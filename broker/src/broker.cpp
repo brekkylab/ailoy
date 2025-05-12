@@ -1,5 +1,3 @@
-#include <format>
-#include <thread>
 #include <unordered_map>
 
 #include <magic_enum/magic_enum.hpp>
