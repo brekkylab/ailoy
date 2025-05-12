@@ -41,7 +41,7 @@
  * A function that creates `component_t` instances.
  * `module_` contains `component_factory_t`s to make VMs can create components
  *
- * ```c++
+ * ```cpp
  * {
  *   auto create_my_component = get_my_module()->factories.at("my_component");
  *

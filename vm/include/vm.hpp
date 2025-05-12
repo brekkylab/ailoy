@@ -12,7 +12,7 @@
  * and can make a VM can use those by being loaded into the VM.
  * (details are in module.hpp)
  *
- * ```c++
+ * ```cpp
  * {
  *   std::shared_ptr<const pakky::module_t> mods[] =
  *       {pakky::get_default_module()};
