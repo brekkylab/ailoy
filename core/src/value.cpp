@@ -1,6 +1,4 @@
-#include <iomanip>
-#include <numeric>
-#include <ostream>
+#include <iostream>
 #include <sstream>
 
 #include "value.hpp"

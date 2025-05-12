@@ -1,7 +1,5 @@
 #include "inproc_socket.hpp"
 
-#include <list>
-
 using namespace std::chrono_literals;
 
 namespace ailoy {

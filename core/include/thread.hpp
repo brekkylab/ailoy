@@ -31,10 +31,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
-#include <functional>
-#include <memory>
 #include <shared_mutex>
-#include <type_traits>
 
 #ifdef _WIN32
 #include <Windows.h>
