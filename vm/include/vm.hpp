@@ -24,14 +24,10 @@
  */
 #pragma once
 
-#include <initializer_list>
 #include <span>
 #include <string>
-#include <unordered_map>
-#include <vector>
 
 #include "module.hpp"
-#include "thread.hpp"
 
 namespace ailoy {
 
