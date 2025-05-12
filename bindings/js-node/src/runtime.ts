@@ -38,8 +38,9 @@ export class Runtime {
   private execResponses: Map<string, Map<number, Packet>>;
 
   /**
-   * 동시에 한개의 listen 함수만 실행되어야 됨. 따라서 listen함수가 여러 로직에서 중복해서 불리는 것을
-   * 방지하기 위해 현재 실행중인 listen 함수의 Promise를 캐싱
+   * Only one listen function should be running at any given time.
+   * To prevent multiple logic paths from calling listen redundantly,
+   * the Promise of the currently running listen function is cached.
    */
   private listener: Promise<void> | null;
 
@@ -275,7 +276,8 @@ export class Runtime {
   }
 
   /**
-   * `define_component` 및 `delete_component`같이 single listen을 수행하는 함수
+   * Performs a single listen operation.
+   * For functions like `define_component` and `delete_component`.
    * @param txid
    * @returns
    */
@@ -311,7 +313,8 @@ export class Runtime {
   }
 
   /**
-   * `call_function` 및 `call_method`같이 iterative listen을 수행해 리턴하는 함수
+   * * performs iterative listen operations.
+   * For functions like `call_function` and `call_method`.
    * @param txid
    * @returns
    */
