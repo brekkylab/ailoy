@@ -3,8 +3,8 @@
 
 #include <iostream>
 
-#include "component.hpp"
 #include "language.hpp"
+#include "module.hpp"
 
 std::string get_file_content(const std::string &url, const std::string &path) {
   httplib::Client cli(url);

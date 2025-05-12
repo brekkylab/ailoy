@@ -4,7 +4,7 @@
 
 #include <tinyexpr.h>
 
-#include "component.hpp"
+#include "module.hpp"
 
 static const std::map<std::string, double> EXPR_EVAL_MAP = {
     {"1+((2-3*4)/5)^6", 65},

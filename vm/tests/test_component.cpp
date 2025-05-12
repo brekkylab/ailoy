@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 
-#include "component.hpp"
+#include "module.hpp"
 
 TEST(ComponentTest, TestEcho) {
   auto default_operators = ailoy::get_default_module()->ops;

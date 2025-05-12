@@ -1,4 +1,5 @@
-#include "component.hpp"
+#include "module.hpp"
+
 #include "calculator.hpp"
 #include "http_request.hpp"
 

@@ -8,8 +8,8 @@
 #include <tokenizers/tokenizers.h>
 
 #include "chat_template_engine.hpp"
-#include "component.hpp"
 #include "model_cache.hpp"
+#include "module.hpp"
 
 namespace ailoy {
 

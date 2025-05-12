@@ -1,6 +1,6 @@
 #include <vector>
 
-#include "component.hpp"
+#include "module.hpp"
 
 namespace ailoy {
 

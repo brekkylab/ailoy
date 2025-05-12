@@ -5,7 +5,7 @@
 
 #include "broker.hpp"
 #include "broker_client.hpp"
-#include "component.hpp"
+#include "module.hpp"
 #include "uuid.hpp"
 #include "vm.hpp"
 

@@ -1,18 +1,18 @@
 #include <gtest/gtest.h>
 
-#include "component.hpp"
 #include "language.hpp"
+#include "module.hpp"
 
 static const std::string QWEN_MESSAGES = R"([
-  {"role": "system", "content": "You are Elon Musk. Please answer like Elon Musk."},
+  {"role": "system", "content": "You are a friendly chatbot who always responds in the style of a pirate."},
   {"role": "user", "content":  "who are you?"}
 ])";
 
 static const std::string QWEN_MULTI_TURN_MESSAGES = R"([
   {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
-  {"role": "user", "content": "Who is the president of US in 2021?"},
-  {"role": "assistant", "content": "The President of the United States in 2021 is Joe Biden. He was inaugurated as the 46th President of the United States on January 20, 2021, and he is still serving in that role."},
-  {"role": "user", "content": "Tell me about him briefly within 5 sentences."}
+  {"role": "user", "content": "Tell me about constant pi in a sentence."},
+  {"role": "assistant", "content": "Pi(π) is a mathematical constant representing the ratio of a circle's circumference to its diameter, approximately equal to 3.14159."},
+  {"role": "user", "content": "Please give me a little more accurate value."}
 ])";
 
 static const std::string TOOLS = R"([

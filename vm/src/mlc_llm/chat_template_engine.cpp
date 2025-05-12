@@ -2,7 +2,8 @@
 
 #include "../file_util.hpp"
 #include "../string_util.hpp"
-#include "component.hpp"
+
+#include "module.hpp"
 
 namespace ailoy {
 

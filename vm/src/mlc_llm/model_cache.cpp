@@ -159,8 +159,7 @@ static const fs::path CACHE_ROOT =
     fs::path(std::getenv("HOME")) / ".cache" / "ailoy";
 #endif
 
-static const std::string R2_BASE_URL =
-    "https://pub-831b8b5d887349809679146edc43bf4a.r2.dev";
+static const std::string R2_BASE_URL = "https://models.download.ailoy.co";
 
 void download_file(httplib::Client &client, const std::string &remote_path,
                    const fs::path &local_path) {

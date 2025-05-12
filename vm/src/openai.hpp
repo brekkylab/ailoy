@@ -5,7 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "component.hpp"
+#include "module.hpp"
 #include "value.hpp"
 
 namespace ailoy {

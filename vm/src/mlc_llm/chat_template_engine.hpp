@@ -3,7 +3,7 @@
 #include <minja/chat-template.hpp>
 #include <nlohmann/json.hpp>
 
-#include "component.hpp"
+#include "module.hpp"
 
 namespace ailoy {
 

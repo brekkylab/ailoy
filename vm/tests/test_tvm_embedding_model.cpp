@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "component.hpp"
 #include "language.hpp"
 #include "mlc_llm/embedding_model.hpp"
+#include "module.hpp"
 
 TEST(EmbeddingModelTest, TestTokenize) {
   auto create_tvm_embedding_model =
