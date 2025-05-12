@@ -1,5 +1,6 @@
 import asyncio
 import json
+import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -19,9 +20,12 @@ from typing import (
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import jmespath
+import mcp
+import mcp.types as mcp_types
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 from ailoy.ailoy_py import generate_uuid
 from ailoy.runtime import AsyncRuntime
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 ## Types for OpenAI API-compatible data structures
 
@@ -82,7 +86,7 @@ class MessageDelta(BaseModel):
 
 ## Types for LLM Model Definitions
 
-TVMModelName = Literal["qwen3-8b", "ministral2410-8b"]
+TVMModelName = Literal["qwen3-0.6b", "qwen3-1.7b", "qwen3-4b", "qwen3-8b"]
 OpenAIModelName = Literal["gpt-4o"]
 AvailableModel = Union[TVMModelName, OpenAIModelName]
 
@@ -105,20 +109,25 @@ class ModelDescription(BaseModel):
 
 
 model_descriptions: Dict[AvailableModel, ModelDescription] = {
+    "qwen3-0.6b": ModelDescription(
+        model_id="Qwen/Qwen3-0.6B",
+        component_type="tvm_language_model",
+        default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+    ),
+    "qwen3-1.7b": ModelDescription(
+        model_id="Qwen/Qwen3-1.7B",
+        component_type="tvm_language_model",
+        default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+    ),
+    "qwen3-4b": ModelDescription(
+        model_id="Qwen/Qwen3-4B",
+        component_type="tvm_language_model",
+        default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+    ),
     "qwen3-8b": ModelDescription(
         model_id="Qwen/Qwen3-8B",
         component_type="tvm_language_model",
         default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-    ),
-    "ministral2410-8b": ModelDescription(
-        model_id="mistralai/Ministral-8B-Instruct-2410",
-        component_type="tvm_language_model",
-        default_system_message=(
-            "You are a helpful assistant with access to the following functions to help the user. "
-            "You can use the functions if needed. Always assist with care, respect, and truth. "
-            "Respond with utmost utility yet securely. Avoid harmful, unethical, prejudiced, or "
-            "negative content. Ensure replies promote fairness and positivity."
-        ),
     ),
     "gpt-4o": ModelDescription(
         model_id="gpt-4o",
@@ -298,11 +307,14 @@ class ReflectiveExecutor:
         self._tools: List[Tool] = tools if tools is not None else []
 
     def __del__(self):
-        if self._initialized:
-            try:
-                asyncio.run(self.deinitialize())
-            except Exception:
-                pass  # Destructor shouldn't raise
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(self.deinitialize())
+            else:
+                loop.run_until_complete(self.deinitialize())
+        except Exception:
+            pass
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -513,3 +525,43 @@ class ReflectiveExecutor:
                 self.add_restapi_tool(RESTAPIToolDefinition.model_validate(tool_def), authenticator=authenticator)
             else:
                 warnings.warn(f'Tool type "{tool_type}" is not supported. Skip adding tool "{tool_name}".')
+
+    def add_mcp_tool(self, params: mcp.StdioServerParameters, tool: mcp_types.Tool):
+        from mcp.client.stdio import stdio_client
+
+        async def call(_: AsyncRuntime, inputs: Dict[str, Any]) -> Any:
+            async with stdio_client(params, errlog=subprocess.STDOUT) as streams:
+                async with mcp.ClientSession(*streams) as session:
+                    await session.initialize()
+
+                    result = await session.call_tool(tool.name, inputs)
+                    contents: List[str] = []
+                    for item in result.content:
+                        if isinstance(item, mcp_types.TextContent):
+                            contents.append(item.text)
+                        elif isinstance(item, mcp_types.ImageContent):
+                            contents.append(item.data)
+                        elif isinstance(item, mcp_types.EmbeddedResource):
+                            if isinstance(item.resource, mcp_types.TextResourceContents):
+                                contents.append(item.resource.text)
+                            else:
+                                contents.append(item.resource.blob)
+
+                    return contents
+
+        desc = ToolDescription(name=tool.name, description=tool.description, parameters=tool.inputSchema)
+        return self.add_tool(Tool(desc=desc, call_fn=call))
+
+    async def add_tools_from_mcp_server(
+        self, params: mcp.StdioServerParameters, tools_to_add: Optional[List[str]] = None
+    ):
+        from mcp.client.stdio import stdio_client
+
+        async with stdio_client(params, errlog=subprocess.STDOUT) as streams:
+            async with mcp.ClientSession(*streams) as session:
+                await session.initialize()
+                resp = await session.list_tools()
+                for tool in resp.tools:
+                    if tools_to_add is None or tool.name in tools_to_add:
+                        self.add_mcp_tool(params, tool)
+                return resp.tools
