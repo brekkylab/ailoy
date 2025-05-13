@@ -137,42 +137,42 @@ class ModelInfo(BaseModel):
 ## Types for Assistant's responses
 
 
-class ResponseBase(BaseModel):
+class AgentResponseBase(BaseModel):
     type: Literal["output_text", "tool_call", "tool_call_result", "reasoning", "error"]
     end_of_turn: bool
     role: Literal["assistant", "tool"]
     content: Any
 
 
-class ResponseOutputText(ResponseBase):
+class AgentResponseOutputText(AgentResponseBase):
     type: Literal["output_text", "reasoning"]
     role: Literal["assistant"]
     content: str
 
 
-class ResponseToolCall(ResponseBase):
+class AgentResponseToolCall(AgentResponseBase):
     type: Literal["tool_call"]
     role: Literal["assistant"]
     content: ToolCall
 
 
-class ResponseToolCallResult(ResponseBase):
+class AgentResponseToolCallResult(AgentResponseBase):
     type: Literal["tool_call_result"]
     role: Literal["tool"]
     content: ToolCallResultMessage
 
 
-class ResponseError(ResponseBase):
+class AgentResponseError(AgentResponseBase):
     type: Literal["error"]
     role: Literal["assistant"]
     content: str
 
 
-Response = Union[
-    ResponseOutputText,
-    ResponseToolCall,
-    ResponseToolCallResult,
-    ResponseError,
+AgentResponse = Union[
+    AgentResponseOutputText,
+    AgentResponseToolCall,
+    AgentResponseToolCallResult,
+    AgentResponseError,
 ]
 
 ## Types and functions related to Tools
@@ -326,7 +326,7 @@ class Assistant:
         message: str,
         do_reasoning: Optional[bool] = None,
         ignore_reasoning: Optional[bool] = None,
-    ) -> AsyncGenerator[Response, None]:
+    ) -> AsyncGenerator[AgentResponse, None]:
         self._messages.append(UserMessage(role="user", content=message))
 
         while True:
@@ -344,7 +344,7 @@ class Assistant:
 
                 if delta.finish_reason is None:
                     output_msg = AIOutputTextMessage.model_validate(delta.message)
-                    yield ResponseOutputText(
+                    yield AgentResponseOutputText(
                         type="reasoning" if output_msg.reasoning else "output_text",
                         end_of_turn=False,
                         role="assistant",
@@ -357,7 +357,7 @@ class Assistant:
                     self._messages.append(tool_call_message)
 
                     for tool_call in tool_call_message.tool_calls:
-                        yield ResponseToolCall(
+                        yield AgentResponseToolCall(
                             type="tool_call",
                             end_of_turn=True,
                             role="assistant",
@@ -385,7 +385,7 @@ class Assistant:
 
                     for result_msg in tool_call_results:
                         self._messages.append(result_msg)
-                        yield ResponseToolCallResult(
+                        yield AgentResponseToolCallResult(
                             type="tool_call_result",
                             end_of_turn=True,
                             role="tool",
@@ -397,7 +397,7 @@ class Assistant:
 
                 if delta.finish_reason in ["stop", "length", "error"]:
                     output_msg = AIOutputTextMessage.model_validate(delta.message)
-                    yield ResponseOutputText(
+                    yield AgentResponseOutputText(
                         type="reasoning" if output_msg.reasoning else "output_text",
                         end_of_turn=False,
                         role="assistant",
