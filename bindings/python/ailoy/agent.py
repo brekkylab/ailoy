@@ -134,7 +134,7 @@ class ModelInfo(BaseModel):
     attrs: Dict[str, Any]
 
 
-## Types for Assistant's responses
+## Types for agent's responses
 
 
 class AgentResponseBase(BaseModel):
@@ -254,7 +254,7 @@ class BearerAuthenticator(ToolAuthenticator):
         return {**request, "headers": headers}
 
 
-class Assistant:
+class Agent:
     def __init__(
         self,
         runtime: AsyncRuntime,
