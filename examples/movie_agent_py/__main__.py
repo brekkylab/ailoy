@@ -2,11 +2,11 @@ import asyncio
 import os
 import textwrap
 
-from ailoy import AsyncRuntime, ReflectiveExecutor
-from ailoy.reflective_executor import BearerAuthenticator, ReflectiveResponse
+from ailoy import AsyncRuntime, Agent
+from ailoy.agent import BearerAuthenticator, AgentResponse
 
 
-def print_reflective_response(resp: ReflectiveResponse):
+def print_agent_response(resp: AgentResponse):
     if resp.type == "output_text":
         print(resp.content, end="")
         if resp.end_of_turn:
@@ -46,13 +46,13 @@ async def main():
     if tmdb_api_key is None:
         tmdb_api_key = input("Enter TMDB API Key: ")
 
-    executor = ReflectiveExecutor(rt, model_name="qwen3-8b")
+    executor = Agent(rt, model_name="qwen3-8b")
 
     # Use openai model
     # openai_api_key = os.environ.get("OPENAI_API_KEY", None)
     # if openai_api_key is None:
     #     openai_api_key = input("Enter OpenAI API Key: ")
-    # executor = ReflectiveExecutor(rt, model_name="gpt-4o", api_key=openai_api_key)
+    # executor = Agent(rt, model_name="gpt-4o", api_key=openai_api_key)
 
     await executor.initialize()
 
@@ -75,7 +75,7 @@ async def main():
             query,
             do_reasoning=True,
         ):
-            print_reflective_response(resp)
+            print_agent_response(resp)
 
 
 if __name__ == "__main__":

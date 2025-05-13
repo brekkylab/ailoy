@@ -3,7 +3,7 @@ import * as fs from "fs/promises";
 import * as ailoy from "ailoy-js-node";
 
 let runtime: ailoy.Runtime | undefined = undefined;
-let executor: ailoy.ReflectiveExecutor | undefined = undefined;
+let agent: ailoy.Agent | undefined = undefined;
 let vectorstore: ailoy.VectorStore | undefined = undefined;
 
 export const initializeComponents = async (mainWindow: BrowserWindow) => {
@@ -20,16 +20,16 @@ export const initializeComponents = async (mainWindow: BrowserWindow) => {
     await vectorstore.initialize();
   }
 
-  if (executor === undefined) {
+  if (agent === undefined) {
     mainWindow.webContents.send(
       "indicate-loading",
       "Loading AI model...",
       false
     );
-    executor = new ailoy.ReflectiveExecutor(runtime, {
+    agent = new ailoy.Agent(runtime, {
       model: { name: "qwen3-8b" },
     });
-    await executor.initialize();
+    await agent.initialize();
     mainWindow.webContents.send("indicate-loading", "", true);
   }
 };
@@ -83,7 +83,7 @@ export const registerIpcHandlers = async (mainWindow: BrowserWindow) => {
   });
 
   ipcMain.handle("infer-language-model", async (event, message: string) => {
-    for await (const resp of executor.run(message)) {
+    for await (const resp of agent.run(message)) {
       mainWindow.webContents.send("assistant-answer", resp);
     }
   });
@@ -99,9 +99,9 @@ export const destroyComponents = async () => {
     await vectorstore.deinitialize();
     vectorstore = undefined;
   }
-  if (executor !== undefined) {
-    await executor.deinitialize();
-    executor = undefined;
+  if (agent !== undefined) {
+    await agent.deinitialize();
+    agent = undefined;
   }
   if (runtime !== undefined) {
     await runtime.stop();

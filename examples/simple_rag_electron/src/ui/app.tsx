@@ -31,7 +31,7 @@ const App: React.FC = () => {
     window.electronAPI.onFileSelected(() => {
       setLoadingStatus("loading");
     });
-    window.electronAPI.onAssistantAnswer((resp: ReflectiveResponse) => {
+    window.electronAPI.onAssistantAnswer((resp: AgentResponse) => {
       if (resp.type === "output_text") {
         setMessages((prevMessages) => {
           const last = prevMessages[prevMessages.length - 1];

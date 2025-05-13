@@ -1,8 +1,4 @@
-import {
-  startRuntime,
-  createReflectiveExecutor,
-  bearerAutenticator,
-} from "ailoy-js-node";
+import { startRuntime, createAgent, bearerAutenticator } from "ailoy-node";
 
 import readline from "readline";
 
@@ -32,7 +28,7 @@ async function main() {
 
   console.log("Initializing AI...");
 
-  const ex = await createReflectiveExecutor(rt, {
+  const ex = await createAgent(rt, {
     model: {
       name: "qwen3-8b",
     },

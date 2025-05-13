@@ -1,13 +1,6 @@
 export { Runtime, startRuntime } from "./runtime";
-export type {
-  ToolAuthenticator,
-  ReflectiveResponse,
-} from "./reflective_executor";
-export {
-  bearerAutenticator,
-  ReflectiveExecutor,
-  createReflectiveExecutor,
-} from "./reflective_executor";
+export type { ToolAuthenticator, AgentResponse } from "./agent";
+export { bearerAutenticator, Agent, createAgent } from "./agent";
 export { VectorStore } from "./vector_store";
 export type {
   VectorStoreInsertItem,

@@ -19,9 +19,10 @@ from typing import (
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import jmespath
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 from ailoy.ailoy_py import generate_uuid
 from ailoy.runtime import AsyncRuntime
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 ## Types for OpenAI API-compatible data structures
 
@@ -133,45 +134,45 @@ class ModelInfo(BaseModel):
     attrs: Dict[str, Any]
 
 
-## Types for ReflectiveExecutor's responses
+## Types for Assistant's responses
 
 
-class ReflectiveResponseBase(BaseModel):
+class ResponseBase(BaseModel):
     type: Literal["output_text", "tool_call", "tool_call_result", "reasoning", "error"]
     end_of_turn: bool
     role: Literal["assistant", "tool"]
     content: Any
 
 
-class ReflectiveResponseOutputText(ReflectiveResponseBase):
+class ResponseOutputText(ResponseBase):
     type: Literal["output_text", "reasoning"]
     role: Literal["assistant"]
     content: str
 
 
-class ReflectiveResponseToolCall(ReflectiveResponseBase):
+class ResponseToolCall(ResponseBase):
     type: Literal["tool_call"]
     role: Literal["assistant"]
     content: ToolCall
 
 
-class ReflectiveResponseToolCallResult(ReflectiveResponseBase):
+class ResponseToolCallResult(ResponseBase):
     type: Literal["tool_call_result"]
     role: Literal["tool"]
     content: ToolCallResultMessage
 
 
-class ReflectiveResponseError(ReflectiveResponseBase):
+class ResponseError(ResponseBase):
     type: Literal["error"]
     role: Literal["assistant"]
     content: str
 
 
-ReflectiveResponse = Union[
-    ReflectiveResponseOutputText,
-    ReflectiveResponseToolCall,
-    ReflectiveResponseToolCallResult,
-    ReflectiveResponseError,
+Response = Union[
+    ResponseOutputText,
+    ResponseToolCall,
+    ResponseToolCallResult,
+    ResponseError,
 ]
 
 ## Types and functions related to Tools
@@ -253,7 +254,7 @@ class BearerAuthenticator(ToolAuthenticator):
         return {**request, "headers": headers}
 
 
-class ReflectiveExecutor:
+class Assistant:
     def __init__(
         self,
         runtime: AsyncRuntime,
@@ -325,7 +326,7 @@ class ReflectiveExecutor:
         message: str,
         do_reasoning: Optional[bool] = None,
         ignore_reasoning: Optional[bool] = None,
-    ) -> AsyncGenerator[ReflectiveResponse, None]:
+    ) -> AsyncGenerator[Response, None]:
         self._messages.append(UserMessage(role="user", content=message))
 
         while True:
@@ -343,7 +344,7 @@ class ReflectiveExecutor:
 
                 if delta.finish_reason is None:
                     output_msg = AIOutputTextMessage.model_validate(delta.message)
-                    yield ReflectiveResponseOutputText(
+                    yield ResponseOutputText(
                         type="reasoning" if output_msg.reasoning else "output_text",
                         end_of_turn=False,
                         role="assistant",
@@ -356,7 +357,7 @@ class ReflectiveExecutor:
                     self._messages.append(tool_call_message)
 
                     for tool_call in tool_call_message.tool_calls:
-                        yield ReflectiveResponseToolCall(
+                        yield ResponseToolCall(
                             type="tool_call",
                             end_of_turn=True,
                             role="assistant",
@@ -384,7 +385,7 @@ class ReflectiveExecutor:
 
                     for result_msg in tool_call_results:
                         self._messages.append(result_msg)
-                        yield ReflectiveResponseToolCallResult(
+                        yield ResponseToolCallResult(
                             type="tool_call_result",
                             end_of_turn=True,
                             role="tool",
@@ -396,7 +397,7 @@ class ReflectiveExecutor:
 
                 if delta.finish_reason in ["stop", "length", "error"]:
                     output_msg = AIOutputTextMessage.model_validate(delta.message)
-                    yield ReflectiveResponseOutputText(
+                    yield ResponseOutputText(
                         type="reasoning" if output_msg.reasoning else "output_text",
                         end_of_turn=False,
                         role="assistant",

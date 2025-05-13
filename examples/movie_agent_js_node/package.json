@@ -10,7 +10,7 @@
   "author": "",
   "description": "",
   "dependencies": {
-    "ailoy-js-node": "file:../../bindings/js-node"
+    "ailoy-node": "file:../../bindings/js-node"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",

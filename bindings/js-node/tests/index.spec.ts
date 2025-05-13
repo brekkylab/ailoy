@@ -1,11 +1,6 @@
 import { expect } from "chai";
 
-import {
-  Runtime,
-  startRuntime,
-  NDArray,
-  createReflectiveExecutor,
-} from "../src/index";
+import { Runtime, startRuntime, NDArray, createAgent } from "../src/index";
 
 describe("JSVM", () => {
   it("run-echo", async () => {
@@ -282,9 +277,9 @@ describe("JSVM", () => {
     });
   }
 
-  it("run-reflective-executor", async () => {
-    const rt = await startRuntime("inproc://reflective-executor");
-    const ex = await createReflectiveExecutor(rt, {
+  it("run-agent", async () => {
+    const rt = await startRuntime("inproc://agent");
+    const ex = await createAgent(rt, {
       model: {
         name: "qwen3-8b",
       },

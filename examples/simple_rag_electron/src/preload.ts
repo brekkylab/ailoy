@@ -26,9 +26,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onFileSelected: (callback: () => void) => {
     ipcRenderer.on("file-selected", () => callback());
   },
-  onAssistantAnswer: (callback: (resp: ReflectiveResponse) => void) => {
-    ipcRenderer.on("assistant-answer", (event, resp: ReflectiveResponse) =>
-      callback(resp)
-    );
+  onAssistantAnswer: (callback: (resp: Agent) => void) => {
+    ipcRenderer.on("assistant-answer", (event, resp: Agent) => callback(resp));
   },
 });

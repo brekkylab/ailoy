@@ -103,9 +103,9 @@ const modelDescriptions: Record<AvailableModel, ModelDescription> = {
   },
 };
 
-/** Types for ReflectiveExecutor's responses */
+/** Types for Agent's responses */
 
-interface ReflectiveResponse_Base {
+interface AgentResponse_Base {
   type:
     | "output_text"
     | "tool_call"
@@ -115,12 +115,12 @@ interface ReflectiveResponse_Base {
   endOfTurn: boolean;
   role: "assistant" | "tool";
 }
-interface ReflectiveResponse_OutputText extends ReflectiveResponse_Base {
+interface AgentResponse_OutputText extends AgentResponse_Base {
   type: "output_text" | "reasoning";
   role: "assistant";
   content: string;
 }
-interface ReflectiveResponse_ToolCall extends ReflectiveResponse_Base {
+interface AgentResponse_ToolCall extends AgentResponse_Base {
   type: "tool_call";
   role: "assistant";
   content: {
@@ -128,7 +128,7 @@ interface ReflectiveResponse_ToolCall extends ReflectiveResponse_Base {
     function: { name: string; arguments: any };
   };
 }
-interface ReflectiveResponse_ToolCallResult extends ReflectiveResponse_Base {
+interface AgentResponse_ToolCallResult extends AgentResponse_Base {
   type: "tool_call_result";
   role: "tool";
   content: {
@@ -137,16 +137,16 @@ interface ReflectiveResponse_ToolCallResult extends ReflectiveResponse_Base {
     content: string;
   };
 }
-interface ReflectiveResponse_Error extends ReflectiveResponse_Base {
+interface AgentResponse_Error extends AgentResponse_Base {
   type: "error";
   role: "assistant";
   error: string;
 }
-export type ReflectiveResponse =
-  | ReflectiveResponse_OutputText
-  | ReflectiveResponse_ToolCall
-  | ReflectiveResponse_ToolCallResult
-  | ReflectiveResponse_Error;
+export type AgentResponse =
+  | AgentResponse_OutputText
+  | AgentResponse_ToolCall
+  | AgentResponse_ToolCallResult
+  | AgentResponse_Error;
 
 /** Types and functions related to Tools */
 
@@ -235,8 +235,8 @@ export function bearerAutenticator(
   };
 }
 
-/** ReflectiveExecutor class */
-export class ReflectiveExecutor {
+/** Assistant class */
+export class Agent {
   private runtime: Runtime;
   private modelInfo: {
     componentType: string;
@@ -451,7 +451,7 @@ export class ReflectiveExecutor {
       reasoning?: boolean;
       ignore_reasoning?: boolean;
     }
-  ): AsyncGenerator<ReflectiveResponse> {
+  ): AsyncGenerator<AgentResponse> {
     this.messages.push({ role: "user", content: message });
 
     while (true) {
@@ -566,16 +566,16 @@ export class ReflectiveExecutor {
   }
 }
 
-/** function createReflectiveExecutor */
-export async function createReflectiveExecutor(
+/** function createAssistant */
+export async function createAgent(
   runtime: Runtime,
   args: {
     model: TVMModelAttrs | OpenAIModelAttrs;
     tools?: Tool[];
     systemMessage?: string;
   }
-): Promise<ReflectiveExecutor> {
-  const ctx = new ReflectiveExecutor(runtime, args);
+): Promise<Agent> {
+  const ctx = new Agent(runtime, args);
   await ctx.initialize();
   return ctx;
 }

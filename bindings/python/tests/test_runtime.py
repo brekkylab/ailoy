@@ -1,8 +1,9 @@
 import textwrap
 
 import pytest
+
 from ailoy import AsyncRuntime, Runtime
-from ailoy.reflective_executor import ReflectiveExecutor, ReflectiveResponse
+from ailoy.assistant import Assistant, Response
 from ailoy.vector_store import FAISSConfig, VectorStore
 
 
@@ -61,7 +62,7 @@ async def test_async_infer_language_model():
     await rt.delete("lm0")
 
 
-def print_reflective_response(resp: ReflectiveResponse):
+def print_agent_response(resp: Response):
     if resp.type == "output_text":
         print(resp.content, end="")
         if resp.end_of_turn:
@@ -97,14 +98,14 @@ def print_reflective_response(resp: ReflectiveResponse):
 @pytest.mark.asyncio
 async def test_tool_call_calculator():
     rt = AsyncRuntime("inproc://test_tool_call_calculator")
-    ex = ReflectiveExecutor(rt, model_name="qwen3-8b")
+    ex = Assistant(rt, model_name="qwen3-8b")
     await ex.initialize()
 
     ex.add_tools_from_preset("calculator")
 
     query = "Please calculate this formula: floor(ln(exp(e))+cos(2*pi))"
     async for resp in ex.run(query):
-        print_reflective_response(resp)
+        print_agent_response(resp)
 
     await ex.deinitialize()
     rt.close()
@@ -113,13 +114,13 @@ async def test_tool_call_calculator():
 @pytest.mark.asyncio
 async def test_tool_call_frankfurter():
     rt = AsyncRuntime("inproc://test_tool_call_frankfurter")
-    ex = ReflectiveExecutor(rt, model_name="qwen3-8b")
+    ex = Assistant(rt, model_name="qwen3-8b")
     await ex.initialize()
 
     ex.add_tools_from_preset("frankfurter")
 
     query = "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?"
     async for resp in ex.run(query):
-        print_reflective_response(resp)
+        print_agent_response(resp)
 
     await ex.deinitialize()

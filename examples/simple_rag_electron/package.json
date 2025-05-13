@@ -41,7 +41,7 @@
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
-    "ailoy-js-node": "file:../../bindings/js-node",
+    "ailoy-node": "file:../../bindings/js-node",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   }

@@ -1,7 +1,7 @@
 import type {
   VectorStoreRetrieveItem,
-  ReflectiveResponse as _ReflectiveResponse,
-} from "ailoy-js-node";
+  AgentResponse as _AgentResponse,
+} from "ailoy-node";
 
 export interface IElectronAPI {
   openFile: () => Promise<string>;
@@ -23,5 +23,5 @@ declare global {
   interface Window {
     electronAPI: IElectronAPI;
   }
-  type ReflectiveResponse = _ReflectiveResponse;
+  type AgentResponse = _AgentResponse;
 }
