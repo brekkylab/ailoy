@@ -1,15 +1,9 @@
 #include "embedding_model.hpp"
 
 #include <filesystem>
-#include <fstream>
-#include <regex>
-#include <thread>
 
-#include <support/json_parser.h>
 #include <tokenizers_c.h>
-#include <tvm/runtime/memory/memory_manager.h>
 #include <tvm/runtime/ndarray.h>
-#include <tvm/runtime/registry.h>
 
 #include "../file_util.hpp"
 #include "../ndarray_util.hpp"

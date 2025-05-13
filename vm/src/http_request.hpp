@@ -2,6 +2,7 @@
 #include <optional>
 #include <unordered_map>
 
+#include "module.hpp"
 #include "value.hpp"
 
 namespace ailoy {

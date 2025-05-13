@@ -1,8 +1,8 @@
+#include "http_request.hpp"
+
 #include <httplib.h>
 
 #include "exception.hpp"
-#include "http_request.hpp"
-#include "module.hpp"
 
 namespace ailoy {
 

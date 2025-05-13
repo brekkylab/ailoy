@@ -5,13 +5,11 @@
 #include <regex>
 #include <thread>
 
-#include <support/json_parser.h>
 #include <tvm/runtime/memory/memory_manager.h>
-#include <tvm/runtime/ndarray.h>
 #include <tvm/runtime/registry.h>
 
 #include "../file_util.hpp"
-#include "../ndarray_util.hpp"
+#include "model_cache.hpp"
 
 using namespace tvm;
 using namespace tvm::runtime;
