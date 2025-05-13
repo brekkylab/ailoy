@@ -1,9 +1,9 @@
 import textwrap
 
 import pytest
+from bindings.python.ailoy.agent import Agent, AgentResponse
 
 from ailoy import AsyncRuntime, Runtime
-from ailoy.assistant import Assistant, Response
 from ailoy.vector_store import FAISSConfig, VectorStore
 
 
@@ -62,7 +62,7 @@ async def test_async_infer_language_model():
     await rt.delete("lm0")
 
 
-def print_agent_response(resp: Response):
+def print_agent_response(resp: AgentResponse):
     if resp.type == "output_text":
         print(resp.content, end="")
         if resp.end_of_turn:
@@ -98,7 +98,7 @@ def print_agent_response(resp: Response):
 @pytest.mark.asyncio
 async def test_tool_call_calculator():
     rt = AsyncRuntime("inproc://test_tool_call_calculator")
-    ex = Assistant(rt, model_name="qwen3-8b")
+    ex = Agent(rt, model_name="qwen3-8b")
     await ex.initialize()
 
     ex.add_tools_from_preset("calculator")
@@ -114,7 +114,7 @@ async def test_tool_call_calculator():
 @pytest.mark.asyncio
 async def test_tool_call_frankfurter():
     rt = AsyncRuntime("inproc://test_tool_call_frankfurter")
-    ex = Assistant(rt, model_name="qwen3-8b")
+    ex = Agent(rt, model_name="qwen3-8b")
     await ex.initialize()
 
     ex.add_tools_from_preset("frankfurter")
