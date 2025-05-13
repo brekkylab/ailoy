@@ -11,7 +11,7 @@ std::shared_ptr<const module_t> get_default_module() {
   auto &default_ops = default_module->ops;
   auto &default_factories = default_module->factories;
 
-  // Create echo
+  // Add Operator Echo
   if (default_ops.find("echo") == default_ops.end()) {
     auto f = [](std::shared_ptr<const value_t> inputs) -> value_or_error_t {
       if (!inputs->is_type_of<string_t>())
@@ -23,7 +23,7 @@ std::shared_ptr<const module_t> get_default_module() {
     default_ops.insert_or_assign("echo", create<instant_operator_t>(f));
   }
 
-  // Create spell
+  // Add Operator Spell
   if (default_ops.find("spell") == default_ops.end()) {
     auto finit = [](std::shared_ptr<const value_t> inputs) -> value_or_error_t {
       if (!inputs->is_type_of<string_t>())
@@ -90,6 +90,7 @@ std::shared_ptr<const module_t> get_default_module() {
     default_factories.insert_or_assign("accumulator", fcreate);
   }
 
+  // Add Operator HTTP Request
   if (default_ops.find("http_request") == default_ops.end()) {
     auto f = [](std::shared_ptr<const value_t> inputs) -> value_or_error_t {
       if (!inputs->is_type_of<map_t>())
@@ -160,6 +161,8 @@ std::shared_ptr<const module_t> get_default_module() {
     };
     default_ops.insert_or_assign("http_request", create<instant_operator_t>(f));
   }
+
+  // Add Operator Calculator
   if (!default_ops.contains("calculator")) {
     default_ops.insert_or_assign("calculator",
                                  create<instant_operator_t>(calculator_op));
