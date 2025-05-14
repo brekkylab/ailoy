@@ -1,8 +1,9 @@
 import asyncio
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from ailoy.runtime import AsyncRuntime, generate_uuid
 from pydantic import BaseModel, TypeAdapter
+
+from ailoy.runtime import AsyncRuntime, generate_uuid
 
 
 class VectorStoreBaseConfig(BaseModel):

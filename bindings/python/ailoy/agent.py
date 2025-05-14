@@ -1,4 +1,3 @@
-import asyncio
 import json
 import subprocess
 import warnings
@@ -6,15 +5,18 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import (
     Any,
-    AsyncGenerator,
     Awaitable,
     Callable,
     Dict,
+    Generator,
     List,
     Literal,
     Optional,
     Tuple,
+    TypeVar,
+    TypeVarTuple,
     Union,
+    Unpack,
     get_args,
 )
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -25,7 +27,7 @@ import mcp.types as mcp_types
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ailoy.ailoy_py import generate_uuid
-from ailoy.runtime import AsyncRuntime
+from ailoy.runtime import Runtime
 
 ## Types for OpenAI API-compatible data structures
 
@@ -239,10 +241,10 @@ class Tool:
     def __init__(
         self,
         desc: ToolDescription,
-        call_fn: Callable[[AsyncRuntime, Any], Awaitable[Any]],
+        call_fn: Callable[[Runtime, Any], Any],
     ):
         self.desc = desc
-        self.call = call_fn  # should be async def or callable
+        self.call = call_fn
 
 
 class ToolAuthenticator(ABC):
@@ -262,10 +264,27 @@ class BearerAuthenticator(ToolAuthenticator):
         return {**request, "headers": headers}
 
 
+T_Retval = TypeVar("T_Retval")
+PosArgsT = TypeVarTuple("PosArgsT")
+
+
+def run_async(coro: Callable[[Unpack[PosArgsT]], Awaitable[T_Retval]]) -> T_Retval:
+    try:
+        import anyio
+
+        # Running outside async loop
+        return anyio.run(lambda: coro)
+    except RuntimeError:
+        import anyio.from_thread
+
+        # Already in a running event loop: use anyio from_thread
+        return anyio.from_thread.run(coro)
+
+
 class Agent:
     def __init__(
         self,
-        runtime: AsyncRuntime,
+        runtime: Runtime,
         model_name: AvailableModel,
         tools: Optional[List[Tool]] = None,
         system_message: Optional[str] = None,
@@ -307,37 +326,37 @@ class Agent:
         self._tools: List[Tool] = tools if tools is not None else []
 
     def __del__(self):
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(self.deinitialize())
-            else:
-                loop.run_until_complete(self.deinitialize())
-        except Exception:
-            pass
+        self.deinitialize()
 
-    async def initialize(self) -> None:
+    def __enter__(self):
+        self.initialize()
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.deinitialize()
+
+    def initialize(self) -> None:
         if self._initialized:
             return
-        await self._runtime.define(
+        self._runtime.define(
             self._model_info.component_type,
             self._model_info.component_name,
             self._model_info.attrs,
         )
         self._initialized = True
 
-    async def deinitialize(self) -> None:
+    def deinitialize(self) -> None:
         if not self._initialized:
             return
-        await self._runtime.delete(self._model_info.component_name)
+        self._runtime.delete(self._model_info.component_name)
         self._initialized = False
 
-    async def run(
+    def run(
         self,
         message: str,
         enable_reasoning: Optional[bool] = None,
         ignore_reasoning_messages: Optional[bool] = None,
-    ) -> AsyncGenerator[AgentResponse, None]:
+    ) -> Generator[AgentResponse, None]:
         self._messages.append(UserMessage(role="user", content=message))
 
         while True:
@@ -350,7 +369,7 @@ class Agent:
             if ignore_reasoning_messages is not None:
                 infer_args["ignore_reasoning_messages"] = ignore_reasoning_messages
 
-            async for resp in self._runtime.call_iter_method(self._model_info.component_name, "infer", infer_args):
+            for resp in self._runtime.call_iter_method(self._model_info.component_name, "infer", infer_args):
                 delta = MessageDelta.model_validate(resp)
 
                 if delta.finish_reason is None:
@@ -377,14 +396,14 @@ class Agent:
 
                     tool_call_results: List[ToolCallResultMessage] = []
 
-                    async def run_tool(tool_call: ToolCall):
+                    def run_tool(tool_call: ToolCall):
                         tool_ = next(
                             (t for t in self._tools if t.desc.name == tool_call.function.name),
                             None,
                         )
                         if not tool_:
                             raise RuntimeError("Tool not found")
-                        resp = await tool_.call(self._runtime, tool_call.function.arguments)
+                        resp = tool_.call(self._runtime, tool_call.function.arguments)
                         return ToolCallResultMessage(
                             role="tool",
                             name=tool_call.function.name,
@@ -392,7 +411,7 @@ class Agent:
                             content=json.dumps(resp),
                         )
 
-                    tool_call_results = await asyncio.gather(*(run_tool(tc) for tc in tool_call_message.tool_calls))
+                    tool_call_results = [run_tool(tc) for tc in tool_call_message.tool_calls]
 
                     for result_msg in tool_call_results:
                         self._messages.append(result_msg)
@@ -415,7 +434,7 @@ class Agent:
                         content=output_msg.content,
                     )
 
-                    # finish this AsyncGenerator
+                    # finish this Generator
                     return
 
     def add_tool(self, tool: Tool) -> None:
@@ -424,20 +443,20 @@ class Agent:
             return
         self._tools.append(tool)
 
-    def add_py_function_tool(self, desc: ToolDescription, f: Callable[[AsyncRuntime, Any], Awaitable[Any]]):
+    def add_py_function_tool(self, desc: ToolDescription, f: Callable[[Runtime, Any], Any]):
         self.add_tool(Tool(desc=desc, call_fn=f))
 
     def add_universal_tool(self, tool_def: UniversalToolDefinition) -> bool:
         if tool_def.type != "universal":
             raise ValueError('Tool type is not "universal"')
 
-        async def call(runtime: AsyncRuntime, inputs: Dict[str, Any]) -> Any:
+        def call(runtime: Runtime, inputs: Dict[str, Any]) -> Any:
             required = tool_def.description.parameters.required or []
             for param_name in required:
                 if param_name not in inputs:
                     raise ValueError(f'Parameter "{param_name}" is required but not provided')
 
-            output = await runtime.call(tool_def.description.name, inputs)
+            output = runtime.call(tool_def.description.name, inputs)
             if tool_def.behavior.output_path is not None:
                 output = jmespath.search(tool_def.behavior.output_path, output)
 
@@ -455,7 +474,7 @@ class Agent:
 
         behavior = tool_def.behavior
 
-        async def call(_: AsyncRuntime, inputs: Dict[str, Any]) -> Any:
+        def call(_: Runtime, inputs: Dict[str, Any]) -> Any:
             def render_template(template: str, context: Dict[str, Any]) -> Tuple[str, List[str]]:
                 import re
 
@@ -499,7 +518,7 @@ class Agent:
 
             # Call HTTP request
             output = None
-            resp = await self._runtime.call("http_request", request)
+            resp = self._runtime.call("http_request", request)
             output = json.loads(resp["body"])
 
             # Parse output path if defined
@@ -529,39 +548,44 @@ class Agent:
     def add_mcp_tool(self, params: mcp.StdioServerParameters, tool: mcp_types.Tool):
         from mcp.client.stdio import stdio_client
 
-        async def call(_: AsyncRuntime, inputs: Dict[str, Any]) -> Any:
-            async with stdio_client(params, errlog=subprocess.STDOUT) as streams:
-                async with mcp.ClientSession(*streams) as session:
-                    await session.initialize()
+        def call(_: Runtime, inputs: Dict[str, Any]) -> Any:
+            async def _inner():
+                async with stdio_client(params, errlog=subprocess.STDOUT) as streams:
+                    async with mcp.ClientSession(*streams) as session:
+                        await session.initialize()
 
-                    result = await session.call_tool(tool.name, inputs)
-                    contents: List[str] = []
-                    for item in result.content:
-                        if isinstance(item, mcp_types.TextContent):
-                            contents.append(item.text)
-                        elif isinstance(item, mcp_types.ImageContent):
-                            contents.append(item.data)
-                        elif isinstance(item, mcp_types.EmbeddedResource):
-                            if isinstance(item.resource, mcp_types.TextResourceContents):
-                                contents.append(item.resource.text)
-                            else:
-                                contents.append(item.resource.blob)
+                        result = await session.call_tool(tool.name, inputs)
+                        contents: List[str] = []
+                        for item in result.content:
+                            if isinstance(item, mcp_types.TextContent):
+                                contents.append(item.text)
+                            elif isinstance(item, mcp_types.ImageContent):
+                                contents.append(item.data)
+                            elif isinstance(item, mcp_types.EmbeddedResource):
+                                if isinstance(item.resource, mcp_types.TextResourceContents):
+                                    contents.append(item.resource.text)
+                                else:
+                                    contents.append(item.resource.blob)
 
-                    return contents
+                        return contents
+
+            return run_async(_inner())
 
         desc = ToolDescription(name=tool.name, description=tool.description, parameters=tool.inputSchema)
         return self.add_tool(Tool(desc=desc, call_fn=call))
 
-    async def add_tools_from_mcp_server(
-        self, params: mcp.StdioServerParameters, tools_to_add: Optional[List[str]] = None
-    ):
+    def add_tools_from_mcp_server(self, params: mcp.StdioServerParameters, tools_to_add: Optional[List[str]] = None):
         from mcp.client.stdio import stdio_client
 
-        async with stdio_client(params, errlog=subprocess.STDOUT) as streams:
-            async with mcp.ClientSession(*streams) as session:
-                await session.initialize()
-                resp = await session.list_tools()
-                for tool in resp.tools:
-                    if tools_to_add is None or tool.name in tools_to_add:
-                        self.add_mcp_tool(params, tool)
-                return resp.tools
+        async def _inner():
+            async with stdio_client(params, errlog=subprocess.STDOUT) as streams:
+                async with mcp.ClientSession(*streams) as session:
+                    await session.initialize()
+                    resp = await session.list_tools()
+                    for tool in resp.tools:
+                        if tools_to_add is None or tool.name in tools_to_add:
+                            self.add_mcp_tool(params, tool)
+                    return resp.tools
+
+        tools = run_async(_inner())
+        return tools
