@@ -263,6 +263,15 @@ class BearerAuthenticator(ToolAuthenticator):
 
 
 class Agent:
+    """
+    The `Agent` class provides a high-level interface for interacting with large language models (LLMs) in Ailoy.
+    It abstracts the underlying runtime and VM logic, allowing users to easily send queries and receive streaming
+    responses.
+
+    Agents can be extended with external tools or APIs to provide real-time or domain-specific knowledge, enabling
+    more powerful and context-aware interactions.
+    """
+
     def __init__(
         self,
         runtime: AsyncRuntime,
@@ -271,6 +280,15 @@ class Agent:
         system_message: Optional[str] = None,
         **kwargs,
     ):
+        """
+        Create an instance.
+
+        :param runtime: The runtime environment associated with the agent.
+        :param model_name: The name of the LLM model to use.
+        :param tools: Optional list of tools to be available by default.
+        :param system_message: Optional system message to set the initial assistant context.
+        :raises ValueError: If model name is not supported or validation fails.
+        """
         self._runtime = runtime
         self._initialized = False
 
@@ -317,6 +335,10 @@ class Agent:
             pass
 
     async def initialize(self) -> None:
+        """
+        Initializes the agent by defining its model in the runtime.
+        This must be called before running the agent. If already initialized, this is a no-op.
+        """
         if self._initialized:
             return
         await self._runtime.define(
@@ -327,6 +349,10 @@ class Agent:
         self._initialized = True
 
     async def deinitialize(self) -> None:
+        """
+        Deinitializes the agent and releases resources in the runtime.
+        This should be called when the agent is no longer needed. If already deinitialized, this is a no-op.
+        """
         if not self._initialized:
             return
         await self._runtime.delete(self._model_info.component_name)
@@ -338,6 +364,14 @@ class Agent:
         enable_reasoning: Optional[bool] = None,
         ignore_reasoning_messages: Optional[bool] = None,
     ) -> AsyncGenerator[AgentResponse, None]:
+        """
+        Runs the agent with a new user message and yields streamed responses.
+
+        :param message: The user message to send to the model.
+        :param enable_reasoning: If True, enables reasoning capabilities (default: True).
+        :param ignore_reasoning_messages: If True, reasoning steps are not included in the response stream.
+        :yield: AgentResponse output of the LLM inference or tool calls
+        """
         self._messages.append(UserMessage(role="user", content=message))
 
         while True:
@@ -419,15 +453,33 @@ class Agent:
                     return
 
     def add_tool(self, tool: Tool) -> None:
+        """
+        Adds a custom tool to the agent.
+
+        :param tool: Tool instance to be added.
+        """
         if any(t.desc.name == tool.desc.name for t in self._tools):
             warnings.warn(f'Tool "{tool.desc.name}" is already added.')
             return
         self._tools.append(tool)
 
     def add_py_function_tool(self, desc: ToolDescription, f: Callable[[AsyncRuntime, Any], Awaitable[Any]]):
+        """
+        Adds a Python function as a tool using callable.
+
+        :param desc: Tool descriotion.
+        :param f: Function will be called when the tool invocation occured.
+        """
         self.add_tool(Tool(desc=desc, call_fn=f))
 
     def add_universal_tool(self, tool_def: UniversalToolDefinition) -> bool:
+        """
+        Adds a universal tool.
+
+        :param tool_def: The universal tool definition.
+        :returns: True if the tool was successfully added.
+        :raises ValueError: If the tool type is not "universal" or required inputs are missing.
+        """
         if tool_def.type != "universal":
             raise ValueError('Tool type is not "universal"')
 
@@ -450,6 +502,14 @@ class Agent:
         tool_def: RESTAPIToolDefinition,
         authenticator: Optional[ToolAuthenticator] = None,
     ) -> bool:
+        """
+        Adds a REST API tool that performs external HTTP requests.
+
+        :param tool_def: REST API tool definition.
+        :param authenticator: Optional authenticator to inject into the request.
+        :returns: True if the tool was successfully added.
+        :raises ValueError: If the tool type is not "restapi".
+        """
         if tool_def.type != "restapi":
             raise ValueError('Tool type is not "restapi"')
 
@@ -511,6 +571,13 @@ class Agent:
         return self.add_tool(Tool(desc=tool_def.description, call_fn=call))
 
     def add_tools_from_preset(self, preset_name: str, authenticator: Optional[ToolAuthenticator] = None):
+        """
+        Loads tools from a predefined JSON preset file.
+
+        :param preset_name: Name of the tool preset.
+        :param authenticator: Optional authenticator to use for REST API tools.
+        :raises ValueError: If the preset file is not found.
+        """
         tool_presets_path = Path(__file__).parent / "presets" / "tools"
         preset_json = tool_presets_path / f"{preset_name}.json"
         if not preset_json.exists():
@@ -527,6 +594,13 @@ class Agent:
                 warnings.warn(f'Tool type "{tool_type}" is not supported. Skip adding tool "{tool_name}".')
 
     def add_mcp_tool(self, params: mcp.StdioServerParameters, tool: mcp_types.Tool):
+        """
+        Adds a tool from an MCP (Model Context Protocol) server.
+
+        :param params: Parameters for connecting to the MCP stdio server.
+        :param tool: Tool metadata as defined by MCP.
+        :returns: True if the tool was successfully added.
+        """
         from mcp.client.stdio import stdio_client
 
         async def call(_: AsyncRuntime, inputs: Dict[str, Any]) -> Any:
@@ -555,6 +629,13 @@ class Agent:
     async def add_tools_from_mcp_server(
         self, params: mcp.StdioServerParameters, tools_to_add: Optional[List[str]] = None
     ):
+        """
+        Fetches tools from an MCP stdio server and registers them with the agent.
+
+        :param params: Parameters for connecting to the MCP stdio server.
+        :param tools_to_add: Optional list of tool names to add. If None, all tools are added.
+        :returns: List of all tools returned by the server.
+        """
         from mcp.client.stdio import stdio_client
 
         async with stdio_client(params, errlog=subprocess.STDOUT) as streams:

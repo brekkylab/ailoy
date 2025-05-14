@@ -237,7 +237,13 @@ export function bearerAutenticator(
   };
 }
 
-/** Assistant class */
+/**
+ * The `Agent` class provides a high-level interface for interacting with large language models (LLMs) in Ailoy.
+ * It abstracts the underlying runtime and VM logic, allowing users to easily send queries and receive streaming
+ * responses.
+ * Agents can be extended with external tools or APIs to provide real-time or domain-specific knowledge, enabling
+ * more powerful and context-aware interactions.
+ */
 export class Agent {
   private runtime: Runtime;
   private modelInfo: {
@@ -250,10 +256,14 @@ export class Agent {
   private valid: boolean;
 
   constructor(
+    /** The runtime environment associated with the agent */
     runtime: Runtime,
     args: {
+      /** LLM Model definition */
       model: TVMModelAttrs | OpenAIModelAttrs;
+      /** Optional list of tools to be available by default */
       tools?: Tool[];
+      /** Optional system message to set the initial assistant context */
       systemMessage?: string;
     }
   ) {
@@ -292,17 +302,31 @@ export class Agent {
     this.valid = false;
   }
 
-  addTool(tool: Tool): boolean {
+  /** Adds a custom tool to the agent */
+  addTool(
+    /** Tool instance to be added */
+    tool: Tool
+  ): boolean {
     if (this.tools.find((t) => t.desc.name == tool.desc.name)) return false;
     this.tools.push(tool);
     return true;
   }
 
-  addJSFunctionTool(desc: ToolDescription, f: (input: any) => any): boolean {
+  /** Adds a Javascript function as a tool using callable */
+  addJSFunctionTool(
+    /** Tool descriotion */
+    desc: ToolDescription,
+    /** Function will be called when the tool invocation occured */
+    f: (input: any) => any
+  ): boolean {
     return this.addTool({ desc, call: f });
   }
 
-  addUniversalTool(tool: UniversalToolDefinition): boolean {
+  /** Adds a universal tool */
+  addUniversalTool(
+    /** The universal tool definition */
+    tool: UniversalToolDefinition
+  ): boolean {
     const call = async (runtime: Runtime, inputs: any) => {
       // Validation
       const required = tool.description.parameters.required || [];
@@ -323,8 +347,11 @@ export class Agent {
     return this.addTool({ desc: tool.description, call });
   }
 
+  /** Adds a REST API tool that performs external HTTP requests */
   addRESTAPITool(
+    /** REST API tool definition */
     tool: RESTAPIToolDefinition,
+    /** Optional authenticator to inject into the request */
     auth?: ToolAuthenticator
   ): boolean {
     const call = async (runtime: Runtime, inputs: any) => {
@@ -401,9 +428,14 @@ export class Agent {
     return this.addTool({ desc: tool.description, call });
   }
 
+  /** Loads tools from a predefined JSON preset file */
   addToolsFromPreset(
+    /** Name of the tool preset */
     presetName: string,
-    args?: { authenticator?: ToolAuthenticator }
+    args?: {
+      /** Optional authenticator to inject into the request */
+      authenticator?: ToolAuthenticator;
+    }
   ): boolean {
     const presetJson = require(`./presets/tools/${presetName}.json`);
     if (presetJson === undefined) {
@@ -424,8 +456,11 @@ export class Agent {
     return true;
   }
 
+  /** Adds a tool from an MCP (Model Context Protocol) server */
   async addMcpTool(
+    /** Parameters for connecting to the MCP stdio server */
     params: MCPClientStdio.StdioServerParameters,
+    /** Tool metadata as defined by MCP */
     tool: Awaited<ReturnType<MCPClient.Client["listTools"]>>["tools"][number]
   ) {
     const call = async (_: Runtime, inputs: any) => {
@@ -478,19 +513,10 @@ export class Agent {
   getAvailableTools(): Array<ToolDescription> {
     return this.tools.map((tool) => tool.desc);
   }
-
-  getMessages(): Message[] {
-    return this.messages;
-  }
-
-  setMessages(messages: Message[]) {
-    this.messages = messages;
-  }
-
-  appendMessage(msg: Message) {
-    this.messages.push(msg);
-  }
-
+  /**
+   * Initializes the agent by defining its model in the runtime.
+   * This must be called before running the agent. If already initialized, this is a no-op.
+   */
   async initialize(): Promise<void> {
     if (this.valid) return;
     const result = await this.runtime.define(
@@ -502,10 +528,14 @@ export class Agent {
     this.valid = true;
   }
 
+  /** Runs the agent with a new user message and yields streamed responses */
   async *run(
+    /** The user message to send to the model */
     message: string,
     options?: {
+      /** If True, enables reasoning capabilities (default: True) */
       enableReasoning?: boolean;
+      /** If True, reasoning steps are not included in the response stream */
       ignoreReasoningMessages?: boolean;
     }
   ): AsyncGenerator<AgentResponse> {
@@ -615,6 +645,10 @@ export class Agent {
     }
   }
 
+  /**
+   * Deinitializes the agent and releases resources in the runtime.
+   * This should be called when the agent is no longer needed. If already deinitialized, this is a no-op.
+   */
   async deinitialize(): Promise<void> {
     if (!this.valid) return;
     const result = await this.runtime.delete(this.modelInfo.componentName);
@@ -623,12 +657,16 @@ export class Agent {
   }
 }
 
-/** function createAssistant */
+/** creates and initializes a new agent */
 export async function createAgent(
+  /** The runtime environment associated with the agent */
   runtime: Runtime,
   args: {
+    /** LLM Model definition */
     model: TVMModelAttrs | OpenAIModelAttrs;
+    /** Optional list of tools to be available by default */
     tools?: Tool[];
+    /** Optional system message to set the initial assistant context */
     systemMessage?: string;
   }
 ): Promise<Agent> {
