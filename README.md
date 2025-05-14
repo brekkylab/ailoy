@@ -26,12 +26,11 @@ Currently, the following AI models are supported:
 ```typescript
 import {
   startRuntime,
-  createReflectiveExecutor,
-  bearerAutenticator,
+  createAgent,
 } from "ailoy-js-node";
 
 const rt = await startRuntime();
-const ex = await createReflectiveExecutor(rt, {model: {name: "qwen3-0.6b"}});
+const ex = await createAgent(rt, {model: {name: "qwen3-0.6b"}});
 for await (const resp of ex.run("When is your cut-off date?")) {
     console.log(resp);
 }
@@ -42,12 +41,12 @@ For more details, refer to `bindings/js-node/README.md`.
 ### Python
 
 ```python
-from ailoy import AsyncRuntime, ReflectiveExecutor
+from ailoy import AsyncRuntime, Agent
 
 rt = AsyncRuntime()
-ex = ReflectiveExecutor(rt, model_name="qwen3-8b")
-async for resp in ex.run(query):
-    print_reflective_response(resp)
+ex = Agent(rt, model_name="qwen3-8b")
+async for resp in ex.run("When is your cut-off date?"):
+    print(resp)
 ```
 
 For more details, refer to `bindings/python/README.md`.

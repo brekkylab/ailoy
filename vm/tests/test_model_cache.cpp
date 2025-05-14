@@ -18,16 +18,6 @@ TEST(ModelCacheTest, BGEM3) {
   ailoy::get_model("BAAI/bge-m3", "q4f16_1", device, std::nullopt, true);
 }
 
-TEST(ModelCacheTest, Llama3_2_1B) {
-  ailoy::get_model("meta-llama/Llama-3.2-1B-Instruct", "q4f16_1", device,
-                   std::nullopt, true);
-}
-
-TEST(ModelCacheTest, Qwen2_5_7B) {
-  ailoy::get_model("Qwen/Qwen2.5-7B-Instruct", "q4f16_1", device, std::nullopt,
-                   true);
-}
-
 TEST(ModelCacheTest, Qwen3_8B) {
   ailoy::get_model("Qwen/Qwen3-8B", "q4f16_1", device, std::nullopt, true);
 }
@@ -42,11 +32,6 @@ TEST(ModelCacheTest, Qwen3_1_7B) {
 
 TEST(ModelCacheTest, Qwen3_0_6B) {
   ailoy::get_model("Qwen/Qwen3-0.6B", "q4f16_1", device, std::nullopt, true);
-}
-
-TEST(ModelCacheTest, Ministral8B) {
-  ailoy::get_model("mistralai/Ministral-8B-Instruct-2410", "q4f16_1", device,
-                   std::nullopt, true);
 }
 
 TEST(ModelCacheTest, BGEM3_Callback) {

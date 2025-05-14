@@ -1,9 +1,9 @@
 import textwrap
 
-from ailoy.reflective_executor import ReflectiveResponse
+from ailoy.agent import AgentResponse
 
 
-def print_reflective_response(resp: ReflectiveResponse):
+def print_agent_response(resp: AgentResponse):
     if resp.type == "output_text":
         print(resp.content, end="")
         if resp.end_of_turn:

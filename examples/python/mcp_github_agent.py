@@ -3,9 +3,9 @@ import os
 
 from mcp import StdioServerParameters
 
-from ailoy import AsyncRuntime, ReflectiveExecutor
+from ailoy import AsyncRuntime, Agent
 
-from common import print_reflective_response
+from common import print_agent_response
 
 
 async def main():
@@ -15,11 +15,11 @@ async def main():
     if github_pat is None:
         github_pat = input("Enter GITHUB_PERSONAL_ACCESS_TOKEN: ")
 
-    executor = ReflectiveExecutor(rt, model_name="qwen3-8b")
+    agent = Agent(rt, model_name="qwen3-8b")
 
-    await executor.initialize()
+    await agent.initialize()
 
-    await executor.add_tools_from_mcp_server(
+    await agent.add_tools_from_mcp_server(
         StdioServerParameters(
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
@@ -44,8 +44,8 @@ async def main():
         if query == "":
             continue
 
-        async for resp in executor.run(query):
-            print_reflective_response(resp)
+        async for resp in agent.run(query):
+            print_agent_response(resp)
 
 
 if __name__ == "__main__":

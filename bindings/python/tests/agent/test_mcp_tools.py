@@ -2,15 +2,15 @@ import mcp
 import pytest
 
 from ailoy import AsyncRuntime
-from ailoy.reflective_executor import ReflectiveExecutor
+from ailoy.agent import Agent
 
-from ..common import print_reflective_response
+from ..common import print_agent_response
 
 
 @pytest.mark.asyncio
 async def test_mcp_tools_github():
     rt = AsyncRuntime("inproc://")
-    ex = ReflectiveExecutor(rt, model_name="qwen3-8b")
+    ex = Agent(rt, model_name="qwen3-8b")
     await ex.initialize()
 
     await ex.add_tools_from_mcp_server(
@@ -29,6 +29,6 @@ async def test_mcp_tools_github():
 
     query = "Search the repository named brekkylab/ailoy, and summarize its README.md."
     async for resp in ex.run(query):
-        print_reflective_response(resp)
+        print_agent_response(resp)
 
     await ex.deinitialize()

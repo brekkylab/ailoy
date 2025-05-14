@@ -1,8 +1,8 @@
 import asyncio
 import os
 
-from ailoy import AsyncRuntime, ReflectiveExecutor
-from ailoy.reflective_executor import BearerAuthenticator
+from ailoy import AsyncRuntime, Agent
+from ailoy.agent import BearerAuthenticator
 
 from common import print_reflective_response
 
@@ -14,13 +14,11 @@ async def main():
     if tmdb_api_key is None:
         tmdb_api_key = input("Enter TMDB API Key: ")
 
-    executor = ReflectiveExecutor(rt, model_name="qwen3-8b")
+    agent = Agent(rt, model_name="qwen3-8b")
 
-    await executor.initialize()
+    await agent.initialize()
 
-    executor.add_tools_from_preset(
-        "tmdb", authenticator=BearerAuthenticator(tmdb_api_key)
-    )
+    agent.add_tools_from_preset("tmdb", authenticator=BearerAuthenticator(tmdb_api_key))
 
     print('Simple Github assistant (Please type "exit" to stop conversation)')
 
@@ -33,7 +31,7 @@ async def main():
         if query == "":
             continue
 
-        async for resp in executor.run(query):
+        async for resp in agent.run(query):
             print_reflective_response(resp)
 
 
