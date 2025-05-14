@@ -18,7 +18,7 @@
  * connection between `monitor_t` and `notify_t` is established using the
  * `notify_t::set_monitor` function, as shown below:
  *
- * ```c++
+ * ```cpp
  * {
  *   std::shared_ptr<monitor_t> monitor = monitor_t::create();
  *   std::shared_ptr<notify_t> notify = my_notifier_t::create();
