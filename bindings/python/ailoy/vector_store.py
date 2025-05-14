@@ -1,9 +1,8 @@
-import asyncio
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, TypeAdapter
 
-from ailoy.runtime import AsyncRuntime, generate_uuid
+from ailoy.runtime import Runtime, generate_uuid
 
 
 class VectorStoreBaseConfig(BaseModel):
@@ -35,7 +34,7 @@ class VectorStoreRetrieveItem(VectorStoreInsertItem):
 class VectorStore:
     def __init__(
         self,
-        runtime: AsyncRuntime,
+        runtime: Runtime,
         config: VectorStoreConfig = FAISSConfig(),
     ):
         self._runtime = runtime
@@ -45,16 +44,16 @@ class VectorStore:
         self._initialized = False
 
     def __del__(self):
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(self.deinitialize())
-            else:
-                loop.run_until_complete(self.deinitialize())
-        except Exception:
-            pass
+        self.deinitialize()
 
-    async def initialize(self):
+    def __enter__(self):
+        self.initialize()
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.deinitialize()
+
+    def initialize(self):
         if self._initialized:
             return
 
@@ -64,17 +63,13 @@ class VectorStore:
         # Initialize embedding model
         if self._config.embedding == "bge-m3":
             dimension = 1024
-            await self._runtime.define(
-                "tvm_embedding_model", self._embedding_model_component_name, {"model": "BAAI/bge-m3"}
-            )
+            self._runtime.define("tvm_embedding_model", self._embedding_model_component_name, {"model": "BAAI/bge-m3"})
 
         # Initialize vector store
         if isinstance(self._config, FAISSConfig):
-            await self._runtime.define(
-                "faiss_vector_store", self._vector_store_component_name, {"dimension": dimension}
-            )
+            self._runtime.define("faiss_vector_store", self._vector_store_component_name, {"dimension": dimension})
         elif isinstance(self._config, ChromadbConfig):
-            await self._runtime.define(
+            self._runtime.define(
                 "chromadb_vector_store",
                 self._vector_store_component_name,
                 {
@@ -87,17 +82,17 @@ class VectorStore:
 
         self._initialized = True
 
-    async def deinitialize(self):
+    def deinitialize(self):
         if not self._initialized:
             return
 
-        await self._runtime.delete(self._embedding_model_component_name)
-        await self._runtime.delete(self._vector_store_component_name)
+        self._runtime.delete(self._embedding_model_component_name)
+        self._runtime.delete(self._vector_store_component_name)
         self._initialized = False
 
     # TODO: add NDArray typing
-    async def embedding(self, text: str) -> Any:
-        resp = await self._runtime.call_method(
+    def embedding(self, text: str) -> Any:
+        resp = self._runtime.call_method(
             self._embedding_model_component_name,
             "infer",
             {
@@ -106,9 +101,9 @@ class VectorStore:
         )
         return resp["embedding"]
 
-    async def insert(self, document: str, metadata: Optional[Dict[str, Any]] = None):
-        embedding = await self.embedding(document)
-        await self._runtime.call_method(
+    def insert(self, document: str, metadata: Optional[Dict[str, Any]] = None):
+        embedding = self.embedding(document)
+        self._runtime.call_method(
             self._vector_store_component_name,
             "insert",
             {
@@ -118,9 +113,9 @@ class VectorStore:
             },
         )
 
-    async def retrieve(self, query: str, top_k: int = 5) -> List[VectorStoreRetrieveItem]:
-        embedding = await self.embedding(query)
-        resp = await self._runtime.call_method(
+    def retrieve(self, query: str, top_k: int = 5) -> List[VectorStoreRetrieveItem]:
+        embedding = self.embedding(query)
+        resp = self._runtime.call_method(
             self._vector_store_component_name,
             "retrieve",
             {
@@ -131,5 +126,5 @@ class VectorStore:
         results = TypeAdapter(List[VectorStoreRetrieveItem]).validate_python(resp["results"])
         return results
 
-    async def clean(self):
-        await self._runtime.call_method(self._vector_store_component_name, "clean", {})
+    def clean(self):
+        self._runtime.call_method(self._vector_store_component_name, "clean", {})

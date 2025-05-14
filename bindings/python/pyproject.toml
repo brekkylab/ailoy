@@ -29,14 +29,14 @@ build-dir = "./build"
 wheel.packages = ["ailoy"]
 
 [tool.pytest.ini_options]
+addopts = "--capture=tee-sys --strict-markers"
 asyncio_mode = "strict"
-pythonpath = "tests"
-addopts = "--capture=tee-sys"
-testpaths = ["tests"]
 markers = [
     "runtime: tests for low-level runtime APIs",
     "agent: tests for high-level agent APIs"
 ]
+pythonpath = "tests"
+testpaths = ["tests"]
 
 [tool.ruff]
 lint.select = [
