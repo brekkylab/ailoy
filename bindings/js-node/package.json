@@ -64,6 +64,7 @@
         ]
     },
     "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.11.2",
         "jmespath": "^0.16.0"
     }
 }

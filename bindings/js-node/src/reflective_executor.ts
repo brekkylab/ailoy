@@ -1,3 +1,5 @@
+import * as MCPClient from "@modelcontextprotocol/sdk/client/index.js";
+import * as MCPClientStdio from "@modelcontextprotocol/sdk/client/stdio.js";
 import { search } from "jmespath";
 
 import { Runtime, generateUUID } from "./runtime";
@@ -420,6 +422,61 @@ export class ReflectiveExecutor {
       }
     }
     return true;
+  }
+
+  async addMcpTool(
+    params: MCPClientStdio.StdioServerParameters,
+    tool: Awaited<ReturnType<MCPClient.Client["listTools"]>>["tools"][number]
+  ) {
+    const call = async (_: Runtime, inputs: any) => {
+      const transport = new MCPClientStdio.StdioClientTransport(params);
+      const client = new MCPClient.Client({
+        name: "dummy-client",
+        version: "dummy-version",
+      });
+      await client.connect(transport);
+
+      const { content } = await client.callTool({
+        name: tool.name,
+        arguments: inputs,
+      });
+      return content;
+    };
+    const desc: ToolDescription = {
+      name: tool.name,
+      description: tool.description || "",
+      parameters: tool.inputSchema as ToolDescription["parameters"],
+    };
+    return this.addTool({ desc, call });
+  }
+
+  async addToolsFromMcpServer(
+    params: MCPClientStdio.StdioServerParameters,
+    options?: {
+      toolsToAdd?: Array<string>;
+    }
+  ) {
+    const transport = new MCPClientStdio.StdioClientTransport(params);
+    const client = new MCPClient.Client({
+      name: "dummy-client",
+      version: "dummy-version",
+    });
+    await client.connect(transport);
+
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+      // If `toolsToAdd` options is provided and this tool name does not belong to them, ignore it
+      if (
+        options?.toolsToAdd !== undefined &&
+        !options?.toolsToAdd.includes(tool.name)
+      )
+        continue;
+      await this.addMcpTool(params, tool);
+    }
+  }
+
+  getAvailableTools(): Array<ToolDescription> {
+    return this.tools.map((tool) => tool.desc);
   }
 
   getMessages(): Message[] {
