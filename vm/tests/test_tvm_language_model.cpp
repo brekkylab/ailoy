@@ -47,13 +47,14 @@ void print_llm_output(std::shared_ptr<ailoy::map_t> delta) {
               << std::endl;
 }
 
-void print_llm_output(std::shared_ptr<ailoy::map_t> delta, bool &reasoning) {
-  if (!reasoning && (*delta->at<ailoy::bool_t>("reasoning", false))) {
-    reasoning = true;
+void print_llm_output(std::shared_ptr<ailoy::map_t> delta,
+                      bool &doing_reasoning) {
+  if (!doing_reasoning && (*delta->at<ailoy::bool_t>("reasoning", false))) {
+    doing_reasoning = true;
     std::cout << "<REASONING>" << std::endl;
   }
-  if (reasoning && !(*delta->at<ailoy::bool_t>("reasoning", false))) {
-    reasoning = false;
+  if (doing_reasoning && !(*delta->at<ailoy::bool_t>("reasoning", false))) {
+    doing_reasoning = false;
     std::cout << "</REASONING>" << std::endl;
   }
   print_llm_output(delta);
@@ -135,15 +136,16 @@ TEST(LanguageModelTest, TestChatReasoning) {
     auto messages =
         ailoy::decode(QWEN_MULTI_TURN_MESSAGES, ailoy::encoding_method_t::json);
     in->insert_or_assign("messages", messages);
-    in->insert_or_assign("reasoning", ailoy::create<ailoy::bool_t>(true));
+    in->insert_or_assign("enable_reasoning",
+                         ailoy::create<ailoy::bool_t>(true));
     auto init_out = language_model->get_operator("infer")->initialize(in);
-    bool reasoning = false;
+    bool doing_reasoning = false;
     for (size_t i = 0; i < 1024; i++) {
       auto out_opt = language_model->get_operator("infer")->step();
       ASSERT_EQ(out_opt.index(), 0);
       auto out = std::get<0>(out_opt);
       auto delta = out.val->as<ailoy::map_t>()->at<ailoy::map_t>("message");
-      print_llm_output(delta, reasoning);
+      print_llm_output(delta, doing_reasoning);
       if (out.finish) {
         std::cout << "(" << i << " tokens)" << std::endl;
         break;
@@ -167,8 +169,9 @@ TEST(LanguageModelTest, TestChatReasoningIgnored) {
     auto messages =
         ailoy::decode(QWEN_MULTI_TURN_MESSAGES, ailoy::encoding_method_t::json);
     in->insert_or_assign("messages", messages);
-    in->insert_or_assign("reasoning", ailoy::create<ailoy::bool_t>(true));
-    in->insert_or_assign("ignore_reasoning",
+    in->insert_or_assign("enable_reasoning",
+                         ailoy::create<ailoy::bool_t>(true));
+    in->insert_or_assign("ignore_reasoning_messages",
                          ailoy::create<ailoy::bool_t>(true));
     auto init_out = language_model->get_operator("infer")->initialize(in);
     for (size_t i = 0; i < 1024; i++) {
@@ -264,15 +267,16 @@ TEST(LanguageModelTest, TestQwenToolCallReasoning) {
         ailoy::decode(QWEN_MESSAGES_TOOL_CALL, ailoy::encoding_method_t::json);
     in->insert_or_assign("messages", messages);
     in->insert_or_assign("tools", ailoy::create<ailoy::string_t>(TOOLS));
-    in->insert_or_assign("reasoning", ailoy::create<ailoy::bool_t>(true));
+    in->insert_or_assign("enable_reasoning",
+                         ailoy::create<ailoy::bool_t>(true));
     auto init_out = language_model->get_operator("infer")->initialize(in);
-    bool reasoning = false;
+    bool doing_reasoning = false;
     for (size_t i = 0; i < 1024; i++) {
       auto out_opt = language_model->get_operator("infer")->step();
       ASSERT_EQ(out_opt.index(), 0);
       auto out = std::get<0>(out_opt);
       auto delta = out.val->as<ailoy::map_t>()->at<ailoy::map_t>("message");
-      print_llm_output(delta, reasoning);
+      print_llm_output(delta, doing_reasoning);
       if (out.finish) {
         std::cout << "(" << i << " tokens)" << std::endl;
         break;

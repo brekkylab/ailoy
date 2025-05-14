@@ -505,8 +505,8 @@ export class Agent {
   async *run(
     message: string,
     options?: {
-      reasoning?: boolean;
-      ignore_reasoning?: boolean;
+      enableReasoning?: boolean;
+      ignoreReasoningMessages?: boolean;
     }
   ): AsyncGenerator<AgentResponse> {
     this.messages.push({ role: "user", content: message });
@@ -520,8 +520,8 @@ export class Agent {
           tools: this.tools.map((v) => {
             return { type: "function", function: v.desc };
           }),
-          reasoning: options?.reasoning,
-          ignore_reasoning: options?.ignore_reasoning,
+          enable_reasoning: options?.enableReasoning,
+          ignore_reasoning_messages: options?.ignoreReasoningMessages,
         }
       )) {
         const delta: MessageDelta = resp;

@@ -335,8 +335,8 @@ class Agent:
     async def run(
         self,
         message: str,
-        do_reasoning: Optional[bool] = None,
-        ignore_reasoning: Optional[bool] = None,
+        enable_reasoning: Optional[bool] = None,
+        ignore_reasoning_messages: Optional[bool] = None,
     ) -> AsyncGenerator[AgentResponse, None]:
         self._messages.append(UserMessage(role="user", content=message))
 
@@ -345,10 +345,10 @@ class Agent:
                 "messages": [msg.model_dump() for msg in self._messages],
                 "tools": [{"type": "function", "function": t.desc.model_dump()} for t in self._tools],
             }
-            if do_reasoning is not None:
-                infer_args["reasoning"] = do_reasoning
-            if ignore_reasoning is not None:
-                infer_args["ignore_reasoning"] = ignore_reasoning
+            if enable_reasoning is not None:
+                infer_args["enable_reasoning"] = enable_reasoning
+            if ignore_reasoning_messages is not None:
+                infer_args["ignore_reasoning_messages"] = ignore_reasoning_messages
 
             async for resp in self._runtime.call_iter_method(self._model_info.component_name, "infer", infer_args):
                 delta = MessageDelta.model_validate(resp)

@@ -167,23 +167,27 @@ std::shared_ptr<const module_t> get_language_module() {
             }
 
             // Get reasoning (optional)
-            bool reasoning = false;
-            if (input_map->contains("reasoning") &&
-                input_map->at("reasoning")->is_type_of<bool_t>())
-              reasoning = *input_map->at<bool_t>("reasoning");
+            bool enable_reasoning = false;
+            if (input_map->contains("enable_reasoning") &&
+                input_map->at("enable_reasoning")->is_type_of<bool_t>())
+              enable_reasoning = *input_map->at<bool_t>("enable_reasoning");
 
             // Get ignore_reasoning (optional)
-            bool ignore_reasoning = false;
-            if (input_map->contains("ignore_reasoning") &&
-                input_map->at("ignore_reasoning")->is_type_of<bool_t>())
-              ignore_reasoning = *input_map->at<bool_t>("ignore_reasoning");
-            component->set_obj("ignore_reasoning",
-                               create<ailoy::bool_t>(ignore_reasoning));
+            bool ignore_reasoning_messages = false;
+            if (input_map->contains("ignore_reasoning_messages") &&
+                input_map->at("ignore_reasoning_messages")
+                    ->is_type_of<bool_t>())
+              ignore_reasoning_messages =
+                  *input_map->at<bool_t>("ignore_reasoning_messages");
+            component->set_obj(
+                "ignore_reasoning_messages",
+                create<ailoy::bool_t>(ignore_reasoning_messages));
 
             // Apply chat template on messages
-            auto prompt = component->get_obj("template_engine")
-                              ->as<chat_template_engine_t>()
-                              ->apply_chat_template(messages, tools, reasoning);
+            auto prompt =
+                component->get_obj("template_engine")
+                    ->as<chat_template_engine_t>()
+                    ->apply_chat_template(messages, tools, enable_reasoning);
 
             // Generate request ID
             uuid_t request_id = generate_uuid();
@@ -200,15 +204,16 @@ std::shared_ptr<const module_t> get_language_module() {
             // Get saved values & objects
             auto request_id = state->as<string_t>();
             auto engine = component->get_obj("engine")->as<mlc_llm_engine_t>();
-            const bool ignore_reasoning =
-                *component->get_obj("ignore_reasoning")->as<ailoy::bool_t>();
+            const bool ignore_reasoning_messages =
+                *component->get_obj("ignore_reasoning_messages")
+                     ->as<ailoy::bool_t>();
 
             // check if delta needs to be dismissed
             auto dismiss_delta =
-                [ignore_reasoning](nlohmann::json delta) -> bool {
+                [ignore_reasoning_messages](nlohmann::json delta) -> bool {
               // case 1) dismiss if ignore option is set and output is reasoning
-              bool dismiss_reasoning =
-                  (ignore_reasoning && delta.value("reasoning", false));
+              bool dismiss_reasoning = (ignore_reasoning_messages &&
+                                        delta.value("reasoning", false));
               // case 2) wait during content is empty and no tool calls exist
               bool wait_valid_tool_call_output =
                   ((delta.value("content", "") == "") &&
@@ -292,15 +297,16 @@ std::shared_ptr<const module_t> get_language_module() {
             }
 
             // Get reasoning (optional)
-            bool reasoning = false;
-            if (input_map->contains("reasoning"))
-              if (input_map->at("reasoning")->is_type_of<bool_t>())
-                reasoning = *input_map->at<bool_t>("reasoning");
+            bool enable_reasoning = false;
+            if (input_map->contains("enable_reasoning"))
+              if (input_map->at("enable_reasoning")->is_type_of<bool_t>())
+                enable_reasoning = *input_map->at<bool_t>("enable_reasoning");
 
             // Apply chat template on messages
-            auto prompt = component->get_obj("template_engine")
-                              ->as<chat_template_engine_t>()
-                              ->apply_chat_template(messages, tools, reasoning);
+            auto prompt =
+                component->get_obj("template_engine")
+                    ->as<chat_template_engine_t>()
+                    ->apply_chat_template(messages, tools, enable_reasoning);
 
             auto outputs = create<map_t>();
             outputs->insert_or_assign("prompt", create<string_t>(prompt));

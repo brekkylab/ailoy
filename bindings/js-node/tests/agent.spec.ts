@@ -80,8 +80,6 @@ describe("Agent", async () => {
   });
 
   after(async () => {
-    console.log("after");
     await rt.stop();
-    console.log("runtime stopped");
   });
 });
