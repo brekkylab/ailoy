@@ -178,17 +178,9 @@ void download_file_with_progress(
     httplib::Client &client, const std::string &remote_path,
     const fs::path &local_path,
     std::function<bool(uint64_t, uint64_t)> progress_callback) {
-
-  // Check if file partially exists and get its size
-  size_t existing_size = fs::exists(local_path) ? fs::file_size(local_path) : 0;
-
-  httplib::Headers headers;
-  if (existing_size > 0) {
-    headers.emplace("Range", "bytes=" + std::to_string(existing_size) + "-");
-  }
-
+  size_t existing_size = 0;
   httplib::Result res = client.Get(
-      ("/" + remote_path).c_str(), headers,
+      ("/" + remote_path).c_str(),
       [&](const char *data, size_t data_length) {
         std::ofstream ofs(local_path, existing_size > 0
                                           ? std::ios::app | std::ios::binary
@@ -302,27 +294,18 @@ get_model(const std::string &model_name, const std::string &quantization,
         indicators::option::ShowElapsedTime{true});
     auto bar_idx = bars.push_back(std::move(bar));
 
-    if (!fs::exists(local_path)) {
-      download_file_with_progress(
-          client, (model_base_path / file).string(), local_path,
-          [&](uint64_t current, uint64_t total) {
-            float progress = static_cast<float>(current) / total * 100;
-            if (callback.has_value())
-              callback.value()(i, total_files, file, progress);
-            if (print_progress_bar)
-              bars[bar_idx].set_progress(progress);
-            return true;
-          });
-      if (print_progress_bar)
-        bars[bar_idx].mark_as_completed();
-    } else {
-      if (callback.has_value())
-        callback.value()(i, total_files, file, 100);
-      if (print_progress_bar) {
-        bars[bar_idx].set_progress(100);
-        bars[bar_idx].mark_as_completed();
-      }
-    }
+    download_file_with_progress(
+        client, (model_base_path / file).string(), local_path,
+        [&](uint64_t current, uint64_t total) {
+          float progress = static_cast<float>(current) / total * 100;
+          if (callback.has_value())
+            callback.value()(i, total_files, file, progress);
+          if (print_progress_bar)
+            bars[bar_idx].set_progress(progress);
+          return true;
+        });
+    if (print_progress_bar)
+      bars[bar_idx].mark_as_completed();
   }
   if (print_progress_bar) {
     // ensure final flush

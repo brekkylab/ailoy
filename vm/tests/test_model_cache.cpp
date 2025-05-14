@@ -56,7 +56,7 @@ TEST(ModelCacheTest, BGEM3_Callback) {
       last_line_length = 0;
     }
   };
-  ailoy::get_model("BAAI/bge-m3", "q4f16_1", device, callback);
+  ailoy::get_model("BAAI/bge-m3", "q4f16_1", device, callback, false);
 }
 
 int main(int argc, char **argv) {
