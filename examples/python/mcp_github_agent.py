@@ -25,9 +25,11 @@ async def main():
             args=["-y", "@modelcontextprotocol/server-github"],
             env={"GITHUB_PERSONAL_ACCESS_TOKEN": github_pat},
         ),
-        # You can add more tools as your need
+        # You can add more tools as your need.
+        # See https://github.com/modelcontextprotocol/servers/tree/main/src/github#tools for the entire tool list.
         tools_to_add=[
             "search_repositories",
+            "get_file_contents",
         ],
     )
 

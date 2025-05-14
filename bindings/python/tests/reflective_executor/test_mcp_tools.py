@@ -1,16 +1,16 @@
-import asyncio
-
 import mcp
 import pytest
 
 from ailoy import AsyncRuntime
 from ailoy.reflective_executor import ReflectiveExecutor
 
+from ..common import print_reflective_response
+
 
 @pytest.mark.asyncio
 async def test_mcp_tools_github():
     rt = AsyncRuntime("inproc://")
-    ex = ReflectiveExecutor(rt, model_name="qwen3-0.6b")
+    ex = ReflectiveExecutor(rt, model_name="qwen3-8b")
     await ex.initialize()
 
     await ex.add_tools_from_mcp_server(
@@ -18,41 +18,17 @@ async def test_mcp_tools_github():
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
         ),
+        tools_to_add=[
+            "search_repositories",
+            "get_file_contents",
+        ],
     )
     tool_names = set([tool.desc.name for tool in ex._tools])
-    # https://github.com/modelcontextprotocol/servers/tree/main/src/github#tools
-    for tool_name in [
-        "create_or_update_file",
-        "push_files",
-        "search_repositories",
-        "create_repository",
-        "get_file_contents",
-        "create_issue",
-        "create_pull_request",
-        "fork_repository",
-        "create_branch",
-        "list_issues",
-        "update_issue",
-        "add_issue_comment",
-        "search_code",
-        "search_issues",
-        "search_users",
-        "list_commits",
-        "get_issue",
-        "get_pull_request",
-        "list_pull_requests",
-        "create_pull_request_review",
-        "merge_pull_request",
-        "get_pull_request_files",
-        "get_pull_request_status",
-        "update_pull_request_branch",
-        "get_pull_request_comments",
-        "get_pull_request_reviews",
-    ]:
-        assert tool_name in tool_names
+    assert "search_repositories" in tool_names
+    assert "get_file_contents" in tool_names
+
+    query = "Search the repository named brekkylab/ailoy, and summarize its README.md."
+    async for resp in ex.run(query):
+        print_reflective_response(resp)
 
     await ex.deinitialize()
-
-
-if __name__ == "__main__":
-    asyncio.run(test_mcp_tools_github())

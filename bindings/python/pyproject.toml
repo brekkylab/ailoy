@@ -28,6 +28,7 @@ build-dir = "./build"
 wheel.packages = ["ailoy"]
 
 [tool.pytest.ini_options]
+pythonpath = "tests"
 addopts = "--capture=tee-sys"
 testpaths = ["tests"]
 

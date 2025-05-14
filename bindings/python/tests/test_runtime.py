@@ -1,10 +1,10 @@
-import textwrap
-
 import pytest
 
 from ailoy import AsyncRuntime, Runtime
-from ailoy.reflective_executor import ReflectiveExecutor, ReflectiveResponse
+from ailoy.reflective_executor import ReflectiveExecutor
 from ailoy.vector_store import FAISSConfig, VectorStore
+
+from .common import print_reflective_response
 
 
 def test_echo():
@@ -60,39 +60,6 @@ async def test_async_infer_language_model():
     async for out in rt.call_iter_method("lm0", "infer", input):
         print(out["message"]["content"], end="", flush=True)
     await rt.delete("lm0")
-
-
-def print_reflective_response(resp: ReflectiveResponse):
-    if resp.type == "output_text":
-        print(resp.content, end="")
-        if resp.end_of_turn:
-            print("\n\n")
-    elif resp.type == "reasoning":
-        print(f"\033[93m{resp.content}\033[0m", end="")
-        if resp.end_of_turn:
-            print("\n\n")
-    elif resp.type == "tool_call":
-        print(
-            textwrap.dedent(
-                f"""
-                Tool Call
-                - ID: {resp.content.id}
-                - name: {resp.content.function.name}
-                - arguments: {resp.content.function.arguments}
-                """
-            )
-        )
-    elif resp.type == "tool_call_result":
-        print(
-            textwrap.dedent(
-                f"""
-                Tool Call Result
-                - ID: {resp.content.tool_call_id}
-                - name: {resp.content.name}
-                - Result: {resp.content.content}
-                """
-            )
-        )
 
 
 @pytest.mark.asyncio
