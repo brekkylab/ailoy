@@ -278,7 +278,7 @@ mlc_llm_engine_t::get_response_from_stream_output(
         choice.finish_reason = std::nullopt;
       }
       choice.index = static_cast<int>(i);
-      ChatCompletionMessage delta;
+
       // Size of delta_output->group_delta_token_ids Array should be 1
       const IntTuple &delta_token_ids = delta_output->group_delta_token_ids[i];
       std::vector<int32_t> delta_token_ids_vec(delta_token_ids.begin(),
@@ -288,7 +288,6 @@ mlc_llm_engine_t::get_response_from_stream_output(
         content += rstate.streamer[i]->Finish();
       }
 
-      delta.content = std::string("");
       if (template_engine_->is_botc_token(content)) {
         mode_ = output_mode::tool_call;
       } else if (template_engine_->is_eotc_token(content)) {
@@ -296,7 +295,7 @@ mlc_llm_engine_t::get_response_from_stream_output(
             template_engine_->get_json_str_if_valid(tool_call_tokens_);
         if (tool_call_json_str_opt.has_value()) {
           // if valid JSON is made, set the string as the content
-          delta.content = tool_call_json_str_opt.value();
+          choice.delta.content = tool_call_json_str_opt.value();
           choice.finish_reason = FinishReason::tool_calls;
         }
         // exit tool call mode no matter valid JSON is made
@@ -308,7 +307,7 @@ mlc_llm_engine_t::get_response_from_stream_output(
             template_engine_->get_json_str_if_valid(tool_call_tokens_);
         if (tool_call_json_str_opt.has_value()) {
           // if valid JSON is made, set the string as the content
-          delta.content = tool_call_json_str_opt.value();
+          choice.delta.content = tool_call_json_str_opt.value();
           choice.finish_reason = FinishReason::tool_calls;
           // exit tool call mode only if valid JSON is made
           mode_ = output_mode::text;
@@ -317,20 +316,22 @@ mlc_llm_engine_t::get_response_from_stream_output(
       } else if (!content.empty()) {
         // Process for reasoning outputs
         // TODO: consider other kinds of reasoning part distinguisher
-        if (content == "<think>")
+        if (content == "<think>") {
           mode_ = output_mode::reasoning;
-        else if (content == "</think>")
+          choice.delta.content = ChatCompletionMessageContent();
+        } else if (content == "</think>") {
           mode_ = output_mode::text;
-        else
-          delta.content = ChatCompletionMessageContent(content);
+          choice.delta.content = ChatCompletionMessageContent();
+        } else
+          choice.delta.content = ChatCompletionMessageContent(content);
       }
 
-      delta.role = "assistant";
-      choice.delta = delta;
+      choice.delta.role = std::string("assistant");
       if (!choice.delta.content.IsNull() || choice.finish_reason.has_value()) {
         response.choices.push_back(choice);
       }
     }
+
     // if it is not the usage block, choices cannot be empty
     if (!response.choices.empty()) {
       responses.push_back(response);

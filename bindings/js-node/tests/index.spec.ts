@@ -1,11 +1,7 @@
 import { expect } from "chai";
 
-import {
-  Runtime,
-  startRuntime,
-  NDArray,
-  createReflectiveExecutor,
-} from "../src/index";
+import { Runtime, NDArray } from "../src/index";
+import "./agent.spec";
 
 describe("JSVM", () => {
   it("run-echo", async () => {
@@ -281,49 +277,4 @@ describe("JSVM", () => {
       await rt.stop();
     });
   }
-
-  it("run-reflective-executor", async () => {
-    const rt = await startRuntime("inproc://reflective-executor");
-    const ex = await createReflectiveExecutor(rt, {
-      model: {
-        name: "qwen3-8b",
-      },
-    });
-    ex.addToolsFromPreset("frankfurter");
-    ex.addToolsFromPreset("calculator");
-
-    const query =
-      "I want to buy 100 U.S. Dollar with my Korean Won. How much do I need to take?";
-    process.stdout.write(`\nQuery: ${query}`);
-
-    process.stdout.write(`\nAssistant: `);
-    for await (const resp of ex.run(query, {
-      reasoning: false,
-      ignore_reasoning: false,
-    })) {
-      if (resp.type === "output_text") {
-        process.stdout.write(resp.content);
-        if (resp.endOfTurn) {
-          process.stdout.write("\n\n");
-        }
-      } else if (resp.type === "tool_call") {
-        process.stdout.write(`
-  Tool Call
-  - ID: ${resp.content.id}
-  - name: ${resp.content.function.name}
-  - arguments: ${JSON.stringify(resp.content.function.arguments)}
-  `);
-      } else if (resp.type === "tool_call_result") {
-        process.stdout.write(`
-  Tool Call Result
-  - ID: ${resp.content.tool_call_id}
-  - name: ${resp.content.name}
-  - Result: ${resp.content.content}
-  `);
-      }
-    }
-
-    await ex.deinitialize();
-    await rt.stop();
-  });
 });

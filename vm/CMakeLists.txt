@@ -70,13 +70,13 @@ if(AILOY_WITH_MLC_LLM)
             FetchContent_Declare(
                 mlc-llm
                 GIT_REPOSITORY https://github.com/brekkylab/mlc-llm.git
-                GIT_TAG 026f91859dddc10ecf96bdaf85f7f3576d73e161
+                GIT_TAG 3b8165524fdb79fd3255395432ac70a7734a22ef
             )
         else()
             FetchContent_Declare(
                 mlc-llm
                 GIT_REPOSITORY https://github.com/brekkylab/mlc-llm.git
-                GIT_TAG 026f91859dddc10ecf96bdaf85f7f3576d73e161
+                GIT_TAG 3b8165524fdb79fd3255395432ac70a7734a22ef
                 PATCH_COMMAND git apply --ignore-whitespace ${CMAKE_CURRENT_SOURCE_DIR}/cmake/mlc_llm.patch
             )
             set(MLC_LLM_PATCH_APPLIED ON CACHE BOOL "MLC_LLM patch file applied" FORCE)

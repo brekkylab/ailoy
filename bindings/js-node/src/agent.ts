@@ -1,3 +1,5 @@
+import * as MCPClient from "@modelcontextprotocol/sdk/client/index.js";
+import * as MCPClientStdio from "@modelcontextprotocol/sdk/client/stdio.js";
 import { search } from "jmespath";
 
 import { Runtime, generateUUID } from "./runtime";
@@ -103,9 +105,9 @@ const modelDescriptions: Record<AvailableModel, ModelDescription> = {
   },
 };
 
-/** Types for ReflectiveExecutor's responses */
+/** Types for Agent's responses */
 
-interface ReflectiveResponse_Base {
+interface AgentResponse_Base {
   type:
     | "output_text"
     | "tool_call"
@@ -115,12 +117,12 @@ interface ReflectiveResponse_Base {
   endOfTurn: boolean;
   role: "assistant" | "tool";
 }
-interface ReflectiveResponse_OutputText extends ReflectiveResponse_Base {
+interface AgentResponse_OutputText extends AgentResponse_Base {
   type: "output_text" | "reasoning";
   role: "assistant";
   content: string;
 }
-interface ReflectiveResponse_ToolCall extends ReflectiveResponse_Base {
+interface AgentResponse_ToolCall extends AgentResponse_Base {
   type: "tool_call";
   role: "assistant";
   content: {
@@ -128,7 +130,7 @@ interface ReflectiveResponse_ToolCall extends ReflectiveResponse_Base {
     function: { name: string; arguments: any };
   };
 }
-interface ReflectiveResponse_ToolCallResult extends ReflectiveResponse_Base {
+interface AgentResponse_ToolCallResult extends AgentResponse_Base {
   type: "tool_call_result";
   role: "tool";
   content: {
@@ -137,16 +139,16 @@ interface ReflectiveResponse_ToolCallResult extends ReflectiveResponse_Base {
     content: string;
   };
 }
-interface ReflectiveResponse_Error extends ReflectiveResponse_Base {
+interface AgentResponse_Error extends AgentResponse_Base {
   type: "error";
   role: "assistant";
   error: string;
 }
-export type ReflectiveResponse =
-  | ReflectiveResponse_OutputText
-  | ReflectiveResponse_ToolCall
-  | ReflectiveResponse_ToolCallResult
-  | ReflectiveResponse_Error;
+export type AgentResponse =
+  | AgentResponse_OutputText
+  | AgentResponse_ToolCall
+  | AgentResponse_ToolCallResult
+  | AgentResponse_Error;
 
 /** Types and functions related to Tools */
 
@@ -235,8 +237,14 @@ export function bearerAutenticator(
   };
 }
 
-/** ReflectiveExecutor class */
-export class ReflectiveExecutor {
+/**
+ * The `Agent` class provides a high-level interface for interacting with large language models (LLMs) in Ailoy.
+ * It abstracts the underlying runtime and VM logic, allowing users to easily send queries and receive streaming
+ * responses.
+ * Agents can be extended with external tools or APIs to provide real-time or domain-specific knowledge, enabling
+ * more powerful and context-aware interactions.
+ */
+export class Agent {
   private runtime: Runtime;
   private modelInfo: {
     componentType: string;
@@ -248,10 +256,14 @@ export class ReflectiveExecutor {
   private valid: boolean;
 
   constructor(
+    /** The runtime environment associated with the agent */
     runtime: Runtime,
     args: {
+      /** LLM Model definition */
       model: TVMModelAttrs | OpenAIModelAttrs;
+      /** Optional list of tools to be available by default */
       tools?: Tool[];
+      /** Optional system message to set the initial assistant context */
       systemMessage?: string;
     }
   ) {
@@ -290,17 +302,31 @@ export class ReflectiveExecutor {
     this.valid = false;
   }
 
-  addTool(tool: Tool): boolean {
+  /** Adds a custom tool to the agent */
+  addTool(
+    /** Tool instance to be added */
+    tool: Tool
+  ): boolean {
     if (this.tools.find((t) => t.desc.name == tool.desc.name)) return false;
     this.tools.push(tool);
     return true;
   }
 
-  addJSFunctionTool(desc: ToolDescription, f: (input: any) => any): boolean {
+  /** Adds a Javascript function as a tool using callable */
+  addJSFunctionTool(
+    /** Tool descriotion */
+    desc: ToolDescription,
+    /** Function will be called when the tool invocation occured */
+    f: (input: any) => any
+  ): boolean {
     return this.addTool({ desc, call: f });
   }
 
-  addUniversalTool(tool: UniversalToolDefinition): boolean {
+  /** Adds a universal tool */
+  addUniversalTool(
+    /** The universal tool definition */
+    tool: UniversalToolDefinition
+  ): boolean {
     const call = async (runtime: Runtime, inputs: any) => {
       // Validation
       const required = tool.description.parameters.required || [];
@@ -321,8 +347,11 @@ export class ReflectiveExecutor {
     return this.addTool({ desc: tool.description, call });
   }
 
+  /** Adds a REST API tool that performs external HTTP requests */
   addRESTAPITool(
+    /** REST API tool definition */
     tool: RESTAPIToolDefinition,
+    /** Optional authenticator to inject into the request */
     auth?: ToolAuthenticator
   ): boolean {
     const call = async (runtime: Runtime, inputs: any) => {
@@ -399,9 +428,14 @@ export class ReflectiveExecutor {
     return this.addTool({ desc: tool.description, call });
   }
 
+  /** Loads tools from a predefined JSON preset file */
   addToolsFromPreset(
+    /** Name of the tool preset */
     presetName: string,
-    args?: { authenticator?: ToolAuthenticator }
+    args?: {
+      /** Optional authenticator to inject into the request */
+      authenticator?: ToolAuthenticator;
+    }
   ): boolean {
     const presetJson = require(`./presets/tools/${presetName}.json`);
     if (presetJson === undefined) {
@@ -422,18 +456,67 @@ export class ReflectiveExecutor {
     return true;
   }
 
-  getMessages(): Message[] {
-    return this.messages;
+  /** Adds a tool from an MCP (Model Context Protocol) server */
+  async addMcpTool(
+    /** Parameters for connecting to the MCP stdio server */
+    params: MCPClientStdio.StdioServerParameters,
+    /** Tool metadata as defined by MCP */
+    tool: Awaited<ReturnType<MCPClient.Client["listTools"]>>["tools"][number]
+  ) {
+    const call = async (_: Runtime, inputs: any) => {
+      const transport = new MCPClientStdio.StdioClientTransport(params);
+      const client = new MCPClient.Client({
+        name: "dummy-client",
+        version: "dummy-version",
+      });
+      await client.connect(transport);
+
+      const { content } = await client.callTool({
+        name: tool.name,
+        arguments: inputs,
+      });
+      return content;
+    };
+    const desc: ToolDescription = {
+      name: tool.name,
+      description: tool.description || "",
+      parameters: tool.inputSchema as ToolDescription["parameters"],
+    };
+    return this.addTool({ desc, call });
   }
 
-  setMessages(messages: Message[]) {
-    this.messages = messages;
+  async addToolsFromMcpServer(
+    params: MCPClientStdio.StdioServerParameters,
+    options?: {
+      toolsToAdd?: Array<string>;
+    }
+  ) {
+    const transport = new MCPClientStdio.StdioClientTransport(params);
+    const client = new MCPClient.Client({
+      name: "dummy-client",
+      version: "dummy-version",
+    });
+    await client.connect(transport);
+
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+      // If `toolsToAdd` options is provided and this tool name does not belong to them, ignore it
+      if (
+        options?.toolsToAdd !== undefined &&
+        !options?.toolsToAdd.includes(tool.name)
+      )
+        continue;
+      await this.addMcpTool(params, tool);
+    }
   }
 
-  appendMessage(msg: Message) {
-    this.messages.push(msg);
+  getAvailableTools(): Array<ToolDescription> {
+    return this.tools.map((tool) => tool.desc);
   }
-
+  /**
+   * Initializes the agent by defining its model in the runtime.
+   * This must be called before running the agent. If already initialized, this is a no-op.
+   */
   async initialize(): Promise<void> {
     if (this.valid) return;
     const result = await this.runtime.define(
@@ -445,13 +528,17 @@ export class ReflectiveExecutor {
     this.valid = true;
   }
 
+  /** Runs the agent with a new user message and yields streamed responses */
   async *run(
+    /** The user message to send to the model */
     message: string,
     options?: {
-      reasoning?: boolean;
-      ignore_reasoning?: boolean;
+      /** If True, enables reasoning capabilities (default: True) */
+      enableReasoning?: boolean;
+      /** If True, reasoning steps are not included in the response stream */
+      ignoreReasoningMessages?: boolean;
     }
-  ): AsyncGenerator<ReflectiveResponse> {
+  ): AsyncGenerator<AgentResponse> {
     this.messages.push({ role: "user", content: message });
 
     while (true) {
@@ -463,8 +550,8 @@ export class ReflectiveExecutor {
           tools: this.tools.map((v) => {
             return { type: "function", function: v.desc };
           }),
-          reasoning: options?.reasoning,
-          ignore_reasoning: options?.ignore_reasoning,
+          enable_reasoning: options?.enableReasoning,
+          ignore_reasoning_messages: options?.ignoreReasoningMessages,
         }
       )) {
         const delta: MessageDelta = resp;
@@ -558,6 +645,10 @@ export class ReflectiveExecutor {
     }
   }
 
+  /**
+   * Deinitializes the agent and releases resources in the runtime.
+   * This should be called when the agent is no longer needed. If already deinitialized, this is a no-op.
+   */
   async deinitialize(): Promise<void> {
     if (!this.valid) return;
     const result = await this.runtime.delete(this.modelInfo.componentName);
@@ -566,16 +657,20 @@ export class ReflectiveExecutor {
   }
 }
 
-/** function createReflectiveExecutor */
-export async function createReflectiveExecutor(
+/** creates and initializes a new agent */
+export async function createAgent(
+  /** The runtime environment associated with the agent */
   runtime: Runtime,
   args: {
+    /** LLM Model definition */
     model: TVMModelAttrs | OpenAIModelAttrs;
+    /** Optional list of tools to be available by default */
     tools?: Tool[];
+    /** Optional system message to set the initial assistant context */
     systemMessage?: string;
   }
-): Promise<ReflectiveExecutor> {
-  const ctx = new ReflectiveExecutor(runtime, args);
+): Promise<Agent> {
+  const ctx = new Agent(runtime, args);
   await ctx.initialize();
   return ctx;
 }

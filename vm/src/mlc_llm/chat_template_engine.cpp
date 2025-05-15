@@ -25,7 +25,7 @@ chat_template_engine_t::make_from_config_file(
 
 const std::string chat_template_engine_t::apply_chat_template(
     const nlohmann::json &messages, const nlohmann::json &tools,
-    const bool reasoning, const bool add_generation_prompt) {
+    const bool enable_reasoning, const bool add_generation_prompt) {
   minja::chat_template_inputs inputs;
   inputs.messages = messages;
   if (!tools.is_null())
@@ -33,7 +33,7 @@ const std::string chat_template_engine_t::apply_chat_template(
   inputs.add_generation_prompt = add_generation_prompt;
   // TODO: consider other ways of enable/disable reasoning
   //       & models without reasoning
-  if (!reasoning)
+  if (!enable_reasoning)
     inputs.extra_context = {{"enable_thinking", false}};
   minja::chat_template_options options;
   return template_->apply(inputs, options);

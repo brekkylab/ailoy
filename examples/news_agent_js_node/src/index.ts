@@ -1,5 +1,5 @@
-import { startRuntime, createReflectiveExecutor } from "ailoy-js-node";
-import type { ToolAuthenticator } from "ailoy-js-node";
+import { startRuntime, createAgent } from "ailoy-node";
+import type { ToolAuthenticator } from "ailoy-node";
 
 import readline from "readline";
 
@@ -19,7 +19,7 @@ function getUserInput(query: string): Promise<string> {
 async function main() {
   const rt = await startRuntime();
 
-  const ex = await createReflectiveExecutor(rt, {
+  const ex = await createAgent(rt, {
     model: { name: "qwen3-8b" },
   });
 

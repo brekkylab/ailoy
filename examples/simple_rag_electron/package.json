@@ -40,8 +40,8 @@
     "vite-plugin-static-copy": "^2.3.1"
   },
   "dependencies": {
+    "ailoy-node": "file:../../bindings/js-node",
     "electron-squirrel-startup": "^1.0.1",
-    "ailoy-js-node": "file:../../bindings/js-node",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   }

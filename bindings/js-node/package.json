@@ -1,8 +1,8 @@
 {
-    "name": "ailoy-js-node",
+    "name": "ailoy-node",
     "version": "0.0.1",
     "author": "Brekkylab Inc.",
-    "license": "ISC",
+    "license": "Apache-2.0",
     "description": "",
     "type": "commonjs",
     "main": "./dist/index.cjs",
@@ -64,6 +64,7 @@
         ]
     },
     "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.11.2",
         "jmespath": "^0.16.0"
     }
 }

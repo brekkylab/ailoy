@@ -21,9 +21,11 @@ public:
   static std::shared_ptr<chat_template_engine_t>
   make_from_config_file(std::filesystem::path config_file_path);
 
-  const std::string apply_chat_template(
-      const nlohmann::json &messages, const nlohmann::json &tools = {},
-      const bool reasoning = false, const bool add_generation_prompt = true);
+  const std::string
+  apply_chat_template(const nlohmann::json &messages,
+                      const nlohmann::json &tools = {},
+                      const bool enable_reasoning = false,
+                      const bool add_generation_prompt = true);
 
   bool is_botc_token(const std::string token) { return token == botc_token_; }
 
