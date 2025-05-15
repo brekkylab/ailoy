@@ -223,7 +223,13 @@ export function bearerAutenticator(
   };
 }
 
-/** Assistant class */
+/**
+ * The `Agent` class provides a high-level interface for interacting with large language models (LLMs) in Ailoy.
+ * It abstracts the underlying runtime and VM logic, allowing users to easily send queries and receive streaming
+ * responses.
+ * Agents can be extended with external tools or APIs to provide real-time or domain-specific knowledge, enabling
+ * more powerful and context-aware interactions.
+ */
 export class Agent {
   private runtime: Runtime;
 
@@ -236,7 +242,12 @@ export class Agent {
 
   private messages: Message[];
 
-  constructor(runtime: Runtime, systemMessage?: string) {
+  constructor(
+    /** The runtime environment associated with the agent */
+    runtime: Runtime,
+    /** Optional system message to set the initial assistant context */
+    systemMessage?: string
+  ) {
     this.runtime = runtime;
 
     // Initialize component state
@@ -257,8 +268,14 @@ export class Agent {
     this.tools = [];
   }
 
+  /**
+   * Defines the LLM components to the runtime.
+   * This must be called before using any other method in the class. If already defined, this is a no-op.
+   */
   async define(
+    /** The name of the LLM model to use in this instance */
     modelName: ModelName,
+    /** `Additional input used as an attribute in the define call of Runtime */
     attrs: Record<string, any>
   ): Promise<void> {
     // Skip if the component already exists
@@ -288,6 +305,10 @@ export class Agent {
     this.componentState.valid = true;
   }
 
+  /**
+   * Delete resources from the runtime.
+   * This should be called when the VectorStore is no longer needed. If already deleted, this is a no-op.
+   */
   async delete(): Promise<void> {
     // Skip if the component not exists
     if (!this.componentState.valid) return;
@@ -304,17 +325,30 @@ export class Agent {
     this.componentState.valid = false;
   }
 
-  addTool(tool: Tool): boolean {
+  /** Adds a custom tool to the agent */
+  addTool(
+    /** Tool instance to be added */
+    tool: Tool
+  ): boolean {
     if (this.tools.find((t) => t.desc.name == tool.desc.name)) return false;
     this.tools.push(tool);
     return true;
   }
 
-  addJSFunctionTool(desc: ToolDescription, f: (input: any) => any): boolean {
+  /** Adds a Javascript function as a tool using callable */
+  addJSFunctionTool(
+    /** Tool descriotion */
+    desc: ToolDescription,
+    /** Function will be called when the tool invocation occured */
+    f: (input: any) => any
+  ): boolean {
     return this.addTool({ desc, call: f });
   }
 
-  addUniversalTool(tool: ToolDefinitionUniversal): boolean {
+  addUniversalTool(
+    /** The universal tool definition */
+    tool: ToolDefinitionUniversal
+  ): boolean {
     const call = async (runtime: Runtime, inputs: any) => {
       // Validation
       const required = tool.description.parameters.required || [];
@@ -335,8 +369,11 @@ export class Agent {
     return this.addTool({ desc: tool.description, call });
   }
 
+  /** Adds a REST API tool that performs external HTTP requests */
   addRESTAPITool(
+    /** REST API tool definition */
     tool: ToolDefinitionRESTAPI,
+    /** Optional authenticator to inject into the request */
     auth?: ToolAuthenticator
   ): boolean {
     const call = async (runtime: Runtime, inputs: any) => {
@@ -413,9 +450,14 @@ export class Agent {
     return this.addTool({ desc: tool.description, call });
   }
 
+  /** Loads tools from a predefined JSON preset file */
   addToolsFromPreset(
+    /** Name of the tool preset */
     presetName: string,
-    args?: { authenticator?: ToolAuthenticator }
+    args?: {
+      /** Optional authenticator to inject into the request */
+      authenticator?: ToolAuthenticator;
+    }
   ): boolean {
     const presetJson = require(`./presets/tools/${presetName}.json`);
     if (presetJson === undefined) {
@@ -436,8 +478,11 @@ export class Agent {
     return true;
   }
 
+  /** Adds a tool from an MCP (Model Context Protocol) server */
   async addMcpTool(
+    /** Parameters for connecting to the MCP stdio server */
     params: MCPClientStdio.StdioServerParameters,
+    /** Tool metadata as defined by MCP */
     tool: Awaited<ReturnType<MCPClient.Client["listTools"]>>["tools"][number]
   ) {
     const call = async (_: Runtime, inputs: any) => {
@@ -491,22 +536,13 @@ export class Agent {
     return this.tools.map((tool) => tool.desc);
   }
 
-  getMessages(): Message[] {
-    return this.messages;
-  }
-
-  setMessages(messages: Message[]) {
-    this.messages = messages;
-  }
-
-  appendMessage(msg: Message) {
-    this.messages.push(msg);
-  }
-
   async *run(
+    /** The user message to send to the model */
     message: string,
     options?: {
+      /** If True, enables reasoning capabilities (default: True) */
       enableReasoning?: boolean;
+      /** If True, reasoning steps are not included in the response stream */
       ignoreReasoningMessages?: boolean;
     }
   ): AsyncGenerator<AgentResponse> {
@@ -617,11 +653,17 @@ export class Agent {
   }
 }
 
+/** Define a new agent */
 export async function defineAgent(
+  /** The runtime environment associated with the agent */
   runtime: Runtime,
+  /** The name of the LLM model to use in this instance */
   modelName: ModelName,
   args?: {
+    /** Optional system message to set the initial assistant context */
     systemMessage?: string;
+    /** A parameter for API key usage.
+     * This field is ignored if the model does not require authentication. */
     apiKey?: string;
   }
 ): Promise<Agent> {

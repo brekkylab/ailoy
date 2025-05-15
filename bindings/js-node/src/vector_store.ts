@@ -22,7 +22,9 @@ const modelDescriptions: Record<EmbeddingModelName, EmbeddingModelDescription> =
   };
 
 export interface VectorStoreInsertItem {
+  /** The raw text document to insert */
   document: string;
+  /** Metadata records additional information about the document */
   metadata?: Record<string, any>;
 }
 
@@ -31,6 +33,20 @@ export interface VectorStoreRetrieveItem extends VectorStoreInsertItem {
   similarity: number;
 }
 
+/**
+ * The `VectorStore` class provides a high-level abstraction for storing and retrieving documents.
+ * It mainly consists of two modules - embedding model and vector store.
+ *
+ * It supports embedding text using AI and interfacing with pluggable vector store backends such as FAISS or ChromaDB.
+ * This class handles initialization, insertion, similarity-based retrieval, and cleanup.
+ *
+ * Typical usage involves:
+ *   1. Initializing the store via `initialize()`
+ *   2. Inserting documents via `insert()`
+ *   3. Querying similar documents via `retrieve()`
+ *
+ * The embedding model and vector store are defined dynamically within the provided runtime.
+ */
 export class VectorStore {
   private runtime: Runtime;
 
@@ -50,6 +66,10 @@ export class VectorStore {
     };
   }
 
+  /**
+   * Defines the embedding model and vector store components to the runtime.
+   * This must be called before using any other method in the class. If already defined, this is a no-op.
+   */
   async define(
     embeddingModelName: EmbeddingModelName,
     embeddingModelAttrs: Record<string, any>,
@@ -94,6 +114,10 @@ export class VectorStore {
     this.componentState.valid = true;
   }
 
+  /**
+   * Delete resources from the runtime.
+   * This should be called when the VectorStore is no longer needed. If already deleted, this is a no-op.
+   */
   async delete(): Promise<void> {
     if (!this.componentState.valid) return;
     await this.runtime.delete(this.componentState.embeddingName);
@@ -101,6 +125,7 @@ export class VectorStore {
     this.componentState.valid = false;
   }
 
+  /** Inserts a new document into the vector store */
   async insert(item: VectorStoreInsertItem): Promise<void> {
     const embedding = await this.embedding(item.document);
     await this.runtime.callMethod(this.componentState.vecstoreName, "insert", {
@@ -110,8 +135,11 @@ export class VectorStore {
     });
   }
 
+  /** Retrieves the top-K most similar documents to the given query */
   async retrieve(
+    /** The input query string to search for similar content */
     query: string,
+    /** Number of top similar documents to retrieve */
     topK: number = 5
   ): Promise<Array<VectorStoreRetrieveItem>> {
     const embedding = await this.embedding(query);
@@ -131,7 +159,11 @@ export class VectorStore {
     await this.runtime.callMethod(this.componentState.vecstoreName, "clear");
   }
 
-  async embedding(text: string): Promise<NDArray> {
+  /** Generates an embedding vector for the given input text using the embedding model */
+  async embedding(
+    /** Input text to embed */
+    text: string
+  ): Promise<NDArray> {
     const resp: { embedding: NDArray } = await this.runtime.callMethod(
       this.componentState.embeddingName,
       "infer",
