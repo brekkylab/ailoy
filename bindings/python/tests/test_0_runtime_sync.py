@@ -1,7 +1,7 @@
 import pytest
 
 from ailoy import Runtime
-from ailoy.vector_store import FAISSConfig, VectorStore
+from ailoy.vector_store import VectorStore
 
 pytestmark = [pytest.mark.runtime]
 
@@ -11,7 +11,7 @@ def runtime():
     print("creating sync runtime")
     rt = Runtime("inproc://sync")
     yield rt
-    rt.close()
+    rt.stop()
 
 
 def test_echo(runtime: Runtime):
@@ -24,7 +24,7 @@ def test_spell(runtime: Runtime):
 
 
 def test_vectorstore(runtime: Runtime):
-    with VectorStore(runtime, FAISSConfig()) as vs:
+    with VectorStore(runtime, "bge-m3", "faiss") as vs:
         doc1 = "BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction."
         doc2 = "BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document"  # noqa: E501
         vs.insert(document=doc1, metadata={"value": "BGE-M3"})

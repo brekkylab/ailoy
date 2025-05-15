@@ -4,7 +4,7 @@ import os
 from ailoy import Runtime, Agent
 from ailoy.agent import BearerAuthenticator
 
-from common import print_reflective_response
+from common import print_agent_response
 
 
 async def main():
@@ -30,7 +30,7 @@ async def main():
             continue
 
         for resp in agent.run(query):
-            print_reflective_response(resp)
+            print_agent_response(resp)
 
 
 if __name__ == "__main__":

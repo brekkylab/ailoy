@@ -1,24 +1,8 @@
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, TypeAdapter
 
 from ailoy.runtime import Runtime, generate_uuid
-
-
-class VectorStoreBaseConfig(BaseModel):
-    embedding: Literal["bge-m3"] = "bge-m3"
-
-
-class FAISSConfig(VectorStoreBaseConfig):
-    pass
-
-
-class ChromadbConfig(VectorStoreBaseConfig):
-    url: str
-    collection: Optional[str] = None
-
-
-VectorStoreConfig = Union[FAISSConfig, ChromadbConfig]
 
 
 class VectorStoreInsertItem(BaseModel):
@@ -29,6 +13,12 @@ class VectorStoreInsertItem(BaseModel):
 class VectorStoreRetrieveItem(VectorStoreInsertItem):
     id: str
     similarity: float
+
+
+class ComponentState(BaseModel):
+    embedding_model_name: str
+    vector_store_name: str
+    valid: bool
 
 
 class VectorStore:
@@ -50,20 +40,38 @@ class VectorStore:
     def __init__(
         self,
         runtime: Runtime,
-        config: VectorStoreConfig = FAISSConfig(),
+        embedding_model_name: Literal["bge-m3"],
+        vector_store_name: Literal["faiss", "chromadb"],
+        url: Optional[str] = None,
+        collection: Optional[str] = None,
+        embedding_model_attrs: dict[str, Any] = dict(),
+        vector_store_attrs: dict[str, Any] = dict(),
     ):
         """
         Creates an instance.
 
         :param runtime: The runtime environment used to manage components.
-        :param config: Configuration for the vector store, either FAISSConfig or ChromadbConfig.
+        :param embedding_model_name: The name of the embedding model to use. Currently it only supports `bge-m3`.
+        :param url: (ChromaDB only) URL of the database.
+        :param collection: (ChromaDB only) The collection name of the database.
+        :param vector_store_name: The name of the vector store provider (One of faiss or chromaDB).
+        :param embedding_model_attrs: Additional initialization parameters (for `define_component` runtime call).
+        :param vector_store_attrs: Additional initialization parameters (for `define_component` runtime call).
         """
         self._runtime = runtime
-        self._config = config
-        self._vector_store_component_name = generate_uuid()
-        self._embedding_model_component_name = generate_uuid()
-        self._defined = False
-        self.define()
+        self._component_state = ComponentState(
+            embedding_model_name=generate_uuid(),
+            vector_store_name=generate_uuid(),
+            valid=False,
+        )
+        self.define(
+            embedding_model_name,
+            vector_store_name,
+            url,
+            collection,
+            embedding_model_attrs,
+            vector_store_attrs,
+        )
 
     def __del__(self):
         self.delete()
@@ -74,50 +82,61 @@ class VectorStore:
     def __exit__(self, type, value, traceback):
         self.delete()
 
-    def define(self):
+    def define(
+        self,
+        embedding_model_name: Literal["bge-m3"],
+        vector_store_name: Literal["faiss", "chromadb"],
+        url: Optional[str] = None,
+        collection: Optional[str] = None,
+        embedding_model_attrs: dict[str, Any] = dict(),
+        vector_store_attrs: dict[str, Any] = dict(),
+    ):
         """
         Defines the embedding model and vector store components to the runtime.
         This must be called before using any other method in the class. If already defined, this is a no-op.
         """
-        if self._defined:
+        if self._component_state.valid:
             return
 
         # Dimension size may be different based on embedding model
         dimension = 1024
 
         # Initialize embedding model
-        if self._config.embedding == "bge-m3":
+        if embedding_model_name == "bge-m3":
             dimension = 1024
-            self._runtime.define("tvm_embedding_model", self._embedding_model_component_name, {"model": "BAAI/bge-m3"})
-
-        # Initialize vector store
-        if isinstance(self._config, FAISSConfig):
-            self._runtime.define("faiss_vector_store", self._vector_store_component_name, {"dimension": dimension})
-        elif isinstance(self._config, ChromadbConfig):
             self._runtime.define(
-                "chromadb_vector_store",
-                self._vector_store_component_name,
-                {
-                    "url": self._config.url,
-                    "collection": self._config.collection,
-                },
+                "tvm_embedding_model",
+                self._component_state.embedding_model_name,
+                {"model": "BAAI/bge-m3"},
             )
         else:
-            raise ValueError(f"Unsupported vector store: {type(self._config)}")
+            raise NotImplementedError()
 
-        self._defined = True
+        # Initialize vector store
+        if vector_store_name == "faiss":
+            if "dimension" not in embedding_model_attrs:
+                embedding_model_attrs["dimension"] = dimension
+            self._runtime.define("faiss_vector_store", self._component_state.vector_store_name, embedding_model_attrs)
+        else:
+            if "url" not in vector_store_attrs:
+                vector_store_attrs["url"] = url
+            if "collection" not in vector_store_attrs:
+                vector_store_attrs["collection"] = collection
+            self._runtime.define("chromadb_vector_store", self._component_state.vector_store_name, vector_store_attrs)
+
+        self._component_state.valid = True
 
     def delete(self):
         """
         Delete resources from the runtime.
         This should be called when the VectorStore is no longer needed. If already deleted, this is a no-op.
         """
-        if not self._defined:
+        if not self._component_state.valid:
             return
 
-        self._runtime.delete(self._embedding_model_component_name)
-        self._runtime.delete(self._vector_store_component_name)
-        self._defined = False
+        self._runtime.delete(self._component_state.embedding_model_name)
+        self._runtime.delete(self._component_state.vector_store_name)
+        self._component_state.valid = False
 
     # TODO: add NDArray typing
     def embedding(self, text: str) -> Any:
@@ -128,7 +147,7 @@ class VectorStore:
         :returns: The resulting embedding vector.
         """
         resp = self._runtime.call_method(
-            self._embedding_model_component_name,
+            self._component_state.embedding_model_name,
             "infer",
             {
                 "prompt": text,
@@ -145,7 +164,7 @@ class VectorStore:
         """
         embedding = self.embedding(document)
         self._runtime.call_method(
-            self._vector_store_component_name,
+            self._component_state.vector_store_name,
             "insert",
             {
                 "embedding": embedding,
@@ -164,7 +183,7 @@ class VectorStore:
         """
         embedding = self.embedding(query)
         resp = self._runtime.call_method(
-            self._vector_store_component_name,
+            self._component_state.vector_store_name,
             "retrieve",
             {
                 "query_embedding": embedding,
@@ -178,4 +197,4 @@ class VectorStore:
         """
         Removes all entries from the vector store.
         """
-        self._runtime.call_method(self._vector_store_component_name, "clean", {})
+        self._runtime.call_method(self._component_state.vector_store_name, "clean", {})

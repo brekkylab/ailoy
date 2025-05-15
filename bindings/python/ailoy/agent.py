@@ -17,14 +17,13 @@ from typing import (
     TypeVarTuple,
     Union,
     Unpack,
-    get_args,
 )
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import jmespath
 import mcp
 import mcp.types as mcp_types
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from ailoy.ailoy_py import generate_uuid
 from ailoy.runtime import Runtime
@@ -90,7 +89,7 @@ class MessageDelta(BaseModel):
 
 TVMModelName = Literal["qwen3-0.6b", "qwen3-1.7b", "qwen3-4b", "qwen3-8b"]
 OpenAIModelName = Literal["gpt-4o"]
-AvailableModel = Union[TVMModelName, OpenAIModelName]
+ModelName = Union[TVMModelName, OpenAIModelName]
 
 
 class TVMModel(BaseModel):
@@ -110,7 +109,7 @@ class ModelDescription(BaseModel):
     default_system_message: Optional[str] = None
 
 
-model_descriptions: Dict[AvailableModel, ModelDescription] = {
+model_descriptions: Dict[ModelName, ModelDescription] = {
     "qwen3-0.6b": ModelDescription(
         model_id="Qwen/Qwen3-0.6B",
         component_type="tvm_language_model",
@@ -138,10 +137,9 @@ model_descriptions: Dict[AvailableModel, ModelDescription] = {
 }
 
 
-class ModelInfo(BaseModel):
-    component_name: str
-    component_type: Literal["tvm_language_model", "openai"]
-    attrs: Dict[str, Any]
+class ComponentState(BaseModel):
+    name: str
+    valid: bool
 
 
 ## Types for agent's responses
@@ -294,8 +292,7 @@ class Agent:
     def __init__(
         self,
         runtime: Runtime,
-        model_name: AvailableModel,
-        tools: Optional[List[Tool]] = None,
+        model_name: ModelName,
         system_message: Optional[str] = None,
         **kwargs,
     ):
@@ -304,81 +301,82 @@ class Agent:
 
         :param runtime: The runtime environment associated with the agent.
         :param model_name: The name of the LLM model to use.
-        :param tools: Optional list of tools to be available by default.
         :param system_message: Optional system message to set the initial assistant context.
+        :param kwargs: Additional initialization parameters (for `define_component` runtime call)
         :raises ValueError: If model name is not supported or validation fails.
         """
         self._runtime = runtime
-        self._initialized = False
 
-        try:
-            if model_name in get_args(TVMModelName):
-                model = TVMModel(name=model_name, **kwargs)
-            elif model_name in get_args(OpenAIModelName):
-                model = OpenAIModel(name=model_name, **kwargs)
-            else:
-                raise ValueError(f"Model {model_name} not supported")
-        except ValidationError as e:
-            raise ValueError(f"Failed to validate model parameters\n{e}")
-
-        model_attrs = {k: v for k, v in model.model_dump(exclude_none=True).items() if k != "name"}
-
-        if model_name not in model_descriptions:
-            raise ValueError(f'Model "{model_name}" is not available')
-
-        model_desc = model_descriptions[model_name]
-        self._model_info = ModelInfo(
-            component_type=model_desc.component_type,
-            component_name=generate_uuid(),
-            attrs={
-                "model": model_desc.model_id,
-                **model_attrs,
-            },
+        # Initialize component state
+        self._component_state = ComponentState(
+            name=generate_uuid(),
+            valid=False,
         )
-        self._messages: List[Message] = []
 
-        system_message = system_message if system_message is not None else model_desc.default_system_message
-        if system_message is not None:
+        # Initialize messages
+        self._messages: List[Message] = []
+        if system_message:
             self._messages.append(SystemMessage(role="system", content=system_message))
 
-        self._tools: List[Tool] = tools if tools is not None else []
+        # Initialize tools
+        self._tools: List[Tool] = []
 
         # Define can be performed in constructor
-        self.define()
+        self.define(model_name, **kwargs)
 
     def __del__(self):
         self.delete()
 
     def __enter__(self):
-        self.define()
         return self
 
     def __exit__(self, type, value, traceback):
         self.delete()
 
-    def define(self) -> None:
+    def define(self, model_name: ModelName, **kwargs) -> None:
         """
         Initializes the agent by defining its model in the runtime.
         This must be called before running the agent. If already initialized, this is a no-op.
+        :param model_name: The name of the LLM model to use.
         """
-        if self._initialized:
+        if self._component_state.valid:
             return
+
+        if model_name not in model_descriptions:
+            raise ValueError(f"Model `{model_name}` not supported")
+
+        model_desc = model_descriptions[model_name]
+        attrs = kwargs
+
+        # Add model name into attrs
+        if "model" in kwargs:
+            attrs["model"] = kwargs["model"]
+        else:
+            attrs["model"] = model_desc.model_id
+
+        # Call runtime's define
         self._runtime.define(
-            self._model_info.component_type,
-            self._model_info.component_name,
-            self._model_info.attrs,
+            model_descriptions[model_name].component_type,
+            self._component_state.name,
+            attrs,
         )
-        self._initialized = True
+
+        # Mark as defined
+        self._component_state.valid = True
 
     def delete(self) -> None:
         """
         Deinitializes the agent and releases resources in the runtime.
         This should be called when the agent is no longer needed. If already deinitialized, this is a no-op.
         """
-        if not self._initialized:
+        if not self._component_state.valid:
             return
-        self._runtime.delete(self._model_info.component_name)
-        self._initialized = False
+        self._runtime.delete(self._component_state.name)
+        if len(self._messages) > 0 and self._messages[0].role == "system":
+            self._messages = [self._messages[0]]
+        else:
+            self._messages = []
+        self._component_state.valid = False
 
     def run(
         self,
@@ -406,7 +404,7 @@ class Agent:
             if ignore_reasoning_messages is not None:
                 infer_args["ignore_reasoning_messages"] = ignore_reasoning_messages
 
-            for resp in self._runtime.call_iter_method(self._model_info.component_name, "infer", infer_args):
+            for resp in self._runtime.call_iter_method(self._component_state.name, "infer", infer_args):
                 delta = MessageDelta.model_validate(resp)
 
                 if delta.finish_reason is None:
