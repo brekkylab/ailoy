@@ -14,24 +14,6 @@ using namespace tvm::runtime::relax_vm;
 
 namespace ailoy {
 
-/* value_t interface related to tvm */
-
-std::shared_ptr<ndarray_t> ndarray_from_tvm(tvm::runtime::NDArray tvm_ndarray) {
-  auto shape = tvm_ndarray.Shape();
-  auto dtype = tvm_ndarray->dtype;
-  size_t nbytes =
-      std::reduce(shape.begin(), shape.end(), 1, std::multiplies<size_t>());
-  nbytes *= (dtype.bits * dtype.lanes + 7) / 8;
-
-  std::vector<uint8_t> data(nbytes);
-  tvm_ndarray.CopyToBytes(data.data(), nbytes);
-
-  auto ndarray =
-      create<ndarray_t>(std::vector<size_t>(shape.begin(), shape.end()), dtype,
-                        data.data(), nbytes);
-  return ndarray;
-}
-
 /* tokenizer_t */
 
 tokenizer_t::tokenizer_t(const std::filesystem::path &json_file_path) {

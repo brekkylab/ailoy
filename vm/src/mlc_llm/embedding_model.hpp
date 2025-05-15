@@ -8,8 +8,6 @@
 
 namespace ailoy {
 
-std::shared_ptr<ndarray_t> ndarray_from_tvm(tvm::runtime::NDArray ndarray);
-
 class tokenizer_t : public object_t {
   using token_t = int32_t;
 

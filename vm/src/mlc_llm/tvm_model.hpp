@@ -9,6 +9,8 @@
 
 namespace ailoy {
 
+std::shared_ptr<ndarray_t> ndarray_from_tvm(tvm::runtime::NDArray ndarray);
+
 class tvm_model_t {
 public:
   tvm_model_t(const std::string &model_name, const std::string &quantization,
