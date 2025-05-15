@@ -18,7 +18,6 @@
         "build": "npm run build:napi && npm run build:ts",
         "clean": "rm -rf dist/",
         "test": "ts-mocha",
-        "test:debug": "node --inspect-brk ./node_modules/.bin/ts-mocha",
         "prepack": "clean-package",
         "postpack": "clean-package restore"
     },
