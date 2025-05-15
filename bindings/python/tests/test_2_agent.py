@@ -46,9 +46,8 @@ def _print_agent_response(resp: AgentResponse):
 def prepared_agent():
     rt = Runtime("inproc://agent")
     agent = Agent(rt, model_name="qwen3-8b")
-    agent.initialize()
     yield agent
-    agent.deinitialize()
+    agent.delete()
 
 
 def test_tool_call_calculator(prepared_agent: Agent):

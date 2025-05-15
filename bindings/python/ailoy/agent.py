@@ -325,17 +325,20 @@ class Agent:
 
         self._tools: List[Tool] = tools if tools is not None else []
 
+        # Define can be performed in constructor
+        self.define()
+
     def __del__(self):
-        self.deinitialize()
+        self.delete()
 
     def __enter__(self):
-        self.initialize()
+        self.define()
         return self
 
     def __exit__(self, type, value, traceback):
-        self.deinitialize()
+        self.delete()
 
-    def initialize(self) -> None:
+    def define(self) -> None:
         if self._initialized:
             return
         self._runtime.define(
@@ -345,7 +348,7 @@ class Agent:
         )
         self._initialized = True
 
-    def deinitialize(self) -> None:
+    def delete(self) -> None:
         if not self._initialized:
             return
         self._runtime.delete(self._model_info.component_name)
@@ -356,7 +359,7 @@ class Agent:
         message: str,
         enable_reasoning: Optional[bool] = None,
         ignore_reasoning_messages: Optional[bool] = None,
-    ) -> Generator[AgentResponse, None]:
+    ) -> Generator[AgentResponse, None, None]:
         self._messages.append(UserMessage(role="user", content=message))
 
         while True:

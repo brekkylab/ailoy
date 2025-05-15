@@ -30,9 +30,9 @@ class RuntimeBase:
         del self._responses[txid]
 
     def __del__(self):
-        self.close()
+        self.stop()
 
-    def close(self):
+    def stop(self):
         if self._client:
             txid = self._send_type1("disconnect")
             if not txid:

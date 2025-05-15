@@ -41,20 +41,20 @@ class VectorStore:
         self._config = config
         self._vector_store_component_name = generate_uuid()
         self._embedding_model_component_name = generate_uuid()
-        self._initialized = False
+        self._defined = False
+        self.define()
 
     def __del__(self):
-        self.deinitialize()
+        self.delete()
 
     def __enter__(self):
-        self.initialize()
         return self
 
     def __exit__(self, type, value, traceback):
-        self.deinitialize()
+        self.delete()
 
-    def initialize(self):
-        if self._initialized:
+    def define(self):
+        if self._defined:
             return
 
         # Dimension size may be different based on embedding model
@@ -80,15 +80,15 @@ class VectorStore:
         else:
             raise ValueError(f"Unsupported vector store: {type(self._config)}")
 
-        self._initialized = True
+        self._defined = True
 
-    def deinitialize(self):
-        if not self._initialized:
+    def delete(self):
+        if not self._defined:
             return
 
         self._runtime.delete(self._embedding_model_component_name)
         self._runtime.delete(self._vector_store_component_name)
-        self._initialized = False
+        self._defined = False
 
     # TODO: add NDArray typing
     def embedding(self, text: str) -> Any:

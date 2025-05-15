@@ -3,13 +3,13 @@ import os
 
 from mcp import StdioServerParameters
 
-from ailoy import AsyncRuntime, Agent
+from ailoy import Runtime, Agent
 
 from common import print_agent_response
 
 
 async def main():
-    rt = AsyncRuntime()
+    rt = Runtime()
 
     github_pat = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", None)
     if github_pat is None:
@@ -17,9 +17,7 @@ async def main():
 
     agent = Agent(rt, model_name="qwen3-8b")
 
-    await agent.initialize()
-
-    await agent.add_tools_from_mcp_server(
+    agent.add_tools_from_mcp_server(
         StdioServerParameters(
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
@@ -44,7 +42,7 @@ async def main():
         if query == "":
             continue
 
-        async for resp in agent.run(query):
+        for resp in agent.run(query):
             print_agent_response(resp)
 
 
