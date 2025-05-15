@@ -1,6 +1,7 @@
 #pragma once
 
 #include <deque>
+#include <memory>
 #include <string>
 
 #include "object.hpp"

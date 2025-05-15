@@ -1,5 +1,7 @@
 #include "inproc_socket.hpp"
 
+#include <unordered_map>
+
 using namespace std::chrono_literals;
 
 namespace ailoy {
