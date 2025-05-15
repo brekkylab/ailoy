@@ -1,6 +1,7 @@
+#include "chromadb_vector_store.hpp"
+
 #include <format>
 
-#include "chromadb_vector_store.hpp"
 #include "exception.hpp"
 #include "uuid.hpp"
 

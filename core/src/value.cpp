@@ -1,7 +1,7 @@
+#include "value.hpp"
+
 #include <iostream>
 #include <sstream>
-
-#include "value.hpp"
 
 namespace ailoy {
 

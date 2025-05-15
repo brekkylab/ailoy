@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 
 #include <json_ffi/openai_api_protocol.h>
 #include <serve/engine.h>

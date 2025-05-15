@@ -1,4 +1,5 @@
 #include "broker_client.hpp"
+
 #include "exception.hpp"
 
 using namespace std::chrono_literals;

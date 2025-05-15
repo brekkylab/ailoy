@@ -1,7 +1,5 @@
 ﻿#include "mlc_llm_engine.hpp"
 
-#include <unordered_map>
-
 #include <json_ffi/conv_template.h>
 #include <support/json_parser.h>
 

@@ -1,3 +1,5 @@
+#include "vm.hpp"
+
 #include <iostream>
 #include <set>
 
@@ -7,7 +9,6 @@
 #include "exception.hpp"
 #include "logging.hpp"
 #include "uuid.hpp"
-#include "vm.hpp"
 
 using namespace std::chrono_literals;
 

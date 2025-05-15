@@ -1,7 +1,8 @@
+#include "split_text.hpp"
+
 #include <deque>
 #include <ranges>
 
-#include "split_text.hpp"
 #include "string_util.hpp"
 
 namespace ailoy {

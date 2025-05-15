@@ -1,7 +1,7 @@
+#include "openai.hpp"
+
 #include <httplib.h>
 #include <nlohmann/json.hpp>
-
-#include "openai.hpp"
 
 namespace ailoy {
 /*
