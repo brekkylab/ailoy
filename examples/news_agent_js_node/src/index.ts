@@ -1,4 +1,4 @@
-import { startRuntime, createAgent } from "ailoy-node";
+import { startRuntime, defineAgent } from "ailoy-node";
 import type { ToolAuthenticator } from "ailoy-node";
 
 import readline from "readline";
@@ -19,9 +19,7 @@ function getUserInput(query: string): Promise<string> {
 async function main() {
   const rt = await startRuntime();
 
-  const ex = await createAgent(rt, {
-    model: { name: "qwen3-8b" },
-  });
+  const ex = await defineAgent(rt, "qwen3-8b");
 
   let nytimesApiKey = process.env.NYTIMES_API_KEY;
   if (nytimesApiKey === undefined) {
@@ -74,6 +72,8 @@ Tool Call Result
       }
     }
   }
+
+  await ex.delete();
 
   await rt.stop();
 }

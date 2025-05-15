@@ -1,4 +1,4 @@
-import { createAgent } from "../src/agent";
+import { defineAgent } from "../src/agent";
 import type { AgentResponse } from "../src/agent";
 import { startRuntime, type Runtime } from "../src/runtime";
 
@@ -32,11 +32,7 @@ describe("Agent", async () => {
   });
 
   it("Tool Call: frankfurter tools", async () => {
-    const ex = await createAgent(rt, {
-      model: {
-        name: "qwen3-8b",
-      },
-    });
+    const ex = await defineAgent(rt, "qwen3-8b");
     ex.addToolsFromPreset("frankfurter");
 
     const query =
@@ -48,15 +44,11 @@ describe("Agent", async () => {
       printAgentResponse(resp);
     }
 
-    await ex.deinitialize();
+    await ex.delete();
   });
 
   it("Tool Call: Github MCP tools", async () => {
-    const ex = await createAgent(rt, {
-      model: {
-        name: "qwen3-8b",
-      },
-    });
+    const ex = await defineAgent(rt, "qwen3-8b");
     await ex.addToolsFromMcpServer(
       {
         command: "npx",
@@ -76,7 +68,7 @@ describe("Agent", async () => {
       printAgentResponse(resp);
     }
 
-    await ex.deinitialize();
+    await ex.delete();
   });
 
   after(async () => {

@@ -1,4 +1,4 @@
-import { startRuntime, createAgent, bearerAutenticator } from "ailoy-node";
+import { startRuntime, defineAgent, bearerAutenticator } from "ailoy-node";
 
 import readline from "readline";
 
@@ -28,15 +28,7 @@ async function main() {
 
   console.log("Initializing AI...");
 
-  const ex = await createAgent(rt, {
-    model: {
-      name: "qwen3-8b",
-    },
-    // model: {
-    //   name: "gpt-4o",
-    //   api_key: openaiApiKey,
-    // },
-  });
+  const ex = await defineAgent(rt, "qwen3-8b");
   ex.addToolsFromPreset("tmdb", {
     authenticator: bearerAutenticator(tmdbApiKey),
   });
@@ -52,7 +44,7 @@ async function main() {
     if (query === "" || query === "exit") break;
 
     process.stdout.write(`\nAssistant: `);
-    for await (const resp of ex.run(query, { reasoning: true })) {
+    for await (const resp of ex.run(query, { enableReasoning: true })) {
       if (resp.type === "output_text") {
         process.stdout.write(resp.content);
         if (resp.endOfTurn) {

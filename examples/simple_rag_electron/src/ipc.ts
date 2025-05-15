@@ -13,11 +13,7 @@ export const initializeComponents = async (mainWindow: BrowserWindow) => {
   }
 
   if (vectorstore === undefined) {
-    vectorstore = new ailoy.VectorStore(runtime, {
-      type: "faiss",
-      embedding: "bge-m3",
-    });
-    await vectorstore.initialize();
+    vectorstore = await ailoy.defineVectorStore(runtime, "bge-m3", "faiss");
   }
 
   if (agent === undefined) {
@@ -26,10 +22,7 @@ export const initializeComponents = async (mainWindow: BrowserWindow) => {
       "Loading AI model...",
       false
     );
-    agent = new ailoy.Agent(runtime, {
-      model: { name: "qwen3-8b" },
-    });
-    await agent.initialize();
+    agent = await ailoy.defineAgent(runtime, "qwen3-8b");
     mainWindow.webContents.send("indicate-loading", "", true);
   }
 };
@@ -96,11 +89,11 @@ export const removeIpcHandlers = () => {
 
 export const destroyComponents = async () => {
   if (vectorstore !== undefined) {
-    await vectorstore.deinitialize();
+    await vectorstore.delete();
     vectorstore = undefined;
   }
   if (agent !== undefined) {
-    await agent.deinitialize();
+    await agent.delete();
     agent = undefined;
   }
   if (runtime !== undefined) {

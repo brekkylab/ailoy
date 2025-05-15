@@ -54,18 +54,15 @@ interface MessageDelta {
 
 /** Types for LLM Model Definitions */
 
-type TVMModel = "qwen3-8b" | "qwen3-4b" | "qwen3-1.7b" | "qwen3-0.6b";
-interface TVMModelAttrs {
-  name: TVMModel;
-  quantization?: "q4f16_1";
-  mode?: "interactive" | "local" | "server";
-}
+export type TVMModelName =
+  | "qwen3-8b"
+  | "qwen3-4b"
+  | "qwen3-1.7b"
+  | "qwen3-0.6b";
 
-type OpenAIModel = "gpt-4o";
-interface OpenAIModelAttrs {
-  name: OpenAIModel;
-  api_key: string;
-}
+export type OpenAIModelName = "gpt-4o";
+
+export type ModelName = TVMModelName | OpenAIModelName;
 
 interface ModelDescription {
   modelId: string;
@@ -73,8 +70,7 @@ interface ModelDescription {
   defaultSystemMessage?: string;
 }
 
-type AvailableModel = TVMModel | OpenAIModel;
-const modelDescriptions: Record<AvailableModel, ModelDescription> = {
+const modelDescriptions: Record<ModelName, ModelDescription> = {
   "qwen3-8b": {
     modelId: "Qwen/Qwen3-8B",
     componentType: "tvm_language_model",
@@ -107,48 +103,42 @@ const modelDescriptions: Record<AvailableModel, ModelDescription> = {
 
 /** Types for Agent's responses */
 
-interface AgentResponse_Base {
-  type:
-    | "output_text"
-    | "tool_call"
-    | "tool_call_result"
-    | "reasoning"
-    | "error";
-  endOfTurn: boolean;
-  role: "assistant" | "tool";
-}
-interface AgentResponse_OutputText extends AgentResponse_Base {
+export interface AgentResponseText {
   type: "output_text" | "reasoning";
   role: "assistant";
+  endOfTurn: boolean;
   content: string;
 }
-interface AgentResponse_ToolCall extends AgentResponse_Base {
+export interface AgentResponseToolCall {
   type: "tool_call";
   role: "assistant";
+  endOfTurn: boolean;
   content: {
     id: string;
     function: { name: string; arguments: any };
   };
 }
-interface AgentResponse_ToolCallResult extends AgentResponse_Base {
+export interface AgentResponseToolResult {
   type: "tool_call_result";
   role: "tool";
+  endOfTurn: boolean;
   content: {
     name: string;
     tool_call_id: string;
     content: string;
   };
 }
-interface AgentResponse_Error extends AgentResponse_Base {
+export interface AgentResponseError {
   type: "error";
   role: "assistant";
-  error: string;
+  endOfTurn: true;
+  content: string;
 }
 export type AgentResponse =
-  | AgentResponse_OutputText
-  | AgentResponse_ToolCall
-  | AgentResponse_ToolCallResult
-  | AgentResponse_Error;
+  | AgentResponseText
+  | AgentResponseToolCall
+  | AgentResponseToolResult
+  | AgentResponseError;
 
 /** Types and functions related to Tools */
 
@@ -157,7 +147,7 @@ interface Tool {
   call: (runtime: Runtime, input: any) => Promise<any>;
 }
 
-interface ToolDescription {
+export interface ToolDescription {
   name: string;
   description: string;
   parameters: {
@@ -178,21 +168,17 @@ interface ToolDescription {
   };
 }
 
-interface BaseToolDefinition {
-  type: string;
-  description: ToolDescription;
-  behavior: Record<string, any>;
-}
-
-interface UniversalToolDefinition extends BaseToolDefinition {
+export interface ToolDefinitionUniversal {
   type: "universal";
+  description: ToolDescription;
   behavior: {
     outputPath?: string;
   };
 }
 
-interface RESTAPIToolDefinition extends BaseToolDefinition {
+export interface ToolDefinitionRESTAPI {
   type: "restapi";
+  description: ToolDescription;
   behavior: {
     baseURL: string;
     method: "GET" | "POST" | "PUT" | "DELETE";
@@ -202,7 +188,7 @@ interface RESTAPIToolDefinition extends BaseToolDefinition {
   };
 }
 
-type ToolDefinition = UniversalToolDefinition | RESTAPIToolDefinition;
+export type ToolDefinition = ToolDefinitionUniversal | ToolDefinitionRESTAPI;
 
 export interface ToolAuthenticator {
   apply: (request: {
@@ -240,56 +226,82 @@ export function bearerAutenticator(
 /** Assistant class */
 export class Agent {
   private runtime: Runtime;
-  private modelInfo: {
-    componentType: string;
-    componentName: string;
-    attrs: Record<string, any>;
-  };
-  private tools: Tool[];
-  private messages: Message[];
-  private valid: boolean;
 
-  constructor(
-    runtime: Runtime,
-    args: {
-      model: TVMModelAttrs | OpenAIModelAttrs;
-      tools?: Tool[];
-      systemMessage?: string;
-    }
-  ) {
+  private componentState: {
+    name: string;
+    valid: boolean;
+  };
+
+  private tools: Tool[];
+
+  private messages: Message[];
+
+  constructor(runtime: Runtime, systemMessage?: string) {
     this.runtime = runtime;
 
-    // Model's short name (`modelName`) will be replaced with full model id defined in description.
-    // The another attributes (`modelAttrs`) are used as-is.
-    const { name: modelName, ...modelAttrs } = args.model;
-    if (!(modelName in modelDescriptions))
-      throw Error(`Model "${modelName}" is not available`);
-
-    const modelDesc = modelDescriptions[modelName];
-    this.modelInfo = {
-      componentType: modelDesc.componentType,
-      componentName: generateUUID(),
-      attrs: {
-        model: modelDesc.modelId,
-        ...modelAttrs,
-      },
+    // Initialize component state
+    this.componentState = {
+      name: generateUUID(),
+      valid: false,
     };
 
+    // Initialize messages
     this.messages = [];
 
     // Use system message provided from arguments first, otherwise use default system message for the model.
-    let systemMessage =
-      args.systemMessage !== undefined
-        ? args.systemMessage
-        : modelDesc.defaultSystemMessage;
-    // Append system message if defined.
-    if (systemMessage !== undefined) {
+    this.messages = [];
+    if (systemMessage !== undefined)
       this.messages.push({ role: "system", content: systemMessage });
-    }
 
-    this.tools = args.tools || [];
+    // Initialize tools
+    this.tools = [];
+  }
 
-    this.valid = false;
+  async define(
+    modelName: ModelName,
+    attrs: Record<string, any>
+  ): Promise<void> {
+    // Skip if the component already exists
+    if (this.componentState.valid) return;
+
+    const modelDesc = modelDescriptions[modelName];
+
+    // Add model name into attrs
+    if (!attrs.model) attrs.model = modelDesc.modelId;
+
+    // Set default system message
+    if (this.messages.length == 0 && modelDesc.defaultSystemMessage)
+      this.messages.push({
+        role: "system",
+        content: modelDesc.defaultSystemMessage,
+      });
+
+    // Call runtime to define componenets
+    const result = await this.runtime.define(
+      modelDesc.componentType,
+      this.componentState.name,
+      attrs
+    );
+    if (!result) throw Error(`component define failed`);
+
+    // Mark component as defined
+    this.componentState.valid = true;
+  }
+
+  async delete(): Promise<void> {
+    // Skip if the component not exists
+    if (!this.componentState.valid) return;
+
+    const result = await this.runtime.delete(this.componentState.name);
+    if (!result) throw Error(`component delete failed`);
+
+    // Clear messages
+    if (this.messages.length > 0 && this.messages[0].role === "system")
+      this.messages = [this.messages[0]];
+    else this.messages = [];
+
+    // Mark component as deleted
+    this.componentState.valid = false;
   }
 
   addTool(tool: Tool): boolean {
@@ -302,7 +314,7 @@ export class Agent {
     return this.addTool({ desc, call: f });
   }
 
-  addUniversalTool(tool: UniversalToolDefinition): boolean {
+  addUniversalTool(tool: ToolDefinitionUniversal): boolean {
     const call = async (runtime: Runtime, inputs: any) => {
       // Validation
       const required = tool.description.parameters.required || [];
@@ -324,7 +336,7 @@ export class Agent {
   }
 
   addRESTAPITool(
-    tool: RESTAPIToolDefinition,
+    tool: ToolDefinitionRESTAPI,
     auth?: ToolAuthenticator
   ): boolean {
     const call = async (runtime: Runtime, inputs: any) => {
@@ -491,17 +503,6 @@ export class Agent {
     this.messages.push(msg);
   }
 
-  async initialize(): Promise<void> {
-    if (this.valid) return;
-    const result = await this.runtime.define(
-      this.modelInfo.componentType,
-      this.modelInfo.componentName,
-      this.modelInfo.attrs
-    );
-    if (!result) throw Error(`model initializeation failed`);
-    this.valid = true;
-  }
-
   async *run(
     message: string,
     options?: {
@@ -513,7 +514,7 @@ export class Agent {
 
     while (true) {
       for await (const resp of this.runtime.callIterMethod(
-        this.modelInfo.componentName,
+        this.componentState.name,
         "infer",
         {
           messages: this.messages,
@@ -614,25 +615,27 @@ export class Agent {
       }
     }
   }
-
-  async deinitialize(): Promise<void> {
-    if (!this.valid) return;
-    const result = await this.runtime.delete(this.modelInfo.componentName);
-    if (!result) throw Error(`model cleanup failed`);
-    this.valid = false;
-  }
 }
 
-/** function createAssistant */
-export async function createAgent(
+export async function defineAgent(
   runtime: Runtime,
-  args: {
-    model: TVMModelAttrs | OpenAIModelAttrs;
-    tools?: Tool[];
+  modelName: ModelName,
+  args?: {
     systemMessage?: string;
+    apiKey?: string;
   }
 ): Promise<Agent> {
-  const ctx = new Agent(runtime, args);
-  await ctx.initialize();
-  return ctx;
+  const args_ = args || {};
+
+  // Call constructor
+  const agent = new Agent(runtime, args_.systemMessage);
+
+  // Attribute input for call `rt.define`
+  let attrs: Record<string, any> = {};
+  if (args_.apiKey) attrs["api_key"] = args_.apiKey;
+
+  await agent.define(modelName, attrs);
+
+  // Return created agent
+  return agent;
 }
