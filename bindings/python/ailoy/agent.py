@@ -324,7 +324,7 @@ class Agent:
         self._tools: List[Tool] = []
 
         # Define can be performed in constructor
-        self.define(model_name, api_key, attrs)
+        self.define(model_name, api_key=api_key, attrs=attrs)
 
     def __del__(self):
         self.delete()
