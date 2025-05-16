@@ -323,7 +323,7 @@ class Agent:
         # Initialize tools
         self._tools: List[Tool] = []
 
-        # Define can be performed in constructor
+        # Define the component
         self.define(model_name, api_key=api_key, attrs=attrs)
 
     def __del__(self):
