@@ -56,13 +56,46 @@ For more details, refer to `bindings/python/README.md`.
 ### Prerequisites
 
 - C/C++ compiler
-- CMake
+  (recommended versions are below)
+  - GCC >= 13
+  - LLVM Clang >= 17
+  - Apple Clang >= 15
+  - MSVC >= 19.29
+- CMake >= 3.24.0
 - Git
 - OpenSSL (libssl-dev)
-- Rust & Cargo (optional, required for mlc-llm)
+- Rust & Cargo >= 1.82.0 (optional, required for mlc-llm)
 - OpenMP (libomp-dev) (optional, used by Faiss)
 - BLAS (libblas-dev) (optional, used by Faiss)
 - LAPACK (liblapack-dev) (optional, used by Faiss)
+
+<details>
+
+<summary>Example commands</summary>
+<h3>Ubuntu 24.04</h3>
+
+```bash
+# APT packages
+apt-get install -y git wget curl
+apt-get install -y libblas-dev liblapack-dev libssl-dev  # BLAS / LAPACK / OpenSSL
+apt-get install -y build-essential                       # g++13
+
+# Rust
+curl https://sh.rustup.rs -sSf | sh
+
+# CMake
+bash -c "$(wget https://github.com/Kitware/CMake/releases/download/v3.24.0/cmake-3.24.0-linux-aarch64.sh)"
+
+# Clone Ailoy
+git clone https://github.com/brekkylab/ailoy && cd ailoy
+
+# Build from source (can be replaced by Node.js/Python builds below)
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+```
+</details>
+
 
 ### Node.js Build
 
