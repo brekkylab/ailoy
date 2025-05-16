@@ -294,7 +294,8 @@ class Agent:
         runtime: Runtime,
         model_name: ModelName,
         system_message: Optional[str] = None,
-        **kwargs,
+        api_key: Optional[str] = None,
+        attrs: dict[str, Any] = dict(),
     ):
         """
         Create an instance.
@@ -302,7 +303,8 @@ class Agent:
         :param runtime: The runtime environment associated with the agent.
         :param model_name: The name of the LLM model to use.
         :param system_message: Optional system message to set the initial assistant context.
-        :param kwargs: Additional initialization parameters (for `define_component` runtime call)
+        :param api_key: (web agent only) The API key for AI API.
+        :param attrs: Additional initialization parameters (for `define_component` runtime call)
         :raises ValueError: If model name is not supported or validation fails.
         """
         self._runtime = runtime
@@ -322,7 +324,7 @@ class Agent:
         self._tools: List[Tool] = []
 
         # Define can be performed in constructor
-        self.define(model_name, **kwargs)
+        self.define(model_name, api_key, attrs)
 
     def __del__(self):
         self.delete()
@@ -333,11 +335,13 @@ class Agent:
     def __exit__(self, type, value, traceback):
         self.delete()
 
-    def define(self, model_name: ModelName, **kwargs) -> None:
+    def define(self, model_name: ModelName, api_key: Optional[str] = None, attrs: dict[str, Any] = dict()) -> None:
         """
         Initializes the agent by defining its model in the runtime.
         This must be called before running the agent. If already initialized, this is a no-op.
         :param model_name: The name of the LLM model to use.
+        :param api_key: (web agent only) The API key for AI API.
+        :param attrs: Additional initialization parameters (for `define_component` runtime call)
         """
         if self._component_state.valid:
             return
@@ -346,13 +350,14 @@ class Agent:
             raise ValueError(f"Model `{model_name}` not supported")
 
         model_desc = model_descriptions[model_name]
-        attrs = kwargs
 
         # Add model name into attrs
-        if "model" in kwargs:
-            attrs["model"] = kwargs["model"]
-        else:
+        if "model" not in attrs:
             attrs["model"] = model_desc.model_id
+
+        # Add API key
+        if api_key:
+            attrs["api_key"] = api_key
 
         # Call runtime's define
         self._runtime.define(
