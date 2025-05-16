@@ -573,8 +573,12 @@ class Agent:
                 request["body"] = body
 
             # Apply authentication
-            if authenticator is not None:
+            if hasattr(authenticator, "apply"):
                 request = authenticator.apply(request)
+            elif callable(authenticator):
+                request = authenticator(request)
+            else:
+                pass
 
             # Call HTTP request
             output = None
