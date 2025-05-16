@@ -301,8 +301,7 @@ get_model(const std::string &model_name, const std::string &quantization,
   for (auto &[file, sha1] :
        manifest["files"]
            .get<std::vector<std::pair<std::string, std::string>>>()) {
-    // Add to files_to_download if neither file exists nor sha1 checksum is
-    // same
+    // Add to files_to_download if neither file exists nor sha1 checksum is same
     if (!(fs::exists(model_cache_path / file) &&
           sha1 == sha1_checksum(model_cache_path / file))) {
       files_to_download.emplace_back(file);
