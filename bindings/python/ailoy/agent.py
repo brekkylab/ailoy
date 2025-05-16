@@ -246,6 +246,9 @@ class Tool:
 
 
 class ToolAuthenticator(ABC):
+    def __call__(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        return self.apply(request)
+
     @abstractmethod
     def apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
         pass
@@ -525,7 +528,7 @@ class Agent:
     def add_restapi_tool(
         self,
         tool_def: RESTAPIToolDefinition,
-        authenticator: Optional[ToolAuthenticator] = None,
+        authenticator: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     ) -> bool:
         """
         Adds a REST API tool that performs external HTTP requests.
@@ -579,12 +582,8 @@ class Agent:
                 request["body"] = body
 
             # Apply authentication
-            if hasattr(authenticator, "apply"):
-                request = authenticator.apply(request)
-            elif callable(authenticator):
+            if callable(authenticator):
                 request = authenticator(request)
-            else:
-                pass
 
             # Call HTTP request
             output = None
@@ -599,7 +598,9 @@ class Agent:
 
         return self.add_tool(Tool(desc=tool_def.description, call_fn=call))
 
-    def add_tools_from_preset(self, preset_name: str, authenticator: Optional[ToolAuthenticator] = None):
+    def add_tools_from_preset(
+        self, preset_name: str, authenticator: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None
+    ):
         """
         Loads tools from a predefined JSON preset file.
 
