@@ -64,23 +64,15 @@ if(AILOY_WITH_MLC_LLM)
             set(MLC_LLM_BINARY_DIR ${MLC_LLM_ROOT}/build)
         endif()
     else()
-        set(MLC_LLM_PATCH_APPLIED OFF CACHE BOOL "MLC_LLM patch file applied")
-        mark_as_advanced(FORCE MLC_LLM_PATCH_APPLIED ON)
-        if(MLC_LLM_PATCH_APPLIED)
-            FetchContent_Declare(
-                mlc-llm
-                GIT_REPOSITORY https://github.com/brekkylab/mlc-llm.git
-                GIT_TAG 3b8165524fdb79fd3255395432ac70a7734a22ef
-            )
-        else()
-            FetchContent_Declare(
-                mlc-llm
-                GIT_REPOSITORY https://github.com/brekkylab/mlc-llm.git
-                GIT_TAG 3b8165524fdb79fd3255395432ac70a7734a22ef
-                PATCH_COMMAND git apply --ignore-whitespace ${CMAKE_CURRENT_SOURCE_DIR}/cmake/mlc_llm.patch
-            )
-            set(MLC_LLM_PATCH_APPLIED ON CACHE BOOL "MLC_LLM patch file applied" FORCE)
+        FetchContent_Declare(
+            mlc-llm
+            GIT_REPOSITORY https://github.com/brekkylab/mlc-llm.git
+            GIT_TAG 7277d579e3b652de4bd538a937c603856f637950
+        )
+        if(NODE)
+            set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY ON CACHE BOOL "" FORCE)
         endif()
+
         if(APPLE)
             set(USE_METAL ON)
             target_compile_definitions(ailoy_vm_obj PUBLIC USE_METAL=1)
