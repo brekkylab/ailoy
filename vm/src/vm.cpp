@@ -1,6 +1,7 @@
-#include <memory>
+#include "vm.hpp"
+
+#include <iostream>
 #include <set>
-#include <thread>
 
 #include <magic_enum/magic_enum.hpp>
 
@@ -8,7 +9,6 @@
 #include "exception.hpp"
 #include "logging.hpp"
 #include "uuid.hpp"
-#include "vm.hpp"
 
 using namespace std::chrono_literals;
 

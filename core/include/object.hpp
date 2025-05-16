@@ -1,7 +1,6 @@
 #pragma once
 
 #include <memory>
-#include <optional>
 #include <type_traits>
 
 namespace ailoy {

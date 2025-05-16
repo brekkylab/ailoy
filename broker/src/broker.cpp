@@ -1,10 +1,9 @@
-#include <format>
-#include <thread>
+#include "broker.hpp"
+
 #include <unordered_map>
 
 #include <magic_enum/magic_enum.hpp>
 
-#include "broker.hpp"
 #include "exception.hpp"
 #include "inproc_socket.hpp"
 #include "logging.hpp"

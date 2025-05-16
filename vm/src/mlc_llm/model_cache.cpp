@@ -1,3 +1,5 @@
+#include "model_cache.hpp"
+
 #include <fstream>
 #include <regex>
 #include <string>
@@ -19,7 +21,6 @@
 #include <openssl/sha.h>
 
 #include "exception.hpp"
-#include "model_cache.hpp"
 
 namespace ailoy {
 

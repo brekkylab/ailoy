@@ -240,7 +240,6 @@ TEST(LanguageModelTest, TestQwenToolCall) {
       ASSERT_EQ(out_opt.index(), 0);
       auto out = std::get<0>(out_opt);
       auto delta = out.val->as<ailoy::map_t>()->at<ailoy::map_t>("message");
-      std::cout << delta->to_nlohmann_json() << std::endl;
       print_llm_output(delta);
       if (out.finish) {
         std::cout << "(" << i << " tokens)" << std::endl;

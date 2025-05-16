@@ -1,8 +1,8 @@
+#include "http_request.hpp"
+
 #include <httplib.h>
 
 #include "exception.hpp"
-#include "http_request.hpp"
-#include "module.hpp"
 
 namespace ailoy {
 
@@ -82,6 +82,72 @@ http_response_t run_http_request(const http_request_t &req) {
   }
 
   return response;
+}
+
+value_or_error_t http_request_op(std::shared_ptr<const value_t> inputs) {
+  if (!inputs->is_type_of<map_t>())
+    return error_output_t(
+        type_error("HTTP Request", "inputs", "map_t", inputs->get_type()));
+
+  auto input_map = inputs->as<map_t>();
+  if (!input_map->contains("url"))
+    return error_output_t(range_error("HTTP Request", "url"));
+  if (!input_map->at("url")->is_type_of<string_t>())
+    return error_output_t(type_error("HTTP Request", "url", "string_t",
+                                     input_map->at("url")->get_type()));
+  auto url = input_map->at<string_t>("url");
+
+  if (!input_map->contains("method"))
+    return error_output_t(range_error("HTTP Request", "method"));
+  if (!input_map->at("method")->is_type_of<string_t>())
+    return error_output_t(type_error("HTTP Request", "method", "string_t",
+                                     input_map->at("method")->get_type()));
+  auto method = input_map->at<string_t>("method");
+  if (!(*method == "GET" || *method == "POST" || *method == "PUT" ||
+        *method == "DELETE")) {
+    return error_output_t(value_error("HTTP Request", "method",
+                                      "GET | POST | PUT | DELETE", *method));
+  }
+  std::shared_ptr<const map_t> headers = create<map_t>();
+  if (input_map->contains("headers")) {
+    if (!input_map->at("headers")->is_type_of<map_t>())
+      return error_output_t(type_error("HTTP Request", "headers", "map_t",
+                                       input_map->at("headers")->get_type()));
+    headers = input_map->at<map_t>("headers");
+  }
+  std::shared_ptr<const string_t> body = create<string_t>();
+  if (input_map->contains("body")) {
+    if (!input_map->at("body")->is_type_of<string_t>())
+      return error_output_t(type_error("HTTP Request", "body", "string_t",
+                                       input_map->at("body")->get_type()));
+    body = input_map->at<string_t>("body");
+  }
+
+  std::unordered_map<std::string, std::string> req_headers_map;
+  for (auto it = headers->begin(); it != headers->end(); it++) {
+    std::string key = it->first;
+    std::string value = *it->second->as<string_t>();
+    req_headers_map.emplace(key, value);
+  }
+
+  ailoy::http_request_t req = {
+      .url = *url,
+      .method = *method,
+      .headers = req_headers_map,
+      .body = body->data(),
+  };
+  auto resp = ailoy::run_http_request(req);
+
+  auto resp_headers_map = create<map_t>();
+  for (const auto &[key, value] : resp.headers) {
+    resp_headers_map->insert_or_assign(key, create<string_t>(value));
+  }
+
+  auto outputs = create<map_t>();
+  outputs->insert_or_assign("status_code", create<uint_t>(resp.status_code));
+  outputs->insert_or_assign("headers", resp_headers_map);
+  outputs->insert_or_assign("body", create<bytes_t>(resp.body));
+  return outputs;
 }
 
 } // namespace ailoy

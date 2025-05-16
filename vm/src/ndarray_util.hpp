@@ -1,5 +1,3 @@
-#include <cstdint>
-
 #include <dlpack/dlpack.h>
 
 #include "value.hpp"

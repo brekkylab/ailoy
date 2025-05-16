@@ -1,9 +1,7 @@
-#include <iomanip>
-#include <numeric>
-#include <ostream>
-#include <sstream>
-
 #include "value.hpp"
+
+#include <iostream>
+#include <sstream>
 
 namespace ailoy {
 

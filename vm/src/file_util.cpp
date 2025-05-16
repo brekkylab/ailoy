@@ -1,5 +1,7 @@
 #include "file_util.hpp"
 
+#include <fstream>
+
 namespace ailoy {
 namespace utils {
 

@@ -1,7 +1,8 @@
+#include "split_text.hpp"
+
 #include <deque>
 #include <ranges>
 
-#include "split_text.hpp"
 #include "string_util.hpp"
 
 namespace ailoy {
@@ -181,6 +182,181 @@ std::vector<std::string> split_text_by_separators_recursively(
   length_function_t flength = length_functions.at(length_function);
   return _split_text_recursive(text, chunk_size, chunk_overlap, separators,
                                flength);
+}
+
+value_or_error_t
+split_text_by_separator_op(std::shared_ptr<const value_t> inputs) {
+  // Get input parameters
+  if (!inputs->is_type_of<map_t>())
+    return error_output_t(
+        type_error("Split Text", "inputs", "map_t", inputs->get_type()));
+  auto input_map = inputs->as<map_t>();
+
+  // Parse text
+  if (!input_map->contains("text"))
+    return error_output_t(range_error("Split Text", "text"));
+  if (!input_map->at("text")->is_type_of<string_t>())
+    return error_output_t(type_error("Split Text", "text", "string_t",
+                                     input_map->at("text")->get_type()));
+  const std::string &text = *input_map->at<string_t>("text");
+
+  // Parse chunk size
+  size_t chunk_size = 4000;
+  if (input_map->contains("chunk_size")) {
+    if (input_map->at("chunk_size")->is_type_of<uint_t>())
+      chunk_size = *input_map->at<uint_t>("chunk_size");
+    else if (input_map->at("chunk_size")->is_type_of<int_t>())
+      chunk_size = *input_map->at<int_t>("chunk_size");
+    else
+      return error_output_t(
+          type_error("Split Text", "chunk_size", "uint_t | int_t",
+                     input_map->at("chunk_size")->get_type()));
+    if (chunk_size < 1)
+      return error_output_t(value_error("Split Text", "chunk_size", ">= 1",
+                                        std::to_string(chunk_size)));
+  }
+
+  // Parse chunk overlap
+  size_t chunk_overlap = 200;
+  if (input_map->contains("chunk_overlap")) {
+    if (input_map->at("chunk_overlap")->is_type_of<uint_t>())
+      chunk_overlap = *input_map->at<uint_t>("chunk_overlap");
+    else if (input_map->at("chunk_overlap")->is_type_of<int_t>())
+      chunk_overlap = *input_map->at<int_t>("chunk_overlap");
+    else
+      return error_output_t(
+          type_error("Split Text", "chunk_overlap", "uint_t | int_t",
+                     input_map->at("chunk_overlap")->get_type()));
+    if (chunk_overlap < 1)
+      return error_output_t(value_error("Split Text", "chunk_overlap", ">= 1",
+                                        std::to_string(chunk_overlap)));
+  }
+
+  // Parse separator
+  std::string separator = "\n\n";
+  if (input_map->contains("separator")) {
+    if (!input_map->at("separator")->is_type_of<string_t>())
+      return error_output_t(type_error("Split Text", "separator", "string_t",
+                                       input_map->at("separator")->get_type()));
+    separator = *input_map->at<string_t>("separator");
+  }
+
+  // Parse length_function
+  std::string length_function = "default";
+  if (input_map->contains("length_function")) {
+    if (!input_map->at("length_function")->is_type_of<string_t>())
+      return error_output_t(
+          type_error("Split Text", "length_function", "string_t",
+                     input_map->at("length_function")->get_type()));
+    length_function = *input_map->at<string_t>("length_function");
+    if (!(length_function == "default" || length_function == "string"))
+      return error_output_t(value_error("Split Text", "length_function",
+                                        "default | string", length_function));
+  }
+
+  // Split text into chunks
+  auto chunks = split_text_by_separator(text, chunk_size, chunk_overlap,
+                                        separator, length_function);
+
+  // Return output
+  auto outputs = create<map_t>();
+  outputs->insert_or_assign("chunks", create<array_t>());
+  for (const auto &chunk : chunks)
+    outputs->at<array_t>("chunks")->push_back(create<string_t>(chunk));
+  return outputs;
+}
+
+value_or_error_t
+split_text_by_separators_recursively_op(std::shared_ptr<const value_t> inputs) {
+  // Get input parameters
+  if (!inputs->is_type_of<map_t>())
+    return error_output_t(
+        type_error("Split Text", "inputs", "map_t", inputs->get_type()));
+  auto input_map = inputs->as<map_t>();
+
+  // Parse text
+  if (!input_map->contains("text"))
+    return error_output_t(range_error("Split Text", "text"));
+  if (!input_map->at("text")->is_type_of<string_t>())
+    return error_output_t(type_error("Split Text", "text", "string_t",
+                                     input_map->at("text")->get_type()));
+  const std::string &text = *input_map->at<string_t>("text");
+
+  // Parse chunk size
+  size_t chunk_size = 4000;
+  if (input_map->contains("chunk_size")) {
+    if (input_map->at("chunk_size")->is_type_of<uint_t>())
+      chunk_size = *input_map->at<uint_t>("chunk_size");
+    else if (input_map->at("chunk_size")->is_type_of<int_t>())
+      chunk_size = *input_map->at<int_t>("chunk_size");
+    else
+      return error_output_t(
+          type_error("Split Text", "chunk_size", "uint_t | int_t",
+                     input_map->at("chunk_size")->get_type()));
+    if (chunk_size < 1)
+      return error_output_t(value_error("Split Text", "chunk_size", ">= 1",
+                                        std::to_string(chunk_size)));
+  }
+
+  // Parse chunk overlap
+  size_t chunk_overlap = 200;
+  if (input_map->contains("chunk_overlap")) {
+    if (input_map->at("chunk_overlap")->is_type_of<uint_t>())
+      chunk_overlap = *input_map->at<uint_t>("chunk_overlap");
+    else if (input_map->at("chunk_overlap")->is_type_of<int_t>())
+      chunk_overlap = *input_map->at<int_t>("chunk_overlap");
+    else
+      return error_output_t(
+          type_error("Split Text", "chunk_overlap", "uint_t | int_t",
+                     input_map->at("chunk_overlap")->get_type()));
+    if (chunk_overlap < 1)
+      return error_output_t(value_error("Split Text", "chunk_overlap", ">= 1",
+                                        std::to_string(chunk_overlap)));
+  }
+
+  // Parse separators
+  std::vector<std::string> separators;
+  if (input_map->contains("separator")) {
+    if (!input_map->at("separators")->is_type_of<array_t>())
+      return error_output_t(
+          type_error("Split Text", "separators", "array_t",
+                     input_map->at("separators")->get_type()));
+    for (const auto sep : *input_map->at<array_t>("separators")) {
+      if (!sep->is_type_of<string_t>())
+        return error_output_t(type_error("Split Text", "separators.*",
+                                         "string_t", sep->get_type()));
+      separators.push_back(*sep->as<string_t>());
+    }
+  } else {
+    separators.push_back("\n\n");
+    separators.push_back("\n");
+    separators.push_back(" ");
+    separators.push_back("");
+  }
+
+  // Parse length_function
+  std::string length_function = "default";
+  if (input_map->contains("length_function")) {
+    if (!input_map->at("length_function")->is_type_of<string_t>())
+      return error_output_t(
+          type_error("Split Text", "length_function", "string_t",
+                     input_map->at("length_function")->get_type()));
+    length_function = *input_map->at<string_t>("length_function");
+    if (!(length_function == "default" || length_function == "string"))
+      return error_output_t(value_error("Split Text", "length_function",
+                                        "default | string", length_function));
+  }
+
+  // Split text into chunks
+  auto chunks = split_text_by_separators_recursively(
+      text, chunk_size, chunk_overlap, separators, length_function);
+
+  // Return output
+  auto outputs = create<map_t>();
+  outputs->insert_or_assign("chunks", create<array_t>());
+  for (const auto &chunk : chunks)
+    outputs->at<array_t>("chunks")->push_back(create<string_t>(chunk));
+  return outputs;
 }
 
 } // namespace ailoy

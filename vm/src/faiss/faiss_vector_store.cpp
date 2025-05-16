@@ -1,4 +1,5 @@
-#include <algorithm>
+#include "faiss_vector_store.hpp"
+
 #include <atomic>
 #include <unordered_map>
 
@@ -6,8 +7,6 @@
 #include <faiss/IndexIDMap.h>
 #include <faiss/impl/FaissException.h>
 #include <nlohmann/json.hpp>
-
-#include "faiss_vector_store.hpp"
 
 namespace ailoy {
 

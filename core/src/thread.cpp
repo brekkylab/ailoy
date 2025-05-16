@@ -1,5 +1,4 @@
 #include "thread.hpp"
-#include "exception.hpp"
 
 namespace ailoy {
 

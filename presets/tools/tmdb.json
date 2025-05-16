@@ -79,7 +79,7 @@
             "headers": {
                 "accept": "application/json"
             },
-            "outputPath": "results[:10].{id: id, title: title, overview: overview, original_language: original_language, genre_ids: genre_ids, release_date: release_date, vote_average: vote_average, adult:adult}"
+            "outputPath": "results[:5].{id: id, title: title, overview: overview, original_language: original_language, genre_ids: genre_ids, release_date: release_date, vote_average: vote_average, adult:adult}"
         }
     },
     "tmdb_movie_reviews": {
@@ -104,7 +104,7 @@
             "headers": {
                 "accept": "application/json"
             },
-            "outputPath": "results[:2].{content:content, author:author, url:url, created_at:created_at, updated_at:updated_at}"
+            "outputPath": "results[:3].{content:content, author:author, url:url, created_at:created_at, updated_at:updated_at}"
         }
     },
     "tmdb_movie_recommendations": {
@@ -129,7 +129,7 @@
             "headers": {
                 "accept": "application/json"
             },
-            "outputPath": "results[:10].{id: id, title: title, overview: overview, original_language: original_language, genre_ids: genre_ids, release_date: release_date, vote_average: vote_average, adult:adult}"
+            "outputPath": "results[:5].{id: id, title: title, overview: overview, original_language: original_language, genre_ids: genre_ids, release_date: release_date, vote_average: vote_average, adult:adult}"
         }
     },
     "tmdb_movie_watch_providers": {

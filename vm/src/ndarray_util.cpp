@@ -1,9 +1,9 @@
+#include "ndarray_util.hpp"
+
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
-
-#include "ndarray_util.hpp"
 
 float float16_to_float32(uint16_t h) {
   uint16_t h_sign = (h & 0x8000u);
