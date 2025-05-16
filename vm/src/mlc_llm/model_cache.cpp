@@ -152,15 +152,42 @@ std::string sha1_checksum(const std::filesystem::path &filepath) {
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
+std::filesystem::path get_cache_root() {
+  fs::path cache_root;
+  if (std::getenv("AILOY_CACHE_ROOT")) {
+    // Check environment variable
+    cache_root = fs::path(std::getenv("AILOY_CACHE_ROOT"));
+  } else {
+    // Set to default cache root
 #if defined(_WIN32)
-static const fs::path CACHE_ROOT =
-    fs::path(std::getenv("LOCALAPPDATA")) / "ailoy";
+    if (std::getenv("LOCALAPPDATA"))
+      cache_root = fs::path(std::getenv("LOCALAPPDATA")) / "ailoy";
 #else
-static const fs::path CACHE_ROOT =
-    fs::path(std::getenv("HOME")) / ".cache" / "ailoy";
+    if (std::getenv("HOME"))
+      cache_root = fs::path(std::getenv("HOME")) / ".cache" / "ailoy";
 #endif
+  }
+  if (cache_root.empty()) {
+    throw exception("Cannot get cache root");
+  }
 
-static const std::string R2_BASE_URL = "https://models.download.ailoy.co";
+  try {
+    // Create a directory
+    // It returns false if already exists
+    fs::create_directories(cache_root);
+  } catch (const fs::filesystem_error &e) {
+    throw exception("cache root directory creation failed");
+  }
+
+  return cache_root;
+}
+
+std::string get_remote_cache_base_url() {
+  if (std::getenv("AILOY_REMOTE_CACHE_BASE_URL"))
+    return std::getenv("AILOY_REMOTE_CACHE_BASE_URL");
+  else
+    return "https://models.download.ailoy.co";
+}
 
 void download_file(httplib::Client &client, const std::string &remote_path,
                    const fs::path &local_path) {
@@ -213,7 +240,7 @@ fs::path get_model_base_path(const std::string &model_name,
 void remove_model(const std::string &model_name,
                   const std::string &quantization) {
   fs::path model_cache_path =
-      CACHE_ROOT / get_model_base_path(model_name, quantization);
+      get_cache_root() / get_model_base_path(model_name, quantization);
   if (fs::exists(model_cache_path)) {
     fs::remove_all(model_cache_path);
   }
@@ -224,13 +251,13 @@ get_model(const std::string &model_name, const std::string &quantization,
           const std::string &target_device,
           std::optional<model_cache_callback_t> callback,
           bool print_progress_bar) {
-  auto client = httplib::Client(R2_BASE_URL);
+  auto client = httplib::Client(get_remote_cache_base_url());
   client.set_connection_timeout(10, 0);
   client.set_read_timeout(60, 0);
 
   // Create local cache directory
   fs::path model_base_path = get_model_base_path(model_name, quantization);
-  fs::path model_cache_path = CACHE_ROOT / model_base_path;
+  fs::path model_cache_path = get_cache_root() / model_base_path;
   fs::create_directories(model_cache_path);
 
   // Assemble manifest filename based on arch, os and target device
@@ -274,7 +301,8 @@ get_model(const std::string &model_name, const std::string &quantization,
   for (auto &[file, sha1] :
        manifest["files"]
            .get<std::vector<std::pair<std::string, std::string>>>()) {
-    // Add to files_to_download if neither file exists nor sha1 checksum is same
+    // Add to files_to_download if neither file exists nor sha1 checksum is
+    // same
     if (!(fs::exists(model_cache_path / file) &&
           sha1 == sha1_checksum(model_cache_path / file))) {
       files_to_download.emplace_back(file);

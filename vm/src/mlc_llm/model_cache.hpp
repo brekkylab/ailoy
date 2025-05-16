@@ -13,6 +13,12 @@ using model_cache_callback_t =
                        const float          // current_file_progress
                        )>;
 
+/**
+ * @brief Get the cache root directory. If the AILOY_CACHE_ROOT environment
+ * variable is set, it will be used; otherwise, the default path will be used.
+ */
+std::filesystem::path get_cache_root();
+
 std::tuple<std::filesystem::path, std::filesystem::path>
 get_model(const std::string &model_name, const std::string &quantization,
           const std::string &target_device,
