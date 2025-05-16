@@ -18,7 +18,7 @@ async def main():
 
     agent.add_tools_from_preset("tmdb", authenticator=BearerAuthenticator(tmdb_api_key))
 
-    print('Simple Github assistant (Please type "exit" to stop conversation)')
+    print('Simple movie assistant (Please type "exit" to stop conversation)')
 
     while True:
         query = input("\nUser: ")
@@ -31,6 +31,8 @@ async def main():
 
         for resp in agent.run(query):
             print_agent_response(resp)
+
+    agent.delete()
 
 
 if __name__ == "__main__":
