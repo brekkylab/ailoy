@@ -37,8 +37,8 @@ target_link_libraries(ailoy_vm_obj PRIVATE indicators::indicators)
 
 # minja
 set(MINJA_ROOT ${CMAKE_BINARY_DIR}/_deps/minja)
-file(DOWNLOAD https://raw.githubusercontent.com/grf53/minja/2fb4f8822c78fb96186f24eee2637260b77cb838/include/minja/minja.hpp ${MINJA_ROOT}/include/minja/minja.hpp)
-file(DOWNLOAD https://raw.githubusercontent.com/grf53/minja/2fb4f8822c78fb96186f24eee2637260b77cb838/include/minja/chat-template.hpp ${MINJA_ROOT}/include/minja/chat-template.hpp)
+file(DOWNLOAD https://raw.githubusercontent.com/google/minja/f06140fa52fd140fe38e531ec373d8dc9c86aa06/include/minja/minja.hpp ${MINJA_ROOT}/include/minja/minja.hpp)
+file(DOWNLOAD https://raw.githubusercontent.com/google/minja/f06140fa52fd140fe38e531ec373d8dc9c86aa06/include/minja/chat-template.hpp ${MINJA_ROOT}/include/minja/chat-template.hpp)
 
 target_include_directories(ailoy_vm_obj PRIVATE ${MINJA_ROOT}/include)
 
