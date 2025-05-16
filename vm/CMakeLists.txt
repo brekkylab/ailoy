@@ -70,7 +70,7 @@ if(AILOY_WITH_MLC_LLM)
             GIT_TAG 7277d579e3b652de4bd538a937c603856f637950
         )
         if(NODE)
-            set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY ON CACHE BOOL "" FORCE)
+            set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
         endif()
 
         if(APPLE)
