@@ -182,7 +182,7 @@ std::filesystem::path get_cache_root() {
   return cache_root;
 }
 
-std::string get_remote_cache_base_url() {
+std::string get_models_url() {
   if (std::getenv("AILOY_MODELS_URL"))
     return std::getenv("AILOY_MODELS_URL");
   else
@@ -251,7 +251,7 @@ get_model(const std::string &model_name, const std::string &quantization,
           const std::string &target_device,
           std::optional<model_cache_callback_t> callback,
           bool print_progress_bar) {
-  auto client = httplib::Client(get_remote_cache_base_url());
+  auto client = httplib::Client(get_models_url());
   client.set_connection_timeout(10, 0);
   client.set_read_timeout(60, 0);
 
