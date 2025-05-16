@@ -67,38 +67,6 @@ if(AILOY_WITH_TEST)
 endif()
 
 ##################
-# Util functions #
-##################
-function(apply_git_patch dep_name patch_path work_dir)
-    find_program(GIT_EXECUTABLE git)
-    if(NOT GIT_EXECUTABLE)
-        message(FATAL_ERROR "Git not found — required to apply patch: ${patch_path}")
-    endif()
-    
-    # Check if patch is already applied by trying to reverse it
-    execute_process(
-        COMMAND ${GIT_EXECUTABLE} apply --reverse --check "${patch_path}"
-        WORKING_DIRECTORY "${work_dir}"
-        RESULT_VARIABLE PATCH_ALREADY_APPLIED
-        OUTPUT_QUIET
-    )
-    if(PATCH_ALREADY_APPLIED EQUAL 0)
-        message(STATUS "${dep_name} patch already applied - skipping")
-    else()
-        message(STATUS "Applying ${dep_name} patch...")
-        execute_process(
-            COMMAND ${GIT_EXECUTABLE} apply "${patch_path}"
-            WORKING_DIRECTORY "${work_dir}"
-            RESULT_VARIABLE PATCH_RESULT
-        )
-        if(NOT PATCH_RESULT EQUAL 0)
-            message(FATAL_ERROR "Failed to apply ${dep_name} patch")
-        endif()
-    endif()
-endfunction()
-
-
-##################
 # Subdirectories #
 ##################
 add_subdirectory(core)
