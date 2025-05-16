@@ -2,21 +2,14 @@ import json
 import subprocess
 import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Generator
 from pathlib import Path
 from typing import (
     Any,
-    Awaitable,
-    Callable,
-    Dict,
-    Generator,
-    List,
     Literal,
     Optional,
-    Tuple,
     TypeVar,
-    TypeVarTuple,
     Union,
-    Unpack,
 )
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -50,7 +43,7 @@ class AIOutputTextMessage(BaseModel):
 class AIToolCallMessage(BaseModel):
     role: Literal["assistant"]
     content: None
-    tool_calls: List["ToolCall"]
+    tool_calls: list["ToolCall"]
 
 
 class ToolCall(BaseModel):
@@ -61,7 +54,7 @@ class ToolCall(BaseModel):
 
 class ToolCallFunction(BaseModel):
     name: str
-    arguments: Dict[str, Any]
+    arguments: dict[str, Any]
 
 
 class ToolCallResultMessage(BaseModel):
@@ -109,7 +102,7 @@ class ModelDescription(BaseModel):
     default_system_message: Optional[str] = None
 
 
-model_descriptions: Dict[ModelName, ModelDescription] = {
+model_descriptions: dict[ModelName, ModelDescription] = {
     "qwen3-0.6b": ModelDescription(
         model_id="Qwen/Qwen3-0.6B",
         component_type="tvm_language_model",
@@ -192,14 +185,14 @@ class ToolDescription(BaseModel):
     name: str
     description: str
     parameters: "ToolParameters"
-    return_type: Optional[Dict[str, Any]] = Field(default=None, alias="return")
+    return_type: Optional[dict[str, Any]] = Field(default=None, alias="return")
     model_config = ConfigDict(populate_by_name=True)
 
 
 class ToolParameters(BaseModel):
     type: Literal["object"]
-    properties: Dict[str, "ToolParametersProperty"]
-    required: Optional[List[str]] = []
+    properties: dict[str, "ToolParametersProperty"]
+    required: Optional[list[str]] = []
 
 
 class ToolParametersProperty(BaseModel):
@@ -229,7 +222,7 @@ class RESTAPIBehavior(BaseModel):
     base_url: str = Field(alias="baseURL")
     method: Literal["GET", "POST", "PUT", "DELETE"]
     authentication: Optional[Literal["bearer"]] = None
-    headers: Optional[Dict[str, str]] = None
+    headers: Optional[dict[str, str]] = None
     body: Optional[str] = None
     output_path: Optional[str] = Field(default=None, alias="outputPath")
     model_config = ConfigDict(populate_by_name=True)
@@ -247,7 +240,7 @@ class Tool:
 
 class ToolAuthenticator(ABC):
     @abstractmethod
-    def apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    def apply(self, request: dict[str, Any]) -> dict[str, Any]:
         pass
 
 
@@ -256,17 +249,16 @@ class BearerAuthenticator(ToolAuthenticator):
         self.token = token
         self.bearer_format = bearer_format
 
-    def apply(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    def apply(self, request: dict[str, Any]) -> dict[str, Any]:
         headers = request.get("headers", {})
         headers["Authorization"] = f"{self.bearer_format} {self.token}"
         return {**request, "headers": headers}
 
 
 T_Retval = TypeVar("T_Retval")
-PosArgsT = TypeVarTuple("PosArgsT")
 
 
-def run_async(coro: Callable[[Unpack[PosArgsT]], Awaitable[T_Retval]]) -> T_Retval:
+def run_async(coro: Callable[..., Awaitable[T_Retval]]) -> T_Retval:
     try:
         import anyio
 
@@ -316,12 +308,12 @@ class Agent:
         )
 
         # Initialize messages
-        self._messages: List[Message] = []
+        self._messages: list[Message] = []
         if system_message:
             self._messages.append(SystemMessage(role="system", content=system_message))
 
         # Initialize tools
-        self._tools: List[Tool] = []
+        self._tools: list[Tool] = []
 
         # Define the component
         self.define(model_name, api_key=api_key, attrs=attrs)
@@ -434,7 +426,7 @@ class Agent:
                             content=tool_call,
                         )
 
-                    tool_call_results: List[ToolCallResultMessage] = []
+                    tool_call_results: list[ToolCallResultMessage] = []
 
                     def run_tool(tool_call: ToolCall):
                         tool_ = next(
@@ -508,7 +500,7 @@ class Agent:
         if tool_def.type != "universal":
             raise ValueError('Tool type is not "universal"')
 
-        def call(runtime: Runtime, inputs: Dict[str, Any]) -> Any:
+        def call(runtime: Runtime, inputs: dict[str, Any]) -> Any:
             required = tool_def.description.parameters.required or []
             for param_name in required:
                 if param_name not in inputs:
@@ -525,7 +517,7 @@ class Agent:
     def add_restapi_tool(
         self,
         tool_def: RESTAPIToolDefinition,
-        authenticator: Optional[ToolAuthenticator] = None,
+        authenticator: Optional[Union[ToolAuthenticator, Callable[[dict[str, Any]], dict[str, Any]]]] = None,
     ) -> bool:
         """
         Adds a REST API tool that performs external HTTP requests.
@@ -540,8 +532,8 @@ class Agent:
 
         behavior = tool_def.behavior
 
-        def call(_: Runtime, inputs: Dict[str, Any]) -> Any:
-            def render_template(template: str, context: Dict[str, Any]) -> Tuple[str, List[str]]:
+        def call(_: Runtime, inputs: dict[str, Any]) -> Any:
+            def render_template(template: str, context: dict[str, Any]) -> tuple[str, list[str]]:
                 import re
 
                 variables = set()
@@ -608,7 +600,7 @@ class Agent:
         if not preset_json.exists():
             raise ValueError(f'Tool preset "{preset_name}" does not exist')
 
-        data: Dict[str, Dict[str, Any]] = json.loads(preset_json.read_text())
+        data: dict[str, dict[str, Any]] = json.loads(preset_json.read_text())
         for tool_name, tool_def in data.items():
             tool_type = tool_def.get("type", None)
             if tool_type == "universal":
@@ -628,14 +620,14 @@ class Agent:
         """
         from mcp.client.stdio import stdio_client
 
-        def call(_: Runtime, inputs: Dict[str, Any]) -> Any:
+        def call(_: Runtime, inputs: dict[str, Any]) -> Any:
             async def _inner():
                 async with stdio_client(params, errlog=subprocess.STDOUT) as streams:
                     async with mcp.ClientSession(*streams) as session:
                         await session.initialize()
 
                         result = await session.call_tool(tool.name, inputs)
-                        contents: List[str] = []
+                        contents: list[str] = []
                         for item in result.content:
                             if isinstance(item, mcp_types.TextContent):
                                 contents.append(item.text)
@@ -654,13 +646,13 @@ class Agent:
         desc = ToolDescription(name=tool.name, description=tool.description, parameters=tool.inputSchema)
         return self.add_tool(Tool(desc=desc, call_fn=call))
 
-    def add_tools_from_mcp_server(self, params: mcp.StdioServerParameters, tools_to_add: Optional[List[str]] = None):
+    def add_tools_from_mcp_server(self, params: mcp.StdioServerParameters, tools_to_add: Optional[list[str]] = None):
         """
         Fetches tools from an MCP stdio server and registers them with the agent.
 
         :param params: Parameters for connecting to the MCP stdio server.
         :param tools_to_add: Optional list of tool names to add. If None, all tools are added.
-        :returns: List of all tools returned by the server.
+        :returns: list of all tools returned by the server.
         """
         from mcp.client.stdio import stdio_client
 
