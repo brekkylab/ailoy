@@ -183,8 +183,8 @@ std::filesystem::path get_cache_root() {
 }
 
 std::string get_remote_cache_base_url() {
-  if (std::getenv("AILOY_REMOTE_CACHE_BASE_URL"))
-    return std::getenv("AILOY_REMOTE_CACHE_BASE_URL");
+  if (std::getenv("AILOY_MODELS_URL"))
+    return std::getenv("AILOY_MODELS_URL");
   else
     return "https://models.download.ailoy.co";
 }
