@@ -21,6 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from ailoy.ailoy_py import generate_uuid
 from ailoy.runtime import Runtime
 
+__all__ = ["Agent"]
+
 ## Types for OpenAI API-compatible data structures
 
 
