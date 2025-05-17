@@ -164,10 +164,8 @@ TEST(VectorStoreTest, ChromadbComponent_CreateAddRetrieve) {
           "metadata", ailoy::from_nlohmann_json(insert_inputs[i].metadata));
       items->push_back(in);
     }
-    auto inputs = ailoy::create<ailoy::map_t>();
-    inputs->insert_or_assign("items", items);
 
-    insert_many_op->initialize(inputs);
+    insert_many_op->initialize(items);
     auto insert_many_outputs_opt = insert_many_op->step();
     ASSERT_EQ(insert_many_outputs_opt.index(), 0);
     auto insert_many_outputs = std::get<0>(insert_many_outputs_opt);

@@ -93,9 +93,7 @@ describe("JSVM", () => {
     ];
 
     let vectorIds;
-    const resp1 = await rt.callMethod("vs0", "insert_many", {
-      items: insertInputs,
-    });
+    const resp1 = await rt.callMethod("vs0", "insert_many", insertInputs);
     expect(resp1).to.have.property("ids");
     vectorIds = resp1.ids;
 
@@ -160,9 +158,7 @@ describe("JSVM", () => {
     ];
 
     let vectorIds;
-    const resp1 = await rt.callMethod("vs0", "insert_many", {
-      items: insertInputs,
-    });
+    const resp1 = await rt.callMethod("vs0", "insert_many", insertInputs);
     expect(resp1).to.have.property("ids");
     vectorIds = resp1.ids;
 
