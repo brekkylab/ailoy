@@ -3,6 +3,7 @@ if (DEFINED NODE)
   # Add node-addon-api include
   execute_process(
     COMMAND node -p "require('node-addon-api').include"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     OUTPUT_VARIABLE NODE_ADDON_API_INCLUDE_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE
   )
@@ -51,4 +52,5 @@ if (DEFINED NODE)
     BYPRODUCTS
         ${AILOY_JS_NODE_OUTPUTS_DST}
   )
+
 endif()
