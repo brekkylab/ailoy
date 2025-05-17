@@ -4,6 +4,8 @@ from pydantic import BaseModel, TypeAdapter
 
 from ailoy.runtime import Runtime, generate_uuid
 
+__all__ = ["VectorStore"]
+
 
 class VectorStoreInsertItem(BaseModel):
     document: str
