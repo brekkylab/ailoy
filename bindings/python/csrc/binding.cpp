@@ -54,8 +54,9 @@ std::string instruction_type_to_string(const ailoy::instruction_type &itype) {
 
 void start_threads(const std::string &url) {
   broker_thread = std::thread{[&]() { ailoy::broker_start(url); }};
-  std::shared_ptr<const ailoy::module_t> mods[] = {
-      ailoy::get_default_module(), ailoy::get_language_module()};
+  std::shared_ptr<const ailoy::module_t> mods[] = {ailoy::get_default_module(),
+                                                   ailoy::get_language_module(),
+                                                   ailoy::get_debug_module()};
   vm_thread = std::thread{[&]() { ailoy::vm_start(url, mods); }};
   std::this_thread::sleep_for(100ms);
 }

@@ -187,7 +187,7 @@ class VectorStore:
             "retrieve",
             {
                 "query_embedding": embedding,
-                "k": top_k,
+                "top_k": top_k,
             },
         )
         results = TypeAdapter(List[VectorStoreRetrieveItem]).validate_python(resp["results"])

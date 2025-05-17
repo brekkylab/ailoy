@@ -17,13 +17,16 @@ def runtime():
 
 
 async def test_async_echo(runtime: AsyncRuntime):
-    await runtime.call("echo", "hello world") == "hello world"
+    text = "hello world"
+    resp = await runtime.call("echo", {"text": text})
+    assert resp["text"] == text
 
 
 async def test_async_spell(runtime: AsyncRuntime):
+    text = "abcdefghijk"
     i = 0
-    async for out in runtime.call_iter("spell", "abcdefghijk"):
-        assert out == "abcdefghijk"[i]
+    async for out in runtime.call_iter("spell", {"text": text}):
+        assert out["text"] == text[i]
         i += 1
 
 

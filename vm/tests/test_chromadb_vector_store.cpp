@@ -112,37 +112,68 @@ TEST(VectorStoreTest, ChromadbComponent_CreateAddRetrieve) {
   }
 
   auto vectorstore = std::get<0>(vectorstore_opt);
-  auto add_vector_op = vectorstore->get_operator("insert");
+  auto insert_op = vectorstore->get_operator("insert");
+  auto insert_many_op = vectorstore->get_operator("insert_many");
   auto get_by_id_op = vectorstore->get_operator("get_by_id");
   auto retrieve_op = vectorstore->get_operator("retrieve");
-  auto remove_vector_op = vectorstore->get_operator("remove");
+  auto remove_op = vectorstore->get_operator("remove");
   auto clear_op = vectorstore->get_operator("clear");
 
   size_t num_vectors = 10;
-  std::vector<ailoy::vector_store_add_input_t> add_inputs;
+  std::vector<ailoy::vector_store_add_input_t> insert_inputs;
   std::vector<std::string> vec_ids;
   for (int i = 0; i < num_vectors; i++) {
     auto vec = get_random_normalized_vector(dimension);
-    auto add_input = ailoy::vector_store_add_input_t{
+    auto insert_input = ailoy::vector_store_add_input_t{
         .embedding = vec,
         .document = "document" + std::to_string(i),
         .metadata = nlohmann::json{{"value", i}},
     };
-    add_inputs.push_back(add_input);
+    insert_inputs.push_back(insert_input);
+  }
 
+  // test insert
+  {
+    auto item0 = insert_inputs[0];
     auto in1 = ailoy::create<ailoy::map_t>();
-    in1->insert_or_assign("embedding", vec);
+    in1->insert_or_assign("embedding",
+                          ailoy::create<ailoy::ndarray_t>(*item0.embedding));
     in1->insert_or_assign("document",
-                          ailoy::create<ailoy::string_t>(add_input.document));
+                          ailoy::create<ailoy::string_t>(item0.document));
     in1->insert_or_assign("metadata",
-                          ailoy::from_nlohmann_json(add_input.metadata));
-    add_vector_op->initialize(in1);
-    auto vec_id_opt = add_vector_op->step();
-    ASSERT_EQ(vec_id_opt.index(), 0);
-    auto vec_id = *std::get<0>(vec_id_opt)
-                       .val->as<ailoy::map_t>()
-                       ->at<ailoy::string_t>("id");
-    vec_ids.push_back(vec_id);
+                          ailoy::from_nlohmann_json(item0.metadata));
+    insert_op->initialize(in1);
+    auto insert_outputs_opt = insert_op->step();
+    ASSERT_EQ(insert_outputs_opt.index(), 0);
+    auto insert_outputs = std::get<0>(insert_outputs_opt);
+    auto vec_id =
+        insert_outputs.val->as<ailoy::map_t>()->at<ailoy::string_t>("id");
+    vec_ids.push_back(*vec_id);
+  }
+
+  // test insert_many
+  {
+    auto items = ailoy::create<ailoy::array_t>();
+    for (int i = 1; i < num_vectors; i++) {
+      auto in = ailoy::create<ailoy::map_t>();
+      in->insert_or_assign("embedding", ailoy::create<ailoy::ndarray_t>(
+                                            *insert_inputs[i].embedding));
+      in->insert_or_assign("document", ailoy::create<ailoy::string_t>(
+                                           insert_inputs[i].document));
+      in->insert_or_assign(
+          "metadata", ailoy::from_nlohmann_json(insert_inputs[i].metadata));
+      items->push_back(in);
+    }
+
+    insert_many_op->initialize(items);
+    auto insert_many_outputs_opt = insert_many_op->step();
+    ASSERT_EQ(insert_many_outputs_opt.index(), 0);
+    auto insert_many_outputs = std::get<0>(insert_many_outputs_opt);
+    auto ids =
+        insert_many_outputs.val->as<ailoy::map_t>()->at<ailoy::array_t>("ids");
+    for (auto vec_id : *ids) {
+      vec_ids.push_back(*vec_id->as<ailoy::string_t>());
+    }
   }
 
   std::string test_id = vec_ids[0];
@@ -155,15 +186,15 @@ TEST(VectorStoreTest, ChromadbComponent_CreateAddRetrieve) {
   auto out2_opt = get_by_id_op->step();
   ASSERT_EQ(out2_opt.index(), 0);
   auto out2 = std::get<0>(out2_opt).val->as<ailoy::map_t>();
-  ASSERT_EQ(*out2->at<ailoy::string_t>("document"), add_inputs[0].document);
+  ASSERT_EQ(*out2->at<ailoy::string_t>("document"), insert_inputs[0].document);
   ASSERT_EQ(out2->at<ailoy::value_t>("metadata")->to_nlohmann_json(),
-            add_inputs[0].metadata.value());
+            insert_inputs[0].metadata.value());
 
   // test retrieve
   auto in3 = ailoy::create<ailoy::map_t>();
   in3->insert_or_assign("query_embedding", ailoy::create<ailoy::ndarray_t>(
-                                               *add_inputs[0].embedding));
-  in3->insert_or_assign("k", ailoy::create<ailoy::uint_t>(1));
+                                               *insert_inputs[0].embedding));
+  in3->insert_or_assign("top_k", ailoy::create<ailoy::uint_t>(1));
   retrieve_op->initialize(in3);
   auto out3_opt = retrieve_op->step();
   ASSERT_EQ(out3_opt.index(), 0);
@@ -172,16 +203,17 @@ TEST(VectorStoreTest, ChromadbComponent_CreateAddRetrieve) {
   ASSERT_EQ(out3->size(), 1);
   auto result = out3->at<ailoy::map_t>(0);
   ASSERT_EQ(*result->at<ailoy::string_t>("id"), test_id);
-  ASSERT_EQ(*result->at<ailoy::string_t>("document"), add_inputs[0].document);
+  ASSERT_EQ(*result->at<ailoy::string_t>("document"),
+            insert_inputs[0].document);
   ASSERT_EQ(result->at<ailoy::value_t>("metadata")->to_nlohmann_json(),
-            add_inputs[0].metadata.value());
+            insert_inputs[0].metadata.value());
   ASSERT_FLOAT_EQ(*result->at<ailoy::float_t>("similarity"), 1.0f);
 
   // test remove
   auto in4 = ailoy::create<ailoy::map_t>();
   in4->insert_or_assign("id", ailoy::create<ailoy::string_t>(vec_ids[0]));
-  remove_vector_op->initialize(in4);
-  auto out4_opt = remove_vector_op->step();
+  remove_op->initialize(in4);
+  auto out4_opt = remove_op->step();
   ASSERT_EQ(out4_opt.index(), 0);
 
   // test clear

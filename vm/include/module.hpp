@@ -359,4 +359,9 @@ struct module_t : public object_t {
  */
 std::shared_ptr<const module_t> get_default_module();
 
+/**
+ * @brief Get debug module with operators & components for debugging purpose
+ */
+std::shared_ptr<const module_t> get_debug_module();
+
 } // namespace ailoy

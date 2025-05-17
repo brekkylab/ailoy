@@ -91,21 +91,21 @@ create_vector_store_component(std::shared_ptr<const value_t> attrs) {
       [](std::shared_ptr<component_t> component,
          std::shared_ptr<const value_t> inputs) -> value_or_error_t {
         if (!inputs->is_type_of<map_t>())
-          return error_output_t(type_error("Vector Store: insert", "inputs",
+          return error_output_t(type_error("vector_store.insert", "inputs",
                                            "map_t", inputs->get_type()));
         auto input_map = inputs->as<map_t>();
 
         if (!input_map->contains("embedding") ||
             !input_map->at("embedding")->is_type_of<ndarray_t>())
           return error_output_t(
-              type_error("Vector Store: insert", "embedding", "ndarray_t",
+              type_error("vector_store.insert", "embedding", "ndarray_t",
                          input_map->at("embedding")->get_type()));
         auto embedding = input_map->at<ndarray_t>("embedding");
 
         if (!input_map->contains("document") ||
             !input_map->at("document")->is_type_of<string_t>())
           return error_output_t(
-              type_error("Vector Store: insert", "document", "string_t",
+              type_error("vector_store.insert", "document", "string_t",
                          input_map->at("embedding")->get_type()));
         std::string document = *input_map->at<string_t>("document");
 
@@ -116,7 +116,7 @@ create_vector_store_component(std::shared_ptr<const value_t> attrs) {
               metadata_val->is_type_of<null_t>())
             metadata = *metadata_val;
           else
-            return error_output_t(type_error("Vector Store: insert", "metadata",
+            return error_output_t(type_error("vector_store.insert", "metadata",
                                              "map_t | null_t",
                                              metadata_val->get_type()));
         } else
@@ -140,16 +140,16 @@ create_vector_store_component(std::shared_ptr<const value_t> attrs) {
       [](std::shared_ptr<component_t> component,
          std::shared_ptr<const value_t> inputs) -> value_or_error_t {
         if (!inputs->is_type_of<array_t>()) {
-          return error_output_t(type_error("Vector Store: insert_many",
-                                           "inputs", "array_t",
-                                           inputs->get_type()));
+          return error_output_t(type_error("vector_store.insert_many", "inputs",
+                                           "array_t", inputs->get_type()));
         }
-        auto input_arr = inputs->as<array_t>();
+
+        auto inputs_arr = inputs->as<array_t>();
 
         std::vector<vector_store_add_input_t> add_inputs;
-        for (auto input_item : *input_arr) {
+        for (auto input_item : *inputs_arr) {
           if (!input_item->is_type_of<map_t>()) {
-            return error_output_t(type_error("Vector Store: insert_many",
+            return error_output_t(type_error("vector_store.insert_many",
                                              "inputs.*", "map_t",
                                              input_item->get_type()));
           }
@@ -158,15 +158,15 @@ create_vector_store_component(std::shared_ptr<const value_t> attrs) {
           if (!input_item_map->contains("embedding") ||
               !input_item_map->at("embedding")->is_type_of<ndarray_t>())
             return error_output_t(type_error(
-                "Vector Store: insert_many", "embedding", "ndarray_t",
+                "vector_store.insert_many", "inputs.embedding", "ndarray_t",
                 input_item_map->at("embedding")->get_type()));
           auto embedding = input_item_map->at<ndarray_t>("embedding");
 
           if (!input_item_map->contains("document") ||
               !input_item_map->at("document")->is_type_of<string_t>())
-            return error_output_t(
-                type_error("Vector Store: insert_many", "document", "string_t",
-                           input_item_map->at("embedding")->get_type()));
+            return error_output_t(type_error(
+                "vector_store.insert_many", "inputs.document", "string_t",
+                input_item_map->at("embedding")->get_type()));
           std::string document = *input_item_map->at<string_t>("document");
 
           nlohmann::json metadata;
@@ -176,9 +176,9 @@ create_vector_store_component(std::shared_ptr<const value_t> attrs) {
                 metadata_val->is_type_of<null_t>())
               metadata = *metadata_val;
             else
-              return error_output_t(type_error("Vector Store: insert_many",
-                                               "metadata", "map_t | null_t",
-                                               metadata_val->get_type()));
+              return error_output_t(
+                  type_error("vector_store.insert_many", "inputs.metadata",
+                             "map_t | null_t", metadata_val->get_type()));
           } else
             metadata = nlohmann::json({});
 
@@ -205,15 +205,15 @@ create_vector_store_component(std::shared_ptr<const value_t> attrs) {
       [](std::shared_ptr<component_t> component,
          std::shared_ptr<const value_t> inputs) -> value_or_error_t {
         if (!inputs->is_type_of<map_t>()) {
-          return error_output_t(type_error("Vector Store: get_by_id", "inputs",
+          return error_output_t(type_error("vector_store.get_by_id", "inputs",
                                            "map_t", inputs->get_type()));
         }
         auto inputs_map = inputs->as<map_t>();
 
         if (!inputs_map->contains("id"))
-          return error_output_t(range_error("Vector Store: get_by_id", "id"));
+          return error_output_t(range_error("vector_store.get_by_id", "id"));
         if (!inputs_map->at("id")->is_type_of<string_t>())
-          return error_output_t(type_error("Vector Store: get_by_id", "id",
+          return error_output_t(type_error("vector_store.get_by_id", "id",
                                            "string_t",
                                            inputs_map->at("id")->get_type()));
         std::string id = *inputs_map->at<string_t>("id");
@@ -247,36 +247,36 @@ create_vector_store_component(std::shared_ptr<const value_t> attrs) {
       [](std::shared_ptr<component_t> component,
          std::shared_ptr<const value_t> inputs) -> value_or_error_t {
         if (!inputs->is_type_of<map_t>()) {
-          return error_output_t(type_error("Vector Store: retrieve", "inputs",
+          return error_output_t(type_error("vector_store.retrieve", "inputs",
                                            "map_t", inputs->get_type()));
         }
         auto inputs_map = inputs->as<map_t>();
 
         if (!inputs_map->contains("query_embedding"))
           return error_output_t(
-              range_error("Vector Store: retrieve", "query_embedding"));
+              range_error("vector_store.retrieve", "query_embedding"));
         if (!inputs_map->at("query_embedding")->is_type_of<ndarray_t>())
           return error_output_t(type_error(
-              "Vector Store: retrieve", "query_embedding", "ndarray_t",
+              "vector_store.retrieve", "query_embedding", "ndarray_t",
               inputs_map->at("query_embedding")->get_type()));
         auto query_embedding = inputs_map->at<ndarray_t>("query_embedding");
 
-        uint64_t k;
-        if (!inputs_map->contains("k"))
+        uint64_t top_k;
+        if (!inputs_map->contains("top_k"))
           return error_output_t(
-              range_error("Vector Store: retrieve", "query_embedding"));
-        if (inputs_map->at("k")->is_type_of<uint_t>())
-          k = *inputs_map->at<uint_t>("k");
-        else if (inputs_map->at("k")->is_type_of<int_t>())
-          k = *inputs_map->at<int_t>("k");
+              range_error("vector_store.retrieve", "query_embedding"));
+        if (inputs_map->at("top_k")->is_type_of<uint_t>())
+          top_k = *inputs_map->at<uint_t>("top_k");
+        else if (inputs_map->at("top_k")->is_type_of<int_t>())
+          top_k = *inputs_map->at<int_t>("top_k");
         else
-          return error_output_t(type_error("Vector Store: retrieve", "k",
-                                           "uint_t | int_t",
-                                           inputs_map->at("k")->get_type()));
+          return error_output_t(
+              type_error("vector_store.retrieve", "top_k", "uint_t | int_t",
+                         inputs_map->at("top_k")->get_type()));
 
         auto retrieve_results = component->get_obj("vector_store")
                                     ->as<vector_store_t>()
-                                    ->retrieve(query_embedding, k);
+                                    ->retrieve(query_embedding, top_k);
 
         auto results = create<array_t>();
         for (const auto &result : retrieve_results) {
@@ -302,15 +302,15 @@ create_vector_store_component(std::shared_ptr<const value_t> attrs) {
       [](std::shared_ptr<component_t> component,
          std::shared_ptr<const value_t> inputs) -> value_or_error_t {
         if (!inputs->is_type_of<map_t>()) {
-          return error_output_t(type_error("Vector Store: remove", "inputs",
+          return error_output_t(type_error("vector_store.remove", "inputs",
                                            "map_t", inputs->get_type()));
         }
         auto inputs_map = inputs->as<map_t>();
 
         if (!inputs_map->contains("id"))
-          return error_output_t(range_error("Vector Store: remove", "id"));
+          return error_output_t(range_error("vector_store.remove", "id"));
         if (!inputs_map->at("id")->is_type_of<string_t>())
-          return error_output_t(type_error("Vector Store: remove", "id",
+          return error_output_t(type_error("vector_store.remove", "id",
                                            "string_t",
                                            inputs_map->at("id")->get_type()));
         std::string id = *inputs_map->at<string_t>("id");

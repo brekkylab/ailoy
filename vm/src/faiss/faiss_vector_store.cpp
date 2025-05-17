@@ -106,13 +106,14 @@ public:
 
   std::vector<vector_store_retrieve_result_t>
   retrieve(std::shared_ptr<const ailoy::ndarray_t> query_embedding,
-           uint64_t k) {
+           uint64_t top_k) {
     if (!is_valid_embedding(query_embedding)) {
       throw ailoy::runtime_error("[FAISS] invalid query embedding shape: " +
                                  query_embedding->shape_str());
     }
 
-    faiss::idx_t min_k = std::min(index_.ntotal, static_cast<faiss::idx_t>(k));
+    faiss::idx_t min_k =
+        std::min(index_.ntotal, static_cast<faiss::idx_t>(top_k));
     if (min_k == 0) {
       return {};
     }

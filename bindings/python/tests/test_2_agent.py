@@ -5,6 +5,7 @@ import pytest
 
 from ailoy import Runtime
 from ailoy.agent import Agent, AgentResponse
+from ailoy.vector_store import VectorStore
 
 pytestmark = [pytest.mark.agent]
 
@@ -43,37 +44,43 @@ def _print_agent_response(resp: AgentResponse):
 
 
 @pytest.fixture(scope="module")
-def prepared_agent():
+def runtime():
     rt = Runtime("inproc://agent")
-    agent = Agent(rt, model_name="qwen3-8b")
+    yield rt
+    rt.stop()
+
+
+@pytest.fixture(scope="module")
+def agent(runtime: Runtime):
+    agent = Agent(runtime, model_name="qwen3-8b")
     yield agent
     agent.delete()
 
 
-def test_tool_call_calculator(prepared_agent: Agent):
-    prepared_agent._messages.clear()
-    prepared_agent._tools.clear()
-    prepared_agent.add_tools_from_preset("calculator")
+def test_tool_call_calculator(agent: Agent):
+    agent._messages.clear()
+    agent._tools.clear()
+    agent.add_tools_from_preset("calculator")
 
     query = "Please calculate this formula: floor(ln(exp(e))+cos(2*pi))"
-    for resp in prepared_agent.run(query):
+    for resp in agent.run(query):
         _print_agent_response(resp)
 
 
-def test_tool_call_frankfurter(prepared_agent: Agent):
-    prepared_agent._messages.clear()
-    prepared_agent._tools.clear()
-    prepared_agent.add_tools_from_preset("frankfurter")
+def test_tool_call_frankfurter(agent: Agent):
+    agent._messages.clear()
+    agent._tools.clear()
+    agent.add_tools_from_preset("frankfurter")
 
     query = "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?"
-    for resp in prepared_agent.run(query):
+    for resp in agent.run(query):
         _print_agent_response(resp)
 
 
-def test_mcp_tools_github(prepared_agent: Agent):
-    prepared_agent._messages.clear()
-    prepared_agent._tools.clear()
-    prepared_agent.add_tools_from_mcp_server(
+def test_mcp_tools_github(agent: Agent):
+    agent._messages.clear()
+    agent._tools.clear()
+    agent.add_tools_from_mcp_server(
         mcp.StdioServerParameters(
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
@@ -83,10 +90,29 @@ def test_mcp_tools_github(prepared_agent: Agent):
             "get_file_contents",
         ],
     )
-    tool_names = set([tool.desc.name for tool in prepared_agent._tools])
+    tool_names = set([tool.desc.name for tool in agent._tools])
     assert "search_repositories" in tool_names
     assert "get_file_contents" in tool_names
 
     query = "Summarize README.md from repository brekkylab/ailoy."
-    for resp in prepared_agent.run(query):
+    for resp in agent.run(query):
         _print_agent_response(resp)
+
+
+def test_simple_rag_pipeline(runtime: Runtime, agent: Agent):
+    agent._messages.clear()
+    agent._tools.clear()
+
+    with VectorStore(runtime, embedding_model_name="bge-m3") as vs:
+        vs.insert(
+            "Ailoy is a lightweight library for building AI applications — such as **agent systems** or **RAG pipelines** — with ease. It is designed to enable AI features effortlessly, one can just import and use.",  # noqa: E501
+        )
+        query = "What is Ailoy?"
+        items = vs.retrieve(query)
+        prompt = f"""
+            Based on the following contexts, answer to user's question.
+            Context: {[item.document for item in items]}
+            Question: {query}
+        """
+        for resp in agent.run(prompt):
+            _print_agent_response(resp)
