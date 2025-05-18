@@ -190,36 +190,32 @@ export interface ToolDefinitionRESTAPI {
 
 export type ToolDefinition = ToolDefinitionUniversal | ToolDefinitionRESTAPI;
 
-export interface ToolAuthenticator {
-  apply: (request: {
-    url: string;
-    headers: { [k: string]: string };
-    [k: string]: any;
-  }) => {
-    url: string;
-    headers: { [k: string]: string };
-    [k: string]: any;
-  };
-}
+export type ToolAuthenticator = (request: {
+  url: string;
+  headers: { [k: string]: string };
+  [k: string]: any;
+}) => {
+  url: string;
+  headers: { [k: string]: string };
+  [k: string]: any;
+};
 
 export function bearerAutenticator(
   token: string,
   bearerFormat: string = "Bearer"
 ): ToolAuthenticator {
-  return {
-    apply: (request: {
-      url: string;
-      headers: { [k: string]: string };
-      [k: string]: any;
-    }) => {
-      return {
-        ...request,
-        headers: {
-          ...request.headers,
-          Authorization: `${bearerFormat} ${token}`,
-        },
-      };
-    },
+  return (request: {
+    url: string;
+    headers: { [k: string]: string };
+    [k: string]: any;
+  }) => {
+    return {
+      ...request,
+      headers: {
+        ...request.headers,
+        Authorization: `${bearerFormat} ${token}`,
+      },
+    };
   };
 }
 
@@ -433,7 +429,7 @@ export class Agent {
           };
 
       // Apply authentication
-      const request = auth ? auth.apply(requestNoAuth) : requestNoAuth;
+      const request = auth ? auth(requestNoAuth) : requestNoAuth;
 
       // Call
       let output: any;

@@ -19,22 +19,20 @@ function getUserInput(query: string): Promise<string> {
 async function main() {
   const rt = await startRuntime();
 
-  const ex = await defineAgent(rt, "qwen3-8b");
+  const agent = await defineAgent(rt, "qwen3-8b");
 
   let nytimesApiKey = process.env.NYTIMES_API_KEY;
   if (nytimesApiKey === undefined) {
     nytimesApiKey = await getUserInput("Enter New York Times API Key: ");
   }
 
-  const authenticator: ToolAuthenticator = {
-    apply: (request) => {
-      let url = new URL(request.url);
-      url.searchParams.append("api-key", nytimesApiKey);
-      request.url = url.toString();
-      return request;
-    },
+  const authenticator: ToolAuthenticator = (request: any) => {
+    let url = new URL(request.url);
+    url.searchParams.append("api-key", nytimesApiKey);
+    request.url = url.toString();
+    return request;
   };
-  ex.addToolsFromPreset("nytimes", {
+  agent.addToolsFromPreset("nytimes", {
     authenticator,
   });
 
@@ -49,7 +47,7 @@ async function main() {
     if (query === "" || query === "exit") break;
 
     process.stdout.write(`\nAssistant: `);
-    for await (const resp of ex.run(query)) {
+    for await (const resp of agent.run(query)) {
       if (resp.type === "output_text") {
         process.stdout.write(resp.content);
         if (resp.endOfTurn) {
@@ -73,7 +71,7 @@ Tool Call Result
     }
   }
 
-  await ex.delete();
+  await agent.delete();
 
   await rt.stop();
 }
