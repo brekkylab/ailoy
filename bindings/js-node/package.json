@@ -20,8 +20,7 @@
         "clean": "rm -rf dist/",
         "test": "ts-mocha",
         "prepack": "node build-prebuild.js && npm run build:ts && clean-package",
-        "postpack": "clean-package restore",
-        "install": "prebuild-install || cmake-js rebuild"
+        "postpack": "clean-package restore"
     },
     "devDependencies": {
         "@rollup/plugin-alias": "^5.1.1",
@@ -68,7 +67,12 @@
             "optionalDependencies",
             "binary",
             "clean-package"
-        ]
+        ],
+        "replace": {
+            "scripts": {
+                "install": "prebuild-install || cmake-js rebuild"
+            }
+        }
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.11.2",
