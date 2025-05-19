@@ -46,6 +46,7 @@ jobs:
         run: |
           curl -LO https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
           ./vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install --root C:\VulkanSDK
+          dir C:\VulkanSDK
 
       - name: Set Vulkan SDK environment
         shell: powershell
@@ -58,7 +59,7 @@ jobs:
         working-directory: ${{ github.workspace }}/bindings/js-node
 
       - name: Run prebuild script
-        run: npm pack
+        run: npm pack || type C:\npm\cache\_logs\*.log
         working-directory: ${{ github.workspace }}/bindings/js-node
 
       - name: Test native addon loads

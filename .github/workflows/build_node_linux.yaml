@@ -11,6 +11,9 @@ jobs:
       image: quay.io/pypa/manylinux_2_28_x86_64
 
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
       - name: Install Node.js (18.x) and npm
         run: |
           curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
@@ -41,17 +44,15 @@ jobs:
           mkdir -p /opt/vulkan-sdk
           tar -xJf vulkan-sdk.tar.xz --strip-components=2 -C /opt/vulkan-sdk
 
-      - name: Checkout source
-        uses: actions/checkout@v4
-
       - name: Build prebuild (C++20, OpenSSL3)
         working-directory: bindings/js-node
-        env:
-          CC: gcc
-          CXX: g++
         run: |
           npm install --ignore-scripts
           node build-prebuild.js
+        env:
+          OPENSSL_ROOT_DIR: /opt/openssl
+          VULKAN_SDK: /opt/vulkan-sdk/x86_64
+          LD_LIBRARY_PATH: /opt/openssl/lib:/opt/vulkan-sdk/x86_64/lib
 
       - name: Upload Linux prebuild
         uses: actions/upload-artifact@v4
