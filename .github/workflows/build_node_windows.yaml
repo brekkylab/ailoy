@@ -27,18 +27,20 @@ jobs:
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
           choco install openssl 7zip
 
-      - name: Download and install Intel MKL
-        shell: powershell
+      - name: Install vcpkg and LAPACK
         run: |
-          $mklInstaller = "w_basekit.exe"
-          Invoke-WebRequest -Uri "https://registrationcenter-download.intel.com/akdlm/irc_nas/19035/w_BaseKit_p_2024.0.0.49538_offline.exe" -OutFile $mklInstaller
-          Start-Process -FilePath ".\$mklInstaller" -ArgumentList "--silent", "--eula", "accept", "--components", "intel.oneapi.lin.mkl.devel", "--install-dir", "C:\Program Files (x86)\Intel\oneAPI" -Wait
+          git clone https://github.com/microsoft/vcpkg.git
+          .\vcpkg\bootstrap-vcpkg.bat
+          .\vcpkg\vcpkg install lapack
 
-      - name: Set MKL environment
+      - name: Set BLAS/LAPACK environment variables
         shell: powershell
         run: |
-          echo "MKLROOT=C:\Program Files (x86)\Intel\oneAPI\mkl\latest" >> $env:GITHUB_ENV
-          echo "C:\Program Files (x86)\Intel\oneAPI\mkl\latest\redist\intel64" >> $env:GITHUB_PATH
+          $root = "${{ github.workspace }}\vcpkg\installed\x64-windows"
+          dir $root
+          echo "BLAS_ROOT=$root" >> $env:GITHUB_ENV
+          echo "LAPACK_ROOT=$root" >> $env:GITHUB_ENV
+          echo "$root\bin" >> $env:GITHUB_PATH
 
       - name: Install Vulkan SDK
         run: |
