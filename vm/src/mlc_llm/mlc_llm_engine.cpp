@@ -21,14 +21,19 @@ mlc_llm_engine_t::mlc_llm_engine_t(const std::string &model_name,
   auto device_type_str = tvm::runtime::DLDeviceType2Str(device.device_type);
 
   // Download model
-  auto [model_path, model_lib_path] =
+  model_cache_get_result_t get_model_result =
       get_model(model_name, quantization, device_type_str);
-  model_path_ = model_path;
+  if (!get_model_result.success) {
+    throw ailoy::runtime_error(get_model_result.error_message.value());
+  }
+
+  model_path_ = get_model_result.model_path.value();
 
   // Configuration for engine creation
   picojson::object engine_config_json;
-  engine_config_json["model"] = picojson::value(model_path.string());
-  engine_config_json["model_lib"] = picojson::value(model_lib_path.string());
+  engine_config_json["model"] = picojson::value(model_path_.string());
+  engine_config_json["model_lib"] =
+      picojson::value(get_model_result.model_lib_path.value().string());
   engine_config_json["mode"] = picojson::value(mode);
 
   // Create engine
