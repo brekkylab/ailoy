@@ -485,14 +485,14 @@ class Agent:
             return
         self._tools.append(tool)
 
-    def add_py_function_tool(self, desc: ToolDescription, f: Callable[..., Any]):
+    def add_py_function_tool(self, desc: dict, f: Callable[..., Any]):
         """
         Adds a Python function as a tool using callable.
 
         :param desc: Tool descriotion.
         :param f: Function will be called when the tool invocation occured.
         """
-        self.add_tool(Tool(desc=desc, call_fn=f))
+        self.add_tool(Tool(desc=ToolDescription.model_validate(desc), call_fn=f))
 
     def add_universal_tool(self, tool_def: UniversalToolDefinition) -> bool:
         """
