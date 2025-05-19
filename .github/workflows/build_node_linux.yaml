@@ -47,7 +47,7 @@ jobs:
       - name: Build prebuild (C++20, OpenSSL3)
         working-directory: bindings/js-node
         run: |
-          npm install --ignore-scripts
+          npm install
           node build-prebuild.js
         env:
           OPENSSL_ROOT_DIR: /opt/openssl

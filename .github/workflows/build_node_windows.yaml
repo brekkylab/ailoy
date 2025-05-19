@@ -55,8 +55,13 @@ jobs:
           echo "PATH=C:\VulkanSDK\Bin;$env:PATH" >> $env:GITHUB_ENV
 
       - name: Install Node dependencies
-        run: npm install --ignore-scripts
+        run: npm install
         working-directory: ${{ github.workspace }}/bindings/js-node
+
+      - name: Manually run build-prebuild.js
+        run: node build-prebuild.js
+        working-directory: ${{ github.workspace }}/bindings/js-node
+        shell: pwsh
 
       - name: Run prebuild script
         shell: powershell

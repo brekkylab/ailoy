@@ -20,7 +20,7 @@ jobs:
           brew install libomp
 
       - name: Install Node dependencies
-        run: npm install --ignore-scripts
+        run: npm install
         working-directory: ${{ github.workspace }}/bindings/js-node
 
       - name: Pack
