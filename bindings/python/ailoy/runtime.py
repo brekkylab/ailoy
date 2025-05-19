@@ -34,6 +34,12 @@ class RuntimeBase:
     def __del__(self):
         self.stop()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.stop()
+
     def stop(self):
         if self._client:
             txid = self._send_type1("disconnect")

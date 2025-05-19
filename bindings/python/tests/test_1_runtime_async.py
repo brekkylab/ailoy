@@ -11,9 +11,8 @@ pytestmark = [pytest.mark.runtime, pytest.mark.asyncio]
 def runtime():
     print("creating async runtime")
     time.sleep(3)
-    rt = AsyncRuntime("inproc://async")
-    yield rt
-    rt.close()
+    with AsyncRuntime("inproc://async") as rt:
+        yield rt
 
 
 async def test_async_echo(runtime: AsyncRuntime):

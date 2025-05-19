@@ -45,16 +45,14 @@ def _print_agent_response(resp: AgentResponse):
 
 @pytest.fixture(scope="module")
 def runtime():
-    rt = Runtime("inproc://agent")
-    yield rt
-    rt.stop()
+    with Runtime("inproc://agent") as rt:
+        yield rt
 
 
 @pytest.fixture(scope="module")
 def agent(runtime: Runtime):
-    agent = Agent(runtime, model_name="qwen3-8b")
-    yield agent
-    agent.delete()
+    with Agent(runtime, model_name="qwen3-8b") as agent:
+        yield agent
 
 
 def test_tool_call_calculator(agent: Agent):
@@ -138,7 +136,8 @@ def test_mcp_tools_github(agent: Agent):
     assert "search_repositories" in tool_names
     assert "get_file_contents" in tool_names
 
-    query = "Summarize README.md from repository brekkylab/ailoy."
+    # query = "Summarize README.md from repository brekkylab/ailoy."
+    query = "Briefly explain about the repository brekkylab/ailoy."
     for resp in agent.run(query):
         _print_agent_response(resp)
 
