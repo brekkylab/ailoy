@@ -59,7 +59,14 @@ jobs:
         working-directory: ${{ github.workspace }}/bindings/js-node
 
       - name: Run prebuild script
-        run: npm pack || type C:\npm\cache\_logs\*.log
+        shell: powershell
+        run: |
+          npm pack
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "❌ npm pack failed. Showing logs:"
+            Get-ChildItem -Path C:\npm\cache\_logs\*.log | Get-Content
+            exit 1
+          }
         working-directory: ${{ github.workspace }}/bindings/js-node
 
       - name: Test native addon loads
