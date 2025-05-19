@@ -3,9 +3,8 @@ import textwrap
 import mcp
 import pytest
 
-from ailoy import Runtime
+from ailoy import Runtime, VectorStore
 from ailoy.agent import Agent, AgentResponse
-from ailoy.vector_store import VectorStore
 
 pytestmark = [pytest.mark.agent]
 
@@ -146,7 +145,7 @@ def test_simple_rag_pipeline(runtime: Runtime, agent: Agent):
     agent._messages.clear()
     agent._tools.clear()
 
-    with VectorStore(runtime, embedding_model_name="bge-m3") as vs:
+    with VectorStore(runtime, embedding_model_name="bge-m3", vector_store_name="faiss") as vs:
         vs.insert(
             "Ailoy is a lightweight library for building AI applications — such as **agent systems** or **RAG pipelines** — with ease. It is designed to enable AI features effortlessly, one can just import and use.",  # noqa: E501
         )
