@@ -50,7 +50,7 @@ jobs:
           CC: gcc
           CXX: g++
         run: |
-          npm install
+          npm install --ignore-scripts
           node build-prebuild.js
 
       - name: Upload Linux prebuild
