@@ -168,8 +168,8 @@ export interface ToolDescription {
   };
 }
 
-export interface ToolDefinitionUniversal {
-  type: "universal";
+export interface ToolDefinitionBuiltIn {
+  type: "built-in";
   description: ToolDescription;
   behavior: {
     outputPath?: string;
@@ -188,7 +188,7 @@ export interface ToolDefinitionRESTAPI {
   };
 }
 
-export type ToolDefinition = ToolDefinitionUniversal | ToolDefinitionRESTAPI;
+export type ToolDefinition = ToolDefinitionBuiltIn | ToolDefinitionRESTAPI;
 
 export type ToolAuthenticator = (request: {
   url: string;
@@ -341,9 +341,9 @@ export class Agent {
     return this.addTool({ desc, call: f });
   }
 
-  addUniversalTool(
-    /** The universal tool definition */
-    tool: ToolDefinitionUniversal
+  addBuiltInTool(
+    /** The built-in tool definition */
+    tool: ToolDefinitionBuiltIn
   ): boolean {
     const call = async (runtime: Runtime, inputs: any) => {
       // Validation
@@ -466,8 +466,8 @@ export class Agent {
       if (tool.type == "restapi") {
         const result = this.addRESTAPITool(tool, args?.authenticator);
         if (!result) return false;
-      } else if (tool.type == "universal") {
-        const result = this.addUniversalTool(tool);
+      } else if (tool.type == "built-in") {
+        const result = this.addBuiltInTool(tool);
         if (!result) return false;
       }
     }
