@@ -36,9 +36,7 @@ async function main() {
     authenticator,
   });
 
-  // "I'm looking for a movie similar to Avatar.";
-  // "Please give me a link can watch Avatar."
-  // "Please recommend me a branding-new movie with good reviews"
+  // "Find me some articles about 'Agentic AI'."
   console.log(
     'Simple news assistant (Please type "exit" to stop conversation)'
   );
