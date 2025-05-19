@@ -29,7 +29,7 @@ async def main():
         if query == "":
             continue
 
-        for resp in agent.run(query):
+        for resp in agent.query(query):
             print_agent_response(resp)
 
     agent.delete()

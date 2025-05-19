@@ -60,7 +60,7 @@ def test_tool_call_calculator(agent: Agent):
     agent.add_tools_from_preset("calculator")
 
     query = "Please calculate this formula: floor(ln(exp(e))+cos(2*pi))"
-    for resp in agent.run(query):
+    for resp in agent.query(query):
         _print_agent_response(resp)
 
 
@@ -70,7 +70,7 @@ def test_tool_call_frankfurter(agent: Agent):
     agent.add_tools_from_preset("frankfurter")
 
     query = "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?"
-    for resp in agent.run(query):
+    for resp in agent.query(query):
         _print_agent_response(resp)
 
 
@@ -114,7 +114,7 @@ def test_tool_call_py_function(agent: Agent):
     assert "get_current_temperature" in tool_names
 
     query = "Hello, how is the current weather in my city Seoul?"
-    for resp in agent.run(query):
+    for resp in agent.query(query):
         _print_agent_response(resp)
 
 
@@ -137,7 +137,7 @@ def test_mcp_tools_github(agent: Agent):
 
     # query = "Summarize README.md from repository brekkylab/ailoy."
     query = "Briefly explain about the repository brekkylab/ailoy."
-    for resp in agent.run(query):
+    for resp in agent.query(query):
         _print_agent_response(resp)
 
 
@@ -156,5 +156,5 @@ def test_simple_rag_pipeline(runtime: Runtime, agent: Agent):
             Context: {[item.document for item in items]}
             Question: {query}
         """
-        for resp in agent.run(prompt):
+        for resp in agent.query(prompt):
             _print_agent_response(resp)

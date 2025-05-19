@@ -380,7 +380,7 @@ class Agent:
             self._messages = []
         self._component_state.valid = False
 
-    def run(
+    def query(
         self,
         message: str,
         enable_reasoning: Optional[bool] = None,
