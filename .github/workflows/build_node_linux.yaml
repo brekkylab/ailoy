@@ -16,9 +16,6 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install Node dependencies
-        run: npm install
-
       - name: Download dockcross wrapper for glibc 2.28
         run: |
           docker run --rm ghcr.io/dockcross/linux-x64-glibc-2.28 > dockcross
@@ -37,6 +34,7 @@ jobs:
             tar -xJf vulkan-sdk.tar.xz --strip-components=2 -C /opt/vulkan-sdk && \
             export VULKAN_SDK=/opt/vulkan-sdk/x86_64 && \
             export LD_LIBRARY_PATH=\$VULKAN_SDK/lib:\$LD_LIBRARY_PATH && \
+            cd && bindings/js-node && \
             npm install && \
             node build-prebuild.js \
           "
@@ -45,4 +43,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: prebuild-linux-glibc-2.28
-          path: prebuilds/*.tar.gz
+          path: ${{ github.workspace }}/bindings/js-node/prebuilds/*.tar.gz

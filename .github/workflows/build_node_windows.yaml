@@ -40,9 +40,11 @@ jobs:
 
       - name: Install Node dependencies
         run: npm install
+        working-directory: ${{ github.workspace }}/bindings/js-node
 
       - name: Run prebuild script
-        run: node build-prebuild.js
+        run: npm pack
+        working-directory: ${{ github.workspace }}/bindings/js-node
 
       - name: Test native addon loads
         run: node -e "require('./build/Release/ailoy_addon.node'); console.log('✅ Loaded')"
@@ -51,4 +53,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: prebuild-windows
-          path: prebuilds/*.tar.gz
+          path: ${{ github.workspace }}/bindings/js-node/prebuilds/*.tar.gz
