@@ -8,41 +8,38 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: debian:10
+      image: quay.io/pypa/manylinux_2_28_x86_64
 
     steps:
-      - name: Install build dependencies
+      - name: Install Node.js (18.x) and npm
         run: |
-          apt-get update && apt-get install -y \
-            git curl cmake build-essential pkg-config \
-            libomp-dev libblas-dev liblapack-dev \
-            wget ca-certificates software-properties-common
+          curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+          yum install -y nodejs
 
-      - name: Install GCC 10
+      - name: Install OpenSSL 3.0.16
         run: |
-          echo "deb http://archive.debian.org/debian buster-backports main" >> /etc/apt/sources.list
-          echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
-          apt-get update
-          apt-get -t buster-backports install -y gcc-10 g++-10
-          update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100 \
-                              --slave /usr/bin/g++ g++ /usr/bin/g++-10
+          yum install -y perl-IPC-Cmd
+          curl -LO https://www.openssl.org/source/openssl-3.0.16.tar.gz
+          tar -xzf openssl-3.0.16.tar.gz
+          cd openssl-3.0.16
+          ./config --prefix=/opt/openssl --openssldir=/opt/openssl no-shared
+          make -j$(nproc)
+          make install_sw
 
-      - name: Install Rust
+      - name: Install Rust (cargo)
         run: |
           curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
-          echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> $GITHUB_ENV
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - name: Build and install OpenSSL 3.0
+      - name: Install BLAS/LAPACK
         run: |
-          curl -LO https://www.openssl.org/source/openssl-3.0.13.tar.gz
-          tar -xzf openssl-3.0.13.tar.gz
-          cd openssl-3.0.13
-          ./config --prefix=/opt/openssl3 --openssldir=/opt/openssl3
-          make -j$(nproc)
-          make install
-          echo "OPENSSL_ROOT_DIR=/opt/openssl3" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/opt/openssl3/lib/pkgconfig" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=/opt/openssl3/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          yum install -y blas-devel lapack-devel
+
+      - name: Install Vulkan SDK
+        run: |
+          curl -LO https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.xz
+          mkdir -p /opt/vulkan-sdk
+          tar -xJf vulkan-sdk.tar.xz --strip-components=2 -C /opt/vulkan-sdk
 
       - name: Checkout source
         uses: actions/checkout@v4
