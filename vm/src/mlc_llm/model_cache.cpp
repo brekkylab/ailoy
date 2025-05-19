@@ -25,8 +25,6 @@
 #include "exception.hpp"
 #include "thread.hpp"
 
-using namespace std::chrono_literals;
-
 namespace ailoy {
 
 struct utsname {
