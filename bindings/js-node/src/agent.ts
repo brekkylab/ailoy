@@ -144,7 +144,7 @@ export type AgentResponse =
 
 interface Tool {
   desc: ToolDescription;
-  call: (runtime: Runtime, input: any) => Promise<any>;
+  call: (input: any) => Promise<any>;
 }
 
 export interface ToolDescription {
@@ -345,7 +345,7 @@ export class Agent {
     /** The universal tool definition */
     tool: ToolDefinitionUniversal
   ): boolean {
-    const call = async (runtime: Runtime, inputs: any) => {
+    const call = async (inputs: any) => {
       // Validation
       const required = tool.description.parameters.required || [];
       const missing = required.filter((name) => !(name in inputs));
@@ -353,7 +353,7 @@ export class Agent {
         throw Error("some parameters are required but not exist: " + missing);
 
       // Call
-      let output = await runtime.call(tool.description.name, inputs);
+      let output = await this.runtime.call(tool.description.name, inputs);
 
       // Parse output path
       if (tool.behavior.outputPath)
@@ -372,7 +372,7 @@ export class Agent {
     /** Optional authenticator to inject into the request */
     auth?: ToolAuthenticator
   ): boolean {
-    const call = async (runtime: Runtime, inputs: any) => {
+    const call = async (inputs: any) => {
       const { baseURL, method, headers, body, outputPath } = tool.behavior;
       const renderTemplate = (
         template: string,
@@ -433,7 +433,7 @@ export class Agent {
 
       // Call
       let output: any;
-      const resp = await runtime.call("http_request", request);
+      const resp = await this.runtime.call("http_request", request);
       // @jhlee: How to parse it?
       output = JSON.parse(resp.body);
 
@@ -481,7 +481,7 @@ export class Agent {
     /** Tool metadata as defined by MCP */
     tool: Awaited<ReturnType<MCPClient.Client["listTools"]>>["tools"][number]
   ) {
-    const call = async (_: Runtime, inputs: any) => {
+    const call = async (inputs: any) => {
       const transport = new MCPClientStdio.StdioClientTransport(params);
       const client = new MCPClient.Client({
         name: "dummy-client",
@@ -599,10 +599,7 @@ export class Agent {
                   reject("Internal exception");
                   return;
                 }
-                const resp = await tool_.call(
-                  this.runtime,
-                  toolCall.function.arguments
-                );
+                const resp = await tool_.call(toolCall.function.arguments);
                 const message: ToolCallResultMessage = {
                   role: "tool",
                   name: toolCall.function.name,
