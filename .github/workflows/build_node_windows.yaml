@@ -25,7 +25,20 @@ jobs:
       - name: Install Chocolatey dependencies
         run: |
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
-          choco install openssl light7zip
+          choco install openssl 7zip
+
+      - name: Download and install Intel MKL
+        shell: powershell
+        run: |
+          $mklInstaller = "w_basekit.exe"
+          Invoke-WebRequest -Uri "https://registrationcenter-download.intel.com/akdlm/irc_nas/19035/w_BaseKit_p_2024.0.0.49538_offline.exe" -OutFile $mklInstaller
+          Start-Process -FilePath ".\$mklInstaller" -ArgumentList "--silent", "--eula", "accept", "--components", "intel.oneapi.lin.mkl.devel", "--install-dir", "C:\Program Files (x86)\Intel\oneAPI" -Wait
+
+      - name: Set MKL environment
+        shell: powershell
+        run: |
+          echo "MKLROOT=C:\Program Files (x86)\Intel\oneAPI\mkl\latest" >> $env:GITHUB_ENV
+          echo "C:\Program Files (x86)\Intel\oneAPI\mkl\latest\redist\intel64" >> $env:GITHUB_PATH
 
       - name: Install Vulkan SDK
         run: |

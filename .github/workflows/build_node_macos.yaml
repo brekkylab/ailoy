@@ -26,6 +26,8 @@ jobs:
       - name: Pack
         run: npm pack
         working-directory: ${{ github.workspace }}/bindings/js-node
+        env:
+          OpenMP_ROOT: /opt/homebrew/opt/libomp
 
       - name: Upload macOS prebuild
         uses: actions/upload-artifact@v4
