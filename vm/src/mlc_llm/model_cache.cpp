@@ -23,6 +23,9 @@
 #include <openssl/sha.h>
 
 #include "exception.hpp"
+#include "thread.hpp"
+
+using namespace std::chrono_literals;
 
 namespace ailoy {
 
@@ -151,31 +154,6 @@ std::string sha1_checksum(const std::filesystem::path &filepath) {
   return result.str();
 }
 
-class SigintCatcher {
-public:
-  SigintCatcher() {
-    // Save previous handler and install ours
-    previous_handler_ = std::signal(SIGINT, &SigintCatcher::handle_signal);
-    interrupted_.store(false);
-  }
-
-  ~SigintCatcher() {
-    // Restore previous signal handler
-    std::signal(SIGINT, previous_handler_);
-  }
-
-  static bool interrupted() { return interrupted_.load(); }
-
-private:
-  static void handle_signal(int /*signum*/) { interrupted_.store(true); }
-
-  static std::atomic<bool> interrupted_;
-  using SignalHandler = void (*)(int);
-  SignalHandler previous_handler_;
-};
-
-std::atomic<bool> SigintCatcher::interrupted_{false};
-
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
@@ -233,14 +211,12 @@ std::pair<bool, std::string> download_file_with_progress(
     httplib::Client &client, const std::string &remote_path,
     const fs::path &local_path,
     std::function<bool(uint64_t, uint64_t)> progress_callback) {
-  SigintCatcher sigint;
-
   size_t existing_size = 0;
   httplib::Result res = client.Get(
       ("/" + remote_path).c_str(),
       [&](const char *data, size_t data_length) {
         // Exit on SIGINT
-        if (SigintCatcher::interrupted())
+        if (ailoy::stop_t::global_stop)
           return false;
 
         std::ofstream ofs(local_path, existing_size > 0
@@ -255,7 +231,7 @@ std::pair<bool, std::string> download_file_with_progress(
   if (!res || (res->status != httplib::OK_200 &&
                res->status != httplib::PartialContent_206)) {
     // If SIGINT interrupted, just return;
-    if (SigintCatcher::interrupted())
+    if (ailoy::stop_t::global_stop)
       return std::make_pair<bool, std::string>(
           false, "Interrupted while downloading the model");
 
