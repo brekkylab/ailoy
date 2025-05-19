@@ -1,0 +1,48 @@
+name: Prebuild Linux
+
+on:
+  push:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Download dockcross wrapper for glibc 2.28
+        run: |
+          docker run --rm ghcr.io/dockcross/linux-x64-glibc-2.28 > dockcross
+          chmod +x dockcross
+
+      - name: Build in dockcross container
+        run: |
+          ./dockcross bash -c "\
+            apt-get update && \
+            apt-get install -y git cmake build-essential pkg-config \
+                               libssl-dev libomp-dev libblas-dev liblapack-dev curl && \
+            curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable && \
+            export PATH=\$HOME/.cargo/bin:\$PATH && \
+            curl -LO https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.xz && \
+            mkdir -p /opt/vulkan-sdk && \
+            tar -xJf vulkan-sdk.tar.xz --strip-components=2 -C /opt/vulkan-sdk && \
+            export VULKAN_SDK=/opt/vulkan-sdk/x86_64 && \
+            export LD_LIBRARY_PATH=\$VULKAN_SDK/lib:\$LD_LIBRARY_PATH && \
+            npm install && \
+            node build-prebuild.js \
+          "
+
+      - name: Upload Linux prebuild
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuild-linux-glibc-2.28
+          path: prebuilds/*.tar.gz

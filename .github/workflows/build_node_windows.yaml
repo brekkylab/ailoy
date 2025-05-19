@@ -1,0 +1,54 @@
+name: Prebuild Windows
+
+on:
+  push:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Install Chocolatey dependencies
+        run: |
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+          choco install openssl light7zip
+
+      - name: Install Vulkan SDK
+        run: |
+          curl -LO https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
+          ./vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install --root C:\VulkanSDK
+
+      - name: Set Vulkan SDK environment
+        shell: powershell
+        run: |
+          echo "VULKAN_SDK=C:\VulkanSDK" >> $env:GITHUB_ENV
+          echo "PATH=C:\VulkanSDK\Bin;$env:PATH" >> $env:GITHUB_ENV
+
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Run prebuild script
+        run: node build-prebuild.js
+
+      - name: Test native addon loads
+        run: node -e "require('./build/Release/ailoy_addon.node'); console.log('✅ Loaded')"
+
+      - name: Upload Windows prebuild
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuild-windows
+          path: prebuilds/*.tar.gz

@@ -1,0 +1,35 @@
+name: Prebuild macOS
+
+on:
+  push:
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew install libomp
+
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Run prebuild script
+        run: node build-prebuild.js
+
+      - name: Test native addon loads
+        run: node -e "require('./build/Release/ailoy_addon.node'); console.log('✅ Loaded')"
+
+      - name: Upload macOS prebuild
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuild-macos
+          path: prebuilds/*.tar.gz
