@@ -234,7 +234,7 @@ class Tool:
     def __init__(
         self,
         desc: ToolDescription,
-        call_fn: Callable[[Runtime, Any], Any],
+        call_fn: Callable[..., Any],
     ):
         self.desc = desc
         self.call = call_fn
@@ -440,7 +440,7 @@ class Agent:
                         )
                         if not tool_:
                             raise RuntimeError("Tool not found")
-                        resp = tool_.call(self._runtime, tool_call.function.arguments)
+                        resp = tool_.call(**tool_call.function.arguments)
                         return ToolCallResultMessage(
                             role="tool",
                             name=tool_call.function.name,
@@ -485,7 +485,7 @@ class Agent:
             return
         self._tools.append(tool)
 
-    def add_py_function_tool(self, desc: ToolDescription, f: Callable[[Runtime, Any], Any]):
+    def add_py_function_tool(self, desc: ToolDescription, f: Callable[..., Any]):
         """
         Adds a Python function as a tool using callable.
 
@@ -505,13 +505,13 @@ class Agent:
         if tool_def.type != "universal":
             raise ValueError('Tool type is not "universal"')
 
-        def call(runtime: Runtime, inputs: dict[str, Any]) -> Any:
+        def call(**inputs: dict[str, Any]) -> Any:
             required = tool_def.description.parameters.required or []
             for param_name in required:
                 if param_name not in inputs:
                     raise ValueError(f'Parameter "{param_name}" is required but not provided')
 
-            output = runtime.call(tool_def.description.name, inputs)
+            output = self._runtime.call(tool_def.description.name, inputs)
             if tool_def.behavior.output_path is not None:
                 output = jmespath.search(tool_def.behavior.output_path, output)
 
@@ -537,7 +537,7 @@ class Agent:
 
         behavior = tool_def.behavior
 
-        def call(_: Runtime, inputs: dict[str, Any]) -> Any:
+        def call(**inputs: dict[str, Any]) -> Any:
             def render_template(template: str, context: dict[str, Any]) -> tuple[str, list[str]]:
                 import re
 
@@ -627,7 +627,7 @@ class Agent:
         """
         from mcp.client.stdio import stdio_client
 
-        def call(_: Runtime, inputs: dict[str, Any]) -> Any:
+        def call(**inputs: dict[str, Any]) -> Any:
             async def _inner():
                 async with stdio_client(params, errlog=subprocess.STDOUT) as streams:
                     async with mcp.ClientSession(*streams) as session:
