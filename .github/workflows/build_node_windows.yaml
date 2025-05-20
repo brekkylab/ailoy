@@ -1,7 +1,7 @@
-name: Prebuild Windows
+name: Node Windows Build
 
 on:
-  push:
+  workflow_dispatch:
 
 jobs:
   build-windows:
@@ -47,10 +47,6 @@ jobs:
           }
           .\vcpkg\bootstrap-vcpkg.bat
           .\vcpkg\vcpkg install lapack
-
-      - name: Set BLAS/LAPACK environment variables
-        shell: powershell
-        run: |
           $root = "${{ github.workspace }}\vcpkg\installed\x64-windows"
           echo "BLAS_ROOT=$root" >> $env:GITHUB_ENV
           echo "LAPACK_ROOT=$root" >> $env:GITHUB_ENV
@@ -60,25 +56,19 @@ jobs:
         run: |
           curl -LO https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
           ./vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install --root C:\VulkanSDK
-          dir C:\VulkanSDK
-
-      - name: Set Vulkan SDK environment
-        shell: powershell
-        run: |
           echo "VULKAN_SDK=C:\VulkanSDK" >> $env:GITHUB_ENV
           echo "PATH=C:\VulkanSDK\Bin;$env:PATH" >> $env:GITHUB_ENV
 
-      - name: Install Node dependencies
-        run: npm install
-        working-directory: ${{ github.workspace }}/bindings/js-node
-
-      - name: Run prebuild script
+      - name: Create package
         shell: powershell
-        run: npm pack
+        run: |
+          npm install
+          PACKAGE_NAME=$(npm pack)
+          echo "package_name=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
         working-directory: ${{ github.workspace }}/bindings/js-node
 
-      - name: Upload Windows prebuild
+      - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
-          name: prebuild-windows
-          path: ${{ github.workspace }}/bindings/js-node/prebuilds/*.tar.gz
+          name: ${{ steps.pack.outputs.package_name }}
+          path: ${{ github.workspace }}/bindings/js-node/${{ steps.pack.outputs.package_name }}

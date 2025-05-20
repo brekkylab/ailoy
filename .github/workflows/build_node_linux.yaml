@@ -1,7 +1,7 @@
-name: Prebuild Linux
+name: Node Linux Build
 
 on:
-  push:
+  workflow_dispatch:
 
 jobs:
   build-linux:
@@ -44,18 +44,19 @@ jobs:
           mkdir -p /opt/vulkan-sdk
           tar -xJf vulkan-sdk.tar.xz --strip-components=2 -C /opt/vulkan-sdk
 
-      - name: Build prebuild (C++20, OpenSSL3)
+      - name: Create package
         working-directory: bindings/js-node
         run: |
           npm install
-          node build-prebuild.js
+          PACKAGE_NAME=$(npm pack)
+          echo "package_name=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
         env:
           OPENSSL_ROOT_DIR: /opt/openssl
           VULKAN_SDK: /opt/vulkan-sdk/x86_64
           LD_LIBRARY_PATH: /opt/openssl/lib:/opt/vulkan-sdk/x86_64/lib
 
-      - name: Upload Linux prebuild
+      - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
-          name: prebuild-linux-glibc-2.28-openssl3-gcc10
-          path: bindings/js-node/prebuilds/*.tar.gz
+          name: ${{ steps.pack.outputs.package_name }}
+          path: ${{ github.workspace }}/bindings/js-node/${{ steps.pack.outputs.package_name }}

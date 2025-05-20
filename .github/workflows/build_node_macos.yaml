@@ -1,7 +1,7 @@
-name: Prebuild macOS
+name: Node macOS Build
 
 on:
-  push:
+  workflow_dispatch:
 
 jobs:
   build-macos:
@@ -19,18 +19,17 @@ jobs:
         run: |
           brew install libomp
 
-      - name: Install Node dependencies
-        run: npm install
-        working-directory: ${{ github.workspace }}/bindings/js-node
-
-      - name: Pack
-        run: npm pack
+      - name: Create package
+        run: | 
+          npm install
+          PACKAGE_NAME=$(npm pack)
+          echo "package_name=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
         working-directory: ${{ github.workspace }}/bindings/js-node
         env:
           OpenMP_ROOT: /opt/homebrew/opt/libomp
 
-      - name: Upload macOS prebuild
+      - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
-          name: prebuild-macos
-          path: ${{ github.workspace }}/bindings/js-node/prebuilds/*.tar.gz
+          name: ${{ steps.pack.outputs.package_name }}
+          path: ${{ github.workspace }}/bindings/js-node/${{ steps.pack.outputs.package_name }}
