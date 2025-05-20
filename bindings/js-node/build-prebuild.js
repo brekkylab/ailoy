@@ -103,13 +103,19 @@ const buildArgs = [
   "--CDAILOY_WITH_TEST:BOOL=OFF",
   `--parallel=${os.cpus().length}`,
 ];
-failIfError(
-  spawnSync("npx", buildArgs, {
-    stdio: "inherit",
-    cwd: path.resolve(__dirname),
-  }),
-  "Build failed"
-);
+const res = spawnSync("npx", buildArgs, {
+  cwd: path.resolve(__dirname),
+  encoding: "utf-8",
+  stdio: "pipe",
+  shell: true,
+  env: {
+    ...process.env,
+  },
+});
+
+if (res.stdout) console.log(res.stdout);
+if (res.stderr) console.error(res.stderr);
+failIfError(res, "Build failed");
 
 // Step 2: Validate build output
 if (!fs.existsSync(buildBinaryPath)) {
