@@ -28,24 +28,13 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Download and Install OpenSSL static
+      - name: Install OpenSSL
         shell: powershell
         run: |
           $url = "https://slproweb.com/download/Win64OpenSSL-3_5_0.exe"
           $output = "openssl-installer.exe"
           Invoke-WebRequest -Uri $url -OutFile $output
           Start-Process -FilePath ".\openssl-installer.exe" -ArgumentList "/silent", "/verysilent", "/sp-", "/SUPPRESSMSGBOXES" -Wait
-
-      - name: Cache vcpkg
-        uses: actions/cache@v4
-        with:
-          path: |
-            vcpkg/installed
-            vcpkg/buildtrees
-            vcpkg/packages
-          key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
-          restore-keys: |
-            ${{ runner.os }}-vcpkg-
 
       - name: Install vcpkg and LAPACK
         shell: powershell
@@ -80,20 +69,9 @@ jobs:
         run: npm install
         working-directory: ${{ github.workspace }}/bindings/js-node
 
-      - name: Manually run build-prebuild.js
-        run: node build-prebuild.js
-        working-directory: ${{ github.workspace }}/bindings/js-node
-        shell: pwsh
-
       - name: Run prebuild script
         shell: powershell
-        run: |
-          npm pack
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "❌ npm pack failed. Showing logs:"
-            Get-ChildItem -Path C:\npm\cache\_logs\*.log | Get-Content
-            exit 1
-          }
+        run: npm pack
         working-directory: ${{ github.workspace }}/bindings/js-node
 
       - name: Test native addon loads
