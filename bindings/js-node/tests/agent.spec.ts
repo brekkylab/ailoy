@@ -40,7 +40,7 @@ describe("Agent", async () => {
     process.stdout.write(`\nQuery: ${query}`);
 
     process.stdout.write(`\nAssistant: `);
-    for await (const resp of agent.run(query)) {
+    for await (const resp of agent.query(query)) {
       printAgentResponse(resp);
     }
 
@@ -86,7 +86,7 @@ describe("Agent", async () => {
     process.stdout.write(`\nQuery: ${query}`);
 
     process.stdout.write(`\nAssistant: `);
-    for await (const resp of agent.run(query)) {
+    for await (const resp of agent.query(query)) {
       printAgentResponse(resp);
     }
 
@@ -110,7 +110,7 @@ describe("Agent", async () => {
     process.stdout.write(`\nQuery: ${query}`);
 
     process.stdout.write(`\nAssistant: `);
-    for await (const resp of agent.run(query)) {
+    for await (const resp of agent.query(query)) {
       printAgentResponse(resp);
     }
 

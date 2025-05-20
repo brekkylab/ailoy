@@ -44,7 +44,7 @@ async function main() {
     if (query === "" || query === "exit") break;
 
     process.stdout.write(`\nAssistant: `);
-    for await (const resp of agent.run(query, { enableReasoning: true })) {
+    for await (const resp of agent.query(query, { enableReasoning: true })) {
       if (resp.type === "output_text") {
         process.stdout.write(resp.content);
         if (resp.endOfTurn) {

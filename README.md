@@ -31,7 +31,7 @@ import {
 
 const rt = await startRuntime();
 const agent = await createAgent(rt, {model: {name: "qwen3-0.6b"}});
-for await (const resp of agent.run("When is your cut-off date?")) {
+for await (const resp of agent.query("When is your cut-off date?")) {
     console.log(resp);
 }
 await agent.delete();
@@ -47,7 +47,7 @@ from ailoy import Runtime, Agent
 
 rt = Runtime()
 agent = Agent(rt, model_name="qwen3-8b")
-for resp in agent.run("When is your cut-off date?"):
+for resp in agent.query("When is your cut-off date?"):
     print(resp)
 agent.delete()
 rt.stop()

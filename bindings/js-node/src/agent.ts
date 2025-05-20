@@ -532,7 +532,7 @@ export class Agent {
     return this.tools.map((tool) => tool.desc);
   }
 
-  async *run(
+  async *query(
     /** The user message to send to the model */
     message: string,
     options?: {
