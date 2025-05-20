@@ -162,9 +162,11 @@ public:
     struct sigaction new_action{};
     new_action.sa_handler = sigint_handler;
     sigemptyset(&new_action.sa_mask);
-    new_action.sa_flags = 0; // Disable SA_RESTART
 
+    // Save existing handler
     sigaction(SIGINT, nullptr, &old_action_);
+
+    // Set our new handler
     sigaction(SIGINT, &new_action, nullptr);
 #endif
   }
@@ -181,7 +183,7 @@ public:
 
 private:
 #if !defined(_WIN32)
-  struct sigaction old_action_;
+  static struct sigaction old_action_;
 #endif
 
   static std::atomic<bool> g_sigint;
@@ -195,11 +197,18 @@ private:
     return FALSE;
   }
 #else
-  static void sigint_handler(int) { g_sigint = true; }
+  static void sigint_handler(int signum) {
+    g_sigint = true;
+
+    if (old_action_.sa_handler != nullptr) {
+      old_action_.sa_handler(signum);
+    }
+  }
 #endif
 };
 
 // Definition of static variable
+struct sigaction SigintGuard::old_action_;
 std::atomic<bool> SigintGuard::g_sigint{false};
 
 namespace fs = std::filesystem;
