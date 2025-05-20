@@ -59,7 +59,10 @@ TEST(ModelCacheTest, SigintWhileGetModel) {
 }
 
 TEST(ModelCacheTest, BGEM3_Callback) {
-  ailoy::remove_model("BAAI/bge-m3", "q4f16_1");
+  auto result = ailoy::remove_model("BAAI/bge-m3");
+  if (!result.success) {
+    throw std::runtime_error(result.error_message.value());
+  }
 
   std::string current_downloading_file;
   size_t last_line_length = 0;

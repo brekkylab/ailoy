@@ -1,6 +1,8 @@
 #include "model_cache.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <csignal>
 #include <fstream>
 #include <regex>
@@ -24,6 +26,8 @@
 
 #include "exception.hpp"
 #include "thread.hpp"
+
+using namespace std::chrono_literals;
 
 namespace ailoy {
 
@@ -269,23 +273,104 @@ std::pair<bool, std::string> download_file_with_progress(
   return std::make_pair<bool, std::string>(true, "");
 }
 
-fs::path get_model_base_path(const std::string &model_name,
-                             const std::string &quantization) {
+fs::path get_model_base_path(const std::string &model_name) {
   std::string model_name_escaped =
       std::regex_replace(model_name, std::regex("/"), "--");
-  fs::path model_base_path =
-      fs::path("tvm-models") / model_name_escaped / quantization;
+  fs::path model_base_path = fs::path("tvm-models") / model_name_escaped;
 
   return model_base_path;
 }
 
-void remove_model(const std::string &model_name,
-                  const std::string &quantization) {
-  fs::path model_cache_path =
-      get_cache_root() / get_model_base_path(model_name, quantization);
-  if (fs::exists(model_cache_path)) {
-    fs::remove_all(model_cache_path);
+std::vector<model_cache_list_result_t> list_local_models() {
+  std::vector<model_cache_list_result_t> results;
+
+  fs::path cache_base_path = get_cache_root();
+
+  // TVM models
+  fs::path tvm_models_path = cache_base_path / "tvm-models";
+  for (const auto &model_entry : fs::directory_iterator{tvm_models_path}) {
+    if (!model_entry.is_directory())
+      continue;
+
+    std::string model_id = model_entry.path().filename().string();
+    model_id = std::regex_replace(model_id, std::regex("--"),
+                                  "/"); // denormalize model id
+    for (const auto &quant_entry : fs::directory_iterator(model_entry.path())) {
+      if (!quant_entry.is_directory())
+        continue;
+
+      std::string quantization = quant_entry.path().filename().string();
+      fs::path quant_dir = fs::absolute(quant_entry.path());
+
+      for (const auto &file_entry : fs::directory_iterator(quant_dir)) {
+        if (!file_entry.is_regular_file())
+          continue;
+
+        // Find the manifest file
+        std::string filename = file_entry.path().filename().string();
+        if (filename.rfind("manifest-", 0) != 0 ||
+            file_entry.path().extension() != ".json")
+          continue;
+
+        std::string manifest_stem = file_entry.path().stem().string();
+        auto parts_start = manifest_stem.find("-");
+        if (parts_start == std::string::npos)
+          continue;
+
+        // Get device name
+        std::vector<std::string> parts;
+        size_t start = parts_start + 1;
+        size_t end;
+        while ((end = manifest_stem.find("-", start)) != std::string::npos) {
+          parts.push_back(manifest_stem.substr(start, end - start));
+          start = end + 1;
+        }
+        parts.push_back(manifest_stem.substr(start));
+        if (parts.size() != 3)
+          continue;
+        std::string device = parts[2];
+
+        // Read manifest json
+        std::ifstream manifest_in(file_entry.path());
+        if (!manifest_in)
+          continue;
+        nlohmann::json manifest_json;
+        try {
+          manifest_in >> manifest_json;
+        } catch (...) {
+          continue;
+        }
+
+        // Calculate total bytes
+        size_t total_bytes = 0;
+        if (manifest_json.contains("files") &&
+            manifest_json["files"].is_array()) {
+          for (const auto &file_pair : manifest_json["files"]) {
+            if (file_pair.is_array() && file_pair.size() >= 1) {
+              fs::path file_path = quant_dir / file_pair[0].get<std::string>();
+              if (fs::exists(file_path) && fs::is_regular_file(file_path)) {
+                total_bytes += fs::file_size(file_path);
+              }
+            }
+          }
+        }
+
+        // Fill the result
+        model_cache_list_result_t result;
+        result.model_type = "tvm";
+        result.model_id = model_id;
+        result.attributes = {
+            {"quantization", quantization},
+            {"device", device},
+        };
+        result.model_path = quant_dir;
+        result.total_bytes = total_bytes;
+        results.push_back(std::move(result));
+      }
+    }
   }
+
+  return results;
 }
 
 model_cache_get_result_t
@@ -300,8 +385,8 @@ get_model(const std::string &model_name, const std::string &quantization,
   client.set_read_timeout(60, 0);
 
   // Create local cache directory
-  fs::path model_base_path = get_model_base_path(model_name, quantization);
-  fs::path model_cache_path = get_cache_root() / model_base_path;
+  fs::path model_base_path = get_model_base_path(model_name);
+  fs::path model_cache_path = get_cache_root() / model_base_path / quantization;
   fs::create_directories(model_cache_path);
 
   // Assemble manifest filename based on arch, os and target device
@@ -310,18 +395,19 @@ get_model(const std::string &model_name, const std::string &quantization,
       std::format("{}-{}-{}", uname.machine, uname.sysname, target_device);
   std::string manifest_filename = std::format("manifest-{}.json", target_lib);
 
-  // Download manifest.json if not already present
+  // Download manifest if not already present
   fs::path manifest_path = model_cache_path / manifest_filename;
   if (!fs::exists(manifest_path)) {
-    download_file(client, (model_base_path / manifest_filename).string(),
+    download_file(client,
+                  (model_base_path / quantization / manifest_filename).string(),
                   manifest_path);
   }
 
-  // Read and parse manifest.json
+  // Read and parse manifest
   std::ifstream manifest_file(manifest_path);
   if (!manifest_file.is_open()) {
     result.error_message =
-        "Failed to open manifest.json at " + manifest_path.string();
+        "Failed to open manifest at " + manifest_path.string();
     return result;
   }
 
@@ -329,12 +415,11 @@ get_model(const std::string &model_name, const std::string &quantization,
   try {
     manifest_file >> manifest;
   } catch (const json::parse_error &e) {
-    // Remove manifest.json if it's not a valid format
+    // Remove manifest if it's not a valid format
     manifest_file.close();
     fs::remove(manifest_path);
 
-    result.error_message =
-        "Failed to parse manifest.json: " + std::string(e.what());
+    result.error_message = "Failed to parse manifest: " + std::string(e.what());
     return result;
   }
   manifest_file.close();
@@ -372,8 +457,8 @@ get_model(const std::string &model_name, const std::string &quantization,
 
     auto [download_success, download_error_message] =
         download_file_with_progress(
-            client, (model_base_path / file).string(), local_path,
-            [&](uint64_t current, uint64_t total) {
+            client, (model_base_path / quantization / file).string(),
+            local_path, [&](uint64_t current, uint64_t total) {
               float progress = static_cast<float>(current) / total * 100;
               if (callback.has_value())
                 callback.value()(i, total_files, file, progress);
@@ -402,6 +487,37 @@ get_model(const std::string &model_name, const std::string &quantization,
   result.success = true;
   result.model_path = model_cache_path;
   result.model_lib_path = model_lib_path;
+  return result;
+}
+
+model_cache_remove_result_t remove_model(const std::string &model_id,
+                                         bool ask_prompt) {
+  model_cache_remove_result_t result{.success = false};
+
+  fs::path model_cache_path = get_cache_root() / get_model_base_path(model_id);
+  if (!fs::exists(model_cache_path)) {
+    result.error_message = std::format(
+        "The model id \"{}\" does not exist in local cache", model_id);
+    return result;
+  }
+
+  if (ask_prompt) {
+    std::string answer;
+    do {
+      std::cout << std::format(
+          "Are you sure you want to remove model \"{}\"? (y/n)", model_id);
+      std::cin >> answer;
+      std::transform(answer.begin(), answer.end(), answer.begin(), ::tolower);
+    } while (!std::cin.fail() && !(answer == "y" || answer == "n"));
+
+    if (answer != "y") {
+      result.success = true;
+      return result;
+    }
+  }
+
+  fs::remove_all(model_cache_path);
+  result.success = true;
   return result;
 }
 
