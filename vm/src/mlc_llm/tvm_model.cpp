@@ -136,17 +136,17 @@ void tvm_model_t::load_params_from_cache() {
 tvm_model_t::tvm_model_t(const std::string &model_name,
                          const std::string &quantization, DLDevice device)
     : model_name_(model_name), quantization_(quantization), device_(device) {
-  auto get_model_result =
-      get_model(model_name, quantization,
-                tvm::runtime::DLDeviceType2Str(device.device_type));
-  if (!get_model_result.success) {
-    throw ailoy::runtime_error(get_model_result.error_message.value());
+  auto download_model_result =
+      download_model(model_name, quantization,
+                     tvm::runtime::DLDeviceType2Str(device.device_type));
+  if (!download_model_result.success) {
+    throw ailoy::runtime_error(download_model_result.error_message.value());
   }
 
-  model_path_ = get_model_result.model_path.value();
+  model_path_ = download_model_result.model_path.value();
 
   Module executable = tvm::runtime::Module::LoadFromFile(
-      get_model_result.model_lib_path.value().string());
+      download_model_result.model_lib_path.value().string());
   if (!executable.defined())
     throw std::runtime_error("Failed to load system");
   auto fload_exec = executable->GetFunction("vm_load_executable");

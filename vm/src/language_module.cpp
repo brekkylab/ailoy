@@ -5,6 +5,7 @@
 #include "mlc_llm/embedding_model.hpp"
 #include "mlc_llm/language_model.hpp"
 #include "mlc_llm/mlc_llm_engine.hpp"
+#include "mlc_llm/model_cache.hpp"
 #include "openai.hpp"
 #include "split_text.hpp"
 
@@ -13,19 +14,36 @@ namespace ailoy {
 static std::shared_ptr<module_t> language_module = create<module_t>();
 
 std::shared_ptr<const module_t> get_language_module() {
-  // Create TVM Embedding model
+  // Add Component: TVM Embedding model
   if (!language_module->factories.contains("tvm_embedding_model")) {
     language_module->factories.insert_or_assign(
         "tvm_embedding_model", create_tvm_embedding_model_component);
   }
 
-  // Create TVM Language model
+  // Add Component: TVM Language model
   if (!language_module->factories.contains("tvm_language_model")) {
     language_module->factories.insert_or_assign(
         "tvm_language_model", create_tvm_language_model_component);
   }
 
-  // Add Operators 'Split Text'
+  // Add Operators: Model Cache
+  if (!language_module->ops.contains("list_local_models")) {
+    language_module->ops.insert_or_assign(
+        "list_local_models",
+        create<instant_operator_t>(ailoy::operators::list_local_models));
+  }
+  if (!language_module->ops.contains("download_model")) {
+    language_module->ops.insert_or_assign(
+        "download_model",
+        create<instant_operator_t>(ailoy::operators::download_model));
+  }
+  if (!language_module->ops.contains("remove_model")) {
+    language_module->ops.insert_or_assign(
+        "remove_model",
+        create<instant_operator_t>(ailoy::operators::remove_model));
+  }
+
+  // Add Operators: Split Text
   if (!language_module->ops.contains("split_text_by_separator")) {
     language_module->ops.insert_or_assign(
         "split_text_by_separator",
@@ -41,7 +59,7 @@ std::shared_ptr<const module_t> get_language_module() {
         create<instant_operator_t>(split_text_by_separators_recursively_op));
   }
 
-  // Create Vectorstores
+  // Add Components: Vectorstores
   if (!language_module->factories.contains("faiss_vector_store")) {
     language_module->factories.insert_or_assign(
         "faiss_vector_store",
@@ -53,7 +71,7 @@ std::shared_ptr<const module_t> get_language_module() {
         create_vector_store_component<chromadb_vector_store_t>);
   }
 
-  // Create OpenAI
+  // Add Component: OpenAI
   if (!language_module->factories.contains("openai")) {
     language_module->factories.insert_or_assign("openai",
                                                 create_openai_component);

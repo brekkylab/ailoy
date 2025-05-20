@@ -245,7 +245,7 @@ std::pair<bool, std::string> download_file_with_progress(
       ("/" + remote_path).c_str(),
       [&](const char *data, size_t data_length) {
         // Exit on SIGINT
-        if (ailoy::stop_t::global_stop)
+        if (sigint.interrupted())
           return false;
 
         std::ofstream ofs(local_path, existing_size > 0
@@ -260,7 +260,7 @@ std::pair<bool, std::string> download_file_with_progress(
   if (!res || (res->status != httplib::OK_200 &&
                res->status != httplib::PartialContent_206)) {
     // If SIGINT interrupted, just return;
-    if (ailoy::stop_t::global_stop)
+    if (sigint.interrupted())
       return std::make_pair<bool, std::string>(
           false, "Interrupted while downloading the model");
 
@@ -273,10 +273,10 @@ std::pair<bool, std::string> download_file_with_progress(
   return std::make_pair<bool, std::string>(true, "");
 }
 
-fs::path get_model_base_path(const std::string &model_name) {
-  std::string model_name_escaped =
-      std::regex_replace(model_name, std::regex("/"), "--");
-  fs::path model_base_path = fs::path("tvm-models") / model_name_escaped;
+fs::path get_model_base_path(const std::string &model_id) {
+  std::string model_id_escaped =
+      std::regex_replace(model_id, std::regex("/"), "--");
+  fs::path model_base_path = fs::path("tvm-models") / model_id_escaped;
 
   return model_base_path;
 }
@@ -385,19 +385,19 @@ std::vector<model_cache_list_result_t> list_local_models() {
   return results;
 }
 
-model_cache_get_result_t
-get_model(const std::string &model_name, const std::string &quantization,
-          const std::string &target_device,
-          std::optional<model_cache_callback_t> callback,
-          bool print_progress_bar) {
-  model_cache_get_result_t result{.success = false};
+model_cache_download_result_t
+download_model(const std::string &model_id, const std::string &quantization,
+               const std::string &target_device,
+               std::optional<model_cache_callback_t> callback,
+               bool print_progress_bar) {
+  model_cache_download_result_t result{.success = false};
 
   auto client = httplib::Client(get_models_url());
   client.set_connection_timeout(10, 0);
   client.set_read_timeout(60, 0);
 
   // Create local cache directory
-  fs::path model_base_path = get_model_base_path(model_name);
+  fs::path model_base_path = get_model_base_path(model_id);
   fs::path model_cache_path = get_cache_root() / model_base_path / quantization;
   fs::create_directories(model_cache_path);
 
@@ -506,8 +506,8 @@ model_cache_remove_result_t remove_model(const std::string &model_id,
                                          bool ask_prompt) {
   model_cache_remove_result_t result{.success = false};
 
-  fs::path model_cache_path = get_cache_root() / get_model_base_path(model_id);
-  if (!fs::exists(model_cache_path)) {
+  fs::path model_path = get_cache_root() / get_model_base_path(model_id);
+  if (!fs::exists(model_path)) {
     result.error_message = std::format(
         "The model id \"{}\" does not exist in local cache", model_id);
     return result;
@@ -528,9 +528,115 @@ model_cache_remove_result_t remove_model(const std::string &model_id,
     }
   }
 
-  fs::remove_all(model_cache_path);
+  fs::remove_all(model_path);
   result.success = true;
+  result.model_path = model_path;
   return result;
 }
+
+namespace operators {
+
+value_or_error_t list_local_models(std::shared_ptr<const value_t> inputs) {
+  auto models = ailoy::list_local_models();
+
+  auto outputs = create<map_t>();
+  auto results = create<array_t>();
+  for (const auto &model : models) {
+    auto item = create<map_t>();
+    item->insert_or_assign("type", create<string_t>(model.model_type));
+    item->insert_or_assign("model_id", create<string_t>(model.model_id));
+    item->insert_or_assign("attributes", from_nlohmann_json(model.attributes));
+    item->insert_or_assign("model_path", create<string_t>(model.model_path));
+    item->insert_or_assign("total_bytes", create<uint_t>(model.total_bytes));
+    results->push_back(item);
+  }
+  outputs->insert_or_assign("results", results);
+  return outputs;
+}
+
+value_or_error_t download_model(std::shared_ptr<const value_t> inputs) {
+  if (!inputs->is_type_of<map_t>())
+    return error_output_t(
+        type_error("download_model", "inputs", "map_t", inputs->get_type()));
+
+  auto inputs_map = inputs->as<map_t>();
+
+  // TODO: Currently there's no model type other than "tvm",
+  // but we need to receive it after many model types are supported
+  std::string model_type = "tvm";
+
+  // Check model_id
+  if (!inputs_map->contains("model_id"))
+    return error_output_t(range_error("download_model", "model_id"));
+  auto model_id_val = inputs_map->at("model_id");
+  if (!model_id_val->is_type_of<string_t>())
+    return error_output_t(type_error("download_model", "model_id", "string_t",
+                                     model_id_val->get_type()));
+  std::string model_id = *model_id_val->as<string_t>();
+
+  if (model_type == "tvm") {
+    // Check quantization
+    if (!inputs_map->contains("quantization"))
+      return error_output_t(range_error("download_model", "quantization"));
+    auto quantization_val = inputs_map->at("quantization");
+    if (!quantization_val->is_type_of<string_t>())
+      return error_output_t(type_error("download_model", "quantization",
+                                       "string_t",
+                                       quantization_val->get_type()));
+    std::string quantization = *quantization_val->as<string_t>();
+
+    // Check device
+    if (!inputs_map->contains("device"))
+      return error_output_t(range_error("download_model", "device"));
+    auto device_val = inputs_map->at("device");
+    if (!device_val->is_type_of<string_t>())
+      return error_output_t(type_error("download_model", "device", "string_t",
+                                       device_val->get_type()));
+    std::string device = *device_val->as<string_t>();
+
+    // Download the model
+    auto result =
+        ailoy::download_model(model_id, quantization, device, nullptr, true);
+    if (!result.success)
+      return error_output_t(result.error_message.value());
+
+    auto outputs = create<map_t>();
+    outputs->insert_or_assign(
+        "model_path", create<string_t>(result.model_path.value().string()));
+
+    return outputs;
+  } else {
+    return error_output_t(
+        std::format("Unsupported model type: {}", model_type));
+  }
+}
+
+value_or_error_t remove_model(std::shared_ptr<const value_t> inputs) {
+  if (!inputs->is_type_of<map_t>())
+    return error_output_t(
+        type_error("remove_model", "inputs", "map_t", inputs->get_type()));
+
+  auto inputs_map = inputs->as<map_t>();
+
+  // Check model_id
+  if (!inputs_map->contains("model_id"))
+    return error_output_t(range_error("download_model", "model_id"));
+  auto model_id_val = inputs_map->at("model_id");
+  if (!model_id_val->is_type_of<string_t>())
+    return error_output_t(type_error("download_model", "model_id", "string_t",
+                                     model_id_val->get_type()));
+  std::string model_id = *model_id_val->as<string_t>();
+
+  auto result = ailoy::remove_model(model_id, true);
+  if (!result.success)
+    return error_output_t(result.error_message.value());
+
+  auto outputs = create<map_t>();
+  outputs->insert_or_assign(
+      "model_path", create<string_t>(result.model_path.value().string()));
+  return outputs;
+}
+
+} // namespace operators
 
 } // namespace ailoy
