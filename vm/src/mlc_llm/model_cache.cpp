@@ -288,13 +288,24 @@ std::vector<model_cache_list_result_t> list_local_models() {
 
   // TVM models
   fs::path tvm_models_path = cache_base_path / "tvm-models";
+  if (!fs::exists(tvm_models_path))
+    return results;
+
+  // Directory structure example for TVM models:
+  // BAAI--bge-m3 (model_id)
+  // └── q4f16_1 (quantization)
+  //     ├── manifest-arm64-Darwin-metal.json (manifest)
+  //     └── ...files...
   for (const auto &model_entry : fs::directory_iterator{tvm_models_path}) {
     if (!model_entry.is_directory())
       continue;
 
+    // Get model id and denormalize it
+    // e.g. "BAAI--bge-m3" -> "BAAI/bge-m3"
     std::string model_id = model_entry.path().filename().string();
-    model_id = std::regex_replace(model_id, std::regex("--"),
-                                  "/"); // denormalize model id
+    model_id = std::regex_replace(model_id, std::regex("--"), "/");
+
+    // Iterate over quantizations
     for (const auto &quant_entry : fs::directory_iterator(model_entry.path())) {
       if (!quant_entry.is_directory())
         continue;
@@ -302,6 +313,7 @@ std::vector<model_cache_list_result_t> list_local_models() {
       std::string quantization = quant_entry.path().filename().string();
       fs::path quant_dir = fs::absolute(quant_entry.path());
 
+      // Iterate over files
       for (const auto &file_entry : fs::directory_iterator(quant_dir)) {
         if (!file_entry.is_regular_file())
           continue;
