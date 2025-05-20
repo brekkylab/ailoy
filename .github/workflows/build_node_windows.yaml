@@ -33,9 +33,23 @@ jobs:
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
           choco install openssl 7zip
 
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/installed
+            vcpkg/buildtrees
+            vcpkg/packages
+          key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-
+
       - name: Install vcpkg and LAPACK
+        shell: powershell
         run: |
-          git clone https://github.com/microsoft/vcpkg.git
+          if (-not (Test-Path "vcpkg")) {
+            git clone https://github.com/microsoft/vcpkg.git
+          }
           .\vcpkg\bootstrap-vcpkg.bat
           .\vcpkg\vcpkg install lapack
 
@@ -43,7 +57,6 @@ jobs:
         shell: powershell
         run: |
           $root = "${{ github.workspace }}\vcpkg\installed\x64-windows"
-          dir $root
           echo "BLAS_ROOT=$root" >> $env:GITHUB_ENV
           echo "LAPACK_ROOT=$root" >> $env:GITHUB_ENV
           echo "$root\bin" >> $env:GITHUB_PATH
