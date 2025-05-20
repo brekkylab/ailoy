@@ -34,6 +34,7 @@ struct model_cache_download_result_t {
 
 struct model_cache_remove_result_t {
   bool success;
+  bool skipped = false;
   std::optional<std::filesystem::path> model_path = std::nullopt;
   std::optional<std::string> error_message = std::nullopt;
 };

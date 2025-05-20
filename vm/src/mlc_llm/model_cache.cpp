@@ -220,17 +220,21 @@ std::string get_models_url() {
     return "https://models.download.ailoy.co";
 }
 
-void download_file(httplib::Client &client, const std::string &remote_path,
-                   const fs::path &local_path) {
+std::pair<bool, std::string> download_file(httplib::Client &client,
+                                           const std::string &remote_path,
+                                           const fs::path &local_path) {
   httplib::Result res = client.Get(("/" + remote_path).c_str());
   if (!res || (res->status != httplib::OK_200)) {
-    throw ailoy::exception(
-        "Failed to download " + remote_path + ": HTTP " +
-        (res ? std::to_string(res->status) : httplib::to_string(res.error())));
+    return std::make_pair<bool, std::string>(
+        false, "Failed to download " + remote_path + ": HTTP " +
+                   (res ? std::to_string(res->status)
+                        : httplib::to_string(res.error())));
   }
 
   std::ofstream ofs(local_path, std::ios::binary);
   ofs.write(res->body.c_str(), res->body.size());
+
+  return std::make_pair<bool, std::string>(true, "");
 }
 
 std::pair<bool, std::string> download_file_with_progress(
@@ -410,9 +414,13 @@ download_model(const std::string &model_id, const std::string &quantization,
   // Download manifest if not already present
   fs::path manifest_path = model_cache_path / manifest_filename;
   if (!fs::exists(manifest_path)) {
-    download_file(client,
-                  (model_base_path / quantization / manifest_filename).string(),
-                  manifest_path);
+    auto [success, error_message] = download_file(
+        client, (model_base_path / quantization / manifest_filename).string(),
+        manifest_path);
+    if (!success) {
+      result.error_message = error_message;
+      return result;
+    }
   }
 
   // Read and parse manifest
@@ -524,6 +532,8 @@ model_cache_remove_result_t remove_model(const std::string &model_id,
 
     if (answer != "y") {
       result.success = true;
+      result.skipped = true;
+      result.model_path = model_path;
       return result;
     }
   }
@@ -595,8 +605,8 @@ value_or_error_t download_model(std::shared_ptr<const value_t> inputs) {
     std::string device = *device_val->as<string_t>();
 
     // Download the model
-    auto result =
-        ailoy::download_model(model_id, quantization, device, nullptr, true);
+    auto result = ailoy::download_model(model_id, quantization, device,
+                                        std::nullopt, true);
     if (!result.success)
       return error_output_t(result.error_message.value());
 
@@ -634,6 +644,7 @@ value_or_error_t remove_model(std::shared_ptr<const value_t> inputs) {
   auto outputs = create<map_t>();
   outputs->insert_or_assign(
       "model_path", create<string_t>(result.model_path.value().string()));
+  outputs->insert_or_assign("skipped", create<bool_t>(result.skipped));
   return outputs;
 }
 
