@@ -235,8 +235,13 @@ create_tvm_embedding_model_component(std::shared_ptr<const value_t> inputs) {
     return outputs;
   };
 
-  auto tvm_embedding_model =
-      create<tvm_embedding_model_t>(model_name, quantization);
+  std::shared_ptr<tvm_embedding_model_t> tvm_embedding_model;
+  try {
+    tvm_embedding_model =
+        create<tvm_embedding_model_t>(model_name, quantization);
+  } catch (const ailoy::runtime_error e) {
+    return ailoy::error_output_t(e.what());
+  }
 
   auto tokenizer = create<tokenizer_t>(tvm_embedding_model->get_model_path() /
                                        "tokenizer.json");

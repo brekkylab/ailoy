@@ -72,7 +72,7 @@ if(AILOY_WITH_MLC_LLM)
         FetchContent_Declare(
             mlc-llm
             GIT_REPOSITORY https://github.com/brekkylab/mlc-llm.git
-            GIT_TAG 7d2cfa1a3d2f640f35b034f53b4544698f33efec
+            GIT_TAG 089484a1f318b947b92633d7b061ec3bc7f916a8
         )
         if(NODE)
             set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
@@ -149,11 +149,11 @@ if(AILOY_WITH_FAISS)
 endif()
 
 if(AILOY_WITH_TEST)
-    add_executable(test_component ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_component.cpp)
-    target_include_directories(test_component PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    add_test(NAME TestComponent COMMAND test_component)
-    target_link_libraries(test_component PRIVATE ailoy_vm_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
-    target_link_options(test_component PRIVATE -fsanitize=undefined -fsanitize=address)
+    add_executable(test_debug_module ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_debug_module.cpp)
+    target_include_directories(test_debug_module PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME TestDebugModule COMMAND test_debug_module)
+    target_link_libraries(test_debug_module PRIVATE ailoy_vm_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
+    target_link_options(test_debug_module PRIVATE -fsanitize=undefined -fsanitize=address)
 
     add_executable(test_vm ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_vm.cpp)
     target_include_directories(test_vm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

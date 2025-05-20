@@ -8,7 +8,8 @@ describe("JSVM", () => {
     const rt = new Runtime("inproc://echo");
     await rt.start();
     const sentence = "hello world";
-    expect(await rt.call("echo", sentence)).to.be.equal(sentence);
+    const resp = await rt.call("echo", { text: sentence });
+    expect(resp.text).to.be.equal(sentence);
     await rt.stop();
   });
 
@@ -17,8 +18,8 @@ describe("JSVM", () => {
     await rt.start();
     const sentence = "abcdefghijk";
     let i = 0;
-    for await (const resp of rt.callIter("spell", sentence)) {
-      expect(resp).to.be.equal(sentence[i]);
+    for await (const resp of rt.callIter("spell", { text: sentence })) {
+      expect(resp.text).to.be.equal(sentence[i]);
       i++;
     }
     await rt.stop();
@@ -28,8 +29,8 @@ describe("JSVM", () => {
     const rt = new Runtime("inproc://multiple");
     await rt.start();
     const sentence = "artificial intelligence";
-    const prom1 = rt.callIter("spell", sentence);
-    const prom2 = rt.callIter("spell", sentence.toUpperCase());
+    const prom1 = rt.callIter("spell", { text: sentence });
+    const prom2 = rt.callIter("spell", { text: sentence.toUpperCase() });
     let sentence_reconstruct1 = "";
     let sentence_reconstruct2 = "";
     let prom1_finished = false;
@@ -38,12 +39,12 @@ describe("JSVM", () => {
       if (!prom1_finished) {
         const prom1_result = await prom1.next();
         if (prom1_result.done) prom1_finished = true;
-        else sentence_reconstruct1 += prom1_result.value;
+        else sentence_reconstruct1 += prom1_result.value.text;
       }
       if (!prom2_finished) {
         const prom2_result = await prom2.next();
         if (prom2_result.done) prom2_finished = true;
-        else sentence_reconstruct2 += prom2_result.value;
+        else sentence_reconstruct2 += prom2_result.value.text;
       }
     }
     expect(sentence).to.be.equal(sentence_reconstruct1);
@@ -74,7 +75,7 @@ describe("JSVM", () => {
       })
     ).to.be.equal(true);
 
-    const addInputs = [
+    const insertInputs = [
       {
         embedding: new Float32Array(
           Array.from({ length: 10 }, () => Math.random())
@@ -92,7 +93,7 @@ describe("JSVM", () => {
     ];
 
     let vectorIds;
-    const resp1 = await rt.callMethod("vs0", "insert_many", addInputs);
+    const resp1 = await rt.callMethod("vs0", "insert_many", insertInputs);
     expect(resp1).to.have.property("ids");
     vectorIds = resp1.ids;
 
@@ -100,18 +101,18 @@ describe("JSVM", () => {
       id: vectorIds[0],
     });
     expect(resp2.id).to.be.equal(vectorIds[0]);
-    expect(resp2.document).to.be.equal(addInputs[0].document);
-    expect(resp2.metadata).to.deep.equal(addInputs[0].metadata);
+    expect(resp2.document).to.be.equal(insertInputs[0].document);
+    expect(resp2.metadata).to.deep.equal(insertInputs[0].metadata);
 
     const resp3 = await rt.callMethod("vs0", "retrieve", {
-      query_embedding: addInputs[0].embedding,
-      k: 2,
+      query_embedding: insertInputs[0].embedding,
+      top_k: 2,
     });
     expect(resp3.results).to.be.lengthOf(2);
     for (const [i, result] of resp3.results.entries()) {
       expect(result.id).to.be.equal(vectorIds[i]);
-      expect(result.document).to.be.equal(addInputs[i].document);
-      expect(result.metadata).to.deep.equal(addInputs[i].metadata);
+      expect(result.document).to.be.equal(insertInputs[i].document);
+      expect(result.metadata).to.deep.equal(insertInputs[i].metadata);
       // first item should have the highest similarity
       expect(result.similarity).to.be.lessThanOrEqual(
         resp3.results[0].similarity
@@ -139,7 +140,7 @@ describe("JSVM", () => {
     });
     expect(resp).to.be.equal(true);
 
-    const addInputs = [
+    const insertInputs = [
       {
         embedding: new Float32Array(
           Array.from({ length: 10 }, () => Math.random())
@@ -157,7 +158,7 @@ describe("JSVM", () => {
     ];
 
     let vectorIds;
-    const resp1 = await rt.callMethod("vs0", "insert_many", addInputs);
+    const resp1 = await rt.callMethod("vs0", "insert_many", insertInputs);
     expect(resp1).to.have.property("ids");
     vectorIds = resp1.ids;
 
@@ -165,18 +166,18 @@ describe("JSVM", () => {
       id: vectorIds[0],
     });
     expect(resp2.id).to.be.equal(vectorIds[0]);
-    expect(resp2.document).to.be.equal(addInputs[0].document);
-    expect(resp2.metadata).to.deep.equal(addInputs[0].metadata);
+    expect(resp2.document).to.be.equal(insertInputs[0].document);
+    expect(resp2.metadata).to.deep.equal(insertInputs[0].metadata);
 
     const resp3 = await rt.callMethod("vs0", "retrieve", {
-      query_embedding: addInputs[0].embedding,
-      k: 2,
+      query_embedding: insertInputs[0].embedding,
+      top_k: 2,
     });
     expect(resp3.results).to.be.lengthOf(2);
     for (const [i, result] of resp3.results.entries()) {
       expect(result.id).to.be.equal(vectorIds[i]);
-      expect(result.document).to.be.equal(addInputs[i].document);
-      expect(result.metadata).to.deep.equal(addInputs[i].metadata);
+      expect(result.document).to.be.equal(insertInputs[i].document);
+      expect(result.metadata).to.deep.equal(insertInputs[i].metadata);
       expect(Number(result.similarity.toFixed(6))).to.be.within(0.0, 1.0);
     }
 

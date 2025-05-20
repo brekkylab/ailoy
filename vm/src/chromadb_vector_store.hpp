@@ -31,7 +31,7 @@ public:
   get_by_id(const std::string &id) override;
 
   std::vector<vector_store_retrieve_result_t>
-  retrieve(embedding_t query_embedding, uint64_t k) override;
+  retrieve(embedding_t query_embedding, uint64_t top_k) override;
 
   void remove_vector(const std::string &id) override;
 

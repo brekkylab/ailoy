@@ -316,7 +316,7 @@ split_text_by_separators_recursively_op(std::shared_ptr<const value_t> inputs) {
 
   // Parse separators
   std::vector<std::string> separators;
-  if (input_map->contains("separator")) {
+  if (input_map->contains("separators")) {
     if (!input_map->at("separators")->is_type_of<array_t>())
       return error_output_t(
           type_error("Split Text", "separators", "array_t",

@@ -15,12 +15,15 @@ def runtime():
 
 
 def test_echo(runtime: Runtime):
-    runtime.call("echo", "hello world") == "hello world"
+    text = "hello world"
+    resp = runtime.call("echo", {"text": text})
+    assert resp["text"] == text
 
 
 def test_spell(runtime: Runtime):
-    for i, out in enumerate(runtime.call_iter("spell", "abcdefghijk")):
-        assert out == "abcdefghijk"[i]
+    text = "abcdefghijk"
+    for i, out in enumerate(runtime.call_iter("spell", {"text": text})):
+        assert out["text"] == text[i]
 
 
 def test_vectorstore(runtime: Runtime):

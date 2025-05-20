@@ -9,7 +9,7 @@
                 "properties": {
                     "expression": {
                         "type": "string",
-                        "description": "The mathematical expression to evaluate, which is consist of float numbers, arithmetics(+, -, *, /, %, ^), parentheses, and functions.\nThe following mathematical constants and functions can be utilzed in the expression.\n[e, pi, sqrt, abs, floor, ceil, ln, log, log10, sin, cos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, fac, ncr, npr]"
+                        "description": "The mathematical expression to evaluate, which is consist of float numbers, arithmetics(+, -, *, /, %, ^), parentheses, and functions.\nThe following mathematical constants and functions can be utilzed in the expression.\n[e, pi, sqrt, abs, round, trunc, floor, ceil, ln, log, log10, sin, cos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, fac, ncr, npr]"
                     }
                 },
                 "required": [

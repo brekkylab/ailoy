@@ -149,7 +149,7 @@ export class VectorStore {
         "retrieve",
         {
           query_embedding: embedding,
-          k: topK,
+          top_k: topK,
         }
       );
     return resp.results;

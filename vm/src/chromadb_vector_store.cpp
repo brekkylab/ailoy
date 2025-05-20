@@ -209,13 +209,13 @@ chromadb_vector_store_t::get_by_id(const std::string &id) {
 }
 
 std::vector<vector_store_retrieve_result_t>
-chromadb_vector_store_t::retrieve(embedding_t query_embedding, uint64_t k) {
+chromadb_vector_store_t::retrieve(embedding_t query_embedding, uint64_t top_k) {
   nlohmann::json params;
   params["query_embeddings"] = std::vector<std::vector<float>>{
       query_embedding->operator std::vector<float>()};
   params["include"] =
       std::vector<std::string>{"documents", "metadatas", "distances"};
-  params["n_results"] = k;
+  params["n_results"] = top_k;
 
   std::string body = params.dump();
   httplib::Result result = cli_->Post(

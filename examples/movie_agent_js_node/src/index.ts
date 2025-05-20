@@ -28,8 +28,8 @@ async function main() {
 
   console.log("Initializing AI...");
 
-  const ex = await defineAgent(rt, "qwen3-8b");
-  ex.addToolsFromPreset("tmdb", {
+  const agent = await defineAgent(rt, "qwen3-8b");
+  agent.addToolsFromPreset("tmdb", {
     authenticator: bearerAutenticator(tmdbApiKey),
   });
 
@@ -44,7 +44,7 @@ async function main() {
     if (query === "" || query === "exit") break;
 
     process.stdout.write(`\nAssistant: `);
-    for await (const resp of ex.run(query, { enableReasoning: true })) {
+    for await (const resp of agent.query(query, { enableReasoning: true })) {
       if (resp.type === "output_text") {
         process.stdout.write(resp.content);
         if (resp.endOfTurn) {

@@ -1,5 +1,7 @@
 #include "model_cache.hpp"
 
+#include <atomic>
+#include <csignal>
 #include <fstream>
 #include <regex>
 #include <string>
@@ -149,6 +151,31 @@ std::string sha1_checksum(const std::filesystem::path &filepath) {
   return result.str();
 }
 
+class SigintCatcher {
+public:
+  SigintCatcher() {
+    // Save previous handler and install ours
+    previous_handler_ = std::signal(SIGINT, &SigintCatcher::handle_signal);
+    interrupted_.store(false);
+  }
+
+  ~SigintCatcher() {
+    // Restore previous signal handler
+    std::signal(SIGINT, previous_handler_);
+  }
+
+  static bool interrupted() { return interrupted_.load(); }
+
+private:
+  static void handle_signal(int /*signum*/) { interrupted_.store(true); }
+
+  static std::atomic<bool> interrupted_;
+  using SignalHandler = void (*)(int);
+  SignalHandler previous_handler_;
+};
+
+std::atomic<bool> SigintCatcher::interrupted_{false};
+
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
@@ -202,14 +229,20 @@ void download_file(httplib::Client &client, const std::string &remote_path,
   ofs.write(res->body.c_str(), res->body.size());
 }
 
-void download_file_with_progress(
+std::pair<bool, std::string> download_file_with_progress(
     httplib::Client &client, const std::string &remote_path,
     const fs::path &local_path,
     std::function<bool(uint64_t, uint64_t)> progress_callback) {
+  SigintCatcher sigint;
+
   size_t existing_size = 0;
   httplib::Result res = client.Get(
       ("/" + remote_path).c_str(),
       [&](const char *data, size_t data_length) {
+        // Stop on SIGINT
+        if (sigint.interrupted())
+          return false;
+
         std::ofstream ofs(local_path, existing_size > 0
                                           ? std::ios::app | std::ios::binary
                                           : std::ios::binary);
@@ -221,10 +254,19 @@ void download_file_with_progress(
       progress_callback);
   if (!res || (res->status != httplib::OK_200 &&
                res->status != httplib::PartialContent_206)) {
-    throw ailoy::exception(
-        "Failed to download " + remote_path + ": HTTP " +
-        (res ? std::to_string(res->status) : httplib::to_string(res.error())));
+    // If SIGINT interrupted, return error message about interrupted
+    if (sigint.interrupted())
+      return std::make_pair<bool, std::string>(
+          false, "Interrupted while downloading the model");
+
+    // Otherwise, return error message about HTTP error
+    return std::make_pair<bool, std::string>(
+        false, "Failed to download " + remote_path + ": HTTP " +
+                   (res ? std::to_string(res->status)
+                        : httplib::to_string(res.error())));
   }
+
+  return std::make_pair<bool, std::string>(true, "");
 }
 
 fs::path get_model_base_path(const std::string &model_name,
@@ -246,11 +288,13 @@ void remove_model(const std::string &model_name,
   }
 }
 
-std::tuple<std::filesystem::path, std::filesystem::path>
+model_cache_get_result_t
 get_model(const std::string &model_name, const std::string &quantization,
           const std::string &target_device,
           std::optional<model_cache_callback_t> callback,
           bool print_progress_bar) {
+  model_cache_get_result_t result{.success = false};
+
   auto client = httplib::Client(get_models_url());
   client.set_connection_timeout(10, 0);
   client.set_read_timeout(60, 0);
@@ -276,8 +320,9 @@ get_model(const std::string &model_name, const std::string &quantization,
   // Read and parse manifest.json
   std::ifstream manifest_file(manifest_path);
   if (!manifest_file.is_open()) {
-    throw ailoy::exception("Failed to open manifest.json at " +
-                           manifest_path.string());
+    result.error_message =
+        "Failed to open manifest.json at " + manifest_path.string();
+    return result;
   }
 
   json manifest;
@@ -287,14 +332,17 @@ get_model(const std::string &model_name, const std::string &quantization,
     // Remove manifest.json if it's not a valid format
     manifest_file.close();
     fs::remove(manifest_path);
-    throw ailoy::exception("Failed to parse manifest.json: " +
-                           std::string(e.what()));
+
+    result.error_message =
+        "Failed to parse manifest.json: " + std::string(e.what());
+    return result;
   }
   manifest_file.close();
 
   // Get files from "files" section
   if (!manifest.contains("files") || !manifest["files"].is_array()) {
-    throw ailoy::exception("Manifest is missing a valid 'files' array");
+    result.error_message = "Manifest is missing a valid 'files' array";
+    return result;
   }
 
   std::vector<std::string> files_to_download;
@@ -322,16 +370,23 @@ get_model(const std::string &model_name, const std::string &quantization,
         indicators::option::ShowElapsedTime{true});
     auto bar_idx = bars.push_back(std::move(bar));
 
-    download_file_with_progress(
-        client, (model_base_path / file).string(), local_path,
-        [&](uint64_t current, uint64_t total) {
-          float progress = static_cast<float>(current) / total * 100;
-          if (callback.has_value())
-            callback.value()(i, total_files, file, progress);
-          if (print_progress_bar)
-            bars[bar_idx].set_progress(progress);
-          return true;
-        });
+    auto [download_success, download_error_message] =
+        download_file_with_progress(
+            client, (model_base_path / file).string(), local_path,
+            [&](uint64_t current, uint64_t total) {
+              float progress = static_cast<float>(current) / total * 100;
+              if (callback.has_value())
+                callback.value()(i, total_files, file, progress);
+              if (print_progress_bar)
+                bars[bar_idx].set_progress(progress);
+              return true;
+            });
+
+    if (!download_success) {
+      result.error_message = download_error_message;
+      return result;
+    }
+
     if (print_progress_bar)
       bars[bar_idx].mark_as_completed();
   }
@@ -344,7 +399,10 @@ get_model(const std::string &model_name, const std::string &quantization,
   std::string model_lib_file = manifest["lib"].get<std::string>();
   fs::path model_lib_path = model_cache_path / model_lib_file;
 
-  return std::make_tuple(model_cache_path, model_lib_path);
+  result.success = true;
+  result.model_path = model_cache_path;
+  result.model_lib_path = model_lib_path;
+  return result;
 }
 
 } // namespace ailoy

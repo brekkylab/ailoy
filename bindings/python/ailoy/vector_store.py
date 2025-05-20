@@ -4,6 +4,8 @@ from pydantic import BaseModel, TypeAdapter
 
 from ailoy.runtime import Runtime, generate_uuid
 
+__all__ = ["VectorStore"]
+
 
 class VectorStoreInsertItem(BaseModel):
     document: str
@@ -110,19 +112,21 @@ class VectorStore:
                 {"model": "BAAI/bge-m3"},
             )
         else:
-            raise NotImplementedError()
+            raise NotImplementedError(f"Unsupprted embedding model: {embedding_model_name}")
 
         # Initialize vector store
         if vector_store_name == "faiss":
             if "dimension" not in embedding_model_attrs:
                 embedding_model_attrs["dimension"] = dimension
             self._runtime.define("faiss_vector_store", self._component_state.vector_store_name, embedding_model_attrs)
-        else:
+        elif vector_store_name == "chromadb":
             if "url" not in vector_store_attrs:
                 vector_store_attrs["url"] = url
             if "collection" not in vector_store_attrs:
                 vector_store_attrs["collection"] = collection
             self._runtime.define("chromadb_vector_store", self._component_state.vector_store_name, vector_store_attrs)
+        else:
+            raise NotImplementedError(f"Unsupprted vector store: {vector_store_name}")
 
         self._component_state.valid = True
 
@@ -187,7 +191,7 @@ class VectorStore:
             "retrieve",
             {
                 "query_embedding": embedding,
-                "k": top_k,
+                "top_k": top_k,
             },
         )
         results = TypeAdapter(List[VectorStoreRetrieveItem]).validate_python(resp["results"])

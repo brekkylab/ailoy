@@ -103,7 +103,13 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
 #endif
 
   // Get engine
-  auto engine = get_mlc_llm_engine(model, quantization, device, mode);
+  std::shared_ptr<mlc_llm_engine_t> engine;
+  try {
+    engine = get_mlc_llm_engine(model, quantization, device, mode);
+  } catch (const ailoy::runtime_error e) {
+    return error_output_t(e.what());
+  }
+
   if (engine->get_last_error().has_value())
     return error_output_t(engine->get_last_error().value());
 

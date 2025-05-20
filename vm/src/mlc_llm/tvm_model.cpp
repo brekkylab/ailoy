@@ -136,13 +136,17 @@ void tvm_model_t::load_params_from_cache() {
 tvm_model_t::tvm_model_t(const std::string &model_name,
                          const std::string &quantization, DLDevice device)
     : model_name_(model_name), quantization_(quantization), device_(device) {
-  auto [model_path, model_lib_path] =
+  auto get_model_result =
       get_model(model_name, quantization,
                 tvm::runtime::DLDeviceType2Str(device.device_type));
-  model_path_ = model_path;
+  if (!get_model_result.success) {
+    throw ailoy::runtime_error(get_model_result.error_message.value());
+  }
 
-  Module executable =
-      tvm::runtime::Module::LoadFromFile(model_lib_path.string());
+  model_path_ = get_model_result.model_path.value();
+
+  Module executable = tvm::runtime::Module::LoadFromFile(
+      get_model_result.model_lib_path.value().string());
   if (!executable.defined())
     throw std::runtime_error("Failed to load system");
   auto fload_exec = executable->GetFunction("vm_load_executable");
@@ -161,13 +165,13 @@ tvm_model_t::tvm_model_t(const std::string &model_name,
   metadata_ = nlohmann::json::parse(static_cast<std::string>(fmetadata()));
 
   // Load ndarray cache metadata
-  auto contents = utils::LoadBytesFromFile(model_path / "ndarray-cache.json");
+  auto contents = utils::LoadBytesFromFile(model_path_ / "ndarray-cache.json");
   load_ndarray_cache_metadata(contents);
 
   // Load ndarray cache
   std::regex re("params_shard_(\\d+)\\.bin");
   std::smatch match;
-  for (const auto &entry : std::filesystem::directory_iterator(model_path)) {
+  for (const auto &entry : std::filesystem::directory_iterator(model_path_)) {
     auto file_path = entry.path().string();
     auto file_name = entry.path().filename().string();
     if (std::regex_match(file_name, match, re)) {

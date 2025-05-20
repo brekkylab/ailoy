@@ -87,20 +87,20 @@ http_response_t run_http_request(const http_request_t &req) {
 value_or_error_t http_request_op(std::shared_ptr<const value_t> inputs) {
   if (!inputs->is_type_of<map_t>())
     return error_output_t(
-        type_error("HTTP Request", "inputs", "map_t", inputs->get_type()));
+        type_error("http_request", "inputs", "map_t", inputs->get_type()));
 
   auto input_map = inputs->as<map_t>();
   if (!input_map->contains("url"))
-    return error_output_t(range_error("HTTP Request", "url"));
+    return error_output_t(range_error("http_request", "url"));
   if (!input_map->at("url")->is_type_of<string_t>())
-    return error_output_t(type_error("HTTP Request", "url", "string_t",
+    return error_output_t(type_error("http_request", "url", "string_t",
                                      input_map->at("url")->get_type()));
   auto url = input_map->at<string_t>("url");
 
   if (!input_map->contains("method"))
-    return error_output_t(range_error("HTTP Request", "method"));
+    return error_output_t(range_error("http_request", "method"));
   if (!input_map->at("method")->is_type_of<string_t>())
-    return error_output_t(type_error("HTTP Request", "method", "string_t",
+    return error_output_t(type_error("http_request", "method", "string_t",
                                      input_map->at("method")->get_type()));
   auto method = input_map->at<string_t>("method");
   if (!(*method == "GET" || *method == "POST" || *method == "PUT" ||
@@ -111,14 +111,14 @@ value_or_error_t http_request_op(std::shared_ptr<const value_t> inputs) {
   std::shared_ptr<const map_t> headers = create<map_t>();
   if (input_map->contains("headers")) {
     if (!input_map->at("headers")->is_type_of<map_t>())
-      return error_output_t(type_error("HTTP Request", "headers", "map_t",
+      return error_output_t(type_error("http_request", "headers", "map_t",
                                        input_map->at("headers")->get_type()));
     headers = input_map->at<map_t>("headers");
   }
   std::shared_ptr<const string_t> body = create<string_t>();
   if (input_map->contains("body")) {
     if (!input_map->at("body")->is_type_of<string_t>())
-      return error_output_t(type_error("HTTP Request", "body", "string_t",
+      return error_output_t(type_error("http_request", "body", "string_t",
                                        input_map->at("body")->get_type()));
     body = input_map->at<string_t>("body");
   }
