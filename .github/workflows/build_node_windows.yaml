@@ -28,10 +28,13 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Install Chocolatey dependencies
+      - name: Download and Install OpenSSL static
+        shell: powershell
         run: |
-          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
-          choco install openssl 7zip
+          $url = "https://slproweb.com/download/Win64OpenSSL-3_5_0.exe"
+          $output = "openssl-installer.exe"
+          Invoke-WebRequest -Uri $url -OutFile $output
+          Start-Process -FilePath ".\openssl-installer.exe" -ArgumentList "/silent", "/verysilent", "/sp-", "/SUPPRESSMSGBOXES" -Wait
 
       - name: Cache vcpkg
         uses: actions/cache@v4
