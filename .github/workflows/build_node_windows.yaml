@@ -39,23 +39,22 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $output
           Start-Process -FilePath ".\openssl-installer.exe" -ArgumentList "/silent", "/verysilent", "/sp-", "/SUPPRESSMSGBOXES" -Wait
 
-      - name: Install vcpkg and LAPACK
+      - name: Install LAPACK
         shell: powershell
         run: |
-          if (-not (Test-Path "vcpkg")) {
-            git clone https://github.com/microsoft/vcpkg.git
-          }
-          .\vcpkg\bootstrap-vcpkg.bat
-          .\vcpkg\vcpkg install lapack
-          $root = "${{ github.workspace }}\vcpkg\installed\x64-windows"
+          & "C:\vcpkg\vcpkg.exe" install lapack
+          $root = "C:\vcpkg\installed\x64-windows"
           echo "BLAS_ROOT=$root" >> $env:GITHUB_ENV
           echo "LAPACK_ROOT=$root" >> $env:GITHUB_ENV
           echo "$root\bin" >> $env:GITHUB_PATH
 
       - name: Install Vulkan SDK
+        shell: powershell
         run: |
-          curl -LO https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
-          ./vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install --root C:\VulkanSDK
+          $url = "https://sdk.lunarg.com/sdk/download/1.4.313.0/windows/vulkan-sdk.exe"
+          $output = "vulkan-sdk.exe"
+          Invoke-WebRequest -Uri $url -OutFile $output
+          Start-Process -FilePath ".\vulkan-sdk.exe" -ArgumentList "--accept-licenses", "--default-answer", "--confirm-command", "install", "--root", "C:\VulkanSDK" -Wait
           echo "VULKAN_SDK=C:\VulkanSDK" >> $env:GITHUB_ENV
           echo "PATH=C:\VulkanSDK\Bin;$env:PATH" >> $env:GITHUB_ENV
 
