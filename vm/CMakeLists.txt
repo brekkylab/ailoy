@@ -22,6 +22,9 @@ FetchContent_Declare(
 set(HTTPLIB_REQUIRE_OPENSSL ON)
 set(BROTLI_USE_STATIC_LIBS ON)
 set(OPENSSL_USE_STATIC_LIBS ON)
+if(NODE)
+    set(OPENSSL_MSVC_STATIC_RT ON)
+endif()
 FetchContent_MakeAvailable(httplib)
 target_link_libraries(ailoy_vm_obj PRIVATE httplib)
 
