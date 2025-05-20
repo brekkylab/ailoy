@@ -23,7 +23,6 @@
 #include <openssl/sha.h>
 
 #include "exception.hpp"
-#include "thread.hpp"
 
 namespace ailoy {
 
@@ -241,7 +240,7 @@ std::pair<bool, std::string> download_file_with_progress(
       ("/" + remote_path).c_str(),
       [&](const char *data, size_t data_length) {
         // Exit on SIGINT
-        if (ailoy::stop_t::global_stop)
+        if (sigint.interrupted())
           return false;
 
         std::ofstream ofs(local_path, existing_size > 0
@@ -256,7 +255,7 @@ std::pair<bool, std::string> download_file_with_progress(
   if (!res || (res->status != httplib::OK_200 &&
                res->status != httplib::PartialContent_206)) {
     // If SIGINT interrupted, just return;
-    if (ailoy::stop_t::global_stop)
+    if (sigint.interrupted())
       return std::make_pair<bool, std::string>(
           false, "Interrupted while downloading the model");
 
