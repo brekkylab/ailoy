@@ -151,30 +151,56 @@ std::string sha1_checksum(const std::filesystem::path &filepath) {
   return result.str();
 }
 
-class SigintCatcher {
+class SigintGuard {
 public:
-  SigintCatcher() {
-    // Save previous handler and install ours
-    previous_handler_ = std::signal(SIGINT, &SigintCatcher::handle_signal);
-    interrupted_.store(false);
+  SigintGuard() {
+    g_sigint = false;
+
+#if defined(_WIN32)
+    SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
+#else
+    struct sigaction new_action{};
+    new_action.sa_handler = sigint_handler;
+    sigemptyset(&new_action.sa_mask);
+    new_action.sa_flags = 0; // Disable SA_RESTART
+
+    sigaction(SIGINT, nullptr, &old_action_);
+    sigaction(SIGINT, &new_action, nullptr);
+#endif
   }
 
-  ~SigintCatcher() {
-    // Restore previous signal handler
-    std::signal(SIGINT, previous_handler_);
+  ~SigintGuard() {
+#if defined(_WIN32)
+    SetConsoleCtrlHandler(console_ctrl_handler, FALSE);
+#else
+    sigaction(SIGINT, &old_action_, nullptr);
+#endif
   }
 
-  static bool interrupted() { return interrupted_.load(); }
+  static bool interrupted() { return g_sigint; }
 
 private:
-  static void handle_signal(int /*signum*/) { interrupted_.store(true); }
+#if !defined(_WIN32)
+  struct sigaction old_action_;
+#endif
 
-  static std::atomic<bool> interrupted_;
-  using SignalHandler = void (*)(int);
-  SignalHandler previous_handler_;
+  static std::atomic<bool> g_sigint;
+
+#if defined(_WIN32)
+  static BOOL WINAPI console_ctrl_handler(DWORD signal) {
+    if (signal == CTRL_C_EVENT || signal == CTRL_BREAK_EVENT) {
+      g_sigint = true;
+      return TRUE;
+    }
+    return FALSE;
+  }
+#else
+  static void sigint_handler(int) { g_sigint = true; }
+#endif
 };
 
-std::atomic<bool> SigintCatcher::interrupted_{false};
+// Definition of static variable
+std::atomic<bool> SigintGuard::g_sigint{false};
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -233,14 +259,14 @@ std::pair<bool, std::string> download_file_with_progress(
     httplib::Client &client, const std::string &remote_path,
     const fs::path &local_path,
     std::function<bool(uint64_t, uint64_t)> progress_callback) {
-  SigintCatcher sigint;
+  SigintGuard sigint_guard;
 
   size_t existing_size = 0;
   httplib::Result res = client.Get(
       ("/" + remote_path).c_str(),
       [&](const char *data, size_t data_length) {
         // Stop on SIGINT
-        if (sigint.interrupted())
+        if (sigint_guard.interrupted())
           return false;
 
         std::ofstream ofs(local_path, existing_size > 0
@@ -255,7 +281,7 @@ std::pair<bool, std::string> download_file_with_progress(
   if (!res || (res->status != httplib::OK_200 &&
                res->status != httplib::PartialContent_206)) {
     // If SIGINT interrupted, return error message about interrupted
-    if (sigint.interrupted())
+    if (sigint_guard.interrupted())
       return std::make_pair<bool, std::string>(
           false, "Interrupted while downloading the model");
 
