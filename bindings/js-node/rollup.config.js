@@ -77,4 +77,16 @@ export default [
     output: [{ file: "dist/index.d.ts", format: "esm" }],
     plugins: [dts({ tsconfig })],
   },
+  // CLI
+  {
+    input: "src/cli/index.ts",
+    output: [{ file: "dist/cli.cjs", format: "cjs" }],
+    plugins: [
+      typescript({ tsconfig }),
+      tscAlias({ tsconfig }),
+      resolve(),
+      commonjs(),
+      terser(),
+    ],
+  },
 ];
