@@ -10,18 +10,19 @@
     "types": "dist/index.d.ts",
     "files": [
         "dist",
+        "prebuilds",
         "README.md"
     ],
     "bin": {
         "ailoy": "./dist/cli.cjs"
     },
     "scripts": {
-        "build:napi": "node build-napi.js",
+        "build:cpp": "node build-cmakejs.js",
         "build:ts": "rollup -c --bundleConfigAsCjs",
-        "build": "npm run build:napi && npm run build:ts",
+        "build": "npm run build:cpp && npm run build:ts",
         "clean": "rm -rf dist/",
         "test": "ts-mocha",
-        "prepack": "clean-package",
+        "prepack": "node build-prebuild.js && npm run build:ts && clean-package",
         "postpack": "clean-package restore"
     },
     "devDependencies": {
@@ -40,6 +41,7 @@
         "cmake-js": "^7.3.0",
         "mocha": "^11.2.2",
         "node-addon-api": "^8.3.1",
+        "prebuild": "^13.0.1",
         "rollup": "^4.40.2",
         "rollup-plugin-copy": "^3.5.0",
         "rollup-plugin-dts": "^6.2.1",
@@ -56,16 +58,25 @@
     "binary": {
         "napi_versions": [
             7
-        ]
+        ],
+        "module_name": "ailoy_addon",
+        "module_path": "build/Release",
+        "package_name": "ailoy-node-v{version}-node-v{abi}-{platform}-{arch}.tar.gz"
     },
     "clean-package": {
         "indent": 2,
         "remove": [
             "scripts",
             "devDependencies",
+            "optionalDependencies",
             "binary",
             "clean-package"
-        ]
+        ],
+        "replace": {
+            "scripts": {
+                "install": "prebuild-install || cmake-js rebuild"
+            }
+        }
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.11.2",

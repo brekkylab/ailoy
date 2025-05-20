@@ -1,0 +1,61 @@
+name: Node Linux Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Node.js (18.x) and npm
+        run: |
+          curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+          yum install -y nodejs
+
+      - name: Install OpenSSL 3.0.16
+        run: |
+          yum install -y perl-IPC-Cmd
+          curl -LO https://www.openssl.org/source/openssl-3.0.16.tar.gz
+          tar -xzf openssl-3.0.16.tar.gz
+          cd openssl-3.0.16
+          ./config --prefix=/opt/openssl --openssldir=/opt/openssl no-shared
+          make -j$(nproc)
+          make install_sw
+
+      - name: Install Rust (cargo)
+        run: |
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install BLAS/LAPACK
+        run: |
+          yum install -y blas-devel lapack-devel
+
+      - name: Install Vulkan SDK 1.4.313.0
+        run: |
+          curl -LO https://sdk.lunarg.com/sdk/download/1.4.313.0/linux/vulkan-sdk-1.4.313.0.tar.xz
+          mkdir -p /opt/vulkan-sdk
+          tar -xJf vulkan-sdk-1.4.313.0.tar.xz --strip-components=2 -C /opt/vulkan-sdk
+
+      - name: Create package
+        working-directory: bindings/js-node
+        run: |
+          npm install
+          PACKAGE_NAME=$(npm pack)
+          echo "package_name=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
+        env:
+          OPENSSL_ROOT_DIR: /opt/openssl
+          VULKAN_SDK: /opt/vulkan-sdk/x86_64
+
+      - name: Upload npm package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.package_name }}
+          path: ${{ github.workspace }}/bindings/js-node/${{ steps.pack.outputs.package_name }}

@@ -1,0 +1,35 @@
+name: Node macOS Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew install libomp
+
+      - name: Create package
+        run: | 
+          npm install
+          PACKAGE_NAME=$(npm pack)
+          echo "package_name=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
+        working-directory: ${{ github.workspace }}/bindings/js-node
+        env:
+          OpenMP_ROOT: /opt/homebrew/opt/libomp
+
+      - name: Upload npm package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.package_name }}
+          path: ${{ github.workspace }}/bindings/js-node/${{ steps.pack.outputs.package_name }}

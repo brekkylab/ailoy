@@ -2,3 +2,5 @@ build
 csrc
 node_modules
 *.backup
+ailoy_addon.node
+*.bak

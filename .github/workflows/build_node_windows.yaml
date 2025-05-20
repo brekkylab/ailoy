@@ -1,0 +1,73 @@
+name: Node Windows Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-2019
+
+    steps:
+      - name: Enable Windows long path support
+        shell: powershell
+        run: |
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
+          git config --system core.longpaths true
+
+      - name: Set up MSVC dev command prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Install OpenSSL
+        shell: powershell
+        run: |
+          $url = "https://slproweb.com/download/Win64OpenSSL-3_5_0.exe"
+          $output = "openssl-installer.exe"
+          Invoke-WebRequest -Uri $url -OutFile $output
+          Start-Process -FilePath ".\openssl-installer.exe" -ArgumentList "/silent", "/verysilent", "/sp-", "/SUPPRESSMSGBOXES" -Wait
+
+      - name: Install LAPACK
+        shell: powershell
+        run: |
+          & "C:\vcpkg\vcpkg.exe" install lapack
+          $root = "C:\vcpkg\installed\x64-windows"
+          echo "BLAS_ROOT=$root" >> $env:GITHUB_ENV
+          echo "LAPACK_ROOT=$root" >> $env:GITHUB_ENV
+          echo "$root\bin" >> $env:GITHUB_PATH
+
+      - name: Install Vulkan SDK
+        shell: powershell
+        run: |
+          $url = "https://sdk.lunarg.com/sdk/download/1.4.313.0/windows/vulkan-sdk.exe"
+          $output = "vulkan-sdk.exe"
+          Invoke-WebRequest -Uri $url -OutFile $output
+          Start-Process -FilePath ".\vulkan-sdk.exe" -ArgumentList "--accept-licenses", "--default-answer", "--confirm-command", "install", "--root", "C:\VulkanSDK" -Wait
+          echo "VULKAN_SDK=C:\VulkanSDK" >> $env:GITHUB_ENV
+          echo "PATH=C:\VulkanSDK\Bin;$env:PATH" >> $env:GITHUB_ENV
+
+      - name: Create package
+        shell: powershell
+        run: |
+          npm install
+          PACKAGE_NAME=$(npm pack)
+          echo "package_name=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
+        working-directory: ${{ github.workspace }}/bindings/js-node
+
+      - name: Upload npm package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.package_name }}
+          path: ${{ github.workspace }}/bindings/js-node/${{ steps.pack.outputs.package_name }}
