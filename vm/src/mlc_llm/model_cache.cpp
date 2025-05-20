@@ -239,7 +239,7 @@ std::pair<bool, std::string> download_file_with_progress(
   httplib::Result res = client.Get(
       ("/" + remote_path).c_str(),
       [&](const char *data, size_t data_length) {
-        // Exit on SIGINT
+        // Stop on SIGINT
         if (sigint.interrupted())
           return false;
 
@@ -254,11 +254,12 @@ std::pair<bool, std::string> download_file_with_progress(
       progress_callback);
   if (!res || (res->status != httplib::OK_200 &&
                res->status != httplib::PartialContent_206)) {
-    // If SIGINT interrupted, just return;
+    // If SIGINT interrupted, return error message about interrupted
     if (sigint.interrupted())
       return std::make_pair<bool, std::string>(
           false, "Interrupted while downloading the model");
 
+    // Otherwise, return error message about HTTP error
     return std::make_pair<bool, std::string>(
         false, "Failed to download " + remote_path + ": HTTP " +
                    (res ? std::to_string(res->status)
