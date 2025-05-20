@@ -17,7 +17,6 @@
         "behavior": {
             "baseURL": "https://api.nytimes.com/svc/search/v2/articlesearch.json",
             "method": "GET",
-            "authentication": "bearer",
             "headers": {
                 "accept": "application/json"
             },

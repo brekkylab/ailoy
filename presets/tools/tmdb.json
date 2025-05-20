@@ -136,7 +136,7 @@
         "type": "restapi",
         "description": {
             "name": "tmdb_movie_watch_providers",
-            "description": "Get the list of streaming providers we have for a movie.",
+            "description": "Get the list of streaming providers we have for a movie in some coutries.",
             "parameters": {
                 "type": "object",
                 "properties": {

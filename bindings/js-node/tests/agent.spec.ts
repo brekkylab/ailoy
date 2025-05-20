@@ -32,24 +32,70 @@ describe("Agent", async () => {
   });
 
   it("Tool Call: frankfurter tools", async () => {
-    const ex = await defineAgent(rt, "qwen3-8b");
-    ex.addToolsFromPreset("frankfurter");
+    const agent = await defineAgent(rt, "qwen3-8b");
+    agent.addToolsFromPreset("frankfurter");
 
     const query =
       "I want to buy 100 U.S. Dollar with my Korean Won. How much do I need to take?";
     process.stdout.write(`\nQuery: ${query}`);
 
     process.stdout.write(`\nAssistant: `);
-    for await (const resp of ex.run(query)) {
+    for await (const resp of agent.query(query)) {
       printAgentResponse(resp);
     }
 
-    await ex.delete();
+    await agent.delete();
+  });
+
+  it("Tool Call: Custom function tools", async () => {
+    const agent = await defineAgent(rt, "qwen3-8b");
+    agent.addJSFunctionTool(
+      {
+        name: "get_current_temperature",
+        description: "Get the current temperature at a location.",
+        parameters: {
+          type: "object",
+          properties: {
+            location: {
+              type: "string",
+              description:
+                'The location to get the temperature for, in the format "City, Country"',
+            },
+            unit: {
+              type: "string",
+              enum: ["celsius", "fahrenheit"],
+              description: "The unit to return the temperature in.",
+            },
+          },
+          required: ["location", "unit"],
+        },
+        return: {
+          type: "number",
+          description:
+            "The current temperature at the specified location in the specified units, as a float.",
+        },
+      },
+      ({ location, unit }) => {
+        if (unit === "celsius") return 25;
+        else if (unit === "fahrenheit") return 77;
+        else return null;
+      }
+    );
+
+    const query = "Hello, how is the current weather in my city Seoul?";
+    process.stdout.write(`\nQuery: ${query}`);
+
+    process.stdout.write(`\nAssistant: `);
+    for await (const resp of agent.query(query)) {
+      printAgentResponse(resp);
+    }
+
+    await agent.delete();
   });
 
   it("Tool Call: Github MCP tools", async () => {
-    const ex = await defineAgent(rt, "qwen3-8b");
-    await ex.addToolsFromMcpServer(
+    const agent = await defineAgent(rt, "qwen3-8b");
+    await agent.addToolsFromMcpServer(
       {
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-github"],
@@ -64,11 +110,11 @@ describe("Agent", async () => {
     process.stdout.write(`\nQuery: ${query}`);
 
     process.stdout.write(`\nAssistant: `);
-    for await (const resp of ex.run(query)) {
+    for await (const resp of agent.query(query)) {
       printAgentResponse(resp);
     }
 
-    await ex.delete();
+    await agent.delete();
   });
 
   after(async () => {

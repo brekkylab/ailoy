@@ -76,7 +76,7 @@ export const registerIpcHandlers = async (mainWindow: BrowserWindow) => {
   });
 
   ipcMain.handle("infer-language-model", async (event, message: string) => {
-    for await (const resp of agent.run(message)) {
+    for await (const resp of agent.query(message)) {
       mainWindow.webContents.send("assistant-answer", resp);
     }
   });

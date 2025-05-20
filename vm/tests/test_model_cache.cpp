@@ -63,6 +63,28 @@ TEST(ModelCacheTest, SigintWhileGetModel) {
             "Interrupted while downloading the model");
 }
 
+TEST(ModelCacheTest, SigintWhileGetModel) {
+  ailoy::remove_model("BAAI/bge-m3", "q4f16_1");
+
+  ailoy::model_cache_get_result_t result;
+
+  auto t1 = std::thread([&]() {
+    result =
+        ailoy::get_model("BAAI/bge-m3", "q4f16_1", device, std::nullopt, true);
+  });
+  auto t2 = std::thread([]() {
+    std::this_thread::sleep_for(3s);
+    std::raise(SIGINT);
+  });
+
+  t1.join();
+  t2.join();
+
+  ASSERT_EQ(result.success, false);
+  ASSERT_EQ(result.error_message.value(),
+            "Interrupted while downloading the model");
+}
+
 TEST(ModelCacheTest, BGEM3_Callback) {
   auto remove_result = ailoy::remove_model("BAAI/bge-m3");
   if (!remove_result.success) {

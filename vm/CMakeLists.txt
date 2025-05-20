@@ -67,7 +67,7 @@ if(AILOY_WITH_MLC_LLM)
         FetchContent_Declare(
             mlc-llm
             GIT_REPOSITORY https://github.com/brekkylab/mlc-llm.git
-            GIT_TAG 7d2cfa1a3d2f640f35b034f53b4544698f33efec
+            GIT_TAG 089484a1f318b947b92633d7b061ec3bc7f916a8
         )
         if(NODE)
             set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
