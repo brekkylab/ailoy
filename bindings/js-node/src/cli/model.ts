@@ -1,5 +1,5 @@
 import Table from "cli-table3";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 import { startRuntime } from "../runtime";
 
@@ -73,8 +73,12 @@ const command = new Command("model")
   .addCommand(
     new Command("download")
       .argument("<model_id>")
-      .option("-q, --quantization <quantization>")
-      .option("-d, --device <device>")
+      .addOption(
+        new Option("-q, --quantization <quantization>").choices(["q4f16_1"])
+      )
+      .addOption(
+        new Option("-d, --device <device>").choices(["metal", "vulkan"])
+      )
       .action(async (model_id, options) => {
         const runtime = await startRuntime();
         try {
