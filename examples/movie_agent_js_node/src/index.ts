@@ -45,31 +45,7 @@ async function main() {
 
     process.stdout.write(`\nAssistant: `);
     for await (const resp of agent.query(query, { enableReasoning: true })) {
-      if (resp.type === "output_text") {
-        process.stdout.write(resp.content);
-        if (resp.endOfTurn) {
-          process.stdout.write("\n\n");
-        }
-      } else if (resp.type === "reasoning") {
-        process.stdout.write(`\x1b[93m${resp.content}\x1b[0m`);
-        if (resp.endOfTurn) {
-          process.stdout.write("\n\n");
-        }
-      } else if (resp.type === "tool_call") {
-        process.stdout.write(`
-Tool Call
-- ID: ${resp.content.id}
-- name: ${resp.content.function.name}
-- arguments: ${JSON.stringify(resp.content.function.arguments)}
-`);
-      } else if (resp.type === "tool_call_result") {
-        process.stdout.write(`
-Tool Call Result
-- ID: ${resp.content.tool_call_id}
-- name: ${resp.content.name}
-- Result: ${resp.content.content}
-`);
-      }
+      agent.print(resp);
     }
   }
 

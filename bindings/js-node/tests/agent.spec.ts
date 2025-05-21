@@ -1,29 +1,5 @@
 import { defineAgent } from "../src/agent";
-import type { AgentResponse } from "../src/agent";
 import { startRuntime, type Runtime } from "../src/runtime";
-
-function printAgentResponse(resp: AgentResponse) {
-  if (resp.type === "output_text") {
-    process.stdout.write(resp.content);
-    if (resp.endOfTurn) {
-      process.stdout.write("\n\n");
-    }
-  } else if (resp.type === "tool_call") {
-    process.stdout.write(`
-  Tool Call
-  - ID: ${resp.content.id}
-  - name: ${resp.content.function.name}
-  - arguments: ${JSON.stringify(resp.content.function.arguments)}
-  `);
-  } else if (resp.type === "tool_call_result") {
-    process.stdout.write(`
-  Tool Call Result
-  - ID: ${resp.content.tool_call_id}
-  - name: ${resp.content.name}
-  - Result: ${resp.content.content}
-  `);
-  }
-}
 
 describe("Agent", async () => {
   let rt: Runtime;
@@ -37,11 +13,10 @@ describe("Agent", async () => {
 
     const query =
       "I want to buy 100 U.S. Dollar with my Korean Won. How much do I need to take?";
-    process.stdout.write(`\nQuery: ${query}`);
+    console.log(`Query: ${query}`);
 
-    process.stdout.write(`\nAssistant: `);
     for await (const resp of agent.query(query)) {
-      printAgentResponse(resp);
+      agent.print(resp);
     }
 
     await agent.delete();
@@ -83,11 +58,10 @@ describe("Agent", async () => {
     );
 
     const query = "Hello, how is the current weather in my city Seoul?";
-    process.stdout.write(`\nQuery: ${query}`);
+    console.log(`Query: ${query}`);
 
-    process.stdout.write(`\nAssistant: `);
     for await (const resp of agent.query(query)) {
-      printAgentResponse(resp);
+      agent.print(resp);
     }
 
     await agent.delete();
@@ -107,11 +81,10 @@ describe("Agent", async () => {
 
     const query =
       "Search the repository named brekkylab/ailoy, and describe what this repo does based on its README.md";
-    process.stdout.write(`\nQuery: ${query}`);
+    console.log(`Query: ${query}`);
 
-    process.stdout.write(`\nAssistant: `);
     for await (const resp of agent.query(query)) {
-      printAgentResponse(resp);
+      agent.print(resp);
     }
 
     await agent.delete();

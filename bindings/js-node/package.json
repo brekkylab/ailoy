@@ -28,6 +28,7 @@
     "devDependencies": {
         "@rollup/plugin-alias": "^5.1.1",
         "@rollup/plugin-commonjs": "^28.0.3",
+        "@rollup/plugin-json": "^6.1.0",
         "@rollup/plugin-node-resolve": "^16.0.1",
         "@rollup/plugin-terser": "^0.4.4",
         "@rollup/plugin-typescript": "^12.1.2",
@@ -80,6 +81,8 @@
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.11.2",
+        "boxen": "^8.0.1",
+        "chalk": "^5.4.1",
         "cli-table3": "^0.6.5",
         "commander": "^14.0.0",
         "jmespath": "^0.16.0"

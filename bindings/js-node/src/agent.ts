@@ -1,5 +1,7 @@
 import * as MCPClient from "@modelcontextprotocol/sdk/client/index.js";
 import * as MCPClientStdio from "@modelcontextprotocol/sdk/client/stdio.js";
+import boxen from "boxen";
+import chalk from "chalk";
 import { search } from "jmespath";
 
 import { Runtime, generateUUID } from "./runtime";
@@ -642,6 +644,89 @@ export class Agent {
           return;
         }
       }
+    }
+  }
+
+  private _printResponseText(resp: AgentResponseText) {
+    const content =
+      resp.type === "reasoning" ? chalk.yellow(resp.content) : resp.content;
+    process.stdout.write(content);
+    if (resp.endOfTurn) {
+      process.stdout.write("\n");
+    }
+  }
+
+  private _printResponseToolCall(resp: AgentResponseToolCall) {
+    const title =
+      chalk.magenta("Tool Call") +
+      ": " +
+      chalk.bold(resp.content.function.name) +
+      ` (${resp.content.id})`;
+    const content = JSON.stringify(resp.content.function.arguments, null, 2);
+    const box = boxen(content, {
+      title,
+      titleAlignment: "left",
+      padding: {
+        left: 1,
+        right: 1,
+        top: 0,
+        bottom: 0,
+      },
+    });
+    console.log(box);
+  }
+
+  private _printResponseToolResult(resp: AgentResponseToolResult) {
+    const title =
+      chalk.green("Tool Result") +
+      ": " +
+      chalk.bold(resp.content.name) +
+      ` (${resp.content.tool_call_id})`;
+    let content = resp.content.content;
+    if (content.length > 500) {
+      content = content.slice(0, 500) + "...";
+    }
+    const box = boxen(content, {
+      title,
+      titleAlignment: "left",
+      padding: {
+        left: 1,
+        right: 1,
+        top: 0,
+        bottom: 0,
+      },
+    });
+    console.log(box);
+  }
+
+  private _printResponseError(resp: AgentResponseError) {
+    const title = chalk.red.bold("Error");
+    const box = boxen(resp.content, {
+      title,
+      titleAlignment: "left",
+      padding: {
+        left: 1,
+        right: 1,
+        top: 0,
+        bottom: 0,
+      },
+    });
+    console.log(box);
+  }
+
+  /** Prints agent's responses in a pretty format */
+  print(
+    /** agent's response yielded from `query()` */
+    resp: AgentResponse
+  ) {
+    if (resp.type === "output_text" || resp.type === "reasoning") {
+      this._printResponseText(resp);
+    } else if (resp.type === "tool_call") {
+      this._printResponseToolCall(resp);
+    } else if (resp.type === "tool_call_result") {
+      this._printResponseToolResult(resp);
+    } else if (resp.type === "error") {
+      this._printResponseError(resp);
     }
   }
 }
