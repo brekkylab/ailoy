@@ -35,6 +35,10 @@ const allFiles = fs
 for (const file of allFiles) {
   const from = path.join(srcDir, file);
   const to = path.join(buildDir, file);
+  if (!fs.existsSync(from)) {
+    console.warn(`File not exists ${file}`);
+    continue;
+  }
   fs.copyFileSync(from, to);
   console.log(`✔ Copied ${file} → prebuild`);
 }
