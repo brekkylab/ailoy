@@ -14,31 +14,35 @@ const platform = process.platform;
 const arch = process.arch;
 
 const srcDir = path.resolve(__dirname, "src");
-const outDir = path.resolve(
+const prebuildSubdir = `${name}-${runtime}-v${abi}-${platform}-${arch}`;
+const buildDir = path.resolve(
   __dirname,
   "prebuilds",
-  `${name}-${runtime}-v${abi}-${platform}-${arch}`,
+  prebuildSubdir,
   "build",
   "Release"
 );
+const tarballName = `ailoy-node-v${version}-node-v${abi}-${platform}-${arch}.tar.gz`;
+const tarballPath = path.resolve(__dirname, "prebuilds", tarballName);
 
-fs.mkdirSync(outDir, { recursive: true });
+fs.mkdirSync(buildDir, { recursive: true });
 
 const allFiles = fs
   .readdirSync(srcDir)
   .filter((f) => f === binaryName || libPattern.test(f));
 
+// copy files
 for (const file of allFiles) {
   const from = path.join(srcDir, file);
-  const to = path.join(outDir, file);
+  const to = path.join(buildDir, file);
   fs.copyFileSync(from, to);
-  console.log(`✔ Moved ${file}`);
+  console.log(`✔ Copied ${file} → prebuild`);
 }
 
-const nodeBinary = path.join(outDir, binaryName);
+const nodeBinary = path.join(buildDir, binaryName);
 const libSet = new Set(allFiles.filter((f) => f !== binaryName));
 
-// rpath 패치
+// patch rpath
 if (platform === "darwin") {
   const otoolOut = spawnSync("otool", ["-L", nodeBinary], {
     encoding: "utf8",
@@ -88,7 +92,25 @@ if (platform === "darwin") {
   }
 }
 
-if (fs.existsSync(path.resolve(__dirname, "dist", "ailoy_addon.node")))
-  fs.unlinkSync(path.resolve(__dirname, "dist", "ailoy_addon.node"));
+const distNode = path.resolve(__dirname, "dist", binaryName);
+if (fs.existsSync(distNode)) {
+  fs.unlinkSync(distNode);
+  console.log(`🧹 Removed existing dist/${binaryName}`);
+}
 
-console.log("✅ Prebuild directory ready.");
+console.log(`📦 Creating tarball: ${tarballName}`);
+const tarResult = spawnSync(
+  "tar",
+  ["-czf", tarballPath, "-C", path.join(buildDir, "..", ".."), "build"],
+  { stdio: "inherit", shell: true }
+);
+if (tarResult.status !== 0) {
+  console.error("❌ Failed to create tarball");
+  process.exit(tarResult.status);
+}
+
+const prebuildDir = path.resolve(__dirname, "prebuilds", prebuildSubdir);
+fs.rmSync(prebuildDir, { recursive: true, force: true });
+console.log(`🧹 Removed ${prebuildSubdir}/`);
+
+console.log(`✅ Prebuilt tarball ready at: prebuilds/${tarballName}`);
