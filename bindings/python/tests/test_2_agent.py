@@ -26,7 +26,7 @@ def test_tool_call_calculator(agent: Agent):
 
     query = "Please calculate this formula: floor(ln(exp(e))+cos(2*pi))"
     for resp in agent.query(query):
-        resp.print()
+        agent.print(resp)
 
 
 def test_tool_call_frankfurter(agent: Agent):
@@ -36,7 +36,7 @@ def test_tool_call_frankfurter(agent: Agent):
 
     query = "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?"
     for resp in agent.query(query):
-        resp.print()
+        agent.print(resp)
 
 
 def test_tool_call_py_function(agent: Agent):
@@ -80,7 +80,7 @@ def test_tool_call_py_function(agent: Agent):
 
     query = "Hello, how is the current weather in my city Seoul?"
     for resp in agent.query(query):
-        resp.print()
+        agent.print(resp)
 
 
 def test_mcp_tools_github(agent: Agent):
@@ -103,7 +103,7 @@ def test_mcp_tools_github(agent: Agent):
     # query = "Summarize README.md from repository brekkylab/ailoy."
     query = "Briefly explain about the repository brekkylab/ailoy."
     for resp in agent.query(query):
-        resp.print()
+        agent.print(resp)
 
 
 def test_simple_rag_pipeline(runtime: Runtime, agent: Agent):
@@ -122,4 +122,4 @@ def test_simple_rag_pipeline(runtime: Runtime, agent: Agent):
             Question: {query}
         """
         for resp in agent.query(prompt):
-            resp.print()
+            agent.print(resp)

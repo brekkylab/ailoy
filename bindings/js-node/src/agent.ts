@@ -491,11 +491,31 @@ export class Agent {
       });
       await client.connect(transport);
 
-      const { content } = await client.callTool({
+      const result = await client.callTool({
         name: tool.name,
         arguments: inputs,
       });
-      return content;
+      const content = result.content as Array<any>;
+      const parsedContent = content.map((item) => {
+        if (item.type === "text") {
+          // Text Content
+          return item.text;
+        } else if (item.type === "image") {
+          // Image Content
+          return item.data;
+        } else if (item.type === "resource") {
+          // Resource Content
+          if (item.resource.text !== undefined) {
+            // Text Resource
+            return item.resource.text;
+          } else {
+            // Blob Resource
+            return item.resource.blob;
+          }
+        }
+      });
+
+      return parsedContent;
     };
     const desc: ToolDescription = {
       name: tool.name,
@@ -682,10 +702,20 @@ export class Agent {
       ": " +
       chalk.bold(resp.content.name) +
       ` (${resp.content.tool_call_id})`;
-    let content = resp.content.content;
-    if (content.length > 500) {
-      content = content.slice(0, 500) + "...";
+
+    let content;
+    try {
+      // Try to parse as json
+      content = JSON.stringify(JSON.parse(resp.content.content), null, 2);
+    } catch (e) {
+      // Use original content if not json deserializable
+      content = resp.content.content;
     }
+    // Truncate long contents
+    if (content.length > 500) {
+      content = content.slice(0, 500) + "...(truncated)";
+    }
+
     const box = boxen(content, {
       title,
       titleAlignment: "left",

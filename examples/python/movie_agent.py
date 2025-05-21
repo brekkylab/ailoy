@@ -28,7 +28,7 @@ async def main():
             continue
 
         for resp in agent.query(query):
-            resp.print()
+            agent.print(resp)
 
     agent.delete()
 

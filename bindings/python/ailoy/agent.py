@@ -19,7 +19,6 @@ import mcp.types as mcp_types
 from pydantic import BaseModel, ConfigDict, Field
 from rich.console import Console
 from rich.panel import Panel
-from rich.text import Text
 
 from ailoy.ailoy_py import generate_uuid
 from ailoy.runtime import Runtime
@@ -186,7 +185,16 @@ class AgentResponseToolCallResult(AgentResponseBase):
     content: ToolCallResultMessage
 
     def print(self):
-        content = Text(self.content.content, overflow="ellipsis").fit(500)
+        try:
+            # Try to parse as json
+            content = json.dumps(json.loads(self.content.content), indent=2)
+        except json.JSONDecodeError:
+            # Use original content if not json deserializable
+            content = self.content.content
+        # Truncate long contents
+        if len(content) > 500:
+            content = content[:500] + "...(truncated)"
+
         panel = Panel(
             content,
             title=f"[green]Tool Result[/green]: [bold]{self.content.name}[/bold] ({self.content.tool_call_id})",
@@ -510,6 +518,9 @@ class Agent:
 
                     # finish this Generator
                     return
+
+    def print(self, resp: AgentResponse):
+        resp.print()
 
     def add_tool(self, tool: Tool) -> None:
         """

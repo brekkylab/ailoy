@@ -38,7 +38,7 @@ async def main():
                 continue
 
             for resp in agent.query(query):
-                resp.print()
+                agent.print(resp)
 
 
 if __name__ == "__main__":
