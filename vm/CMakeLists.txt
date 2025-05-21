@@ -18,6 +18,7 @@ FetchContent_Declare(
     httplib
     GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
     GIT_TAG v0.20.0
+    EXCLUDE_FROM_ALL
 )
 set(HTTPLIB_REQUIRE_OPENSSL ON)
 set(BROTLI_USE_STATIC_LIBS ON)
@@ -36,6 +37,7 @@ target_link_libraries(ailoy_vm_obj PRIVATE OpenSSL::Crypto OpenSSL::SSL)
 FetchContent_Declare(
     indicators
     URL https://github.com/p-ranav/indicators/archive/ac6c93ea2b1f97a220d10a0729a625b3f51e320b.tar.gz
+    EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(indicators)
 target_link_libraries(ailoy_vm_obj PRIVATE indicators::indicators)
@@ -76,6 +78,7 @@ if(AILOY_WITH_MLC_LLM)
             mlc-llm
             GIT_REPOSITORY https://github.com/brekkylab/mlc-llm.git
             GIT_TAG 089484a1f318b947b92633d7b061ec3bc7f916a8
+            EXCLUDE_FROM_ALL
         )
         if(NODE)
             set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
@@ -133,6 +136,7 @@ if(AILOY_WITH_FAISS)
         faiss
         GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
         GIT_TAG v1.10.0
+        EXCLUDE_FROM_ALL
     )
     find_package(MKL QUIET)
     if (MKL_FOUND)

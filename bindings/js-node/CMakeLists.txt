@@ -19,13 +19,14 @@ if (DEFINED NODE)
     execute_process(COMMAND ${CMAKE_AR} /def:${CMAKE_JS_NODELIB_DEF} /out:${CMAKE_JS_NODELIB_TARGET} ${CMAKE_STATIC_LINKER_FLAGS})
   endif()
 
-  # 빌드 후 install 경로 지정
+  # Copy target file
   install(TARGETS ailoy_addon
     LIBRARY DESTINATION .
     RUNTIME DESTINATION .
+    COMPONENT ailoy_addon
   )
 
-  # 런타임 DLL/SO 복사: install 시점에 분석해서 같이 복사
+  # Copy runtime dependencies
   install(CODE [[
     file(GET_RUNTIME_DEPENDENCIES
       EXECUTABLES "$<TARGET_FILE:ailoy_addon>"

@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.15)
+﻿cmake_minimum_required(VERSION 3.28)
 project(ailoy C CXX)
 
 # Compatibility with CMake < 3.5 has been removed from CMake>=4.0.
@@ -14,8 +14,8 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
     cmake_policy(SET CMP0135 NEW)
 endif()
 
-# Remove 3rdparty libraries from dependencies
-install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
+# # Remove 3rdparty libraries from dependencies
+# install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
 
 # Some platform-specific global options
 if(APPLE)
@@ -54,7 +54,7 @@ if(AILOY_USE_DUMMY_OPENMP)
     list(PREPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/_deps/dummy_openmp/cmake")
 endif()
     
-FetchContent_Declare(magic_enum URL https://github.com/Neargye/magic_enum/archive/refs/tags/v0.9.7.tar.gz)
+FetchContent_Declare(magic_enum URL https://github.com/Neargye/magic_enum/archive/refs/tags/v0.9.7.tar.gz EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(magic_enum)
 
 if(AILOY_WITH_TEST)

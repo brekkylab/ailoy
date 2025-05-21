@@ -5,21 +5,22 @@ include(GNUInstallDirs)
 FetchContent_Declare(
     nlohmann_json
     URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+    EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
-FetchContent_Declare(dlpack URL https://github.com/dmlc/dlpack/archive/refs/tags/v1.0.tar.gz)
+FetchContent_Declare(dlpack URL https://github.com/dmlc/dlpack/archive/refs/tags/v1.0.tar.gz EXCLUDE_FROM_ALL)
 set(BUILD_MOCK OFF CACHE BOOL "DLPack disable mock build" FORCE)  # skip building mock in dlpack
 FetchContent_MakeAvailable(dlpack)
 
-FetchContent_Declare(stduuid URL https://github.com/mariusbancila/stduuid/archive/refs/tags/v1.2.3.tar.gz)
+FetchContent_Declare(stduuid URL https://github.com/mariusbancila/stduuid/archive/refs/tags/v1.2.3.tar.gz EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(stduuid)
 
-FetchContent_Declare(spdlog URL https://github.com/gabime/spdlog/archive/refs/tags/v1.15.2.tar.gz)
+FetchContent_Declare(spdlog URL https://github.com/gabime/spdlog/archive/refs/tags/v1.15.2.tar.gz EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(spdlog)
 
 if(NOT DEFINED EMSCRIPTEN) 
-    FetchContent_Declare(cpptrace URL https://github.com/jeremy-rifkin/cpptrace/archive/refs/tags/v0.7.5.tar.gz)
+    FetchContent_Declare(cpptrace URL https://github.com/jeremy-rifkin/cpptrace/archive/refs/tags/v0.7.5.tar.gz EXCLUDE_FROM_ALL)
     FetchContent_MakeAvailable(cpptrace)
 endif()
 

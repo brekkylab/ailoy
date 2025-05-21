@@ -2,14 +2,14 @@ const { spawnSync } = require("child_process");
 const path = require("path");
 
 const buildDir = "build";
-const installDir = "vv";
+const installDir = path.resolve(__dirname, "src"); // ⬅️ 절대경로로 변경
 
 const buildArgs = [
   "cmake-js",
   "-d",
   "../..",
   "-O",
-  "build",
+  buildDir,
   "--CDNODE:BOOL=ON",
   "--CDAILOY_WITH_TEST:BOOL=OFF",
   `--parallel ${require("os").cpus().length}`,
