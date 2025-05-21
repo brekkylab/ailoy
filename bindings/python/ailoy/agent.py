@@ -352,6 +352,10 @@ class Agent:
         if "model" not in attrs:
             attrs["model"] = model_desc.model_id
 
+        # Set default system message
+        if len(self._messages) == 0 and model_desc.default_system_message:
+            self._messages.append(SystemMessage(role="system", content=model_desc.default_system_message))
+
         # Add API key
         if api_key:
             attrs["api_key"] = api_key
