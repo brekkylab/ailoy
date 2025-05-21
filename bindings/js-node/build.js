@@ -33,6 +33,7 @@ const installResult = spawnSync(
   ["--install", buildDir, "--prefix", installDir],
   {
     stdio: "inherit",
+    shell: true,
   }
 );
 
