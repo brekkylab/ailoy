@@ -27,18 +27,43 @@ if (DEFINED NODE)
   )
 
   # Copy runtime dependencies
+  install(CODE "set(IGNORE_LIST_FILENAME \"libignore_${CMAKE_SYSTEM_NAME}_${CMAKE_SYSTEM_PROCESSOR}.txt\")")
   install(CODE [[
     file(GET_RUNTIME_DEPENDENCIES
       EXECUTABLES "$<TARGET_FILE:ailoy_addon>"
       RESOLVED_DEPENDENCIES_VAR deps
       UNRESOLVED_DEPENDENCIES_VAR missing
     )
+
+    set(ignorelist_filename "${CMAKE_CURRENT_SOURCE_DIR}/cmake/${IGNORE_LIST_FILENAME}")
+
+    if(EXISTS ${ignorelist_filename})
+      message(STATUS "Using ignore file: ${ignorelist_filename}")
+      file(STRINGS "${ignorelist_filename}" ignorelist ENCODING UTF-8)
+    else()
+      message(STATUS "Ignore list not found: ${ignorelist_filename}")
+      set(ignorelist "")
+    endif()
+
     foreach(dep IN LISTS deps)
-      message(STATUS "Installing runtime dependency: ${dep}")
-      file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}"
-          TYPE SHARED_LIBRARY FILES "${dep}")
+      set(skip FALSE)
+      get_filename_component(dep_filename ${dep} NAME)
+      foreach(ignore IN LISTS ignorelist)
+        if (dep_filename STREQUAL ignore)
+          set(skip TRUE)
+          break()
+        endif()
+      endforeach()
+      if (NOT skip)
+        file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}"
+            TYPE SHARED_LIBRARY FILES "${dep}")
+      else()
+        message(STATUS "Skipping ignored dependency: ${dep}")
+      endif()
     endforeach()
-  ]])
+]])
+
+
 
   # list(APPEND AILOY_JS_NODE_OUTPUTS ailoy_addon.node)
   # if(WIN32)

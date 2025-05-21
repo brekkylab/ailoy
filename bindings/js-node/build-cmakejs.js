@@ -1,13 +1,14 @@
 const { spawnSync } = require("child_process");
 const path = require("path");
 
-const buildDir = "build";
-const installDir = path.resolve(__dirname, "src"); // ⬅️ 절대경로로 변경
+const srcDir = path.resolve(__dirname, "../..");
+const buildDir = path.resolve(__dirname, "build");
+const installDir = path.resolve(__dirname, "src");
 
 const buildArgs = [
   "cmake-js",
   "-d",
-  "../..",
+  srcDir,
   "-O",
   buildDir,
   "--CDNODE:BOOL=ON",
@@ -18,14 +19,15 @@ const buildArgs = [
 const buildResult = spawnSync("npx", buildArgs, {
   stdio: "inherit",
   cwd: path.resolve(__dirname),
+  shell: true,
 });
 
 if (buildResult.error || buildResult.status !== 0) {
+  console.log(buildResult);
   console.error("build failed.");
   process.exit(buildResult.status || 1);
 }
 
-// 2. Install (runtime deps 포함)
 const installResult = spawnSync(
   "cmake",
   ["--install", buildDir, "--prefix", installDir],
