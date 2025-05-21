@@ -66,7 +66,6 @@
             "scripts",
             "devDependencies",
             "optionalDependencies",
-            "binary",
             "clean-package"
         ],
         "replace": {

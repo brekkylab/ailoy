@@ -88,4 +88,7 @@ if (platform === "darwin") {
   }
 }
 
+if (fs.existsSync(path.resolve(__dirname, "dist", "ailoy_addon.node")))
+  fs.unlinkSync(path.resolve(__dirname, "dist", "ailoy_addon.node"));
+
 console.log("✅ Prebuild directory ready.");
