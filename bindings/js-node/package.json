@@ -14,12 +14,12 @@
         "README.md"
     ],
     "scripts": {
-        "build:cpp": "node build-cmakejs.js",
+        "build:cpp": "node build.js",
         "build:ts": "rollup -c --bundleConfigAsCjs",
         "build": "npm run build:cpp && npm run build:ts",
         "clean": "rm -rf dist/",
         "test": "ts-mocha",
-        "prepack": "node build-prebuild.js && npm run build:ts && clean-package",
+        "prepack": "npm run build && node prepack.js && clean-package",
         "postpack": "clean-package restore"
     },
     "devDependencies": {
@@ -71,7 +71,7 @@
         ],
         "replace": {
             "scripts": {
-                "install": "prebuild-install || cmake-js rebuild"
+                "install": "prebuild-install && node dist/postinstall.js"
             }
         }
     },
