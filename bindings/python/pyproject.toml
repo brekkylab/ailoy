@@ -1,9 +1,24 @@
 [project]
 name = "ailoy"
 version = "0.0.1"
-description = "Ailoy runtime library"
+description = "Ailoy Python library"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
+authors = [
+    {name = "Brekkylab Dev", email = "dev@brekkylab.com"}
+]
+license-files = ["LICENSE.md"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
     "anyio>=4.9.0",
     "jmespath>=1.0.1",
@@ -26,13 +41,15 @@ dev = [
 ]
 
 [build-system]
-requires = ["scikit-build-core", "pybind11"]
-build-backend = "scikit_build_core.build"
+requires = ["setuptools", "pybind11"]
+build-backend = "setuptools.build_meta"
 
-[tool.scikit-build]
-cmake.source-dir = "../.."
-build-dir = "./build"
-wheel.packages = ["ailoy"]
+[tool.cibuildwheel]
+skip = "pp*"
+build-verbosity = 1
+
+[tool.cibuildwheel.macos]
+archs = ["arm64"]
 
 [tool.pytest.ini_options]
 addopts = "--capture=tee-sys --strict-markers"

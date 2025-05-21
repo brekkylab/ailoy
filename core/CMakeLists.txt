@@ -6,6 +6,8 @@ FetchContent_Declare(
     nlohmann_json
     URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
 )
+set(JSON_MultipleHeaders OFF)
+set(JSON_Install ON)
 FetchContent_MakeAvailable(nlohmann_json)
 
 FetchContent_Declare(dlpack URL https://github.com/dmlc/dlpack/archive/refs/tags/v1.0.tar.gz)
@@ -25,15 +27,18 @@ endif()
 
 file(GLOB_RECURSE AILOY_CORE_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 add_library(ailoy_core_obj OBJECT ${AILOY_CORE_SRCS})
-target_include_directories(ailoy_core_obj PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-if(NOT DEFINED EMSCRIPTEN) 
-    target_link_libraries(ailoy_core_obj PRIVATE cpptrace::cpptrace)
+target_include_directories(ailoy_core_obj PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+if(NOT DEFINED EMSCRIPTEN)
+    target_link_libraries(ailoy_core_obj PRIVATE $<BUILD_INTERFACE:cpptrace::cpptrace>)
 endif()
 target_link_libraries(ailoy_core_obj PUBLIC nlohmann_json::nlohmann_json)
 target_link_libraries(ailoy_core_obj PUBLIC dlpack::dlpack)
-target_link_libraries(ailoy_core_obj PRIVATE stduuid)
-target_link_libraries(ailoy_core_obj PRIVATE spdlog)
-target_link_libraries(ailoy_core_obj PRIVATE magic_enum)
+target_link_libraries(ailoy_core_obj PRIVATE $<BUILD_INTERFACE:stduuid>)
+target_link_libraries(ailoy_core_obj PRIVATE $<BUILD_INTERFACE:spdlog>)
+target_link_libraries(ailoy_core_obj PRIVATE $<BUILD_INTERFACE:magic_enum>)
 
 if(AILOY_WITH_TEST)
     add_executable(test_packet ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_packet.cpp)
@@ -51,3 +56,8 @@ if(AILOY_WITH_TEST)
     add_test(NAME TestValue COMMAND test_value)
     target_link_options(test_value PRIVATE -fsanitize=undefined -fsanitize=address)
 endif()
+
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.hpp"
+)

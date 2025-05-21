@@ -7,15 +7,13 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0.0")
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 endif()
 
+include(CMakePackageConfigHelpers)
 include(FetchContent)
 
 # Avoid FetchContent warning about DOWNLOAD_EXTRACT_TIMESTAMP in CMake 3.24:
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
     cmake_policy(SET CMP0135 NEW)
 endif()
-
-# Remove 3rdparty libraries from dependencies
-install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
 
 # Some platform-specific global options
 if(APPLE)
@@ -34,9 +32,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET 14.4)
-endif()
 
 set(AILOY_WITH_TEST ON CACHE BOOL "Build test")
 if(DEFINED EMSCRIPTEN)
@@ -73,5 +68,37 @@ add_subdirectory(core)
 add_subdirectory(broker)
 add_subdirectory(vm)
 
-add_subdirectory(bindings/python)
-add_subdirectory(bindings/js-node)
+# add_subdirectory(bindings/js-node)
+
+add_library(ailoy SHARED)
+target_link_libraries(ailoy PRIVATE
+    ailoy_core_obj
+    ailoy_broker_obj
+    ailoy_broker_client_obj
+    ailoy_vm_obj
+)
+set_target_properties(ailoy PROPERTIES
+    INSTALL_RPATH "@loader_path"
+)
+
+install(TARGETS ailoy
+    EXPORT ailoyTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(EXPORT ailoyTargets
+    FILE ailoyTargets.cmake
+    NAMESPACE ailoy::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ailoy
+)
+
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ailoyConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/ailoyConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ailoy
+)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/ailoyConfig.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ailoy
+)

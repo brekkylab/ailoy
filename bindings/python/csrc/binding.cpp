@@ -94,6 +94,8 @@ PYBIND11_MODULE(ailoy_py, m) {
                return self->send<ailoy::packet_type::connect>(txid);
              else if (ptype == "disconnect")
                return self->send<ailoy::packet_type::disconnect>(txid);
+             else
+               throw std::runtime_error("invalid packet type: " + ptype);
            })
       .def("send_type2",
            [](std::shared_ptr<ailoy::broker_client_t> self,

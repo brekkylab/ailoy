@@ -2,7 +2,7 @@ from asyncio import Event, to_thread
 from collections import defaultdict
 from typing import Any, AsyncGenerator, Generator, Literal, Optional, TypedDict
 
-from .ailoy_py import BrokerClient, generate_uuid, start_threads, stop_threads
+from ailoy.ailoy_py import BrokerClient, generate_uuid, start_threads, stop_threads
 
 __all__ = ["Runtime", "AsyncRuntime"]
 

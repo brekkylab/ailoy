@@ -1,17 +1,21 @@
 include(FetchContent)
+include(GNUInstallDirs)
 
 file(GLOB_RECURSE AILOY_VM_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
-if(AILOY_WITH_MLC_LLM)
-    file(GLOB_RECURSE AILOY_VM_MLC_LLM_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/mlc_llm/*.cpp)
-    list(APPEND AILOY_VM_SRCS ${AILOY_VM_MLC_LLM_SRCS})
-endif()
-if(AILOY_WITH_FAISS)
-    file(GLOB_RECURSE AILOY_VM_FAISS_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/faiss/*.cpp)
-    list(APPEND AILOY_VM_SRCS ${AILOY_VM_FAISS_SRCS})
-endif()
-add_library(ailoy_vm_obj OBJECT ${AILOY_VM_SRCS})
-target_include_directories(ailoy_vm_obj PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(ailoy_vm_obj PUBLIC ailoy_broker_client_obj ailoy_core_obj)
+
+add_library(ailoy_vm_obj OBJECT ${AILOY_VM_SRCS} )
+target_include_directories(ailoy_vm_obj PUBLIC 
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
+add_library(ailoy_vm_deps INTERFACE)
+target_link_libraries(ailoy_vm_deps INTERFACE ailoy_broker_client_obj ailoy_core_obj)
+
+# openssl
+set(OPENSSL_USE_STATIC_LIBS TRUE)
+find_package(OpenSSL REQUIRED)
+target_link_libraries(ailoy_vm_deps INTERFACE OpenSSL::Crypto OpenSSL::SSL)
 
 # cpp-httplib
 FetchContent_Declare(
@@ -26,11 +30,7 @@ if(NODE)
     set(OPENSSL_MSVC_STATIC_RT ON)
 endif()
 FetchContent_MakeAvailable(httplib)
-target_link_libraries(ailoy_vm_obj PRIVATE httplib)
-
-# openssl
-find_package(OpenSSL REQUIRED)
-target_link_libraries(ailoy_vm_obj PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+target_link_libraries(ailoy_vm_deps INTERFACE httplib)
 
 # indicators
 FetchContent_Declare(
@@ -38,14 +38,13 @@ FetchContent_Declare(
     URL https://github.com/p-ranav/indicators/archive/ac6c93ea2b1f97a220d10a0729a625b3f51e320b.tar.gz
 )
 FetchContent_MakeAvailable(indicators)
-target_link_libraries(ailoy_vm_obj PRIVATE indicators::indicators)
+target_link_libraries(ailoy_vm_deps INTERFACE indicators::indicators)
 
 # minja
 set(MINJA_ROOT ${CMAKE_BINARY_DIR}/_deps/minja)
 file(DOWNLOAD https://raw.githubusercontent.com/google/minja/f06140fa52fd140fe38e531ec373d8dc9c86aa06/include/minja/minja.hpp ${MINJA_ROOT}/include/minja/minja.hpp)
 file(DOWNLOAD https://raw.githubusercontent.com/google/minja/f06140fa52fd140fe38e531ec373d8dc9c86aa06/include/minja/chat-template.hpp ${MINJA_ROOT}/include/minja/chat-template.hpp)
-
-target_include_directories(ailoy_vm_obj PRIVATE ${MINJA_ROOT}/include)
+target_include_directories(ailoy_vm_deps INTERFACE ${MINJA_ROOT}/include)
 
 # tinyexpr
 set(TINYEXPR_ROOT ${CMAKE_BINARY_DIR}/_deps/tinyexpr)
@@ -54,10 +53,10 @@ file(DOWNLOAD https://raw.githubusercontent.com/codeplea/tinyexpr/9907207e5def0f
 file(DOWNLOAD https://raw.githubusercontent.com/codeplea/tinyexpr/9907207e5def0fabdb60c443517b0d9e9d521393/tinyexpr.c ${TINYEXPR_ROOT}/src/tinyexpr.c)
 add_library(tinyexpr STATIC ${TINYEXPR_ROOT}/src/tinyexpr.c)
 target_include_directories(tinyexpr PUBLIC ${TINYEXPR_ROOT}/include)
-target_link_libraries(ailoy_vm_obj PUBLIC tinyexpr)
+target_link_libraries(ailoy_vm_deps INTERFACE tinyexpr)
 
 # magic_enum
-target_link_libraries(ailoy_vm_obj PRIVATE magic_enum)
+target_link_libraries(ailoy_vm_deps INTERFACE $<BUILD_INTERFACE:magic_enum>)
 
 # mlc-llm
 if(AILOY_WITH_MLC_LLM)
@@ -98,7 +97,7 @@ if(AILOY_WITH_MLC_LLM)
         set_target_properties(mlc_llm PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
         set_target_properties(mlc_llm_static PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
     endif()
-    target_include_directories(ailoy_vm_obj PUBLIC
+    target_include_directories(ailoy_vm_deps INTERFACE
         ${MLC_LLM_SOURCE_DIR}/3rdparty/tvm/3rdparty/dmlc-core/include
         ${MLC_LLM_SOURCE_DIR}/3rdparty/tvm/3rdparty/dlpack/include
         ${MLC_LLM_SOURCE_DIR}/3rdparty/tvm/3rdparty/picojson
@@ -107,11 +106,11 @@ if(AILOY_WITH_MLC_LLM)
         ${MLC_LLM_SOURCE_DIR}/3rdparty/xgrammar/include
         ${MLC_LLM_SOURCE_DIR}/cpp
     )
-    target_link_directories(ailoy_vm_obj PUBLIC
+    target_link_directories(ailoy_vm_deps INTERFACE
         ${MLC_LLM_BINARY_DIR}
         ${MLC_LLM_BINARY_DIR}/tvm
     )
-    target_link_libraries(ailoy_vm_obj PUBLIC
+    target_link_libraries(ailoy_vm_deps INTERFACE
         tvm_runtime
         mlc_llm_static
         tokenizers_c
@@ -145,8 +144,10 @@ if(AILOY_WITH_FAISS)
     set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "Disable extra components" FORCE)
     set(BUILD_TESTING OFF CACHE BOOL "Disable build tests" FORCE)
     FetchContent_MakeAvailable(faiss)
-    target_link_libraries(ailoy_vm_obj PUBLIC faiss)
+    target_link_libraries(ailoy_vm_deps INTERFACE faiss)
 endif()
+
+target_link_libraries(ailoy_vm_obj PUBLIC ailoy_vm_deps)
 
 if(AILOY_WITH_TEST)
     add_executable(test_debug_module ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_debug_module.cpp)
@@ -164,7 +165,7 @@ if(AILOY_WITH_TEST)
     add_executable(test_tvm_language_model ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tvm_language_model.cpp)
     add_test(NAME TestTVMLanguageModel COMMAND test_tvm_language_model)
     target_include_directories(test_tvm_language_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(test_tvm_language_model PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj httplib GTest::gtest)
+    target_link_libraries(test_tvm_language_model PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
     target_link_options(test_tvm_language_model PRIVATE -fsanitize=undefined -fsanitize=address)
 
     add_executable(test_tvm_embedding_model ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tvm_embedding_model.cpp)
@@ -182,12 +183,12 @@ if(AILOY_WITH_TEST)
     add_executable(test_chromadb_vector_store ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_chromadb_vector_store.cpp)
     add_test(NAME TestChromadbVectorStore COMMAND test_chromadb_vector_store)
     target_include_directories(test_chromadb_vector_store PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(test_chromadb_vector_store PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj httplib GTest::gtest)
+    target_link_libraries(test_chromadb_vector_store PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
     target_link_options(test_chromadb_vector_store PRIVATE -fsanitize=undefined -fsanitize=address)
 
     add_executable(test_split_text ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_split_text.cpp)
     add_test(NAME TestSplitText COMMAND test_split_text)
-    target_link_libraries(test_split_text PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj httplib GTest::gtest)
+    target_link_libraries(test_split_text PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
     target_link_options(test_split_text PRIVATE -fsanitize=undefined -fsanitize=address)
 
     add_executable(test_calculator ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_calculator.cpp)
@@ -198,19 +199,23 @@ if(AILOY_WITH_TEST)
     add_executable(test_model_cache ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_model_cache.cpp)
     add_test(NAME TestModelCache COMMAND test_model_cache)
     target_include_directories(test_model_cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(test_model_cache PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj httplib GTest::gtest)
+    target_link_libraries(test_model_cache PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
     target_link_options(test_model_cache PRIVATE -fsanitize=undefined -fsanitize=address)
 
     add_executable(test_http_request ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_http_request.cpp)
     add_test(NAME TestHttpRequest COMMAND test_http_request)
     target_include_directories(test_http_request PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(test_http_request PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj httplib nlohmann_json::nlohmann_json GTest::gtest)
+    target_link_libraries(test_http_request PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
     target_link_options(test_http_request PRIVATE -fsanitize=undefined -fsanitize=address)
 
     add_executable(test_openai ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_openai.cpp)
     add_test(NAME TestOpenAI COMMAND test_openai)
     target_include_directories(test_openai PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(test_openai PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj httplib nlohmann_json::nlohmann_json GTest::gtest GTest::gmock)
+    target_link_libraries(test_openai PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest GTest::gmock)
     target_link_options(test_openai PRIVATE -fsanitize=undefined -fsanitize=address)
-
 endif()
+
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.hpp"
+)

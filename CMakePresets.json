@@ -15,6 +15,7 @@
                 "rhs": "Darwin"
             },
             "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/build/${presetName}/install",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
                 "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
@@ -37,6 +38,7 @@
                 "rhs": "Darwin"
             },
             "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/build/${presetName}/install",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
                 "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
@@ -59,6 +61,7 @@
             },
             "generator": "Unix Makefiles",
             "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/build/${presetName}/install",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "/usr/bin/clang",
                 "CMAKE_CXX_COMPILER": "/usr/bin/clang++",
@@ -76,6 +79,7 @@
             },
             "generator": "Unix Makefiles",
             "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/build/${presetName}/install",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "/usr/bin/clang",
                 "CMAKE_CXX_COMPILER": "/usr/bin/clang++",
@@ -93,6 +97,7 @@
             },
             "generator": "Unix Makefiles",
             "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/build/${presetName}/install",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "/usr/bin/gcc",
                 "CMAKE_CXX_COMPILER": "/usr/bin/g++",
@@ -110,6 +115,7 @@
             },
             "generator": "Unix Makefiles",
             "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/build/${presetName}/install",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "/usr/bin/gcc",
                 "CMAKE_CXX_COMPILER": "/usr/bin/g++",
@@ -127,6 +133,7 @@
             },
             "generator": "NMake Makefiles",
             "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/build/${presetName}/install",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "cl",
                 "CMAKE_CXX_COMPILER": "cl",
@@ -143,6 +150,7 @@
             },
             "generator": "NMake Makefiles",
             "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/build/${presetName}/install",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "cl",
                 "CMAKE_CXX_COMPILER": "cl",
