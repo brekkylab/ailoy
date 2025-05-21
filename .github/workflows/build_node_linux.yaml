@@ -59,8 +59,10 @@ jobs:
       - name: Create package
         run: |
           npm install
+          echo "install done"
           PACKAGE_NAME=$(npm pack | tail -n 1)
-          echo "PACKAGE_NAME: $PACKAGE_NAME"
+          echo "npm pack done"
+          ls src
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
         working-directory: ${{ github.workspace }}/bindings/js-node
         env:
@@ -71,5 +73,5 @@ jobs:
       - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PACKAGE_NAME }}
+          name: ${{ env.PACKAGE_NAME }}.{{ matrix.node }}
           path: ${{ github.workspace }}/bindings/js-node/${{ env.PACKAGE_NAME }}
