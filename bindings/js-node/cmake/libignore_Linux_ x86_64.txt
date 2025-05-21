@@ -1,0 +1,10 @@
+ld-linux-x86-64.so.1
+ld-linux-x86-64.so.2
+ld-linux-x86-64.so.3
+libpython3.9.so.1.0
+libpython3.10.so.1.0
+libpython3.11.so.1.0
+libpython3.12.so.1.0
+libpython3.13.so.1.0
+libpython3.14.so.1.0
+libpython3.15.so.1.0
