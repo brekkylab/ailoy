@@ -10,14 +10,19 @@ jobs:
     container:
       image: quay.io/pypa/manylinux_2_28_x86_64
 
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Install Node.js (18.x) and npm
+      - name: Install Node.js ${{ matrix.node }}
         run: |
-          curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
-          yum install -y nodejs
+          curl -fsSL https://nodejs.org/dist/v${{ matrix.node }}.0.0/node-v${{ matrix.node }}.0.0-linux-x64.tar.xz -o node.tar.xz
+          tar -xf node.tar.xz
+          echo "$PWD/node-v${{ matrix.node }}.0.0-linux-x64/bin" >> $GITHUB_PATH
 
       - name: Install OpenSSL 3.0.16
         run: |

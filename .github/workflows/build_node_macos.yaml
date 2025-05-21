@@ -7,13 +7,18 @@ jobs:
   build-macos:
     runs-on: macos-14
 
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: ${{ matrix.node }}
 
       - name: Install Homebrew dependencies
         run: |
