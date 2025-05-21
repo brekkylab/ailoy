@@ -3,8 +3,6 @@ import os
 
 from ailoy import Runtime, Agent
 
-from common import print_agent_response
-
 
 async def main():
     rt = Runtime()
@@ -40,7 +38,7 @@ async def main():
                 continue
 
             for resp in agent.query(query):
-                print_agent_response(resp)
+                resp.print()
 
 
 if __name__ == "__main__":

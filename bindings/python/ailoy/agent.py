@@ -17,6 +17,9 @@ import jmespath
 import mcp
 import mcp.types as mcp_types
 from pydantic import BaseModel, ConfigDict, Field
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
 
 from ailoy.ailoy_py import generate_uuid
 from ailoy.runtime import Runtime
@@ -139,6 +142,8 @@ class ComponentState(BaseModel):
 
 ## Types for agent's responses
 
+_console = Console(highlight=False)
+
 
 class AgentResponseBase(BaseModel):
     type: Literal["output_text", "tool_call", "tool_call_result", "reasoning", "error"]
@@ -146,11 +151,19 @@ class AgentResponseBase(BaseModel):
     role: Literal["assistant", "tool"]
     content: Any
 
+    def print(self):
+        raise NotImplementedError
+
 
 class AgentResponseOutputText(AgentResponseBase):
     type: Literal["output_text", "reasoning"]
     role: Literal["assistant"]
     content: str
+
+    def print(self):
+        _console.print(self.content, end="", style=("yellow" if self.type == "reasoning" else None))
+        if self.end_of_turn:
+            _console.print()
 
 
 class AgentResponseToolCall(AgentResponseBase):
@@ -158,17 +171,41 @@ class AgentResponseToolCall(AgentResponseBase):
     role: Literal["assistant"]
     content: ToolCall
 
+    def print(self):
+        panel = Panel(
+            json.dumps(self.content.function.arguments, indent=2),
+            title=f"[magenta]Tool Call[/magenta]: [bold]{self.content.function.name}[/bold] ({self.content.id})",
+            title_align="left",
+        )
+        _console.print(panel)
+
 
 class AgentResponseToolCallResult(AgentResponseBase):
     type: Literal["tool_call_result"]
     role: Literal["tool"]
     content: ToolCallResultMessage
 
+    def print(self):
+        content = Text(self.content.content, overflow="ellipsis").fit(500)
+        panel = Panel(
+            content,
+            title=f"[green]Tool Result[/green]: [bold]{self.content.name}[/bold] ({self.content.tool_call_id})",
+            title_align="left",
+        )
+        _console.print(panel)
+
 
 class AgentResponseError(AgentResponseBase):
     type: Literal["error"]
     role: Literal["assistant"]
     content: str
+
+    def print(self):
+        panel = Panel(
+            self.content,
+            title="[bold red]Error[/bold red]",
+        )
+        _console.print(panel)
 
 
 AgentResponse = Union[
@@ -393,7 +430,7 @@ class Agent:
         :param enable_reasoning: If True, enables reasoning capabilities. (default: False)
         :param ignore_reasoning_messages: If True, reasoning steps are not included in the response stream. (default: False)
         :yield: AgentResponse output of the LLM inference or tool calls
-        """
+        """  # noqa: E501
         self._messages.append(UserMessage(role="user", content=message))
 
         while True:
@@ -466,7 +503,7 @@ class Agent:
                     output_msg = AIOutputTextMessage.model_validate(delta.message)
                     yield AgentResponseOutputText(
                         type="reasoning" if output_msg.reasoning else "output_text",
-                        end_of_turn=False,
+                        end_of_turn=True,
                         role="assistant",
                         content=output_msg.content,
                     )

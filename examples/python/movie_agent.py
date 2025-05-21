@@ -4,8 +4,6 @@ import os
 from ailoy import Runtime, Agent
 from ailoy.agent import BearerAuthenticator
 
-from common import print_agent_response
-
 
 async def main():
     rt = Runtime()
@@ -30,7 +28,7 @@ async def main():
             continue
 
         for resp in agent.query(query):
-            print_agent_response(resp)
+            resp.print()
 
     agent.delete()
 

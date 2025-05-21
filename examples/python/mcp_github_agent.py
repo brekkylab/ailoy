@@ -4,8 +4,6 @@ from mcp import StdioServerParameters
 
 from ailoy import Runtime, Agent
 
-from common import print_agent_response
-
 
 def main():
     rt = Runtime()
@@ -41,7 +39,7 @@ def main():
                 continue
 
             for resp in agent.query(query):
-                print_agent_response(resp)
+                resp.print()
 
 
 if __name__ == "__main__":
