@@ -73,5 +73,5 @@ jobs:
       - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PACKAGE_NAME }}.{{ matrix.node }}
+          name: ${{ env.PACKAGE_NAME }}.${{ matrix.node }}
           path: ${{ github.workspace }}/bindings/js-node/${{ env.packageName }}
