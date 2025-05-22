@@ -46,7 +46,7 @@ jobs:
       - name: Install OpenBLAS
         shell: powershell
         run: |
-          & "C:\vcpkg\vcpkg.exe" install openblas:x64-windows-static
+          & "C:\vcpkg\vcpkg.exe" install openblas:x64-windows-static lapack-reference:x64-windows-static
           $root = "C:\vcpkg\installed\x64-windows-static"
           echo "BLAS_ROOT=$root" >> $env:GITHUB_ENV
           echo "LAPACK_ROOT=$root" >> $env:GITHUB_ENV
