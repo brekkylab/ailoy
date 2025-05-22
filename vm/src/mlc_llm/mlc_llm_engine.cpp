@@ -3,6 +3,7 @@
 #include <json_ffi/conv_template.h>
 #include <support/json_parser.h>
 
+#include "logging.hpp"
 #include "uuid.hpp"
 
 using namespace mlc::llm;
@@ -19,6 +20,7 @@ mlc_llm_engine_t::mlc_llm_engine_t(const std::string &model_name,
                                    DLDevice device, const std::string &mode) {
   device_ = device;
   auto device_type_str = tvm::runtime::DLDeviceType2Str(device.device_type);
+  debug("Using device {}:{}", device_type_str, device_.device_id);
 
   // Download model
   model_cache_download_result_t download_model_result =
@@ -28,6 +30,7 @@ mlc_llm_engine_t::mlc_llm_engine_t(const std::string &model_name,
   }
 
   model_path_ = download_model_result.model_path.value();
+  debug("Model downloaded to {}", model_path_.string());
 
   // Configuration for engine creation
   picojson::object engine_config_json;
@@ -110,6 +113,7 @@ mlc_llm_engine_t::mlc_llm_engine_t(const std::string &model_name,
       std::move(engine_creation_output.completed_engine_config);
   default_generation_config_ =
       std::move(engine_creation_output.default_generation_cfg);
+  debug("Engine created");
 
   // Load conversation template.
   Result<picojson::object> model_config_json =
@@ -131,8 +135,10 @@ mlc_llm_engine_t::mlc_llm_engine_t(const std::string &model_name,
   auto conv_template_ = conv_template.Unwrap();
   stop_str_ = conv_template_.stop_str;
   stop_token_ids_ = conv_template_.stop_token_ids;
+  debug("Conv template loaded");
 
   tokenizer_ = Tokenizer::FromPath(engine_config->model);
+  debug("Tokenizer loaded");
 }
 
 void mlc_llm_engine_t::initialize_chat_completion(const std::string &request_id,
@@ -200,12 +206,14 @@ void mlc_llm_engine_t::initialize_chat_completion(const std::string &request_id,
   request_map_[request_id] = std::move(rstate);
 
   engine_->AddRequest(engine_request);
+  debug("Chat template initialized");
 }
 
 std::optional<mlc_llm_engine_t::response_state_t>
 mlc_llm_engine_t::step_chat_completion(const std::string &request_id) {
   response_map_.insert_or_assign(request_id, response_state_t{});
   engine_->Step();
+  debug("Chat template stepped");
   if (get_last_error().has_value()) {
     response_map_.erase(request_id);
     return std::nullopt;
