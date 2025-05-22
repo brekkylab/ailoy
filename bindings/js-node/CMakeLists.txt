@@ -29,36 +29,60 @@ if (DEFINED NODE)
   # Copy runtime dependencies
   install(CODE "set(IGNORE_LIST_FILENAME \"libignore_${CMAKE_SYSTEM_NAME}_${CMAKE_SYSTEM_PROCESSOR}.txt\")")
   install(CODE [[
-    file(GET_RUNTIME_DEPENDENCIES
-      EXECUTABLES "$<TARGET_FILE:ailoy_addon>"
-      RESOLVED_DEPENDENCIES_VAR deps
-      UNRESOLVED_DEPENDENCIES_VAR missing
-    )
+    set(IGNORE_LIST_FILENAME "${CMAKE_CURRENT_SOURCE_DIR}/cmake/${IGNORE_LIST_FILENAME}")
+    set(entrypoint "$<TARGET_FILE:ailoy_addon>")
+    set(to_process ${entrypoint})
+    set(all_deps "")
+    set(seen_deps "${entrypoint}")
 
-    set(ignorelist_filename "${CMAKE_CURRENT_SOURCE_DIR}/cmake/${IGNORE_LIST_FILENAME}")
+    # Recusively extract dependencies
+    while(NOT "${to_process}" STREQUAL "")
+      set(new_to_process "")
+      foreach(target IN LISTS to_process)
+        file(GET_RUNTIME_DEPENDENCIES
+          EXECUTABLES "${target}"
+          RESOLVED_DEPENDENCIES_VAR deps
+          UNRESOLVED_DEPENDENCIES_VAR missing
+        )
+        foreach(dep IN LISTS deps)
+          list(FIND seen_deps "${dep}" already_seen)
+          if(already_seen EQUAL -1)
+            list(APPEND all_deps "${dep}")
+            list(APPEND new_to_process "${dep}")
+            list(APPEND seen_deps "${dep}")
+          endif()
+        endforeach()
+      endforeach()
+      set(to_process ${new_to_process})
+    endwhile()
 
-    if(EXISTS ${ignorelist_filename})
-      message(STATUS "Using ignore file: ${ignorelist_filename}")
-      file(STRINGS "${ignorelist_filename}" ignorelist ENCODING UTF-8)
+    list(REMOVE_DUPLICATES all_deps)
+
+    if(EXISTS ${IGNORE_LIST_FILENAME})
+      message(STATUS "Using ignore file: ${IGNORE_LIST_FILENAME}")
+      file(STRINGS "${IGNORE_LIST_FILENAME}" ignorelist ENCODING UTF-8)
     else()
-      message(STATUS "Ignore list not found: ${ignorelist_filename}")
+      message(STATUS "Ignore list not found: ${IGNORE_LIST_FILENAME}")
       set(ignorelist "")
     endif()
 
-    foreach(dep IN LISTS deps)
+    foreach(dep IN LISTS all_deps)
       set(skip FALSE)
       get_filename_component(dep_filename ${dep} NAME)
       foreach(ignore IN LISTS ignorelist)
-        if (dep_filename STREQUAL ignore)
+        if(dep_filename STREQUAL ignore)
           set(skip TRUE)
           break()
         endif()
       endforeach()
-      if (NOT skip)
-        file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}"
-            TYPE SHARED_LIBRARY FILES "${dep}")
-      else()
+      if(NOT skip)
         message(STATUS "Skipping ignored dependency: ${dep}")
+      else()
+        file(INSTALL
+          DESTINATION "${CMAKE_INSTALL_PREFIX}"
+          TYPE SHARED_LIBRARY
+          FILES "${dep}"
+        )
       endif()
     endforeach()
 ]])
@@ -66,6 +90,8 @@ if (DEFINED NODE)
 # Set RPATH
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(CMAKE_INSTALL_RPATH "\$ORIGIN")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  set(CMAKE_INSTALL_RPATH "@loader_path")
 endif()
 
 endif()

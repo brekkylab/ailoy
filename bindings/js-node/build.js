@@ -52,6 +52,7 @@ function listDir(dir) {
 
 (async () => {
   try {
+    console.log("Building...");
     const buildArgs = [
       "cmake-js",
       "-d",
@@ -64,10 +65,11 @@ function listDir(dir) {
     ];
     await runCommand("npx", buildArgs, { cwd: __dirname });
 
+    console.log("Installing...");
     const installArgs = ["--install", buildDir, "--prefix", installDir];
     await runCommand("cmake", installArgs, { cwd: __dirname });
 
-    console.log(`📂 Installed files under ${installDir}:\n`);
+    console.log(`📂 Files under ${installDir}:\n`);
     listDir(installDir);
   } catch (err) {
     console.error("Build failed:", err.message);

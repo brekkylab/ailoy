@@ -8,3 +8,12 @@ libpython3.12.so.1.0
 libpython3.13.so.1.0
 libpython3.14.so.1.0
 libpython3.15.so.1.0
+libc.so.1
+libc.so.2
+libc.so.3
+libc.so.4
+libc.so.5
+libc.so.6
+libc.so.7
+libc.so.8
+libc.so.9
