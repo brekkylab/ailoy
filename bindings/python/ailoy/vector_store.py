@@ -109,16 +109,19 @@ class VectorStore:
             self._runtime.define(
                 "tvm_embedding_model",
                 self._component_state.embedding_model_name,
-                {"model": "BAAI/bge-m3"},
+                {
+                    "model": "BAAI/bge-m3",
+                    **embedding_model_attrs,
+                },
             )
         else:
             raise NotImplementedError(f"Unsupprted embedding model: {embedding_model_name}")
 
         # Initialize vector store
         if vector_store_name == "faiss":
-            if "dimension" not in embedding_model_attrs:
-                embedding_model_attrs["dimension"] = dimension
-            self._runtime.define("faiss_vector_store", self._component_state.vector_store_name, embedding_model_attrs)
+            if "dimension" not in vector_store_attrs:
+                vector_store_attrs["dimension"] = dimension
+            self._runtime.define("faiss_vector_store", self._component_state.vector_store_name, vector_store_attrs)
         elif vector_store_name == "chromadb":
             if "url" not in vector_store_attrs:
                 vector_store_attrs["url"] = url
