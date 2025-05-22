@@ -83,23 +83,14 @@ if (DEFINED NODE)
         message(STATUS "Skipping ignored dependency: ${dep}")
       else()
         get_filename_component(real_dep "${dep}" REALPATH)
-        get_filename_component(dep_basename "${dep}" NAME)
-        get_filename_component(real_basename "${real_dep}" NAME)
+        get_filename_component(dep_basename "${dep}" NAME) # libfoo.so.1
+        get_filename_component(real_basename "${real_dep}" NAME) # libfoo.so.1.2.3
+        set(target_path "${CMAKE_INSTALL_PREFIX}/${dep_basename}")
 
-        # File copy
-        file(INSTALL
-          DESTINATION "${CMAKE_INSTALL_PREFIX}"
-          TYPE SHARED_LIBRARY
-          FILES "${real_dep}"
-        )
-
-        if(NOT dep_basename STREQUAL real_basename)
-          # Create symlink
-          set(link_path "${CMAKE_INSTALL_PREFIX}/${dep_basename}")
-          set(link_target "${real_basename}")
-          execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink "${link_target}" "${link_path}")
-          message(STATUS "Created symlink: ${dep_basename} -> ${real_basename}")
-        endif()
+        # Copy real file and rename to symlink name
+        file(COPY "${real_dep}" DESTINATION "${CMAKE_INSTALL_PREFIX}")
+        file(RENAME "${CMAKE_INSTALL_PREFIX}/${real_basename}" "${target_path}")
+        message(STATUS "Renamed ${real_basename} -> ${dep_basename}")
       endif()
     endforeach()
 ]])
