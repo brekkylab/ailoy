@@ -770,6 +770,8 @@ export async function defineAgent(
   args?: {
     /** Optional system message to set the initial assistant context */
     systemMessage?: string;
+    /** Optional device id to set the device id to run LLM model */
+    device?: number;
     /** A parameter for API key usage.
      * This field is ignored if the model does not require authentication. */
     apiKey?: string;
@@ -782,6 +784,7 @@ export async function defineAgent(
 
   // Attribute input for call `rt.define`
   let attrs: Record<string, any> = {};
+  if (args_.device) attrs["device"] = args_.device;
   if (args_.apiKey) attrs["api_key"] = args_.apiKey;
 
   await agent.define(modelName, attrs);

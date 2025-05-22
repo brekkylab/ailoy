@@ -180,6 +180,7 @@ export async function defineVectorStore(
   modelName: EmbeddingModelName,
   vectorStoreName: VectorStoreName,
   args?: {
+    device?: number;
     url?: string;
     collection?: string;
   }
@@ -190,6 +191,7 @@ export async function defineVectorStore(
 
   // Attribute input for call `rt.define(embedding_model)`
   let embeddingAttrs: Record<string, any> = {};
+  if (args_.device) embeddingAttrs["device"] = args_.device;
 
   // Attribute input for call `rt.define(vector_store)`
   let vectorStoreAttrs: Record<string, any> = {};
