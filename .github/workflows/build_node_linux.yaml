@@ -52,7 +52,7 @@ jobs:
 
       - name: Install Vulkan SDK 1.4.313.0
         run: |
-          curl -LO https://sdk.lunarg.com/sdk/download/1.4.313.0/linux/vulkan-sdk-1.4.313.0.tar.xz
+          curl -LO https://sdk.lunarg.com/sdk/download/1.3.250.1/linux/vulkan-sdk-1.3.250.1.tar.xz
           mkdir -p /opt/vulkan-sdk
           tar -xJf vulkan-sdk-1.4.313.0.tar.xz --strip-components=2 -C /opt/vulkan-sdk
 
