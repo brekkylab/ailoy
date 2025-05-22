@@ -93,7 +93,7 @@ if (DEFINED NODE)
           FILES "${real_dep}"
         )
 
-        if(NOT dep STREQUAL real_dep)
+        if(NOT dep_basename STREQUAL real_basename)
           # Create symlink
           set(link_path "${CMAKE_INSTALL_PREFIX}/${dep_basename}")
           set(link_target "${real_basename}")
