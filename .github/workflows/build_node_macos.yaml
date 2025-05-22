@@ -27,7 +27,9 @@ jobs:
       - name: Create package
         run: | 
           npm install
-          PACKAGE_NAME=$(npm pack | tail -n 1)
+          npm pack
+          PACKAGE_NAME=$(ls -1t ailoy-*.tgz | head -n 1)
+          echo "PACKAGE_NAME=$PACKAGE_NAME"
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
         working-directory: ${{ github.workspace }}/bindings/js-node
         env:
