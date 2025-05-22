@@ -1,43 +1,58 @@
-const { spawnSync } = require("child_process");
+const { spawn } = require("child_process");
 const path = require("path");
 
 const srcDir = path.resolve(__dirname, "../..");
 const buildDir = path.resolve(__dirname, "build");
 const installDir = path.resolve(__dirname, "src");
 
-const buildArgs = [
-  "cmake-js",
-  "-d",
-  srcDir,
-  "-O",
-  buildDir,
-  "--CDNODE:BOOL=ON",
-  "--CDAILOY_WITH_TEST:BOOL=OFF",
-  `--parallel ${require("os").cpus().length}`,
-];
+function runCommand(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      shell: true,
+      cwd: options.cwd || process.cwd(),
+      env: process.env,
+    });
 
-const buildResult = spawnSync("npx", buildArgs, {
-  stdio: "inherit",
-  cwd: path.resolve(__dirname),
-  shell: true,
-});
+    child.stdout.on("data", (data) => {
+      process.stdout.write(data);
+    });
 
-if (buildResult.error || buildResult.status !== 0) {
-  console.log(buildResult);
-  console.error("build failed.");
-  process.exit(buildResult.status || 1);
+    child.stderr.on("data", (data) => {
+      process.stderr.write(data);
+    });
+
+    child.on("error", (err) => {
+      reject(err);
+    });
+
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`${command} exited with code ${code}`));
+      } else {
+        resolve();
+      }
+    });
+  });
 }
 
-const installResult = spawnSync(
-  "cmake",
-  ["--install", buildDir, "--prefix", installDir],
-  {
-    stdio: "inherit",
-    shell: true,
+(async () => {
+  try {
+    const buildArgs = [
+      "cmake-js",
+      "-d",
+      srcDir,
+      "-O",
+      buildDir,
+      "--CDNODE:BOOL=ON",
+      "--CDAILOY_WITH_TEST:BOOL=OFF",
+      `--parallel ${require("os").cpus().length}`,
+    ];
+    await runCommand("npx", buildArgs, { cwd: __dirname });
+
+    const installArgs = ["--install", buildDir, "--prefix", installDir];
+    await runCommand("cmake", installArgs, { cwd: __dirname });
+  } catch (err) {
+    console.error("Build failed:", err.message);
+    process.exit(1);
   }
-);
-
-if (installResult.error || installResult.status !== 0) {
-  console.error("install failed.");
-  process.exit(installResult.status || 1);
-}
+})();

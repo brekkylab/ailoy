@@ -15,9 +15,6 @@ jobs:
         node: [20, 22, 24]
 
     steps:
-      - name: Enable GitHub Actions debug logs
-        run: echo "ACTIONS_STEP_DEBUG=true" >> $GITHUB_ENV
-
       - name: Checkout source
         uses: actions/checkout@v4
 
