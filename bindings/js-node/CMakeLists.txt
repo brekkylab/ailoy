@@ -63,37 +63,9 @@ if (DEFINED NODE)
     endforeach()
 ]])
 
-
-
-  # list(APPEND AILOY_JS_NODE_OUTPUTS ailoy_addon.node)
-  # if(WIN32)
-  #   list(APPEND AILOY_JS_NODE_OUTPUTS mlc_llm.dll)
-  #   list(APPEND AILOY_JS_NODE_OUTPUTS tvm_runtime.dll)
-  #   if(CMAKE_GENERATOR MATCHES "Visual Studio")
-  #     list(APPEND AILOY_JS_NODE_OUTPUTS $<$<CONFIG:Debug>:ailoy_addon.pdb>)
-  #     list(APPEND AILOY_JS_NODE_OUTPUTS $<$<CONFIG:Debug>:mlc_llm.pdb>)
-  #     list(APPEND AILOY_JS_NODE_OUTPUTS $<$<CONFIG:Debug>:tvm_runtime.pdb>)
-  #   elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  #     list(APPEND AILOY_JS_NODE_OUTPUTS ailoy_addon.pdb)
-  #     list(APPEND AILOY_JS_NODE_OUTPUTS mlc_llm.pdb)
-  #     list(APPEND AILOY_JS_NODE_OUTPUTS tvm_runtime.pdb)
-  #   endif()
-  # endif()
-
-  # set(AILOY_JS_NODE_OUTPUTS_SRC ${AILOY_JS_NODE_OUTPUTS})
-  # list(TRANSFORM AILOY_JS_NODE_OUTPUTS_SRC PREPEND $<TARGET_FILE_DIR:ailoy_addon>/)
-  # set(AILOY_JS_NODE_OUTPUT_DST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  # set(AILOY_JS_NODE_OUTPUTS_DST ${AILOY_JS_NODE_OUTPUTS})
-  # list(TRANSFORM AILOY_JS_NODE_OUTPUTS_DST PREPEND ${AILOY_JS_NODE_OUTPUT_DST_DIR}/)
-  # add_custom_command(
-  #   TARGET ailoy_addon
-  #   POST_BUILD
-  #   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-  #       ${AILOY_JS_NODE_OUTPUTS_SRC}
-  #       ${AILOY_JS_NODE_OUTPUT_DST_DIR}
-  #   COMMENT "Copying build artifacts to output directory"
-  #   BYPRODUCTS
-  #       ${AILOY_JS_NODE_OUTPUTS_DST}
-  # )
+# Set RPATH
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(CMAKE_INSTALL_RPATH "\$ORIGIN")
+endif()
 
 endif()

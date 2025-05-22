@@ -35,6 +35,20 @@ function runCommand(command, args, options = {}) {
   });
 }
 
+function listDir(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    const relPath = path.relative(dir, fullPath);
+    if (entry.isDirectory()) {
+      console.log(`[DIR]  ${relPath}/`);
+    } else {
+      const size = fs.statSync(fullPath).size;
+      console.log(`[FILE] ${relPath} (${size} bytes)`);
+    }
+  }
+}
+
 (async () => {
   try {
     const buildArgs = [
@@ -51,6 +65,9 @@ function runCommand(command, args, options = {}) {
 
     const installArgs = ["--install", buildDir, "--prefix", installDir];
     await runCommand("cmake", installArgs, { cwd: __dirname });
+
+    console.log(`📂 Installed files under ${installDir}:\n`);
+    listDir(installDir);
   } catch (err) {
     console.error("Build failed:", err.message);
     process.exit(1);
