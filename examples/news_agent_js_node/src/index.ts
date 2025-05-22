@@ -19,7 +19,7 @@ function getUserInput(query: string): Promise<string> {
 async function main() {
   const rt = await startRuntime();
 
-  const agent = await defineAgent(rt, "qwen3-8b");
+  const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
 
   let nytimesApiKey = process.env.NYTIMES_API_KEY;
   if (nytimesApiKey === undefined) {

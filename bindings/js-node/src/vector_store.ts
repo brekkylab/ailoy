@@ -2,7 +2,7 @@ import type { NDArray } from "ailoy_addon.node";
 
 import { Runtime, generateUUID } from "./runtime";
 
-export type EmbeddingModelName = "bge-m3";
+export type EmbeddingModelName = "BAAI/bge-m3";
 
 export type VectorStoreName = "faiss" | "chromadb";
 
@@ -14,7 +14,7 @@ interface EmbeddingModelDescription {
 
 const modelDescriptions: Record<EmbeddingModelName, EmbeddingModelDescription> =
   {
-    "bge-m3": {
+    "BAAI/bge-m3": {
       modelId: "BAAI/bge-m3",
       componentType: "tvm_embedding_model",
       dimension: 1024,

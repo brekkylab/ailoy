@@ -15,7 +15,7 @@ def runtime():
 
 @pytest.fixture(scope="module")
 def agent(runtime: Runtime):
-    with Agent(runtime, model_name="qwen3-8b") as agent:
+    with Agent(runtime, model_name="Qwen/Qwen3-8B") as agent:
         yield agent
 
 
@@ -110,7 +110,7 @@ def test_simple_rag_pipeline(runtime: Runtime, agent: Agent):
     agent._messages.clear()
     agent._tools.clear()
 
-    with VectorStore(runtime, embedding_model_name="bge-m3", vector_store_name="faiss") as vs:
+    with VectorStore(runtime, embedding_model_name="BAAI/bge-m3", vector_store_name="faiss") as vs:
         vs.insert(
             "Ailoy is a lightweight library for building AI applications — such as **agent systems** or **RAG pipelines** — with ease. It is designed to enable AI features effortlessly, one can just import and use.",  # noqa: E501
         )

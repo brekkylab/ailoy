@@ -42,7 +42,7 @@ class VectorStore:
     def __init__(
         self,
         runtime: Runtime,
-        embedding_model_name: Literal["bge-m3"],
+        embedding_model_name: Literal["BAAI/bge-m3"],
         vector_store_name: Literal["faiss", "chromadb"],
         url: Optional[str] = None,
         collection: Optional[str] = None,
@@ -53,7 +53,7 @@ class VectorStore:
         Creates an instance.
 
         :param runtime: The runtime environment used to manage components.
-        :param embedding_model_name: The name of the embedding model to use. Currently it only supports `bge-m3`.
+        :param embedding_model_name: The name of the embedding model to use. Currently it only supports `BAAI/bge-m3`.
         :param url: (ChromaDB only) URL of the database.
         :param collection: (ChromaDB only) The collection name of the database.
         :param vector_store_name: The name of the vector store provider (One of faiss or chromaDB).
@@ -86,7 +86,7 @@ class VectorStore:
 
     def define(
         self,
-        embedding_model_name: Literal["bge-m3"],
+        embedding_model_name: Literal["BAAI/bge-m3"],
         vector_store_name: Literal["faiss", "chromadb"],
         url: Optional[str] = None,
         collection: Optional[str] = None,
@@ -104,7 +104,7 @@ class VectorStore:
         dimension = 1024
 
         # Initialize embedding model
-        if embedding_model_name == "bge-m3":
+        if embedding_model_name == "BAAI/bge-m3":
             dimension = 1024
             self._runtime.define(
                 "tvm_embedding_model",

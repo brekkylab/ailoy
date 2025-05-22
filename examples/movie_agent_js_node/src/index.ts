@@ -28,7 +28,7 @@ async function main() {
 
   console.log("Initializing AI...");
 
-  const agent = await defineAgent(rt, "qwen3-8b");
+  const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
   agent.addToolsFromPreset("tmdb", {
     authenticator: bearerAutenticator(tmdbApiKey),
   });

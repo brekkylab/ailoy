@@ -27,7 +27,7 @@ def test_spell(runtime: Runtime):
 
 
 def test_vectorstore(runtime: Runtime):
-    with VectorStore(runtime, "bge-m3", "faiss") as vs:
+    with VectorStore(runtime, "BAAI/bge-m3", "faiss") as vs:
         doc1 = "BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction."
         doc2 = "BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document"  # noqa: E501
         vs.insert(document=doc1, metadata={"value": "BGE-M3"})

@@ -8,7 +8,7 @@ describe("Agent", async () => {
   });
 
   it("Tool Call: frankfurter tools", async () => {
-    const agent = await defineAgent(rt, "qwen3-8b");
+    const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
     agent.addToolsFromPreset("frankfurter");
 
     const query =
@@ -23,7 +23,7 @@ describe("Agent", async () => {
   });
 
   it("Tool Call: Custom function tools", async () => {
-    const agent = await defineAgent(rt, "qwen3-8b");
+    const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
     agent.addJSFunctionTool(
       {
         name: "get_current_temperature",
@@ -68,7 +68,7 @@ describe("Agent", async () => {
   });
 
   it("Tool Call: Github MCP tools", async () => {
-    const agent = await defineAgent(rt, "qwen3-8b");
+    const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
     await agent.addToolsFromMcpServer(
       {
         command: "npx",

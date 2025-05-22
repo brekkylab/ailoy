@@ -11,7 +11,7 @@ async def main():
     if nytimes_api_key is None:
         nytimes_api_key = input("Enter New York Times API Key: ")
 
-    with Agent(rt, model_name="qwen3-8b") as agent:
+    with Agent(rt, model_name="Qwen/Qwen3-8B") as agent:
 
         def nytimes_authenticator(request):
             from urllib.parse import parse_qsl, urlencode, urlparse

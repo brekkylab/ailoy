@@ -12,7 +12,7 @@ async def main():
     if tmdb_api_key is None:
         tmdb_api_key = input("Enter TMDB API Key: ")
 
-    agent = Agent(rt, model_name="qwen3-8b")
+    agent = Agent(rt, model_name="Qwen/Qwen3-4B")
 
     agent.add_tools_from_preset("tmdb", authenticator=BearerAuthenticator(tmdb_api_key))
 

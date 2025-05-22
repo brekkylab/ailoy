@@ -84,7 +84,7 @@ class MessageDelta(BaseModel):
 
 ## Types for LLM Model Definitions
 
-TVMModelName = Literal["qwen3-0.6b", "qwen3-1.7b", "qwen3-4b", "qwen3-8b"]
+TVMModelName = Literal["Qwen/Qwen3-0.6B", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B"]
 OpenAIModelName = Literal["gpt-4o"]
 ModelName = Union[TVMModelName, OpenAIModelName]
 
@@ -107,22 +107,22 @@ class ModelDescription(BaseModel):
 
 
 model_descriptions: dict[ModelName, ModelDescription] = {
-    "qwen3-0.6b": ModelDescription(
+    "Qwen/Qwen3-0.6B": ModelDescription(
         model_id="Qwen/Qwen3-0.6B",
         component_type="tvm_language_model",
         default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
     ),
-    "qwen3-1.7b": ModelDescription(
+    "Qwen/Qwen3-1.7B": ModelDescription(
         model_id="Qwen/Qwen3-1.7B",
         component_type="tvm_language_model",
         default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
     ),
-    "qwen3-4b": ModelDescription(
+    "Qwen/Qwen3-4B": ModelDescription(
         model_id="Qwen/Qwen3-4B",
         component_type="tvm_language_model",
         default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
     ),
-    "qwen3-8b": ModelDescription(
+    "Qwen/Qwen3-8B": ModelDescription(
         model_id="Qwen/Qwen3-8B",
         component_type="tvm_language_model",
         default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",

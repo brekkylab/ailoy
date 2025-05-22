@@ -12,7 +12,7 @@ def main():
     if github_pat is None:
         github_pat = input("Enter GITHUB_PERSONAL_ACCESS_TOKEN: ")
 
-    with Agent(rt, model_name="qwen3-8b") as agent:
+    with Agent(rt, model_name="Qwen/Qwen3-8B") as agent:
         agent.add_tools_from_mcp_server(
             StdioServerParameters(
                 command="npx",
