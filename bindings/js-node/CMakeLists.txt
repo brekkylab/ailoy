@@ -66,23 +66,40 @@ if (DEFINED NODE)
       set(ignorelist "")
     endif()
 
+    # Copy files
     foreach(dep IN LISTS all_deps)
+      # Find in ignorelist
       set(skip FALSE)
-      get_filename_component(dep_filename ${dep} NAME)
+      get_filename_component(dep_filename "${dep}" NAME)
       foreach(ignore IN LISTS ignorelist)
         if(dep_filename STREQUAL ignore)
           set(skip TRUE)
           break()
         endif()
       endforeach()
+
       if(skip)
+        # Skip if in ignorelist
         message(STATUS "Skipping ignored dependency: ${dep}")
       else()
+        get_filename_component(real_dep "${dep}" REALPATH)
+        get_filename_component(dep_basename "${dep}" NAME)
+        get_filename_component(real_basename "${real_dep}" NAME)
+
+        # File copy
         file(INSTALL
           DESTINATION "${CMAKE_INSTALL_PREFIX}"
           TYPE SHARED_LIBRARY
-          FILES "${dep}"
+          FILES "${real_dep}"
         )
+
+        if(NOT dep STREQUAL real_dep)
+          # Create symlink
+          set(link_path "${CMAKE_INSTALL_PREFIX}/${dep_basename}")
+          set(link_target "${real_basename}")
+          execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink "${link_target}" "${link_path}")
+          message(STATUS "Created symlink: ${dep_basename} -> ${real_basename}")
+        endif()
       endif()
     endforeach()
 ]])
