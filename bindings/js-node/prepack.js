@@ -28,7 +28,7 @@ const tarballPath = path.resolve(__dirname, "prebuilds", tarballName);
 function runCommand(command, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      shell: true,
+      shell: opts.shell || true,
       cwd: opts.cwd || process.cwd(),
       env: process.env,
     });
@@ -107,18 +107,30 @@ function runCommand(command, args, opts = {}) {
         shell: true,
       });
       if (readelfOut.error) throw readelfOut.error;
-
       const lines = readelfOut.stdout.split("\n");
-      const needed = lines
+      const entries = lines
         .filter((l) => l.includes("(NEEDED)"))
         .map((l) => l.match(/\[(.+?)\]/)?.[1])
         .filter(Boolean);
+      console.log(entries);
 
-      const matchLibs = needed.filter((name) => libSet.has(name));
-      if (matchLibs.length > 0) {
-        console.log(
-          `→ patch: rpath set to $ORIGIN for ${matchLibs.join(", ")}`
-        );
+      const patchedLibs = [];
+
+      for (const lib of entries) {
+        const localPath = path.join(buildDir, lib);
+        if (fs.existsSync(localPath)) {
+          console.log(`→ patch: replace ${lib} → \$ORIGIN/${lib}`);
+          await runCommand(
+            "patchelf",
+            ["--replace-needed", lib, `$ORIGIN/${lib}`, nodeBinary],
+            { shell: false }
+          );
+          patchedLibs.push(lib);
+        }
+      }
+
+      if (patchedLibs.length > 0) {
+        console.log(`→ patch: set rpath to $ORIGIN`);
         await runCommand("patchelf", ["--set-rpath", "$ORIGIN", nodeBinary]);
       }
     }
