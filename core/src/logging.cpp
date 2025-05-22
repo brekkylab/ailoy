@@ -13,7 +13,7 @@ std::shared_ptr<spdlog::logger> get_logger() {
   static std::__1::shared_ptr<spdlog::logger> logger = nullptr;
 
   if (!logger) {
-    logger = spdlog::stdout_color_mt("ailoy");
+    logger = spdlog::stdout_color_mt("AILOY");
 
     const char *env = std::getenv("AILOY_LOG_LEVEL");
     if (env) {
