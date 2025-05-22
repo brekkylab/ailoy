@@ -75,7 +75,7 @@ if (DEFINED NODE)
           break()
         endif()
       endforeach()
-      if(NOT skip)
+      if(skip)
         message(STATUS "Skipping ignored dependency: ${dep}")
       else()
         file(INSTALL
