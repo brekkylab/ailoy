@@ -4,6 +4,14 @@
 #include "mlc_llm/embedding_model.hpp"
 #include "module.hpp"
 
+TEST(EmbeddingModelTest, TestDeviceOne) {
+  auto create_tvm_embedding_model =
+      ailoy::get_language_module()->factories.at("tvm_embedding_model");
+  auto attrs = ailoy::create<ailoy::map_t>();
+  attrs->insert_or_assign("device", ailoy::create<ailoy::int_t>(1));
+  auto embedding_model = std::get<0>(create_tvm_embedding_model(attrs));
+}
+
 TEST(EmbeddingModelTest, TestTokenize) {
   auto create_tvm_embedding_model =
       ailoy::get_language_module()->factories.at("tvm_embedding_model");
