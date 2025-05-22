@@ -82,20 +82,17 @@ packet_t::operator std::string() const {
   switch (ptype) {
   case packet_type::connect:
   case packet_type::disconnect:
-    return std::format("[Broker] packet received: {} {}", get_tx_id(),
-                       magic_enum::enum_name(ptype));
+    return std::format("{} {}", get_tx_id(), magic_enum::enum_name(ptype));
   case packet_type::subscribe:
   case packet_type::unsubscribe:
   case packet_type::execute:
-    return std::format("[Broker] packet received: {} {} {}", get_tx_id(),
-                       magic_enum::enum_name(ptype),
+    return std::format("{} {} {}", get_tx_id(), magic_enum::enum_name(ptype),
                        magic_enum::enum_name(itype.value()));
   case packet_type::respond:
-    return std::format("[Broker] packet received: {} {}", get_tx_id(),
-                       magic_enum::enum_name(ptype));
+    return std::format("{} {}", get_tx_id(), magic_enum::enum_name(ptype));
   case packet_type::respond_execute:
-    return std::format("[Broker] packet received: {} {} idx {} fin {}",
-                       get_tx_id(), magic_enum::enum_name(ptype),
+    return std::format("{} {} idx {} fin {}", get_tx_id(),
+                       magic_enum::enum_name(ptype),
                        std::to_string(*headers->at<uint_t>(1)),
                        std::to_string(*headers->at<bool_t>(2)));
   default:
