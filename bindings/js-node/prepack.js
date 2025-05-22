@@ -128,11 +128,6 @@ function runCommand(command, args, opts = {}) {
           patchedLibs.push(lib);
         }
       }
-
-      if (patchedLibs.length > 0) {
-        console.log(`→ patch: set rpath to $ORIGIN`);
-        await runCommand("patchelf", ["--set-rpath", "$ORIGIN", nodeBinary]);
-      }
     }
 
     const distNode = path.resolve(__dirname, "dist", binaryName);
