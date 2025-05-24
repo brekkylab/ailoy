@@ -33,6 +33,4 @@ void notify_t::set_monitor(std::shared_ptr<monitor_t> monitor) {
   on_monitor_set();
 }
 
-stop_t stop_t::global_stop(true);
-
 } // namespace ailoy

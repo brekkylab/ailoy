@@ -58,10 +58,11 @@ std::string tokenizer_t::decode(const std::vector<tokenizer_t::token_t> &ids,
 /* tvm_embedding_model_t */
 
 tvm_embedding_model_t::tvm_embedding_model_t(const std::string &model_name,
-                                             const std::string &quantization)
+                                             const std::string &quantization,
+                                             DLDevice device)
     : object_t() {
   if (engine_ == nullptr)
-    engine_ = prepare_engine(model_name, quantization);
+    engine_ = create<tvm_model_t>(model_name, quantization, device);
   fprefill_ = engine_->get_vm_function("prefill");
 }
 
@@ -176,6 +177,26 @@ create_tvm_embedding_model_component(std::shared_ptr<const value_t> inputs) {
     quantization = "q4f16_1";
   }
 
+  // Parse device(optional)
+  int32_t device_id;
+  if (input_map->contains("device")) {
+    if (input_map->at("device")->is_type_of<int_t>())
+      device_id = *input_map->at<int_t>("device");
+    else if (input_map->at("device")->is_type_of<uint_t>())
+      device_id = *input_map->at<uint_t>("device");
+    else
+      return error_output_t(type_error("TVM Language Model: create", "device",
+                                       "int_t | uint_t",
+                                       input_map->at("device")->get_type()));
+  } else
+    device_id = 0;
+
+  auto device_opt = get_tvm_device(device_id);
+  if (!device_opt.has_value())
+    return error_output_t(
+        runtime_error("No supported device is detected for your system."));
+  auto device = device_opt.value();
+
   auto infer = [](std::shared_ptr<component_t> component,
                   std::shared_ptr<const value_t> inputs) -> value_or_error_t {
     if (!inputs->is_type_of<map_t>())
@@ -238,7 +259,7 @@ create_tvm_embedding_model_component(std::shared_ptr<const value_t> inputs) {
   std::shared_ptr<tvm_embedding_model_t> tvm_embedding_model;
   try {
     tvm_embedding_model =
-        create<tvm_embedding_model_t>(model_name, quantization);
+        create<tvm_embedding_model_t>(model_name, quantization, device);
   } catch (const ailoy::runtime_error e) {
     return ailoy::error_output_t(e.what());
   }

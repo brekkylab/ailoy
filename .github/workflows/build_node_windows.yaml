@@ -28,13 +28,6 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-
       - name: Install OpenSSL
         shell: powershell
         run: |

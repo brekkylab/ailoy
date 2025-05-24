@@ -2,7 +2,7 @@ import type { NDArray } from "ailoy_addon.node";
 
 import { Runtime, generateUUID } from "./runtime";
 
-export type EmbeddingModelName = "bge-m3";
+export type EmbeddingModelName = "BAAI/bge-m3";
 
 export type VectorStoreName = "faiss" | "chromadb";
 
@@ -14,7 +14,7 @@ interface EmbeddingModelDescription {
 
 const modelDescriptions: Record<EmbeddingModelName, EmbeddingModelDescription> =
   {
-    "bge-m3": {
+    "BAAI/bge-m3": {
       modelId: "BAAI/bge-m3",
       componentType: "tvm_embedding_model",
       dimension: 1024,
@@ -180,6 +180,7 @@ export async function defineVectorStore(
   modelName: EmbeddingModelName,
   vectorStoreName: VectorStoreName,
   args?: {
+    device?: number;
     url?: string;
     collection?: string;
   }
@@ -190,6 +191,7 @@ export async function defineVectorStore(
 
   // Attribute input for call `rt.define(embedding_model)`
   let embeddingAttrs: Record<string, any> = {};
+  if (args_.device) embeddingAttrs["device"] = args_.device;
 
   // Attribute input for call `rt.define(vector_store)`
   let vectorStoreAttrs: Record<string, any> = {};

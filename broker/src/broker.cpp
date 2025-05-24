@@ -50,7 +50,6 @@ size_t broker_start(const std::string &url) {
   // Stop signals
   std::shared_ptr<stop_t> stop = std::make_shared<stop_t>();
   stops.insert_or_assign(url, stop);
-  stop_t::global_stop.set_monitor(monitor);
   stop->set_monitor(monitor);
 
   while (true) {

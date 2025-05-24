@@ -4,8 +4,6 @@ import os
 from ailoy import Runtime, Agent
 from ailoy.agent import BearerAuthenticator
 
-from common import print_agent_response
-
 
 async def main():
     rt = Runtime()
@@ -14,7 +12,7 @@ async def main():
     if tmdb_api_key is None:
         tmdb_api_key = input("Enter TMDB API Key: ")
 
-    agent = Agent(rt, model_name="qwen3-8b")
+    agent = Agent(rt, model_name="Qwen/Qwen3-8B")
 
     agent.add_tools_from_preset("tmdb", authenticator=BearerAuthenticator(tmdb_api_key))
 
@@ -30,7 +28,7 @@ async def main():
             continue
 
         for resp in agent.query(query):
-            print_agent_response(resp)
+            agent.print(resp)
 
     agent.delete()
 

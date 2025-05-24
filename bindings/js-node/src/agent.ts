@@ -1,5 +1,7 @@
 import * as MCPClient from "@modelcontextprotocol/sdk/client/index.js";
 import * as MCPClientStdio from "@modelcontextprotocol/sdk/client/stdio.js";
+import boxen from "boxen";
+import chalk from "chalk";
 import { search } from "jmespath";
 
 import { Runtime, generateUUID } from "./runtime";
@@ -55,10 +57,10 @@ interface MessageDelta {
 /** Types for LLM Model Definitions */
 
 export type TVMModelName =
-  | "qwen3-8b"
-  | "qwen3-4b"
-  | "qwen3-1.7b"
-  | "qwen3-0.6b";
+  | "Qwen/Qwen3-8B"
+  | "Qwen/Qwen3-4B"
+  | "Qwen/Qwen3-1.7B"
+  | "Qwen/Qwen3-0.6B";
 
 export type OpenAIModelName = "gpt-4o";
 
@@ -71,25 +73,25 @@ interface ModelDescription {
 }
 
 const modelDescriptions: Record<ModelName, ModelDescription> = {
-  "qwen3-8b": {
+  "Qwen/Qwen3-8B": {
     modelId: "Qwen/Qwen3-8B",
     componentType: "tvm_language_model",
     defaultSystemMessage:
       "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
   },
-  "qwen3-4b": {
+  "Qwen/Qwen3-4B": {
     modelId: "Qwen/Qwen3-4B",
     componentType: "tvm_language_model",
     defaultSystemMessage:
       "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
   },
-  "qwen3-1.7b": {
+  "Qwen/Qwen3-1.7B": {
     modelId: "Qwen/Qwen3-1.7B",
     componentType: "tvm_language_model",
     defaultSystemMessage:
       "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
   },
-  "qwen3-0.6b": {
+  "Qwen/Qwen3-0.6B": {
     modelId: "Qwen/Qwen3-0.6B",
     componentType: "tvm_language_model",
     defaultSystemMessage:
@@ -489,11 +491,31 @@ export class Agent {
       });
       await client.connect(transport);
 
-      const { content } = await client.callTool({
+      const result = await client.callTool({
         name: tool.name,
         arguments: inputs,
       });
-      return content;
+      const content = result.content as Array<any>;
+      const parsedContent = content.map((item) => {
+        if (item.type === "text") {
+          // Text Content
+          return item.text;
+        } else if (item.type === "image") {
+          // Image Content
+          return item.data;
+        } else if (item.type === "resource") {
+          // Resource Content
+          if (item.resource.text !== undefined) {
+            // Text Resource
+            return item.resource.text;
+          } else {
+            // Blob Resource
+            return item.resource.blob;
+          }
+        }
+      });
+
+      return parsedContent;
     };
     const desc: ToolDescription = {
       name: tool.name,
@@ -644,6 +666,99 @@ export class Agent {
       }
     }
   }
+
+  private _printResponseText(resp: AgentResponseText) {
+    const content =
+      resp.type === "reasoning" ? chalk.yellow(resp.content) : resp.content;
+    process.stdout.write(content);
+    if (resp.endOfTurn) {
+      process.stdout.write("\n");
+    }
+  }
+
+  private _printResponseToolCall(resp: AgentResponseToolCall) {
+    const title =
+      chalk.magenta("Tool Call") +
+      ": " +
+      chalk.bold(resp.content.function.name) +
+      ` (${resp.content.id})`;
+    const content = JSON.stringify(resp.content.function.arguments, null, 2);
+    const box = boxen(content, {
+      title,
+      titleAlignment: "left",
+      padding: {
+        left: 1,
+        right: 1,
+        top: 0,
+        bottom: 0,
+      },
+    });
+    console.log(box);
+  }
+
+  private _printResponseToolResult(resp: AgentResponseToolResult) {
+    const title =
+      chalk.green("Tool Result") +
+      ": " +
+      chalk.bold(resp.content.name) +
+      ` (${resp.content.tool_call_id})`;
+
+    let content;
+    try {
+      // Try to parse as json
+      content = JSON.stringify(JSON.parse(resp.content.content), null, 2);
+    } catch (e) {
+      // Use original content if not json deserializable
+      content = resp.content.content;
+    }
+    // Truncate long contents
+    if (content.length > 500) {
+      content = content.slice(0, 500) + "...(truncated)";
+    }
+
+    const box = boxen(content, {
+      title,
+      titleAlignment: "left",
+      padding: {
+        left: 1,
+        right: 1,
+        top: 0,
+        bottom: 0,
+      },
+    });
+    console.log(box);
+  }
+
+  private _printResponseError(resp: AgentResponseError) {
+    const title = chalk.red.bold("Error");
+    const box = boxen(resp.content, {
+      title,
+      titleAlignment: "left",
+      padding: {
+        left: 1,
+        right: 1,
+        top: 0,
+        bottom: 0,
+      },
+    });
+    console.log(box);
+  }
+
+  /** Prints agent's responses in a pretty format */
+  print(
+    /** agent's response yielded from `query()` */
+    resp: AgentResponse
+  ) {
+    if (resp.type === "output_text" || resp.type === "reasoning") {
+      this._printResponseText(resp);
+    } else if (resp.type === "tool_call") {
+      this._printResponseToolCall(resp);
+    } else if (resp.type === "tool_call_result") {
+      this._printResponseToolResult(resp);
+    } else if (resp.type === "error") {
+      this._printResponseError(resp);
+    }
+  }
 }
 
 /** Define a new agent */
@@ -655,6 +770,8 @@ export async function defineAgent(
   args?: {
     /** Optional system message to set the initial assistant context */
     systemMessage?: string;
+    /** Optional device id to set the device id to run LLM model */
+    device?: number;
     /** A parameter for API key usage.
      * This field is ignored if the model does not require authentication. */
     apiKey?: string;
@@ -667,6 +784,7 @@ export async function defineAgent(
 
   // Attribute input for call `rt.define`
   let attrs: Record<string, any> = {};
+  if (args_.device) attrs["device"] = args_.device;
   if (args_.apiKey) attrs["api_key"] = args_.apiKey;
 
   await agent.define(modelName, attrs);

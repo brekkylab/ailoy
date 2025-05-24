@@ -13,7 +13,11 @@ export const initializeComponents = async (mainWindow: BrowserWindow) => {
   }
 
   if (vectorstore === undefined) {
-    vectorstore = await ailoy.defineVectorStore(runtime, "bge-m3", "faiss");
+    vectorstore = await ailoy.defineVectorStore(
+      runtime,
+      "BAAI/bge-m3",
+      "faiss"
+    );
   }
 
   if (agent === undefined) {
@@ -22,7 +26,7 @@ export const initializeComponents = async (mainWindow: BrowserWindow) => {
       "Loading AI model...",
       false
     );
-    agent = await ailoy.defineAgent(runtime, "qwen3-8b");
+    agent = await ailoy.defineAgent(runtime, "Qwen/Qwen3-8B");
     mainWindow.webContents.send("indicate-loading", "", true);
   }
 };

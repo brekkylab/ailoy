@@ -33,14 +33,6 @@
 #include <deque>
 #include <shared_mutex>
 
-#ifdef _WIN32
-#include <Windows.h>
-#endif
-
-#if defined(UNIX) || defined(APPLE)
-#include <signal.h>
-#endif
-
 #include "exception.hpp"
 #include "object.hpp"
 
@@ -209,18 +201,7 @@ private:
  */
 class stop_t : public notify_t {
 public:
-  stop_t(bool handle_signal = false) {
-    exit_.store(false);
-#if defined(_WIN32)
-    if (handle_signal)
-      if (!SetConsoleCtrlHandler(stop_t::console_handler, TRUE))
-        throw exception("Failed to set sigint");
-#elif defined(EMSCRIPTEN)
-#else
-    if (handle_signal)
-      signal(SIGINT, stop_t::signal_handler);
-#endif
-  }
+  stop_t() { exit_.store(false); }
 
   operator bool() const { return exit_.load(); }
 
@@ -228,24 +209,6 @@ public:
     exit_.store(true);
     notify("stop");
   }
-
-#if defined(_WIN32)
-  static BOOL WINAPI console_handler(DWORD signal) {
-    if (signal == CTRL_C_EVENT) {
-      global_stop.stop();
-      return TRUE;
-    }
-    return TRUE;
-  }
-#elif defined(EMSCRIPTEN)
-#else
-  static void signal_handler(int signum) {
-    if (signum == SIGINT)
-      global_stop.stop();
-  }
-#endif
-
-  static stop_t global_stop;
 
 private:
   std::atomic_bool exit_;

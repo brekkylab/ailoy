@@ -2,6 +2,7 @@
 
 #include "mlc_llm_engine.hpp"
 #include "module.hpp"
+#include "tvm_model.hpp"
 #include "uuid.hpp"
 
 namespace ailoy {
@@ -92,15 +93,25 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
   } else
     mode = "interactive";
 
-// Parse device
-// @jhlee: TODO implement other environment
-#if defined(USE_METAL)
-  auto device = DLDevice{kDLMetal, 0};
-#elif defined(USE_VULKAN)
-  auto device = DLDevice{kDLVulkan, 0};
-#else
-  auto device = DLDevice{kDLCPU, 0};
-#endif
+  // Parse device(optional)
+  int32_t device_id;
+  if (input_map->contains("device")) {
+    if (input_map->at("device")->is_type_of<int_t>())
+      device_id = *input_map->at<int_t>("device");
+    else if (input_map->at("device")->is_type_of<uint_t>())
+      device_id = *input_map->at<uint_t>("device");
+    else
+      return error_output_t(type_error("TVM Language Model: create", "device",
+                                       "int_t | uint_t",
+                                       input_map->at("device")->get_type()));
+  } else
+    device_id = 0;
+
+  auto device_opt = get_tvm_device(device_id);
+  if (!device_opt.has_value())
+    return error_output_t(
+        runtime_error("No supported device is detected for your system."));
+  auto device = device_opt.value();
 
   // Get engine
   std::shared_ptr<mlc_llm_engine_t> engine;

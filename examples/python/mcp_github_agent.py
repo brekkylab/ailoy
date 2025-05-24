@@ -4,8 +4,6 @@ from mcp import StdioServerParameters
 
 from ailoy import Runtime, Agent
 
-from common import print_agent_response
-
 
 def main():
     rt = Runtime()
@@ -14,7 +12,7 @@ def main():
     if github_pat is None:
         github_pat = input("Enter GITHUB_PERSONAL_ACCESS_TOKEN: ")
 
-    with Agent(rt, model_name="qwen3-8b") as agent:
+    with Agent(rt, model_name="Qwen/Qwen3-8B") as agent:
         agent.add_tools_from_mcp_server(
             StdioServerParameters(
                 command="npx",
@@ -41,7 +39,7 @@ def main():
                 continue
 
             for resp in agent.query(query):
-                print_agent_response(resp)
+                agent.print(resp)
 
 
 if __name__ == "__main__":

@@ -1,45 +1,10 @@
-import textwrap
-
 import mcp
 import pytest
 
 from ailoy import Runtime, VectorStore
-from ailoy.agent import Agent, AgentResponse
+from ailoy.agent import Agent
 
 pytestmark = [pytest.mark.agent]
-
-
-def _print_agent_response(resp: AgentResponse):
-    if resp.type == "output_text":
-        print(resp.content, end="")
-        if resp.end_of_turn:
-            print("\n\n")
-    elif resp.type == "reasoning":
-        print(f"\033[93m{resp.content}\033[0m", end="")
-        if resp.end_of_turn:
-            print("\n\n")
-    elif resp.type == "tool_call":
-        print(
-            textwrap.dedent(
-                f"""
-                Tool Call
-                - ID: {resp.content.id}
-                - name: {resp.content.function.name}
-                - arguments: {resp.content.function.arguments}
-                """
-            )
-        )
-    elif resp.type == "tool_call_result":
-        print(
-            textwrap.dedent(
-                f"""
-                Tool Call Result
-                - ID: {resp.content.tool_call_id}
-                - name: {resp.content.name}
-                - Result: {resp.content.content}
-                """
-            )
-        )
 
 
 @pytest.fixture(scope="module")
@@ -50,7 +15,7 @@ def runtime():
 
 @pytest.fixture(scope="module")
 def agent(runtime: Runtime):
-    with Agent(runtime, model_name="qwen3-8b") as agent:
+    with Agent(runtime, model_name="Qwen/Qwen3-8B") as agent:
         yield agent
 
 
@@ -61,7 +26,7 @@ def test_tool_call_calculator(agent: Agent):
 
     query = "Please calculate this formula: floor(ln(exp(e))+cos(2*pi))"
     for resp in agent.query(query):
-        _print_agent_response(resp)
+        agent.print(resp)
 
 
 def test_tool_call_frankfurter(agent: Agent):
@@ -71,7 +36,7 @@ def test_tool_call_frankfurter(agent: Agent):
 
     query = "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?"
     for resp in agent.query(query):
-        _print_agent_response(resp)
+        agent.print(resp)
 
 
 def test_tool_call_py_function(agent: Agent):
@@ -115,7 +80,7 @@ def test_tool_call_py_function(agent: Agent):
 
     query = "Hello, how is the current weather in my city Seoul?"
     for resp in agent.query(query):
-        _print_agent_response(resp)
+        agent.print(resp)
 
 
 def test_mcp_tools_github(agent: Agent):
@@ -138,14 +103,14 @@ def test_mcp_tools_github(agent: Agent):
     # query = "Summarize README.md from repository brekkylab/ailoy."
     query = "Briefly explain about the repository brekkylab/ailoy."
     for resp in agent.query(query):
-        _print_agent_response(resp)
+        agent.print(resp)
 
 
 def test_simple_rag_pipeline(runtime: Runtime, agent: Agent):
     agent._messages.clear()
     agent._tools.clear()
 
-    with VectorStore(runtime, embedding_model_name="bge-m3", vector_store_name="faiss") as vs:
+    with VectorStore(runtime, embedding_model_name="BAAI/bge-m3", vector_store_name="faiss") as vs:
         vs.insert(
             "Ailoy is a lightweight library for building AI applications — such as **agent systems** or **RAG pipelines** — with ease. It is designed to enable AI features effortlessly, one can just import and use.",  # noqa: E501
         )
@@ -157,4 +122,4 @@ def test_simple_rag_pipeline(runtime: Runtime, agent: Agent):
             Question: {query}
         """
         for resp in agent.query(prompt):
-            _print_agent_response(resp)
+            agent.print(resp)

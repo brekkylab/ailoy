@@ -1,4 +1,5 @@
 import commonjs from "@rollup/plugin-commonjs";
+import json from "@rollup/plugin-json";
 import resolve from "@rollup/plugin-node-resolve";
 import terser from "@rollup/plugin-terser";
 import typescript from "@rollup/plugin-typescript";
@@ -32,6 +33,7 @@ export default [
     plugins: [
       resolve(),
       commonjs(),
+      json(),
       typescript({
         tsconfig,
       }),
@@ -76,5 +78,17 @@ export default [
     input: "src/index.ts",
     output: [{ file: "dist/index.d.ts", format: "esm" }],
     plugins: [dts({ tsconfig })],
+  },
+  // CLI
+  {
+    input: "src/cli/index.ts",
+    output: [{ file: "dist/cli.cjs", format: "cjs" }],
+    plugins: [
+      typescript({ tsconfig }),
+      tscAlias({ tsconfig }),
+      resolve(),
+      commonjs(),
+      terser(),
+    ],
   },
 ];

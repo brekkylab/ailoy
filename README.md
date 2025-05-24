@@ -13,10 +13,10 @@ Ailoy supports the following operating systems:
 - Linux (x86, with Vulkan)
 
 Currently, the following AI models are supported:
-- qwen3-0.6b (on-device)
-- qwen3-1.7b (on-device)
-- qwen3-4b (on-device)
-- qwen3-8b (on-device)
+- Qwen/Qwen3-0.6B (on-device)
+- Qwen/Qwen3-1.7B (on-device)
+- Qwen/Qwen3-4B (on-device)
+- Qwen/Qwen3-8B (on-device)
 - gpt-4o (API key needed)
 
 ## Getting Started
@@ -30,9 +30,9 @@ import {
 } from "ailoy-js-node";
 
 const rt = await startRuntime();
-const agent = await createAgent(rt, {model: {name: "qwen3-0.6b"}});
+const agent = await createAgent(rt, {model: {name: "Qwen/Qwen3-0.6B"}});
 for await (const resp of agent.query("When is your cut-off date?")) {
-    console.log(resp);
+  agent.print(resp);
 }
 await agent.delete();
 await rt.stop();
@@ -46,9 +46,9 @@ For more details, refer to `bindings/js-node/README.md`.
 from ailoy import Runtime, Agent
 
 rt = Runtime()
-agent = Agent(rt, model_name="qwen3-8b")
+agent = Agent(rt, model_name="Qwen/Qwen3-8B")
 for resp in agent.query("When is your cut-off date?"):
-    print(resp)
+    resp.print()
 agent.delete()
 rt.stop()
 ```

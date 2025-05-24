@@ -186,12 +186,9 @@ void vm_start(const std::string &url,
       }
 
       if (pkt->itype.has_value())
-        debug("[VM] packet received: {} {} {}", pkt->get_tx_id(),
-              magic_enum::enum_name(pkt->ptype),
-              magic_enum::enum_name(pkt->itype.value()));
+        debug("[VM] packet received: {}", pkt->operator std::string());
       else
-        debug("[VM] packet received: {} {}", pkt->get_tx_id(),
-              magic_enum::enum_name(pkt->ptype));
+        debug("[VM] packet received: {}", pkt->operator std::string());
 
       if (pkt->ptype == packet_type::respond) {
         if (expected_responses.find(pkt->get_tx_id()) !=
@@ -239,12 +236,9 @@ void vm_start(const std::string &url,
       auto packet = client->recv();
 
       if (packet->itype.has_value())
-        debug("[VM] packet received: {} {} {}", packet->get_tx_id(),
-              magic_enum::enum_name(packet->ptype),
-              magic_enum::enum_name(packet->itype.value()));
+        debug("[VM] packet received: {}", packet->operator std::string());
       else
-        debug("[VM] packet received: {} {}", packet->get_tx_id(),
-              magic_enum::enum_name(packet->ptype));
+        debug("[VM] packet received: {}", packet->operator std::string());
 
       if (packet->ptype != packet_type::respond) {
         std::cerr << "[VM] ignoring packet " << packet->get_tx_id()

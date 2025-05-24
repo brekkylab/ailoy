@@ -17,6 +17,8 @@ import jmespath
 import mcp
 import mcp.types as mcp_types
 from pydantic import BaseModel, ConfigDict, Field
+from rich.console import Console
+from rich.panel import Panel
 
 from ailoy.ailoy_py import generate_uuid
 from ailoy.runtime import Runtime
@@ -82,7 +84,7 @@ class MessageDelta(BaseModel):
 
 ## Types for LLM Model Definitions
 
-TVMModelName = Literal["qwen3-0.6b", "qwen3-1.7b", "qwen3-4b", "qwen3-8b"]
+TVMModelName = Literal["Qwen/Qwen3-0.6B", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B"]
 OpenAIModelName = Literal["gpt-4o"]
 ModelName = Union[TVMModelName, OpenAIModelName]
 
@@ -105,22 +107,22 @@ class ModelDescription(BaseModel):
 
 
 model_descriptions: dict[ModelName, ModelDescription] = {
-    "qwen3-0.6b": ModelDescription(
+    "Qwen/Qwen3-0.6B": ModelDescription(
         model_id="Qwen/Qwen3-0.6B",
         component_type="tvm_language_model",
         default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
     ),
-    "qwen3-1.7b": ModelDescription(
+    "Qwen/Qwen3-1.7B": ModelDescription(
         model_id="Qwen/Qwen3-1.7B",
         component_type="tvm_language_model",
         default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
     ),
-    "qwen3-4b": ModelDescription(
+    "Qwen/Qwen3-4B": ModelDescription(
         model_id="Qwen/Qwen3-4B",
         component_type="tvm_language_model",
         default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
     ),
-    "qwen3-8b": ModelDescription(
+    "Qwen/Qwen3-8B": ModelDescription(
         model_id="Qwen/Qwen3-8B",
         component_type="tvm_language_model",
         default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
@@ -139,6 +141,8 @@ class ComponentState(BaseModel):
 
 ## Types for agent's responses
 
+_console = Console(highlight=False)
+
 
 class AgentResponseBase(BaseModel):
     type: Literal["output_text", "tool_call", "tool_call_result", "reasoning", "error"]
@@ -146,11 +150,19 @@ class AgentResponseBase(BaseModel):
     role: Literal["assistant", "tool"]
     content: Any
 
+    def print(self):
+        raise NotImplementedError
+
 
 class AgentResponseOutputText(AgentResponseBase):
     type: Literal["output_text", "reasoning"]
     role: Literal["assistant"]
     content: str
+
+    def print(self):
+        _console.print(self.content, end="", style=("yellow" if self.type == "reasoning" else None))
+        if self.end_of_turn:
+            _console.print()
 
 
 class AgentResponseToolCall(AgentResponseBase):
@@ -158,17 +170,50 @@ class AgentResponseToolCall(AgentResponseBase):
     role: Literal["assistant"]
     content: ToolCall
 
+    def print(self):
+        panel = Panel(
+            json.dumps(self.content.function.arguments, indent=2),
+            title=f"[magenta]Tool Call[/magenta]: [bold]{self.content.function.name}[/bold] ({self.content.id})",
+            title_align="left",
+        )
+        _console.print(panel)
+
 
 class AgentResponseToolCallResult(AgentResponseBase):
     type: Literal["tool_call_result"]
     role: Literal["tool"]
     content: ToolCallResultMessage
 
+    def print(self):
+        try:
+            # Try to parse as json
+            content = json.dumps(json.loads(self.content.content), indent=2)
+        except json.JSONDecodeError:
+            # Use original content if not json deserializable
+            content = self.content.content
+        # Truncate long contents
+        if len(content) > 500:
+            content = content[:500] + "...(truncated)"
+
+        panel = Panel(
+            content,
+            title=f"[green]Tool Result[/green]: [bold]{self.content.name}[/bold] ({self.content.tool_call_id})",
+            title_align="left",
+        )
+        _console.print(panel)
+
 
 class AgentResponseError(AgentResponseBase):
     type: Literal["error"]
     role: Literal["assistant"]
     content: str
+
+    def print(self):
+        panel = Panel(
+            self.content,
+            title="[bold red]Error[/bold red]",
+        )
+        _console.print(panel)
 
 
 AgentResponse = Union[
@@ -352,6 +397,10 @@ class Agent:
         if "model" not in attrs:
             attrs["model"] = model_desc.model_id
 
+        # Set default system message
+        if len(self._messages) == 0 and model_desc.default_system_message:
+            self._messages.append(SystemMessage(role="system", content=model_desc.default_system_message))
+
         # Add API key
         if api_key:
             attrs["api_key"] = api_key
@@ -393,7 +442,7 @@ class Agent:
         :param enable_reasoning: If True, enables reasoning capabilities. (default: False)
         :param ignore_reasoning_messages: If True, reasoning steps are not included in the response stream. (default: False)
         :yield: AgentResponse output of the LLM inference or tool calls
-        """
+        """  # noqa: E501
         self._messages.append(UserMessage(role="user", content=message))
 
         while True:
@@ -466,13 +515,16 @@ class Agent:
                     output_msg = AIOutputTextMessage.model_validate(delta.message)
                     yield AgentResponseOutputText(
                         type="reasoning" if output_msg.reasoning else "output_text",
-                        end_of_turn=False,
+                        end_of_turn=True,
                         role="assistant",
                         content=output_msg.content,
                     )
 
                     # finish this Generator
                     return
+
+    def print(self, resp: AgentResponse):
+        resp.print()
 
     def add_tool(self, tool: Tool) -> None:
         """

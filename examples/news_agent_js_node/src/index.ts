@@ -19,7 +19,7 @@ function getUserInput(query: string): Promise<string> {
 async function main() {
   const rt = await startRuntime();
 
-  const agent = await defineAgent(rt, "qwen3-8b");
+  const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
 
   let nytimesApiKey = process.env.NYTIMES_API_KEY;
   if (nytimesApiKey === undefined) {
@@ -46,26 +46,7 @@ async function main() {
 
     process.stdout.write(`\nAssistant: `);
     for await (const resp of agent.query(query)) {
-      if (resp.type === "output_text") {
-        process.stdout.write(resp.content);
-        if (resp.endOfTurn) {
-          process.stdout.write("\n\n");
-        }
-      } else if (resp.type === "tool_call") {
-        process.stdout.write(`
-Tool Call
-- ID: ${resp.content.id}
-- name: ${resp.content.function.name}
-- arguments: ${JSON.stringify(resp.content.function.arguments)}
-`);
-      } else if (resp.type === "tool_call_result") {
-        process.stdout.write(`
-Tool Call Result
-- ID: ${resp.content.tool_call_id}
-- name: ${resp.content.name}
-- Result: ${resp.content.content}
-`);
-      }
+      agent.print(resp);
     }
   }
 

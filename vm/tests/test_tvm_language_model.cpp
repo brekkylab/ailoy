@@ -60,6 +60,17 @@ void print_llm_output(std::shared_ptr<ailoy::map_t> delta,
   print_llm_output(delta);
 }
 
+TEST(LanguageModelTest, TestDeviceOne) {
+  auto in = ailoy::create<ailoy::map_t>();
+  in->insert_or_assign("model",
+                       ailoy::create<ailoy::string_t>("Qwen/Qwen3-8B"));
+  in->insert_or_assign("device", ailoy::create<ailoy::int_t>(1));
+  auto language_model_opt =
+      ailoy::get_language_module()->factories.at("tvm_language_model")(in);
+  ASSERT_EQ(language_model_opt.index(), 0);
+  auto language_model = std::get<0>(language_model_opt);
+}
+
 TEST(LanguageModelTest, TestInfer) {
   std::shared_ptr<ailoy::component_t> language_model;
   {
@@ -92,15 +103,16 @@ TEST(LanguageModelTest, TestInfer) {
 }
 
 TEST(LanguageModelTest, TestMultiTurnChat) {
-  auto create_language_model =
-      ailoy::get_language_module()->factories.at("tvm_language_model");
-  auto attrs = ailoy::create<ailoy::map_t>();
-  attrs->insert_or_assign("model",
-                          ailoy::create<ailoy::string_t>("Qwen/Qwen3-8B"));
-  auto language_model_opt = create_language_model(attrs);
-  ASSERT_EQ(language_model_opt.index(), 0);
-  auto language_model = std::get<0>(language_model_opt);
-
+  std::shared_ptr<ailoy::component_t> language_model;
+  {
+    auto in = ailoy::create<ailoy::map_t>();
+    in->insert_or_assign("model",
+                         ailoy::create<ailoy::string_t>("Qwen/Qwen3-8B"));
+    auto language_model_opt =
+        ailoy::get_language_module()->factories.at("tvm_language_model")(in);
+    ASSERT_EQ(language_model_opt.index(), 0);
+    language_model = std::get<0>(language_model_opt);
+  }
   {
     auto in = ailoy::create<ailoy::map_t>();
     auto messages =
@@ -122,15 +134,16 @@ TEST(LanguageModelTest, TestMultiTurnChat) {
 }
 
 TEST(LanguageModelTest, TestChatReasoning) {
-  auto create_language_model =
-      ailoy::get_language_module()->factories.at("tvm_language_model");
-  auto attrs = ailoy::create<ailoy::map_t>();
-  attrs->insert_or_assign("model",
-                          ailoy::create<ailoy::string_t>("Qwen/Qwen3-8B"));
-  auto language_model_opt = create_language_model(attrs);
-  ASSERT_EQ(language_model_opt.index(), 0);
-  auto language_model = std::get<0>(language_model_opt);
-
+  std::shared_ptr<ailoy::component_t> language_model;
+  {
+    auto in = ailoy::create<ailoy::map_t>();
+    in->insert_or_assign("model",
+                         ailoy::create<ailoy::string_t>("Qwen/Qwen3-8B"));
+    auto language_model_opt =
+        ailoy::get_language_module()->factories.at("tvm_language_model")(in);
+    ASSERT_EQ(language_model_opt.index(), 0);
+    language_model = std::get<0>(language_model_opt);
+  }
   {
     auto in = ailoy::create<ailoy::map_t>();
     auto messages =
@@ -155,15 +168,16 @@ TEST(LanguageModelTest, TestChatReasoning) {
 }
 
 TEST(LanguageModelTest, TestChatReasoningIgnored) {
-  auto create_language_model =
-      ailoy::get_language_module()->factories.at("tvm_language_model");
-  auto attrs = ailoy::create<ailoy::map_t>();
-  attrs->insert_or_assign("model",
-                          ailoy::create<ailoy::string_t>("Qwen/Qwen3-8B"));
-  auto language_model_opt = create_language_model(attrs);
-  ASSERT_EQ(language_model_opt.index(), 0);
-  auto language_model = std::get<0>(language_model_opt);
-
+  std::shared_ptr<ailoy::component_t> language_model;
+  {
+    auto in = ailoy::create<ailoy::map_t>();
+    in->insert_or_assign("model",
+                         ailoy::create<ailoy::string_t>("Qwen/Qwen3-8B"));
+    auto language_model_opt =
+        ailoy::get_language_module()->factories.at("tvm_language_model")(in);
+    ASSERT_EQ(language_model_opt.index(), 0);
+    language_model = std::get<0>(language_model_opt);
+  }
   {
     auto in = ailoy::create<ailoy::map_t>();
     auto messages =

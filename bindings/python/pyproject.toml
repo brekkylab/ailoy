@@ -10,7 +10,12 @@ dependencies = [
     "mcp>=1.8.0",
     "numpy>=2.0.2",
     "pydantic>=2.11.4",
+    "rich>=14.0.0",
+    "typer>=0.15.4",
 ]
+
+[project.scripts]
+ailoy = "ailoy.cli.__main__:app"
 
 [dependency-groups]
 dev = [

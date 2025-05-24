@@ -17,33 +17,38 @@ std::string device = "cpu";
 #endif
 
 TEST(ModelCacheTest, BGEM3) {
-  ailoy::get_model("BAAI/bge-m3", "q4f16_1", device, std::nullopt, true);
+  ailoy::download_model("BAAI/bge-m3", "q4f16_1", device, std::nullopt, true);
 }
 
 TEST(ModelCacheTest, Qwen3_8B) {
-  ailoy::get_model("Qwen/Qwen3-8B", "q4f16_1", device, std::nullopt, true);
+  ailoy::download_model("Qwen/Qwen3-8B", "q4f16_1", device, std::nullopt, true);
 }
 
 TEST(ModelCacheTest, Qwen3_4B) {
-  ailoy::get_model("Qwen/Qwen3-4B", "q4f16_1", device, std::nullopt, true);
+  ailoy::download_model("Qwen/Qwen3-4B", "q4f16_1", device, std::nullopt, true);
 }
 
 TEST(ModelCacheTest, Qwen3_1_7B) {
-  ailoy::get_model("Qwen/Qwen3-1.7B", "q4f16_1", device, std::nullopt, true);
+  ailoy::download_model("Qwen/Qwen3-1.7B", "q4f16_1", device, std::nullopt,
+                        true);
 }
 
 TEST(ModelCacheTest, Qwen3_0_6B) {
-  ailoy::get_model("Qwen/Qwen3-0.6B", "q4f16_1", device, std::nullopt, true);
+  ailoy::download_model("Qwen/Qwen3-0.6B", "q4f16_1", device, std::nullopt,
+                        true);
 }
 
 TEST(ModelCacheTest, SigintWhileGetModel) {
-  ailoy::remove_model("BAAI/bge-m3", "q4f16_1");
+  auto remove_result = ailoy::remove_model("BAAI/bge-m3");
+  if (!remove_result.success) {
+    throw std::runtime_error(remove_result.error_message.value());
+  }
 
-  ailoy::model_cache_get_result_t result;
+  ailoy::model_cache_download_result_t result;
 
   auto t1 = std::thread([&]() {
-    result =
-        ailoy::get_model("BAAI/bge-m3", "q4f16_1", device, std::nullopt, true);
+    result = ailoy::download_model("BAAI/bge-m3", "q4f16_1", device,
+                                   std::nullopt, true);
   });
   auto t2 = std::thread([]() {
     std::this_thread::sleep_for(3s);
@@ -59,7 +64,10 @@ TEST(ModelCacheTest, SigintWhileGetModel) {
 }
 
 TEST(ModelCacheTest, BGEM3_Callback) {
-  ailoy::remove_model("BAAI/bge-m3", "q4f16_1");
+  auto remove_result = ailoy::remove_model("BAAI/bge-m3");
+  if (!remove_result.success) {
+    throw std::runtime_error(remove_result.error_message.value());
+  }
 
   std::string current_downloading_file;
   size_t last_line_length = 0;
@@ -80,7 +88,7 @@ TEST(ModelCacheTest, BGEM3_Callback) {
       last_line_length = 0;
     }
   };
-  ailoy::get_model("BAAI/bge-m3", "q4f16_1", device, callback, false);
+  ailoy::download_model("BAAI/bge-m3", "q4f16_1", device, callback, false);
 }
 
 int main(int argc, char **argv) {

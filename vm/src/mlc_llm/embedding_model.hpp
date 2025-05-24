@@ -31,7 +31,7 @@ private:
 class tvm_embedding_model_t : public object_t {
 public:
   tvm_embedding_model_t(const std::string &model_name,
-                        const std::string &quantization);
+                        const std::string &quantization, DLDevice device);
 
   void postprocess_embedding_ndarray(const tvm::runtime::NDArray &from,
                                      tvm::runtime::NDArray &to);
@@ -43,20 +43,6 @@ public:
   }
 
 private:
-  std::shared_ptr<tvm_model_t> prepare_engine(const std::string &model_name,
-                                              const std::string &quantization) {
-    // Parse device
-// @jhlee: TODO implement other environment
-#if defined(USE_METAL)
-    auto device = DLDevice{kDLMetal, 0};
-#elif defined(USE_VULKAN)
-    auto device = DLDevice{kDLVulkan, 0};
-#else
-    auto device = DLDevice{kDLCPU, 0};
-#endif
-    return create<tvm_model_t>(model_name, quantization, device);
-  }
-
   tvm::runtime::PackedFunc fprefill_;
   std::shared_ptr<tvm_model_t> engine_ = nullptr;
 };
