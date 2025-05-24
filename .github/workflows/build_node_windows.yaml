@@ -1,7 +1,7 @@
 name: Node Windows Build
 
 on:
-  push:
+  workflow_dispatch:
 
 jobs:
   build-windows:
