@@ -48,7 +48,7 @@ jobs:
       - name: Install Vulkan SDK
         shell: powershell
         run: |
-          $url = "https://sdk.lunarg.com/sdk/download/1.3.250.1/windows/vulkan-sdk.exe"
+          $url = "https://sdk.lunarg.com/sdk/download/1.3.283.0/windows/vulkan-sdk.exe"
           $output = "vulkan-sdk.exe"
           Invoke-WebRequest -Uri $url -OutFile $output
           Start-Process -FilePath ".\vulkan-sdk.exe" -ArgumentList "--accept-licenses", "--default-answer", "--confirm-command", "install", "--root", "C:\VulkanSDK" -Wait
@@ -65,7 +65,7 @@ jobs:
           pip install build scikit-build-core delvewheel
           python -m build -w --outdir dist
           $dist_wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
-          delvewheel repair -w wheelhouse $dist_wheel --add-path "${{ github.workspace }}\bindings\python\build\_deps\mlc-llm-build\Release;${{ github.workspace }}\bindings\python\build\_deps\mlc-llm-build\tvm\Release;C:\VulkanSDK\Lib"
+          delvewheel repair -w wheelhouse $dist_wheel --add-path "${{ github.workspace }}\bindings\python\build\_deps\mlc-llm-build\Release;${{ github.workspace }}\bindings\python\build\_deps\mlc-llm-build\tvm\Release;C:\VulkanSDK\Lib" --exclude vulkan-1.dll
           $wheel = Get-ChildItem wheelhouse\*.whl | Select-Object -First 1
           echo "WHEEL_FILENAME=$($wheel.Name)" >> $env:GITHUB_ENV
 
