@@ -36,10 +36,10 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $output
           Start-Process -FilePath ".\openssl-installer.exe" -ArgumentList "/silent", "/verysilent", "/sp-", "/SUPPRESSMSGBOXES" -Wait
 
-      - name: Install LAPACK
+      - name: Install OpenBLAS
         shell: powershell
         run: |
-          & "C:\vcpkg\vcpkg.exe" install lapack:x64-windows-static
+          & "C:\vcpkg\vcpkg.exe" install openblas:x64-windows-static lapack-reference:x64-windows-static
           $root = "C:\vcpkg\installed\x64-windows-static"
           echo "BLAS_ROOT=$root" >> $env:GITHUB_ENV
           echo "LAPACK_ROOT=$root" >> $env:GITHUB_ENV

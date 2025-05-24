@@ -24,6 +24,10 @@ jobs:
           tar -xf node.tar.xz
           echo "$PWD/node-v${{ matrix.node }}.0.0-linux-x64/bin" >> $GITHUB_PATH
 
+      - name: Install Vulkan SDK
+        run: |
+          yum install -y vulkan-devel spirv-headers-devel spirv-tools-devel spirv-tools-libs
+
       - name: Install OpenSSL 3.0.16
         run: |
           yum install -y perl-IPC-Cmd
@@ -50,12 +54,6 @@ jobs:
         env:
           MAKEFLAGS: -j$(nproc)
 
-      - name: Install Vulkan SDK
-        run: |
-          curl -LO https://sdk.lunarg.com/sdk/download/1.3.250.1/linux/vulkan-sdk-1.3.250.1.tar.gz
-          mkdir -p /opt/vulkan-sdk
-          tar -xzf vulkan-sdk-1.3.250.1.tar.gz --strip-components=2 -C /opt/vulkan-sdk
-
       - name: Create package
         run: |
           npm install
@@ -66,7 +64,6 @@ jobs:
         working-directory: ${{ github.workspace }}/bindings/js-node
         env:
           OPENSSL_ROOT_DIR: /opt/openssl
-          VULKAN_SDK: /opt/vulkan-sdk/x86_64
           CMAKE_PREFIX_PATH: /opt/openblas
 
       - name: Upload npm package
