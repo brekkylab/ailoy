@@ -10,36 +10,28 @@ npm install ailoy-js-node
 yarn add ailoy-js-node
 ```
 
-## Quickstart
+## Building from source
 
-```typescript
-import * as ailoy from "ailoy-js-node";
+### Prerequisites
 
-// Create a new runtime
-const runtime = new ailoy.Runtime();
+- Node 18 or higher
+- Python 3.10 or higher
+- C/C++ compiler
+  (recommended versions are below)
+  - GCC >= 13
+  - LLVM Clang >= 17
+  - Apple Clang >= 15
+  - MSVC >= 19.29
+- CMake >= 3.24.0
+- Git
+- OpenSSL
+- Rust & Cargo >= 1.82.0
+- OpenMP
+- BLAS
+- LAPACK
+- Vulkan SDK (if you are using vulkan)
 
-// Start runtime
-await runtime.start();
-
-// Call function
-for await (const resp of runtime.call("echo", "hello world!")) {
-  console.log(resp);
-  // Prints "hello world!"
-}
-
-// Define components
-await rt.define("tvm_language_model", "lm0", {
-  model: "Qwen/Qwen3-8B",
-});
-// Returns true
-
-// Call method and iterate for responses
-for await (const resp of runtime.callIterMethod("lm0", "infer", {
-  messages: [{role: "user", content: "Hello World!"}],
-})) {
-  console.log(resp);
-  // Prints { finish_reason: null, message: { role: "assistant", content: "<token>"} } until finished
-}
-
+```bash
+cd bindings/js-node
+npm run build
 ```
-
