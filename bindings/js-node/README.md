@@ -3,6 +3,12 @@
 Node.js binding for Ailoy runtime APIs
 
 ## Install
+
+> [!WARNING]
+> We are currently undergoing review for package managers (PyPI / npm) for upload.
+> In the meantime, if you'd like to try it out, please use the wheel files provided.
+> [https://github.com/brekkylab/ailoy/releases/tag/v0.0.1](https://github.com/brekkylab/ailoy/releases/tag/v0.0.1)
+
 ```bash
 # npm
 npm install ailoy-js-node
