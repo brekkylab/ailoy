@@ -1,0 +1,157 @@
+# Getting started
+
+Welcome to Ailoy’s Tutorial!
+
+In this tutorial, we’ll explore how to run LLMs in Ailoy, extend their capabilities like agent system.
+
+Let’s start right away with a simple code example.
+Below is the simplest way to run an LLM — it’s like Ailoy’s “Hello, World!”
+
+<CodeTabs>
+
+```python
+from ailoy import Runtime, Agent
+
+# The runtime must be started to use Ailoy
+rt = Runtime()
+
+# Defines an agent
+# During this step, the model parameters are downloaded and the LLM is set up for execution
+with Agent(rt, model_name="Qwen/Qwen3-0.6B") as agent:
+    # This is where the actual LLM call happens
+    for response in agent.query("Please give me a short poem about AI"):
+        print(response.content, end='')
+    print()
+
+# Stop the runtime
+rt.stop()
+```
+
+```typescript
+import { startRuntime, defineAgent } from "ailoy-node";
+
+(async () => {
+  // The runtime must be started to use Ailoy
+  const rt = await startRuntime();
+
+  // Defines an agent
+  // During this step, the model parameters are downloaded and the LLM is set up for execution
+  const agent = await defineAgent(rt, "Qwen/Qwen3-0.6B");
+
+  // This is where the actual LLM call happens
+  for await (const response of agent.query("Please give me a short poem about AI")) {
+    process.stdout.write(`${response.content}`);
+  }
+  process.stdout.write("\n");
+
+  // Once the agent is no longer needed, it can be released
+  await agent.delete();
+
+  // Stop the runtime
+  await rt.stop();
+})();
+```
+
+</CodeTabs>
+
+Since the model needs to be downloaded and initialized, the first run may take a little time.
+After a short wait, you may see an output similar to this.
+
+<TerminalBox>
+In the digital realm, where thoughts run,  
+AI dreams, no more than dreams of our own.  
+With code and data, it creates, it learns,  
+But dreams, still, run in hearts, in minds.
+</TerminalBox>
+
+All done! You've just activated an LLM. 🎉
+
+{/* prettier-ignore-start */}
+
+:::note 
+Don't be surprised if the output changes each time you run it. An LLM's
+output includes a certain level of randomness based on the temperature setting.
+:::
+
+{/* prettier-ignore-end */}
+
+Now, let me explain through the code line by line to understand what each part does.
+
+The very first step to using Ailoy is to start a Runtime.
+
+<CodeTabs>
+
+```python
+# The runtime must be started to use Ailoy
+rt = Runtime()
+
+# ...
+
+# Stop the runtime
+rt.stop()
+```
+
+```typescript
+// The runtime must be started to use Ailoy
+const rt = await startRuntime();
+
+// ...
+
+// Stop the runtime
+await rt.stop();
+```
+
+</CodeTabs>
+
+The `Runtime` contains Ailoy’s internal engine. Most of Ailoy’s functionalities
+are processed by this internal engine.
+
+<CodeTabs>
+
+```python
+# Defines an agent.
+# During this step, the model parameters are downloaded and the LLM is set up for execution
+with Agent(rt, model_name="Qwen/Qwen3-0.6B") as agent:
+```
+
+```typescript
+// Defines an agent.
+// During this step, the model parameters are downloaded and the LLM is set up for execution
+const agent = await defineAgent(rt, "Qwen/Qwen3-0.6B");
+// ...
+// Once the agent is no longer needed, it can be released
+await agent.delete();
+```
+
+</CodeTabs>
+
+Next, you’ll see that we define a class called `Agent`.
+It is the simplest way to use LLMs (or agents) in Ailoy.
+The `Agent` class provides high-level APIs that abstract away the underlying runtime, allowing you to use LLM capabilities effortlessly.
+In this example, we’re using Alibaba’s [qwen3](https://github.com/QwenLM/Qwen3) to run the model directly on-device.
+
+Once an Agent is defined, you can run the LLM using the query method.
+The output is returned as an iterator that yields the LLM’s response.
+This can also be considered a single step in successive generation process.
+
+<CodeTabs>
+
+```python
+# This is where the actual LLM call happens.
+for response in agent.query("Please give me a short poem about AI"):
+    print(response.content, end='')
+print()
+```
+
+```typescript
+// This is where the actual LLM call happens
+for await (const response of agent.query("Please give me a short poem about AI")) {
+  process.stdout.write(`${response.content}`);
+}
+process.stdout.write("\n");
+```
+
+</CodeTabs>
+
+The response is structured according to Ailoy’s defined output format.
+For a detailed specification of this format, please refer to [Agent Response Format](../concepts/agent-response-format).

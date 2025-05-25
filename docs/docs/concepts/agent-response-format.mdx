@@ -1,0 +1,43 @@
+# Agent Response Format
+
+**Agent responses** are the streamed output of the agent runs. Since Ailoy is
+designed to stream output on-the-fly, each part of the response can be treated
+as a real-time output.
+
+Basically, an agent response has the following structure:
+
+```python
+{
+  type: One of ["output_text" | "tool_call" | "tool_call_result" | "reasoning" | "error"]
+  role: One of ["assistant" | "tool"];
+  end_of_turn: boolean
+  content: Depends on type;
+}
+```
+
+- The `type` field indicates what kind of output the agent is currently
+  producing. Depending on the type, the structure of the response may vary.
+- The `role` field specifies who is speaking—either the Assistant (LLM model) or
+  a Tool.
+- The `end_of_turn` flag indicates whether this response is the final message
+  for the current turn. If set to `true`, it means a new type of response will
+  follow.
+
+Here are the descriptions of each response type:
+
+- **output_text**: This is the main textual output from the assistant. The
+  `content` field contains a string with the generated text.
+- **tool_call**: A message indicating that the assistant is requesting a tool to
+  be invoked. Within the agent system, tools automatically receive this call and
+  are expected to return a corresponding `tool_call_result`. The `content`
+  contains a JSON-compatible dictionary describing the tool call.
+- **tool_call_result**: The result returned by the tool in response to a
+  `tool_call`. The assistant receives this result and uses it to produce a final
+  response to the user. The `content` contains a JSON-compatible dictionary with
+  the tool's output.
+- **reasoning**: Intermediate reasoning steps produced by a reasoning-enabled
+  model. The `content` field contains a string with the generated reasoning. If
+  the `ignore_reasoning_messages` flag is enabled, these messages are omitted
+  from the output.
+- **error**: Indicates that an error has occurred. `content` field contains the
+  reason of the error. After error raised, no more responses will be generated.

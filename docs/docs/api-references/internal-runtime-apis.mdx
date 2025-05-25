@@ -1,0 +1,649 @@
+# Internal Runtime API References
+
+## Introduction
+
+### Primitive Value Types
+
+Low-level API requests in Ailoy are made using a JSON-like object as the input
+argument. The key difference from standard JSON is that binary values can also
+be included.
+
+In Ailoy, you do not need to manually construct this object. Default types in
+Python and JavaScript are automatically converted into the appropriate internal
+representation when a request is sent.
+
+The table below summarizes how types in Python and JavaScript are mapped:
+
+| Name    | Python          | Javascript          |
+| ------- | --------------- | ------------------- |
+| null    | `None`          | `undefined`, `null` |
+| bool    | `bool`          | `boolean`           |
+| uint    | `int`           | `number`            |
+| int     | `int`           | `number`            |
+| float   | `float`         | `number`            |
+| double  | `float`         | `number`            |
+| string  | `str`           | `string`            |
+| array   | `List`          | `Array`             |
+| map     | `Dict`          | `object`            |
+| ndarray | `numpy.ndarray` | `TypedArray`        |
+
+### Iterative output
+
+In Ailoy, function outputs are designed to be iterable by default. A function
+may produce output either as a single response or as a sequence of multiple
+packets. The runtime continues to emit packets until it encounters a packet with
+the field finish: true. If the function completes in one response, that single
+packet will include `finish: true`. If the function produces multiple outputs,
+each packet will be yielded in order, and only the final one will have
+`finish: true`.
+
+In this documentation, the flag **`iterative: true`** indicates that the
+function may return **multiple output packets**. When using such a function,
+users must consume the output using an iterator loop (e.g., `for` or
+`async for`) to ensure all packets are handled. On the other hand, if
+**`iterative`** is set to false, the function is guaranteed to produce its
+entire output in a single packet. In this case, it is safe to call the function
+as a regular method and consume the result directly, without iteration.
+
+---
+
+## `calculator`
+
+- Type: **Function**
+- Module: `default`
+
+A simple calculator function.
+
+#### Parameters
+
+| Name         | Type   | Description                 | Required |
+| ------------ | ------ | --------------------------- | -------- |
+| `expression` | string | expression to be calculated | ✅       |
+
+#### Outputs
+
+| Name    | Type   | Description        |
+| ------- | ------ | ------------------ |
+| `value` | double | calculation result |
+
+`iterative`: **`false`**
+
+## `http_request`
+
+- Type: **Function**
+- Module: `default`
+
+Sends an HTTP(S) request to the specified URL and returns the response.
+
+#### Parameters
+
+| Name      | Type   | Description                                         | Required |
+| --------- | ------ | --------------------------------------------------- | -------- |
+| `url`     | string | base url to request                                 | ✅       |
+| `method`  | string | request method among `GET`, `POST`, `PUT`, `DELETE` | ✅       |
+| `headers` | map    | request headers                                     |          |
+| `body`    | string | request body                                        |          |
+
+#### Outputs
+
+| Name          | Type  | Description      |
+| ------------- | ----- | ---------------- |
+| `status_code` | uint  | HTTP status code |
+| `headers`     | map   | response headers |
+| `body`        | bytes | response body    |
+
+`iterative`: **`false`**
+
+---
+
+## `chromadb_vector_store`
+
+- Type: **Component**
+- Module: `language`
+
+A vector store backed by ChromaDB as the underlying storage and retrieval
+engine.
+
+#### Parameters
+
+| Name         | Type   | Description                                               | Required |
+| ------------ | ------ | --------------------------------------------------------- | -------- |
+| `url`        | string | URL of the chromadb server                                | ✅       |
+| `collection` | string | Collection name to use (defaults to `default_collection`) |          |
+
+### `clear`
+
+- Type: **Method**
+- Component: `chromadb_vector_store`
+
+Clears all items from the vector store.
+
+#### Parameters
+
+None
+
+#### Outputs
+
+None
+
+`iterative`: **`false`**
+
+### `get_by_id`
+
+- Type: **Method**
+- Component: `chromadb_vector_store`
+
+Retrieves a stored item by its unique identifier, returning the embedding,
+document, and metadata.
+
+#### Parameters
+
+| Name | Type   | Description                       | Required |
+| ---- | ------ | --------------------------------- | -------- |
+| `id` | string | Unique identifier of item to find | ✅       |
+
+#### Outputs
+
+| Name        | Type    | Description                         |
+| ----------- | ------- | ----------------------------------- |
+| `id`        | string  | Unique identifier of the found item |
+| `embedding` | ndarray | Embedding of the found item         |
+| `document`  | string  | Document of the found item          |
+| `metadata`  | map     | Metadata of the found item          |
+
+`iterative`: **`false`**
+
+### `insert`<a name="chroma_vector_store.insert"></a>
+
+- Type: **Method**
+- Component: `chromadb_vector_store`
+
+Inserts a single embedding into the vector store along with its associated
+document and optional metadata.
+
+#### Parameters
+
+| Name        | Type        | Description                                                         | Required |
+| ----------- | ----------- | ------------------------------------------------------------------- | -------- |
+| `embedding` | ndarray     | embedding to insert                                                 | ✅       |
+| `document`  | string      | original document corresponding to embedding                        | ✅       |
+| `metadata`  | map or null | arbitrary key-value pairs with JSON-serializable (defaults to null) |          |
+
+#### Outputs
+
+| Name | Type   | Description                         |
+| ---- | ------ | ----------------------------------- |
+| `id` | string | Unique identifier of the added item |
+
+### `insert_many`
+
+Inserts multiple embeddings into the vector store in a batch. Each item must
+follow the same format as in insert.
+
+- Type: **Method**
+- Component: `chromadb_vector_store`
+
+#### Parameters
+
+Array of objects(map) with [`insert`](#chroma_vector_store.insert) inputs
+
+#### Outputs
+
+| Name  | Type            | Description                                                     |
+| ----- | --------------- | --------------------------------------------------------------- |
+| `ids` | array\<string\> | Unique identifiers of the added items (same order with `items`) |
+
+`iterative`: **`false`**
+
+### `remove`
+
+- Type: **Method**
+- Component: `chromadb_vector_store`
+
+Removes a stored item from the vector store by its unique identifier.
+
+#### Parameters
+
+| Name | Type   | Description                         | Required |
+| ---- | ------ | ----------------------------------- | -------- |
+| `id` | string | Unique identifier of item to remove | ✅       |
+
+#### Outputs
+
+None
+
+`iterative`: **`false`**
+
+### `retrieve`
+
+- Type: **Method**
+- Component: `chromadb_vector_store`
+
+Searches for the most similar items to the given query embedding. Returns the
+top-k results along with similarity scores.
+
+#### Parameters
+
+| Name              | Type   | Description                           | Required |
+| ----------------- | ------ | ------------------------------------- | -------- |
+| `query_embedding` | string | Embedding for query message           | ✅       |
+| `top_k`           | uint   | Number of results to retrieve at most | ✅       |
+
+#### Outputs
+
+| Name      | Type         | Description                                                                                                                                                                                                                                                     |
+| --------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `results` | array\<map\> | Retrieved results where each item consists of<br/>`id`(string): Unique identifier of the item<br/>`document`(string): Document of the item<br/>`metadata`(map or null): Metadata of the item<br/>`similarity`(float): cosine similarity between query embedding |
+
+`iterative`: **`false`**
+
+## `download_model`
+
+- Type: **Function**
+- Module: `language`
+
+Download the model specified by model ID and additional attributes.
+
+#### Parameters
+
+| Name           | Type   | Description                                           | Required |
+| -------------- | ------ | ----------------------------------------------------- | -------- |
+| `model_id`     | string | Model ID                                              | ✅       |
+| `quantization` | string | Quantization method<br/>Available values: `q4f16_1`   | ✅       |
+| `device`       | string | Target device<br/>Available values: `metal`, `vulkan` | ✅       |
+
+#### Outputs
+
+| Name         | Type   | Description                  |
+| ------------ | ------ | ---------------------------- |
+| `model_path` | string | Path to the downloaded model |
+
+## `faiss_vector_store`
+
+- Type: **Component**
+- Module: `language`
+
+A vector store component using Faiss as the provider.
+
+#### Parameters
+
+| Name        | Type | Description            | Required |
+| ----------- | ---- | ---------------------- | -------- |
+| `dimension` | uint | Dimension of the index | ✅       |
+
+### `clear`
+
+- Type: **Method**
+- Component: `faiss_vector_store`
+
+Clears all items from the vector store.
+
+#### Parameters
+
+None
+
+#### Outputs
+
+None
+
+`iterative`: **`false`**
+
+### `get_by_id`
+
+- Type: **Method**
+- Component: `faiss_vector_store`
+
+Retrieves a stored item by its unique identifier, returning the embedding,
+document, and metadata.
+
+#### Parameters
+
+| Name | Type   | Description                       | Required |
+| ---- | ------ | --------------------------------- | -------- |
+| `id` | string | Unique identifier of item to find | ✅       |
+
+#### Outputs
+
+| Name        | Type    | Description                         |
+| ----------- | ------- | ----------------------------------- |
+| `id`        | string  | Unique identifier of the found item |
+| `embedding` | ndarray | Embedding of the found item         |
+| `document`  | string  | Document of the found item          |
+| `metadata`  | map     | Metadata of the found item          |
+
+`iterative`: **`false`**
+
+### `insert`<a name="faiss_vector_store.insert"></a>
+
+- Type: **Method**
+- Component: `faiss_vector_store`
+
+Inserts a single embedding into the vector store along with its associated
+document and optional metadata.
+
+#### Parameters
+
+| Name        | Type        | Description                                                         | Required |
+| ----------- | ----------- | ------------------------------------------------------------------- | -------- |
+| `embedding` | ndarray     | embedding to insert                                                 | ✅       |
+| `document`  | string      | original document corresponding to embedding                        | ✅       |
+| `metadata`  | map or null | arbitrary key-value pairs with JSON-serializable (defaults to null) |          |
+
+#### Outputs
+
+| Name | Type   | Description                         |
+| ---- | ------ | ----------------------------------- |
+| `id` | string | Unique identifier of the added item |
+
+`iterative`: **`false`**
+
+### `insert_many`
+
+- Type: **Method**
+- Component: `faiss_vector_store`
+
+Inserts multiple embeddings into the vector store in a batch. Each item must
+follow the same format as in insert.
+
+#### Parameters
+
+Array of objects(map) with [`insert`](#faiss_vector_store.insert) inputs
+
+#### Outputs
+
+| Name  | Type            | Description                                                     |
+| ----- | --------------- | --------------------------------------------------------------- |
+| `ids` | array\<string\> | Unique identifiers of the added items (same order with `items`) |
+
+`iterative`: **`false`**
+
+### `remove`
+
+Removes a stored item from the vector store by its unique identifier.
+
+- Type: **Method**
+- Component: `faiss_vector_store`
+
+#### Parameters
+
+| Name | Type   | Description                         | Required |
+| ---- | ------ | ----------------------------------- | -------- |
+| `id` | string | Unique identifier of item to remove | ✅       |
+
+#### Outputs
+
+None
+
+`iterative`: **`false`**
+
+### `retrieve`
+
+- Type: **Method**
+- Component: `faiss_vector_store`
+
+Searches for the most similar items to the given query embedding. Returns the
+top-k results along with similarity scores.
+
+#### Parameters
+
+| Name              | Type   | Description                           | Required |
+| ----------------- | ------ | ------------------------------------- | -------- |
+| `query_embedding` | string | Embedding for query message           | ✅       |
+| `top_k`           | uint   | Number of results to retrieve at most | ✅       |
+
+#### Outputs
+
+| Name      | Type         | Description                                                                                                                                                                                                                                                     |
+| --------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `results` | array\<map\> | Retrieved results where each item consists of<br/>`id`(string): Unique identifier of the item<br/>`document`(string): Document of the item<br/>`metadata`(map or null): Metadata of the item<br/>`similarity`(float): cosine similarity between query embedding |
+
+`iterative`: **`false`**
+
+## `list_local_models`
+
+- Type: **Function**
+- Module: `language`
+
+Lists downloaded models in local cache directory.
+
+#### Parameters
+
+None
+
+#### Outputs
+
+| Name      | Type         | Description                                                   |
+| --------- | ------------ | ------------------------------------------------------------- |
+| `results` | array\<map\> | Result items where each item consists of the following schema |
+
+| Name          | Type   | Description                                                                   |
+| ------------- | ------ | ----------------------------------------------------------------------------- |
+| `type`        | string | Model Type<br/>Available values: `tvm`                                        |
+| `model_id`    | string | Model ID                                                                      |
+| `attributes`  | map    | Model Attributes, including `quantization` and `device` for `tvm` type models |
+| `model_path`  | string | Path to the model                                                             |
+| `total_bytes` | uint   | Sum of model's file size in bytes                                             |
+
+## `openai`
+
+- Type: **Component**
+- Module: `language`
+
+A `tvm_language_model` compatible using the OpenAI API, an LLM component.
+
+#### Parameters
+
+| Name      | Type   | Description                                                      | Required |
+| --------- | ------ | ---------------------------------------------------------------- | -------- |
+| `api_key` | string | API key to use on inference                                      | ✅       |
+| `model`   | string | Model name<br/>Available values: `gpt-4o` (defaults to `gpt-4o`) |          |
+
+### `infer`
+
+- Type: **Method**
+- Component: `openai`
+
+Performs inference, generates outputs.
+
+#### Parameters
+
+| Name       | Type         | Description                                 | Required |
+| ---------- | ------------ | ------------------------------------------- | -------- |
+| `messages` | array\<map\> | array of messages (OpenAI API compatible)   | ✅       |
+| `tools`    | array\<map\> | tools to be used (defaults to empty string) |          |
+
+#### Outputs
+
+| Name            | Type   | Description                                                                   |
+| --------------- | ------ | ----------------------------------------------------------------------------- |
+| `message`       | map    | result message                                                                |
+| `finish_reason` | string | finished reason.<br/>Available values: `stop`, `tool_call`, `length`, `error` |
+
+`iterative`: **`false`**
+
+## `remove_model`
+
+- Type: **Function**
+- Module: `language`
+
+Remove the model specified by model ID.
+
+#### Parameters
+
+| Name       | Type   | Description | Required |
+| ---------- | ------ | ----------- | -------- |
+| `model_id` | string | Model ID    | ✅       |
+
+#### Outputs
+
+| Name         | Type   | Description                     |
+| ------------ | ------ | ------------------------------- |
+| `skipped`    | bool   | Whether the deletion is skipped |
+| `model_path` | string | Path to the removed model       |
+
+## `split_text`
+
+- Type: **Function**
+- Module: `language`
+- Ailas: `split_text_separators_recursively`
+
+#### Parameters
+
+| Name              | Type            | Description                                                                              | Required |
+| ----------------- | --------------- | ---------------------------------------------------------------------------------------- | -------- |
+| `text`            | string          | Text to split                                                                            | ✅       |
+| `chunk_size`      | uint            | Chunk size to split (defaults to `4000`)                                                 |          |
+| `chunk_overlap`   | uint            | Chunk overlap size (defaults to `200`)                                                   |          |
+| `separators`      | array\<string\> | Separators to use (defaults to `["\n\n", "\n", " ", ""]`)                                |          |
+| `length_function` | string          | Length function to use<br/>Available values: `default`, `string` (defaults to `default`) |          |
+
+#### Outputs
+
+| Name     | Type            | Description |
+| -------- | --------------- | ----------- |
+| `chunks` | array\<string\> | Text chunks |
+
+`iterative`: **`false`**
+
+## `split_text_by_separator`
+
+- Type: **Function**
+- Module: `language`
+
+#### Parameters
+
+| Name              | Type   | Description                                                                              | Required |
+| ----------------- | ------ | ---------------------------------------------------------------------------------------- | -------- |
+| `text`            | string | Text to split                                                                            | ✅       |
+| `chunk_size`      | uint   | Chunk size to split (defaults to `4000`)                                                 |          |
+| `chunk_overlap`   | uint   | Chunk overlap size (defaults to `200`)                                                   |          |
+| `separator`       | string | Separator to use (defaults to `\n\n`)                                                    |          |
+| `length_function` | string | Length function to use<br/>Available values: `default`, `string` (defaults to `default`) |          |
+
+#### Outputs
+
+| Name     | Type            | Description |
+| -------- | --------------- | ----------- |
+| `chunks` | array\<string\> | Text chunks |
+
+`iterative`: **`false`**
+
+## `tvm_embedding_model`
+
+- Type: **Component**
+- Module: `language`
+
+Defines an on-device embedding model using TVM as the provider.
+
+#### Parameters
+
+| Name           | Type   | Description                                                                        | Required |
+| -------------- | ------ | ---------------------------------------------------------------------------------- | -------- |
+| `model`        | string | Model name to use.<br/>Available values: `BAAI/bge-m3` (defaults to `BAAI/bge-m3`) |          |
+| `quantization` | string | Quantization method.<br/>Available values: `q4f16_1` (defaults to `q4f16_1`)       |          |
+
+### `infer`
+
+- Type: **Method**
+- Component: `tvm_embedding_model`
+
+Performs inference using the embedding model.
+
+#### Parameters
+
+| Name     | Type   | Description                     | Required |
+| -------- | ------ | ------------------------------- | -------- |
+| `prompt` | string | input text to perform embedding | ✅       |
+
+#### Outputs
+
+| Name        | Type    | Description                  |
+| ----------- | ------- | ---------------------------- |
+| `embedding` | ndarray | result embedding (1-d array) |
+
+`iterative`: **`false`**
+
+### `tokenize`
+
+- Type: **Method**
+- Component: `tvm_embedding_model`
+
+Performs tokenization on the input text and returns a list of tokens (input of
+deep learning).
+
+#### Parameters
+
+| Name     | Type   | Description                        | Required |
+| -------- | ------ | ---------------------------------- | -------- |
+| `prompt` | string | input text to perform tokenization | ✅       |
+
+#### Outputs
+
+| Name     | Type         | Description   |
+| -------- | ------------ | ------------- |
+| `tokens` | array\<int\> | result tokens |
+
+`iterative`: **`false`**
+
+## `tvm_language_model`
+
+- Type: **Component**
+- Module: `language`
+
+Defines an on-device language model using TVM as the provider.
+
+#### Parameters
+
+| Name           | Type   | Description                                                                                                     | Required |
+| -------------- | ------ | --------------------------------------------------------------------------------------------------------------- | -------- |
+| `model`        | string | Model name to use.<br/>Available values: `Qwen/Qwen3-0.6B`, `Qwen/Qwen3-1.7B`, `Qwen/Qwen3-4B`, `Qwen/Qwen3-8B` | ✅       |
+| `quantization` | string | Quantization method.<br/>Available values: `q4f16_1` (defaults to `q4f16_1`)                                    |          |
+| `mode`         | string | Mode to initialize the model<br/>Available values: `interactive`, `local`, `server` (defaults to `interactive`) |          |
+
+### `apply_chat_template`
+
+- Type: **Method**
+- Component: `tvm_language_model`
+
+Format inputs by it's model type.
+
+#### Parameters
+
+| Name               | Type                   | Description                                  | Required |
+| ------------------ | ---------------------- | -------------------------------------------- | -------- |
+| `messages`         | array\<map\>           | array of messages (OpenAI API compatible)    | ✅       |
+| `tools`            | array\<map\> or string | tools to be used (defaults to empty string)  |          |
+| `enable_reasoning` | bool                   | flag to enable reasoning (defaults to false) |          |
+
+#### Outputs
+
+| Name     | Type   | Description   |
+| -------- | ------ | ------------- |
+| `prompt` | string | result prompt |
+
+`iterative`: **`false`**
+
+### `infer`
+
+- Type: **Method**
+- Component: `tvm_language_model`
+
+Performs inference, generates outputs.
+
+#### Parameters
+
+| Name                        | Type                   | Description                                                | Required |
+| --------------------------- | ---------------------- | ---------------------------------------------------------- | -------- |
+| `messages`                  | array\<map\>           | array of messages (OpenAI API compatible)                  | ✅       |
+| `tools`                     | array\<map\> or string | tools to be used (defaults to empty string)                |          |
+| `enable_reasoning`          | bool                   | flag to enable reasoning (defaults to false)               |          |
+| `ignore_reasoning_messages` | bool                   | ignore reasoning messages from outputs (defaults to false) |          |
+
+#### Outputs
+
+| Name            | Type           | Description                                                                   |
+| --------------- | -------------- | ----------------------------------------------------------------------------- |
+| `message`       | map            | result message from this iteration                                            |
+| `finish_reason` | string or null | finished reason.<br/>Available values: `stop`, `tool_call`, `length`, `error` |
+
+`iterative`: **`true`**

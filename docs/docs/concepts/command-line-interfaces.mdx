@@ -1,0 +1,38 @@
+# Command Line Interfaces
+
+Ailoy includes a Command Line Interface (CLI) that allows users to manage
+resources used within the Ailoy ecosystem. The CLI is installed alongside the
+Ailoy package in both Python and Node.js environments.
+
+Once you've completed the installation, you can run the `ailoy` command. Run
+`ailoy --help` for more details.
+
+{/* prettier-ignore-start */}
+
+:::note
+The terminal output in this documentation assumes that the CLI was installed via the Python package.
+If you installed it via the Node.js package, the output may differ slightly.
+:::
+
+{/* prettier-ignore-end */}
+
+## Commands
+
+### `ailoy model`
+
+Manages AI models used in Ailoy.
+
+#### `ailoy model list`
+
+Lists all available models in the local cache directory.
+
+#### `ailoy model download <model-id>`
+
+Downloads the specified model using the given model ID and required attributes.
+Currently, the only supported model type is `tvm`, so you must specify the
+`--quantization` and `--device` options.
+
+#### `ailoy model remove <model-id>`
+
+Removes the specified model by its ID.  
+You'll be prompted to confirm the deletion by entering `Y`(`y`) or `N`(`n`).

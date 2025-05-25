@@ -1,0 +1,110 @@
+import ArchitectureImg from "./img/architecture.svg";
+
+# Architecture
+
+## In a Nutshell
+
+Ailoy aims to enable performant LLM execution with minimal boilerplate across a wide range of programming languages and environments.
+To achieve this, it is structured around a modular, message-driven architecture composed of three core components: **Runtime**, **Broker**, and **VM**.
+
+<p align="center">
+  <ArchitectureImg style={{ width: "80%", height: "80%" }} />
+</p>
+
+### Runtime
+
+The `Runtime` serves as the user-facing interface.
+It defines the public API and manages all interactions between the user and the internal components of the system.
+
+To ensure seamless integration across diverse development environments, each `Runtime` is designed to follow the idiomatic conventions and best practices of its target programming language.
+This allows developers to interact with Ailoy in a way that feels natural and intuitive, without having to inspect an internal architecture.
+
+#### Responsibilities
+
+- Expose user-facing APIs
+- Serialize user requests into messages
+- Deserialize responses back into native objects
+
+#### Implementations
+
+- Python
+- JavaScript (node.js)
+- *JavaScript (browser) (planned)*
+- *Java / Kotlin (planned)*
+- *C# (planned)*
+- etc.
+
+### Broker
+
+The Broker implements Ailoy’s internal message broker system.
+It sits between the Runtime and the VM, managing communication and dispatching messages between them.
+
+Ailoy currently uses an in-process communication model for minimal overhead and maximum performance.
+This implementation is based on a local network system, allowing fast and efficient message delivery between components within the same device.
+However, the underlying architecture is designed to be easily extended to support remote communication protocols, such as TCP, enabling cross-machine scenarios.
+
+#### Responsibilities
+
+- Manage connections and message queues
+- Route messages to appropriate VMs
+- Support multiple networking backends
+
+#### Implementations
+
+- inproc (for intra-device protocol)
+- *tcp (for inter-device protocol) (planned)*
+
+### VM
+
+The `VM` is the execution backend that performs the actual compute tasks.
+It is platform-specific and executes requests routed through the `Broker`.
+
+#### Responsibilities
+
+- Execute AI-related tasks or compute operations
+- Serialize response messages and return them to the `Broker`
+
+#### Target architectures
+
+Our goal is to run the `VM` across diverse environments.
+To support this, we are implementing portable `VM` backends across a variety of targets.
+
+- x86_64-windows-unknown
+- arm64-macos-unknown
+- x86_64-unknown-linux-gnu
+- *wasm32-emscripten-unknown (planned)*
+- to be added
+
+## Module System
+
+In Ailoy's architecture, the VM is responsible for computing and returning results for incoming requests.
+It must be capable of executing a wide range of functions, including LLM inference, deep learning modules, and various utility operations.
+The number of functions supported by the VM is expected to grow continuously as new capabilities are introduced.
+Additionally, the VM should support user-defined tasks as plug-ins, enabling developers to extend its functionality without modifying the core library.
+These two requirements—supporting a growing set of functions and enabling extensibility through plug-ins—are fundamental to the design of the VM.
+
+To address these requirements, Ailoy adopts a module-based VM system.
+This design allows the VM to dynamically load task-specific modules and invoke the functions defined within them.
+Conceptually, a `Module` can be thought of as a package, similar to those found in many modern programming languages.
+
+| **Entity** | **Description** |
+| --- | --- |
+| **VM** | The runtime environment where task execution takes place |
+| **Module** | The executable logic that defines how tasks are performed within the VM |
+
+Each module consists of two types of sub-entities: operators and components.
+An operator is a stateless function that executes immediately when invoked with input and returns a result.
+In contrast, a component is a stateful instance that produces an output based on both its internal state and the given input.
+Roughly speaking, operators are analogous to functions, while components resemble class instances in traditional programming.
+
+| **Entity** | **Description** |
+| --- | --- |
+| **Operator** | A stateless function. Takes input and returns a result. |
+| **Component Type** | A class-like definition that can be instantiated by VM when it imports a module. |
+| **Component** | A runtime instance. Maintains internal state and produces output based on input and it's state. |
+
+Conceptually, a module can be thought of as a package, similar to those found in many modern programming languages.
+Each module consists of two types of sub-entities: operators and component types (also referred to as component factories).
+Some may wonder why a module consists of component types instead of just components.
+In Ailoy, components are not instantiated at module load time; rather, they are explicitly created by the user by sending a define_component-type packet.
+It is analogous to how packages work in most programming languages—when a package is imported, it typically exposes class definitions rather than class instances, and provides access to their constructors so that users can instantiate them as needed.
