@@ -15,7 +15,11 @@ computation and memory usage, it can increase latency and overall resource
 consumption. Therefore, it’s important to enable reasoning only when necessary,
 based on the complexity of your use case.
 
-In Ailoy, You can activate it by simply specifying an option:
+Reasoning may not be supported on some models. The `Qwen3` model currently available in Ailoy supports reasoning.
+
+## How to enable reasoning
+
+In Ailoy, You can activate reasoning feature by simply specifying an option `enable_reasoning`.
 
 <CodeTabs>
 
@@ -40,9 +44,10 @@ for await (const resp of agent.query(
 
 </CodeTabs>
 
-Since reasoning is an internal process, you may not want to include it in the
-output. In such cases, you can use the `ignore_reasoning_messages` option to exclude it
-from the output.
+### Dismiss reasoning messages
+
+Since reasoning is an internal process, you might want to ignore it in the output.
+In such cases, you can use the `ignore_reasoning_messages` option to make `Agent` to dismiss the reasoning tokens.
 
 <CodeTabs>
 

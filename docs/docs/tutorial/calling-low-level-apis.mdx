@@ -16,6 +16,8 @@ By using the `Runtime` directly, you can send requests to the `VM` yourself.
 This is useful when you need more advanced configuration or want to call APIs
 that are not available through the high-level interfaces.
 
+## "Type 'Echo'"
+
 Let’s take a look at how the lower-level API works, with the simplest example `echo`.
 The `echo` operator is a basic operator that returns the user's input as-is.
 
@@ -54,6 +56,8 @@ import { startRuntime } from "ailoy-node";
 <TerminalBox>
 Hello world
 </TerminalBox>
+
+## A useful operator
 
 Next, let’s try a more practical operator.
 The [`split_text`](../api-references/internal-runtime-apis.mdx#split_text)
@@ -141,6 +145,8 @@ He came closer, so that it was clearly visible. To his surprise it really was a 
 `}
 
 </TerminalBox>
+
+## Components
 
 Some jobs may require state, like member variables in a class.
 Ailoy provides support for this kind of stateful structure through a type called a `Component`.
