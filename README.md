@@ -67,6 +67,11 @@ On macOS, this refers to unified memory, as Apple Silicon uses a shared memory a
 
 ## Getting Started
 
+> [!WARNING]
+> We are currently undergoing review for package managers (PyPI / npm) for upload.
+> In the meantime, if you'd like to try it out, please use the wheel files provided.
+> [https://github.com/brekkylab/ailoy/releases/tag/v0.0.1](https://github.com/brekkylab/ailoy/releases/tag/v0.0.1)
+
 ### Node
 
 ```sh
