@@ -117,7 +117,7 @@ function runCommand(command, args, opts = {}) {
       // Add RPATH
       await runCommand(
         "patchelf",
-        ["--force-rpath", "--set-rpath", "$ORIGIN", nodeBinary],
+        ["--force-rpath", "--set-rpath", "'\$ORIGIN'", nodeBinary],
         { shell: false }
       );
 
