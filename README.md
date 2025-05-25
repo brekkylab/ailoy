@@ -20,12 +20,14 @@ Ailoy is a lightweight library for building AI applications — such as **agent 
 For more details, please refer to the documentation.
 
 Currently, the following AI models are supported:
-- Qwen/Qwen3-0.6B (on-device)
-- Qwen/Qwen3-1.7B (on-device)
-- Qwen/Qwen3-4B (on-device)
-- Qwen/Qwen3-8B (on-device)
-- gpt-4o (API key needed)
-- BAAI/bge-m3 (embedding model)
+- Language Models
+  - Qwen/Qwen3-0.6B (on-device)
+  - Qwen/Qwen3-1.7B (on-device)
+  - Qwen/Qwen3-4B (on-device)
+  - Qwen/Qwen3-8B (on-device)
+  - gpt-4o (API; key needed)
+- Embedding Models
+  - BAAI/bge-m3 (on-device)
 
 You can check out examples for tool usage and retrieval-augmented generation (RAG).
 
