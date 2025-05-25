@@ -5,7 +5,7 @@ Ailoy is a lightweight library for building AI applications — such as **agent 
 > [!WARNING]
 > This library is in an early stage of development. APIs may change without notice.
 
-> [!INFO]
+> [!TIP]
 > We have a [Discord channel](https://discord.gg/CeCH4Ax4)! If you get stuck or have any questions, feel free to join and ask.
 
 
