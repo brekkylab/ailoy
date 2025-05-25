@@ -3,7 +3,6 @@
 Node.js binding for Ailoy runtime APIs
 
 ## Install
-
 ```bash
 # npm
 npm install ailoy-js-node
