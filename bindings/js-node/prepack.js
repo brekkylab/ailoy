@@ -114,20 +114,27 @@ function runCommand(command, args, opts = {}) {
         .filter(Boolean);
       console.log(entries);
 
-      const patchedLibs = [];
+      // Add RPATH
+      await runCommand(
+        "patchelf",
+        ["--force-rpath", "--set-rpath", "$ORIGIN", nodeBinary],
+        { shell: false }
+      );
 
-      for (const lib of entries) {
-        const localPath = path.join(buildDir, lib);
-        if (fs.existsSync(localPath)) {
-          console.log(`→ patch: replace ${lib} → \$ORIGIN/${lib}`);
-          await runCommand(
-            "patchelf",
-            ["--replace-needed", lib, `$ORIGIN/${lib}`, nodeBinary],
-            { shell: false }
-          );
-          patchedLibs.push(lib);
-        }
-      }
+      // const patchedLibs = [];
+
+      // for (const lib of entries) {
+      //   const localPath = path.join(buildDir, lib);
+      //   if (fs.existsSync(localPath)) {
+      //     console.log(`→ patch: replace ${lib} → \$ORIGIN/${lib}`);
+      //     await runCommand(
+      //       "patchelf",
+      //       ["--replace-needed", lib, `$ORIGIN/${lib}`, nodeBinary],
+      //       { shell: false }
+      //     );
+      //     patchedLibs.push(lib);
+      //   }
+      // }
     }
 
     const distNode = path.resolve(__dirname, "dist", binaryName);
