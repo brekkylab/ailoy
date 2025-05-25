@@ -112,10 +112,10 @@ const config: Config = {
               label: "Discord",
               href: "https://discord.gg/CeCH4Ax4",
             },
-            // {
-            //   label: "X",
-            //   href: "https://x.com/docusaurus",
-            // },
+            {
+              label: "X",
+              href: "https://x.com/ailoy_co",
+            },
           ],
         },
         {
