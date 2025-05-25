@@ -32,9 +32,9 @@ You can check out examples for tool usage and retrieval-augmented generation (RA
 ## Requirements
 
 Ailoy supports the following operating systems:
-- Windows (x86, with Vulkan)
+- Windows (x86_64, with Vulkan)
 - macOS (Apple Silicon, with Metal)
-- Linux (x86, with Vulkan)
+- Linux (x86_64, with Vulkan)
 
 To use Ailoy with on-device inference, a compatible device is required.
 However, if your system doesn't meet the hardware requirements, you can still run Ailoy using external APIs such as OpenAI.
@@ -47,7 +47,7 @@ On macOS, this refers to unified memory, as Apple Silicon uses a shared memory a
 ### For running on-device AI
 
 **Windows**
-- CPU: Intel Skylake or newer (AVX512 is not mandatory)
+- CPU: Intel Skylake or newer (and compatible AMD), x86_64 is required
 - GPU: At least 8GB of VRAM and support for Vulkan 1.3
 - OS: Windows 11 or Windows Server 2022 (earlier versions may work but are not officially tested)
 - NVIDIA driver that supports Vulkan 1.3 or higher
@@ -58,7 +58,7 @@ On macOS, this refers to unified memory, as Apple Silicon uses a shared memory a
 - OS: macOS 14 or newer
 
 **Linux**
-- CPU: Intel Skylake or newer
+- CPU: Intel Skylake or newer (and compatible AMD), x86_64 is required
 - GPU: At least 8GB of VRAM and support for Vulkan 1.3
 - OS: Debian 10 / Ubuntu 21.04 or newer (this means, os with glibc 2.28 or higher)
 - NVIDIA driver that supports Vulkan 1.3 or higher
@@ -75,7 +75,7 @@ npm install ailoy-node
 import {
   startRuntime,
   defineAgent,
-} from "ailoy-js-node";
+} from "ailoy-node";
 
 (async () => {
   const rt = await startRuntime();
