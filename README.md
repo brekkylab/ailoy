@@ -17,7 +17,7 @@ Ailoy is a lightweight library for building AI applications — such as **agent 
 - Support for reasoning-based workflows
 - Multi-turn conversation and system message customization
 
-For more details, please refer to the documentation.
+For more details, please refer to the [documentation](https://brekkylab.github.io/ailoy/).
 
 Currently, the following AI models are supported:
 - Language Models
