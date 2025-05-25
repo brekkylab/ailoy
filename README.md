@@ -101,8 +101,8 @@ from ailoy import Runtime, Agent
 
 rt = Runtime()
 with Agent(rt, model_name="Qwen/Qwen3-8B") as agent:
-  for resp in agent.query("Hello world!"):
-      resp.print()
+    for resp in agent.query("Hello world!"):
+        resp.print()
 rt.stop()
 ```
 
