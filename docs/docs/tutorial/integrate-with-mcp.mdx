@@ -48,17 +48,15 @@ call the query() method:
 ```python
 question = "Search the repository named brekkylab/ailoy and describe what it does based on its README.md."
 for resp in agent.query(question):
-    print(resp.content, end='')
-print()
+    agent.print(resp)
 ```
 
 ```typescript
 const question =
   "Search the repository named brekkylab/ailoy and describe what it does based on its README.md.";
 for await (const resp of agent.query(question)) {
-  process.stdout.write(`${resp.content}`);
+  agent.print(resp);
 }
-process.stdout.write("\n");
 ```
 
 </CodeTabs>
@@ -91,8 +89,7 @@ with Agent(rt, model_name="Qwen/Qwen3-8B") as agent:
 
     question = "Search the repository named brekkylab/ailoy and describe what it does based on its README.md."
     for resp in agent.query(question):
-        print(resp.content, end='')
-    print()
+        agent.print(resp)
 ```
 
 ```typescript
@@ -111,9 +108,8 @@ import { startRuntime, createAgent } from "ailoy-node";
   const question =
     "Search the repository named brekkylab/ailoy and describe what it does based on its README.md.";
   for await (const resp of agent.query(question)) {
-    process.stdout.write(`${resp.content}`);
+    agent.print(resp);
   }
-  process.stdout.write("\n");
 })();
 ```
 

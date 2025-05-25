@@ -62,7 +62,7 @@ for resp in agent.query(question):
     # skip printing when the response is related to tool calls
     if resp.type in ("tool_call", "tool_call_result"):
         continue
-    print(resp.content, end='')
+    agent.print(resp)
 ```
 
 ```typescript
@@ -70,7 +70,7 @@ for await (const resp of agent.query(question)) {
   // skip printing when the response is related to tool calls
   if (resp.type in ["tool_call", "tool_call_result"])
     continue
-  process.stdout.write(resp.content);
+  agent.print(resp);
 }
 ```
 

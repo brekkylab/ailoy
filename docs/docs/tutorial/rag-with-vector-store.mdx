@@ -130,15 +130,13 @@ You can then pass this prompt to the agent for inference:
 
 ```python
 for resp in agent.query(prompt):
-    print(resp.content, end='')
-print()
+    agent.print(resp)
 ```
 
 ```typescript
 for await (const resp of agent.query(prompt)) {
-  process.stdout.write(resp.content);
+  agent.print(resp);
 }
-process.stdout.write("\n");
 ```
 
 </CodeTabs>
@@ -176,9 +174,7 @@ with Agent(rt, "Qwen/Qwen3-8B") as agent, VectorStore(rt, "BAAI/bge-m3", "faiss"
 
     # Invoke agent
     for resp in agent.query(prompt):
-        print(resp.content, end='')
-    print()
-
+        agent.print(resp)
 ```
 
 ```typescript
@@ -211,9 +207,11 @@ async function main() {
 
   // Invoke agent
   for await (const resp of agent.query(prompt)) {
-    process.stdout.write(resp.content);
+    agent.print(resp);
   }
-  process.stdout.write("\n");
+
+  // Delete agent
+  await agent.delete();
 }
 ```
 

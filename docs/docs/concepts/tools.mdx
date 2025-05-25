@@ -328,7 +328,8 @@ with Agent(...) as agent:
         "nytimes",
         authenticator=nytimes_authenticator,
     )
-    agent.query("Find me some articles about 'Agentic AI'.")
+    for resp in agent.query("Find me some articles about 'Agentic AI'."):
+        agent.print(resp)
 ```
 
 ```typescript
@@ -344,7 +345,10 @@ const authenticator: ToolAuthenticator = {
 agent.addToolsFromPreset("nytimes", {
   authenticator,
 });
-agent.query("Find me some articles about 'Agentic AI'.")
+for await (const resp of agent.query("Find me some articles about 'Agentic AI'.")) {
+  agent.print(resp);
+}
+await agent.delete();
 ```
 </CodeTabs>
 

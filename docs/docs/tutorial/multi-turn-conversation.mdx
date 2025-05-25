@@ -19,7 +19,7 @@ with Agent(...) as agent:
             continue
 
         for resp in agent.query(query):
-            print(resp.content, end="")
+            agent.print(resp)
 ```
 
 ```typescript
@@ -34,7 +34,7 @@ while (true) {
 
   process.stdout.write(`\nAssistant: `);
   for await (const resp of agent.query(query)) {
-    process.stdout.write(resp.content);
+    agent.print(resp);
   }
 }
 await agent.delete();
@@ -54,9 +54,8 @@ with Agent(
     model_name="Qwen/Qwen3-8B",
     system_message="You are a friendly chatbot who always responds in the style of a pirate.",
 ) as agent:
-    for response in agent.query("Please give me a short poem about AI"):
-        print(response.content, end='')
-    print()
+    for resp in agent.query("Please give me a short poem about AI"):
+        agent.print(resp)
 ```
 
 ```typescript
@@ -65,10 +64,9 @@ const agent = await defineAgent(rt, "Qwen/Qwen3-8B", {
     "You are a friendly chatbot who always responds in the style of a pirate.",
 });
 
-for await (const response of agent.query("Please give me a short poem about AI")) {
-  process.stdout.write(`${response.content}`);
+for await (const resp of agent.query("Please give me a short poem about AI")) {
+  agent.print(resp);
 }
-process.stdout.write("\n");
 await agent.delete();
 ```
 

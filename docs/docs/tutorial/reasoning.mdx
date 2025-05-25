@@ -24,8 +24,7 @@ for resp in agent.query(
     "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
     enable_reasoning=True
 ):
-    print(resp.content, end='')
-print()
+    agent.print(resp)
 ```
 
 ```typescript
@@ -35,9 +34,8 @@ for await (const resp of agent.query(
     enableReasoning: true,
   }
 )) {
-  process.stdout.write(resp.content);
+  agent.print(resp);
 }
-process.stdout.write("\n");
 ```
 
 </CodeTabs>
@@ -54,8 +52,7 @@ for resp in agent.query(
     enable_reasoning=True,
     ignore_reasoning_messages=True
 ):
-    print(resp.content, end='')
-print()
+    agent.print(resp)
 ```
 
 ```typescript
@@ -66,9 +63,8 @@ for await (const resp of agent.query(
     ignoreReasoningMessages: true,
   }
 )) {
-  process.stdout.write(resp.content);
+  agent.print(resp);
 }
-process.stdout.write("\n");
 ```
 
 </CodeTabs>
