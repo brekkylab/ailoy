@@ -126,3 +126,5 @@ Your feedback, ideas, and use cases will shape what Ailoy becomes.
 **Ready to build?**
 
 Grab the package, explore the docs, and start bringing your ideas.
+
+[https://github.com/brekkylab/ailoy](https://github.com/brekkylab/ailoy)

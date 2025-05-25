@@ -67,6 +67,10 @@ On macOS, this refers to unified memory, as Apple Silicon uses a shared memory a
 
 ### Node
 
+```sh
+npm install ailoy-node
+```
+
 ```typescript
 import {
   startRuntime,
@@ -85,6 +89,10 @@ import {
 ```
 
 ### Python
+
+```sh
+pip install ailoy
+```
 
 ```python
 from ailoy import Runtime, Agent
