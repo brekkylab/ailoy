@@ -77,7 +77,7 @@ if(AILOY_WITH_MLC_LLM)
         FetchContent_Declare(
             mlc-llm
             GIT_REPOSITORY https://github.com/brekkylab/mlc-llm.git
-            GIT_TAG 23a03474c7ef6b55b390562f560a4bb77f610712
+            GIT_TAG 24b0b72296d64c3a5e4ce5f2efaabfda51e1a8b8
             EXCLUDE_FROM_ALL
         )
         if(NODE)
