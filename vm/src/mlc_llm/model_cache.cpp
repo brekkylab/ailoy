@@ -501,6 +501,10 @@ download_model(const std::string &model_id, const std::string &quantization,
     }
   }
 
+#ifdef _WIN32
+  SetConsoleOutputCP(CP_UTF8);    // to print progress properly on Windows
+#endif
+
   indicators::DynamicProgress<indicators::BlockProgressBar> bars;
   bars.set_option(indicators::option::HideBarWhenComplete{true});
 
