@@ -1,13 +1,13 @@
-# ailoy-js-node
+# ailoy-node
 
 Node.js binding for Ailoy runtime APIs
 
 ## Install
 ```bash
 # npm
-npm install ailoy-js-node
+npm install ailoy-node
 # yarn
-yarn add ailoy-js-node
+yarn add ailoy-node
 ```
 
 ## Building from source
