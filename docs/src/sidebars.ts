@@ -45,12 +45,12 @@ const sidebars: SidebarsConfig = {
         "api-references/internal-runtime-apis",
         {
           type: "html",
-          value: `<a href="/pydocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Python API References</a>`,
+          value: `<a href="/ailoy/pydocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Python API References</a>`,
           defaultStyle: true,
         },
         {
           type: "html",
-          value: `<a href="/tsdocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Node) API References</a>`,
+          value: `<a href="/ailoy/tsdocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Node) API References</a>`,
           defaultStyle: true,
         },
       ],
