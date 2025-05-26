@@ -17,7 +17,7 @@ Ailoy is a lightweight library for building AI applications — such as **agent 
 - Support for reasoning-based workflows
 - Multi-turn conversation and system message customization
 
-For more details, please refer to the documentation.
+For more details, please refer to the [documentation](https://brekkylab.github.io/ailoy/).
 
 Currently, the following AI models are supported:
 - Language Models
@@ -66,6 +66,11 @@ On macOS, this refers to unified memory, as Apple Silicon uses a shared memory a
 - NVIDIA driver that supports Vulkan 1.3 or higher
 
 ## Getting Started
+
+> [!WARNING]
+> We are currently undergoing review for package managers (PyPI / npm) for upload.
+> In the meantime, if you'd like to try it out, please use the wheel files provided.
+> [https://github.com/brekkylab/ailoy/releases/tag/v0.0.1](https://github.com/brekkylab/ailoy/releases/tag/v0.0.1)
 
 ### Node
 
