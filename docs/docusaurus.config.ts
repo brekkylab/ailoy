@@ -98,10 +98,10 @@ const config: Config = {
               to: "/docs/tutorial/getting-started",
             },
             {
-              html: `<a href="/pydocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Python API References</a>`,
+              html: `<a href="/ailoy/pydocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Python API References</a>`,
             },
             {
-              html: `<a href="/tsdocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Node) API References</a>`,
+              html: `<a href="/ailoy/tsdocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Node) API References</a>`,
             },
           ],
         },
