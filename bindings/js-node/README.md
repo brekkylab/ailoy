@@ -1,13 +1,42 @@
 # ailoy-node
 
-Node.js binding for Ailoy runtime APIs
+Node.js binding for Ailoy runtime APIs.
+
+See our [documentation](https://brekkylab.github.io/ailoy) for more details.
 
 ## Install
+
 ```bash
 # npm
 npm install ailoy-node
 # yarn
 yarn add ailoy-node
+```
+
+## Quickstart
+
+```typescript
+import { startRuntime, defineAgent } from "ailoy-node";
+
+(async () => {
+  // The runtime must be started to use Ailoy
+  const rt = await startRuntime();
+
+  // Defines an agent
+  // During this step, the model parameters are downloaded and the LLM is set up for execution
+  const agent = await defineAgent(rt, "Qwen/Qwen3-0.6B");
+
+  // This is where the actual LLM call happens
+  for await (const resp of agent.query("Please give me a short poem about AI")) {
+    agent.print(resp);
+  }
+
+  // Once the agent is no longer needed, it can be released
+  await agent.delete();
+
+  // Stop the runtime
+  await rt.stop();
+})();
 ```
 
 ## Building from source

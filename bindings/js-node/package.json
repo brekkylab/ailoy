@@ -3,7 +3,12 @@
     "version": "0.0.1",
     "author": "Brekkylab Inc.",
     "license": "Apache-2.0",
-    "description": "",
+    "description": "Node.js binding for Ailoy runtime APIs",
+    "homepage": "https://brekkylab.github.io/ailoy",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/brekkylab/ailoy"
+    },
     "type": "commonjs",
     "main": "./dist/index.cjs",
     "module": "./dist/index.mjs",
