@@ -12,14 +12,14 @@ const config: Config = {
   favicon: "img/favicon.ico",
 
   // Set the production url of your site here
-  url: "https://ailoy.co",
+  url: "https://brekkylab.github.io",
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: "/",
+  baseUrl: "/ailoy/",
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: "BrekkyLab", // Usually your GitHub org/user name.
+  organizationName: "brekkylab", // Usually your GitHub org/user name.
   projectName: "ailoy", // Usually your repo name.
 
   onBrokenLinks: "throw",
@@ -98,10 +98,10 @@ const config: Config = {
               to: "/docs/tutorial/getting-started",
             },
             {
-              html: `<a href="/pydocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Python API References</a>`,
+              html: `<a href="/ailoy/pydocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Python API References</a>`,
             },
             {
-              html: `<a href="/tsdocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Node) API References</a>`,
+              html: `<a href="/ailoy/tsdocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Node) API References</a>`,
             },
           ],
         },
