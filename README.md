@@ -98,7 +98,7 @@ import {
 ### Python
 
 ```sh
-pip install ailoy
+pip install ailoy-py
 ```
 
 ```python

@@ -1,9 +1,24 @@
 [project]
-name = "ailoy"
+name = "ailoy-py"
 version = "0.0.1"
-description = "Ailoy runtime library"
+description = "Python binding for Ailoy runtime APIs"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
+authors = [
+    {name = "Brekkylab Inc.", email = "contact@brekkylab.com"}
+]
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
     "anyio>=4.9.0",
     "jmespath>=1.0.1",
