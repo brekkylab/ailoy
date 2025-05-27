@@ -29,7 +29,6 @@ jobs:
           curl -LO https://sdk.lunarg.com/sdk/download/1.3.283.0/linux/vulkansdk-linux-x86_64-1.3.283.0.tar.xz
           mkdir -p /opt/vulkan-sdk
           tar -xJf vulkansdk-linux-x86_64-1.3.283.0.tar.xz --strip-components=2 -C /opt/vulkan-sdk
-          rm -f /opt/vulkan-sdk/lib/libvulkan.so.*
 
       - name: Install OpenSSL 3.0.16
         run: |

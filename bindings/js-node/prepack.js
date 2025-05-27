@@ -53,7 +53,8 @@ function runCommand(command, args, opts = {}) {
 
     const allFiles = fs
       .readdirSync(srcDir)
-      .filter((f) => f === binaryName || libPattern.test(f));
+      .filter((f) => f === binaryName || libPattern.test(f))
+      .filter((f) => !f.includes("vulkan")); // Do not vendor libvulkan
 
     // copy files
     for (const file of allFiles) {
