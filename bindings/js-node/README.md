@@ -43,8 +43,7 @@ import { startRuntime, defineAgent } from "ailoy-node";
 
 ### Prerequisites
 
-- Node 18 or higher
-- Python 3.10 or higher
+- Node 20 or higher
 - C/C++ compiler
   (recommended versions are below)
   - GCC >= 13
@@ -60,7 +59,14 @@ import { startRuntime, defineAgent } from "ailoy-node";
 - LAPACK
 - Vulkan SDK (if you are using vulkan)
 
+### Build
+
 ```bash
-cd bindings/js-node
 npm run build
+```
+
+### Packaging
+
+```bash
+npm pack
 ```
