@@ -29,7 +29,9 @@ jobs:
 
       - name: Install Vulkan SDK
         run: |
-          yum install -y vulkan-devel spirv-headers-devel spirv-tools-devel spirv-tools-libs
+          curl -LO https://sdk.lunarg.com/sdk/download/1.3.283.0/linux/vulkansdk-linux-x86_64-1.3.283.0.tar.xz
+          mkdir -p /opt/vulkan-sdk
+          tar -xJf vulkansdk-linux-x86_64-1.3.283.0.tar.xz --strip-components=2 -C /opt/vulkan-sdk
 
       - name: Install OpenSSL 3.0.16
         run: |
@@ -62,14 +64,13 @@ jobs:
         env:
           OPENSSL_ROOT_DIR: /opt/openssl
           CMAKE_PREFIX_PATH: /opt/openblas
+          VULKAN_SDK: /opt/vulkan-sdk
 
       - name: Repair wheel
         working-directory: bindings/python
         run: |
           mkdir -p wheelhouse
-          auditwheel repair dist/*.whl -w wheelhouse \
-            --plat manylinux_2_28_x86_64 \
-            --exclude libvulkan.so.*
+          auditwheel repair dist/*.whl --plat manylinux_2_28_x86_64 -w wheelhouse
           auditwheel show wheelhouse/*.whl
           WHEEL_NAME=$(basename wheelhouse/*.whl)
           echo "WHEEL_FILENAME=$WHEEL_NAME" >> $GITHUB_ENV

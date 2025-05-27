@@ -28,8 +28,8 @@ const tarballPath = path.resolve(__dirname, "prebuilds", tarballName);
 function runCommand(command, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      shell: opts.shell || true,
-      cwd: opts.cwd || process.cwd(),
+      shell: opts.shell ?? true,
+      cwd: opts.cwd ?? process.cwd(),
       env: process.env,
     });
 
@@ -114,10 +114,10 @@ function runCommand(command, args, opts = {}) {
         .filter(Boolean);
       console.log(entries);
 
-      // Add RPATH
+      // Set RPATH as $ORIGIN
       await runCommand(
         "patchelf",
-        ["--force-rpath", "--set-rpath", "'\$ORIGIN'", nodeBinary],
+        ["--force-rpath", "--set-rpath", "$ORIGIN", nodeBinary],
         { shell: false }
       );
 
