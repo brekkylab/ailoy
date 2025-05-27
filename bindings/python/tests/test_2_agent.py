@@ -41,6 +41,15 @@ def test_tool_call_frankfurter(agent: Agent):
 
 def test_tool_call_py_function(agent: Agent):
     def get_current_temperature(location: str, unit: str):
+        """
+        Get the current temperature at a location.
+
+        Args:
+            location: The location to get the temperature for, in the format "City, Country"
+            unit: The unit to return the temperature in. (choices: ["celsius", "fahrenheit"])
+        Returns:
+            The current temperature at the specified location in the specified units, as a float.
+        """
         if unit == "celsius":
             return 25
         elif unit == "fahrenheit":
@@ -49,32 +58,33 @@ def test_tool_call_py_function(agent: Agent):
 
     agent._messages.clear()
     agent._tools.clear()
-    agent.add_py_function_tool(
-        desc={
-            "name": "get_current_temperature",
-            "description": "Get the current temperature at a location.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": 'The location to get the temperature for, in the format "City, Country"',
-                    },
-                    "unit": {
-                        "type": "string",
-                        "enum": ["celsius", "fahrenheit"],
-                        "description": "The unit to return the temperature in.",
-                    },
-                },
-                "required": ["location", "unit"],
-            },
-            "return": {
-                "type": "number",
-                "description": "The current temperature at the specified location in the specified units, as a float.",
-            },
-        },
-        f=get_current_temperature,
-    )
+    agent.add_py_function_tool(f=get_current_temperature)
+    # agent.add_py_function_tool(
+    #     f=get_current_temperature,
+    #     desc={
+    #         "name": "get_current_temperature",
+    #         "description": "Get the current temperature at a location.",
+    #         "parameters": {
+    #             "type": "object",
+    #             "properties": {
+    #                 "location": {
+    #                     "type": "string",
+    #                     "description": 'The location to get the temperature for, in the format "City, Country"',
+    #                 },
+    #                 "unit": {
+    #                     "type": "string",
+    #                     "enum": ["celsius", "fahrenheit"],
+    #                     "description": "The unit to return the temperature in.",
+    #                 },
+    #             },
+    #             "required": ["location", "unit"],
+    #         },
+    #         "return": {
+    #             "type": "number",
+    #             "description": "The current temperature at the specified location in the specified units, as a float.",
+    #         },
+    #     },
+    # )
     tool_names = set([tool.desc.name for tool in agent._tools])
     assert "get_current_temperature" in tool_names
 

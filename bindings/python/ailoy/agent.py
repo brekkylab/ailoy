@@ -16,12 +16,13 @@ from urllib.parse import urlencode, urlparse, urlunparse
 import jmespath
 import mcp
 import mcp.types as mcp_types
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from rich.console import Console
 from rich.panel import Panel
 
 from ailoy.ailoy_py import generate_uuid
 from ailoy.runtime import Runtime
+from ailoy.tools import DocstringParsingException, TypeHintParsingException, get_json_schema
 
 __all__ = ["Agent"]
 
@@ -576,14 +577,27 @@ class Agent:
             return
         self._tools.append(tool)
 
-    def add_py_function_tool(self, desc: dict, f: Callable[..., Any]):
+    def add_py_function_tool(self, f: Callable[..., Any], desc: Optional[dict] = None):
         """
         Adds a Python function as a tool using callable.
 
-        :param desc: Tool descriotion.
         :param f: Function will be called when the tool invocation occured.
+        :param desc: Tool description.
         """
-        self.add_tool(Tool(desc=ToolDescription.model_validate(desc), call_fn=f))
+        tool_description = None
+        if desc is not None:
+            try:
+                tool_description = ToolDescription.model_validate(desc)
+            except ValidationError:
+                pass
+
+        if tool_description is None:
+            try:
+                tool_description = ToolDescription.model_validate(get_json_schema(f).get("function"))
+            except (TypeHintParsingException, DocstringParsingException) as e:
+                ValueError("Failed to parse docstring", e)
+
+        self.add_tool(Tool(desc=tool_description, call_fn=f))
 
     def add_builtin_tool(self, tool_def: BuiltinToolDefinition) -> bool:
         """
