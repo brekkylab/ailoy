@@ -1,8 +1,32 @@
-# Ailoy Python Runtime
+# ailoy-py
+
+Python binding for Ailoy runtime APIs.
+
+See our [documentation](https://brekkylab.github.io/ailoy) for more details.
 
 ## Install
+
 ```bash
-pip install ailoy
+pip install ailoy-py
+```
+
+## Quickstart
+
+```python
+from ailoy import Runtime, Agent
+
+# The runtime must be started to use Ailoy
+rt = Runtime()
+
+# Defines an agent
+# During this step, the model parameters are downloaded and the LLM is set up for execution
+with Agent(rt, model_name="Qwen/Qwen3-0.6B") as agent:
+    # This is where the actual LLM call happens
+    for resp in agent.query("Please give me a short poem about AI"):
+        agent.print(resp)
+
+# Stop the runtime
+rt.stop()
 ```
 
 ## Building from source
@@ -24,11 +48,6 @@ pip install ailoy
 - BLAS
 - LAPACK
 - Vulkan SDK (if you are using vulkan)
-
-```bash
-cd bindings/js-node
-npm run build
-```
 
 
 ### Setup development environment
