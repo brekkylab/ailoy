@@ -70,7 +70,9 @@ jobs:
         working-directory: bindings/python
         run: |
           mkdir -p wheelhouse
-          auditwheel repair dist/*.whl --plat manylinux_2_28_x86_64 -w wheelhouse
+          auditwheel repair dist/*.whl -w wheelhouse \
+            --plat manylinux_2_28_x86_64 \
+            --exclude libvulkan.so.*
           auditwheel show wheelhouse/*.whl
           WHEEL_NAME=$(basename wheelhouse/*.whl)
           echo "WHEEL_FILENAME=$WHEEL_NAME" >> $GITHUB_ENV
