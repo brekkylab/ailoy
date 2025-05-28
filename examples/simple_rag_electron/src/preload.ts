@@ -3,6 +3,8 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("electronAPI", {
   /** Client -> Server IPCs */
   openFile: async () => await ipcRenderer.invoke("open-file"),
+  updateVectorStore: async (document: string) =>
+    await ipcRenderer.invoke("update-vector-store", document),
   retrieveSimilarDocuments: async (query: string) =>
     await ipcRenderer.invoke("retrieve-similar-documents", query),
   inferLanguageModel: async (message: string) =>
@@ -18,14 +20,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
         callback(indicator, finished)
     );
   },
-  onTextLoadProgress: (callback: (loaded: number, total: number) => void) =>
+  onVectorStoreUpdateStarted: (callback: () => void) =>
+    ipcRenderer.on("vector-store-update-started", () => callback()),
+  onVectorStoreUpdateProgress: (
+    callback: (loaded: number, total: number) => void
+  ) =>
     ipcRenderer.on(
-      "text-load-progress",
+      "vector-store-update-progress",
       (_event, loaded: number, total: number) => callback(loaded, total)
     ),
-  onFileSelected: (callback: () => void) => {
-    ipcRenderer.on("file-selected", () => callback());
-  },
+  onVectorStoreUpdateFinished: (callback: () => void) =>
+    ipcRenderer.on("vector-store-update-finished", () => callback()),
   onAssistantAnswer: (callback: (resp: AgentResponse) => void) => {
     ipcRenderer.on("assistant-answer", (event, resp: AgentResponse) =>
       callback(resp)
