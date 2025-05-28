@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import Markdown from "marked-react";
 
 import "./index.css";
 
@@ -130,8 +131,10 @@ Query: ${query}
         </div>
         <div className="w-1/2 p-4 overflow-auto">
           {messages.map((message, index) => (
-            <div key={index} className="mb-2 p-2 border rounded">
-              {message.role}: {message.content}
+            <div key={index} className="mb-2 p-2 border rounded overflow-scroll">
+              <Markdown>
+                {`${message.role}: ${message.content}`}
+              </Markdown>
             </div>
           ))}
         </div>
