@@ -18,7 +18,7 @@ The `description` field defines how the AI understands and uses the tool. It fol
 
 ### Behavior
 
-The `behavior` field defines how the tool actually behaves when invoked. This varies depending on the tool type. For example, a REST API tool includes the endpoint URL, HTTP method, and headers. A native tool may define a Python or Node.js function, while a built-in tool delegates the behavior to a pre-defined module.
+The `behavior` field defines how the tool actually behaves when invoked. This varies depending on the tool type. For example, a REST API tool includes the endpoint URL, HTTP method, and headers. A native tool may define a Python or Node.js function, while a builtin tool delegates the behavior to a pre-defined module.
 
 To see the examples, take a look at the **[Out-of-the-box tools](#out-of-the-box-tools)** section.
 
@@ -103,19 +103,19 @@ agent.addRESTAPITool(
 ```
 </CodeTabs>
 
-### Built-in tools
+### Builtin tools
 
-Built-in tools uses the function of Ailoy’s internal module system. It work across all the environments supported. These tools are pre-registered and can be referenced by name.
+Builtin tools uses the function of Ailoy’s internal module system. It work across all the environments supported. These tools are pre-registered and can be referenced by name.
 
 #### Behavior
 
 Defined by preset behavior implemented inside Ailoy. The only thing defined outside of Ailoy is the JMESPath query string(`outputPath`) to process the raw results of the function into useful data.
 
-***Tool definition*** for a built-in tool looks like:
+***Tool definition*** for a builtin tool looks like:
 
 ```json
 {
-  "type": "built-in",
+  "type": "builtin",
   "description": {...},
   "behavior": {
     "outputPath": "value"
@@ -123,7 +123,7 @@ Defined by preset behavior implemented inside Ailoy. The only thing defined outs
 }
 ```
 
-> *Built-in tools are not designed to be added at runtime.*
+> *Builtin tools are not designed to be added at runtime.*
 
 ### Native tools
 
