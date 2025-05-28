@@ -1,6 +1,6 @@
 {
     "calculator": {
-        "type": "built-in",
+        "type": "builtin",
         "description": {
             "name": "calculator",
             "description": "Evaluate the given mathematical expression. It is recommended to be used when there is something to calculate.",

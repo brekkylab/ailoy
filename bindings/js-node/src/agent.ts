@@ -170,8 +170,8 @@ export interface ToolDescription {
   };
 }
 
-export interface ToolDefinitionBuiltIn {
-  type: "built-in";
+export interface ToolDefinitionBuiltin {
+  type: "builtin";
   description: ToolDescription;
   behavior: {
     outputPath?: string;
@@ -190,7 +190,7 @@ export interface ToolDefinitionRESTAPI {
   };
 }
 
-export type ToolDefinition = ToolDefinitionBuiltIn | ToolDefinitionRESTAPI;
+export type ToolDefinition = ToolDefinitionBuiltin | ToolDefinitionRESTAPI;
 
 export type ToolAuthenticator = (request: {
   url: string;
@@ -343,9 +343,9 @@ export class Agent {
     return this.addTool({ desc, call: f });
   }
 
-  addBuiltInTool(
-    /** The built-in tool definition */
-    tool: ToolDefinitionBuiltIn
+  addBuiltinTool(
+    /** The built in tool definition */
+    tool: ToolDefinitionBuiltin
   ): boolean {
     const call = async (inputs: any) => {
       // Validation
@@ -468,8 +468,8 @@ export class Agent {
       if (tool.type == "restapi") {
         const result = this.addRESTAPITool(tool, args?.authenticator);
         if (!result) return false;
-      } else if (tool.type == "built-in") {
-        const result = this.addBuiltInTool(tool);
+      } else if (tool.type == "builtin") {
+        const result = this.addBuiltinTool(tool);
         if (!result) return false;
       }
     }
