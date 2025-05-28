@@ -548,9 +548,9 @@ class Agent:
 
     def add_builtin_tool(self, tool_def: BuiltinToolDefinition) -> bool:
         """
-        Adds a built in tool.
+        Adds a built-in tool.
 
-        :param tool_def: The built in tool definition.
+        :param tool_def: The built-in tool definition.
         :returns: True if the tool was successfully added.
         :raises ValueError: If the tool type is not "builtin" or required inputs are missing.
         """
