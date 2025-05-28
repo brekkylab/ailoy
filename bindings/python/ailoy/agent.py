@@ -546,7 +546,7 @@ class Agent:
         """
         self.add_tool(Tool(desc=ToolDescription.model_validate(desc), call_fn=f))
 
-    def add_built_in_tool(self, tool_def: BuiltinToolDefinition) -> bool:
+    def add_builtin_tool(self, tool_def: BuiltinToolDefinition) -> bool:
         """
         Adds a built in tool.
 
@@ -663,7 +663,7 @@ class Agent:
         for tool_name, tool_def in data.items():
             tool_type = tool_def.get("type", None)
             if tool_type == "builtin":
-                self.add_built_in_tool(BuiltinToolDefinition.model_validate(tool_def))
+                self.add_builtin_tool(BuiltinToolDefinition.model_validate(tool_def))
             elif tool_type == "restapi":
                 self.add_restapi_tool(RESTAPIToolDefinition.model_validate(tool_def), authenticator=authenticator)
             else:
