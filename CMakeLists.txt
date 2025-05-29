@@ -26,7 +26,7 @@ if(APPLE)
         OUTPUT_VARIABLE MACOS_SDK_PATH
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
-    set(CMAKE_OSX_SYSROOT ${MACOS_SDK_PATH})
+    set(CMAKE_OSX_SYSROOT "${MACOS_SDK_PATH}")
 endif()
 
 # Some platform-specific global options
