@@ -337,7 +337,7 @@ class Agent:
         model_name: ModelName,
         system_message: Optional[str] = None,
         api_key: Optional[str] = None,
-        attrs: dict[str, Any] = dict(),
+        **attrs,
     ):
         """
         Create an instance.
@@ -366,7 +366,7 @@ class Agent:
         self._tools: list[Tool] = []
 
         # Define the component
-        self.define(model_name, api_key=api_key, attrs=attrs)
+        self.define(model_name, api_key=api_key, **attrs)
 
     def __del__(self):
         self.delete()
@@ -377,7 +377,7 @@ class Agent:
     def __exit__(self, type, value, traceback):
         self.delete()
 
-    def define(self, model_name: ModelName, api_key: Optional[str] = None, attrs: dict[str, Any] = dict()) -> None:
+    def define(self, model_name: ModelName, api_key: Optional[str] = None, **attrs) -> None:
         """
         Initializes the agent by defining its model in the runtime.
         This must be called before running the agent. If already initialized, this is a no-op.

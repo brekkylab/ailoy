@@ -12,9 +12,6 @@ using namespace mlc::llm::json_ffi;
 
 namespace ailoy {
 
-static std::unordered_map<std::string, std::shared_ptr<mlc_llm_engine_t>>
-    engines;
-
 mlc_llm_engine_t::mlc_llm_engine_t(const std::string &model_name,
                                    const std::string &quantization,
                                    DLDevice device, const std::string &mode) {
@@ -23,6 +20,8 @@ mlc_llm_engine_t::mlc_llm_engine_t(const std::string &model_name,
   debug("Using device {}:{}", device_type_str, device_.device_id);
 
   // Download model
+  debug("Downloading model: {}, quantization: {}, device: {}", model_name,
+        quantization, device_type_str);
   model_cache_download_result_t download_model_result =
       download_model(model_name, quantization, device_type_str);
   if (!download_model_result.success) {
@@ -351,18 +350,6 @@ mlc_llm_engine_t::get_response_from_stream_output(
     }
   }
   return responses;
-}
-
-std::shared_ptr<mlc_llm_engine_t>
-get_mlc_llm_engine(const std::string &model_name,
-                   const std::string &quantization, DLDevice device,
-                   const std::string &mode) {
-  auto key = model_name + quantization +
-             std::string(tvm::runtime::DLDeviceType2Str(device.device_type));
-  if (engines.find(key) == engines.end())
-    engines.insert_or_assign(
-        key, create<mlc_llm_engine_t>(model_name, quantization, device, mode));
-  return engines.at(key);
 }
 
 } // namespace ailoy
