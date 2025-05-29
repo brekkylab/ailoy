@@ -12,7 +12,7 @@ python -m tool_sampler
 ```
 
 You can try out the following tools:
-- Frankfurters: Real-time foreign exchange rate API
+- Frankfurter: Real-time foreign exchange rate API
 - TMDB (requires API key): Movie-related information
 - New York Times (requires API key): Articles and news content
 
