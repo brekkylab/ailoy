@@ -1,5 +1,5 @@
 {
-  "name": "news_agent_js_node",
+  "name": "tool_sampler_js_node",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
@@ -10,7 +10,8 @@
   "author": "",
   "description": "",
   "dependencies": {
-    "ailoy-node": "file:../../bindings/js-node"
+    "@inquirer/prompts": "^7.5.3",
+    "ailoy-node": "^0.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
