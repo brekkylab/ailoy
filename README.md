@@ -5,7 +5,7 @@
 [![PyPI - Python Version](https://img.shields.io/pypi/v/ailoy-py)](https://pypi.org/project/ailoy-py/)
 [![NPM Version](https://img.shields.io/npm/v/ailoy-node)](https://www.npmjs.com/package/ailoy-node)
 
-[![Discord](https://img.shields.io/discord/1376092616780812368)](https://discord.gg/CeCH4Ax4)
+[![Discoard](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white)](https://discord.gg/CeCH4Ax4)
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Fx.com%2Failoy_co)](https://x.com/ailoy_co)
 
 
@@ -90,7 +90,7 @@ import {
 
 (async () => {
   const rt = await startRuntime();
-  const agent = await defineAgent(rt, {model: {name: "Qwen/Qwen3-0.6B"}});
+  const agent = await defineAgent(rt, "Qwen/Qwen3-0.6B");
   for await (const resp of agent.query("Hello world!")) {
     agent.print(resp);
   }
@@ -109,7 +109,7 @@ pip install ailoy-py
 from ailoy import Runtime, Agent
 
 rt = Runtime()
-with Agent(rt, model_name="Qwen/Qwen3-8B") as agent:
+with Agent(rt, model_name="Qwen/Qwen3-0.6B") as agent:
     for resp in agent.query("Hello world!"):
         resp.print()
 rt.stop()
