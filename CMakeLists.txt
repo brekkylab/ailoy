@@ -1,5 +1,4 @@
 ﻿cmake_minimum_required(VERSION 3.28)
-project(ailoy C CXX)
 
 # Compatibility with CMake < 3.5 has been removed from CMake>=4.0.
 # Add -DCMAKE_POLICY_VERSION_MINIMUM=3.5 to try configuring anyway.
@@ -7,11 +6,27 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0.0")
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 endif()
 
-include(FetchContent)
-
 # Avoid FetchContent warning about DOWNLOAD_EXTRACT_TIMESTAMP in CMake 3.24:
-if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
-    cmake_policy(SET CMP0135 NEW)
+cmake_policy(SET CMP0135 NEW)
+
+##################
+# Global options #
+##################
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+if(APPLE)
+    # Support OSX>=14.0
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0)
+
+    # If using Homebrew LLVM, explicitly tell the compiler to use the macOS system SDK.
+    execute_process(
+        COMMAND xcrun --sdk macosx --show-sdk-path
+        OUTPUT_VARIABLE MACOS_SDK_PATH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    set(CMAKE_OSX_SYSROOT ${MACOS_SDK_PATH})
 endif()
 
 # Some platform-specific global options
@@ -23,17 +38,10 @@ elseif(MSVC)
     add_compile_options(/utf-8)
 endif()
 
-
-##################
-# Global options #
-##################
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET 14.4)
-endif()
+#################
+# Project ailoy #
+#################
+project(ailoy C CXX)
 
 set(AILOY_WITH_TEST ON CACHE BOOL "Build test")
 if(DEFINED EMSCRIPTEN)
@@ -50,6 +58,8 @@ set(MLC_LLM_ROOT "" CACHE PATH "Root directory of mlc-llm. If AILOY_WITH_MLC_LLM
 if(AILOY_USE_DUMMY_OPENMP)
     list(PREPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/_deps/dummy_openmp/cmake")
 endif()
+
+include(FetchContent)
     
 FetchContent_Declare(magic_enum URL https://github.com/Neargye/magic_enum/archive/refs/tags/v0.9.7.tar.gz EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(magic_enum)

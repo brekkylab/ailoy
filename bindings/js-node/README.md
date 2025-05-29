@@ -50,7 +50,7 @@ import { startRuntime, defineAgent } from "ailoy-node";
   - LLVM Clang >= 17
   - Apple Clang >= 15
   - MSVC >= 19.29
-- CMake >= 3.24.0
+- CMake >= 3.28.0
 - Git
 - OpenSSL
 - Rust & Cargo >= 1.82.0
