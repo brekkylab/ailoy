@@ -91,7 +91,7 @@ export const registerIpcHandlers = async (mainWindow: BrowserWindow) => {
 
 export const removeIpcHandlers = () => {
   ipcMain.removeHandler("open-file");
-
+  ipcMain.removeHandler("update-vector-store");
   ipcMain.removeHandler("retrieve-similar-documents");
   ipcMain.removeHandler("infer-language-model");
 };
