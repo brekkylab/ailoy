@@ -14,9 +14,6 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
     cmake_policy(SET CMP0135 NEW)
 endif()
 
-# # Remove 3rdparty libraries from dependencies
-# install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
-
 # Some platform-specific global options
 if(APPLE)
     add_compile_definitions(APPLE)
