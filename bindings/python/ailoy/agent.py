@@ -455,11 +455,43 @@ class Agent:
             if ignore_reasoning_messages:
                 infer_args["ignore_reasoning_messages"] = ignore_reasoning_messages
 
+            reasoning_message = ""
+            output_text_message = ""
+
+            def _append_assistant_text_message():
+                nonlocal reasoning_message
+                nonlocal output_text_message
+
+                # if output_text is empty, do nothing
+                if output_text_message.strip() == "":
+                    return
+
+                # construct assistant message content considering reasoning message
+                assistant_message_content = output_text_message.strip()
+                if (enable_reasoning and not ignore_reasoning_messages) and reasoning_message.strip() != "":
+                    # TODO: consider other kinds of reasoning part distinguisher
+                    assistant_message_content = (
+                        f"<think>\n{reasoning_message.strip()}\n</think>\n\n" + assistant_message_content
+                    )
+
+                # append constructed message content into messages
+                self._messages.append(AIOutputTextMessage(role="assistant", content=assistant_message_content))
+
+                reasoning_message = ""
+                output_text_message = ""
+
             for resp in self._runtime.call_iter_method(self._component_state.name, "infer", infer_args):
                 delta = MessageDelta.model_validate(resp)
 
                 if delta.finish_reason is None:
                     output_msg = AIOutputTextMessage.model_validate(delta.message)
+
+                    # accumulate text messages to append in batch
+                    if output_msg.reasoning:
+                        reasoning_message += output_msg.content
+                    else:
+                        output_text_message += output_msg.content
+
                     yield AgentResponseOutputText(
                         type="reasoning" if output_msg.reasoning else "output_text",
                         end_of_turn=False,
@@ -469,6 +501,8 @@ class Agent:
                     continue
 
                 if delta.finish_reason == "tool_calls":
+                    _append_assistant_text_message()
+
                     tool_call_message = AIToolCallMessage.model_validate(delta.message)
                     self._messages.append(tool_call_message)
 
@@ -513,6 +547,11 @@ class Agent:
 
                 if delta.finish_reason in ["stop", "length", "error"]:
                     output_msg = AIOutputTextMessage.model_validate(delta.message)
+
+                    output_text_message += output_msg.content
+
+                    _append_assistant_text_message()
+
                     yield AgentResponseOutputText(
                         type="reasoning" if output_msg.reasoning else "output_text",
                         end_of_turn=True,
