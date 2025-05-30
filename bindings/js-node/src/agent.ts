@@ -554,6 +554,27 @@ export class Agent {
     return this.tools.map((tool) => tool.desc);
   }
 
+  private _pushAssistantTextMessage(
+    reasoningMessage: string,
+    outputTextMessage: string
+  ) {
+    // if output_text is empty, do nothing
+    if (outputTextMessage.trim() === "") return;
+
+    // construct assistant message content considering reasoning message
+    let assistantMessageContent = outputTextMessage.trim();
+    if (reasoningMessage.trim() !== "")
+      assistantMessageContent =
+        `<think>\n${reasoningMessage.trim()}\n</think>\n\n` +
+        assistantMessageContent;
+
+    // push constructed message content into messages
+    this.messages.push({
+      role: "assistant",
+      content: assistantMessageContent,
+    } as AIOutputTextMessage);
+  }
+
   async *query(
     /** The user message to send to the model */
     message: string,
@@ -567,6 +588,8 @@ export class Agent {
     this.messages.push({ role: "user", content: message });
 
     while (true) {
+      let reasoningMessage = "";
+      let outputTextMessage = "";
       for await (const resp of this.runtime.callIterMethod(
         this.componentState.name,
         "infer",
@@ -584,6 +607,11 @@ export class Agent {
         // This means AI is still streaming tokens
         if (delta.finish_reason === null) {
           let message = delta.message as AIOutputTextMessage;
+
+          // accumulate text messages to push in batch
+          if (message.reasoning) reasoningMessage += message.content;
+          else outputTextMessage += message.content;
+
           yield {
             type: message.reasoning ? "reasoning" : "output_text",
             endOfTurn: false,
@@ -595,6 +623,10 @@ export class Agent {
 
         // This means AI requested tool calls
         if (delta.finish_reason === "tool_calls") {
+          this._pushAssistantTextMessage(reasoningMessage, outputTextMessage);
+          reasoningMessage = "";
+          outputTextMessage = "";
+
           const toolCallMessage = delta.message as AIToolCallMessage;
           // Add tool call back to messages
           this.messages.push(toolCallMessage);
@@ -654,11 +686,19 @@ export class Agent {
           delta.finish_reason === "length" ||
           delta.finish_reason === "error"
         ) {
+          const message = delta.message as AIOutputTextMessage;
+
+          outputTextMessage += message.content;
+
+          this._pushAssistantTextMessage(reasoningMessage, outputTextMessage);
+          reasoningMessage = "";
+          outputTextMessage = "";
+
           yield {
             type: "output_text",
             endOfTurn: true,
             role: "assistant",
-            content: (delta.message as AIOutputTextMessage).content,
+            content: message.content,
           };
           // Finish this AsyncGenerator
           return;
