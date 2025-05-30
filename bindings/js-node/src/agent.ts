@@ -554,27 +554,6 @@ export class Agent {
     return this.tools.map((tool) => tool.desc);
   }
 
-  private _pushAssistantTextMessage(
-    reasoningMessage: string,
-    outputTextMessage: string
-  ) {
-    // if output_text is empty, do nothing
-    if (outputTextMessage.trim() === "") return;
-
-    // construct assistant message content considering reasoning message
-    let assistantMessageContent = outputTextMessage.trim();
-    if (reasoningMessage.trim() !== "")
-      assistantMessageContent =
-        `<think>\n${reasoningMessage.trim()}\n</think>\n\n` +
-        assistantMessageContent;
-
-    // push constructed message content into messages
-    this.messages.push({
-      role: "assistant",
-      content: assistantMessageContent,
-    } as AIOutputTextMessage);
-  }
-
   async *query(
     /** The user message to send to the model */
     message: string,
@@ -590,6 +569,33 @@ export class Agent {
     while (true) {
       let reasoningMessage = "";
       let outputTextMessage = "";
+
+      const _pushAssistantTextMessage = () => {
+        // if output_text is empty, do nothing
+        if (outputTextMessage.trim() === "") return;
+
+        // construct assistant message content considering reasoning message
+        let assistantMessageContent = outputTextMessage.trim();
+        if (
+          options?.enableReasoning &&
+          !options.ignoreReasoningMessages &&
+          reasoningMessage.trim() !== ""
+        )
+          // TODO: consider other kinds of reasoning part distinguisher
+          assistantMessageContent =
+            `<think>\n${reasoningMessage.trim()}\n</think>\n\n` +
+            assistantMessageContent;
+
+        // push constructed message content into messages
+        this.messages.push({
+          role: "assistant",
+          content: assistantMessageContent,
+        } as AIOutputTextMessage);
+
+        reasoningMessage = "";
+        outputTextMessage = "";
+      };
+
       for await (const resp of this.runtime.callIterMethod(
         this.componentState.name,
         "infer",
@@ -608,7 +614,7 @@ export class Agent {
         if (delta.finish_reason === null) {
           let message = delta.message as AIOutputTextMessage;
 
-          // accumulate text messages to push in batch
+          // accumulate text messages to append in batch
           if (message.reasoning) reasoningMessage += message.content;
           else outputTextMessage += message.content;
 
@@ -623,9 +629,7 @@ export class Agent {
 
         // This means AI requested tool calls
         if (delta.finish_reason === "tool_calls") {
-          this._pushAssistantTextMessage(reasoningMessage, outputTextMessage);
-          reasoningMessage = "";
-          outputTextMessage = "";
+          _pushAssistantTextMessage();
 
           const toolCallMessage = delta.message as AIToolCallMessage;
           // Add tool call back to messages
@@ -690,9 +694,7 @@ export class Agent {
 
           outputTextMessage += message.content;
 
-          this._pushAssistantTextMessage(reasoningMessage, outputTextMessage);
-          reasoningMessage = "";
-          outputTextMessage = "";
+          _pushAssistantTextMessage();
 
           yield {
             type: "output_text",
