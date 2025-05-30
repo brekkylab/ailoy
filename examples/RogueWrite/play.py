@@ -107,6 +107,7 @@ def main():
             break
     else:
         print(ANNOUNCEMENT_CLEAR.format(character=character))
+        i += 1
 
     panel = Panel(
         CONTENT_STAT.format(character=character, level_index=i, max_level=len(levels)),
