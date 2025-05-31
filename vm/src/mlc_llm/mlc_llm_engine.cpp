@@ -315,16 +315,6 @@ mlc_llm_engine_t::get_response_from_stream_output(
         tool_call_tokens_.clear();
       } else if (mode_ == output_mode::tool_call) {
         tool_call_tokens_.push_back(content);
-        auto tool_call_json_str_opt =
-            template_engine_->get_json_str_if_valid(tool_call_tokens_);
-        if (tool_call_json_str_opt.has_value()) {
-          // if valid JSON is made, set the string as the content
-          choice.delta.content = tool_call_json_str_opt.value();
-          choice.finish_reason = FinishReason::tool_calls;
-          // exit tool call mode only if valid JSON is made
-          mode_ = output_mode::text;
-          tool_call_tokens_.clear();
-        }
       } else if (!content.empty()) {
         // Process for reasoning outputs
         // TODO: consider other kinds of reasoning part distinguisher

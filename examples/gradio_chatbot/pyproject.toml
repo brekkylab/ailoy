@@ -1,0 +1,9 @@
+[project]
+name = "ailoy-gradio-chatbot-example"
+version = "0.1.0"
+description = "Ailoy + Gradio integration example"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "gradio>=5.31.0",
+]
