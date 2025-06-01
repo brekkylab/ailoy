@@ -1,0 +1,161 @@
+#pragma once
+
+#include <minja/chat-template.hpp>
+#include <nlohmann/json.hpp>
+
+#include "module.hpp"
+
+namespace ailoy {
+
+class chat_manager_t : public object_t {
+public:
+  chat_manager_t(const std::string &chat_template, const std::string &bos_token,
+                 const std::string &eos_token,
+                 const std::string &botc_token = "",
+                 const std::string &eotc_token = "")
+      : template_(std::make_unique<minja::chat_template>(chat_template,
+                                                         bos_token, eos_token)),
+        bos_token_(bos_token), eos_token_(eos_token), botc_token_(botc_token),
+        eotc_token_(eotc_token) {}
+
+  static std::shared_ptr<chat_manager_t>
+  make_from_config_file(std::filesystem::path config_file_path);
+
+  const std::string
+  apply_chat_template(std::shared_ptr<const value_t> conversation,
+                      std::shared_ptr<const value_t> tools = nullptr,
+                      const bool enable_reasoning = false,
+                      const bool add_generation_prompt = true);
+
+  const std::string &get_bos_token() const { return bos_token_; }
+
+  const std::string &get_eos_token() const { return eos_token_; }
+
+  const std::string &get_botc_token() const { return botc_token_; }
+
+  const std::string &get_eotc_token() const { return eotc_token_; }
+
+  bool is_bos_token(const std::string &token) const {
+    return token == bos_token_;
+  }
+
+  bool is_eos_token(const std::string &token) const {
+    return token == eos_token_;
+  }
+
+  bool is_botc_token(const std::string &token) const {
+    return token == botc_token_;
+  }
+
+  bool is_eotc_token(const std::string &token) const {
+    return token == eotc_token_;
+  }
+
+  const std::optional<std::string>
+  get_json_str_if_valid(const std::vector<std::string> &tokens);
+
+private:
+  std::unique_ptr<minja::chat_template> template_;
+
+  const std::string bos_token_;
+
+  const std::string eos_token_;
+
+  const std::string botc_token_;
+
+  const std::string eotc_token_;
+};
+
+std::shared_ptr<value_t>
+put_default_reasoning(std::shared_ptr<const value_t> in,
+                      const std::string &content = "\n\n");
+
+/**
+  Melt the `reasoning` field into the output `content`
+
+  Before:
+  ```
+  "role": "assistant",
+  "reasoning": [
+    {"type": "text", "text": "reasoning..."}
+  ],
+  "content": [
+    {"type": "text", "text": "Based on reasoning, It's foo"}
+  ]
+  ```
+
+  After:
+  ```
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "<think>reasoning...</think>"
+    },
+    {
+      "type": "text",
+      "text": "Based on reasoning, It's foo"
+    }
+  ]
+  ```
+
+  Reasoning field always attached to first element of the content.
+ */
+std::shared_ptr<value_t>
+convert_reasoning(std::shared_ptr<const value_t> in,
+                  const std::string &bor_delimiter = "<think>",
+                  const std::string &eor_delimiter = "</think>\n\n");
+
+/**
+  Merge `text` in `content` field
+
+  Before:
+  ```
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "I'm a foo"
+    },
+    {
+      "type": "text",
+      "text": "I'm a bar and foobar"
+    }
+  ]
+  ```
+
+  After:
+  ```
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "I'm a fooI'm a bar and foobar"
+    }
+  ]
+  ```
+ */
+std::shared_ptr<value_t> merge_content_text(std::shared_ptr<const value_t> in,
+                                            const std::string &delimiter = "");
+
+std::shared_ptr<value_t> merge_content_json(std::shared_ptr<const value_t> in);
+
+/**
+   Melt `content` data to a single string
+   Before:
+  ```
+  "role": "user",
+  "content": [
+    {"type": "text", "text": "This is user text!"}
+  ]
+  ```
+   After:
+  ```
+  "role": "user",
+  "content": "This is user text!"
+  ```
+  The length of `content` must be 1.
+ */
+std::shared_ptr<value_t> melt_content_data(std::shared_ptr<const value_t> in);
+
+} // namespace ailoy

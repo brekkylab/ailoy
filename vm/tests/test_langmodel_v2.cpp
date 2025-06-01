@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include "mlc_llm/language_model_v2.hpp"
-#include "mlc_llm/tvm_model.hpp"
 #include "value.hpp"
 
 #include <iostream>
@@ -20,14 +19,14 @@ std::shared_ptr<ailoy::component_t> get_model() {
   return model;
 }
 
-std::string
-infer(std::shared_ptr<ailoy::component_t> model,
-      std::shared_ptr<ailoy::value_t> messages,
-      std::shared_ptr<ailoy::value_t> tools = ailoy::create<ailoy::array_t>(),
-      bool enable_reasoning = false, bool ignore_reasoning_messages = false) {
+std::string infer(std::shared_ptr<ailoy::component_t> model,
+                  std::shared_ptr<ailoy::value_t> messages,
+                  std::shared_ptr<ailoy::value_t> tools = nullptr,
+                  bool enable_reasoning = false,
+                  bool ignore_reasoning_messages = false) {
   auto in = ailoy::create<ailoy::map_t>();
   in->insert_or_assign("messages", messages);
-  if (!tools->as<ailoy::array_t>()->empty())
+  if (tools)
     in->insert_or_assign("tools", tools);
   in->insert_or_assign("enable_reasoning",
                        ailoy::create<ailoy::bool_t>(enable_reasoning));
@@ -59,7 +58,15 @@ infer(std::shared_ptr<ailoy::component_t> model,
 
 TEST(TestLangModelV2, TestSimple) {
   auto messages_str = R"([
-  {"role": "user", "content":  "Introduce yourself in one sentence."}
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Introduce yourself in one sentence."
+      }
+    ]
+  }
 ])";
 
   std::shared_ptr<ailoy::component_t> model = get_model();
@@ -72,38 +79,143 @@ TEST(TestLangModelV2, TestSimple) {
 
 TEST(TestLangModelV2, TestMultiTurn) {
   auto messages_str1 = R"([
-  {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
-  {"role": "user", "content":  "Who made you? Answer it simply."}
+  {
+    "role": "system",
+    "content": [
+      {
+        "type": "text",
+        "text": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Who are you? Answer it simply."
+      }
+    ]
+  }
 ])";
   std::shared_ptr<ailoy::component_t> model = get_model();
   auto messages1 = ailoy::decode(messages_str1, ailoy::encoding_method_t::json);
   auto answer1 = infer(model, messages1);
-  ASSERT_EQ(answer1, "I was created by Alibaba Cloud.");
+  ASSERT_EQ(answer1,
+            "I am Qwen, a helpful assistant created by Alibaba Cloud.");
 
   auto messages_str2 = R"([
-  {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
-  {"role": "user", "content":  "Who made you? Answer it simply."},
-  {"role": "assistant", "content":  "I was created by Alibaba Cloud."},
-  {"role": "user", "content":  "Based on your first answer, introduce a company simply."}
+  {
+    "role": "system",
+    "content": [
+      {
+        "type": "text",
+        "text": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Who are you? Answer it simply."
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "I am Qwen, a helpful assistant created by Alibaba Cloud."
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Repeat it."
+      }
+    ]
+  }
 ])";
   auto messages2 = ailoy::decode(messages_str2, ailoy::encoding_method_t::json);
   auto answer2 = infer(model, messages2);
-  ASSERT_EQ(
-      answer2,
-      R"(Alibaba Cloud is a global technology company that provides software, services, and infrastructure solutions.)");
+  ASSERT_EQ(answer2,
+            "I am Qwen, a helpful assistant created by Alibaba Cloud.");
 }
 
-TEST(TestLangModelV2, TestGrammar) {
-  auto messages_str = R"([
-  {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
-  {"role": "user", "content": "Hello, how is the current weather in my city Seoul?"},
-  {"role": "assistant", "content": "I can certainly help with that! Would you like to know the current temperature or the current wind speed in Seoul, South Korea?"},
-  {"role": "user", "content": "Yes, both please!"}
-])";
+TEST(TestLangModelV2, TestToolCall) {
+  const std::string messages_str = R"([
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "How is the current weather in Seoul?"}
+      ]
+    }
+  ])";
+
   const std::string tools_str = R"([
-  {"type": "function", "function": {"name": "get_current_temperature", "description": "Get the current temperature at a location.", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "The location to get the temperature for, in the format \"City, Country\""}, "unit": {"type": "string", "enum": ["celsius", "fahrenheit"], "description": "The unit to return the temperature in."}}, "required": ["location", "unit"]}, "return": {"type": "number", "description": "The current temperature at the specified location in the specified units, as a float."}}},
-  {"type": "function", "function": {"name": "get_current_wind_speed", "description": "Get the current wind speed in km/h at a given location.", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "The location to get the temperature for, in the format \"City, Country\""}}, "required": ["location"]}, "return": {"type": "number", "description": "The current wind speed at the given location in km/h, as a float."}}}
-])";
+    {
+      "type": "function",
+      "function": {
+        "name": "get_current_temperature",
+        "description": "Get the current temperature at a location.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The location to get the temperature for, in the format \"City, Country\""
+            },
+            "unit": {
+              "type": "string",
+              "enum": ["celsius", "fahrenheit"],
+              "description": "The unit to return the temperature in."
+            }
+          },
+          "required": ["location", "unit"]
+        },
+        "return": {
+          "type": "number",
+          "description": "The current temperature at the specified location in the specified units, as a float."
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_current_wind_speed",
+        "description": "Get the current wind speed in km/h at a given location.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The location to get the temperature for, in the format \"City, Country\""
+            }
+          },
+          "required": ["location"]
+        },
+        "return": {
+          "type": "number",
+          "description": "The current wind speed at the given location in km/h, as a float."
+        }
+      }
+    }
+  ])";
 
   std::shared_ptr<ailoy::component_t> model = get_model();
   auto messages = ailoy::decode(messages_str, ailoy::encoding_method_t::json);
@@ -113,20 +225,71 @@ TEST(TestLangModelV2, TestGrammar) {
   auto answer = infer(model, messages, tools);
   // std::cout << answer << std::endl;
   // model->reset_grammar("tool_call");
+
+  const std::string messages2_str = R"([
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "How is the current weather in Seoul?"}
+      ]
+    },
+    {
+      "role": "assistant",
+      "tool_calls": [
+        {"type": "json", "json": {"function":{"arguments":{"location":"Seoul","unit":"celsius"},"name":"get_current_temperature"},"type":"function"}}
+      ]
+    },
+    {
+      "role": "tool",
+      "content": [
+        {"type": "text", "text": "20.5"}
+      ]
+    }
+  ])";
+  auto messages2 = ailoy::decode(messages2_str, ailoy::encoding_method_t::json);
+  auto answer2 = infer(model, messages2, tools, false);
+  // std::cout << answer2 << std::endl;
 }
 
 TEST(TestLangModelV2, TestReasoning) {
   auto messages_str = R"([
-  {"role": "user", "content": "Introduce yourself."}
+  {"role": "user", "content": [{"type": "text","text": "Introduce yourself."}]}
 ])";
 
   std::shared_ptr<ailoy::component_t> model = get_model();
   auto messages = ailoy::decode(messages_str, ailoy::encoding_method_t::json);
-  auto out =
-      infer(model, messages, ailoy::create<ailoy::array_t>(), true, false);
-  // std::cout << out << std::endl;
-  auto out2 =
-      infer(model, messages, ailoy::create<ailoy::array_t>(), true, true);
+  auto out = infer(model, messages, nullptr, true, false);
+
+  auto messages_str2 = R"([
+  {"role": "user", "content": [{"type": "text","text": "Introduce yourself."}]},
+  {
+    "role": "assistant",
+    "reasoning": [
+      {
+        "type": "text",
+        "text": "\nOkay, the user wants me to introduce myself. Let me start by acknowledging their request. I should be friendly and open. I can say something like, \"Hi, I'm an AI assistant here. I'm here to help you with your questions!\" That's a good start. Now, I need to add some personal details or a brief introduction. Maybe mention my name or a trait, like being a language model. Let me check if that's needed. Oh, the user might want to know more about their role. So, include that. Make sure it's concise and positive. Alright, that should cover it.\n"
+      }
+    ],
+    "content": [
+      {
+        "type": "text",
+        "text": "Hi! I'm an AI assistant here, and I'm excited to help you with your questions. I'm designed to support you in various ways, and I'm here to be your guide! Let me know how I can assist you! 😊"
+      }
+    ]
+  },
+  {"role": "user", "content": [{"type": "text","text": "I love you."}]}
+])";
+  auto messages2 = ailoy::decode(messages_str2, ailoy::encoding_method_t::json);
+  auto out2 = infer(model, messages2, nullptr, false, false);
   // std::cout << out2 << std::endl;
 }
 

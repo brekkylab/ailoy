@@ -6,8 +6,8 @@
 #include <nlohmann/json.hpp>
 #include <xgrammar/xgrammar.h>
 
+#include "../chat_manager.hpp"
 #include "../file_util.hpp"
-#include "chat_template_engine.hpp"
 #include "model_cache.hpp"
 #include "tokenizer.hpp"
 #include "tvm_model.hpp"
@@ -169,7 +169,7 @@ tvm_language_model_t::tvm_language_model_t(const std::string &model,
                                            const std::string &quantization,
                                            DLDevice device) {
   model_ = create<tvm_model_t>(model, quantization, device);
-  template_engine_ = chat_template_engine_t::make_from_config_file(
+  template_engine_ = chat_manager_t::make_from_config_file(
       model_->get_model_path() / "chat-template-config.json");
   tokenizer_ = create<tokenizer_t>(model_->get_model_path() / "tokenizer.json");
   kv_cache_ = create<kv_cache_t>(model_);
@@ -228,10 +228,11 @@ void tvm_language_model_t::clear() {
 }
 
 std::string tvm_language_model_t::apply_chat_template(
-    const nlohmann::json &messages, const nlohmann::json &tools,
-    bool enable_reasoning, bool add_generation_prompt) const {
+    std::shared_ptr<const value_t> conversation,
+    std::shared_ptr<const value_t> tools, bool enable_reasoning,
+    bool add_generation_prompt) const {
   return template_engine_->apply_chat_template(
-      messages, tools, enable_reasoning, add_generation_prompt);
+      conversation, tools, enable_reasoning, add_generation_prompt);
 }
 
 bool tvm_language_model_t::is_bor(const std::string &tok) const {
@@ -294,6 +295,7 @@ int32_t tvm_language_model_t::prefill(const std::vector<int32_t> &tokens) {
       break;
     ++lcp_index;
   }
+
   // Rewind the head of kv-cache to the LCP
   if (lcp_index < history_.size()) {
     kv_cache_->popn(history_.size() - lcp_index);
@@ -563,16 +565,15 @@ _validate_language_model_input(const std::string &context,
       return error_output_t(value_error(context, "role",
                                         "system | user | assistant | tool",
                                         *msg->at<string_t>("role")));
-    if (!(msg->contains("content") || msg->contains("tool_calls")))
-      return error_output_t("Invalid msg schema");
-    if (msg->contains("content") &&
-        !(msg->at("content")->is_type_of<string_t>() ||
-          msg->at("content")->is_type_of<null_t>()))
-      return error_output_t("Invalid msg schema");
-    if (msg->contains("tool_calls") &&
-        !msg->at("tool_calls")->is_type_of<array_t>())
-      return error_output_t(type_error(context, "tool_calls", "string_t",
-                                       msg->at("content")->get_type()));
+    // if (!(msg->contains("content") || msg->contains("tool_call")))
+    //   return error_output_t("Invalid msg schema");
+    // if (msg->contains("content") &&
+    // !msg->at("content")->is_type_of<array_t>())
+    //   return error_output_t("Invalid msg schema");
+    // if (msg->contains("tool_calls") &&
+    //     !msg->at("tool_calls")->is_type_of<array_t>())
+    //   return error_output_t(type_error(context, "tool_calls", "string_t",
+    //                                    msg->at("content")->get_type()));
   }
   if (input_map->contains("temperature"))
     if (!input_map->at("temperature")->is_type_of<double_t>())
@@ -672,25 +673,25 @@ create_tvm_language_model_v2_component(std::shared_ptr<const value_t> inputs) {
                                                     input_map);
         if (error.has_value())
           return error.value();
-        auto messages = input_map->at<array_t>("messages")->to_nlohmann_json();
+        auto messages = input_map->at<array_t>("messages");
 
         // Get tools (optional)
-        nlohmann::json tools;
+        std::shared_ptr<const value_t> tools;
         if (input_map->contains("tools")) {
           if (input_map->at("tools")->is_type_of<string_t>()) {
             const std::string tools_str = *input_map->at<string_t>("tools");
             if (!nlohmann::json::accept(tools_str))
               return error_output_t(
-                  value_error("[TVM Language Model: infer] Invalid JSON "
-                              "string in tools: " +
+                  value_error("[TVM Language Model: apply_chat_template] "
+                              "Invalid JSON string in tools: " +
                               tools_str));
-            tools = nlohmann::json::parse(tools_str);
+            tools = decode(tools_str, encoding_method_t::json);
           } else if (input_map->at("tools")->is_type_of<array_t>()) {
-            tools = input_map->at<array_t>("tools")->operator nlohmann::json();
+            tools = input_map->at<array_t>("tools");
           } else {
             return error_output_t(type_error(
-                "TVM Language Model: infer", "tools", "string_t | array_t",
-                input_map->at("tools")->get_type()));
+                "TVM Language Model: apply_chat_template", "tools",
+                "string_t | array_t", input_map->at("tools")->get_type()));
           }
         }
 
@@ -826,10 +827,10 @@ create_tvm_language_model_v2_component(std::shared_ptr<const value_t> inputs) {
             "TVM Language Model: apply_chat_template", input_map);
         if (error.has_value())
           return error.value();
-        auto messages = input_map->at<array_t>("messages")->to_nlohmann_json();
+        auto messages = input_map->at<array_t>("messages");
 
         // Get tools (optional)
-        nlohmann::json tools;
+        std::shared_ptr<const value_t> tools;
         if (input_map->contains("tools")) {
           if (input_map->at("tools")->is_type_of<string_t>()) {
             const std::string tools_str = *input_map->at<string_t>("tools");
@@ -838,9 +839,9 @@ create_tvm_language_model_v2_component(std::shared_ptr<const value_t> inputs) {
                   value_error("[TVM Language Model: apply_chat_template] "
                               "Invalid JSON string in tools: " +
                               tools_str));
-            tools = nlohmann::json::parse(tools_str);
+            tools = decode(tools_str, encoding_method_t::json);
           } else if (input_map->at("tools")->is_type_of<array_t>()) {
-            tools = input_map->at<array_t>("tools")->operator nlohmann::json();
+            tools = input_map->at<array_t>("tools");
           } else {
             return error_output_t(type_error(
                 "TVM Language Model: apply_chat_template", "tools",

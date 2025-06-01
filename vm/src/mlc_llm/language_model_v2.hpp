@@ -17,7 +17,7 @@ namespace ailoy {
 
 struct tvm_model_t;
 
-struct chat_template_engine_t;
+struct chat_manager_t;
 
 struct tokenizer_t;
 
@@ -98,10 +98,11 @@ public:
   /**
    * Apply chat template
    */
-  std::string apply_chat_template(const nlohmann::json &messages,
-                                  const nlohmann::json &tools = {},
-                                  bool enable_reasoning = false,
-                                  bool add_generation_prompt = true) const;
+  std::string
+  apply_chat_template(std::shared_ptr<const value_t> conversation,
+                      std::shared_ptr<const value_t> tools = nullptr,
+                      bool enable_reasoning = false,
+                      bool add_generation_prompt = true) const;
 
   /** Begin of reasoning */
   bool is_bor(const std::string &tok) const;
@@ -177,7 +178,7 @@ public:
 private:
   std::shared_ptr<tvm_model_t> model_;
 
-  std::shared_ptr<chat_template_engine_t> template_engine_;
+  std::shared_ptr<chat_manager_t> template_engine_;
 
   std::shared_ptr<tokenizer_t> tokenizer_;
 
