@@ -335,10 +335,10 @@ export class Agent {
 
   /** Adds a Javascript function as a tool using callable */
   addJSFunctionTool(
-    /** Tool descriotion */
-    desc: ToolDescription,
     /** Function will be called when the tool invocation occured */
-    f: (input: any) => any
+    f: (input: any) => any,
+    /** Tool descriotion */
+    desc: ToolDescription
   ): boolean {
     return this.addTool({ desc, call: f });
   }
