@@ -556,27 +556,6 @@ export class Agent {
     return this.tools.map((tool) => tool.desc);
   }
 
-  private _pushAssistantTextMessage(
-    reasoningMessage: string,
-    outputTextMessage: string
-  ) {
-    // if output_text is empty, do nothing
-    if (outputTextMessage.trim() === "") return;
-
-    // construct assistant message content considering reasoning message
-    let assistantMessageContent = outputTextMessage.trim();
-    if (reasoningMessage.trim() !== "")
-      assistantMessageContent =
-        `<think>\n${reasoningMessage.trim()}\n</think>\n\n` +
-        assistantMessageContent;
-
-    // push constructed message content into messages
-    this.messages.push({
-      role: "assistant",
-      content: assistantMessageContent,
-    } as AIOutputTextMessage);
-  }
-
   print_messages() {
     console.log(this.messages);
   }
