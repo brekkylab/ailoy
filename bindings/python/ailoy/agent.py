@@ -388,6 +388,9 @@ class Agent:
         if self._component_state.valid:
             return
 
+        if self._runtime._client is None:
+            raise ValueError("Runtime is not valid.")
+
         if model_name not in model_descriptions:
             raise ValueError(f"Model `{model_name}` not supported")
 
@@ -444,6 +447,9 @@ class Agent:
         :param ignore_reasoning_messages: If True, reasoning steps are not included in the response stream. (default: False)
         :yield: AgentResponse output of the LLM inference or tool calls
         """  # noqa: E501
+        if self._runtime._client is None:
+            raise ValueError("Runtime is not valid.")
+
         self._messages.append(UserMessage(role="user", content=message))
 
         is_tool_called = False
