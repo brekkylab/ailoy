@@ -527,22 +527,25 @@ class Agent:
                             content=result_msg,
                         )
 
-                elif delta.finish_reason in ["stop", "length", "error"]:
-                    output_msg = AIOutputTextMessage.model_validate(delta.message)
-                    if output_msg.reasoning:
-                        reasoning_message += output_msg.content
-                    else:
-                        output_text_message += output_msg.content
+                    continue
 
-                    resp = AgentResponseOutputText(
-                        type="reasoning" if output_msg.reasoning else "output_text",
-                        role="assistant",
-                        content=output_msg.content,
-                    )
-                    resp.is_type_switched = prev_resp_type != resp.type
-                    prev_resp_type = resp.type
-                    yield resp
+                output_msg = AIOutputTextMessage.model_validate(delta.message)
+                if output_msg.reasoning:
+                    reasoning_message += output_msg.content
+                else:
+                    output_text_message += output_msg.content
 
+                resp = AgentResponseOutputText(
+                    type="reasoning" if output_msg.reasoning else "output_text",
+                    role="assistant",
+                    content=output_msg.content,
+                )
+                resp.is_type_switched = prev_resp_type != resp.type
+                prev_resp_type = resp.type
+                yield resp
+
+                if delta.finish_reason in ["stop", "length", "error"]:
+                    _append_assistant_text_message()
                     # Finish this infer
                     break
 
