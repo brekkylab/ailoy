@@ -1,8 +1,12 @@
+import asyncio
 import json
 import subprocess
+import threading
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Generator
+from concurrent.futures import Future
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import (
     Any,
@@ -13,6 +17,7 @@ from typing import (
 )
 from urllib.parse import urlencode, urlparse, urlunparse
 
+import anyio
 import jmespath
 import mcp
 import mcp.types as mcp_types
@@ -772,3 +777,212 @@ class Agent:
 
         tools = run_async(_inner())
         return tools
+
+
+# class MCPServer:
+#     def __init__(self, params: mcp.StdioServerParameters, tools_to_use: Optional[list[str]] = None):
+#         self.params = params
+#         self.tools_to_use = tools_to_use
+
+#         self._session: mcp.ClientSession | None = None
+#         self._cleanup_lock: anyio.Lock = anyio.Lock()
+#         self._exit_stack: AsyncExitStack = AsyncExitStack()
+
+#         self._loop = asyncio.new_event_loop()
+#         self._thread = threading.Thread(target=self._start_loop, daemon=True)
+#         self._thread.start()
+#         self._ready = threading.Event()
+
+#         # Wait for server to initialize
+#         self._run(self._initialize)
+#         self._ready.set()
+
+#     def _start_loop(self):
+#         asyncio.set_event_loop(self._loop)
+#         self._loop.run_forever()
+
+#     def _run(self, coro_func):
+#         """Runs an async function from the main thread and returns its result."""
+#         future = asyncio.run_coroutine_threadsafe(coro_func(), self._loop)
+#         return future.result()
+
+#     async def _initialize(self):
+#         from mcp.client.stdio import stdio_client
+
+#         try:
+#             stdio_transport = await self._exit_stack.enter_async_context(stdio_client(self.params))
+#             read, write = stdio_transport
+#             session = await self._exit_stack.enter_async_context(mcp.ClientSession(read, write))
+#             await session.initialize()
+#             self._session = session
+#         except Exception:
+#             await self._cleanup()
+#             raise
+
+#     def list_tools(self):
+#         return self._run(self._list_tools)
+
+#     async def _list_tools(self):
+#         if not self._session:
+#             raise RuntimeError("Server not initialized")
+
+#         resp = await self._session.list_tools()
+#         return [tool for tool in resp.tools if self.tools_to_use is None or tool.name in self.tools_to_use]
+
+#     def call_tool(self, tool: mcp.Tool, arguments: dict[str, Any]):
+#         return self._run(lambda: self._call_tool(tool, arguments))
+
+#     async def _call_tool(self, tool: mcp.Tool, arguments: dict[str, Any]):
+#         if not self._session:
+#             raise RuntimeError("Server not initialized")
+
+#         result = await self._session.call_tool(tool.name, arguments)
+#         contents: list[str] = []
+
+#         for item in result.content:
+#             if isinstance(item, mcp_types.TextContent):
+#                 try:
+#                     content = json.loads(item.text)
+#                     contents.append(json.dumps(content))
+#                 except json.JSONDecodeError:
+#                     contents.append(item.text)
+#             elif isinstance(item, mcp_types.ImageContent):
+#                 contents.append(item.data)
+#             elif isinstance(item, mcp_types.EmbeddedResource):
+#                 resource = item.resource
+#                 contents.append(
+#                     resource.text if isinstance(resource, mcp_types.TextResourceContents) else resource.blob
+#                 )
+
+#         return contents
+
+#     def cleanup(self):
+#         self._run(self._cleanup)
+#         self._loop.call_soon_threadsafe(self._loop.stop)
+#         self._thread.join()
+
+#     async def _cleanup(self):
+#         async with self._cleanup_lock:
+#             try:
+#                 await self._exit_stack.aclose()
+#                 self._session = None
+#             except Exception as e:
+#                 print(f"Error during cleanup of server: {e}")
+
+
+class MCPServer:
+    def __init__(self, params: mcp.StdioServerParameters, tools_to_use: Optional[list[str]] = None):
+        self.params = params
+        self.tools_to_use = tools_to_use
+
+        self._session: mcp.ClientSession | None = None
+        self._cleanup_lock: anyio.Lock = anyio.Lock()
+        self._exit_stack: AsyncExitStack = AsyncExitStack()
+
+        self._loop = asyncio.new_event_loop()
+        self._queue = asyncio.Queue()
+        self._thread = threading.Thread(target=self._start_loop, daemon=True)
+        self._thread.start()
+
+        self._ready = threading.Event()
+        self._stop = threading.Event()
+
+    def _start_loop(self):
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._server_task())
+
+    async def _server_task(self):
+        try:
+            await self._initialize()
+            self._ready.set()
+
+            while not self._stop.is_set():
+                try:
+                    cmd, fut = await asyncio.wait_for(self._queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
+
+                async def handle_cmd():
+                    try:
+                        result = await cmd()
+                        fut.set_result(result)
+                    except Exception as e:
+                        fut.set_exception(e)
+
+                asyncio.create_task(handle_cmd())
+        finally:
+            await self._cleanup()
+
+    def _run(self, coro):
+        self._ready.wait()
+        fut = Future()
+        self._loop.call_soon_threadsafe(lambda: self._queue.put_nowait((coro, fut)))
+        return fut.result()
+
+    async def _initialize(self):
+        from mcp.client.stdio import stdio_client
+
+        try:
+            stdio_transport = await self._exit_stack.enter_async_context(stdio_client(self.params))
+            read, write = stdio_transport
+            session = await self._exit_stack.enter_async_context(mcp.ClientSession(read, write))
+            await session.initialize()
+            self._session = session
+        except Exception:
+            await self._cleanup()
+            raise
+
+    def list_tools(self):
+        return self._run(lambda: self._list_tools())
+
+    async def _list_tools(self):
+        if not self._session:
+            raise RuntimeError("Server not initialized")
+
+        resp = await self._session.list_tools()
+        tools = []
+        for tool in resp.tools:
+            if self.tools_to_use is None or tool.name in self.tools_to_use:
+                tools.append(tool)
+        return tools
+
+    def call_tool(self, tool: mcp.Tool, arguments: dict[str, Any]):
+        return self._run(lambda: self._call_tool(tool, arguments))
+
+    async def _call_tool(self, tool: mcp.Tool, arguments: dict[str, Any]):
+        if not self._session:
+            raise RuntimeError("Server not initialized")
+
+        try:
+            result = await self._session.call_tool(tool.name, arguments)
+            contents: list[str] = []
+            for item in result.content:
+                if isinstance(item, mcp_types.TextContent):
+                    try:
+                        content = json.loads(item.text)
+                        contents.append(json.dumps(content))
+                    except json.JSONDecodeError:
+                        contents.append(item.text)
+                elif isinstance(item, mcp_types.ImageContent):
+                    contents.append(item.data)
+                elif isinstance(item, mcp_types.EmbeddedResource):
+                    if isinstance(item.resource, mcp_types.TextResourceContents):
+                        contents.append(item.resource.text)
+                    else:
+                        contents.append(item.resource.blob)
+            return contents
+        except Exception as e:
+            print(f"Error executing tool: {e}")
+            raise
+
+    async def _cleanup(self):
+        async with self._cleanup_lock:
+            try:
+                await self._exit_stack.aclose()
+                self._session = None
+            except Exception as e:
+                print(f"Error during cleanup of server: {e}")
+
+    def cleanup(self):
+        self._stop.set()
+        self._thread.join()
