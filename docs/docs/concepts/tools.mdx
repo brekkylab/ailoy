@@ -333,7 +333,7 @@ with Agent(...) as agent:
 ```
 
 ```typescript
-const agent = await createAgent(...);
+const agent = await defineAgent(...);
 const authenticator: ToolAuthenticator = {
   apply: (request) => {
     let url = new URL(request.url);

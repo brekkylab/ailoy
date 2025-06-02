@@ -1,5 +1,14 @@
 # Ailoy
 
+[![document](https://img.shields.io/badge/document-latest-2ea44f)](https://brekkylab.github.io/ailoy/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ailoy-py)](https://pypi.org/project/ailoy-py/)
+[![PyPI - Python Version](https://img.shields.io/pypi/v/ailoy-py)](https://pypi.org/project/ailoy-py/)
+[![NPM Version](https://img.shields.io/npm/v/ailoy-node)](https://www.npmjs.com/package/ailoy-node)
+
+[![Discoard](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white)](https://discord.gg/CeCH4Ax4)
+[![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Fx.com%2Failoy_co)](https://x.com/ailoy_co)
+
+
 Ailoy is a lightweight library for building AI applications — such as **agent systems** or **RAG pipelines** — with ease. It is designed to enable AI features effortlessly, one can just import and use.
 
 > [!WARNING]
@@ -8,6 +17,10 @@ Ailoy is a lightweight library for building AI applications — such as **agent 
 > [!TIP]
 > We have a [Discord channel](https://discord.gg/CeCH4Ax4)! If you get stuck or have any questions, feel free to join and ask.
 
+> [!TIP]
+> There are several interesting examples in the [`examples`](./examples) directory — take a look!
+>
+> You might get inspired what kind of applications you can build with Agents.
 
 ## Features
 
@@ -67,11 +80,6 @@ On macOS, this refers to unified memory, as Apple Silicon uses a shared memory a
 
 ## Getting Started
 
-> [!WARNING]
-> We are currently undergoing review for package managers (PyPI / npm) for upload.
-> In the meantime, if you'd like to try it out, please use the wheel files provided.
-> [https://github.com/brekkylab/ailoy/releases/tag/v0.0.1](https://github.com/brekkylab/ailoy/releases/tag/v0.0.1)
-
 ### Node
 
 ```sh
@@ -86,7 +94,7 @@ import {
 
 (async () => {
   const rt = await startRuntime();
-  const agent = await defineAgent(rt, {model: {name: "Qwen/Qwen3-0.6B"}});
+  const agent = await defineAgent(rt, "Qwen/Qwen3-0.6B");
   for await (const resp of agent.query("Hello world!")) {
     agent.print(resp);
   }
@@ -105,7 +113,7 @@ pip install ailoy-py
 from ailoy import Runtime, Agent
 
 rt = Runtime()
-with Agent(rt, model_name="Qwen/Qwen3-8B") as agent:
+with Agent(rt, model_name="Qwen/Qwen3-0.6B") as agent:
     for resp in agent.query("Hello world!"):
         resp.print()
 rt.stop()

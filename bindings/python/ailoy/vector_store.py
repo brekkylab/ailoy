@@ -46,8 +46,8 @@ class VectorStore:
         vector_store_name: Literal["faiss", "chromadb"],
         url: Optional[str] = None,
         collection: Optional[str] = None,
-        embedding_model_attrs: dict[str, Any] = dict(),
-        vector_store_attrs: dict[str, Any] = dict(),
+        embedding_model_attrs: Optional[dict[str, Any]] = None,
+        vector_store_attrs: Optional[dict[str, Any]] = None,
     ):
         """
         Creates an instance.
@@ -69,10 +69,10 @@ class VectorStore:
         self.define(
             embedding_model_name,
             vector_store_name,
-            url,
-            collection,
-            embedding_model_attrs,
-            vector_store_attrs,
+            url=url,
+            collection=collection,
+            embedding_model_attrs=embedding_model_attrs,
+            vector_store_attrs=vector_store_attrs,
         )
 
     def __del__(self):
@@ -90,8 +90,8 @@ class VectorStore:
         vector_store_name: Literal["faiss", "chromadb"],
         url: Optional[str] = None,
         collection: Optional[str] = None,
-        embedding_model_attrs: dict[str, Any] = dict(),
-        vector_store_attrs: dict[str, Any] = dict(),
+        embedding_model_attrs: Optional[dict[str, Any]] = None,
+        vector_store_attrs: Optional[dict[str, Any]] = None,
     ):
         """
         Defines the embedding model and vector store components to the runtime.
@@ -111,13 +111,14 @@ class VectorStore:
                 self._component_state.embedding_model_name,
                 {
                     "model": "BAAI/bge-m3",
-                    **embedding_model_attrs,
+                    **(embedding_model_attrs or {}),
                 },
             )
         else:
             raise NotImplementedError(f"Unsupprted embedding model: {embedding_model_name}")
 
         # Initialize vector store
+        vector_store_attrs = vector_store_attrs or {}
         if vector_store_name == "faiss":
             if "dimension" not in vector_store_attrs:
                 vector_store_attrs["dimension"] = dimension

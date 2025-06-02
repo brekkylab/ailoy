@@ -116,7 +116,9 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
   // Get engine
   std::shared_ptr<mlc_llm_engine_t> engine;
   try {
-    engine = get_mlc_llm_engine(model, quantization, device, mode);
+    // TODO(@khj809): share parameters when multiple engines are created in
+    // order to reduce memory usages
+    engine = create<mlc_llm_engine_t>(model, quantization, device, mode);
   } catch (const ailoy::runtime_error e) {
     return error_output_t(e.what());
   }

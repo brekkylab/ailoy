@@ -84,9 +84,4 @@ private:
   std::optional<std::string> last_error_;
 };
 
-std::shared_ptr<mlc_llm_engine_t>
-get_mlc_llm_engine(const std::string &model_name,
-                   const std::string &quantization, DLDevice device,
-                   const std::string &mode = "interactive");
-
 } // namespace ailoy

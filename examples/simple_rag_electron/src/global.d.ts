@@ -5,17 +5,20 @@ import type {
 
 export interface IElectronAPI {
   openFile: () => Promise<string>;
+  updateVectorStore: (document: string) => Promise<void>;
   retrieveSimilarDocuments: (
     query: string
   ) => Promise<Array<VectorStoreRetrieveItem>>;
   inferLanguageModel: (message: string) => Promise<void>;
+
   onIndicateLoading: (
     callback: (indicator: string, finished: boolean) => void
   ) => void;
-  onTextLoadProgress: (
+  onVectorStoreUpdateStarted: (callback: () => void) => void;
+  onVectorStoreUpdateProgress: (
     callback: (loaded: number, total: number) => void
   ) => void;
-  onFileSelected: (callback: () => void) => void;
+  onVectorStoreUpdateFinished: (callback: () => void) => void;
   onAssistantAnswer: (callback: (delta: MessageDelta) => void) => void;
 }
 

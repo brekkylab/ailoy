@@ -39,39 +39,42 @@ export const registerIpcHandlers = async (mainWindow: BrowserWindow) => {
     });
 
     if (!result.canceled && result.filePaths.length > 0) {
-      mainWindow.webContents.send("file-selected");
-
       const content = await fs.readFile(result.filePaths[0], "utf-8");
-
-      await vectorstore.clear();
-
-      // split texts into chunks
-      const { chunks }: { chunks: Array<string> } = await runtime.call(
-        "split_text",
-        {
-          text: content,
-          chunk_size: 500,
-          chunk_overlap: 200,
-        }
-      );
-
-      let chunkIdx = 0;
-      for (const chunk of chunks) {
-        await vectorstore.insert({
-          document: chunk,
-          metadata: null,
-        });
-        mainWindow.webContents.send(
-          "text-load-progress",
-          chunkIdx + 1,
-          chunks.length
-        );
-        chunkIdx += 1;
-      }
-
       return content;
     }
     return null;
+  });
+
+  ipcMain.handle("update-vector-store", async (event, document: string) => {
+    mainWindow.webContents.send("vector-store-update-started");
+
+    await vectorstore.clear();
+
+    // split texts into chunks
+    const { chunks }: { chunks: Array<string> } = await runtime.call(
+      "split_text",
+      {
+        text: document,
+        chunk_size: 500,
+        chunk_overlap: 200,
+      }
+    );
+
+    let chunkIdx = 0;
+    for (const chunk of chunks) {
+      await vectorstore.insert({
+        document: chunk,
+        metadata: null,
+      });
+      mainWindow.webContents.send(
+        "vector-store-update-progress",
+        chunkIdx + 1,
+        chunks.length
+      );
+      chunkIdx += 1;
+    }
+
+    mainWindow.webContents.send("vector-store-update-finished");
   });
 
   ipcMain.handle("retrieve-similar-documents", async (event, query: string) => {
@@ -88,7 +91,9 @@ export const registerIpcHandlers = async (mainWindow: BrowserWindow) => {
 
 export const removeIpcHandlers = () => {
   ipcMain.removeHandler("open-file");
-  ipcMain.removeHandler("submit-query");
+  ipcMain.removeHandler("update-vector-store");
+  ipcMain.removeHandler("retrieve-similar-documents");
+  ipcMain.removeHandler("infer-language-model");
 };
 
 export const destroyComponents = async () => {

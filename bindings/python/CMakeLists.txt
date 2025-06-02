@@ -10,16 +10,6 @@ if(DEFINED SKBUILD)
     pybind11_add_module(ailoy_py ${AILOY_PY_SRCS})
     target_link_libraries(ailoy_py PUBLIC ailoy_core_obj ailoy_broker_client_obj ailoy_broker_obj ailoy_vm_obj)
 
-    if(APPLE)
-        # If using Homebrew LLVM, explicitly tell the compiler to use the macOS system SDK.
-        execute_process(
-            COMMAND xcrun --sdk macosx --show-sdk-path
-            OUTPUT_VARIABLE MACOS_SDK_PATH
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-        )
-        target_compile_options(ailoy_py PUBLIC -isysroot ${MACOS_SDK_PATH})
-        target_link_options(ailoy_py PUBLIC -isysroot ${MACOS_SDK_PATH})
-    endif()
     if(MSVC)
         target_compile_definitions(ailoy_py PRIVATE NOMINMAX)
     endif()

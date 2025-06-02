@@ -514,6 +514,7 @@ export class Agent {
           }
         }
       });
+      await client.close();
 
       return parsedContent;
     };
@@ -548,6 +549,7 @@ export class Agent {
         continue;
       await this.addMcpTool(params, tool);
     }
+    await client.close();
   }
 
   getAvailableTools(): Array<ToolDescription> {
@@ -566,7 +568,38 @@ export class Agent {
   ): AsyncGenerator<AgentResponse> {
     this.messages.push({ role: "user", content: message });
 
+    let isToolCalled = false;
+
     while (true) {
+      let reasoningMessage = "";
+      let outputTextMessage = "";
+
+      const _pushAssistantTextMessage = () => {
+        // if output_text is empty, do nothing
+        if (outputTextMessage.trim() === "") return;
+
+        // construct assistant message content considering reasoning message
+        let assistantMessageContent = outputTextMessage.trim();
+        if (
+          options?.enableReasoning &&
+          !options.ignoreReasoningMessages &&
+          reasoningMessage.trim() !== ""
+        )
+          // TODO: consider other kinds of reasoning part distinguisher
+          assistantMessageContent =
+            `<think>\n${reasoningMessage.trim()}\n</think>\n\n` +
+            assistantMessageContent;
+
+        // push constructed message content into messages
+        this.messages.push({
+          role: "assistant",
+          content: assistantMessageContent,
+        } as AIOutputTextMessage);
+
+        reasoningMessage = "";
+        outputTextMessage = "";
+      };
+
       for await (const resp of this.runtime.callIterMethod(
         this.componentState.name,
         "infer",
@@ -584,6 +617,11 @@ export class Agent {
         // This means AI is still streaming tokens
         if (delta.finish_reason === null) {
           let message = delta.message as AIOutputTextMessage;
+
+          // accumulate text messages to append in batch
+          if (message.reasoning) reasoningMessage += message.content;
+          else outputTextMessage += message.content;
+
           yield {
             type: message.reasoning ? "reasoning" : "output_text",
             endOfTurn: false,
@@ -595,6 +633,9 @@ export class Agent {
 
         // This means AI requested tool calls
         if (delta.finish_reason === "tool_calls") {
+          isToolCalled = true;
+          _pushAssistantTextMessage();
+
           const toolCallMessage = delta.message as AIToolCallMessage;
           // Add tool call back to messages
           this.messages.push(toolCallMessage);
@@ -644,26 +685,39 @@ export class Agent {
               content: toolCallResult,
             };
           }
-          // Infer again with a new request
-          break;
         }
-
         // This means AI finished its answer
-        if (
+        else if (
           delta.finish_reason === "stop" ||
           delta.finish_reason === "length" ||
           delta.finish_reason === "error"
         ) {
+          const message = delta.message as AIOutputTextMessage;
+
+          outputTextMessage += message.content;
+
+          _pushAssistantTextMessage();
+
           yield {
             type: "output_text",
             endOfTurn: true,
             role: "assistant",
-            content: (delta.message as AIOutputTextMessage).content,
+            content: message.content,
           };
-          // Finish this AsyncGenerator
-          return;
+
+          // Finish this infer
+          break;
         }
       }
+
+      // Infer again if tool calls happened
+      if (isToolCalled) {
+        isToolCalled = false;
+        continue;
+      }
+
+      // Finish this generator
+      return;
     }
   }
 

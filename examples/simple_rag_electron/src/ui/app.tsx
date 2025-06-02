@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import Markdown from "marked-react";
 
 import "./index.css";
 
@@ -13,6 +14,7 @@ const App: React.FC = () => {
   const [loadingStatus, setLoadingStatus] = useState<LoadingStatus>("loaded");
   const [loadingIndicator, setLoadingIndicator] = useState<string>("");
   const [textContent, setTextContent] = useState("");
+  const [currentContent, setCurrentContent] = useState("");
   const [query, setQuery] = useState("");
 
   const [messages, setMessages] = useState<Array<Message>>([]);
@@ -24,12 +26,18 @@ const App: React.FC = () => {
       setLoadingIndicator(indicator);
       setLoadingStatus(finished ? "loaded" : "loading");
     });
-    window.electronAPI.onTextLoadProgress((loaded: number, total: number) => {
-      const progress = Math.round((100 * loaded) / total);
-      setLoadingIndicator(`Loading texts to vector store: ${progress}%`);
-    });
-    window.electronAPI.onFileSelected(() => {
+    window.electronAPI.onVectorStoreUpdateStarted(() => {
       setLoadingStatus("loading");
+    });
+    window.electronAPI.onVectorStoreUpdateProgress(
+      (loaded: number, total: number) => {
+        const progress = Math.round((100 * loaded) / total);
+        setLoadingIndicator(`Loading texts to vector store: ${progress}%`);
+      }
+    );
+    window.electronAPI.onVectorStoreUpdateFinished(() => {
+      setLoadingStatus("loaded");
+      setLoadingIndicator("");
     });
     window.electronAPI.onAssistantAnswer((resp: AgentResponse) => {
       if (resp.type === "output_text") {
@@ -47,8 +55,13 @@ const App: React.FC = () => {
 
   const handleFileLoad = async () => {
     const content = await window.electronAPI.openFile();
-    setLoadingStatus("loaded");
-    setTextContent(content);
+    setCurrentContent(content);
+  };
+
+  const handleUpdateVectorStore = async () => {
+    if (textContent === currentContent || currentContent === "") return;
+    setTextContent(currentContent);
+    await window.electronAPI.updateVectorStore(currentContent);
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -77,31 +90,40 @@ Query: ${query}
 `;
 
     setIsAnswering(true);
-    window.electronAPI.inferLanguageModel(
-      augmentedPrompt
-    );
+    window.electronAPI.inferLanguageModel(augmentedPrompt);
   };
 
   return (
     <main className="h-screen flex flex-col">
       <div className="flex flex-1 overflow-hidden">
         <div className="w-1/2 p-4 flex flex-col ">
-          <button
-            className="mb-4 bg-blue-500 text-white px-4 py-2 rounded cursor-pointer"
-            onClick={handleFileLoad}
-          >
-            Load Text File
-          </button>
+          <div className="w-full flex justify-between gap-2">
+            <button
+              className="mb-4 bg-blue-500 text-white px-4 py-2 rounded cursor-pointer"
+              onClick={handleFileLoad}
+            >
+              Load Text File
+            </button>
+            <button
+              className="mb-4 bg-yellow-400 px-4 py-1 rounded cursor-pointer disabled:opacity-30 disabled:cursor-default"
+              disabled={textContent === currentContent || currentContent === ""}
+              onClick={handleUpdateVectorStore}
+            >
+              Update Vectorstore
+            </button>
+          </div>
           <textarea
             className="w-full h-full border rounded p-2"
-            value={textContent}
-            readOnly
+            value={currentContent}
+            onChange={(e) => setCurrentContent(e.target.value)}
           />
         </div>
         <div className="w-1/2 p-4 overflow-auto">
           {messages.map((message, index) => (
-            <div key={index} className="mb-2 p-2 border rounded">
-              {message.role}: {message.content}
+            <div key={index} className="mb-2 p-2 border rounded overflow-scroll">
+              <Markdown>
+                {`${message.role}: ${message.content}`}
+              </Markdown>
             </div>
           ))}
         </div>

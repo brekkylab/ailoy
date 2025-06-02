@@ -8,18 +8,18 @@ describe("Agent", async () => {
   });
 
   it("Tool Call: calculator tools", async () => {
-    const ex = await defineAgent(rt, "qwen3-8b");
-    ex.addToolsFromPreset("calculator");
+    const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
+    agent.addToolsFromPreset("calculator");
 
     const query = "Please calculate this formula: floor(ln(exp(e))+cos(2*pi))";
     process.stdout.write(`\nQuery: ${query}`);
 
     process.stdout.write(`\nAssistant: `);
-    for await (const resp of ex.run(query)) {
-      printAgentResponse(resp);
+    for await (const resp of agent.query(query)) {
+      agent.print(resp);
     }
 
-    await ex.delete();
+    await agent.delete();
   });
 
   it("Tool Call: frankfurter tools", async () => {
@@ -27,7 +27,7 @@ describe("Agent", async () => {
     agent.addToolsFromPreset("frankfurter");
 
     const query =
-      "I want to buy 100 U.S. Dollar with my Korean Won. How much do I need to take?";
+      "I want to buy 100 U.S. Dollar and 100 EUR with my Korean Won. How much do I need to take?";
     console.log(`Query: ${query}`);
 
     for await (const resp of agent.query(query)) {
