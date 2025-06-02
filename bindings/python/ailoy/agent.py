@@ -595,7 +595,7 @@ class Agent:
             try:
                 tool_description = ToolDescription.model_validate(get_json_schema(f).get("function"))
             except (TypeHintParsingException, DocstringParsingException) as e:
-                ValueError("Failed to parse docstring", e)
+                raise ValueError("Failed to parse docstring", e)
 
         self.add_tool(Tool(desc=tool_description, call_fn=f))
 
