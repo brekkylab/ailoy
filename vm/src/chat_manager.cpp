@@ -32,8 +32,7 @@ chat_manager_t::apply_chat_template(std::shared_ptr<const value_t> conversation,
   conversation = put_default_reasoning(conversation, "\n\n");
   conversation = melt_reasoning(conversation);
   conversation = merge_text_data(conversation);
-  conversation = merge_json_data(conversation);
-  conversation = melt_content_data(conversation);
+  conversation = melt_content_text(conversation);
 
   minja::chat_template_inputs inputs;
   inputs.messages = conversation->operator nlohmann::json();
@@ -159,81 +158,22 @@ std::shared_ptr<value_t> merge_text_data(std::shared_ptr<const value_t> in,
   return out;
 }
 
-std::shared_ptr<value_t> merge_json_data(std::shared_ptr<const value_t> in) {
+std::shared_ptr<value_t> melt_content_text(std::shared_ptr<const value_t> in) {
   auto out =
       decode(in->encode(encoding_method_t::json), encoding_method_t::json);
   for (auto message_value : *out->as<array_t>()) {
     auto message = message_value->as<map_t>();
-    for (std::string key : {"tool_calls"}) {
-      if (!message->contains(key))
-        continue;
-      std::shared_ptr<array_t> content = message->at<array_t>(key);
-      auto content_new = create<array_t>();
-
-      // Iterate over content
-      for (auto data_value : *content) {
-        auto data = data_value->as<map_t>();
-        if (!content_new->empty()) {
-          std::shared_ptr<map_t> data_new_last =
-              (*content_new->rbegin())->as<map_t>();
-          if (*data_new_last->at<string_t>("type") == "json" &&
-              *data->at<string_t>("type") == "json") {
-            // If data_new_last is map -> convert it to array
-            if (data_new_last->at("json")->is_type_of<map_t>()) {
-              auto v = create<array_t>();
-              v->push_back(data_new_last->at("json"));
-              data_new_last->insert_or_assign("json", v);
-            }
-            // Merge json
-            if (data->at("json")->is_type_of<array_t>()) {
-              // If array -> merge array
-              for (auto json_elem : *data->at<array_t>("json"))
-                data_new_last->at<array_t>("json")->push_back(json_elem);
-            } else {
-              // If not array -> push back to merged content
-              data_new_last->at<array_t>("json")->push_back(data->at("json"));
-            }
-            continue;
-          }
-        }
-        content_new->push_back(data);
-      }
-      message->insert_or_assign(key, content_new);
+    if (!message->contains("content"))
+      continue;
+    auto content = message->at<array_t>("content");
+    if (content->size() != 1)
+      throw exception("content length != 1");
+    auto content_data = content->at<map_t>(0);
+    auto content_type = content_data->at<string_t>("type");
+    if (*content_type == "text") {
+      message->insert_or_assign(
+          "content", create<string_t>(*content_data->at<string_t>("text")));
     }
-  }
-  return out;
-}
-
-std::shared_ptr<value_t> melt_content_data(std::shared_ptr<const value_t> in) {
-  auto out = create<array_t>();
-  for (auto message_value : *in->as<array_t>()) {
-    auto message = message_value->as<map_t>();
-    auto message_out = create<map_t>();
-    for (auto [key, content_value] : *message) {
-      if (key == "role") {
-        message_out->insert_or_assign(
-            key, create<string_t>(*content_value->as<string_t>()));
-        continue;
-      }
-      std::shared_ptr<array_t> content = content_value->as<array_t>();
-      std::shared_ptr<value_t> content_out;
-      if (content->size() != 1)
-        throw exception("content length != 1");
-      auto content_data = content->at<map_t>(0);
-      auto content_type = content_data->at<string_t>("type");
-      if (*content_type == "text") {
-        content_out = create<string_t>(*content_data->at<string_t>("text"));
-      } else if (*content_type == "json") {
-        content_out = create<array_t>();
-        content_out->as<array_t>()->push_back(
-            decode(content_data->at("json")->encode(encoding_method_t::json),
-                   encoding_method_t::json));
-      } else {
-        throw exception("Unknown content data type");
-      }
-      message_out->insert_or_assign(key, content_out);
-    }
-    out->push_back(message_out);
   }
   return out;
 }

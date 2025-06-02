@@ -790,7 +790,7 @@ create_tvm_language_model_v2_component(std::shared_ptr<const value_t> inputs) {
               if (model->is_botc(current_token_str))
                 // BOTC token generated
                 state->as<map_t>()->at<string_t>("finish_reason") =
-                    create<string_t>("tool_call");
+                    create<string_t>("tool_calls");
               else
                 agg_token_str += current_token_str;
               continue;
@@ -813,8 +813,8 @@ create_tvm_language_model_v2_component(std::shared_ptr<const value_t> inputs) {
                 try {
                   // Try to decode
                   auto decoded = decode(agg_token_str, encoding_method_t::json);
-                  insert_to_delta("tool_calls", "json", decoded);
-                } catch (const nlohmann::json::parse_error &e) {
+                  insert_to_delta("tool_calls", "function", decoded);
+                } catch (const std::exception &e) {
                   // Decode fail -> invalid_tool_call
                   insert_to_delta(
                       "error", "text",

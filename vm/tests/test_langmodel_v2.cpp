@@ -57,10 +57,10 @@ std::string infer(std::shared_ptr<ailoy::component_t> model,
       agg_out += *delta->at<ailoy::array_t>("content")
                       ->at<ailoy::map_t>(0)
                       ->at<ailoy::string_t>("text");
-    if (delta->contains("tool_call"))
-      agg_out += delta->at<ailoy::array_t>("tool_call")
+    if (delta->contains("tool_calls"))
+      agg_out += delta->at<ailoy::array_t>("tool_calls")
                      ->at<ailoy::map_t>(0)
-                     ->at("json")
+                     ->at("function")
                      ->encode(ailoy::encoding_method_t::json)
                      ->operator std::string();
     if (out.finish)
@@ -258,7 +258,7 @@ TEST(TestLangModelV2, TestToolCall) {
     {
       "role": "assistant",
       "tool_calls": [
-        {"type": "json", "json": {"function":{"arguments":{"location":"Seoul","unit":"celsius"},"name":"get_current_temperature"},"type":"function"}}
+        {"function":{"arguments":{"location":"Seoul","unit":"celsius"},"name":"get_current_temperature"},"type":"function"}
       ]
     },
     {

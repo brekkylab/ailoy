@@ -10,48 +10,41 @@ import { Runtime, generateUUID } from "./runtime";
 
 interface SystemMessage {
   role: "system";
-  content: string;
+  content: Array<{ type: "text"; text: string }>;
 }
 
 interface UserMessage {
   role: "user";
-  content: string;
+  content: Array<{ type: "text"; text: string }>;
 }
 
-interface AIOutputTextMessage {
+interface AssistantMessage {
   role: "assistant";
-  content: string;
-  reasoning?: boolean;
+  content?: Array<{ type: "text"; text: string }>;
+  reasoning?: Array<{ type: "text"; text: string }>;
+  tool_calls?: Array<{
+    type: "function";
+    function: { name: string; arguments: any };
+  }>;
 }
 
-interface AIToolCallMessage {
-  role: "assistant";
-  content: null;
-  tool_calls: Array<ToolCall>;
-}
-
-interface ToolCall {
-  id: string;
-  function: { name: string; arguments: any };
-}
-
-interface ToolCallResultMessage {
+interface ToolMessage {
   role: "tool";
   name: string;
-  tool_call_id: string;
-  content: string;
+  content: Array<{ type: "text"; text: string }>;
 }
 
-type Message =
-  | SystemMessage
-  | UserMessage
-  | AIOutputTextMessage
-  | AIToolCallMessage
-  | ToolCallResultMessage;
+type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
 
-interface MessageDelta {
-  finish_reason: "stop" | "tool_calls" | "length" | "error" | null;
-  message: Message;
+interface MessageOutput {
+  finish_reason:
+    | "stop"
+    | "tool_calls"
+    | "invalid_tool_call"
+    | "length"
+    | "error"
+    | undefined;
+  delta: Omit<AssistantMessage, "role">;
 }
 
 /** Types for LLM Model Definitions */
@@ -116,8 +109,8 @@ export interface AgentResponseToolCall {
   role: "assistant";
   endOfTurn: boolean;
   content: {
-    id: string;
-    function: { name: string; arguments: any };
+    name: string;
+    arguments: any;
   };
 }
 export interface AgentResponseToolResult {
@@ -126,7 +119,6 @@ export interface AgentResponseToolResult {
   endOfTurn: boolean;
   content: {
     name: string;
-    tool_call_id: string;
     content: string;
   };
 }
@@ -260,7 +252,10 @@ export class Agent {
     // Use system message provided from arguments first, otherwise use default system message for the model.
     this.messages = [];
     if (systemMessage !== undefined)
-      this.messages.push({ role: "system", content: systemMessage });
+      this.messages.push({
+        role: "system",
+        content: [{ type: "text", text: systemMessage }],
+      });
 
     // Initialize tools
     this.tools = [];
@@ -288,7 +283,7 @@ export class Agent {
     if (this.messages.length == 0 && modelDesc.defaultSystemMessage)
       this.messages.push({
         role: "system",
-        content: modelDesc.defaultSystemMessage,
+        content: [{ type: "text", text: modelDesc.defaultSystemMessage }],
       });
 
     // Call runtime to define componenets
@@ -566,38 +561,16 @@ export class Agent {
       ignoreReasoningMessages?: boolean;
     }
   ): AsyncGenerator<AgentResponse> {
-    this.messages.push({ role: "user", content: message });
+    this.messages.push({
+      role: "user",
+      content: [{ type: "text", text: message }],
+    });
 
-    let isToolCalled = false;
+    let finish_reason = "";
 
     while (true) {
-      let reasoningMessage = "";
-      let outputTextMessage = "";
-
-      const _pushAssistantTextMessage = () => {
-        // if output_text is empty, do nothing
-        if (outputTextMessage.trim() === "") return;
-
-        // construct assistant message content considering reasoning message
-        let assistantMessageContent = outputTextMessage.trim();
-        if (
-          options?.enableReasoning &&
-          !options.ignoreReasoningMessages &&
-          reasoningMessage.trim() !== ""
-        )
-          // TODO: consider other kinds of reasoning part distinguisher
-          assistantMessageContent =
-            `<think>\n${reasoningMessage.trim()}\n</think>\n\n` +
-            assistantMessageContent;
-
-        // push constructed message content into messages
-        this.messages.push({
-          role: "assistant",
-          content: assistantMessageContent,
-        } as AIOutputTextMessage);
-
-        reasoningMessage = "";
-        outputTextMessage = "";
+      let assistantMessage: AssistantMessage = {
+        role: "assistant",
       };
 
       for await (const resp of this.runtime.callIterMethod(
@@ -611,113 +584,101 @@ export class Agent {
           enable_reasoning: options?.enableReasoning,
           ignore_reasoning_messages: options?.ignoreReasoningMessages,
         }
-      )) {
-        const delta: MessageDelta = resp;
-
-        // This means AI is still streaming tokens
-        if (delta.finish_reason === null) {
-          let message = delta.message as AIOutputTextMessage;
-
-          // accumulate text messages to append in batch
-          if (message.reasoning) reasoningMessage += message.content;
-          else outputTextMessage += message.content;
-
-          yield {
-            type: message.reasoning ? "reasoning" : "output_text",
-            endOfTurn: false,
-            role: "assistant",
-            content: message.content,
-          };
-          continue;
-        }
-
-        // This means AI requested tool calls
-        if (delta.finish_reason === "tool_calls") {
-          isToolCalled = true;
-          _pushAssistantTextMessage();
-
-          const toolCallMessage = delta.message as AIToolCallMessage;
-          // Add tool call back to messages
-          this.messages.push(toolCallMessage);
-
-          // Yield for each tool call
-          for (const toolCall of toolCallMessage.tool_calls) {
-            yield {
-              type: "tool_call",
-              endOfTurn: true,
-              role: "assistant",
-              content: toolCall,
-            };
+      ) as AsyncIterable<MessageOutput>) {
+        // This measn AI generated something
+        if (resp.delta) {
+          if (resp.delta.reasoning) {
+            for (const reasoningData of resp.delta.reasoning) {
+              if (!assistantMessage.reasoning)
+                assistantMessage.reasoning = [reasoningData];
+              else assistantMessage.reasoning[0].text += reasoningData.text;
+              yield {
+                type: "reasoning",
+                endOfTurn: false,
+                role: "assistant",
+                content: reasoningData.text,
+              };
+            }
           }
-
-          // Call tools in parallel
-          let toolCallPromises: Array<Promise<ToolCallResultMessage>> = [];
-          for (const toolCall of toolCallMessage.tool_calls) {
-            toolCallPromises.push(
-              new Promise(async (resolve, reject) => {
-                const tool_ = this.tools.find(
-                  (v) => v.desc.name == toolCall.function.name
-                );
-                if (!tool_) {
-                  reject("Internal exception");
-                  return;
-                }
-                const resp = await tool_.call(toolCall.function.arguments);
-                const message: ToolCallResultMessage = {
-                  role: "tool",
-                  name: toolCall.function.name,
-                  tool_call_id: toolCall.id,
-                  content: JSON.stringify(resp),
-                };
-                resolve(message);
-              })
-            );
+          if (resp.delta.content) {
+            for (const contentData of resp.delta.content) {
+              if (!assistantMessage.content)
+                assistantMessage.content = [contentData];
+              else assistantMessage.content[0].text += contentData.text;
+              yield {
+                type: "output_text",
+                endOfTurn: false,
+                role: "assistant",
+                content: contentData.text,
+              };
+            }
           }
-          const toolCallResults = await Promise.all(toolCallPromises);
-
-          // Yield for each tool call result
-          for (const toolCallResult of toolCallResults) {
-            this.messages.push(toolCallResult);
-            yield {
-              type: "tool_call_result",
-              endOfTurn: true,
-              role: "tool",
-              content: toolCallResult,
-            };
+          if (resp.delta.tool_calls) {
+            for (const tool_call_data of resp.delta.tool_calls) {
+              if (!assistantMessage.content)
+                assistantMessage.tool_calls = [tool_call_data];
+              else assistantMessage.tool_calls?.push(tool_call_data);
+              yield {
+                type: "tool_call",
+                endOfTurn: false,
+                role: "assistant",
+                content: tool_call_data.function,
+              };
+            }
           }
         }
-        // This means AI finished its answer
-        else if (
-          delta.finish_reason === "stop" ||
-          delta.finish_reason === "length" ||
-          delta.finish_reason === "error"
-        ) {
-          const message = delta.message as AIOutputTextMessage;
 
-          outputTextMessage += message.content;
-
-          _pushAssistantTextMessage();
-
-          yield {
-            type: "output_text",
-            endOfTurn: true,
-            role: "assistant",
-            content: message.content,
-          };
-
+        if (resp.finish_reason) {
           // Finish this infer
+          finish_reason = resp.finish_reason;
           break;
         }
       }
 
-      // Infer again if tool calls happened
-      if (isToolCalled) {
-        isToolCalled = false;
+      // Call tools in parallel
+      if (finish_reason == "tool_calls") {
+        let toolCallPromises: Array<Promise<ToolMessage>> = [];
+        for (const toolCall of assistantMessage.tool_calls || []) {
+          toolCallPromises.push(
+            new Promise(async (resolve, reject) => {
+              const tool_ = this.tools.find(
+                (v) => v.desc.name == toolCall.function.name
+              );
+              if (!tool_) {
+                reject("Internal exception");
+                return;
+              }
+              const resp = await tool_.call(toolCall.function.arguments);
+              const message: ToolMessage = {
+                role: "tool",
+                name: toolCall.function.name,
+                content: [{ type: "text", text: JSON.stringify(resp) }],
+              };
+              resolve(message);
+            })
+          );
+        }
+        const toolCallResults = await Promise.all(toolCallPromises);
+
+        // Yield for each tool call result
+        for (const toolCallResult of toolCallResults) {
+          this.messages.push(toolCallResult);
+          yield {
+            type: "tool_call_result",
+            endOfTurn: true,
+            role: "tool",
+            content: {
+              name: toolCallResult.name,
+              content: toolCallResult.content[0].text,
+            },
+          };
+        }
+        // Infer again if tool calls happened
         continue;
       }
 
       // Finish this generator
-      return;
+      break;
     }
   }
 
@@ -732,11 +693,8 @@ export class Agent {
 
   private _printResponseToolCall(resp: AgentResponseToolCall) {
     const title =
-      chalk.magenta("Tool Call") +
-      ": " +
-      chalk.bold(resp.content.function.name) +
-      ` (${resp.content.id})`;
-    const content = JSON.stringify(resp.content.function.arguments, null, 2);
+      chalk.magenta("Tool Call") + ": " + chalk.bold(resp.content.name);
+    const content = JSON.stringify(resp.content.arguments, null, 2);
     const box = boxen(content, {
       title,
       titleAlignment: "left",
@@ -752,10 +710,7 @@ export class Agent {
 
   private _printResponseToolResult(resp: AgentResponseToolResult) {
     const title =
-      chalk.green("Tool Result") +
-      ": " +
-      chalk.bold(resp.content.name) +
-      ` (${resp.content.tool_call_id})`;
+      chalk.green("Tool Result") + ": " + chalk.bold(resp.content.name);
 
     let content;
     try {

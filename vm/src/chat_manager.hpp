@@ -139,38 +139,7 @@ std::shared_ptr<value_t> merge_text_data(std::shared_ptr<const value_t> in,
                                          const std::string &delimiter = "");
 
 /**
-Merge `json` in `tool_calls` field
-
-Before:
-```
-"role": "assistant",
-  "tool_calls": [
-  {
-    "type": "json",
-    "json": {"key1": "value1"}
-  },
-  {
-    "type": "json",
-    "json": {"key2": "value2"}
-  }
-]
-```
-
-After:
-```
-"role": "assistant",
-"tool_calls": [
-  {
-    "type": "json",
-    "json": [{"key1": "value1"}, {"key2": "value2"}]
-  }
-]
-```
- */
-std::shared_ptr<value_t> merge_json_data(std::shared_ptr<const value_t> in);
-
-/**
-   Melt `content` data to a single string
+   Melt `content` text to a single string
    Before:
   ```
   "role": "user",
@@ -185,6 +154,6 @@ std::shared_ptr<value_t> merge_json_data(std::shared_ptr<const value_t> in);
   ```
   The length of `content` must be 1.
  */
-std::shared_ptr<value_t> melt_content_data(std::shared_ptr<const value_t> in);
+std::shared_ptr<value_t> melt_content_text(std::shared_ptr<const value_t> in);
 
 } // namespace ailoy
