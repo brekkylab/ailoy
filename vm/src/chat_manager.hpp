@@ -102,9 +102,9 @@ put_default_reasoning(std::shared_ptr<const value_t> in,
   Reasoning field always attached to first element of the content.
  */
 std::shared_ptr<value_t>
-convert_reasoning(std::shared_ptr<const value_t> in,
-                  const std::string &bor_delimiter = "<think>",
-                  const std::string &eor_delimiter = "</think>\n\n");
+melt_reasoning(std::shared_ptr<const value_t> in,
+               const std::string &bor_delimiter = "<think>",
+               const std::string &eor_delimiter = "</think>\n\n");
 
 /**
   Merge `text` in `content` field

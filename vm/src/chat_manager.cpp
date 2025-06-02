@@ -30,7 +30,7 @@ chat_manager_t::apply_chat_template(std::shared_ptr<const value_t> conversation,
   // @jhlee TODO Different conversion passes to be applied for each model. We'll
   // consider to make configuration for them
   conversation = put_default_reasoning(conversation, "\n\n");
-  conversation = convert_reasoning(conversation);
+  conversation = melt_reasoning(conversation);
   conversation = merge_content_text(conversation);
   conversation = merge_content_json(conversation);
   conversation = melt_content_data(conversation);
@@ -79,9 +79,9 @@ put_default_reasoning(std::shared_ptr<const value_t> in,
   return out;
 }
 
-std::shared_ptr<value_t> convert_reasoning(std::shared_ptr<const value_t> in,
-                                           const std::string &bor_delimiter,
-                                           const std::string &eor_delimiter) {
+std::shared_ptr<value_t> melt_reasoning(std::shared_ptr<const value_t> in,
+                                        const std::string &bor_delimiter,
+                                        const std::string &eor_delimiter) {
   auto out = create<array_t>();
   for (auto message_value : *in->as<array_t>()) {
     auto message = message_value->as<map_t>();

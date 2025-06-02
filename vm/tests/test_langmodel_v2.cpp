@@ -41,13 +41,26 @@ std::string infer(std::shared_ptr<ailoy::component_t> model,
   while (true) {
     ailoy::output_t out_opt = model->get_operator("infer")->step();
     if (out_opt.index() != 0)
-      return std::get<1>(out_opt).reason;
+      throw ailoy::exception(std::get<1>(out_opt).reason);
     auto out = std::get<0>(out_opt);
     auto resp = out.val->as<ailoy::map_t>();
-    if (resp->at("content")->is_type_of<ailoy::string_t>())
-      agg_out += *resp->at<ailoy::string_t>("content");
-    else
-      agg_out += resp->at("content")
+    if (resp->contains("finish_reason"))
+      break;
+    if (!resp->contains("delta"))
+      continue;
+    auto delta = resp->at<ailoy::map_t>("delta");
+    if (delta->contains("reasoning"))
+      agg_out += *delta->at<ailoy::array_t>("reasoning")
+                      ->at<ailoy::map_t>(0)
+                      ->at<ailoy::string_t>("text");
+    if (delta->contains("content"))
+      agg_out += *delta->at<ailoy::array_t>("content")
+                      ->at<ailoy::map_t>(0)
+                      ->at<ailoy::string_t>("text");
+    if (delta->contains("tool_call"))
+      agg_out += delta->at<ailoy::array_t>("tool_call")
+                     ->at<ailoy::map_t>(0)
+                     ->at("json")
                      ->encode(ailoy::encoding_method_t::json)
                      ->operator std::string();
     if (out.finish)
@@ -268,6 +281,7 @@ TEST(TestLangModelV2, TestReasoning) {
   std::shared_ptr<ailoy::component_t> model = get_model();
   auto messages = ailoy::decode(messages_str, ailoy::encoding_method_t::json);
   auto out = infer(model, messages, nullptr, true, false);
+  // std::cout << out1 << std::endl;
 
   auto messages_str2 = R"([
   {"role": "user", "content": [{"type": "text","text": "Introduce yourself."}]},
@@ -289,7 +303,7 @@ TEST(TestLangModelV2, TestReasoning) {
   {"role": "user", "content": [{"type": "text","text": "I love you."}]}
 ])";
   auto messages2 = ailoy::decode(messages_str2, ailoy::encoding_method_t::json);
-  auto out2 = infer(model, messages2, nullptr, false, false);
+  auto out2 = infer(model, messages2, nullptr, true, true);
   // std::cout << out2 << std::endl;
 }
 

@@ -147,14 +147,14 @@ public:
    * string generated */
   std::optional<std::string> detokenize(int32_t token);
 
-  const std::string &get_current_mode() const;
+  const std::string &get_current_stream_mode() const;
 
-  const stream_mode_t &get_mode(std::string mode_name) const;
+  const stream_mode_t &get_stream_mode(std::string mode_name) const;
 
-  void add_mode(std::string mode_name, const std::string &open_indicator,
-                const std::string &close_indicator);
+  void add_stream_mode(std::string mode_name, const std::string &open_indicator,
+                       const std::string &close_indicator);
 
-  void remove_mode(std::string mode_name);
+  void remove_stream_mode(std::string mode_name);
 
   std::shared_ptr<grammar_matcher_t> get_current_grammar_matcher();
 

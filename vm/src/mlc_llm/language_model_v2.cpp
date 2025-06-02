@@ -466,23 +466,23 @@ std::optional<std::string> tvm_language_model_t::detokenize(int32_t token) {
   }
 }
 
-const std::string &tvm_language_model_t::get_current_mode() const {
+const std::string &tvm_language_model_t::get_current_stream_mode() const {
   return current_stream_mode_;
 }
 
 const tvm_language_model_t::stream_mode_t &
-tvm_language_model_t::get_mode(std::string mode_name) const {
+tvm_language_model_t::get_stream_mode(std::string mode_name) const {
   return stream_modes_.at(mode_name);
 }
 
-void tvm_language_model_t::add_mode(std::string mode_name,
-                                    const std::string &open_indicator,
-                                    const std::string &close_indicator) {
+void tvm_language_model_t::add_stream_mode(std::string mode_name,
+                                           const std::string &open_indicator,
+                                           const std::string &close_indicator) {
   stream_modes_.insert_or_assign(
       mode_name, stream_mode_t(this, open_indicator, close_indicator));
 }
 
-void tvm_language_model_t::remove_mode(std::string mode_name) {
+void tvm_language_model_t::remove_stream_mode(std::string mode_name) {
   stream_modes_.erase(mode_name);
 }
 
@@ -724,10 +724,19 @@ create_tvm_language_model_v2_component(std::shared_ptr<const value_t> inputs) {
         auto tokens = model->tokenize(prompt);
 
         // Prefill
-        auto current_token = model->prefill(tokens);
+        int32_t current_token;
+        std::string finish_reason;
+        try {
+          current_token = model->prefill(tokens);
+          finish_reason = "stop"; // Assumes default finish reason here
+        } catch (const exception_t<context_length_limit> &e) {
+          current_token = -1;
+          finish_reason = "length";
+        }
 
         auto rv = create<map_t>();
         rv->insert_or_assign("current_token", create<int_t>(current_token));
+        rv->insert_or_assign("finish_reason", create<string_t>(finish_reason));
         rv->insert_or_assign("ignore_reasoning_messages",
                              create<ailoy::bool_t>(ignore_reasoning_messages));
         return rv;
@@ -740,72 +749,96 @@ create_tvm_language_model_v2_component(std::shared_ptr<const value_t> inputs) {
         // Get saved values & objects
         auto model = component->get_obj("model")->as<tvm_language_model_t>();
         auto current_token = state->as<map_t>()->at<int_t>("current_token");
+        auto finish_reason = state->as<map_t>()->at<string_t>("finish_reason");
         bool ignore_reasoning_messages =
             *state->as<map_t>()->at<bool_t>("ignore_reasoning_messages");
 
+        // If current_token == -1: Raised in prefill
+        if (current_token < 0) {
+          if (finish_reason) {
+            auto resp = create<map_t>();
+            resp->insert_or_assign("finish_reason",
+                                   create<string_t>(*finish_reason));
+            return ok_output_t(resp, true);
+          }
+          return error_output_t("Unknown error");
+        }
+
         // Repeat steps until valid output comes or it finished.
         auto resp = create<map_t>();
-        resp->insert_or_assign("role", create<string_t>("assistant"));
-        std::string agg_token_str;
+        auto delta = create<map_t>();
+        resp->insert_or_assign("delta", delta);
+        auto insert_to_delta = [&](const std::string &key,
+                                   const std::string &datatype,
+                                   std::shared_ptr<value_t> data) {
+          delta->insert_or_assign(key, create<array_t>());
+          auto delta_data = create<map_t>();
+          delta_data->insert_or_assign("type", create<string_t>(datatype));
+          delta_data->insert_or_assign(datatype, data);
+          delta->at<array_t>(key)->push_back(delta_data);
+        };
         try {
+          std::string agg_token_str;
           while (true) {
             *current_token = model->decode(*current_token);
-            auto current_mode = model->get_current_mode();
+            auto current_stream_mode = model->get_current_stream_mode();
             auto opt = model->detokenize(*current_token);
             if (!opt.has_value())
               continue;
             std::string current_token_str = opt.value();
-            if (current_mode == "tool_call") {
+            if (current_stream_mode == "tool_call") { // Tool call mode
               if (model->is_botc(current_token_str))
-                continue;
-              agg_token_str += current_token_str;
-            } else if (current_mode == "reasoning") {
-              if (model->is_bor(current_token_str))
-                continue;
+                // BOTC token generated
+                state->as<map_t>()->at<string_t>("finish_reason") =
+                    create<string_t>("tool_call");
+              else
+                agg_token_str += current_token_str;
+              continue;
+            } else if (current_stream_mode == "reasoning") { // Reasoning mode
               if (ignore_reasoning_messages)
                 continue;
-              resp->insert_or_assign("type", create<string_t>("reasoning"));
-              resp->insert_or_assign("content",
-                                     create<string_t>(current_token_str));
-              resp->insert_or_assign("end_of_turn", create<bool_t>(false));
+              if (model->is_bor(current_token_str))
+                // BOR token generated
+                continue;
+              insert_to_delta("reasoning", "text",
+                              create<string_t>(current_token_str));
               return ok_output_t(resp, false);
-            } else {
+            } else { // Default mode
               if (model->is_eos(current_token_str)) {
-                resp->insert_or_assign("type", create<string_t>("output_text"));
-                resp->insert_or_assign("content", create<string_t>(""));
-                resp->insert_or_assign("end_of_turn", create<bool_t>(true));
+                // EOS token generated
+                resp->insert_or_assign("finish_reason", finish_reason);
                 return ok_output_t(resp, true);
               } else if (model->is_eotc(current_token_str)) {
-                auto decoded = decode(agg_token_str, encoding_method_t::json);
+                // EOTC(</tool_call>) token generated
+                try {
+                  // Try to decode
+                  auto decoded = decode(agg_token_str, encoding_method_t::json);
+                  insert_to_delta("tool_calls", "json", decoded);
+                } catch (const nlohmann::json::parse_error &e) {
+                  // Decode fail -> invalid_tool_call
+                  insert_to_delta(
+                      "error", "text",
+                      create<string_t>("Invalid tool_call created"));
+                  resp->insert_or_assign("finish_reason",
+                                         create<string_t>("invalid_tool_call"));
+                  return ok_output_t(resp, true);
+                }
                 agg_token_str = "";
-                resp->insert_or_assign("type", create<string_t>("tool_call"));
-                resp->insert_or_assign("content", create<map_t>());
-                resp->insert_or_assign("end_of_turn", create<bool_t>(true));
-                auto content = resp->at<map_t>("content");
-                content->insert_or_assign("type", create<string_t>("function"));
-                content->insert_or_assign("function", decoded);
                 return ok_output_t(resp, false);
               } else if (model->is_eor(current_token_str)) {
-                if (ignore_reasoning_messages)
-                  continue;
-                resp->insert_or_assign("type", create<string_t>("reasoning"));
-                resp->insert_or_assign("content", create<string_t>(""));
-                resp->insert_or_assign("end_of_turn", create<bool_t>(true));
-                return ok_output_t(resp, false);
+                // EOR(</think>) token generated
+                continue;
               }
-              resp->insert_or_assign("type", create<string_t>("output_text"));
-              resp->insert_or_assign("content",
-                                     create<string_t>(current_token_str));
-              resp->insert_or_assign("end_of_turn", create<bool_t>(false));
+              // Default case
+              insert_to_delta("content", "text",
+                              create<string_t>(current_token_str));
               return ok_output_t(resp, false);
             }
           }
         } catch (const exception_t<context_length_limit> &e) {
-          resp->insert_or_assign("type", create<string_t>("error"));
-          resp->insert_or_assign("content", create<string_t>(e.what()));
           resp->insert_or_assign("finish_reason", create<string_t>("length"));
           return ok_output_t(resp, true);
-        }
+        };
       });
 
   //
