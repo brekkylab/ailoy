@@ -65,7 +65,63 @@ for await (const resp of agent.query(question)) {
 This demonstrates how the agent utilizes the GitHub MCP tools to search
 repositories and summarize their contents.
 
-(TODO) console output
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+{`╭─ Tool Call: get_file_contents (call_af2808d8-cd87-4dcd-ac9f-62c6862ad5cb) ────────────────────╮ 
+│ {                                                                                             │
+│   "repo": "ailoy",                                                                            │
+│   "path": "README.md",                                                                        │
+│   "owner": "brekkylab",                                                                       │
+│   "branch": "main"                                                                            │
+│ }                                                                                             │
+╰───────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Tool Result: get_file_contents (call_af2808d8-cd87-4dcd-ac9f-62c6862ad5cb) ──────────────────╮
+│ [                                                                                             │
+│   "{\\n  \"name\": \"README.md\",\\n  \"path\": \"README.md\",\\n  \"sha\":                                │
+│ \"377c27678db5b28e3b99e177a6ed937feed52d5d\",\\n  \"size\": 4310,\\n  \"url\":                        │
+│ \"https://api.github.com/repos/brekkylab/ailoy/contents/README.md?ref=main\",\\n                 │
+│ \"html_url\": \"https://github.com/brekkylab/ailoy/blob/main/README.md\",\\n  \"git_url\":           │
+│ \"https://api.github.com/repos/brekkylab/ailoy/git/blobs/377c27678db5b28e3b99e177a6ed937feed52 | 
+| d5d\",\\n  \"download_url\": \"https://raw.githubusercontent.com/brekkylab/a...(truncated)         │
+╰───────────────────────────────────────────────────────────────────────────────────────────────╯
+The repository named \`brekkylab/ailoy\` is a GitHub repository for the **Ailoy** project, which is a lightweight library for building AI applications. Here's a summary of what it does based on its \`README.md\`:
+
+### Overview
+- **Ailoy** is designed to make it easy to build AI applications such as **agent systems** or **RAG (Retrieval-Augmented Generation) pipelines**.
+- It enables AI features with minimal effort, allowing users to import and use the library without much setup.
+
+### Features
+- **Run AI models**: Supports both on-device and cloud API-based execution of AI models.
+- **Vector store support**: Integrates with libraries like \`Faiss\` and \`ChromaDB\` for efficient vector storage and retrieval.
+
+### Supported Models
+- **Language Models**: Includes several versions of Qwen models (e.g., Qwen3-0.6B, Qwen3-1.7B, Qwen3-4B, Qwen3-8B) for on-device use and access to models like \`gpt-4o\` via API.
+- **Embedding Models**: Supports BAAI/bge-m3 for on-device use.
+
+### Requirements
+- **Operating Systems**: Windows, macOS (Apple Silicon), and Linux.
+- **Hardware**: Requires compatible hardware with sufficient GPU memory, especially for larger models.
+- **Software**: Specific drivers and OS versions are recommended for optimal performance.
+
+### Getting Started
+- **Node.js**: Install via \`npm install ailoy-node\` and use the provided TypeScript examples.
+- **Python**: Install via \`pip install ailoy-py\` and use the Python examples.
+- **Build from source**: Instructions are available in the respective \`README.md\` files for Node.js and Python.
+
+### Additional Information
+- **Documentation**: The official documentation is available at [https://brekkylab.github.io/ailoy/](https://brekkylab.github.io/ailoy/).
+- **Examples**: Several examples are available in the \`examples\` directory to demonstrate usage and RAG pipelines.
+
+### Notes
+- The library is in an early development stage, so APIs may change without notice.
+- A Discord channel is available for support and questions.
+
+This library is ideal for developers looking to build AI applications with ease, leveraging pre-trained models and supporting both local and cloud-based AI execution.
+`}
+</TerminalBox>
+
+{/* prettier-ignore-end */}
 
 ### Complete Example
 
