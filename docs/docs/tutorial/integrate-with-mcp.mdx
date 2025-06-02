@@ -93,11 +93,11 @@ with Agent(rt, model_name="Qwen/Qwen3-8B") as agent:
 ```
 
 ```typescript
-import { startRuntime, createAgent } from "ailoy-node";
+import { startRuntime, defineAgent } from "ailoy-node";
 
 (async () => {
   const rt = await startRuntime();
-  const agent = await createAgent(rt, { model: { name: "Qwen/Qwen3-8B" } });
+  const agent = await defineAgent(rt, { model: { name: "Qwen/Qwen3-8B" } });
 
   // Add tools from Github MCP server
   await agent.addToolsFromMcpServer({
