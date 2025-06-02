@@ -514,6 +514,7 @@ export class Agent {
           }
         }
       });
+      await client.close();
 
       return parsedContent;
     };
@@ -548,6 +549,7 @@ export class Agent {
         continue;
       await this.addMcpTool(params, tool);
     }
+    await client.close();
   }
 
   getAvailableTools(): Array<ToolDescription> {
@@ -565,6 +567,8 @@ export class Agent {
     }
   ): AsyncGenerator<AgentResponse> {
     this.messages.push({ role: "user", content: message });
+
+    let isToolCalled = false;
 
     while (true) {
       let reasoningMessage = "";
@@ -629,6 +633,7 @@ export class Agent {
 
         // This means AI requested tool calls
         if (delta.finish_reason === "tool_calls") {
+          isToolCalled = true;
           _pushAssistantTextMessage();
 
           const toolCallMessage = delta.message as AIToolCallMessage;
@@ -680,12 +685,9 @@ export class Agent {
               content: toolCallResult,
             };
           }
-          // Infer again with a new request
-          break;
         }
-
         // This means AI finished its answer
-        if (
+        else if (
           delta.finish_reason === "stop" ||
           delta.finish_reason === "length" ||
           delta.finish_reason === "error"
@@ -702,10 +704,20 @@ export class Agent {
             role: "assistant",
             content: message.content,
           };
-          // Finish this AsyncGenerator
-          return;
+
+          // Finish this infer
+          break;
         }
       }
+
+      // Infer again if tool calls happened
+      if (isToolCalled) {
+        isToolCalled = false;
+        continue;
+      }
+
+      // Finish this generator
+      return;
     }
   }
 

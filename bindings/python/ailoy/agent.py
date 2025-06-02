@@ -445,6 +445,8 @@ class Agent:
         """  # noqa: E501
         self._messages.append(UserMessage(role="user", content=message))
 
+        is_tool_called = False
+
         while True:
             infer_args = {
                 "messages": [msg.model_dump() for msg in self._messages],
@@ -486,7 +488,7 @@ class Agent:
                 if delta.finish_reason is None:
                     output_msg = AIOutputTextMessage.model_validate(delta.message)
 
-                    # accumulate text messages to append in batch
+                    # Accumulate text messages to append in batch
                     if output_msg.reasoning:
                         reasoning_message += output_msg.content
                     else:
@@ -501,6 +503,7 @@ class Agent:
                     continue
 
                 if delta.finish_reason == "tool_calls":
+                    is_tool_called = True
                     _append_assistant_text_message()
 
                     tool_call_message = AIToolCallMessage.model_validate(delta.message)
@@ -513,8 +516,6 @@ class Agent:
                             role="assistant",
                             content=tool_call,
                         )
-
-                    tool_call_results: list[ToolCallResultMessage] = []
 
                     def run_tool(tool_call: ToolCall):
                         tool_ = next(
@@ -542,10 +543,7 @@ class Agent:
                             content=result_msg,
                         )
 
-                    # Run infer again with new messages
-                    break
-
-                if delta.finish_reason in ["stop", "length", "error"]:
+                elif delta.finish_reason in ["stop", "length", "error"]:
                     output_msg = AIOutputTextMessage.model_validate(delta.message)
 
                     output_text_message += output_msg.content
@@ -559,8 +557,16 @@ class Agent:
                         content=output_msg.content,
                     )
 
-                    # finish this Generator
-                    return
+                    # Finish this infer
+                    break
+
+            # Infer again if tool calls happened
+            if is_tool_called:
+                is_tool_called = False
+                continue
+
+            # Finish this generator
+            return
 
     def print(self, resp: AgentResponse):
         resp.print()

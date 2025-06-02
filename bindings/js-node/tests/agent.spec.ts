@@ -27,7 +27,7 @@ describe("Agent", async () => {
     agent.addToolsFromPreset("frankfurter");
 
     const query =
-      "I want to buy 100 U.S. Dollar with my Korean Won. How much do I need to take?";
+      "I want to buy 100 U.S. Dollar and 100 EUR with my Korean Won. How much do I need to take?";
     console.log(`Query: ${query}`);
 
     for await (const resp of agent.query(query)) {
