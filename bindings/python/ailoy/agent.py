@@ -422,7 +422,8 @@ class Agent:
         """
         if not self._component_state.valid:
             return
-        self._runtime.delete(self._component_state.name)
+        if self._runtime._client is not None:
+            self._runtime.delete(self._component_state.name)
         if len(self._messages) > 0 and self._messages[0].role == "system":
             self._messages = [self._messages[0]]
         else:
