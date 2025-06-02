@@ -10,4 +10,5 @@ dependencies = [
 ]
 
 [tool.uv.sources]
+# TODO(@khj809): change to next version (probably 0.0.2)
 ailoy-py = { path = "../../bindings/python", editable = true }
