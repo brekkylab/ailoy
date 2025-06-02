@@ -446,7 +446,7 @@ class Agent:
         self._messages.append(UserMessage(role="user", content=message))
 
         prev_resp_type = None
-        tool_calls = []
+        is_tool_called = False
 
         while True:
             infer_args = {
@@ -487,14 +487,47 @@ class Agent:
                 delta = MessageDelta.model_validate(result)
 
                 if delta.finish_reason == "tool_calls":
+                    is_tool_called = True
                     _append_assistant_text_message()
 
                     tool_call_message = AIToolCallMessage.model_validate(delta.message)
                     self._messages.append(tool_call_message)
-                    # these tool calls will be handled outside the loop
-                    tool_calls.extend(tool_call_message.tool_calls)
 
-                else:
+                    for tool_call in tool_call_message.tool_calls:
+                        yield AgentResponseToolCall(
+                            type="tool_call",
+                            end_of_turn=True,
+                            role="assistant",
+                            content=tool_call,
+                        )
+
+                    def run_tool(tool_call: ToolCall):
+                        tool_ = next(
+                            (t for t in self._tools if t.desc.name == tool_call.function.name),
+                            None,
+                        )
+                        if not tool_:
+                            raise RuntimeError("Tool not found")
+                        resp = tool_.call(**tool_call.function.arguments)
+                        return ToolCallResultMessage(
+                            role="tool",
+                            name=tool_call.function.name,
+                            tool_call_id=tool_call.id,
+                            content=json.dumps(resp),
+                        )
+
+                    tool_call_results = [run_tool(tc) for tc in tool_call_message.tool_calls]
+
+                    for result_msg in tool_call_results:
+                        self._messages.append(result_msg)
+                        yield AgentResponseToolCallResult(
+                            type="tool_call_result",
+                            end_of_turn=True,
+                            role="tool",
+                            content=result_msg,
+                        )
+
+                elif delta.finish_reason in ["stop", "length", "error"]:
                     output_msg = AIOutputTextMessage.model_validate(delta.message)
                     if output_msg.reasoning:
                         reasoning_message += output_msg.content
@@ -510,55 +543,15 @@ class Agent:
                     prev_resp_type = resp.type
                     yield resp
 
-                if delta.finish_reason in ["stop", "length", "error"]:
-                    _append_assistant_text_message()
-                    # Stop generating next tokens
+                    # Finish this infer
                     break
 
-            # Handle tool calls if exist
-            if len(tool_calls) > 0:
-
-                def run_tool(tool_call: ToolCall):
-                    tool_ = next(
-                        (t for t in self._tools if t.desc.name == tool_call.function.name),
-                        None,
-                    )
-                    if not tool_:
-                        raise RuntimeError("Tool not found")
-                    resp = tool_.call(**tool_call.function.arguments)
-                    return ToolCallResultMessage(
-                        role="tool",
-                        name=tool_call.function.name,
-                        tool_call_id=tool_call.id,
-                        content=json.dumps(resp),
-                    )
-
-                for tool_call in tool_calls:
-                    resp = AgentResponseToolCall(
-                        type="tool_call",
-                        is_type_switched=(prev_resp_type != "tool_call"),
-                        role="assistant",
-                        content=tool_call,
-                    )
-                    prev_resp_type = resp.type
-                    yield resp
-
-                    tool_call_result = run_tool(tool_call)
-                    self._messages.append(tool_call_result)
-                    resp = AgentResponseToolCallResult(
-                        type="tool_call_result",
-                        is_type_switched=(prev_resp_type != "tool_call_result"),
-                        role="tool",
-                        content=tool_call_result,
-                    )
-                    prev_resp_type = resp.type
-                    yield resp
-
-                tool_calls.clear()
-                # Run again with tool call results
+            # Infer again if tool calls happened
+            if is_tool_called:
+                is_tool_called = False
                 continue
 
-            # Exit the generator
+            # Finish this generator
             return
 
     def print(self, resp: AgentResponse):
