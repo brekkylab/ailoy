@@ -107,7 +107,7 @@ melt_reasoning(std::shared_ptr<const value_t> in,
                const std::string &eor_delimiter = "</think>\n\n");
 
 /**
-  Merge `text` in `content` field
+  Merge successive `text` to one data, in `content` or `reasoning`
 
   Before:
   ```
@@ -135,10 +135,39 @@ melt_reasoning(std::shared_ptr<const value_t> in,
   ]
   ```
  */
-std::shared_ptr<value_t> merge_content_text(std::shared_ptr<const value_t> in,
-                                            const std::string &delimiter = "");
+std::shared_ptr<value_t> merge_text_data(std::shared_ptr<const value_t> in,
+                                         const std::string &delimiter = "");
 
-std::shared_ptr<value_t> merge_content_json(std::shared_ptr<const value_t> in);
+/**
+Merge `json` in `tool_calls` field
+
+Before:
+```
+"role": "assistant",
+  "tool_calls": [
+  {
+    "type": "json",
+    "json": {"key1": "value1"}
+  },
+  {
+    "type": "json",
+    "json": {"key2": "value2"}
+  }
+]
+```
+
+After:
+```
+"role": "assistant",
+"tool_calls": [
+  {
+    "type": "json",
+    "json": [{"key1": "value1"}, {"key2": "value2"}]
+  }
+]
+```
+ */
+std::shared_ptr<value_t> merge_json_data(std::shared_ptr<const value_t> in);
 
 /**
    Melt `content` data to a single string
