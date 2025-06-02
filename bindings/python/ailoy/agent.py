@@ -494,12 +494,14 @@ class Agent:
                     self._messages.append(tool_call_message)
 
                     for tool_call in tool_call_message.tool_calls:
-                        yield AgentResponseToolCall(
+                        resp = AgentResponseToolCall(
                             type="tool_call",
-                            end_of_turn=True,
                             role="assistant",
+                            is_type_switched=(prev_resp_type != "tool_call"),
                             content=tool_call,
                         )
+                        prev_resp_type = resp.type
+                        yield resp
 
                     def run_tool(tool_call: ToolCall):
                         tool_ = next(
@@ -520,12 +522,14 @@ class Agent:
 
                     for result_msg in tool_call_results:
                         self._messages.append(result_msg)
-                        yield AgentResponseToolCallResult(
+                        resp = AgentResponseToolCallResult(
                             type="tool_call_result",
-                            end_of_turn=True,
                             role="tool",
+                            is_type_switched=(prev_resp_type != "tool_call_result"),
                             content=result_msg,
                         )
+                        prev_resp_type = resp.type
+                        yield resp
 
                     continue
 
