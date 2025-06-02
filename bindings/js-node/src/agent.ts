@@ -585,55 +585,53 @@ export class Agent {
           ignore_reasoning_messages: options?.ignoreReasoningMessages,
         }
       ) as AsyncIterable<MessageOutput>) {
-        // This measn AI generated something
-        if (resp.delta) {
-          if (resp.delta.reasoning) {
-            for (const reasoningData of resp.delta.reasoning) {
-              if (!assistantMessage.reasoning)
-                assistantMessage.reasoning = [reasoningData];
-              else assistantMessage.reasoning[0].text += reasoningData.text;
-              yield {
-                type: "reasoning",
-                endOfTurn: false,
-                role: "assistant",
-                content: reasoningData.text,
-              };
-            }
+        if (resp.delta.reasoning) {
+          for (const reasoningData of resp.delta.reasoning) {
+            if (!assistantMessage.reasoning)
+              assistantMessage.reasoning = [reasoningData];
+            else assistantMessage.reasoning[0].text += reasoningData.text;
+            yield {
+              type: "reasoning",
+              endOfTurn: false,
+              role: "assistant",
+              content: reasoningData.text,
+            };
           }
-          if (resp.delta.content) {
-            for (const contentData of resp.delta.content) {
-              if (!assistantMessage.content)
-                assistantMessage.content = [contentData];
-              else assistantMessage.content[0].text += contentData.text;
-              yield {
-                type: "output_text",
-                endOfTurn: false,
-                role: "assistant",
-                content: contentData.text,
-              };
-            }
+        }
+        if (resp.delta.content) {
+          for (const contentData of resp.delta.content) {
+            if (!assistantMessage.content)
+              assistantMessage.content = [contentData];
+            else assistantMessage.content[0].text += contentData.text;
+            yield {
+              type: "output_text",
+              endOfTurn: false,
+              role: "assistant",
+              content: contentData.text,
+            };
           }
-          if (resp.delta.tool_calls) {
-            for (const tool_call_data of resp.delta.tool_calls) {
-              if (!assistantMessage.content)
-                assistantMessage.tool_calls = [tool_call_data];
-              else assistantMessage.tool_calls?.push(tool_call_data);
-              yield {
-                type: "tool_call",
-                endOfTurn: false,
-                role: "assistant",
-                content: tool_call_data.function,
-              };
-            }
+        }
+        if (resp.delta.tool_calls) {
+          for (const tool_call_data of resp.delta.tool_calls) {
+            if (!assistantMessage.content)
+              assistantMessage.tool_calls = [tool_call_data];
+            else assistantMessage.tool_calls?.push(tool_call_data);
+            yield {
+              type: "tool_call",
+              endOfTurn: false,
+              role: "assistant",
+              content: tool_call_data.function,
+            };
           }
         }
 
         if (resp.finish_reason) {
-          // Finish this infer
           finish_reason = resp.finish_reason;
           break;
         }
       }
+      // Append output
+      this.messages.push(assistantMessage);
 
       // Call tools in parallel
       if (finish_reason == "tool_calls") {

@@ -757,6 +757,7 @@ create_tvm_language_model_v2_component(std::shared_ptr<const value_t> inputs) {
         if (current_token < 0) {
           if (finish_reason) {
             auto resp = create<map_t>();
+            resp->insert_or_assign("delta", create<map_t>());
             resp->insert_or_assign("finish_reason",
                                    create<string_t>(*finish_reason));
             return ok_output_t(resp, true);
