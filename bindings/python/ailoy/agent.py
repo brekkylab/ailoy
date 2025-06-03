@@ -16,7 +16,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 import jmespath
 import mcp
 import mcp.types as mcp_types
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 from rich.console import Console
 from rich.panel import Panel
 
@@ -583,19 +583,21 @@ class Agent:
 
         :param f: Function will be called when the tool invocation occured.
         :param desc: Tool description.
+
+        :raises ValueError: Docstring parsing is failed.
+        :raises ValidationError: Given or parsed description is not a valid `ToolDescription`.
         """
         tool_description = None
         if desc is not None:
-            try:
-                tool_description = ToolDescription.model_validate(desc)
-            except ValidationError:
-                pass
+            tool_description = ToolDescription.model_validate(desc)
 
         if tool_description is None:
             try:
-                tool_description = ToolDescription.model_validate(get_json_schema(f).get("function"))
+                json_schema = get_json_schema(f)
             except (TypeHintParsingException, DocstringParsingException) as e:
                 raise ValueError("Failed to parse docstring", e)
+
+            tool_description = ToolDescription.model_validate(json_schema.get("function", {}))
 
         self.add_tool(Tool(desc=tool_description, call_fn=f))
 
