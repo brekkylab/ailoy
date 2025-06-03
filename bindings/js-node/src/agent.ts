@@ -570,6 +570,9 @@ export class Agent {
       ignoreReasoningMessages?: boolean;
     }
   ): AsyncGenerator<AgentResponse> {
+    if (!this.componentState.valid)
+      throw Error(`Agent is not valid. Create one or define newly.`);
+
     if (!this.runtime.alive) throw Error(`Runtime is currently stopped.`);
 
     this.messages.push({ role: "user", content: message });

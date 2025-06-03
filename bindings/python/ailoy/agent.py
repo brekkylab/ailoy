@@ -447,6 +447,9 @@ class Agent:
         :param ignore_reasoning_messages: If True, reasoning steps are not included in the response stream. (default: False)
         :yield: AgentResponse output of the LLM inference or tool calls
         """  # noqa: E501
+        if not self._component_state.valid:
+            raise ValueError("Agent is not valid. Create one or define newly.")
+
         if not self._runtime.alive:
             raise ValueError("Runtime is currently stopped.")
 
