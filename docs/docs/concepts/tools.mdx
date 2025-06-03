@@ -165,8 +165,8 @@ const a_useful_function_impl = ({ arg0, arg1 }) => {
 
 const agent = await defineAgent(...);
 agent.addJSFunctionTool(
-  {...},      // Tool description
-  a_useful_function_impl
+  a_useful_function_impl,
+  {...}      // Tool description
 );
 ```
 </CodeTabs>
