@@ -1,12 +1,8 @@
-import asyncio
 import json
-import subprocess
-import threading
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Generator
-from concurrent.futures import Future
-from contextlib import AsyncExitStack
+from functools import partial
 from pathlib import Path
 from typing import (
     Any,
@@ -17,15 +13,13 @@ from typing import (
 )
 from urllib.parse import urlencode, urlparse, urlunparse
 
-import anyio
 import jmespath
-import mcp
-import mcp.types as mcp_types
 from pydantic import BaseModel, ConfigDict, Field
 from rich.console import Console
 from rich.panel import Panel
 
 from ailoy.ailoy_py import generate_uuid
+from ailoy.mcp import MCPServer, MCPTool, StdioServerParameters
 from ailoy.runtime import Runtime
 
 __all__ = ["Agent"]
@@ -370,6 +364,9 @@ class Agent:
         # Initialize tools
         self._tools: list[Tool] = []
 
+        # Initialize MCP servers
+        self._mcp_servers: list[MCPServer] = []
+
         # Define the component
         self.define(model_name, api_key=api_key, **attrs)
 
@@ -432,6 +429,8 @@ class Agent:
             self._messages = [self._messages[0]]
         else:
             self._messages = []
+        for mcp_server in self._mcp_servers:
+            mcp_server.cleanup()
         self._component_state.valid = False
 
     def query(
@@ -719,270 +718,53 @@ class Agent:
             else:
                 warnings.warn(f'Tool type "{tool_type}" is not supported. Skip adding tool "{tool_name}".')
 
-    def add_mcp_tool(self, params: mcp.StdioServerParameters, tool: mcp_types.Tool):
+    def add_tools_from_mcp_server(
+        self, name: str, params: StdioServerParameters, tools_to_add: Optional[list[str]] = None
+    ):
         """
-        Adds a tool from an MCP (Model Context Protocol) server.
+        Create a MCP server and register its tools to agent.
 
-        :param params: Parameters for connecting to the MCP stdio server.
-        :param tool: Tool metadata as defined by MCP.
-        :returns: True if the tool was successfully added.
-        """
-        from mcp.client.stdio import stdio_client
-
-        def call(**inputs: dict[str, Any]) -> Any:
-            async def _inner():
-                async with stdio_client(params, errlog=subprocess.STDOUT) as streams:
-                    async with mcp.ClientSession(*streams) as session:
-                        await session.initialize()
-
-                        result = await session.call_tool(tool.name, inputs)
-                        contents: list[str] = []
-                        for item in result.content:
-                            if isinstance(item, mcp_types.TextContent):
-                                contents.append(item.text)
-                            elif isinstance(item, mcp_types.ImageContent):
-                                contents.append(item.data)
-                            elif isinstance(item, mcp_types.EmbeddedResource):
-                                if isinstance(item.resource, mcp_types.TextResourceContents):
-                                    contents.append(item.resource.text)
-                                else:
-                                    contents.append(item.resource.blob)
-
-                        return contents
-
-            return run_async(_inner())
-
-        desc = ToolDescription(name=tool.name, description=tool.description, parameters=tool.inputSchema)
-        return self.add_tool(Tool(desc=desc, call_fn=call))
-
-    def add_tools_from_mcp_server(self, params: mcp.StdioServerParameters, tools_to_add: Optional[list[str]] = None):
-        """
-        Fetches tools from an MCP stdio server and registers them with the agent.
-
+        :param name: The unique name of the MCP server.
+                     If there's already a MCP server with the same name, it raises RuntimeError.
         :param params: Parameters for connecting to the MCP stdio server.
         :param tools_to_add: Optional list of tool names to add. If None, all tools are added.
-        :returns: list of all tools returned by the server.
         """
-        from mcp.client.stdio import stdio_client
+        if any([s.name == name for s in self._mcp_servers]):
+            raise RuntimeError(f"MCP server with name '{name}' is already registered")
 
-        async def _inner():
-            async with stdio_client(params, errlog=subprocess.STDOUT) as streams:
-                async with mcp.ClientSession(*streams) as session:
-                    await session.initialize()
-                    resp = await session.list_tools()
-                    for tool in resp.tools:
-                        if tools_to_add is None or tool.name in tools_to_add:
-                            self.add_mcp_tool(params, tool)
-                    return resp.tools
+        # Create and register MCP server
+        mcp_server = MCPServer(name, params)
+        self._mcp_servers.append(mcp_server)
 
-        tools = run_async(_inner())
-        return tools
+        # Register tools
+        for tool in mcp_server.list_tools():
+            # Skip if this tool is not in the whitelist
+            if tools_to_add is not None and tool.name not in tools_to_add:
+                continue
 
+            desc = ToolDescription(
+                name=f"{name}/{tool.name}", description=tool.description, parameters=tool.inputSchema
+            )
 
-# class MCPServer:
-#     def __init__(self, params: mcp.StdioServerParameters, tools_to_use: Optional[list[str]] = None):
-#         self.params = params
-#         self.tools_to_use = tools_to_use
+            def call(tool: MCPTool, **inputs: dict[str, Any]) -> list[str]:
+                return mcp_server.call_tool(tool, inputs)
 
-#         self._session: mcp.ClientSession | None = None
-#         self._cleanup_lock: anyio.Lock = anyio.Lock()
-#         self._exit_stack: AsyncExitStack = AsyncExitStack()
+            self.add_tool(Tool(desc=desc, call_fn=partial(call, tool)))
 
-#         self._loop = asyncio.new_event_loop()
-#         self._thread = threading.Thread(target=self._start_loop, daemon=True)
-#         self._thread.start()
-#         self._ready = threading.Event()
+    def remove_mcp_server(self, name: str):
+        """
+        Removes the MCP server and its tools from the agent, with terminating the MCP server process.
 
-#         # Wait for server to initialize
-#         self._run(self._initialize)
-#         self._ready.set()
+        :param name: The unique name of the MCP server.
+                     If there's no MCP server matches the name, it raises RuntimeError.
+        """
+        if all([s.name != name for s in self._mcp_servers]):
+            raise RuntimeError(f"MCP server with name '{name}' does not exist")
 
-#     def _start_loop(self):
-#         asyncio.set_event_loop(self._loop)
-#         self._loop.run_forever()
+        # Remove the MCP server
+        mcp_server = next(filter(lambda s: s.name == name, self._mcp_servers))
+        self._mcp_servers.remove(mcp_server)
+        mcp_server.cleanup()
 
-#     def _run(self, coro_func):
-#         """Runs an async function from the main thread and returns its result."""
-#         future = asyncio.run_coroutine_threadsafe(coro_func(), self._loop)
-#         return future.result()
-
-#     async def _initialize(self):
-#         from mcp.client.stdio import stdio_client
-
-#         try:
-#             stdio_transport = await self._exit_stack.enter_async_context(stdio_client(self.params))
-#             read, write = stdio_transport
-#             session = await self._exit_stack.enter_async_context(mcp.ClientSession(read, write))
-#             await session.initialize()
-#             self._session = session
-#         except Exception:
-#             await self._cleanup()
-#             raise
-
-#     def list_tools(self):
-#         return self._run(self._list_tools)
-
-#     async def _list_tools(self):
-#         if not self._session:
-#             raise RuntimeError("Server not initialized")
-
-#         resp = await self._session.list_tools()
-#         return [tool for tool in resp.tools if self.tools_to_use is None or tool.name in self.tools_to_use]
-
-#     def call_tool(self, tool: mcp.Tool, arguments: dict[str, Any]):
-#         return self._run(lambda: self._call_tool(tool, arguments))
-
-#     async def _call_tool(self, tool: mcp.Tool, arguments: dict[str, Any]):
-#         if not self._session:
-#             raise RuntimeError("Server not initialized")
-
-#         result = await self._session.call_tool(tool.name, arguments)
-#         contents: list[str] = []
-
-#         for item in result.content:
-#             if isinstance(item, mcp_types.TextContent):
-#                 try:
-#                     content = json.loads(item.text)
-#                     contents.append(json.dumps(content))
-#                 except json.JSONDecodeError:
-#                     contents.append(item.text)
-#             elif isinstance(item, mcp_types.ImageContent):
-#                 contents.append(item.data)
-#             elif isinstance(item, mcp_types.EmbeddedResource):
-#                 resource = item.resource
-#                 contents.append(
-#                     resource.text if isinstance(resource, mcp_types.TextResourceContents) else resource.blob
-#                 )
-
-#         return contents
-
-#     def cleanup(self):
-#         self._run(self._cleanup)
-#         self._loop.call_soon_threadsafe(self._loop.stop)
-#         self._thread.join()
-
-#     async def _cleanup(self):
-#         async with self._cleanup_lock:
-#             try:
-#                 await self._exit_stack.aclose()
-#                 self._session = None
-#             except Exception as e:
-#                 print(f"Error during cleanup of server: {e}")
-
-
-class MCPServer:
-    def __init__(self, params: mcp.StdioServerParameters, tools_to_use: Optional[list[str]] = None):
-        self.params = params
-        self.tools_to_use = tools_to_use
-
-        self._session: mcp.ClientSession | None = None
-        self._cleanup_lock: anyio.Lock = anyio.Lock()
-        self._exit_stack: AsyncExitStack = AsyncExitStack()
-
-        self._loop = asyncio.new_event_loop()
-        self._queue = asyncio.Queue()
-        self._thread = threading.Thread(target=self._start_loop, daemon=True)
-        self._thread.start()
-
-        self._ready = threading.Event()
-        self._stop = threading.Event()
-
-    def _start_loop(self):
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._server_task())
-
-    async def _server_task(self):
-        try:
-            await self._initialize()
-            self._ready.set()
-
-            while not self._stop.is_set():
-                try:
-                    cmd, fut = await asyncio.wait_for(self._queue.get(), timeout=0.1)
-                except asyncio.TimeoutError:
-                    continue
-
-                async def handle_cmd():
-                    try:
-                        result = await cmd()
-                        fut.set_result(result)
-                    except Exception as e:
-                        fut.set_exception(e)
-
-                asyncio.create_task(handle_cmd())
-        finally:
-            await self._cleanup()
-
-    def _run(self, coro):
-        self._ready.wait()
-        fut = Future()
-        self._loop.call_soon_threadsafe(lambda: self._queue.put_nowait((coro, fut)))
-        return fut.result()
-
-    async def _initialize(self):
-        from mcp.client.stdio import stdio_client
-
-        try:
-            stdio_transport = await self._exit_stack.enter_async_context(stdio_client(self.params))
-            read, write = stdio_transport
-            session = await self._exit_stack.enter_async_context(mcp.ClientSession(read, write))
-            await session.initialize()
-            self._session = session
-        except Exception:
-            await self._cleanup()
-            raise
-
-    def list_tools(self):
-        return self._run(lambda: self._list_tools())
-
-    async def _list_tools(self):
-        if not self._session:
-            raise RuntimeError("Server not initialized")
-
-        resp = await self._session.list_tools()
-        tools = []
-        for tool in resp.tools:
-            if self.tools_to_use is None or tool.name in self.tools_to_use:
-                tools.append(tool)
-        return tools
-
-    def call_tool(self, tool: mcp.Tool, arguments: dict[str, Any]):
-        return self._run(lambda: self._call_tool(tool, arguments))
-
-    async def _call_tool(self, tool: mcp.Tool, arguments: dict[str, Any]):
-        if not self._session:
-            raise RuntimeError("Server not initialized")
-
-        try:
-            result = await self._session.call_tool(tool.name, arguments)
-            contents: list[str] = []
-            for item in result.content:
-                if isinstance(item, mcp_types.TextContent):
-                    try:
-                        content = json.loads(item.text)
-                        contents.append(json.dumps(content))
-                    except json.JSONDecodeError:
-                        contents.append(item.text)
-                elif isinstance(item, mcp_types.ImageContent):
-                    contents.append(item.data)
-                elif isinstance(item, mcp_types.EmbeddedResource):
-                    if isinstance(item.resource, mcp_types.TextResourceContents):
-                        contents.append(item.resource.text)
-                    else:
-                        contents.append(item.resource.blob)
-            return contents
-        except Exception as e:
-            print(f"Error executing tool: {e}")
-            raise
-
-    async def _cleanup(self):
-        async with self._cleanup_lock:
-            try:
-                await self._exit_stack.aclose()
-                self._session = None
-            except Exception as e:
-                print(f"Error during cleanup of server: {e}")
-
-    def cleanup(self):
-        self._stop.set()
-        self._thread.join()
+        # Remove tools registered from the MCP server
+        self._tools = list(filter(lambda t: not t.desc.name.startswith(f"{mcp_server.name}/"), self._tools))
