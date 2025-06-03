@@ -388,8 +388,8 @@ class Agent:
         if self._component_state.valid:
             return
 
-        if self._runtime._client is None:
-            raise ValueError("Runtime is not valid.")
+        if not self._runtime.alive:
+            raise ValueError("Runtime is currently stopped.")
 
         if model_name not in model_descriptions:
             raise ValueError(f"Model `{model_name}` not supported")
@@ -425,7 +425,7 @@ class Agent:
         """
         if not self._component_state.valid:
             return
-        if self._runtime._client is not None:
+        if self._runtime.alive:
             self._runtime.delete(self._component_state.name)
         if len(self._messages) > 0 and self._messages[0].role == "system":
             self._messages = [self._messages[0]]
@@ -447,8 +447,8 @@ class Agent:
         :param ignore_reasoning_messages: If True, reasoning steps are not included in the response stream. (default: False)
         :yield: AgentResponse output of the LLM inference or tool calls
         """  # noqa: E501
-        if self._runtime._client is None:
-            raise ValueError("Runtime is not valid.")
+        if not self._runtime.alive:
+            raise ValueError("Runtime is currently stopped.")
 
         self._messages.append(UserMessage(role="user", content=message))
 

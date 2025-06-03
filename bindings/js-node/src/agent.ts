@@ -279,6 +279,8 @@ export class Agent {
     // Skip if the component already exists
     if (this.componentState.valid) return;
 
+    if (!this.runtime.alive) throw Error(`Runtime is currently stopped.`);
+
     const modelDesc = modelDescriptions[modelName];
 
     // Add model name into attrs
@@ -311,8 +313,10 @@ export class Agent {
     // Skip if the component not exists
     if (!this.componentState.valid) return;
 
-    const result = await this.runtime.delete(this.componentState.name);
-    if (!result) throw Error(`component delete failed`);
+    if (!this.runtime.alive) {
+      const result = await this.runtime.delete(this.componentState.name);
+      if (!result) throw Error(`component delete failed`);
+    }
 
     // Clear messages
     if (this.messages.length > 0 && this.messages[0].role === "system")
@@ -566,6 +570,8 @@ export class Agent {
       ignoreReasoningMessages?: boolean;
     }
   ): AsyncGenerator<AgentResponse> {
+    if (!this.runtime.alive) throw Error(`Runtime is currently stopped.`);
+
     this.messages.push({ role: "user", content: message });
 
     let isToolCalled = false;
