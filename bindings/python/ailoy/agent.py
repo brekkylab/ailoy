@@ -458,8 +458,8 @@ class Agent:
 
         while True:
             infer_args = {
-                "messages": [msg.model_dump() for msg in self._messages],
-                "tools": [{"type": "function", "function": t.desc.model_dump()} for t in self._tools],
+                "messages": [msg.model_dump(exclude_none=True) for msg in self._messages],
+                "tools": [{"type": "function", "function": t.desc.model_dump(exclude_none=True)} for t in self._tools],
             }
             if enable_reasoning:
                 infer_args["enable_reasoning"] = enable_reasoning
@@ -502,7 +502,6 @@ class Agent:
                         prev_resp_type = resp.type
                         yield resp
                 if msg.delta.tool_calls:
-                    print(f"Tool call, finish_reason: {msg.finish_reason}")
                     for v in msg.delta.tool_calls:
                         if not assistant_tool_calls:
                             assistant_tool_calls = [v]
