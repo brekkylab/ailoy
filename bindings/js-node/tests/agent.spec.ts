@@ -85,6 +85,7 @@ describe("Agent", async () => {
   it("Tool Call: Github MCP tools", async () => {
     const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
     await agent.addToolsFromMcpServer(
+      "github",
       {
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-github"],

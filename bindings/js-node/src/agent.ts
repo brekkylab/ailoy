@@ -4,6 +4,7 @@ import boxen from "boxen";
 import chalk from "chalk";
 import { search } from "jmespath";
 
+import MCPServer from "./mcp";
 import { Runtime, generateUUID } from "./runtime";
 
 /** Types for OpenAI API-compatible data structures */
@@ -238,6 +239,8 @@ export class Agent {
 
   private tools: Tool[];
 
+  private mcpServers: MCPServer[];
+
   private messages: Message[];
 
   constructor(
@@ -264,6 +267,9 @@ export class Agent {
 
     // Initialize tools
     this.tools = [];
+
+    // Initialize mcpServers
+    this.mcpServers = [];
   }
 
   /**
@@ -318,6 +324,12 @@ export class Agent {
     if (this.messages.length > 0 && this.messages[0].role === "system")
       this.messages = [this.messages[0]];
     else this.messages = [];
+
+    // Cleanup MCP servers
+    for (const mcpServer of this.mcpServers) {
+      await mcpServer.cleanup();
+    }
+    this.mcpServers = [];
 
     // Mark component as deleted
     this.componentState.valid = false;
@@ -476,70 +488,28 @@ export class Agent {
     return true;
   }
 
-  /** Adds a tool from an MCP (Model Context Protocol) server */
-  async addMcpTool(
+  /** Create a MCP server and register its tools to agent. */
+  async addToolsFromMcpServer(
+    /** The unique name of the MCP server. If there's already a MCP server with the same name, it throws Error. */
+    name: string,
     /** Parameters for connecting to the MCP stdio server */
     params: MCPClientStdio.StdioServerParameters,
-    /** Tool metadata as defined by MCP */
-    tool: Awaited<ReturnType<MCPClient.Client["listTools"]>>["tools"][number]
-  ) {
-    const call = async (inputs: any) => {
-      const transport = new MCPClientStdio.StdioClientTransport(params);
-      const client = new MCPClient.Client({
-        name: "dummy-client",
-        version: "dummy-version",
-      });
-      await client.connect(transport);
-
-      const result = await client.callTool({
-        name: tool.name,
-        arguments: inputs,
-      });
-      const content = result.content as Array<any>;
-      const parsedContent = content.map((item) => {
-        if (item.type === "text") {
-          // Text Content
-          return item.text;
-        } else if (item.type === "image") {
-          // Image Content
-          return item.data;
-        } else if (item.type === "resource") {
-          // Resource Content
-          if (item.resource.text !== undefined) {
-            // Text Resource
-            return item.resource.text;
-          } else {
-            // Blob Resource
-            return item.resource.blob;
-          }
-        }
-      });
-      await client.close();
-
-      return parsedContent;
-    };
-    const desc: ToolDescription = {
-      name: tool.name,
-      description: tool.description || "",
-      parameters: tool.inputSchema as ToolDescription["parameters"],
-    };
-    return this.addTool({ desc, call });
-  }
-
-  async addToolsFromMcpServer(
-    params: MCPClientStdio.StdioServerParameters,
     options?: {
+      /** Optional list of tool names to add. If not specified, all tools are added. */
       toolsToAdd?: Array<string>;
     }
   ) {
-    const transport = new MCPClientStdio.StdioClientTransport(params);
-    const client = new MCPClient.Client({
-      name: "dummy-client",
-      version: "dummy-version",
-    });
-    await client.connect(transport);
+    if (this.mcpServers.some((s) => s.name === name)) {
+      throw Error(`MCP server with name "${name}" is already registered`);
+    }
 
-    const { tools } = await client.listTools();
+    // Create and register MCP server
+    const mcpServer = new MCPServer(name, params);
+    await mcpServer.start();
+    this.mcpServers.push(mcpServer);
+
+    // Register tools
+    const tools = await mcpServer.listTools();
     for (const tool of tools) {
       // If `toolsToAdd` options is provided and this tool name does not belong to them, ignore it
       if (
@@ -547,9 +517,35 @@ export class Agent {
         !options?.toolsToAdd.includes(tool.name)
       )
         continue;
-      await this.addMcpTool(params, tool);
+
+      const desc: ToolDescription = {
+        name: `${name}/${tool.name}`,
+        description: tool.description || "",
+        parameters: tool.inputSchema as ToolDescription["parameters"],
+      };
+      this.addTool({
+        desc,
+        call: async (inputs) => await mcpServer.callTool(tool, inputs),
+      });
     }
-    await client.close();
+  }
+
+  /** Removes the MCP server and its tools from the agent, with terminating the MCP server process. */
+  async removeMcpServer(
+    /** The unique name of the MCP server. If there's no MCP server matches the name, it throws Error. */
+    name: string
+  ) {
+    if (this.mcpServers.every((s) => s.name !== name)) {
+      throw Error(`MCP server with name "${name}" does not exist`);
+    }
+
+    // Remove the MCP server
+    const idx = this.mcpServers.findIndex((s) => s.name === name)!;
+    await this.mcpServers[idx].cleanup();
+    this.mcpServers.splice(idx, 1);
+
+    // Remove tools registered from the MCP server
+    this.tools = this.tools.filter((t) => !t.desc.name.startsWith(`${name}/`));
   }
 
   getAvailableTools(): Array<ToolDescription> {
