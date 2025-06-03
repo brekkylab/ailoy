@@ -12,9 +12,8 @@ describe("Agent", async () => {
     agent.addToolsFromPreset("calculator");
 
     const query = "Please calculate this formula: floor(ln(exp(e))+cos(2*pi))";
-    process.stdout.write(`\nQuery: ${query}`);
+    process.stdout.write(`Query: ${query}`);
 
-    process.stdout.write(`\nAssistant: `);
     for await (const resp of agent.query(query)) {
       agent.print(resp);
     }

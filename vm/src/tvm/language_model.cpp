@@ -692,23 +692,27 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
 
         // Get reasoning (optional)
         bool enable_reasoning = false;
-        if (input_map->contains("enable_reasoning"))
+        if (input_map->contains("enable_reasoning") &&
+            !input_map->at("enable_reasoning")->is_type_of<null_t>())
           enable_reasoning = *input_map->at<bool_t>("enable_reasoning");
 
         // Get ignore_reasoning (optional)
         bool ignore_reasoning_messages = false;
-        if (input_map->contains("ignore_reasoning_messages"))
+        if (input_map->contains("ignore_reasoning_messages") &&
+            !input_map->at("ignore_reasoning_messages")->is_type_of<null_t>())
           ignore_reasoning_messages =
               *input_map->at<bool_t>("ignore_reasoning_messages");
 
         // Get temperature (optional)
         model->config.temperature = model->get_default_config().temperature;
-        if (input_map->contains("temperature"))
+        if (input_map->contains("temperature") &&
+            !input_map->at("temperature")->is_type_of<null_t>())
           model->config.temperature = *input_map->at<double_t>("temperature");
 
         // Get top-p (optional)
         model->config.top_p = model->get_default_config().top_p;
-        if (input_map->contains("top_p"))
+        if (input_map->contains("top_p") &&
+            !input_map->at("top_p")->is_type_of<null_t>())
           model->config.top_p = *input_map->at<double_t>("top_p");
 
         // Apply chat template on messages
