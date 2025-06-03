@@ -1,0 +1,14 @@
+[project]
+name = "ailoy-gradio-chatbot-example"
+version = "0.1.0"
+description = "Ailoy + Gradio integration example"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "ailoy-py",
+    "gradio>=5.31.0",
+]
+
+[tool.uv.sources]
+# TODO(@khj809): change to next version (probably 0.0.2)
+ailoy-py = { path = "../../bindings/python", editable = true }

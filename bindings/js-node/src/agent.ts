@@ -125,7 +125,7 @@ export interface AgentResponseToolResult {
 export interface AgentResponseError {
   type: "error";
   role: "assistant";
-  isTypeSwitched: true;
+  isTypeSwitched: boolean;
   content: string;
 }
 export type AgentResponse =
@@ -330,10 +330,10 @@ export class Agent {
 
   /** Adds a Javascript function as a tool using callable */
   addJSFunctionTool(
-    /** Tool descriotion */
-    desc: ToolDescription,
     /** Function will be called when the tool invocation occured */
-    f: (input: any) => any
+    f: (input: any) => any,
+    /** Tool descriotion */
+    desc: ToolDescription
   ): boolean {
     return this.addTool({ desc, call: f });
   }
@@ -627,7 +627,11 @@ export class Agent {
               isTypeSwitched: true,
               content: tool_call_data.function,
             };
+            prevRespType = resp.type;
+            yield resp;
           }
+
+          continue;
         }
 
         if (result.finish_reason) {
