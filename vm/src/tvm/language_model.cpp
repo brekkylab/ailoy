@@ -1,4 +1,4 @@
-#include "language_model_v2.hpp"
+#include "language_model.hpp"
 
 #include <random>
 
@@ -190,8 +190,8 @@ tvm_language_model_t::tvm_language_model_t(const std::string &model,
         utils::LoadBytesFromFile(model_->get_model_path() / "tokenizer.json");
 
     // 3. Create tokenizer info
-    tokenizer_info_ = create<tokenizer_info_t>(std::move(
-        xgrammar::TokenizerInfo::FromHuggingFace(vocabs, backend_str)));
+    tokenizer_info_ =
+        create<tokenizer_info_t>(std::move(xgrammar::TokenizerInfo(vocabs)));
   }
 
   // Add default modes
@@ -391,7 +391,7 @@ int32_t tvm_language_model_t::decode(int32_t last_token) {
         {bitmask_len}, I32, DLDevice{.device_type = kDLCPU, .device_id = 0});
 
     // Apply matcher
-    matcher.GetNextTokenBitmask(&bitmask_cpu.ToDLPack()->dl_tensor);
+    matcher.FillNextTokenBitmask(&bitmask_cpu.ToDLPack()->dl_tensor);
 
     // Copy bitmask to GPU
     NDArray bitmask = NDArray::Empty({bitmask_len}, I32, model_->get_device());
@@ -495,11 +495,9 @@ tvm_language_model_t::get_current_grammar_matcher() {
 void tvm_language_model_t::set_builtin_grammar(
     const std::string &mode_name, const std::string &grammar_type) {
   if (grammar_type == "json") {
-    auto grammar = xgrammar::BuiltinGrammar::JSON();
-    auto compiled_grammar =
-        xgrammar::CompiledGrammar(grammar, tokenizer_info_->inner);
-    stream_modes_.at(mode_name).grammar =
-        create<grammar_t>(std::move(compiled_grammar));
+    auto grammar = xgrammar::GrammarCompiler(tokenizer_info_->inner)
+                       .CompileBuiltinJSONGrammar();
+    stream_modes_.at(mode_name).grammar = create<grammar_t>(std::move(grammar));
   } else {
     throw exception("Unknown grammer type");
   }
@@ -507,26 +505,23 @@ void tvm_language_model_t::set_builtin_grammar(
 
 void tvm_language_model_t::set_json_schema_grammar(
     const std::string &mode_name, const std::string &json_schema) {
-  auto grammar = xgrammar::BuiltinGrammar::JSONSchema(json_schema);
-  auto compiled_grammar =
-      xgrammar::CompiledGrammar(grammar, tokenizer_info_->inner);
-  stream_modes_.at(mode_name).grammar =
-      create<grammar_t>(std::move(compiled_grammar));
+  auto grammar = xgrammar::GrammarCompiler(tokenizer_info_->inner)
+                     .CompileJSONSchema(json_schema);
+  stream_modes_.at(mode_name).grammar = create<grammar_t>(std::move(grammar));
 }
 
 void tvm_language_model_t::set_regex_grammar(const std::string &mode_name,
                                              const std::string &regex) {
-  return set_ebnf_grammar(mode_name,
-                          xgrammar::BuiltinGrammar::_RegexToEBNF(regex));
+  auto grammar =
+      xgrammar::GrammarCompiler(tokenizer_info_->inner).CompileRegex(regex);
+  stream_modes_.at(mode_name).grammar = create<grammar_t>(std::move(grammar));
 }
 
 void tvm_language_model_t::set_ebnf_grammar(const std::string &mode_name,
                                             const std::string &ebnf) {
-  auto grammar = xgrammar::BNFGrammar(ebnf);
-  auto compiled_grammar =
-      xgrammar::CompiledGrammar(grammar, tokenizer_info_->inner);
-  stream_modes_.at(mode_name).grammar =
-      create<grammar_t>(std::move(compiled_grammar));
+  auto grammar = xgrammar::GrammarCompiler(tokenizer_info_->inner)
+                     .CompileGrammar(xgrammar::Grammar::FromEBNF(ebnf));
+  stream_modes_.at(mode_name).grammar = create<grammar_t>(std::move(grammar));
 }
 
 void tvm_language_model_t::reset_grammar(const std::string &mode_name) {
@@ -593,7 +588,7 @@ _validate_language_model_input(const std::string &context,
  * Create component for tvm_language_model
  */
 component_or_error_t
-create_tvm_language_model_v2_component(std::shared_ptr<const value_t> inputs) {
+create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
   if (!inputs->is_type_of<map_t>())
     return error_output_t(type_error("TVM Language Model: create", "inputs",
                                      "map_t", inputs->get_type()));

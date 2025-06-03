@@ -1,9 +1,9 @@
 include(FetchContent)
 
 file(GLOB_RECURSE AILOY_VM_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
-if(AILOY_WITH_MLC_LLM)
-    file(GLOB_RECURSE AILOY_VM_MLC_LLM_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/mlc_llm/*.cpp)
-    list(APPEND AILOY_VM_SRCS ${AILOY_VM_MLC_LLM_SRCS})
+if(AILOY_WITH_TVM)
+    file(GLOB_RECURSE AILOY_VM_TVM_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/tvm/*.cpp)
+    list(APPEND AILOY_VM_SRCS ${AILOY_VM_TVM_SRCS})
 endif()
 if(AILOY_WITH_FAISS)
     file(GLOB_RECURSE AILOY_VM_FAISS_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/faiss/*.cpp)
@@ -64,26 +64,35 @@ target_link_libraries(ailoy_vm_obj PUBLIC tinyexpr)
 # magic_enum
 target_link_libraries(ailoy_vm_obj PRIVATE magic_enum)
 
-# mlc-llm
-if(AILOY_WITH_MLC_LLM)
-    if(MLC_LLM_ROOT)
-        if(NOT DEFINED MLC_LLM_SOURCE_DIR)
-            set(MLC_LLM_SOURCE_DIR ${MLC_LLM_ROOT})
+# tokenizers-cpp
+FetchContent_Declare(
+    tokenizers-cpp
+    GIT_REPOSITORY https://github.com/mlc-ai/tokenizers-cpp.git
+    GIT_TAG 4fbe996658ddd003b88e1650d799b351fe83b2d6
+    EXCLUDE_FROM_ALL
+)
+if(NODE)
+    set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
+endif()
+FetchContent_MakeAvailable(tokenizers-cpp)
+target_link_libraries(ailoy_vm_obj PRIVATE tokenizers_c tokenizers_cpp)
+
+# tvm
+if(AILOY_WITH_TVM)
+    if(TVM_ROOT)
+        if(NOT DEFINED TVM_SOURCE_DIR)
+            set(TVM_SOURCE_DIR ${TVM_ROOT})
         endif()
-        if(NOT DEFINED MLC_LLM_BINARY_DIR)
-            set(MLC_LLM_BINARY_DIR ${MLC_LLM_ROOT}/build)
+        if(NOT DEFINED TVM_BINARY_DIR)
+            set(TVM_BINARY_DIR ${TVM_ROOT}/build)
         endif()
     else()
         FetchContent_Declare(
-            mlc-llm
-            GIT_REPOSITORY https://github.com/brekkylab/mlc-llm.git
-            GIT_TAG 24b0b72296d64c3a5e4ce5f2efaabfda51e1a8b8
+            tvm
+            GIT_REPOSITORY https://github.com/brekkylab/relax.git
+            GIT_TAG dcda2cfd38a8183990d27a0ec6fbeecbb74a46b4
             EXCLUDE_FROM_ALL
         )
-        if(NODE)
-            set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
-        endif()
-
         if(APPLE)
             set(USE_METAL ON)
             target_compile_definitions(ailoy_vm_obj PUBLIC USE_METAL=1)
@@ -98,33 +107,17 @@ if(AILOY_WITH_MLC_LLM)
         endif()
         set(BUILD_DUMMY_LIBTVM ON)
         set(USE_LIBBACTRACE OFF)
-        FetchContent_MakeAvailable(mlc-llm)
-        set(MLC_LLM_SOURCE_DIR ${mlc-llm_SOURCE_DIR})
-        set(MLC_LLM_BINARY_DIR ${mlc-llm_BINARY_DIR})
-    endif()
-    if(MSVC)
-        set_target_properties(mlc_llm PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-        set_target_properties(mlc_llm_static PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+        FetchContent_MakeAvailable(tvm)
+        set(TVM_SOURCE_DIR ${tvm_SOURCE_DIR})
+        set(TVM_BINARY_DIR ${tvm_BINARY_DIR})
     endif()
     target_include_directories(ailoy_vm_obj PUBLIC
-        ${MLC_LLM_SOURCE_DIR}/3rdparty/tvm/3rdparty/dmlc-core/include
-        ${MLC_LLM_SOURCE_DIR}/3rdparty/tvm/3rdparty/dlpack/include
-        ${MLC_LLM_SOURCE_DIR}/3rdparty/tvm/3rdparty/picojson
-        ${MLC_LLM_SOURCE_DIR}/3rdparty/tvm/include
-        ${MLC_LLM_SOURCE_DIR}/3rdparty/tokenizers-cpp/include
-        ${MLC_LLM_SOURCE_DIR}/3rdparty/xgrammar/include
-        ${MLC_LLM_SOURCE_DIR}/cpp
+        ${TVM_SOURCE_DIR}/3rdparty/dmlc-core/include
+        ${TVM_SOURCE_DIR}/include
     )
-    target_link_directories(ailoy_vm_obj PUBLIC
-        ${MLC_LLM_BINARY_DIR}
-        ${MLC_LLM_BINARY_DIR}/tvm
-    )
-    target_link_libraries(ailoy_vm_obj PUBLIC
-        tvm_runtime
-        mlc_llm_static
-        tokenizers_c
-        tokenizers_cpp
-    )
+    target_link_libraries(tvm_runtime PRIVATE dlpack)
+    target_link_directories(ailoy_vm_obj PUBLIC ${TVM_BINARY_DIR})
+    target_link_libraries(ailoy_vm_obj PRIVATE tvm_runtime)
     target_compile_definitions(ailoy_vm_obj PUBLIC DMLC_USE_LOGGING_LIBRARY=<tvm/runtime/logging.h>)
 endif()
 
@@ -157,21 +150,21 @@ if(AILOY_WITH_FAISS)
     target_link_libraries(ailoy_vm_obj PUBLIC faiss)
 endif()
 
-# # xgrammar
-# FetchContent_Declare(
-#     xgrammar
-#     URL https://github.com/mlc-ai/xgrammar/archive/refs/tags/v0.1.19.tar.gz
-#     EXCLUDE_FROM_ALL
-# )
-# # Since xgrammar overrides settings via a config file, calling `set` in here has no effect.
-# # Instead, create a `config.cmake` file to set the configuration.
-# if(NOT EXISTS "${CMAKE_BINARY_DIR}/config.cmake")
-#   file(WRITE "${CMAKE_BINARY_DIR}/config.cmake" "")
-# endif()
-# file(APPEND "${CMAKE_BINARY_DIR}/config.cmake" "set(XGRAMMAR_BUILD_PYTHON_BINDINGS OFF)\n")
-# FetchContent_MakeAvailable(xgrammar)
-# target_link_libraries(xgrammar PRIVATE dlpack)
-# target_link_libraries(ailoy_vm_obj PRIVATE xgrammar)
+# xgrammar
+FetchContent_Declare(
+    xgrammar
+    URL https://github.com/mlc-ai/xgrammar/archive/refs/tags/v0.1.19.tar.gz
+    EXCLUDE_FROM_ALL
+)
+# Since xgrammar overrides settings via a config file, calling `set` in here has no effect.
+# Instead, create a `config.cmake` file to set the configuration.
+if(NOT EXISTS "${CMAKE_BINARY_DIR}/config.cmake")
+  file(WRITE "${CMAKE_BINARY_DIR}/config.cmake" "")
+endif()
+file(APPEND "${CMAKE_BINARY_DIR}/config.cmake" "set(XGRAMMAR_BUILD_PYTHON_BINDINGS OFF)\n")
+FetchContent_MakeAvailable(xgrammar)
+target_link_libraries(xgrammar PRIVATE dlpack)
+target_link_libraries(ailoy_vm_obj PRIVATE xgrammar)
 
 if(AILOY_WITH_TEST)
     add_executable(test_debug_module ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_debug_module.cpp)
@@ -191,12 +184,6 @@ if(AILOY_WITH_TEST)
     target_include_directories(test_tvm_language_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(test_tvm_language_model PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj httplib GTest::gtest)
     target_link_options(test_tvm_language_model PRIVATE -fsanitize=undefined -fsanitize=address)
-
-    add_executable(test_langmodel_v2 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_langmodel_v2.cpp)
-    add_test(NAME TestLangModel COMMAND test_langmodel_v2)
-    target_include_directories(test_langmodel_v2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(test_langmodel_v2 PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj httplib GTest::gtest)
-    target_link_options(test_langmodel_v2 PRIVATE -fsanitize=undefined -fsanitize=address)
 
     add_executable(test_tvm_embedding_model ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tvm_embedding_model.cpp)
     add_test(NAME TestTVMEmbeddingModel COMMAND test_tvm_embedding_model)

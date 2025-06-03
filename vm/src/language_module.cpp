@@ -2,12 +2,11 @@
 
 #include "chromadb_vector_store.hpp"
 #include "faiss/faiss_vector_store.hpp"
-#include "mlc_llm/embedding_model.hpp"
-#include "mlc_llm/language_model.hpp"
-#include "mlc_llm/language_model_v2.hpp"
-#include "mlc_llm/model_cache.hpp"
 #include "openai.hpp"
 #include "split_text.hpp"
+#include "tvm/embedding_model.hpp"
+#include "tvm/language_model.hpp"
+#include "tvm/model_cache.hpp"
 
 namespace ailoy {
 
@@ -23,7 +22,7 @@ std::shared_ptr<const module_t> get_language_module() {
   // Add Component: TVM Language model
   if (!language_module->factories.contains("tvm_language_model")) {
     language_module->factories.insert_or_assign(
-        "tvm_language_model", create_tvm_language_model_v2_component);
+        "tvm_language_model", create_tvm_language_model_component);
   }
 
   // Add Operators: Model Cache
