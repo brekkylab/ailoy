@@ -785,8 +785,8 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
             if (current_stream_mode == "tool_call") { // Tool call mode
               if (model->is_botc(current_token_str))
                 // BOTC token generated
-                state->as<map_t>()->at<string_t>("finish_reason") =
-                    create<string_t>("tool_calls");
+                state->as<map_t>()->insert_or_assign(
+                    "finish_reason", create<string_t>("tool_calls"));
               else
                 agg_token_str += current_token_str;
               continue;

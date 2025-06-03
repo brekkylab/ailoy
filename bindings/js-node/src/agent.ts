@@ -101,13 +101,13 @@ const modelDescriptions: Record<ModelName, ModelDescription> = {
 export interface AgentResponseText {
   type: "output_text" | "reasoning";
   role: "assistant";
-  endOfTurn: boolean;
+  isTypeSwitched: boolean;
   content: string;
 }
 export interface AgentResponseToolCall {
   type: "tool_call";
   role: "assistant";
-  endOfTurn: boolean;
+  isTypeSwitched: boolean;
   content: {
     name: string;
     arguments: any;
@@ -116,7 +116,7 @@ export interface AgentResponseToolCall {
 export interface AgentResponseToolResult {
   type: "tool_call_result";
   role: "tool";
-  endOfTurn: boolean;
+  isTypeSwitched: boolean;
   content: {
     name: string;
     content: string;
@@ -125,7 +125,7 @@ export interface AgentResponseToolResult {
 export interface AgentResponseError {
   type: "error";
   role: "assistant";
-  endOfTurn: true;
+  isTypeSwitched: true;
   content: string;
 }
 export type AgentResponse =
@@ -567,13 +567,14 @@ export class Agent {
     });
 
     let finish_reason = "";
+    let prevRespType: string | null = null;
 
     while (true) {
       let assistantMessage: AssistantMessage = {
         role: "assistant",
       };
 
-      for await (const resp of this.runtime.callIterMethod(
+      for await (const result of this.runtime.callIterMethod(
         this.componentState.name,
         "infer",
         {
@@ -585,48 +586,52 @@ export class Agent {
           ignore_reasoning_messages: options?.ignoreReasoningMessages,
         }
       ) as AsyncIterable<MessageOutput>) {
-        if (resp.delta.reasoning) {
-          for (const reasoningData of resp.delta.reasoning) {
+        if (result.delta.reasoning) {
+          for (const reasoningData of result.delta.reasoning) {
             if (!assistantMessage.reasoning)
               assistantMessage.reasoning = [reasoningData];
             else assistantMessage.reasoning[0].text += reasoningData.text;
-            yield {
+            const resp: AgentResponseText = {
               type: "reasoning",
-              endOfTurn: false,
               role: "assistant",
+              isTypeSwitched: prevRespType !== "reasoning",
               content: reasoningData.text,
             };
+            prevRespType = resp.type;
+            yield resp;
           }
         }
-        if (resp.delta.content) {
-          for (const contentData of resp.delta.content) {
+        if (result.delta.content) {
+          for (const contentData of result.delta.content) {
             if (!assistantMessage.content)
               assistantMessage.content = [contentData];
             else assistantMessage.content[0].text += contentData.text;
-            yield {
+            const resp: AgentResponseText = {
               type: "output_text",
-              endOfTurn: false,
               role: "assistant",
+              isTypeSwitched: prevRespType !== "output_text",
               content: contentData.text,
             };
+            prevRespType = resp.type;
+            yield resp;
           }
         }
-        if (resp.delta.tool_calls) {
-          for (const tool_call_data of resp.delta.tool_calls) {
+        if (result.delta.tool_calls) {
+          for (const tool_call_data of result.delta.tool_calls) {
             if (!assistantMessage.content)
               assistantMessage.tool_calls = [tool_call_data];
             else assistantMessage.tool_calls?.push(tool_call_data);
-            yield {
+            const resp: AgentResponseToolCall = {
               type: "tool_call",
-              endOfTurn: false,
               role: "assistant",
+              isTypeSwitched: true,
               content: tool_call_data.function,
             };
           }
         }
 
-        if (resp.finish_reason) {
-          finish_reason = resp.finish_reason;
+        if (result.finish_reason) {
+          finish_reason = result.finish_reason;
           break;
         }
       }
@@ -646,11 +651,11 @@ export class Agent {
                 reject("Internal exception");
                 return;
               }
-              const resp = await tool_.call(toolCall.function.arguments);
+              const toolResult = await tool_.call(toolCall.function.arguments);
               const message: ToolMessage = {
                 role: "tool",
                 name: toolCall.function.name,
-                content: [{ type: "text", text: JSON.stringify(resp) }],
+                content: [{ type: "text", text: JSON.stringify(toolResult) }],
               };
               resolve(message);
             })
@@ -661,15 +666,17 @@ export class Agent {
         // Yield for each tool call result
         for (const toolCallResult of toolCallResults) {
           this.messages.push(toolCallResult);
-          yield {
+          const resp: AgentResponseToolResult = {
             type: "tool_call_result",
-            endOfTurn: true,
             role: "tool",
+            isTypeSwitched: true,
             content: {
               name: toolCallResult.name,
               content: toolCallResult.content[0].text,
             },
           };
+          prevRespType = resp.type;
+          yield resp;
         }
         // Infer again if tool calls happened
         continue;
@@ -681,12 +688,12 @@ export class Agent {
   }
 
   private _printResponseText(resp: AgentResponseText) {
+    if (resp.isTypeSwitched) {
+      process.stdout.write("\n");
+    }
     const content =
       resp.type === "reasoning" ? chalk.yellow(resp.content) : resp.content;
     process.stdout.write(content);
-    if (resp.endOfTurn) {
-      process.stdout.write("\n");
-    }
   }
 
   private _printResponseToolCall(resp: AgentResponseToolCall) {

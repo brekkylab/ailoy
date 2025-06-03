@@ -61,7 +61,6 @@ class AssistantMessage(BaseModel):
 
 class ToolMessage(BaseModel):
     role: Literal["tool"]
-    content: str
     name: str
     content: list[TextData]
 
@@ -149,7 +148,7 @@ _console = Console(highlight=False)
 class AgentResponseOutputText(BaseModel):
     type: Literal["output_text", "reasoning"]
     role: Literal["assistant"]
-    end_of_turn: bool
+    is_type_switched: bool = False
     content: str
 
     def print(self):
@@ -165,7 +164,7 @@ class AgentResponseToolCall(BaseModel):
 
     type: Literal["tool_call"]
     role: Literal["assistant"]
-    end_of_turn: bool
+    is_type_switched: bool = False
     content: ContentBody
 
     def print(self):
@@ -177,14 +176,14 @@ class AgentResponseToolCall(BaseModel):
         _console.print(panel)
 
 
-class AgentResponseToolCallResult(BaseModel):
+class AgentResponseToolResult(BaseModel):
     class ContentBody(BaseModel):
         name: str
         content: str
 
     type: Literal["tool_call_result"]
     role: Literal["tool"]
-    end_of_turn: bool
+    is_type_switched: bool = False
     content: ContentBody
 
     def print(self):
@@ -209,7 +208,7 @@ class AgentResponseToolCallResult(BaseModel):
 class AgentResponseError(BaseModel):
     type: Literal["error"]
     role: Literal["assistant"]
-    end_of_turn: bool
+    is_type_switched: bool = False
     content: str
 
     def print(self):
@@ -223,7 +222,7 @@ class AgentResponseError(BaseModel):
 AgentResponse = Union[
     AgentResponseOutputText,
     AgentResponseToolCall,
-    AgentResponseToolCallResult,
+    AgentResponseToolResult,
     AgentResponseError,
 ]
 
@@ -454,6 +453,8 @@ class Agent:
         """  # noqa: E501
         self._messages.append(UserMessage(role="user", content=[{"type": "text", "text": message}]))
 
+        prev_resp_type = None
+
         while True:
             infer_args = {
                 "messages": [msg.model_dump() for msg in self._messages],
@@ -468,47 +469,54 @@ class Agent:
             assistant_content = None
             assistant_tool_calls = None
             finish_reason = ""
-            for resp in self._runtime.call_iter_method(self._component_state.name, "infer", infer_args):
-                resp = MessageOutput.model_validate(resp)
+            for result in self._runtime.call_iter_method(self._component_state.name, "infer", infer_args):
+                msg = MessageOutput.model_validate(result)
 
-                if resp.delta.reasoning:
-                    for v in resp.delta.reasoning:
+                if msg.delta.reasoning:
+                    for v in msg.delta.reasoning:
                         if not assistant_reasoning:
                             assistant_reasoning = [v]
                         else:
                             assistant_reasoning[0].text += v.text
-                        yield AgentResponseOutputText(
+                        resp = AgentResponseOutputText(
                             type="reasoning",
-                            end_of_turn=False,
                             role="assistant",
+                            is_type_switched=(prev_resp_type != "reasoning"),
                             content=v.text,
                         )
-                if resp.delta.content:
-                    for v in resp.delta.content:
+                        prev_resp_type = resp.type
+                        yield resp
+                if msg.delta.content:
+                    for v in msg.delta.content:
                         if not assistant_content:
                             assistant_content = [v]
                         else:
                             assistant_content[0].text += v.text
-                        yield AgentResponseOutputText(
+                        resp = AgentResponseOutputText(
                             type="output_text",
-                            end_of_turn=False,
                             role="assistant",
+                            is_type_switched=(prev_resp_type != "output_text"),
                             content=v.text,
                         )
-                if resp.delta.tool_calls:
-                    for v in resp.delta.tool_calls:
+                        prev_resp_type = resp.type
+                        yield resp
+                if msg.delta.tool_calls:
+                    print(f"Tool call, finish_reason: {msg.finish_reason}")
+                    for v in msg.delta.tool_calls:
                         if not assistant_tool_calls:
                             assistant_tool_calls = [v]
                         else:
                             assistant_tool_calls.append(v)
-                        yield AgentResponseToolCall(
+                        resp = AgentResponseToolCall(
                             type="tool_call",
-                            end_of_turn=False,
                             role="assistant",
+                            is_type_switched=True,
                             content=v.function.model_dump(),
                         )
-                if resp.finish_reason:
-                    finish_reason = resp.finish_reason
+                        prev_resp_type = resp.type
+                        yield resp
+                if msg.finish_reason:
+                    finish_reason = msg.finish_reason
                     break
 
             # Append output
@@ -530,22 +538,26 @@ class Agent:
                     )
                     if not tool_:
                         raise RuntimeError("Tool not found")
-                    resp = tool_.call(**tool_call.function.arguments)
+                    tool_result = tool_.call(**tool_call.function.arguments)
                     return ToolMessage(
                         role="tool",
                         name=tool_call.function.name,
-                        content=json.dumps(resp),
+                        content=[TextData(type="text", text=json.dumps(tool_result))],
                     )
 
                 tool_call_results = [run_tool(tc) for tc in assistant_tool_calls]
                 for result_msg in tool_call_results:
                     self._messages.append(result_msg)
-                    yield AgentResponseToolCallResult(
+                    resp = AgentResponseToolResult(
                         type="tool_call_result",
-                        end_of_turn=True,
                         role="tool",
-                        content=result_msg.content[0],
+                        is_type_switched=True,
+                        content=AgentResponseToolResult.ContentBody(
+                            name=result_msg.name, content=result_msg.content[0].text
+                        ),
                     )
+                    prev_resp_type = resp.type
+                    yield resp
                 # Infer again if tool calls happened
                 continue
 
