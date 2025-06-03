@@ -6,7 +6,7 @@ import { search } from "jmespath";
 
 import { Runtime, generateUUID } from "./runtime";
 
-/** Types for OpenAI API-compatible data structures */
+/** Types for internal data structures */
 
 interface SystemMessage {
   role: "system";

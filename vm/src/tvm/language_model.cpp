@@ -147,7 +147,7 @@ tvm_language_model_t::stream_mode_t::stream_mode_t(
   close_indicator = model->tokenizer_->encode(close_indicator_);
 }
 
-bool tvm_language_model_t::stream_mode_t::check_indecator(
+bool tvm_language_model_t::stream_mode_t::check_indicator(
     const std::string &indicator_type,
     const std::vector<int32_t> &history) const {
   const auto &indicator =
@@ -255,8 +255,16 @@ bool tvm_language_model_t::is_bos(const std::string &tok) const {
   return template_engine_->is_bos_token(tok);
 }
 
+bool tvm_language_model_t::is_bos(int32_t tok) const {
+  return is_bos(tokenizer_->token_id_to_str(tok));
+}
+
 bool tvm_language_model_t::is_eos(const std::string &tok) const {
   return template_engine_->is_eos_token(tok);
+}
+
+bool tvm_language_model_t::is_eos(int32_t tok) const {
+  return is_eos(tokenizer_->token_id_to_str(tok));
 }
 
 bool tvm_language_model_t::is_botc(const std::string &tok) const {
@@ -432,7 +440,7 @@ int32_t tvm_language_model_t::decode(int32_t last_token) {
     for (auto [name, mode] : stream_modes_) {
       if (name == "output_text")
         continue;
-      if (!mode.check_indecator("open", history_))
+      if (!mode.check_indicator("open", history_))
         continue;
       if (mode.grammar) {
         auto matcher =
@@ -444,7 +452,7 @@ int32_t tvm_language_model_t::decode(int32_t last_token) {
     }
   } else {
     const auto &current_mode = stream_modes_.at(current_stream_mode_);
-    if (current_mode.check_indecator("close", history_)) {
+    if (current_mode.check_indicator("close", history_)) {
       auto name = current_stream_mode_;
       if (stream_modes_.at(name).grammar)
         stream_modes_.at(name).matcher = nullptr;

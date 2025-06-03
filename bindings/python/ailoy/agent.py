@@ -26,7 +26,7 @@ from ailoy.tools import DocstringParsingException, TypeHintParsingException, get
 
 __all__ = ["Agent"]
 
-## Types for OpenAI API-compatible data structures
+## Types for internal data structures
 
 
 class TextData(BaseModel):

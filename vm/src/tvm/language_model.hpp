@@ -119,8 +119,14 @@ public:
   /** Begin of sentence */
   bool is_bos(const std::string &tok) const;
 
+  /** End of reasoning */
+  bool is_bos(int32_t tok) const;
+
   /** End of sentence */
   bool is_eos(const std::string &tok) const;
+
+  /** End of reasoning */
+  bool is_eos(int32_t tok) const;
 
   /** Begin of tool call */
   bool is_botc(const std::string &tok) const;
