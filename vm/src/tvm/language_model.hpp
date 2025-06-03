@@ -69,7 +69,7 @@ public:
      * @param indicator_type "open" or "close"
      * @param history History of generated token
      */
-    bool check_indecator(const std::string &indicator_type,
+    bool check_indicator(const std::string &indicator_type,
                          const std::vector<int32_t> &history) const;
 
     std::vector<int32_t> open_indicator;
