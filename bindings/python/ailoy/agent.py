@@ -44,12 +44,12 @@ class FunctionData(BaseModel):
 
 class SystemMessage(BaseModel):
     role: Literal["system"]
-    content: str
+    content: list[TextData]
 
 
 class UserMessage(BaseModel):
     role: Literal["user"]
-    content: str
+    content: list[TextData]
 
 
 class AssistantMessage(BaseModel):
@@ -81,7 +81,7 @@ class MessageOutput(BaseModel):
         tool_calls: Optional[list[FunctionData]] = None
 
     delta: AssistantMessageDelta
-    finish_reason: Optional[Literal["stop", "tool_calls", "invalid_tool_call", "length", "error"]]
+    finish_reason: Optional[Literal["stop", "tool_calls", "invalid_tool_call", "length", "error"]] = None
 
 
 ## Types for LLM Model Definitions
@@ -170,8 +170,8 @@ class AgentResponseToolCall(BaseModel):
 
     def print(self):
         panel = Panel(
-            json.dumps(self.content.function.arguments, indent=2),
-            title=f"[magenta]Tool Call[/magenta]: [bold]{self.content.function.name}[/bold] ({self.content.id})",
+            json.dumps(self.content.arguments, indent=2),
+            title=f"[magenta]Tool Call[/magenta]: [bold]{self.content.name}[/bold]",
             title_align="left",
         )
         _console.print(panel)
@@ -200,7 +200,7 @@ class AgentResponseToolCallResult(BaseModel):
 
         panel = Panel(
             content,
-            title=f"[green]Tool Result[/green]: [bold]{self.content.name}[/bold] ({self.content.tool_call_id})",
+            title=f"[green]Tool Result[/green]: [bold]{self.content.name}[/bold]",
             title_align="left",
         )
         _console.print(panel)
@@ -364,7 +364,7 @@ class Agent:
         # Initialize messages
         self._messages: list[Message] = []
         if system_message:
-            self._messages.append(SystemMessage(role="system", content=system_message))
+            self._messages.append(SystemMessage(role="system", content=[{"type": "text", "text": system_message}]))
 
         # Initialize tools
         self._tools: list[Tool] = []
@@ -403,7 +403,12 @@ class Agent:
 
         # Set default system message
         if len(self._messages) == 0 and model_desc.default_system_message:
-            self._messages.append(SystemMessage(role="system", content=model_desc.default_system_message))
+            self._messages.append(
+                SystemMessage(
+                    role="system",
+                    content=[{"type": "text", "text": model_desc.default_system_message}],
+                )
+            )
 
         # Add API key
         if api_key:
@@ -447,7 +452,7 @@ class Agent:
         :param ignore_reasoning_messages: If True, reasoning steps are not included in the response stream. (default: False)
         :yield: AgentResponse output of the LLM inference or tool calls
         """  # noqa: E501
-        self._messages.append(UserMessage(role="user", content=message))
+        self._messages.append(UserMessage(role="user", content=[{"type": "text", "text": message}]))
 
         while True:
             infer_args = {
@@ -468,7 +473,7 @@ class Agent:
 
                 if resp.delta.reasoning:
                     for v in resp.delta.reasoning:
-                        if len(assistant_reasoning) == 0:
+                        if not assistant_reasoning:
                             assistant_reasoning = [v]
                         else:
                             assistant_reasoning[0].text += v.text
@@ -480,19 +485,19 @@ class Agent:
                         )
                 if resp.delta.content:
                     for v in resp.delta.content:
-                        if len(assistant_content) == 0:
+                        if not assistant_content:
                             assistant_content = [v]
                         else:
                             assistant_content[0].text += v.text
                         yield AgentResponseOutputText(
-                            type="content",
+                            type="output_text",
                             end_of_turn=False,
                             role="assistant",
                             content=v.text,
                         )
                 if resp.delta.tool_calls:
                     for v in resp.delta.tool_calls:
-                        if len(assistant_tool_calls) == 0:
+                        if not assistant_tool_calls:
                             assistant_tool_calls = [v]
                         else:
                             assistant_tool_calls.append(v)
@@ -500,7 +505,7 @@ class Agent:
                             type="tool_call",
                             end_of_turn=False,
                             role="assistant",
-                            content=v.function,
+                            content=v.function.model_dump(),
                         )
                 if resp.finish_reason:
                     finish_reason = resp.finish_reason
