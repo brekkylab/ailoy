@@ -560,15 +560,45 @@ _validate_language_model_input(const std::string &context,
       return error_output_t(value_error(context, "role",
                                         "system | user | assistant | tool",
                                         *msg->at<string_t>("role")));
-    // if (!(msg->contains("content") || msg->contains("tool_call")))
-    //   return error_output_t("Invalid msg schema");
-    // if (msg->contains("content") &&
-    // !msg->at("content")->is_type_of<array_t>())
-    //   return error_output_t("Invalid msg schema");
-    // if (msg->contains("tool_calls") &&
-    //     !msg->at("tool_calls")->is_type_of<array_t>())
-    //   return error_output_t(type_error(context, "tool_calls", "string_t",
-    //                                    msg->at("content")->get_type()));
+    for (auto key : {"reasoning", "content", "tool_calls"}) {
+      if (!msg->contains(key))
+        continue;
+      if (msg->at(key)->is_type_of<null_t>()) {
+        msg->erase(key);
+        continue;
+      }
+      if (!msg->at(key)->is_type_of<array_t>()) {
+        return error_output_t(
+            type_error(context, key, "array", msg->at(key)->get_type()));
+      }
+      for (size_t i = 0; i < msg->at<array_t>(key)->size(); i++) {
+        auto data_val = msg->at<array_t>(key)->at(i);
+        if (!data_val->is_type_of<map_t>()) {
+          return error_output_t(type_error(context,
+                                           std::format("{}/{}", key, i),
+                                           "map_t", msg->at(key)->get_type()));
+        }
+        auto data = data_val->as<map_t>();
+        if (!data->contains("type"))
+          return error_output_t(
+              std::format("Field not exists: {}/{}/type", key, i));
+        if (!data->at("type")->is_type_of<string_t>())
+          return error_output_t(type_error(context, "type", "string",
+                                           data->at("type")->get_type()));
+        if (*data->at<string_t>("type") == "text") {
+          if (!data->contains("text"))
+            return error_output_t(
+                std::format("Field not exists: {}/{}/text", key, i));
+          if (!data->at("text")->is_type_of<string_t>())
+            return error_output_t(type_error(context, "type", "string",
+                                             data->at("type")->get_type()));
+        } else if (*data->at<string_t>("type") == "function") {
+          if (!data->contains("function"))
+            return error_output_t(
+                std::format("Field not exists: {}/{}/function", key, i));
+        }
+      }
+    }
   }
   if (input_map->contains("temperature"))
     if (!input_map->at("temperature")->is_type_of<double_t>())
