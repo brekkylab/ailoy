@@ -24,6 +24,7 @@ interface AssistantMessage {
   reasoning?: Array<{ type: "text"; text: string }>;
   tool_calls?: Array<{
     type: "function";
+    id?: string;
     function: { name: string; arguments: any };
   }>;
 }
@@ -32,6 +33,7 @@ interface ToolMessage {
   role: "tool";
   name: string;
   content: Array<{ type: "text"; text: string }>;
+  tool_call_id?: string;
 }
 
 type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
@@ -44,7 +46,7 @@ interface MessageOutput {
     | "length"
     | "error"
     | undefined;
-  delta: Omit<AssistantMessage, "role">;
+  message: Omit<AssistantMessage, "role">;
 }
 
 /** Types for LLM Model Definitions */
@@ -586,8 +588,8 @@ export class Agent {
           ignore_reasoning_messages: options?.ignoreReasoningMessages,
         }
       ) as AsyncIterable<MessageOutput>) {
-        if (result.delta.reasoning) {
-          for (const reasoningData of result.delta.reasoning) {
+        if (result.message.reasoning) {
+          for (const reasoningData of result.message.reasoning) {
             if (!assistantMessage.reasoning)
               assistantMessage.reasoning = [reasoningData];
             else assistantMessage.reasoning[0].text += reasoningData.text;
@@ -601,8 +603,8 @@ export class Agent {
             yield resp;
           }
         }
-        if (result.delta.content) {
-          for (const contentData of result.delta.content) {
+        if (result.message.content) {
+          for (const contentData of result.message.content) {
             if (!assistantMessage.content)
               assistantMessage.content = [contentData];
             else assistantMessage.content[0].text += contentData.text;
@@ -616,8 +618,8 @@ export class Agent {
             yield resp;
           }
         }
-        if (result.delta.tool_calls) {
-          for (const tool_call_data of result.delta.tool_calls) {
+        if (result.message.tool_calls) {
+          for (const tool_call_data of result.message.tool_calls) {
             if (!assistantMessage.content)
               assistantMessage.tool_calls = [tool_call_data];
             else assistantMessage.tool_calls?.push(tool_call_data);
@@ -660,6 +662,7 @@ export class Agent {
                 role: "tool",
                 name: toolCall.function.name,
                 content: [{ type: "text", text: JSON.stringify(toolResult) }],
+                tool_call_id: toolCall.id || undefined,
               };
               resolve(message);
             })

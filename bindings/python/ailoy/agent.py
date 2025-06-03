@@ -40,6 +40,7 @@ class FunctionData(BaseModel):
         arguments: Any
 
     type: Literal["function"]
+    id: Optional[str] = None
     function: FunctionBody
 
 
@@ -64,6 +65,7 @@ class ToolMessage(BaseModel):
     role: Literal["tool"]
     name: str
     content: list[TextData]
+    tool_call_id: Optional[str] = None
 
 
 Message = Union[
@@ -80,7 +82,7 @@ class MessageOutput(BaseModel):
         reasoning: Optional[list[TextData]] = None
         tool_calls: Optional[list[FunctionData]] = None
 
-    delta: AssistantMessageDelta
+    message: AssistantMessageDelta
     finish_reason: Optional[Literal["stop", "tool_calls", "invalid_tool_call", "length", "error"]] = None
 
 
@@ -473,8 +475,8 @@ class Agent:
             for result in self._runtime.call_iter_method(self._component_state.name, "infer", infer_args):
                 msg = MessageOutput.model_validate(result)
 
-                if msg.delta.reasoning:
-                    for v in msg.delta.reasoning:
+                if msg.message.reasoning:
+                    for v in msg.message.reasoning:
                         if not assistant_reasoning:
                             assistant_reasoning = [v]
                         else:
@@ -487,8 +489,8 @@ class Agent:
                         )
                         prev_resp_type = resp.type
                         yield resp
-                if msg.delta.content:
-                    for v in msg.delta.content:
+                if msg.message.content:
+                    for v in msg.message.content:
                         if not assistant_content:
                             assistant_content = [v]
                         else:
@@ -501,8 +503,8 @@ class Agent:
                         )
                         prev_resp_type = resp.type
                         yield resp
-                if msg.delta.tool_calls:
-                    for v in msg.delta.tool_calls:
+                if msg.message.tool_calls:
+                    for v in msg.message.tool_calls:
                         if not assistant_tool_calls:
                             assistant_tool_calls = [v]
                         else:
@@ -543,6 +545,7 @@ class Agent:
                         role="tool",
                         name=tool_call.function.name,
                         content=[TextData(type="text", text=json.dumps(tool_result))],
+                        tool_call_id=tool_call.id if tool_call.id else None,
                     )
 
                 tool_call_results = [run_tool(tc) for tc in assistant_tool_calls]
