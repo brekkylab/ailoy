@@ -40,6 +40,11 @@ describe("Agent", async () => {
   it("Tool Call: Custom function tools", async () => {
     const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
     agent.addJSFunctionTool(
+      ({ location, unit }) => {
+        if (unit === "celsius") return 25;
+        else if (unit === "fahrenheit") return 77;
+        else return null;
+      },
       {
         name: "get_current_temperature",
         description: "Get the current temperature at a location.",
@@ -64,11 +69,6 @@ describe("Agent", async () => {
           description:
             "The current temperature at the specified location in the specified units, as a float.",
         },
-      },
-      ({ location, unit }) => {
-        if (unit === "celsius") return 25;
-        else if (unit === "fahrenheit") return 77;
-        else return null;
       }
     );
 
