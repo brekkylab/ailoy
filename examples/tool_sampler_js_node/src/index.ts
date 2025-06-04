@@ -101,7 +101,7 @@ async function main() {
   await getTool();
 
   // Ask whether reasoning mode should be enabled
-  const enableReasoning =
+  const reasoning =
     (
       await input({
         message:
@@ -118,7 +118,7 @@ async function main() {
     if (prompt === "") continue;
 
     // Stream assistant's response
-    for await (const resp of agent.query(prompt, { enableReasoning })) {
+    for await (const resp of agent.query(prompt, { reasoning })) {
       agent.print(resp);
     }
   }

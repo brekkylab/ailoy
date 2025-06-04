@@ -609,11 +609,11 @@ Format inputs by it's model type.
 
 #### Parameters
 
-| Name               | Type                   | Description                                  | Required |
-| ------------------ | ---------------------- | -------------------------------------------- | -------- |
-| `messages`         | array\<map\>           | array of messages (OpenAI API compatible)    | ✅       |
-| `tools`            | array\<map\> or string | tools to be used (defaults to empty string)  |          |
-| `enable_reasoning` | bool                   | flag to enable reasoning (defaults to false) |          |
+| Name        | Type                   | Description                                  | Required |
+| ----------- | ---------------------- | -------------------------------------------- | -------- |
+| `messages`  | array\<map\>           | array of messages (OpenAI API compatible)    | ✅       |
+| `tools`     | array\<map\> or string | tools to be used (defaults to empty string)  |          |
+| `reasoning` | bool                   | flag to enable reasoning (defaults to false) |          |
 
 #### Outputs
 
@@ -632,12 +632,11 @@ Performs inference, generates outputs.
 
 #### Parameters
 
-| Name                        | Type                   | Description                                                | Required |
-| --------------------------- | ---------------------- | ---------------------------------------------------------- | -------- |
-| `messages`                  | array\<map\>           | array of messages (OpenAI API compatible)                  | ✅       |
-| `tools`                     | array\<map\> or string | tools to be used (defaults to empty string)                |          |
-| `enable_reasoning`          | bool                   | flag to enable reasoning (defaults to false)               |          |
-| `ignore_reasoning_messages` | bool                   | ignore reasoning messages from outputs (defaults to false) |          |
+| Name        | Type                   | Description                                  | Required |
+| ----------- | ---------------------- | -------------------------------------------- | -------- |
+| `messages`  | array\<map\>           | array of messages (OpenAI API compatible)    | ✅       |
+| `tools`     | array\<map\> or string | tools to be used (defaults to empty string)  |          |
+| `reasoning` | bool                   | flag to enable reasoning (defaults to false) |          |
 
 #### Outputs
 

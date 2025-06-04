@@ -19,14 +19,14 @@ Reasoning may not be supported on some models. The `Qwen3` model currently avail
 
 ## How to enable reasoning
 
-In Ailoy, You can activate reasoning feature by simply specifying an option `enable_reasoning`.
+In Ailoy, You can activate reasoning feature by simply specifying an option `reasoning`.
 
 <CodeTabs>
 
 ```python
 for resp in agent.query(
     "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
-    enable_reasoning=True
+    reasoning=True
 ):
     agent.print(resp)
 ```
@@ -34,9 +34,7 @@ for resp in agent.query(
 ```typescript
 for await (const resp of agent.query(
   "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
-  {
-    enableReasoning: true,
-  }
+  { reasoning: true }
 )) {
   agent.print(resp);
 }
@@ -54,8 +52,7 @@ In such cases, you can use the `ignore_reasoning_messages` option to make `Agent
 ```python
 for resp in agent.query(
     "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
-    enable_reasoning=True,
-    ignore_reasoning_messages=True
+    reasoning=True,
 ):
     agent.print(resp)
 ```
@@ -63,10 +60,7 @@ for resp in agent.query(
 ```typescript
 for await (const resp of agent.query(
   "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
-  {
-    enableReasoning: true,
-    ignoreReasoningMessages: true,
-  }
+  { reasoning: true }
 )) {
   agent.print(resp);
 }

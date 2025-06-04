@@ -550,10 +550,8 @@ export class Agent {
     /** The user message to send to the model */
     message: string,
     options?: {
-      /** If True, enables reasoning capabilities (default: True) */
-      enableReasoning?: boolean;
-      /** If True, reasoning steps are not included in the response stream */
-      ignoreReasoningMessages?: boolean;
+      /** If True, enables reasoning capabilities (default: False) */
+      reasoning?: boolean;
     }
   ): AsyncGenerator<AgentResponse> {
     if (!this.componentState.valid)
@@ -582,8 +580,7 @@ export class Agent {
           tools: this.tools.map((v) => {
             return { type: "function", function: v.desc };
           }),
-          enable_reasoning: options?.enableReasoning,
-          ignore_reasoning_messages: options?.ignoreReasoningMessages,
+          reasoning: options?.reasoning,
         }
       ) as AsyncIterable<MessageOutput>) {
         if (result.message.reasoning) {

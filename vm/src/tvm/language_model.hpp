@@ -101,7 +101,7 @@ public:
   std::string
   apply_chat_template(std::shared_ptr<const value_t> conversation,
                       std::shared_ptr<const value_t> tools = nullptr,
-                      bool enable_reasoning = false,
+                      bool reasoning = false,
                       bool add_generation_prompt = true) const;
 
   /** Begin of reasoning */

@@ -79,10 +79,10 @@ def main():
         agent.add_tools_from_preset(preset_name)
 
     # Ask whether reasoning mode should be enabled
-    enable_reasoning: str = questionary.text(
+    reasoning: str = questionary.text(
         "Do you want to enable reasoning? (Please type 'y' to enable):"
     ).ask()
-    enable_reasoning: bool = enable_reasoning.lower() == "y"
+    reasoning: bool = reasoning.lower() == "y"
 
     # Start conversation loop
     while True:
@@ -93,7 +93,7 @@ def main():
             break
         if query == "":
             continue
-        for resp in agent.query(query, enable_reasoning=enable_reasoning):
+        for resp in agent.query(query, reasoning=reasoning):
             agent.print(resp)
 
     agent.delete()
