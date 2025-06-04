@@ -1,7 +1,6 @@
 import { expect } from "chai";
 
 import { Runtime, NDArray } from "../src/index";
-import "./agent.spec";
 
 describe("JSVM", () => {
   it("run-echo", async () => {
