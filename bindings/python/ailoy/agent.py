@@ -360,7 +360,7 @@ class Agent:
 
         # Initialize messages
         self._messages: list[Message] = []
-        self._system_message: str = system_message
+        self._system_message: Optional[str] = system_message
 
         # Initialize tools
         self._tools: list[Tool] = []
@@ -401,8 +401,7 @@ class Agent:
             attrs["model"] = model_desc.model_id
 
         # Set default system message
-        if self._system_message is None:
-            self._system_message = model_desc.default_system_message if model_desc.default_system_message else None
+        self._system_message = self._system_message or model_desc.default_system_message
         self.clear_history()
 
         # Add API key
