@@ -1,6 +1,15 @@
 import * as MCPClient from "@modelcontextprotocol/sdk/client/index.js";
 import * as MCPClientStdio from "@modelcontextprotocol/sdk/client/stdio.js";
 
+/**
+ * MCPServer provides a high-level interface for interacting with an MCP stdio server
+ * using the official MCP JavaScript SDK.
+ *
+ * - It manages a single `MCPClient.Client` instance and connects via `StdioClientTransport`.
+ * - The connection lifecycle is handled through the `start()` and `cleanup()` methods.
+ * - Tools can be discovered with `listTools()`, and invoked using `callTool()`.
+ * - Unlike in Python, this class does not use subprocesses; it runs entirely within the calling Node.js process.
+ */
 class MCPServer {
   readonly name: string;
   #params: MCPClientStdio.StdioServerParameters;

@@ -50,7 +50,7 @@ class MCPServer:
     """
     MCPServer manages a subprocess that acts as a bridge between an MCP stdio server and the main process.
 
-    - The subprocess communicates with the MCP stdio server using the `ClientSession` provided by the MCP SDK.
+    - The subprocess communicates with the MCP stdio server using the official MCP Python SDK.
     - Communication between the main process and the subprocess is handled through a multiprocessing Pipe.
       Messages sent over this Pipe are serialized and deserialized using structured Pydantic models:
         - `RequestMessage` for requests from the main process to the subprocess.
