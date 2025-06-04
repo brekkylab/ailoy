@@ -5,7 +5,7 @@
 [![PyPI - Python Version](https://img.shields.io/pypi/v/ailoy-py)](https://pypi.org/project/ailoy-py/)
 [![NPM Version](https://img.shields.io/npm/v/ailoy-node)](https://www.npmjs.com/package/ailoy-node)
 
-[![Discoard](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white)](https://discord.gg/CeCH4Ax4)
+[![Discoard](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white)](https://discord.gg/27rx3EJy3P)
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Fx.com%2Failoy_co)](https://x.com/ailoy_co)
 
 
@@ -15,7 +15,7 @@ Ailoy is a lightweight library for building AI applications — such as **agent 
 > This library is in an early stage of development. APIs may change without notice.
 
 > [!TIP]
-> We have a [Discord channel](https://discord.gg/CeCH4Ax4)! If you get stuck or have any questions, feel free to join and ask.
+> We have a [Discord channel](https://discord.gg/27rx3EJy3P)! If you get stuck or have any questions, feel free to join and ask.
 
 > [!TIP]
 > There are several interesting examples in the [`examples`](./examples) directory — take a look!
