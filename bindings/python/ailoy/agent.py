@@ -142,7 +142,7 @@ class ComponentState(BaseModel):
 
 ## Types for agent's responses
 
-_console = Console(highlight=False)
+_console = Console(highlight=False, force_jupyter=False, force_terminal=True)
 
 
 class AgentResponseBase(BaseModel):
