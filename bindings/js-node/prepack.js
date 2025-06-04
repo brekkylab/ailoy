@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { spawn, spawnSync } = require("child_process");
+const { spawn } = require("child_process");
 const pkg = require("./package.json");
 
 const binaryName = "ailoy_addon.node";
@@ -74,6 +74,7 @@ function runCommand(command, args, opts = {}) {
       console.log(`🧹 Removed existing dist/${binaryName}`);
     }
 
+    // creating tarballs
     console.log(`📦 Creating tarball: ${tarballName}`);
     await runCommand("tar", [
       "-czf",
