@@ -41,38 +41,3 @@ for await (const resp of agent.query(
 ```
 
 </CodeTabs>
-
-### Dismiss reasoning messages
-
-Since reasoning is an internal process, you might want to ignore it in the output.
-In such cases, you can use the `ignore_reasoning_messages` option to make `Agent` to dismiss the reasoning tokens.
-
-<CodeTabs>
-
-```python
-for resp in agent.query(
-    "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
-    reasoning=True,
-):
-    agent.print(resp)
-```
-
-```typescript
-for await (const resp of agent.query(
-  "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
-  { reasoning: true }
-)) {
-  agent.print(resp);
-}
-```
-
-</CodeTabs>
-
-{/* prettier-ignore-start */}
-
-:::note 
-Note: Qwen3-0.6b is too small to perform effective reasoning.
-We recommend using a model with bigger parameters for reasoning tasks. 
-:::
-
-{/* prettier-ignore-end */}
