@@ -45,6 +45,10 @@ chat_manager_t::apply_chat_template(std::shared_ptr<const value_t> conversation,
   if (!enable_reasoning)
     inputs.extra_context = {{"enable_thinking", false}};
   minja::chat_template_options options;
+  // TODO: remove after minja issue fixed
+  options.polyfill_tools = false;
+  options.polyfill_tool_calls = false;
+  options.polyfill_tool_responses = false;
   return template_->apply(inputs, options);
 }
 
