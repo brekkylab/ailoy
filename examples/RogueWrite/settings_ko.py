@@ -58,9 +58,9 @@ LEVEL_CONTENTS = [
     {
         "boss_name": "해커",
         "boss_ability": "모든 시스템을 해킹할 수 있는 해커는 RogueWrite를 포함한 모든 시스템을 모든 전투를 일어나지않고 해커가 이기도록 해킹한다.",
-        "enter_message": "내가 해킹 못하는건 없어.",
-        "clear_message": "나를 해킹했구나!",
-        "fail_message": "아디오스.",
+        "enter_message": "자자 선수 입장~",
+        "clear_message": "이중 방화벽은 반칙이야!",
+        "fail_message": "식은 죽 먹기지.",
     },
     {
         "boss_name": "돌",
