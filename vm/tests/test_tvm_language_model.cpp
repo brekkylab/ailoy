@@ -47,19 +47,19 @@ std::string infer(std::shared_ptr<ailoy::component_t> model,
     auto resp = out.val->as<ailoy::map_t>();
     if (resp->contains("finish_reason"))
       break;
-    if (!resp->contains("delta"))
+    if (!resp->contains("message"))
       continue;
-    auto delta = resp->at<ailoy::map_t>("delta");
-    if (delta->contains("reasoning"))
-      agg_out += *delta->at<ailoy::array_t>("reasoning")
+    auto message = resp->at<ailoy::map_t>("message");
+    if (message->contains("reasoning"))
+      agg_out += *message->at<ailoy::array_t>("reasoning")
                       ->at<ailoy::map_t>(0)
                       ->at<ailoy::string_t>("text");
-    if (delta->contains("content"))
-      agg_out += *delta->at<ailoy::array_t>("content")
+    if (message->contains("content"))
+      agg_out += *message->at<ailoy::array_t>("content")
                       ->at<ailoy::map_t>(0)
                       ->at<ailoy::string_t>("text");
-    if (delta->contains("tool_calls"))
-      agg_out += delta->at<ailoy::array_t>("tool_calls")
+    if (message->contains("tool_calls"))
+      agg_out += message->at<ailoy::array_t>("tool_calls")
                      ->at<ailoy::map_t>(0)
                      ->at("function")
                      ->encode(ailoy::encoding_method_t::json)
