@@ -13,6 +13,8 @@ from mcp.client.stdio import (
 )
 from pydantic import BaseModel, Field, TypeAdapter
 
+__all__ = ["MCPServer"]
+
 
 class ListToolsRequest(BaseModel):
     type: Literal["list_tools"] = "list_tools"
