@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const pkg = require("./package.json");
 
 const binaryName = "ailoy_addon.node";
@@ -66,6 +66,48 @@ function runCommand(command, args, opts = {}) {
       }
       fs.copyFileSync(from, to);
       console.log(`✔ Copied ${file} → prebuild`);
+    }
+
+    const nodeBinary = path.join(buildDir, binaryName);
+    const libSet = new Set(allFiles.filter((f) => f !== binaryName));
+
+    // Patch library file
+    if (platform === "darwin") {
+      const otoolOut = spawnSync("otool", ["-L", nodeBinary], {
+        encoding: "utf8",
+        shell: true,
+      });
+      if (otoolOut.error) throw otoolOut.error;
+
+      const lines = otoolOut.stdout.split("\n").slice(1);
+      for (const line of lines) {
+        const match = line.trim().match(/^(.+?\.dylib)/);
+        if (!match) continue;
+
+        const depPath = match[1];
+        const base = path.basename(depPath);
+        if (libSet.has(base)) {
+          console.log(`→ patch: ${depPath} → @loader_path/${base}`);
+          await runCommand("install_name_tool", [
+            "-change",
+            depPath,
+            `@loader_path/${base}`,
+            nodeBinary,
+          ]);
+        }
+      }
+    } else if (platform === "linux") {
+      const readelfOut = spawnSync("readelf", ["-d", nodeBinary], {
+        encoding: "utf8",
+        shell: true,
+      });
+      if (readelfOut.error) throw readelfOut.error;
+      const lines = readelfOut.stdout.split("\n");
+      const entries = lines
+        .filter((l) => l.includes("(NEEDED)"))
+        .map((l) => l.match(/\[(.+?)\]/)?.[1])
+        .filter(Boolean);
+      console.log(entries);
     }
 
     const distNode = path.resolve(__dirname, "dist", binaryName);
