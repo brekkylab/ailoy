@@ -161,48 +161,46 @@ class AgentResponseOutputText(BaseModel):
 
 
 class AgentResponseToolCall(BaseModel):
-    class ContentBody(BaseModel):
-        name: str
-        arguments: Any
-
     type: Literal["tool_call"]
     role: Literal["assistant"]
     is_type_switched: bool = False
-    content: ContentBody
+    content: FunctionData
 
     def print(self):
+        title = f"[magenta]Tool Call[/magenta]: [bold]{self.content.function.name}[/bold]"
+        if self.content.id is not None:
+            title += f" ({self.content.id})"
         panel = Panel(
-            json.dumps(self.content.arguments, indent=2),
-            title=f"[magenta]Tool Call[/magenta]: [bold]{self.content.name}[/bold]",
+            json.dumps(self.content.function.arguments, indent=2),
+            title=title,
             title_align="left",
         )
         _console.print(panel)
 
 
 class AgentResponseToolResult(BaseModel):
-    class ContentBody(BaseModel):
-        name: str
-        content: str
-
     type: Literal["tool_call_result"]
     role: Literal["tool"]
     is_type_switched: bool = False
-    content: ContentBody
+    content: ToolMessage
 
     def print(self):
         try:
             # Try to parse as json
-            content = json.dumps(json.loads(self.content.content), indent=2)
+            content = json.dumps(json.loads(self.content.content[0].text), indent=2)
         except json.JSONDecodeError:
             # Use original content if not json deserializable
-            content = self.content.content
+            content = self.content.content[0].text
         # Truncate long contents
         if len(content) > 500:
             content = content[:500] + "...(truncated)"
 
+        title = f"[green]Tool Result[/green]: [bold]{self.content.name}[/bold]"
+        if self.content.tool_call_id is not None:
+            title += f" ({self.content.tool_call_id})"
         panel = Panel(
             content,
-            title=f"[green]Tool Result[/green]: [bold]{self.content.name}[/bold]",
+            title=title,
             title_align="left",
         )
         _console.print(panel)
@@ -513,7 +511,7 @@ class Agent:
                             type="tool_call",
                             role="assistant",
                             is_type_switched=True,
-                            content=v.function.model_dump(),
+                            content=v,
                         )
                         prev_resp_type = resp.type
                         yield resp
@@ -555,9 +553,7 @@ class Agent:
                         type="tool_call_result",
                         role="tool",
                         is_type_switched=True,
-                        content=AgentResponseToolResult.ContentBody(
-                            name=result_msg.name, content=result_msg.content[0].text
-                        ),
+                        content=result_msg,
                     )
                     prev_resp_type = resp.type
                     yield resp
