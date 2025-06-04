@@ -14,6 +14,7 @@ def main():
 
     with Agent(rt, model_name="Qwen/Qwen3-8B") as agent:
         agent.add_tools_from_mcp_server(
+            "github",
             StdioServerParameters(
                 command="npx",
                 args=["-y", "@modelcontextprotocol/server-github"],
