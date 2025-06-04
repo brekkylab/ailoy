@@ -95,11 +95,17 @@ if (DEFINED NODE)
     endforeach()
 ]])
 
-# Set RPATH
+# Set RPATH so that the target loads dependency from the same directory
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  set(CMAKE_INSTALL_RPATH "\$ORIGIN")
+  set_target_properties(ailoy_addon PROPERTIES
+    INSTALL_RPATH "\$ORIGIN"
+    BUILD_WITH_INSTALL_RPATH TRUE
+  )
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-  set(CMAKE_INSTALL_RPATH "@loader_path")
+  set_target_properties(ailoy_addon PROPERTIES
+    INSTALL_RPATH "@loader_path"
+    BUILD_WITH_INSTALL_RPATH TRUE
+  )
 endif()
 
 endif()

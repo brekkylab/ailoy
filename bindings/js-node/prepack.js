@@ -96,12 +96,6 @@ function runCommand(command, args, opts = {}) {
           ]);
         }
       }
-
-      await runCommand("install_name_tool", [
-        "-add_rpath",
-        "@loader_path",
-        nodeBinary,
-      ]);
     } else if (platform === "linux") {
       const readelfOut = spawnSync("readelf", ["-d", nodeBinary], {
         encoding: "utf8",
@@ -114,13 +108,6 @@ function runCommand(command, args, opts = {}) {
         .map((l) => l.match(/\[(.+?)\]/)?.[1])
         .filter(Boolean);
       console.log(entries);
-
-      // Set RPATH as $ORIGIN
-      await runCommand(
-        "patchelf",
-        ["--force-rpath", "--set-rpath", "$ORIGIN", nodeBinary],
-        { shell: false }
-      );
     }
 
     const distNode = path.resolve(__dirname, "dist", binaryName);
@@ -129,6 +116,7 @@ function runCommand(command, args, opts = {}) {
       console.log(`🧹 Removed existing dist/${binaryName}`);
     }
 
+    // creating tarballs
     console.log(`📦 Creating tarball: ${tarballName}`);
     await runCommand("tar", [
       "-czf",
