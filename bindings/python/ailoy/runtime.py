@@ -41,7 +41,7 @@ class RuntimeBase:
         self.stop()
 
     def stop(self):
-        if self._client:
+        if self.is_alive():
             txid = self._send_type1("disconnect")
             if not txid:
                 raise RuntimeError("Disconnection failed")
@@ -51,6 +51,9 @@ class RuntimeBase:
                 raise RuntimeError("Disconnection failed")
             self._client = None
             stop_threads(self.address)
+
+    def is_alive(self):
+        return self._client is not None
 
     def _send_type1(self, ptype: Literal["connect", "disconnect"]) -> Optional[str]:
         txid = generate_uuid()

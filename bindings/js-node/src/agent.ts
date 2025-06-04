@@ -242,6 +242,7 @@ export class Agent {
   private mcpServers: MCPServer[];
 
   private messages: Message[];
+  private systemMessage?: string;
 
   constructor(
     /** The runtime environment associated with the agent */
@@ -261,9 +262,7 @@ export class Agent {
     this.messages = [];
 
     // Use system message provided from arguments first, otherwise use default system message for the model.
-    this.messages = [];
-    if (systemMessage !== undefined)
-      this.messages.push({ role: "system", content: systemMessage });
+    this.systemMessage = systemMessage;
 
     // Initialize tools
     this.tools = [];
@@ -285,17 +284,16 @@ export class Agent {
     // Skip if the component already exists
     if (this.componentState.valid) return;
 
+    if (!this.runtime.is_alive()) throw Error(`Runtime is currently stopped.`);
+
     const modelDesc = modelDescriptions[modelName];
 
     // Add model name into attrs
     if (!attrs.model) attrs.model = modelDesc.modelId;
 
     // Set default system message
-    if (this.messages.length == 0 && modelDesc.defaultSystemMessage)
-      this.messages.push({
-        role: "system",
-        content: modelDesc.defaultSystemMessage,
-      });
+    this.systemMessage = this.systemMessage || modelDesc.defaultSystemMessage;
+    this.clearHistory();
 
     // Call runtime to define componenets
     const result = await this.runtime.define(
@@ -317,13 +315,13 @@ export class Agent {
     // Skip if the component not exists
     if (!this.componentState.valid) return;
 
-    const result = await this.runtime.delete(this.componentState.name);
-    if (!result) throw Error(`component delete failed`);
+    if (!this.runtime.is_alive()) {
+      const result = await this.runtime.delete(this.componentState.name);
+      if (!result) throw Error(`component delete failed`);
+    }
 
     // Clear messages
-    if (this.messages.length > 0 && this.messages[0].role === "system")
-      this.messages = [this.messages[0]];
-    else this.messages = [];
+    this.clearHistory();
 
     // Cleanup MCP servers
     for (const mcpServer of this.mcpServers) {
@@ -562,6 +560,11 @@ export class Agent {
       ignoreReasoningMessages?: boolean;
     }
   ): AsyncGenerator<AgentResponse> {
+    if (!this.componentState.valid)
+      throw Error(`Agent is not valid. Create one or define newly.`);
+
+    if (!this.runtime.is_alive()) throw Error(`Runtime is currently stopped.`);
+
     this.messages.push({ role: "user", content: message });
 
     let prevRespType: string | null = null;
@@ -710,6 +713,12 @@ export class Agent {
       // Finish this generator
       return;
     }
+  }
+
+  clearHistory() {
+    this.messages = [];
+    if (this.systemMessage !== undefined)
+      this.messages.push({ role: "system", content: this.systemMessage });
   }
 
   private _printResponseText(resp: AgentResponseText) {

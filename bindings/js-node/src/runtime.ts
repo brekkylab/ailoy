@@ -44,6 +44,8 @@ export class Runtime {
    */
   private listener: Promise<void> | null;
 
+  private alive: boolean = false;
+
   constructor(url: string = "inproc://") {
     this.url = url;
     this.resolvers = new Map();
@@ -62,18 +64,27 @@ export class Runtime {
     return new Promise<void>(async (resolve, reject) => {
       this.registerResolver(txid, resolve, reject);
       while (this.resolvers.has(txid)) await this.listen();
+      this.alive = true;
     });
   }
 
   stop(): Promise<void> {
-    const txid = generateUUID();
-    if (!this.client.send_type1(txid, "disconnect"))
-      throw Error("Disconnection failed");
-    return new Promise<void>(async (resolve, reject) => {
-      this.registerResolver(txid, resolve, reject);
-      while (this.resolvers.has(txid)) await this.listen();
-      stopThreads(this.url);
-    });
+    if (this.alive) {
+      const txid = generateUUID();
+      if (!this.client.send_type1(txid, "disconnect"))
+        throw Error("Disconnection failed");
+      return new Promise<void>(async (resolve, reject) => {
+        this.registerResolver(txid, resolve, reject);
+        while (this.resolvers.has(txid)) await this.listen();
+        stopThreads(this.url);
+        this.alive = false;
+      });
+    }
+    return Promise.resolve();
+  }
+
+  is_alive(): boolean {
+    return this.alive;
   }
 
   async call(funcName: string, inputs: any = null): Promise<any> {

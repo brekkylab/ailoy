@@ -141,7 +141,7 @@ class ComponentState(BaseModel):
 
 ## Types for agent's responses
 
-_console = Console(highlight=False)
+_console = Console(highlight=False, force_jupyter=False, force_terminal=True)
 
 
 class AgentResponseBase(BaseModel):
@@ -359,8 +359,7 @@ class Agent:
 
         # Initialize messages
         self._messages: list[Message] = []
-        if system_message:
-            self._messages.append(SystemMessage(role="system", content=system_message))
+        self._system_message: Optional[str] = system_message
 
         # Initialize tools
         self._tools: list[Tool] = []
@@ -391,6 +390,9 @@ class Agent:
         if self._component_state.valid:
             return
 
+        if not self._runtime.is_alive():
+            raise ValueError("Runtime is currently stopped.")
+
         if model_name not in model_descriptions:
             raise ValueError(f"Model `{model_name}` not supported")
 
@@ -401,8 +403,8 @@ class Agent:
             attrs["model"] = model_desc.model_id
 
         # Set default system message
-        if len(self._messages) == 0 and model_desc.default_system_message:
-            self._messages.append(SystemMessage(role="system", content=model_desc.default_system_message))
+        self._system_message = self._system_message or model_desc.default_system_message
+        self.clear_history()
 
         # Add API key
         if api_key:
@@ -425,13 +427,15 @@ class Agent:
         """
         if not self._component_state.valid:
             return
-        self._runtime.delete(self._component_state.name)
-        if len(self._messages) > 0 and self._messages[0].role == "system":
-            self._messages = [self._messages[0]]
-        else:
-            self._messages = []
+
+        if self._runtime.is_alive():
+            self._runtime.delete(self._component_state.name)
+
+        self.clear_history()
+
         for mcp_server in self._mcp_servers:
             mcp_server.cleanup()
+
         self._component_state.valid = False
 
     def query(
@@ -448,6 +452,12 @@ class Agent:
         :param ignore_reasoning_messages: If True, reasoning steps are not included in the response stream. (default: False)
         :yield: AgentResponse output of the LLM inference or tool calls
         """  # noqa: E501
+        if not self._component_state.valid:
+            raise ValueError("Agent is not valid. Create one or define newly.")
+
+        if not self._runtime.is_alive():
+            raise ValueError("Runtime is currently stopped.")
+
         self._messages.append(UserMessage(role="user", content=message))
 
         prev_resp_type = None
@@ -565,6 +575,11 @@ class Agent:
 
             # Finish this generator
             return
+
+    def clear_history(self):
+        self._messages.clear()
+        if self._system_message is not None:
+            self._messages.append(SystemMessage(role="system", content=self._system_message))
 
     def print(self, resp: AgentResponse):
         resp.print()
