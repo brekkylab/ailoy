@@ -15,11 +15,11 @@
 
 namespace ailoy {
 
-struct tvm_model_t;
+class tvm_model_t;
 
-struct chat_manager_t;
+class chat_manager_t;
 
-struct tokenizer_t;
+class tokenizer_t;
 
 struct kv_cache_t;
 
