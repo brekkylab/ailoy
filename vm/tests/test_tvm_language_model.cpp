@@ -23,16 +23,12 @@ std::shared_ptr<ailoy::component_t> get_model() {
 std::string infer(std::shared_ptr<ailoy::component_t> model,
                   std::shared_ptr<ailoy::value_t> messages,
                   std::shared_ptr<ailoy::value_t> tools = nullptr,
-                  bool enable_reasoning = false,
-                  bool ignore_reasoning_messages = false) {
+                  bool reasoning = false) {
   auto in = ailoy::create<ailoy::map_t>();
   in->insert_or_assign("messages", messages);
   if (tools)
     in->insert_or_assign("tools", tools);
-  in->insert_or_assign("enable_reasoning",
-                       ailoy::create<ailoy::bool_t>(enable_reasoning));
-  in->insert_or_assign("ignore_reasoning_messages",
-                       ailoy::create<ailoy::bool_t>(ignore_reasoning_messages));
+  in->insert_or_assign("reasoning", ailoy::create<ailoy::bool_t>(reasoning));
   in->insert_or_assign("temperature", ailoy::create<ailoy::double_t>(0.));
   in->insert_or_assign("top_p", ailoy::create<ailoy::double_t>(0.));
   auto init_out_opt = model->get_operator("infer")->initialize(in);
@@ -281,7 +277,7 @@ TEST(TestTVMLanguageModel, TestReasoning) {
 
   std::shared_ptr<ailoy::component_t> model = get_model();
   auto messages = ailoy::decode(messages_str, ailoy::encoding_method_t::json);
-  auto out = infer(model, messages, nullptr, true, false);
+  auto out = infer(model, messages, nullptr, true);
   ailoy::debug(out);
 
   auto messages_str2 = R"([
@@ -304,7 +300,7 @@ TEST(TestTVMLanguageModel, TestReasoning) {
   {"role": "user", "content": [{"type": "text","text": "I love you."}]}
 ])";
   auto messages2 = ailoy::decode(messages_str2, ailoy::encoding_method_t::json);
-  auto out2 = infer(model, messages2, nullptr, true, true);
+  auto out2 = infer(model, messages2, nullptr, true);
   ailoy::debug(out2);
 }
 

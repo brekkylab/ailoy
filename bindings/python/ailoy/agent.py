@@ -448,15 +448,13 @@ class Agent:
     def query(
         self,
         message: str,
-        enable_reasoning: bool = False,
-        ignore_reasoning_messages: bool = False,
+        reasoning: bool = False,
     ) -> Generator[AgentResponse, None, None]:
         """
         Runs the agent with a new user message and yields streamed responses.
 
         :param message: The user message to send to the model.
-        :param enable_reasoning: If True, enables reasoning capabilities. (default: False)
-        :param ignore_reasoning_messages: If True, reasoning steps are not included in the response stream. (default: False)
+        :param reasoning: If True, enables reasoning capabilities. (default: False)
         :yield: AgentResponse output of the LLM inference or tool calls
         """  # noqa: E501
         if not self._component_state.valid:
@@ -474,10 +472,8 @@ class Agent:
                 "messages": [msg.model_dump(exclude_none=True) for msg in self._messages],
                 "tools": [{"type": "function", "function": t.desc.model_dump(exclude_none=True)} for t in self._tools],
             }
-            if enable_reasoning:
-                infer_args["enable_reasoning"] = enable_reasoning
-            if ignore_reasoning_messages:
-                infer_args["ignore_reasoning_messages"] = ignore_reasoning_messages
+            if reasoning:
+                infer_args["reasoning"] = reasoning
 
             assistant_reasoning = None
             assistant_content = None

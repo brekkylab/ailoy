@@ -21,7 +21,7 @@ with gr.Blocks() as demo, ai.Agent(rt, "Qwen/Qwen3-8B") as agent:
 
     def agent_answer(messages):
         user_prompt = messages[-1]["content"]
-        for resp in agent.query(user_prompt, enable_reasoning=True):
+        for resp in agent.query(user_prompt, reasoning=True):
             if resp.type == "tool_call":
                 messages.append(
                     gr.ChatMessage(

@@ -25,7 +25,7 @@ chat_manager_t::make_from_config_file(std::filesystem::path config_file_path) {
 const std::string
 chat_manager_t::apply_chat_template(std::shared_ptr<const value_t> conversation,
                                     std::shared_ptr<const value_t> tools,
-                                    const bool enable_reasoning,
+                                    const bool reasoning,
                                     const bool add_generation_prompt) {
   // @jhlee TODO Different conversion passes to be applied for each model. We'll
   // consider to make configuration for them
@@ -42,7 +42,7 @@ chat_manager_t::apply_chat_template(std::shared_ptr<const value_t> conversation,
   inputs.add_generation_prompt = add_generation_prompt;
   // TODO: consider other ways of enable/disable reasoning
   //       & models without reasoning
-  if (!enable_reasoning)
+  if (!reasoning)
     inputs.extra_context = {{"enable_thinking", false}};
   minja::chat_template_options options;
   return template_->apply(inputs, options);

@@ -229,10 +229,10 @@ void tvm_language_model_t::clear() {
 
 std::string tvm_language_model_t::apply_chat_template(
     std::shared_ptr<const value_t> conversation,
-    std::shared_ptr<const value_t> tools, bool enable_reasoning,
+    std::shared_ptr<const value_t> tools, bool reasoning,
     bool add_generation_prompt) const {
-  return template_engine_->apply_chat_template(
-      conversation, tools, enable_reasoning, add_generation_prompt);
+  return template_engine_->apply_chat_template(conversation, tools, reasoning,
+                                               add_generation_prompt);
 }
 
 bool tvm_language_model_t::is_bor(const std::string &tok) const {
@@ -729,17 +729,10 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
         }
 
         // Get reasoning (optional)
-        bool enable_reasoning = false;
-        if (input_map->contains("enable_reasoning") &&
-            !input_map->at("enable_reasoning")->is_type_of<null_t>())
-          enable_reasoning = *input_map->at<bool_t>("enable_reasoning");
-
-        // Get ignore_reasoning (optional)
-        bool ignore_reasoning_messages = false;
-        if (input_map->contains("ignore_reasoning_messages") &&
-            !input_map->at("ignore_reasoning_messages")->is_type_of<null_t>())
-          ignore_reasoning_messages =
-              *input_map->at<bool_t>("ignore_reasoning_messages");
+        bool reasoning = false;
+        if (input_map->contains("reasoning") &&
+            !input_map->at("reasoning")->is_type_of<null_t>())
+          reasoning = *input_map->at<bool_t>("reasoning");
 
         // Get temperature (optional)
         model->config.temperature = model->get_default_config().temperature;
@@ -754,8 +747,7 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
           model->config.top_p = *input_map->at<double_t>("top_p");
 
         // Apply chat template on messages
-        auto prompt =
-            model->apply_chat_template(messages, tools, enable_reasoning);
+        auto prompt = model->apply_chat_template(messages, tools, reasoning);
 
         // Tokenize
         auto tokens = model->tokenize(prompt);
@@ -774,8 +766,6 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
         auto rv = create<map_t>();
         rv->insert_or_assign("current_token", create<int_t>(current_token));
         rv->insert_or_assign("finish_reason", create<string_t>(finish_reason));
-        rv->insert_or_assign("ignore_reasoning_messages",
-                             create<ailoy::bool_t>(ignore_reasoning_messages));
         return rv;
       },
       //
@@ -787,8 +777,6 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
         auto model = component->get_obj("model")->as<tvm_language_model_t>();
         auto current_token = state->as<map_t>()->at<int_t>("current_token");
         auto finish_reason = state->as<map_t>()->at<string_t>("finish_reason");
-        bool ignore_reasoning_messages =
-            *state->as<map_t>()->at<bool_t>("ignore_reasoning_messages");
 
         // If current_token == -1: Raised in prefill
         if (current_token < 0) {
@@ -833,8 +821,6 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
                 agg_token_str += current_token_str;
               continue;
             } else if (current_stream_mode == "reasoning") { // Reasoning mode
-              if (ignore_reasoning_messages)
-                continue;
               if (model->is_bor(current_token_str))
                 // BOR token generated
                 continue;
@@ -921,16 +907,15 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
         }
 
         // Get reasoning (optional)
-        bool enable_reasoning = false;
-        if (input_map->contains("enable_reasoning"))
-          if (input_map->at("enable_reasoning")->is_type_of<bool_t>())
-            enable_reasoning = *input_map->at<bool_t>("enable_reasoning");
+        bool reasoning = false;
+        if (input_map->contains("reasoning"))
+          if (input_map->at("reasoning")->is_type_of<bool_t>())
+            reasoning = *input_map->at<bool_t>("reasoning");
 
         // Apply chat template on messages
-        auto prompt =
-            component->get_obj("model")
-                ->as<tvm_language_model_t>()
-                ->apply_chat_template(messages, tools, enable_reasoning);
+        auto prompt = component->get_obj("model")
+                          ->as<tvm_language_model_t>()
+                          ->apply_chat_template(messages, tools, reasoning);
 
         auto outputs = create<map_t>();
         outputs->insert_or_assign("prompt", create<string_t>(prompt));

@@ -24,7 +24,7 @@ public:
   const std::string
   apply_chat_template(std::shared_ptr<const value_t> conversation,
                       std::shared_ptr<const value_t> tools = nullptr,
-                      const bool enable_reasoning = false,
+                      const bool reasoning = false,
                       const bool add_generation_prompt = true);
 
   const std::string &get_bos_token() const { return bos_token_; }
