@@ -364,6 +364,9 @@ class Agent:
         # Initialize messages
         self._messages: list[Message] = []
 
+        # Initialize system message
+        self._system_message = system_message
+
         # Initialize tools
         self._tools: list[Tool] = []
 

@@ -253,6 +253,9 @@ export class Agent {
     // Initialize messages
     this.messages = [];
 
+    // Initialize system message
+    this.systemMessage = systemMessage;
+
     // Initialize tools
     this.tools = [];
   }
