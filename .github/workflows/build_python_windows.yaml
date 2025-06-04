@@ -65,7 +65,7 @@ jobs:
           pip install build scikit-build-core delvewheel
           python -m build -w --outdir dist
           $dist_wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
-          delvewheel repair -w wheelhouse $dist_wheel --add-path "${{ github.workspace }}\bindings\python\build\_deps\mlc-llm-build\Release;${{ github.workspace }}\bindings\python\build\_deps\mlc-llm-build\tvm\Release" --exclude vulkan-1.dll
+          delvewheel repair -w wheelhouse $dist_wheel --add-path "${{ github.workspace }}\bindings\python\build\_deps\tvm-build\Release" --exclude vulkan-1.dll
           $wheel = Get-ChildItem wheelhouse\*.whl | Select-Object -First 1
           echo "WHEEL_FILENAME=$($wheel.Name)" >> $env:GITHUB_ENV
 
