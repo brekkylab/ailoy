@@ -279,7 +279,7 @@ export class Agent {
     // Skip if the component already exists
     if (this.componentState.valid) return;
 
-    if (!this.runtime.alive) throw Error(`Runtime is currently stopped.`);
+    if (!this.runtime.is_alive()) throw Error(`Runtime is currently stopped.`);
 
     const modelDesc = modelDescriptions[modelName];
 
@@ -313,7 +313,7 @@ export class Agent {
     // Skip if the component not exists
     if (!this.componentState.valid) return;
 
-    if (!this.runtime.alive) {
+    if (!this.runtime.is_alive()) {
       const result = await this.runtime.delete(this.componentState.name);
       if (!result) throw Error(`component delete failed`);
     }
@@ -573,7 +573,7 @@ export class Agent {
     if (!this.componentState.valid)
       throw Error(`Agent is not valid. Create one or define newly.`);
 
-    if (!this.runtime.alive) throw Error(`Runtime is currently stopped.`);
+    if (!this.runtime.is_alive()) throw Error(`Runtime is currently stopped.`);
 
     this.messages.push({ role: "user", content: message });
 

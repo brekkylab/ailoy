@@ -44,7 +44,7 @@ export class Runtime {
    */
   private listener: Promise<void> | null;
 
-  alive: boolean = false;
+  private alive: boolean = false;
 
   constructor(url: string = "inproc://") {
     this.url = url;
@@ -81,6 +81,10 @@ export class Runtime {
       });
     }
     return Promise.resolve();
+  }
+
+  is_alive(): boolean {
+    return this.alive;
   }
 
   async call(funcName: string, inputs: any = null): Promise<any> {
