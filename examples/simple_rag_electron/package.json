@@ -31,12 +31,13 @@
     "@typescript-eslint/eslint-plugin": "^5.62.0",
     "@typescript-eslint/parser": "^5.62.0",
     "electron": "35.1.5",
+    "esbuild": "^0.25.5",
     "eslint": "^8.57.1",
     "eslint-plugin-import": "^2.31.0",
     "tailwindcss": "^4.1.4",
     "ts-node": "^10.9.2",
     "typescript": "~4.5.4",
-    "vite": "^5.4.18",
+    "vite": "^5.4.19",
     "vite-plugin-static-copy": "^2.3.1"
   },
   "dependencies": {
