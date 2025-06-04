@@ -3,6 +3,8 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include "chat_manager.hpp"
+
 namespace ailoy {
 /*
   OpenAI returns function call arguments as string by default,
@@ -24,6 +26,8 @@ void to_json(json &j, const ailoy::openai_chat_function_call_t &obj) {
     } else {
       j["arguments"] = obj.arguments.value();
     }
+  } else {
+    j["arguments"] = nlohmann::json::object();
   }
 }
 
@@ -50,10 +54,18 @@ void from_json(const json &j, ailoy::openai_chat_tool_call_t &obj) {
 
 void to_json(json &j, const ailoy::openai_chat_completion_message_t &obj) {
   j = json{{"role", obj.role}};
-  j["content"] = obj.content;
-  j["name"] = obj.name;
-  j["tool_calls"] = obj.tool_calls;
-  j["tool_call_id"] = obj.tool_call_id;
+  if (obj.content.has_value()) {
+    j["content"] = nlohmann::json::array();
+    j["content"].push_back(nlohmann::json::object());
+    j["content"][0]["type"] = "text";
+    j["content"][0]["text"] = obj.content;
+  }
+  if (obj.name.has_value())
+    j["name"] = obj.name;
+  if (obj.tool_calls.has_value())
+    j["tool_calls"] = obj.tool_calls;
+  if (obj.tool_call_id.has_value())
+    j["tool_call_id"] = obj.tool_call_id;
 }
 
 void from_json(const json &j, ailoy::openai_chat_completion_message_t &obj) {
@@ -147,7 +159,10 @@ convert_request_input(std::shared_ptr<const value_t> inputs) {
         "[OpenAI] input should have array type field 'messages'");
   }
 
+  // Apply input conversion
   auto messages = input_map->at<array_t>("messages");
+  messages = melt_content_text(messages)->as<array_t>();
+
   for (const auto &msg_val : *messages) {
     request->messages.push_back(msg_val->to_nlohmann_json());
   }
@@ -323,10 +338,10 @@ create_openai_component(std::shared_ptr<const value_t> attrs) {
       [&](std::shared_ptr<component_t> component,
           std::shared_ptr<const value_t> inputs) -> value_or_error_t {
         auto request = convert_request_input(inputs);
-        auto delta =
+        auto resp =
             component->get_obj("engine")->as<openai_llm_engine_t>()->infer(
                 std::move(request));
-        auto rv = ailoy::from_nlohmann_json(delta);
+        auto rv = ailoy::from_nlohmann_json(resp)->as<map_t>();
         return rv;
       });
 

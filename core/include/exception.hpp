@@ -112,9 +112,13 @@ template <typename T = runtime_error>
   requires is_exception_reason<T>
 class exception_t : public std::exception {
 public:
-  template <typename... TArgs>
-  exception_t(TArgs... args)
-      : std::exception(), errstr(build_errstr(T(args...).what())) {}
+  template <typename... TArgs> exception_t(TArgs... args) : std::exception() {
+    if constexpr (requires { T::what(); }) {
+      errstr = build_errstr(T::what());
+    } else {
+      errstr = build_errstr(T(std::forward<TArgs>(args)...).what());
+    }
+  }
 
   const char *what() const noexcept override { return errstr.c_str(); }
 
@@ -124,7 +128,7 @@ private:
 
 template <typename T = runtime_error, typename... TArgs>
 exception_t<T> exception(TArgs... args) {
-  return exception_t{args...};
+  return exception_t<T>(std::forward<TArgs>(args)...);
 }
 
 } // namespace ailoy
