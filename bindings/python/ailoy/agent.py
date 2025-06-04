@@ -405,8 +405,10 @@ class Agent:
         if "model" not in attrs:
             attrs["model"] = model_desc.model_id
 
-        # Set default system message
-        self._system_message = self._system_message or model_desc.default_system_message
+        # Set default system message if not given; still can be None
+        if self._system_message is None:
+            self._system_message = model_desc.default_system_message
+
         self.clear_history()
 
         # Add API key
