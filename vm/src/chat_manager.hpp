@@ -66,6 +66,8 @@ private:
   const std::string eotc_token_;
 };
 
+std::shared_ptr<value_t> remove_tool_call_id(std::shared_ptr<const value_t> in);
+
 std::shared_ptr<value_t>
 put_default_reasoning(std::shared_ptr<const value_t> in,
                       const std::string &content = "\n\n");

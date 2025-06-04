@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "logging.hpp"
 #include "tvm/language_model.hpp"
 #include "value.hpp"
 
@@ -69,7 +70,7 @@ std::string infer(std::shared_ptr<ailoy::component_t> model,
   return agg_out;
 }
 
-TEST(TestLangModelV2, TestSimple) {
+TEST(TestTVMLanguageModel, TestSimple) {
   auto messages_str = R"([
   {
     "role": "user",
@@ -90,7 +91,7 @@ TEST(TestLangModelV2, TestSimple) {
       R"(I am a language model, and I am here to assist you with language learning and other tasks.)");
 }
 
-TEST(TestLangModelV2, TestMultiTurn) {
+TEST(TestTVMLanguageModel, TestMultiTurn) {
   auto messages_str1 = R"([
   {
     "role": "system",
@@ -161,7 +162,7 @@ TEST(TestLangModelV2, TestMultiTurn) {
             "I am Qwen, a helpful assistant created by Alibaba Cloud.");
 }
 
-TEST(TestLangModelV2, TestToolCall) {
+TEST(TestTVMLanguageModel, TestToolCall) {
   const std::string messages_str = R"([
     {
       "role": "system",
@@ -236,7 +237,7 @@ TEST(TestLangModelV2, TestToolCall) {
 
   // model->set_builtin_grammar("tool_call", "json");
   auto answer = infer(model, messages, tools);
-  // std::cout << answer << std::endl;
+  ailoy::debug(answer);
   // model->reset_grammar("tool_call");
 
   const std::string messages2_str = R"([
@@ -273,7 +274,7 @@ TEST(TestLangModelV2, TestToolCall) {
   // std::cout << answer2 << std::endl;
 }
 
-TEST(TestLangModelV2, TestReasoning) {
+TEST(TestTVMLanguageModel, TestReasoning) {
   auto messages_str = R"([
   {"role": "user", "content": [{"type": "text","text": "Introduce yourself."}]}
 ])";
@@ -281,7 +282,7 @@ TEST(TestLangModelV2, TestReasoning) {
   std::shared_ptr<ailoy::component_t> model = get_model();
   auto messages = ailoy::decode(messages_str, ailoy::encoding_method_t::json);
   auto out = infer(model, messages, nullptr, true, false);
-  // std::cout << out1 << std::endl;
+  ailoy::debug(out);
 
   auto messages_str2 = R"([
   {"role": "user", "content": [{"type": "text","text": "Introduce yourself."}]},
@@ -304,7 +305,7 @@ TEST(TestLangModelV2, TestReasoning) {
 ])";
   auto messages2 = ailoy::decode(messages_str2, ailoy::encoding_method_t::json);
   auto out2 = infer(model, messages2, nullptr, true, true);
-  // std::cout << out2 << std::endl;
+  ailoy::debug(out2);
 }
 
 int main(int argc, char **argv) {

@@ -6,7 +6,7 @@ import { search } from "jmespath";
 
 import { Runtime, generateUUID } from "./runtime";
 
-/** Types for OpenAI API-compatible data structures */
+/** Types for internal data structures */
 
 interface SystemMessage {
   role: "system";
@@ -24,6 +24,7 @@ interface AssistantMessage {
   reasoning?: Array<{ type: "text"; text: string }>;
   tool_calls?: Array<{
     type: "function";
+    id?: string;
     function: { name: string; arguments: any };
   }>;
 }
@@ -32,6 +33,7 @@ interface ToolMessage {
   role: "tool";
   name: string;
   content: Array<{ type: "text"; text: string }>;
+  tool_call_id?: string;
 }
 
 type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
@@ -44,7 +46,7 @@ interface MessageOutput {
     | "length"
     | "error"
     | undefined;
-  delta: Omit<AssistantMessage, "role">;
+  message: Omit<AssistantMessage, "role">;
 }
 
 /** Types for LLM Model Definitions */
@@ -109,8 +111,8 @@ export interface AgentResponseToolCall {
   role: "assistant";
   isTypeSwitched: boolean;
   content: {
-    name: string;
-    arguments: any;
+    id?: string;
+    function: { name: string; arguments: any };
   };
 }
 export interface AgentResponseToolResult {
@@ -119,7 +121,8 @@ export interface AgentResponseToolResult {
   isTypeSwitched: boolean;
   content: {
     name: string;
-    content: string;
+    content: Array<{ type: "text"; text: string }>;
+    tool_call_id?: string;
   };
 }
 export interface AgentResponseError {
@@ -274,6 +277,8 @@ export class Agent {
     // Skip if the component already exists
     if (this.componentState.valid) return;
 
+    if (!this.runtime.is_alive()) throw Error(`Runtime is currently stopped.`);
+
     const modelDesc = modelDescriptions[modelName];
 
     // Add model name into attrs
@@ -306,8 +311,10 @@ export class Agent {
     // Skip if the component not exists
     if (!this.componentState.valid) return;
 
-    const result = await this.runtime.delete(this.componentState.name);
-    if (!result) throw Error(`component delete failed`);
+    if (!this.runtime.is_alive()) {
+      const result = await this.runtime.delete(this.componentState.name);
+      if (!result) throw Error(`component delete failed`);
+    }
 
     // Clear messages
     if (this.messages.length > 0 && this.messages[0].role === "system")
@@ -561,6 +568,11 @@ export class Agent {
       ignoreReasoningMessages?: boolean;
     }
   ): AsyncGenerator<AgentResponse> {
+    if (!this.componentState.valid)
+      throw Error(`Agent is not valid. Create one or define newly.`);
+
+    if (!this.runtime.is_alive()) throw Error(`Runtime is currently stopped.`);
+
     this.messages.push({
       role: "user",
       content: [{ type: "text", text: message }],
@@ -586,8 +598,8 @@ export class Agent {
           ignore_reasoning_messages: options?.ignoreReasoningMessages,
         }
       ) as AsyncIterable<MessageOutput>) {
-        if (result.delta.reasoning) {
-          for (const reasoningData of result.delta.reasoning) {
+        if (result.message.reasoning) {
+          for (const reasoningData of result.message.reasoning) {
             if (!assistantMessage.reasoning)
               assistantMessage.reasoning = [reasoningData];
             else assistantMessage.reasoning[0].text += reasoningData.text;
@@ -601,8 +613,8 @@ export class Agent {
             yield resp;
           }
         }
-        if (result.delta.content) {
-          for (const contentData of result.delta.content) {
+        if (result.message.content) {
+          for (const contentData of result.message.content) {
             if (!assistantMessage.content)
               assistantMessage.content = [contentData];
             else assistantMessage.content[0].text += contentData.text;
@@ -616,22 +628,20 @@ export class Agent {
             yield resp;
           }
         }
-        if (result.delta.tool_calls) {
-          for (const tool_call_data of result.delta.tool_calls) {
-            if (!assistantMessage.content)
+        if (result.message.tool_calls) {
+          for (const tool_call_data of result.message.tool_calls) {
+            if (!assistantMessage.tool_calls)
               assistantMessage.tool_calls = [tool_call_data];
             else assistantMessage.tool_calls?.push(tool_call_data);
             const resp: AgentResponseToolCall = {
               type: "tool_call",
               role: "assistant",
               isTypeSwitched: true,
-              content: tool_call_data.function,
+              content: tool_call_data,
             };
             prevRespType = resp.type;
             yield resp;
           }
-
-          continue;
         }
 
         if (result.finish_reason) {
@@ -660,6 +670,7 @@ export class Agent {
                 role: "tool",
                 name: toolCall.function.name,
                 content: [{ type: "text", text: JSON.stringify(toolResult) }],
+                tool_call_id: toolCall.id || undefined,
               };
               resolve(message);
             })
@@ -674,10 +685,7 @@ export class Agent {
             type: "tool_call_result",
             role: "tool",
             isTypeSwitched: true,
-            content: {
-              name: toolCallResult.name,
-              content: toolCallResult.content[0].text,
-            },
+            content: toolCallResult,
           };
           prevRespType = resp.type;
           yield resp;
@@ -701,9 +709,14 @@ export class Agent {
   }
 
   private _printResponseToolCall(resp: AgentResponseToolCall) {
-    const title =
-      chalk.magenta("Tool Call") + ": " + chalk.bold(resp.content.name);
-    const content = JSON.stringify(resp.content.arguments, null, 2);
+    let title =
+      chalk.magenta("Tool Call") +
+      ": " +
+      chalk.bold(resp.content.function.name);
+    if (resp.content.id !== undefined) {
+      title += ` (${resp.content.id})`;
+    }
+    const content = JSON.stringify(resp.content.function.arguments, null, 2);
     const box = boxen(content, {
       title,
       titleAlignment: "left",
@@ -718,16 +731,23 @@ export class Agent {
   }
 
   private _printResponseToolResult(resp: AgentResponseToolResult) {
-    const title =
+    let title =
       chalk.green("Tool Result") + ": " + chalk.bold(resp.content.name);
+    if (resp.content.tool_call_id !== undefined) {
+      title += ` (${resp.content.tool_call_id})`;
+    }
 
-    let content;
+    let content: string;
     try {
       // Try to parse as json
-      content = JSON.stringify(JSON.parse(resp.content.content), null, 2);
+      content = JSON.stringify(
+        JSON.parse(resp.content.content[0].text),
+        null,
+        2
+      );
     } catch (e) {
       // Use original content if not json deserializable
-      content = resp.content.content;
+      content = resp.content.content[0].text;
     }
     // Truncate long contents
     if (content.length > 500) {

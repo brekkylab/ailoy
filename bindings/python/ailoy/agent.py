@@ -26,7 +26,7 @@ from ailoy.tools import DocstringParsingException, TypeHintParsingException, get
 
 __all__ = ["Agent"]
 
-## Types for OpenAI API-compatible data structures
+## Types for internal data structures
 
 
 class TextData(BaseModel):
@@ -40,6 +40,7 @@ class FunctionData(BaseModel):
         arguments: Any
 
     type: Literal["function"]
+    id: Optional[str] = None
     function: FunctionBody
 
 
@@ -64,6 +65,7 @@ class ToolMessage(BaseModel):
     role: Literal["tool"]
     name: str
     content: list[TextData]
+    tool_call_id: Optional[str] = None
 
 
 Message = Union[
@@ -80,7 +82,7 @@ class MessageOutput(BaseModel):
         reasoning: Optional[list[TextData]] = None
         tool_calls: Optional[list[FunctionData]] = None
 
-    delta: AssistantMessageDelta
+    message: AssistantMessageDelta
     finish_reason: Optional[Literal["stop", "tool_calls", "invalid_tool_call", "length", "error"]] = None
 
 
@@ -159,48 +161,46 @@ class AgentResponseOutputText(BaseModel):
 
 
 class AgentResponseToolCall(BaseModel):
-    class ContentBody(BaseModel):
-        name: str
-        arguments: Any
-
     type: Literal["tool_call"]
     role: Literal["assistant"]
     is_type_switched: bool = False
-    content: ContentBody
+    content: FunctionData
 
     def print(self):
+        title = f"[magenta]Tool Call[/magenta]: [bold]{self.content.function.name}[/bold]"
+        if self.content.id is not None:
+            title += f" ({self.content.id})"
         panel = Panel(
-            json.dumps(self.content.arguments, indent=2),
-            title=f"[magenta]Tool Call[/magenta]: [bold]{self.content.name}[/bold]",
+            json.dumps(self.content.function.arguments, indent=2),
+            title=title,
             title_align="left",
         )
         _console.print(panel)
 
 
 class AgentResponseToolResult(BaseModel):
-    class ContentBody(BaseModel):
-        name: str
-        content: str
-
     type: Literal["tool_call_result"]
     role: Literal["tool"]
     is_type_switched: bool = False
-    content: ContentBody
+    content: ToolMessage
 
     def print(self):
         try:
             # Try to parse as json
-            content = json.dumps(json.loads(self.content.content), indent=2)
+            content = json.dumps(json.loads(self.content.content[0].text), indent=2)
         except json.JSONDecodeError:
             # Use original content if not json deserializable
-            content = self.content.content
+            content = self.content.content[0].text
         # Truncate long contents
         if len(content) > 500:
             content = content[:500] + "...(truncated)"
 
+        title = f"[green]Tool Result[/green]: [bold]{self.content.name}[/bold]"
+        if self.content.tool_call_id is not None:
+            title += f" ({self.content.tool_call_id})"
         panel = Panel(
             content,
-            title=f"[green]Tool Result[/green]: [bold]{self.content.name}[/bold]",
+            title=title,
             title_align="left",
         )
         _console.print(panel)
@@ -392,6 +392,9 @@ class Agent:
         if self._component_state.valid:
             return
 
+        if not self._runtime.is_alive():
+            raise ValueError("Runtime is currently stopped.")
+
         if model_name not in model_descriptions:
             raise ValueError(f"Model `{model_name}` not supported")
 
@@ -431,7 +434,10 @@ class Agent:
         """
         if not self._component_state.valid:
             return
-        self._runtime.delete(self._component_state.name)
+
+        if self._runtime.is_alive():
+            self._runtime.delete(self._component_state.name)
+
         if len(self._messages) > 0 and self._messages[0].role == "system":
             self._messages = [self._messages[0]]
         else:
@@ -452,6 +458,12 @@ class Agent:
         :param ignore_reasoning_messages: If True, reasoning steps are not included in the response stream. (default: False)
         :yield: AgentResponse output of the LLM inference or tool calls
         """  # noqa: E501
+        if not self._component_state.valid:
+            raise ValueError("Agent is not valid. Create one or define newly.")
+
+        if not self._runtime.is_alive():
+            raise ValueError("Runtime is currently stopped.")
+
         self._messages.append(UserMessage(role="user", content=[{"type": "text", "text": message}]))
 
         prev_resp_type = None
@@ -473,8 +485,8 @@ class Agent:
             for result in self._runtime.call_iter_method(self._component_state.name, "infer", infer_args):
                 msg = MessageOutput.model_validate(result)
 
-                if msg.delta.reasoning:
-                    for v in msg.delta.reasoning:
+                if msg.message.reasoning:
+                    for v in msg.message.reasoning:
                         if not assistant_reasoning:
                             assistant_reasoning = [v]
                         else:
@@ -487,8 +499,8 @@ class Agent:
                         )
                         prev_resp_type = resp.type
                         yield resp
-                if msg.delta.content:
-                    for v in msg.delta.content:
+                if msg.message.content:
+                    for v in msg.message.content:
                         if not assistant_content:
                             assistant_content = [v]
                         else:
@@ -501,8 +513,8 @@ class Agent:
                         )
                         prev_resp_type = resp.type
                         yield resp
-                if msg.delta.tool_calls:
-                    for v in msg.delta.tool_calls:
+                if msg.message.tool_calls:
+                    for v in msg.message.tool_calls:
                         if not assistant_tool_calls:
                             assistant_tool_calls = [v]
                         else:
@@ -511,7 +523,7 @@ class Agent:
                             type="tool_call",
                             role="assistant",
                             is_type_switched=True,
-                            content=v.function.model_dump(),
+                            content=v,
                         )
                         prev_resp_type = resp.type
                         yield resp
@@ -543,6 +555,7 @@ class Agent:
                         role="tool",
                         name=tool_call.function.name,
                         content=[TextData(type="text", text=json.dumps(tool_result))],
+                        tool_call_id=tool_call.id if tool_call.id else None,
                     )
 
                 tool_call_results = [run_tool(tc) for tc in assistant_tool_calls]
@@ -552,9 +565,7 @@ class Agent:
                         type="tool_call_result",
                         role="tool",
                         is_type_switched=True,
-                        content=AgentResponseToolResult.ContentBody(
-                            name=result_msg.name, content=result_msg.content[0].text
-                        ),
+                        content=result_msg,
                     )
                     prev_resp_type = resp.type
                     yield resp

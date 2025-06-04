@@ -29,6 +29,7 @@ chat_manager_t::apply_chat_template(std::shared_ptr<const value_t> conversation,
                                     const bool add_generation_prompt) {
   // @jhlee TODO Different conversion passes to be applied for each model. We'll
   // consider to make configuration for them
+  conversation = remove_tool_call_id(conversation);
   conversation = put_default_reasoning(conversation, "\n\n");
   conversation = melt_reasoning(conversation);
   conversation = merge_text_data(conversation);
@@ -55,6 +56,35 @@ chat_manager_t::get_json_str_if_valid(const std::vector<std::string> &tokens) {
   if (nlohmann::json::accept(tool_call_string))
     return tool_call_string;
   return std::nullopt;
+}
+
+std::shared_ptr<value_t>
+remove_tool_call_id(std::shared_ptr<const value_t> in) {
+  auto out =
+      decode(in->encode(encoding_method_t::json), encoding_method_t::json);
+  for (auto message_value : *out->as<array_t>()) {
+    auto message = message_value->as<map_t>();
+    if (*message->at<string_t>("role") == "assistant") {
+      if (!message->contains("tool_calls"))
+        continue;
+      auto tool_calls = message->at<array_t>("tool_calls");
+      for (auto tool_call_data : *tool_calls) {
+        auto tool_call = tool_call_data->as<map_t>();
+        if (tool_call->contains("id"))
+          tool_call->erase("id");
+      }
+    } else if (*message->at<string_t>("role") == "tool") {
+      if (!message->contains("content"))
+        continue;
+      auto contents = message->at<array_t>("content");
+      for (auto content : *contents) {
+        auto tool_call = content->as<map_t>();
+        if (tool_call->contains("tool_call_id"))
+          tool_call->erase("tool_call_id");
+      }
+    }
+  }
+  return out;
 }
 
 std::shared_ptr<value_t>
@@ -165,12 +195,20 @@ std::shared_ptr<value_t> melt_content_text(std::shared_ptr<const value_t> in) {
     auto message = message_value->as<map_t>();
     if (!message->contains("content"))
       continue;
+    if (!message->at("content")->is_type_of<array_t>())
+      continue;
     auto content = message->at<array_t>("content");
     if (content->size() != 1)
       throw exception("content length != 1");
+    if (!content->at(0)->is_type_of<map_t>())
+      continue;
+    if (!content->at<map_t>(0)->contains("type"))
+      continue;
     auto content_data = content->at<map_t>(0);
     auto content_type = content_data->at<string_t>("type");
     if (*content_type == "text") {
+      if (!content->at<map_t>(0)->contains("text"))
+        continue;
       message->insert_or_assign(
           "content", create<string_t>(*content_data->at<string_t>("text")));
     }

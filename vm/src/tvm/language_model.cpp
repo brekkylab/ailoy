@@ -147,7 +147,7 @@ tvm_language_model_t::stream_mode_t::stream_mode_t(
   close_indicator = model->tokenizer_->encode(close_indicator_);
 }
 
-bool tvm_language_model_t::stream_mode_t::check_indecator(
+bool tvm_language_model_t::stream_mode_t::check_indicator(
     const std::string &indicator_type,
     const std::vector<int32_t> &history) const {
   const auto &indicator =
@@ -255,8 +255,16 @@ bool tvm_language_model_t::is_bos(const std::string &tok) const {
   return template_engine_->is_bos_token(tok);
 }
 
+bool tvm_language_model_t::is_bos(int32_t tok) const {
+  return is_bos(tokenizer_->token_id_to_str(tok));
+}
+
 bool tvm_language_model_t::is_eos(const std::string &tok) const {
   return template_engine_->is_eos_token(tok);
+}
+
+bool tvm_language_model_t::is_eos(int32_t tok) const {
+  return is_eos(tokenizer_->token_id_to_str(tok));
 }
 
 bool tvm_language_model_t::is_botc(const std::string &tok) const {
@@ -432,7 +440,7 @@ int32_t tvm_language_model_t::decode(int32_t last_token) {
     for (auto [name, mode] : stream_modes_) {
       if (name == "output_text")
         continue;
-      if (!mode.check_indecator("open", history_))
+      if (!mode.check_indicator("open", history_))
         continue;
       if (mode.grammar) {
         auto matcher =
@@ -444,7 +452,7 @@ int32_t tvm_language_model_t::decode(int32_t last_token) {
     }
   } else {
     const auto &current_mode = stream_modes_.at(current_stream_mode_);
-    if (current_mode.check_indecator("close", history_)) {
+    if (current_mode.check_indicator("close", history_)) {
       auto name = current_stream_mode_;
       if (stream_modes_.at(name).grammar)
         stream_modes_.at(name).matcher = nullptr;
@@ -786,7 +794,7 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
         if (current_token < 0) {
           if (finish_reason) {
             auto resp = create<map_t>();
-            resp->insert_or_assign("delta", create<map_t>());
+            resp->insert_or_assign("message", create<map_t>());
             resp->insert_or_assign("finish_reason",
                                    create<string_t>(*finish_reason));
             return ok_output_t(resp, true);
@@ -797,7 +805,7 @@ create_tvm_language_model_component(std::shared_ptr<const value_t> inputs) {
         // Repeat steps until valid output comes or it finished.
         auto resp = create<map_t>();
         auto delta = create<map_t>();
-        resp->insert_or_assign("delta", delta);
+        resp->insert_or_assign("message", delta);
         auto insert_to_delta = [&](const std::string &key,
                                    const std::string &datatype,
                                    std::shared_ptr<value_t> data) {
