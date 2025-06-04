@@ -39,10 +39,11 @@ TEST_F(OpenAITest, SimpleChat) {
 
   auto input = ailoy::create<ailoy::map_t>();
   auto messages = nlohmann::json::array();
-  messages.push_back(
-      {{"role", "user"},
-       {"content",
-        "Who is the president of US in 2021? Just answer in two words."}});
+  messages.push_back({{"role", "user"}, {"content", nlohmann::json::array()}});
+  messages[0]["content"].push_back(nlohmann::json::object());
+  messages[0]["content"][0]["type"] = "text";
+  messages[0]["content"][0]["text"] =
+      "Who is the president of US in 2021? Just answer in two words.";
   input->insert_or_assign("messages", ailoy::from_nlohmann_json(messages));
 
   infer->initialize(input);
@@ -66,9 +67,40 @@ TEST_F(OpenAITest, SimpleChat) {
   ASSERT_EQ(*out_map->at<ailoy::string_t>("finish_reason"), "stop");
   ASSERT_EQ(*out_map->at<ailoy::map_t>("message")->at<ailoy::string_t>("role"),
             "assistant");
-  EXPECT_THAT(
-      *out_map->at<ailoy::map_t>("message")->at<ailoy::string_t>("content"),
-      ::testing::HasSubstr("Joe Biden"));
+  ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
+                  ->at("content")
+                  ->is_type_of<ailoy::array_t>());
+  ASSERT_EQ(out_map->at<ailoy::map_t>("message")
+                ->at<ailoy::array_t>("content")
+                ->size(),
+            1);
+  ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
+                  ->at<ailoy::array_t>("content")
+                  ->at(0)
+                  ->is_type_of<ailoy::map_t>());
+  ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
+                  ->at<ailoy::array_t>("content")
+                  ->at<ailoy::map_t>(0)
+                  ->contains("type"));
+  ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
+                  ->at<ailoy::array_t>("content")
+                  ->at<ailoy::map_t>(0)
+                  ->at("type")
+                  ->is_type_of<ailoy::string_t>());
+  ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
+                  ->at<ailoy::array_t>("content")
+                  ->at<ailoy::map_t>(0)
+                  ->contains("text"));
+  ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
+                  ->at<ailoy::array_t>("content")
+                  ->at<ailoy::map_t>(0)
+                  ->at("text")
+                  ->is_type_of<ailoy::string_t>());
+  EXPECT_THAT(*out_map->at<ailoy::map_t>("message")
+                   ->at<ailoy::array_t>("content")
+                   ->at<ailoy::map_t>(0)
+                   ->at<ailoy::string_t>("text"),
+              ::testing::HasSubstr("Joe Biden"));
 }
 
 TEST_F(OpenAITest, ToolCall) {
@@ -76,8 +108,11 @@ TEST_F(OpenAITest, ToolCall) {
 
   auto input = ailoy::create<ailoy::map_t>();
   auto messages = nlohmann::json::array();
-  messages.push_back({{"role", "user"},
-                      {"content", "What is the weather like in Paris today?"}});
+  messages.push_back({{"role", "user"}, {"content", nlohmann::json::array()}});
+  messages[0]["content"].push_back(nlohmann::json::object());
+  messages[0]["content"][0]["type"] = "text";
+  messages[0]["content"][0]["text"] =
+      "What is the weather like in Paris today?";
   input->insert_or_assign("messages", ailoy::from_nlohmann_json(messages));
 
   auto tools = nlohmann::json::parse(R"(
@@ -167,7 +202,8 @@ TEST_F(OpenAITest, ToolCall) {
   */
   ASSERT_EQ(out2_map["finish_reason"], "stop");
   ASSERT_EQ(out2_map["message"]["role"], "assistant");
-  EXPECT_THAT(out2_map["message"]["content"], ::testing::HasSubstr("14°C"));
+  EXPECT_THAT(out2_map["message"]["content"][0]["text"],
+              ::testing::HasSubstr("14°C"));
 }
 
 int main(int argc, char **argv) {

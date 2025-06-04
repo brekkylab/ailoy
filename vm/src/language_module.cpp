@@ -2,12 +2,11 @@
 
 #include "chromadb_vector_store.hpp"
 #include "faiss/faiss_vector_store.hpp"
-#include "mlc_llm/embedding_model.hpp"
-#include "mlc_llm/language_model.hpp"
-#include "mlc_llm/mlc_llm_engine.hpp"
-#include "mlc_llm/model_cache.hpp"
 #include "openai.hpp"
 #include "split_text.hpp"
+#include "tvm/embedding_model.hpp"
+#include "tvm/language_model.hpp"
+#include "tvm/model_cache.hpp"
 
 namespace ailoy {
 

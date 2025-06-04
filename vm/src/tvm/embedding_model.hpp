@@ -8,26 +8,6 @@
 
 namespace ailoy {
 
-class tokenizer_t : public object_t {
-  using token_t = int32_t;
-
-public:
-  tokenizer_t(const std::filesystem::path &json_file_path);
-
-  std::vector<token_t> encode(const std::string &text,
-                              bool add_special_token = true);
-
-  std::string decode(const std::vector<token_t> &ids,
-                     bool skip_special_tokens = true);
-
-private:
-  /**
-   * @brief tokenizer handle
-   */
-  void *handle_;
-  // std::unique_ptr<tokenizers::Tokenizer> tokenizer_;
-};
-
 class tvm_embedding_model_t : public object_t {
 public:
   tvm_embedding_model_t(const std::string &model_name,

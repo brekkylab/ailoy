@@ -4,7 +4,7 @@
 
 #include <gtest/gtest.h>
 
-#include "mlc_llm/model_cache.hpp"
+#include "tvm/model_cache.hpp"
 
 using namespace std::chrono_literals;
 

@@ -31,8 +31,8 @@ async def test_async_spell(runtime: AsyncRuntime):
 
 async def test_async_infer_language_model(runtime: AsyncRuntime):
     await runtime.define("tvm_language_model", "lm0", {"model": "Qwen/Qwen3-0.6B"})
-    input = {"messages": [{"role": "user", "content": "Who are you?"}]}
+    input = {"messages": [{"role": "user", "content": [{"type": "text", "text": "Who are you?"}]}]}
     print("\n")
     async for out in runtime.call_iter_method("lm0", "infer", input):
-        print(out["message"]["content"], end="", flush=True)
+        print(out.get("message", {}).get("content", [{"type": "text", "text": ""}])[0].get("text"), end="", flush=True)
     await runtime.delete("lm0")
