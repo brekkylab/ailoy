@@ -280,7 +280,7 @@ export class Agent {
     // Add model name into attrs
     if (!attrs.model) attrs.model = modelDesc.modelId;
 
-    // Set default system message
+    // Set default system message if not given; still can be undefined
     this.systemMessage = this.systemMessage ?? modelDesc.defaultSystemMessage;
     this.clearHistory();
 
