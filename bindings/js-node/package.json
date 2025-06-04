@@ -1,6 +1,6 @@
 {
     "name": "ailoy-node",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "author": "Brekkylab Inc. <contact@brekkylab.com>",
     "license": "Apache-2.0",
     "description": "Node.js binding for Ailoy runtime APIs",
