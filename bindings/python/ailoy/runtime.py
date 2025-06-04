@@ -17,17 +17,17 @@ class Packet(TypedDict):
 class RuntimeBase:
     __client_count: dict[str, int] = {}
 
-    def __init__(self, address: str = "inproc://"):
-        self.address: str = address
+    def __init__(self, url: str = "inproc://"):
+        self.url: str = url
         self._responses: dict[str, Packet] = {}
         self._exec_responses: defaultdict[str, dict[int, Packet]] = defaultdict(dict)
         self._listen_lock: Optional[Event] = None
 
-        if RuntimeBase.__client_count.get(address, 0) == 0:
-            start_threads(self.address)
-            RuntimeBase.__client_count[address] = 0
+        if RuntimeBase.__client_count.get(self.url, 0) == 0:
+            start_threads(self.url)
+            RuntimeBase.__client_count[self.url] = 0
 
-        self._client: BrokerClient = BrokerClient(address)
+        self._client: BrokerClient = BrokerClient(self.url)
         txid = self._send_type1("connect")
         if not txid:
             raise RuntimeError("Connection failed")
@@ -35,7 +35,7 @@ class RuntimeBase:
         if not self._responses[txid]["body"]["status"]:
             raise RuntimeError("Connection failed")
         del self._responses[txid]
-        RuntimeBase.__client_count[address] += 1
+        RuntimeBase.__client_count[self.url] += 1
 
     def __del__(self):
         self.stop()
@@ -56,10 +56,10 @@ class RuntimeBase:
             if not self._responses[txid]["body"]["status"]:
                 raise RuntimeError("Disconnection failed")
             self._client = None
-            RuntimeBase.__client_count[self.address] -= 1
-        if RuntimeBase.__client_count[self.address] <= 0:
-            stop_threads(self.address)
-            RuntimeBase.__client_count.pop(self.address)
+            RuntimeBase.__client_count[self.url] -= 1
+        if RuntimeBase.__client_count[self.url] <= 0:
+            stop_threads(self.url)
+            RuntimeBase.__client_count.pop(self.url)
 
     def is_alive(self):
         return self._client is not None
@@ -124,8 +124,8 @@ class RuntimeBase:
 
 
 class Runtime(RuntimeBase):
-    def __init__(self, address: str = "inproc://"):
-        super().__init__(address)
+    def __init__(self, url: str = "inproc://"):
+        super().__init__(url)
 
     def call(self, func_name: str, input: Any) -> Any:
         rv = [v for v in self.call_iter(func_name, input)]
@@ -205,8 +205,8 @@ class Runtime(RuntimeBase):
 
 
 class AsyncRuntime(RuntimeBase):
-    def __init__(self, address: str = "inproc://"):
-        super().__init__(address)
+    def __init__(self, url: str = "inproc://"):
+        super().__init__(url)
 
     async def call(self, func_name: str, input: Any) -> Any:
         rv = [v async for v in self.call_iter(func_name, input)]
