@@ -14,6 +14,8 @@ export type HTTPRequestType = {
 };
 
 export class Runtime {
+  private static client_count: Map<string, number> = new Map();
+
   private url: string;
 
   private client: ailoy.BrokerClient;
@@ -53,12 +55,20 @@ export class Runtime {
     this.execResolvers = new Map();
     this.execResponses = new Map();
     this.listener = null;
-    startThreads(this.url);
+
+    const current_count = Runtime.client_count.get(this.url) ?? 0;
+    if (current_count == 0) {
+      startThreads(this.url);
+      Runtime.client_count.set(this.url, 0);
+    }
+
     this.client = new BrokerClient(url);
   }
 
   start(): Promise<void> {
     const txid = this.#_sendType1("connect");
+    const current_count = Runtime.client_count.get(this.url) ?? 0;
+    Runtime.client_count.set(this.url, current_count + 1);
     return new Promise<void>(async (resolve, reject) => {
       this.registerResolver(txid, resolve, reject);
       while (this.resolvers.has(txid)) await this.listen();
@@ -67,16 +77,24 @@ export class Runtime {
   }
 
   stop(): Promise<void> {
+    let promise;
     if (this.alive) {
       const txid = this.#_sendType1("disconnect");
-      return new Promise<void>(async (resolve, reject) => {
+      promise = new Promise<void>(async (resolve, reject) => {
         this.registerResolver(txid, resolve, reject);
         while (this.resolvers.has(txid)) await this.listen();
-        stopThreads(this.url);
         this.alive = false;
+        const current_count = Runtime.client_count.get(this.url) ?? 0;
+        Runtime.client_count.set(this.url, current_count - 1);
       });
-    }
-    return Promise.resolve();
+    } else promise = Promise.resolve();
+    return promise.then(() => {
+      const current_count = Runtime.client_count.get(this.url) ?? 0;
+      if (current_count <= 0) {
+        stopThreads(this.url);
+        Runtime.client_count.delete(this.url);
+      }
+    });
   }
 
   is_alive(): boolean {

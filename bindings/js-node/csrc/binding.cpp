@@ -1,5 +1,7 @@
-#include <optional>
+#include <memory>
+#include <string>
 #include <thread>
+#include <unordered_map>
 
 #include <napi.h>
 
@@ -9,8 +11,8 @@
 #include "language.hpp"
 #include "vm.hpp"
 
-static std::optional<std::thread> broker_thread;
-static std::optional<std::thread> vm_thread;
+static std::unordered_map<std::string, std::thread> broker_threads;
+static std::unordered_map<std::string, std::thread> vm_threads;
 
 static void log(Napi::Env env, Napi::Value val) {
   Napi::Object console = env.Global().Get("console").As<Napi::Object>();
@@ -25,12 +27,19 @@ void start_threads(const Napi::CallbackInfo &info) {
         .ThrowAsJavaScriptException();
   std::string url = info[0].As<Napi::String>();
 
-  broker_thread = std::thread{[&]() { ailoy::broker_start(url); }};
-  std::shared_ptr<const ailoy::module_t> mods[] = {ailoy::get_default_module(),
-                                                   ailoy::get_language_module(),
-                                                   ailoy::get_debug_module()};
-  vm_thread = std::thread{[&]() { ailoy::vm_start(url, mods); }};
-  std::this_thread::sleep_for(100ms);
+  if (!broker_threads.contains(url)) {
+    std::thread broker_thread =
+        std::thread{[&]() { ailoy::broker_start(url); }};
+    broker_threads.insert_or_assign(url, std::move(broker_thread));
+  }
+  if (!vm_threads.contains(url)) {
+    std::shared_ptr<const ailoy::module_t> mods[] = {
+        ailoy::get_default_module(), ailoy::get_language_module(),
+        ailoy::get_debug_module()};
+    std::thread vm_thread = std::thread{[&]() { ailoy::vm_start(url, mods); }};
+    vm_threads.insert_or_assign(url, std::move(vm_thread));
+    std::this_thread::sleep_for(100ms);
+  }
 }
 
 void stop_threads(const Napi::CallbackInfo &info) {
@@ -40,13 +49,17 @@ void stop_threads(const Napi::CallbackInfo &info) {
         .ThrowAsJavaScriptException();
   std::string url = info[0].As<Napi::String>();
 
-  if (vm_thread.has_value()) {
+  std::unordered_map<std::string, std::thread>::iterator vm_thread;
+  if ((vm_thread = vm_threads.find(url)) != vm_threads.end()) {
     ailoy::vm_stop(url);
-    vm_thread.value().join();
+    vm_thread->second.join();
+    vm_threads.erase(vm_thread);
   }
-  if (broker_thread.has_value()) {
+  std::unordered_map<std::string, std::thread>::iterator broker_thread;
+  if ((broker_thread = broker_threads.find(url)) != broker_threads.end()) {
     ailoy::broker_stop(url);
-    broker_thread.value().join();
+    broker_thread->second.join();
+    broker_threads.erase(broker_thread);
   }
 }
 
