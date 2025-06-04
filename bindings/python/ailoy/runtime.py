@@ -15,13 +15,18 @@ class Packet(TypedDict):
 
 
 class RuntimeBase:
+    __client_count: dict[str, int] = {}
+
     def __init__(self, address: str = "inproc://"):
         self.address: str = address
         self._responses: dict[str, Packet] = {}
         self._exec_responses: defaultdict[str, dict[int, Packet]] = defaultdict(dict)
         self._listen_lock: Optional[Event] = None
 
-        start_threads(self.address)
+        if RuntimeBase.__client_count.get(address, 0) == 0:
+            start_threads(self.address)
+            RuntimeBase.__client_count[address] = 0
+
         self._client: BrokerClient = BrokerClient(address)
         txid = self._send_type1("connect")
         if not txid:
@@ -30,6 +35,7 @@ class RuntimeBase:
         if not self._responses[txid]["body"]["status"]:
             raise RuntimeError("Connection failed")
         del self._responses[txid]
+        RuntimeBase.__client_count[address] += 1
 
     def __del__(self):
         self.stop()
@@ -50,7 +56,10 @@ class RuntimeBase:
             if not self._responses[txid]["body"]["status"]:
                 raise RuntimeError("Disconnection failed")
             self._client = None
+            RuntimeBase.__client_count[self.address] -= 1
+        if RuntimeBase.__client_count[self.address] <= 0:
             stop_threads(self.address)
+            RuntimeBase.__client_count.pop(self.address)
 
     def is_alive(self):
         return self._client is not None
