@@ -34,5 +34,5 @@ async def test_async_infer_language_model(runtime: AsyncRuntime):
     input = {"messages": [{"role": "user", "content": [{"type": "text", "text": "Who are you?"}]}]}
     print("\n")
     async for out in runtime.call_iter_method("lm0", "infer", input):
-        print(out.get("delta", {}).get("content", [{"type": "text", "text": ""}])[0].get("text"), end="", flush=True)
+        print(out.get("message", {}).get("content", [{"type": "text", "text": ""}])[0].get("text"), end="", flush=True)
     await runtime.delete("lm0")

@@ -234,11 +234,11 @@ describe("JSVM", () => {
       ],
       tools: [],
     })) {
-      expect(resp).to.have.property("delta");
+      expect(resp).to.have.property("message");
       if (resp.finish_reason) {
         expect(resp.finish_reason).to.be.equal("stop");
       } else {
-        expect(resp.delta).to.have.property("content");
+        expect(resp.message).to.have.property("content");
       }
     }
     await rt.stop();

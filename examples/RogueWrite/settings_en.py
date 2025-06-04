@@ -60,9 +60,9 @@ LEVEL_CONTENTS = [
     {
         "boss_name": "Hacker",
         "boss_ability": "A hacker capable of breaching any system. Without any physical combat, they hack into all systems—including RogueWrite—to ensure victory before a battle can even begin.",
-        "enter_message": "Nothing I can't hack.",
-        "clear_message": "You hacked me!",
-        "fail_message": "Adiós",
+        "enter_message": "Now, I'm in the mainframe.",
+        "clear_message": "Dual firewall is cheating!",
+        "fail_message": "Easy Peasy Lemon Squeezy.",
     },
     {
         "boss_name": "Stone",
