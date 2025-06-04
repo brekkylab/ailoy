@@ -57,9 +57,9 @@ class RuntimeBase:
                 raise RuntimeError("Disconnection failed")
             self._client = None
             RuntimeBase.__client_count[self.url] -= 1
-        if RuntimeBase.__client_count[self.url] <= 0:
+        if RuntimeBase.__client_count.get(self.url, 0) <= 0:
             stop_threads(self.url)
-            RuntimeBase.__client_count.pop(self.url)
+            RuntimeBase.__client_count.pop(self.url, 0)
 
     def is_alive(self):
         return self._client is not None
