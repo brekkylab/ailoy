@@ -234,6 +234,7 @@ export class Agent {
   private tools: Tool[];
 
   private messages: Message[];
+  private systemMessage?: string;
 
   constructor(
     /** The runtime environment associated with the agent */
@@ -251,14 +252,6 @@ export class Agent {
 
     // Initialize messages
     this.messages = [];
-
-    // Use system message provided from arguments first, otherwise use default system message for the model.
-    this.messages = [];
-    if (systemMessage !== undefined)
-      this.messages.push({
-        role: "system",
-        content: [{ type: "text", text: systemMessage }],
-      });
 
     // Initialize tools
     this.tools = [];
@@ -285,11 +278,8 @@ export class Agent {
     if (!attrs.model) attrs.model = modelDesc.modelId;
 
     // Set default system message
-    if (this.messages.length == 0 && modelDesc.defaultSystemMessage)
-      this.messages.push({
-        role: "system",
-        content: [{ type: "text", text: modelDesc.defaultSystemMessage }],
-      });
+    this.systemMessage = this.systemMessage ?? modelDesc.defaultSystemMessage;
+    this.clearHistory();
 
     // Call runtime to define componenets
     const result = await this.runtime.define(
@@ -317,9 +307,7 @@ export class Agent {
     }
 
     // Clear messages
-    if (this.messages.length > 0 && this.messages[0].role === "system")
-      this.messages = [this.messages[0]];
-    else this.messages = [];
+    this.clearHistory();
 
     // Mark component as deleted
     this.componentState.valid = false;
@@ -697,6 +685,15 @@ export class Agent {
       // Finish this generator
       break;
     }
+  }
+
+  clearHistory() {
+    this.messages = [];
+    if (this.systemMessage !== undefined)
+      this.messages.push({
+        role: "system",
+        content: [{ type: "text", text: this.systemMessage }],
+      });
   }
 
   private _printResponseText(resp: AgentResponseText) {

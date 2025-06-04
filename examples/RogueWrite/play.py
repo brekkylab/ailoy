@@ -70,6 +70,7 @@ def main():
 
     character = get_character_from_user(_console)
     for i, level in enumerate(levels):
+        agent.clear_history()
         level.set_agent(agent)
         print(ANNOUNCEMENT_BOSS.format(level_index=i + 1))
         panel = Panel(

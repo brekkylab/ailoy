@@ -145,7 +145,7 @@ class ComponentState(BaseModel):
 
 ## Types for agent's responses
 
-_console = Console(highlight=False)
+_console = Console(highlight=False, force_jupyter=False, force_terminal=True)
 
 
 class AgentResponseOutputText(BaseModel):
@@ -363,8 +363,6 @@ class Agent:
 
         # Initialize messages
         self._messages: list[Message] = []
-        if system_message:
-            self._messages.append(SystemMessage(role="system", content=[{"type": "text", "text": system_message}]))
 
         # Initialize tools
         self._tools: list[Tool] = []
@@ -405,13 +403,8 @@ class Agent:
             attrs["model"] = model_desc.model_id
 
         # Set default system message
-        if len(self._messages) == 0 and model_desc.default_system_message:
-            self._messages.append(
-                SystemMessage(
-                    role="system",
-                    content=[{"type": "text", "text": model_desc.default_system_message}],
-                )
-            )
+        self._system_message = self._system_message or model_desc.default_system_message
+        self.clear_history()
 
         # Add API key
         if api_key:
@@ -438,10 +431,7 @@ class Agent:
         if self._runtime.is_alive():
             self._runtime.delete(self._component_state.name)
 
-        if len(self._messages) > 0 and self._messages[0].role == "system":
-            self._messages = [self._messages[0]]
-        else:
-            self._messages = []
+        self.clear_history()
         self._component_state.valid = False
 
     def query(
@@ -574,6 +564,13 @@ class Agent:
 
             # Finish this generator
             break
+
+    def clear_history(self):
+        self._messages.clear()
+        if self._system_message is not None:
+            self._messages.append(
+                SystemMessage(role="system", content=[TextData(type="text", text=self._system_message)])
+            )
 
     def print(self, resp: AgentResponse):
         resp.print()
