@@ -29,8 +29,6 @@ class RuntimeBase:
 
         self._client: BrokerClient = BrokerClient(self.url)
         txid = self._send_type1("connect")
-        if not txid:
-            raise RuntimeError("Connection failed")
         self._sync_listen()
         if not self._responses[txid]["body"]["status"]:
             raise RuntimeError("Connection failed")
@@ -49,8 +47,6 @@ class RuntimeBase:
     def stop(self):
         if self.is_alive():
             txid = self._send_type1("disconnect")
-            if not txid:
-                raise RuntimeError("Disconnection failed")
             while txid not in self._responses:
                 self._sync_listen()
             if not self._responses[txid]["body"]["status"]:
@@ -64,11 +60,16 @@ class RuntimeBase:
     def is_alive(self):
         return self._client is not None
 
-    def _send_type1(self, ptype: Literal["connect", "disconnect"]) -> Optional[str]:
+    def _send_type1(self, ptype: Literal["connect", "disconnect"]) -> str:
         txid = generate_uuid()
-        if self._client.send_type1(txid, ptype):
-            return txid
-        raise RuntimeError("Failed to send packet")
+        retry_count = 0
+        # Since the broker thread might start slightly later than the runtime client,
+        # we retry sending the packat a few times to ensure delivery.
+        while retry_count < 3:
+            if self._client.send_type1(txid, ptype):
+                return txid
+            retry_count += 1
+        raise RuntimeError(f'Failed to send packet "{ptype}"')
 
     def _send_type2(
         self,
@@ -88,7 +89,7 @@ class RuntimeBase:
         *args,
     ):
         txid = generate_uuid()
-        if self._client.send_type2(txid, ptype, status, *args):
+        if self._client.send_type3(txid, ptype, status, *args):
             return txid
         raise RuntimeError("Failed to send packet")
 

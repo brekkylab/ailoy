@@ -6,52 +6,47 @@ import { search } from "jmespath";
 
 import { Runtime, generateUUID } from "./runtime";
 
-/** Types for OpenAI API-compatible data structures */
+/** Types for internal data structures */
 
 interface SystemMessage {
   role: "system";
-  content: string;
+  content: Array<{ type: "text"; text: string }>;
 }
 
 interface UserMessage {
   role: "user";
-  content: string;
+  content: Array<{ type: "text"; text: string }>;
 }
 
-interface AIOutputTextMessage {
+interface AssistantMessage {
   role: "assistant";
-  content: string;
-  reasoning?: boolean;
+  content?: Array<{ type: "text"; text: string }>;
+  reasoning?: Array<{ type: "text"; text: string }>;
+  tool_calls?: Array<{
+    type: "function";
+    id?: string;
+    function: { name: string; arguments: any };
+  }>;
 }
 
-interface AIToolCallMessage {
-  role: "assistant";
-  content: null;
-  tool_calls: Array<ToolCall>;
-}
-
-interface ToolCall {
-  id: string;
-  function: { name: string; arguments: any };
-}
-
-interface ToolCallResultMessage {
+interface ToolMessage {
   role: "tool";
   name: string;
-  tool_call_id: string;
-  content: string;
+  content: Array<{ type: "text"; text: string }>;
+  tool_call_id?: string;
 }
 
-type Message =
-  | SystemMessage
-  | UserMessage
-  | AIOutputTextMessage
-  | AIToolCallMessage
-  | ToolCallResultMessage;
+type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
 
-interface MessageDelta {
-  finish_reason: "stop" | "tool_calls" | "length" | "error" | null;
-  message: Message;
+interface MessageOutput {
+  finish_reason:
+    | "stop"
+    | "tool_calls"
+    | "invalid_tool_call"
+    | "length"
+    | "error"
+    | undefined;
+  message: Omit<AssistantMessage, "role">;
 }
 
 /** Types for LLM Model Definitions */
@@ -116,7 +111,7 @@ export interface AgentResponseToolCall {
   role: "assistant";
   isTypeSwitched: boolean;
   content: {
-    id: string;
+    id?: string;
     function: { name: string; arguments: any };
   };
 }
@@ -126,8 +121,8 @@ export interface AgentResponseToolResult {
   isTypeSwitched: boolean;
   content: {
     name: string;
-    tool_call_id: string;
-    content: string;
+    content: Array<{ type: "text"; text: string }>;
+    tool_call_id?: string;
   };
 }
 export interface AgentResponseError {
@@ -258,7 +253,7 @@ export class Agent {
     // Initialize messages
     this.messages = [];
 
-    // Use system message provided from arguments first, otherwise use default system message for the model.
+    // Initialize system message
     this.systemMessage = systemMessage;
 
     // Initialize tools
@@ -285,8 +280,8 @@ export class Agent {
     // Add model name into attrs
     if (!attrs.model) attrs.model = modelDesc.modelId;
 
-    // Set default system message
-    this.systemMessage = this.systemMessage || modelDesc.defaultSystemMessage;
+    // Set default system message if not given; still can be undefined
+    this.systemMessage = this.systemMessage ?? modelDesc.defaultSystemMessage;
     this.clearHistory();
 
     // Call runtime to define componenets
@@ -569,39 +564,17 @@ export class Agent {
 
     if (!this.runtime.is_alive()) throw Error(`Runtime is currently stopped.`);
 
-    this.messages.push({ role: "user", content: message });
+    this.messages.push({
+      role: "user",
+      content: [{ type: "text", text: message }],
+    });
 
+    let finish_reason = "";
     let prevRespType: string | null = null;
-    let isToolCalled = false;
 
     while (true) {
-      let reasoningMessage = "";
-      let outputTextMessage = "";
-
-      const _pushAssistantTextMessage = () => {
-        // if output_text is empty, do nothing
-        if (outputTextMessage.trim() === "") return;
-
-        // construct assistant message content considering reasoning message
-        let assistantMessageContent = outputTextMessage.trim();
-        if (
-          options?.enableReasoning &&
-          !options.ignoreReasoningMessages &&
-          reasoningMessage.trim() !== ""
-        )
-          // TODO: consider other kinds of reasoning part distinguisher
-          assistantMessageContent =
-            `<think>\n${reasoningMessage.trim()}\n</think>\n\n` +
-            assistantMessageContent;
-
-        // push constructed message content into messages
-        this.messages.push({
-          role: "assistant",
-          content: assistantMessageContent,
-        } as AIOutputTextMessage);
-
-        reasoningMessage = "";
-        outputTextMessage = "";
+      let assistantMessage: AssistantMessage = {
+        role: "assistant",
       };
 
       for await (const result of this.runtime.callIterMethod(
@@ -615,114 +588,115 @@ export class Agent {
           enable_reasoning: options?.enableReasoning,
           ignore_reasoning_messages: options?.ignoreReasoningMessages,
         }
-      )) {
-        const delta: MessageDelta = result;
-
-        // This means AI requested tool calls
-        if (delta.finish_reason === "tool_calls") {
-          isToolCalled = true;
-          _pushAssistantTextMessage();
-
-          const toolCallMessage = delta.message as AIToolCallMessage;
-          // Add tool call back to messages
-          this.messages.push(toolCallMessage);
-
-          // Yield for each tool call
-          for (const toolCall of toolCallMessage.tool_calls) {
+      ) as AsyncIterable<MessageOutput>) {
+        if (result.message.reasoning) {
+          for (const reasoningData of result.message.reasoning) {
+            if (!assistantMessage.reasoning)
+              assistantMessage.reasoning = [reasoningData];
+            else assistantMessage.reasoning[0].text += reasoningData.text;
+            const resp: AgentResponseText = {
+              type: "reasoning",
+              role: "assistant",
+              isTypeSwitched: prevRespType !== "reasoning",
+              content: reasoningData.text,
+            };
+            prevRespType = resp.type;
+            yield resp;
+          }
+        }
+        if (result.message.content) {
+          for (const contentData of result.message.content) {
+            if (!assistantMessage.content)
+              assistantMessage.content = [contentData];
+            else assistantMessage.content[0].text += contentData.text;
+            const resp: AgentResponseText = {
+              type: "output_text",
+              role: "assistant",
+              isTypeSwitched: prevRespType !== "output_text",
+              content: contentData.text,
+            };
+            prevRespType = resp.type;
+            yield resp;
+          }
+        }
+        if (result.message.tool_calls) {
+          for (const tool_call_data of result.message.tool_calls) {
+            if (!assistantMessage.tool_calls)
+              assistantMessage.tool_calls = [tool_call_data];
+            else assistantMessage.tool_calls?.push(tool_call_data);
             const resp: AgentResponseToolCall = {
               type: "tool_call",
               role: "assistant",
-              isTypeSwitched: prevRespType !== "tool_call",
-              content: toolCall,
+              isTypeSwitched: true,
+              content: tool_call_data,
             };
             prevRespType = resp.type;
             yield resp;
           }
-
-          // Call tools in parallel
-          let toolCallPromises: Array<Promise<ToolCallResultMessage>> = [];
-          for (const toolCall of toolCallMessage.tool_calls) {
-            toolCallPromises.push(
-              new Promise(async (resolve, reject) => {
-                const tool_ = this.tools.find(
-                  (v) => v.desc.name == toolCall.function.name
-                );
-                if (!tool_) {
-                  reject("Internal exception");
-                  return;
-                }
-                const resp = await tool_.call(toolCall.function.arguments);
-                const message: ToolCallResultMessage = {
-                  role: "tool",
-                  name: toolCall.function.name,
-                  tool_call_id: toolCall.id,
-                  content: JSON.stringify(resp),
-                };
-                resolve(message);
-              })
-            );
-          }
-          const toolCallResults = await Promise.all(toolCallPromises);
-
-          // Yield for each tool call result
-          for (const toolCallResult of toolCallResults) {
-            this.messages.push(toolCallResult);
-            const resp: AgentResponseToolResult = {
-              type: "tool_call_result",
-              role: "tool",
-              isTypeSwitched: prevRespType !== "tool_call_result",
-              content: toolCallResult,
-            };
-            prevRespType = resp.type;
-            yield resp;
-          }
-
-          continue;
         }
 
-        let message = delta.message as AIOutputTextMessage;
-
-        // Accumulate text messages to append in batch
-        if (message.reasoning) reasoningMessage += message.content;
-        else outputTextMessage += message.content;
-
-        const resp: AgentResponseText = {
-          type: message.reasoning ? "reasoning" : "output_text",
-          role: "assistant",
-          isTypeSwitched: false,
-          content: message.content,
-        };
-        resp.isTypeSwitched = prevRespType !== resp.type;
-        prevRespType = resp.type;
-        yield resp;
-
-        // This means AI finished its answer
-        if (
-          delta.finish_reason === "stop" ||
-          delta.finish_reason === "length" ||
-          delta.finish_reason === "error"
-        ) {
-          _pushAssistantTextMessage();
-          // Finish this infer
+        if (result.finish_reason) {
+          finish_reason = result.finish_reason;
           break;
         }
       }
+      // Append output
+      this.messages.push(assistantMessage);
 
-      // Infer again if tool calls happened
-      if (isToolCalled) {
-        isToolCalled = false;
+      // Call tools in parallel
+      if (finish_reason == "tool_calls") {
+        let toolCallPromises: Array<Promise<ToolMessage>> = [];
+        for (const toolCall of assistantMessage.tool_calls || []) {
+          toolCallPromises.push(
+            new Promise(async (resolve, reject) => {
+              const tool_ = this.tools.find(
+                (v) => v.desc.name == toolCall.function.name
+              );
+              if (!tool_) {
+                reject("Internal exception");
+                return;
+              }
+              const toolResult = await tool_.call(toolCall.function.arguments);
+              const message: ToolMessage = {
+                role: "tool",
+                name: toolCall.function.name,
+                content: [{ type: "text", text: JSON.stringify(toolResult) }],
+                tool_call_id: toolCall.id || undefined,
+              };
+              resolve(message);
+            })
+          );
+        }
+        const toolCallResults = await Promise.all(toolCallPromises);
+
+        // Yield for each tool call result
+        for (const toolCallResult of toolCallResults) {
+          this.messages.push(toolCallResult);
+          const resp: AgentResponseToolResult = {
+            type: "tool_call_result",
+            role: "tool",
+            isTypeSwitched: true,
+            content: toolCallResult,
+          };
+          prevRespType = resp.type;
+          yield resp;
+        }
+        // Infer again if tool calls happened
         continue;
       }
 
       // Finish this generator
-      return;
+      break;
     }
   }
 
   clearHistory() {
     this.messages = [];
     if (this.systemMessage !== undefined)
-      this.messages.push({ role: "system", content: this.systemMessage });
+      this.messages.push({
+        role: "system",
+        content: [{ type: "text", text: this.systemMessage }],
+      });
   }
 
   private _printResponseText(resp: AgentResponseText) {
@@ -735,11 +709,13 @@ export class Agent {
   }
 
   private _printResponseToolCall(resp: AgentResponseToolCall) {
-    const title =
+    let title =
       chalk.magenta("Tool Call") +
       ": " +
-      chalk.bold(resp.content.function.name) +
-      ` (${resp.content.id})`;
+      chalk.bold(resp.content.function.name);
+    if (resp.content.id !== undefined) {
+      title += ` (${resp.content.id})`;
+    }
     const content = JSON.stringify(resp.content.function.arguments, null, 2);
     const box = boxen(content, {
       title,
@@ -755,19 +731,23 @@ export class Agent {
   }
 
   private _printResponseToolResult(resp: AgentResponseToolResult) {
-    const title =
-      chalk.green("Tool Result") +
-      ": " +
-      chalk.bold(resp.content.name) +
-      ` (${resp.content.tool_call_id})`;
+    let title =
+      chalk.green("Tool Result") + ": " + chalk.bold(resp.content.name);
+    if (resp.content.tool_call_id !== undefined) {
+      title += ` (${resp.content.tool_call_id})`;
+    }
 
-    let content;
+    let content: string;
     try {
       // Try to parse as json
-      content = JSON.stringify(JSON.parse(resp.content.content), null, 2);
+      content = JSON.stringify(
+        JSON.parse(resp.content.content[0].text),
+        null,
+        2
+      );
     } catch (e) {
       // Use original content if not json deserializable
-      content = resp.content.content;
+      content = resp.content.content[0].text;
     }
     // Truncate long contents
     if (content.length > 500) {

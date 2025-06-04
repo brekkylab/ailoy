@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
 #include "language.hpp"
-#include "mlc_llm/embedding_model.hpp"
 #include "module.hpp"
+#include "tvm/embedding_model.hpp"
 
 TEST(EmbeddingModelTest, TestDeviceOne) {
   auto create_tvm_embedding_model =

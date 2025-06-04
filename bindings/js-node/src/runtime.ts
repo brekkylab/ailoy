@@ -66,9 +66,7 @@ export class Runtime {
   }
 
   start(): Promise<void> {
-    const txid = generateUUID();
-    if (!this.client.send_type1(txid, "connect"))
-      throw Error("Connection failed");
+    const txid = this.#_sendType1("connect");
     const current_count = Runtime.client_count.get(this.url) ?? 0;
     Runtime.client_count.set(this.url, current_count + 1);
     return new Promise<void>(async (resolve, reject) => {
@@ -81,9 +79,7 @@ export class Runtime {
   stop(): Promise<void> {
     let promise;
     if (this.alive) {
-      const txid = generateUUID();
-      if (!this.client.send_type1(txid, "disconnect"))
-        throw Error("Disconnection failed");
+      const txid = this.#_sendType1("disconnect");
       promise = new Promise<void>(async (resolve, reject) => {
         this.registerResolver(txid, resolve, reject);
         while (this.resolvers.has(txid)) await this.listen();
@@ -103,6 +99,20 @@ export class Runtime {
 
   is_alive(): boolean {
     return this.alive;
+  }
+
+  #_sendType1(ptype: "connect" | "disconnect") {
+    const txid = generateUUID();
+    let retryCount = 0;
+    // Since the broker thread might start slightly later than the runtime client,
+    // we retry sending the packat a few times to ensure delivery.
+    while (retryCount < 3) {
+      if (this.client.send_type1(txid, ptype)) {
+        return txid;
+      }
+      retryCount += 1;
+    }
+    throw Error(`Failed to send packet "${ptype}"`);
   }
 
   async call(funcName: string, inputs: any = null): Promise<any> {

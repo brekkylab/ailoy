@@ -15,6 +15,36 @@ using namespace tvm::runtime::relax_vm;
 
 namespace ailoy {
 
+bool tvm_device_exist(DLDevice device) {
+  tvm::runtime::TVMRetValue rv;
+  tvm::runtime::DeviceAPI::Get(device, true)
+      ->GetAttr(device, tvm::runtime::DeviceAttrKind::kExist, &rv);
+  return rv;
+}
+
+std::optional<DLDevice> get_tvm_device(int32_t device_id) {
+#if defined(USE_METAL)
+  auto device_type = kDLMetal;
+#elif defined(USE_VULKAN)
+  auto device_type = kDLVulkan;
+#else
+  auto device_type = kDLCPU;
+#endif
+
+  auto device_type_str = tvm::runtime::DLDeviceType2Str(device_type);
+  if (tvm_device_exist(DLDevice{device_type, device_id})) {
+    debug("using device {}:{}", device_type_str, device_id);
+    return DLDevice{device_type, device_id};
+  } else if (tvm_device_exist(DLDevice{device_type, 0})) {
+    info("Device {}:{} doesn't exist, use {}:0 instead.", device_type_str,
+         device_id, device_type_str);
+    return DLDevice{device_type, 0};
+  } else {
+    debug("No {} device is detected.", device_type_str);
+    return std::nullopt;
+  }
+}
+
 /* value_t interface related to tvm */
 
 std::shared_ptr<ndarray_t> ndarray_from_tvm(tvm::runtime::NDArray tvm_ndarray) {
@@ -163,6 +193,10 @@ tvm_model_t::tvm_model_t(const std::string &model_name,
   // Load model metadata
   TypedPackedFunc<tvm::String()> fmetadata = vm.GetFunction("_metadata");
   metadata_ = nlohmann::json::parse(static_cast<std::string>(fmetadata()));
+
+  // Load mlc-chat-config.json
+  mlc_chat_config_ = nlohmann::json::parse(
+      utils::LoadBytesFromFile(model_path_ / "mlc-chat-config.json"));
 
   // Load ndarray cache metadata
   auto contents = utils::LoadBytesFromFile(model_path_ / "ndarray-cache.json");

@@ -15,35 +15,9 @@ namespace ailoy {
 
 std::shared_ptr<ndarray_t> ndarray_from_tvm(tvm::runtime::NDArray ndarray);
 
-static bool tvm_device_exist(DLDevice device) {
-  tvm::runtime::TVMRetValue rv;
-  tvm::runtime::DeviceAPI::Get(device, true)
-      ->GetAttr(device, tvm::runtime::DeviceAttrKind::kExist, &rv);
-  return rv;
-}
+bool tvm_device_exist(DLDevice device);
 
-static std::optional<DLDevice> get_tvm_device(int32_t device_id) {
-#if defined(USE_METAL)
-  auto device_type = kDLMetal;
-#elif defined(USE_VULKAN)
-  auto device_type = kDLVulkan;
-#else
-  auto device_type = kDLCPU;
-#endif
-
-  auto device_type_str = tvm::runtime::DLDeviceType2Str(device_type);
-  if (tvm_device_exist(DLDevice{device_type, device_id})) {
-    debug("using device {}:{}", device_type_str, device_id);
-    return DLDevice{device_type, device_id};
-  } else if (tvm_device_exist(DLDevice{device_type, 0})) {
-    info("Device {}:{} doesn't exist, use {}:0 instead.", device_type_str,
-         device_id, device_type_str);
-    return DLDevice{device_type, 0};
-  } else {
-    debug("No {} device is detected.", device_type_str);
-    return std::nullopt;
-  }
-}
+std::optional<DLDevice> get_tvm_device(int32_t device_id);
 
 class tvm_model_t {
 public:
@@ -58,8 +32,15 @@ public:
 
   const nlohmann::json &get_metadata() const { return metadata_; }
 
-  tvm::runtime::PackedFunc get_vm_function(const std::string_view fname) {
-    return get_module().GetFunction(std::string(fname));
+  const nlohmann::json &get_mlc_chat_config() const { return mlc_chat_config_; }
+
+  tvm::runtime::PackedFunc get_function(const std::string_view fname) {
+    return *tvm::runtime::Registry::Get(std::string(fname));
+  }
+
+  tvm::runtime::PackedFunc get_vm_function(const std::string_view fname,
+                                           bool query_imports = false) {
+    return get_module().GetFunction(std::string(fname), query_imports);
   }
 
   tvm::runtime::ObjectRef get_params() const { return params_; }
@@ -83,6 +64,7 @@ private:
   std::filesystem::path model_path_;
   tvm::runtime::Module mod_;
   nlohmann::json metadata_ = {};
+  nlohmann::json mlc_chat_config_ = {};
   tvm::runtime::relax_vm::NDArrayCacheMetadata ndarray_cache_metadata_;
   tvm::runtime::ObjectRef params_;
 

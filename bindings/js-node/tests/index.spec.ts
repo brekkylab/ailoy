@@ -218,15 +218,27 @@ describe("JSVM", () => {
     const rt = new Runtime("inproc://language_model");
     await rt.start();
     let resp = await rt.define("tvm_language_model", "lm0", {
-      model: "meta-llama/Llama-3.2-1B-Instruct",
+      model: "Qwen/Qwen3-0.6B",
     });
     expect(resp).to.be.equal(true);
+
     for await (const resp of rt.callIterMethod("lm0", "infer", {
       messages: [
-        { role: "user", content: "Who is the president of US in 2021?" },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Who is the president of US in 2021?" },
+          ],
+        },
       ],
+      tools: [],
     })) {
       expect(resp).to.have.property("message");
+      if (resp.finish_reason) {
+        expect(resp.finish_reason).to.be.equal("stop");
+      } else {
+        expect(resp.message).to.have.property("content");
+      }
     }
     await rt.stop();
   });
