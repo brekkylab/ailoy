@@ -202,7 +202,42 @@ Avoid using unnecessary tools. Keep your chat context focused and concise.
 
 If the tool you are looking for doesn't exist, or you want more fine-grained control, you can define your own tool through the simple APIs of Ailoy.
 
-The following example shows how to explicitly define the Frankfurter API tool we saw above.
+### Native function tool
+
+If you are using Python, you can define your own tool as a python function.  
+Just write a function with
+**_[google-style docstring](https://google.github.io/styleguide/pyguide.html#383-functions-and-methods)_**,
+and add it as the tool.
+
+<CodeTabs>
+
+```python
+def get_current_temperature(location: str, unit: str):
+    """
+    Get the current temperature at a location.
+
+    Args:
+        location: The location to get the temperature for, in the format "City, Country"
+        unit: The unit to return the temperature in. (choices: ["celsius", "fahrenheit"])
+    Returns:
+        The current temperature at the specified location in the specified units, as a float.
+    """
+    if unit == "celsius":
+        return 25
+    elif unit == "fahrenheit":
+        return 77
+    return
+
+with Agent(...) as agent:
+    agent.add_py_function_tool(get_current_temperature)  # Just pass the function!
+```
+
+</CodeTabs>
+
+### General tool definition
+
+The following example shows how to explicitly define the Frankfurter API tool we
+saw above.
 
 <CodeTabs>
 
