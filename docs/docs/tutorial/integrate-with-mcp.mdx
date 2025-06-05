@@ -19,6 +19,7 @@ from mcp import StdioServerParameters
 
 agent.add_tools_from_mcp_server(
     StdioServerParameters(
+        "github",
         command="npx",
         args=["-y", "@modelcontextprotocol/server-github"]
     )
@@ -26,7 +27,7 @@ agent.add_tools_from_mcp_server(
 ```
 
 ```typescript
-await agent.addToolsFromMcpServer({
+await agent.addToolsFromMcpServer("github", {
   command: "npx",
   args: ["-y", "@modelcontextprotocol/server-github"],
 });
@@ -81,6 +82,7 @@ rt = Runtime()
 with Agent(rt, model_name="Qwen/Qwen3-8B") as agent:
     # Add tools from Github MCP server
     agent.add_tools_from_mcp_server(
+        "github",
         StdioServerParameters(
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"]
@@ -100,7 +102,7 @@ import { startRuntime, defineAgent } from "ailoy-node";
   const agent = await defineAgent(rt, { model: { name: "Qwen/Qwen3-8B" } });
 
   // Add tools from Github MCP server
-  await agent.addToolsFromMcpServer({
+  await agent.addToolsFromMcpServer("github", {
     command: "npx",
     args: ["-y", "@modelcontextprotocol/server-github"],
   });
