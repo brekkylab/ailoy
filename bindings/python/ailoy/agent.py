@@ -598,7 +598,7 @@ class Agent:
         Adds a Python function as a tool using callable.
 
         :param f: Function will be called when the tool invocation occured.
-        :param desc: Tool description.
+        :param desc: Tool description to override. If not given, parsed from docstring of function `f`.
 
         :raises ValueError: Docstring parsing is failed.
         :raises ValidationError: Given or parsed description is not a valid `ToolDescription`.
