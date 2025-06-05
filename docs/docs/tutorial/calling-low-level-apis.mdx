@@ -196,7 +196,7 @@ import { startRuntime } from "ailoy-node";
   });
 
   for await (const resp of rt.callIterMethod("lm0", "infer", {
-    messages: [{ role: "user", content: "What's your name?" }],
+    messages: [{ role: "user", content: [{"type": "text", "text": "What's your name?"}]}],
   })) {
     console.log(resp);
   }
