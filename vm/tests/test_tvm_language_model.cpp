@@ -4,8 +4,6 @@
 #include "tvm/language_model.hpp"
 #include "value.hpp"
 
-#include <iostream>
-
 std::shared_ptr<ailoy::component_t> get_model() {
   static std::shared_ptr<ailoy::component_t> model;
   if (!model) {
@@ -159,74 +157,73 @@ TEST(TestTVMLanguageModel, TestMultiTurn) {
 }
 
 TEST(TestTVMLanguageModel, TestToolCall) {
-  const std::string messages_str = R"([
-    {
-      "role": "system",
-      "content": [
-        {
-          "type": "text",
-          "text": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
-        }
-      ]
-    },
-    {
-      "role": "user",
-      "content": [
-        {"type": "text", "text": "How is the current weather in Seoul?"}
-      ]
-    }
-  ])";
-
   const std::string tools_str = R"([
-    {
-      "type": "function",
-      "function": {
-        "name": "get_current_temperature",
-        "description": "Get the current temperature at a location.",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "location": {
-              "type": "string",
-              "description": "The location to get the temperature for, in the format \"City, Country\""
-            },
-            "unit": {
-              "type": "string",
-              "enum": ["celsius", "fahrenheit"],
-              "description": "The unit to return the temperature in."
-            }
+  {
+    "type": "function",
+    "function": {
+      "name": "get_current_temperature",
+      "description": "Get the current temperature at a location.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "The location to get the temperature for, in the format \"City, Country\""
           },
-          "required": ["location", "unit"]
+          "unit": {
+            "type": "string",
+            "enum": ["celsius", "fahrenheit"],
+            "description": "The unit to return the temperature in."
+          }
         },
-        "return": {
-          "type": "number",
-          "description": "The current temperature at the specified location in the specified units, as a float."
-        }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "get_current_wind_speed",
-        "description": "Get the current wind speed in km/h at a given location.",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "location": {
-              "type": "string",
-              "description": "The location to get the temperature for, in the format \"City, Country\""
-            }
-          },
-          "required": ["location"]
-        },
-        "return": {
-          "type": "number",
-          "description": "The current wind speed at the given location in km/h, as a float."
-        }
+        "required": ["location", "unit"]
+      },
+      "return": {
+        "type": "number",
+        "description": "The current temperature at the specified location in the specified units, as a float."
       }
     }
-  ])";
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_current_wind_speed",
+      "description": "Get the current wind speed in km/h at a given location.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "The location to get the temperature for, in the format \"City, Country\""
+          }
+        },
+        "required": ["location"]
+      },
+      "return": {
+        "type": "number",
+        "description": "The current wind speed at the given location in km/h, as a float."
+      }
+    }
+  }
+])";
 
+  const std::string messages_str = R"([
+  {
+    "role": "system",
+    "content": [
+      {
+        "type": "text",
+        "text": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "How is the current weather in Seoul?"}
+    ]
+  }
+])";
   std::shared_ptr<ailoy::component_t> model = get_model();
   auto messages = ailoy::decode(messages_str, ailoy::encoding_method_t::json);
   auto tools = ailoy::decode(tools_str, ailoy::encoding_method_t::json);
@@ -237,37 +234,37 @@ TEST(TestTVMLanguageModel, TestToolCall) {
   // model->reset_grammar("tool_call");
 
   const std::string messages2_str = R"([
-    {
-      "role": "system",
-      "content": [
-        {
-          "type": "text",
-          "text": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
-        }
-      ]
-    },
-    {
-      "role": "user",
-      "content": [
-        {"type": "text", "text": "How is the current weather in Seoul?"}
-      ]
-    },
-    {
-      "role": "assistant",
-      "tool_calls": [
-        {"function":{"arguments":{"location":"Seoul","unit":"celsius"},"name":"get_current_temperature"},"type":"function"}
-      ]
-    },
-    {
-      "role": "tool",
-      "content": [
-        {"type": "text", "text": "20.5"}
-      ]
-    }
-  ])";
+  {
+    "role": "system",
+    "content": [
+      {
+        "type": "text",
+        "text": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "How is the current weather in Seoul?"}
+    ]
+  },
+  {
+    "role": "assistant",
+    "tool_calls": [
+      {"function":{"arguments":{"location":"Seoul, South Korea","unit":"celsius"},"name":"get_current_temperature"},"type":"function"}
+    ]
+  },
+  {
+    "role": "tool",
+    "content": [
+      {"type": "text", "text": "20.5"}
+    ]
+  }
+])";
   auto messages2 = ailoy::decode(messages2_str, ailoy::encoding_method_t::json);
   auto answer2 = infer(model, messages2, tools, false);
-  // std::cout << answer2 << std::endl;
+  ailoy::debug(answer2);
 }
 
 TEST(TestTVMLanguageModel, TestReasoning) {
