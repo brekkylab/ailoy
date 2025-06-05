@@ -152,14 +152,14 @@ def a_useful_function_impl(arg0, arg1):
 with Agent(...) as agent:
     agent.add_py_function_tool(
         f=a_useful_function_impl,
-        desc={...},      # Tool description
+        desc={...},  # Tool description, if you want to override
     )
 ```
 
 ```typescript
 const a_useful_function_impl = ({ arg0, arg1 }) => {
     let a_useful_value = 0
-    ...       // Your own codes
+    ...      // Your own codes
     return a_useful_value
   };
 
@@ -169,8 +169,72 @@ agent.addJSFunctionTool(
   {...}      // Tool description
 );
 ```
+
 </CodeTabs>
 
+**_In Python, the tool description can be automatically generated_** from the
+**_[google-style docstring](https://google.github.io/styleguide/pyguide.html#383-functions-and-methods)_**
+of the function.  
+In that case, you don't have to give the tool description as the parameter.  
+Even if your function have proper docstring, you can override the tool
+description by passing your own tool description as above.
+
+Check this **example code(Python)** with the **_generated_ tool
+description(Json)**:
+
+<CodeTabs>
+
+```python
+def get_current_temperature(location: str, unit: str):
+    """
+    Get the current temperature at a location.
+
+    Args:
+        location: The location to get the temperature for, in the format "City, Country"
+        unit: The unit to return the temperature in. (choices: ["celsius", "fahrenheit"])
+    Returns:
+        The current temperature at the specified location in the specified units, as a float.
+    """
+    if unit == "celsius":
+        return 25
+    elif unit == "fahrenheit":
+        return 77
+    return
+
+with Agent(...) as agent:
+    agent.add_py_function_tool(get_current_temperature)  # Just pass the function!
+```
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "get_current_temperature",
+    "description": "Get the current temperature at a location.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "type": "string",
+          "description": "The location to get the temperature for, in the format \"City, Country\""
+        },
+        "unit": {
+          "type": "string",
+          "enum": ["celsius", "fahrenheit"],
+          "description": "The unit to return the temperature in."
+        }
+      },
+      "required": ["location", "unit"]
+    },
+    "return": {
+      "type": "number",
+      "description": "The current temperature at the specified location in the specified units, as a float."
+    }
+  }
+}
+```
+
+</CodeTabs>
 
 ## Out-of-the-box tools
 
