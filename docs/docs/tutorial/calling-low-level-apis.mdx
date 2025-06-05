@@ -16,7 +16,13 @@ By using the `Runtime` directly, you can send requests to the `VM` yourself.
 This is useful when you need more advanced configuration or want to call APIs
 that are not available through the high-level interfaces.
 
-## "Type 'Echo'"
+:::info
+See [Internal Runtime APIs](../api-references/internal-runtime-apis.mdx) for
+the full list of available APIs.
+:::
+
+
+## Operator
 
 Let’s take a look at how the lower-level API works, with the simplest example `echo`.
 The `echo` operator is a basic operator that returns the user's input as-is.
@@ -57,7 +63,7 @@ import { startRuntime } from "ailoy-node";
 Hello world
 </TerminalBox>
 
-## A useful operator
+### Text chunking
 
 Next, let’s try a more practical operator.
 The [`split_text`](../api-references/internal-runtime-apis.mdx#split_text)
@@ -146,10 +152,12 @@ He came closer, so that it was clearly visible. To his surprise it really was a 
 
 </TerminalBox>
 
-## Components
+## Component
 
 Some jobs may require state, like member variables in a class.
 Ailoy provides support for this kind of stateful structure through a type called a `Component`.
+
+### Direct language model inference
 
 In this example, we’ll directly invoke an LLM using the low-level Runtime API.
 To begin, a `Component` must first be initialized using the `define` call.
@@ -243,14 +251,118 @@ import { startRuntime } from "ailoy-node";
 `}
 </TerminalBox>
 
-To understand this properly, it helps to be familiar with the conventions used by LLMs.
-The model name should match the model card ID on HuggingFace.
-You can check [Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) model card.
+You can put the context of freely structured conversations into Ailoy's
+low-level `Runtime` API calls for more advanced multi-turn conversation. e.g.
+_[Chain-of-Thought Prompting](https://arxiv.org/abs/2201.11903)_
 
-The input format follows OpenAI's chat API — you can refer to [this page](https://platform.openai.com/docs/guides/text?api-mode=chat) for details.
-For the output format, please refer to the [corresponding documentation](../concepts/agent-response-format).
+In theory, an LLM generates responses based only on the context provided at the
+moment—it doesn't retain memory of past interactions by itself. Therefore, to
+receive an appropriate response in an ongoing conversation with an LLM, you must
+provide the entire conversation history up to that point each time you make a
+request.
 
-:::info
-See [Internal Runtime APIs](../api-references/internal-runtime-apis.mdx) for
-the full list of available APIs.
-:::
+<CodeTabs>
+
+```python
+with Runtime() as rt:
+    rt.define("tvm_language_model", "lm0", {"model": "Qwen/Qwen3-8B"})
+
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "if a>1, what is the sum of the real solutions of 'sqrt(a-sqrt(a+x))=x'?"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "Let's think step by step."}]},  # Chain-of-Thought prompt
+    ]
+
+    for resp in rt.call_iter_method("lm0", "infer", {"messages": messages}):
+        print(resp["message"]["content"][0]["text"], end='')
+
+    rt.delete("lm0")
+```
+
+```typescript
+const rt = await startRuntime();
+
+await rt.define("tvm_language_model", "lm0", {
+  model: "Qwen/Qwen3-8B",
+});
+
+const messages = [
+  {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: "if a>1, what is the sum of the real solutions of 'sqrt(a-sqrt(a+x))=x'?",
+      },
+    ],
+  },
+  {
+    role: "assistant",
+    content: [{ type: "text", text: "Let's think step by step." }],
+  }, // Chain-of-Thought prompt
+];
+
+for await (const resp of rt.callIterMethod("lm0", "infer", {
+  messages: messages,
+})) {
+  process.stdout.write(resp.message.content[0].text);
+}
+
+await rt.delete("lm0");
+
+await rt.stop();
+```
+
+</CodeTabs>
+
+To override the system message, you can include a message with
+`"role": "system"` as the first element in the context messages array.
+
+<CodeTabs>
+
+```python
+with Runtime() as rt:
+    rt.define("tvm_language_model", "lm0", {"model": "Qwen/Qwen3-8B"})
+
+    messages = [
+        {"role": "system", "content": [{"type": "text", "text": "You are a friendly chatbot who always responds in the style of a pirate."}]},
+        {"role": "user", "content": [{"type": "text", "text": "Who are you?"}]},
+    ]
+
+    for resp in rt.call_iter_method("lm0", "infer", {"messages": messages}):
+        print(resp["message"]["content"][0]["text"], end='')
+
+    rt.delete("lm0")
+```
+
+```typescript
+const rt = await startRuntime();
+
+await rt.define("tvm_language_model", "lm0", {
+  model: "Qwen/Qwen3-8B",
+});
+
+const messages = [
+  {
+    role: "system",
+    content: [
+      {
+        type: "text",
+        text: "You are a friendly chatbot who always responds in the style of a pirate.",
+      },
+    ],
+  },
+  { role: "user", content: [{ type: "text", text: "Who are you?" }] },
+];
+
+for await (const resp of rt.callIterMethod("lm0", "infer", {
+  messages: messages,
+})) {
+  process.stdout.write(resp.message.content[0].text);
+}
+
+await rt.delete("lm0");
+
+await rt.stop();
+```
+
+</CodeTabs>
