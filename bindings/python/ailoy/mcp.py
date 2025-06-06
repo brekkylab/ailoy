@@ -2,6 +2,7 @@ import asyncio
 import json
 import multiprocessing
 import platform
+import subprocess
 from multiprocessing.connection import Connection
 from typing import Annotated, Any, Literal, Union
 
@@ -85,7 +86,7 @@ class MCPServer:
         asyncio.run(self._process_main(conn))
 
     async def _process_main(self, conn: Connection):
-        async with stdio_client(self.params) as (read, write):
+        async with stdio_client(self.params, errlog=subprocess.PIPE) as (read, write):
             async with ClientSession(read, write) as session:
                 # Notify to main process that the initialization has been finished and ready to receive requests
                 try:
