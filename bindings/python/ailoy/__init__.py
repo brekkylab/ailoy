@@ -8,15 +8,12 @@ if __doc__ is None:
         pass
 
 if __doc__ is None:
-    import os.path
+    from pathlib import Path
 
-    if os.path.isfile("README.md"):
-        with open("README.md", "r") as f:
-            __doc__ = f.read()
-    elif os.path.isfile("../README.md"):
-        with open("../README.md", "r") as f:
-            __doc__ = f.read()
-    else:
+    readme = Path(__file__).parent.parent / "README.md"
+    if readme.exists():
+        __doc__ = readme.read_text()
+    else:  # fallback docstring
         __doc__ = "# ailoy-py\n\nPython binding for Ailoy runtime APIs"
 
 from .agent import Agent  # noqa: F401
