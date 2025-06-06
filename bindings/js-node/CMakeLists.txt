@@ -15,6 +15,11 @@ if (DEFINED NODE)
   find_package(OpenSSL REQUIRED)
   target_link_libraries(ailoy_addon PUBLIC ailoy_core_obj ailoy_broker_client_obj ailoy_broker_obj ailoy_vm_obj OpenSSL::Crypto OpenSSL::SSL ${CMAKE_JS_LIB})
 
+  # On Linux, do not expose static libstdc++ symbols globally
+  if(UNIX AND NOT APPLE)
+    target_link_options(ailoy_addon PRIVATE -Wl,--exclude-libs,ALL)
+  endif()
+
   if(MSVC AND CMAKE_JS_NODELIB_DEF AND CMAKE_JS_NODELIB_TARGET)
     execute_process(COMMAND ${CMAKE_AR} /def:${CMAKE_JS_NODELIB_DEF} /out:${CMAKE_JS_NODELIB_TARGET} ${CMAKE_STATIC_LINKER_FLAGS})
   endif()
