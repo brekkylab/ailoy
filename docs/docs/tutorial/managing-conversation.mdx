@@ -80,7 +80,8 @@ await agent.delete();
 
 ## Clearing message history
 
-You can use `.clear_history()` to clear the message history. Note that the
+If you want to check the previous messages, you can do with `.get_messages`.
+You can use `.clear_messages()` to clear the message history. Note that the
 system message is not removed and will always appear at the beginning of the
 message history.
 
@@ -91,7 +92,11 @@ with Agent(...) as agent:
     for resp in agent.query("The first question")
         agent.print(resp)
 
-    agent.clear_history()
+    # Get the previous messages
+    prev_messages = agent.get_messages()
+
+    # Clear the previous messages
+    agent.clear_messages()
 ```
 
 ```typescript
@@ -99,7 +104,12 @@ const agent = await defineAgent(...);
 for await (const resp of agent.query("The first question")) {
   agent.print(resp);
 }
-agent.clearHistory();
+
+# Get the previous messages
+const prevMessages = agent.getMessages();
+
+# Clear the previous messages
+agent.clearMessages();
 ```
 
 </CodeTabs>
