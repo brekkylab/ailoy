@@ -8,19 +8,117 @@ To see the basic usage of tools, refer to **[Using Tools](/docs/tutorial/using-t
 
 {/* prettier-ignore-end */}
 
-In Ailoy, a **tool** allows an agent to access functionality beyond what the base language model can offer, such as real-time data or domain-specific APIs.
+In Ailoy, a **tool** allows an agent to access functionality beyond what the
+base language model can offer, such as real-time data or domain-specific APIs.
+
+## How to add tools
+
+The following example shows **how to explicitly define a REST API tool** for
+_Frankfurter API_ that provides real-time currency exchange rate information.
+
+<CodeTabs>
+
+```python
+rt = Runtime()
+agent = Agent(rt, model_name="Qwen/Qwen3-8B")
+
+frankfurter = {
+    "type": "restapi",
+    "description": {
+        "name": "frankfurter",
+        "description": "Get the latest currency exchange rates of target currencies based on the 'base' currency",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "base": {
+                    "type": "string",
+                    "description": "The ISO 4217 currency code to be the divider of the currency rate to be got."
+                },
+                "symbols": {
+                    "type": "string",
+                    "description": "The target ISO 4217 currency codes separated by comma."
+                }
+            },
+        }
+    },
+    "behavior": {
+        "baseURL": "https://api.frankfurter.dev/v1/latest",
+        "method": "GET",
+        "headers": {
+            "accept": "application/json"
+        },
+        "outputPath": "rates"
+    },
+}
+agent.add_restapi_tool(frankfurter)
+```
+
+```typescript
+const rt = await startRuntime();
+const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
+
+const frankfurter = {
+  type: "restapi",
+  description: {
+    name: "frankfurter",
+    description:
+      "Get the latest currency exchange rates of target currencies based on the 'base' currency",
+    parameters: {
+      type: "object",
+      properties: {
+        base: {
+          type: "string",
+          description:
+            "The ISO 4217 currency code to be the divider of the currency rate to be got.",
+        },
+        symbols: {
+          type: "string",
+          description: "The target ISO 4217 currency codes separated by comma.",
+        },
+      },
+    },
+  },
+  behavior: {
+    baseURL: "https://api.frankfurter.dev/v1/latest",
+    method: "GET",
+    headers: {
+      accept: "application/json",
+    },
+    outputPath: "rates",
+  },
+};
+agent.addRESTAPITool(frankfurter);
+```
+
+</CodeTabs>
+
+You can see that a tool is considered as a **Tool Definition** document in the
+code. And the explanation of it is continued below.
+
+## Tool Definition
 
 Each tool is defined using two components:
 
 ### Description
 
-The `description` field defines how the AI understands and uses the tool. It follows the standard described in **[tool definitions of Transformers](https://huggingface.co/docs/transformers/v4.51.3/en/chat_templating_writing#tool-definitions)**, including details such as the tool's name, purpose, input parameters, and example usage. This helps the LLM decide *when* and *how* to use the tool.
+The `description` field defines how the AI understands and uses the tool. It
+follows the standard described in
+**[tool definitions of Transformers](https://huggingface.co/docs/transformers/v4.51.3/en/chat_templating_writing#tool-definitions)**,
+which is the format widely used for defining tools in LLM. That is a JSON Schema
+explaining a function signature including details such as the tool's name,
+purpose, input parameters, return value and example usage. This helps the LLM
+decide _when_ and _how_ to use the tool.
 
 ### Behavior
 
-The `behavior` field defines how the tool actually behaves when invoked. This varies depending on the tool type. For example, a REST API tool includes the endpoint URL, HTTP method, and headers. A native tool may define a Python or Node.js function, while a built-in tool delegates the behavior to a pre-defined module.
+The `behavior` field defines how the tool actually behaves when invoked. This
+varies depending on the tool type. For example, a REST API tool includes the
+endpoint URL, HTTP method, and headers. A native tool may define a Python or
+Node.js function, while a built-in tool delegates the behavior to a pre-defined
+module.
 
-To see the examples, take a look at the **[Out-of-the-box tools](#out-of-the-box-tools)** section.
+To see the examples of tools, take a look at the
+**[Out-of-the-box tools](#out-of-the-box-tools)** section.
 
 ## Types
 
