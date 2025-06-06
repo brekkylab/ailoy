@@ -27,6 +27,9 @@ Create your own character to defeat all the bosses!
 
 (You don't need to install Python to run these thanks to [pyinstaller](https://github.com/pyinstaller/pyinstaller).)
 
+> [!IMPORTANT]  
+> Since we are using the Qwen 8B model, a GPU with more than 12GB of memory is required.
+
 - [Windows](https://download.ailoy.co/RogueWrite-prebuilts/RogueWrite-windows.exe)  
   [SHA-1] `2fe34c99db957cf3a5a2d2eedc0df9dac563112f`
 - [macOS](https://download.ailoy.co/RogueWrite-prebuilts/RogueWrite-macos)  
