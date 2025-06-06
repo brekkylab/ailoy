@@ -23,6 +23,13 @@ Create your own character to defeat all the bosses!
 
 ## How to Run
 
+### with prebuilt executables
+
+- [Windows](https://download.ailoy.co/RogueWrite-prebuilts/RogueWrite-windows.exe)  
+  [SHA-1] `2fe34c99db957cf3a5a2d2eedc0df9dac563112f`
+- [macOS](https://download.ailoy.co/RogueWrite-prebuilts/RogueWrite-macos)  
+  [SHA-1] `6f188b2aef4dffc035f4d2e6f34ae1eef4aab012`
+
 ### with `uv`
 
 ```bash
@@ -38,6 +45,7 @@ $ python play.py
 ```
 
 ## Language settings
+
 Currently, RogueWrite supports **_English_** and **_Korean_**.
 
 `ROGUEWRITE_LANGUAGE`: Environment variable to set the language. Options: [`en`, `ko`], default is `en`.
