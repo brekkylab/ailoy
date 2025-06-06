@@ -1,3 +1,4 @@
+import time
 from asyncio import Event, to_thread
 from collections import defaultdict
 from typing import Any, AsyncGenerator, Generator, Literal, Optional, TypedDict
@@ -68,6 +69,7 @@ class RuntimeBase:
         while retry_count < 3:
             if self._client.send_type1(txid, ptype):
                 return txid
+            time.sleep(0.001)
             retry_count += 1
         raise RuntimeError(f'Failed to send packet "{ptype}"')
 
