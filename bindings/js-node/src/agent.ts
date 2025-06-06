@@ -288,7 +288,7 @@ export class Agent {
 
     // Set default system message if not given; still can be undefined
     this.systemMessage = this.systemMessage ?? modelDesc.defaultSystemMessage;
-    this.clearHistory();
+    this.clearMessages();
 
     // Call runtime to define componenets
     const result = await this.runtime.define(
@@ -316,7 +316,7 @@ export class Agent {
     }
 
     // Clear messages
-    this.clearHistory();
+    this.clearMessages();
 
     // Cleanup MCP servers
     for (const mcpServer of this.mcpServers) {
@@ -683,7 +683,17 @@ export class Agent {
     }
   }
 
-  clearHistory() {
+  /**
+   * Get the history of conversation messages.
+   */
+  getMessages() {
+    return this.messages;
+  }
+
+  /**
+   * Clear the history of conversation messages.
+   */
+  clearMessages() {
     this.messages = [];
     if (this.systemMessage !== undefined)
       this.messages.push({

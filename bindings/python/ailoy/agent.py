@@ -411,7 +411,7 @@ class Agent:
         if self._system_message is None:
             self._system_message = model_desc.default_system_message
 
-        self.clear_history()
+        self.clear_messages()
 
         # Add API key
         if api_key:
@@ -438,7 +438,7 @@ class Agent:
         if self._runtime.is_alive():
             self._runtime.delete(self._component_state.name)
 
-        self.clear_history()
+        self.clear_messages()
 
         for mcp_server in self._mcp_servers:
             mcp_server.cleanup()
@@ -572,7 +572,19 @@ class Agent:
             # Finish this generator
             break
 
-    def clear_history(self):
+    def get_messages(self):
+        """
+        Get the history of conversation messages.
+
+        :returns: a list of messages
+        :rtype: list[Message]
+        """
+        return self._messages
+
+    def clear_messages(self):
+        """
+        Clear the history of conversation messages.
+        """
         self._messages.clear()
         if self._system_message is not None:
             self._messages.append(

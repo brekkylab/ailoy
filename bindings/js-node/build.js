@@ -61,7 +61,8 @@ function listDir(dir) {
       buildDir,
       "--CDNODE:BOOL=ON",
       "--CDAILOY_WITH_TEST:BOOL=OFF",
-      `--parallel ${require("os").cpus().length}`,
+      "--parallel",
+      `${require("os").cpus().length}`,
     ];
     await runCommand("npx", buildArgs, { cwd: __dirname });
 
