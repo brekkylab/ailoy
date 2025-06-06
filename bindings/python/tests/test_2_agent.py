@@ -20,7 +20,7 @@ def agent(runtime: Runtime):
 
 
 def test_tool_call_calculator(agent: Agent):
-    agent.clear_history()
+    agent.clear_messages()
     agent._tools.clear()
     agent.add_tools_from_preset("calculator")
 
@@ -30,7 +30,7 @@ def test_tool_call_calculator(agent: Agent):
 
 
 def test_tool_call_frankfurter(agent: Agent):
-    agent.clear_history()
+    agent.clear_messages()
     agent._tools.clear()
     agent.add_tools_from_preset("frankfurter")
 
@@ -56,7 +56,7 @@ def test_tool_call_py_function(agent: Agent):
             return 77
         return
 
-    agent.clear_history()
+    agent.clear_messages()
     agent._tools.clear()
     agent.add_py_function_tool(f=get_current_temperature)
     tool_names = set([tool.desc.name for tool in agent._tools])
@@ -68,7 +68,7 @@ def test_tool_call_py_function(agent: Agent):
 
 
 def test_mcp_tools_github(agent: Agent):
-    agent.clear_history()
+    agent.clear_messages()
     agent._tools.clear()
     agent.add_tools_from_mcp_server(
         "github",
@@ -92,7 +92,7 @@ def test_mcp_tools_github(agent: Agent):
 
 
 def test_simple_rag_pipeline(runtime: Runtime, agent: Agent):
-    agent.clear_history()
+    agent.clear_messages()
     agent._tools.clear()
 
     with VectorStore(runtime, embedding_model_name="BAAI/bge-m3", vector_store_name="faiss") as vs:
