@@ -46,7 +46,7 @@ const App: React.FC = () => {
           last.content += resp.content;
           return [...prevMessages.slice(0, prevMessages.length - 1), last];
         });
-        if (resp.endOfTurn) {
+        if (resp.isTypeSwitched) {
           setIsAnswering(false);
         }
       }
@@ -120,10 +120,11 @@ Query: ${query}
         </div>
         <div className="w-1/2 p-4 overflow-auto">
           {messages.map((message, index) => (
-            <div key={index} className="mb-2 p-2 border rounded overflow-scroll">
-              <Markdown>
-                {`${message.role}: ${message.content}`}
-              </Markdown>
+            <div
+              key={index}
+              className="mb-2 p-2 border rounded overflow-scroll"
+            >
+              <Markdown>{`${message.role}: ${message.content}`}</Markdown>
             </div>
           ))}
         </div>

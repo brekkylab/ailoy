@@ -10,10 +10,7 @@ with gr.Blocks() as demo, ai.Agent(rt, "Qwen/Qwen3-8B") as agent:
     agent.add_tools_from_preset("frankfurter")
 
     gr.Markdown("# Chat with Ailoy Agent")
-    chatbot = gr.Chatbot(
-        type="messages",
-        label="Agent",
-    )
+    chatbot = gr.Chatbot(type="messages", label="Agent", height="80vh")
     input = gr.Textbox(lines=1, label="Chat Message")
 
     def user_prompt(prompt, history):
@@ -28,7 +25,7 @@ with gr.Blocks() as demo, ai.Agent(rt, "Qwen/Qwen3-8B") as agent:
                         role="assistant",
                         content=json.dumps(resp.content.function.arguments),
                         metadata={
-                            "title": f"🛠️ Tool Call: {resp.content.function.name}({resp.content.id})"
+                            "title": f"🛠️ Tool Call: **{resp.content.function.name}**"
                         },
                     )
                 )
@@ -36,10 +33,8 @@ with gr.Blocks() as demo, ai.Agent(rt, "Qwen/Qwen3-8B") as agent:
                 messages.append(
                     gr.ChatMessage(
                         role="assistant",
-                        content=resp.content.content,
-                        metadata={
-                            "title": f"📄 Tool Result: {resp.content.name}({resp.content.tool_call_id})"
-                        },
+                        content=resp.content.content[0].text,
+                        metadata={"title": f"📄 Tool Result: **{resp.content.name}**"},
                     )
                 )
             elif resp.type == "reasoning":
