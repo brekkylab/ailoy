@@ -1,6 +1,7 @@
 import asyncio
 import json
 import multiprocessing
+import platform
 from multiprocessing.connection import Connection
 from typing import Annotated, Any, Literal, Union
 
@@ -69,7 +70,9 @@ class MCPServer:
         self.params = params
 
         self._parent_conn, self._child_conn = multiprocessing.Pipe()
-        self._proc = multiprocessing.Process(target=self._run_process, args=(self._child_conn,))
+
+        ctx = multiprocessing.get_context("fork" if platform.system() != "Windows" else "spawn")
+        self._proc = ctx.Process(target=self._run_process, args=(self._child_conn,))
         self._proc.start()
 
         # Wait for subprocess to signal initialization complete

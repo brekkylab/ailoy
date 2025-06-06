@@ -331,7 +331,7 @@ int32_t tvm_language_model_t::prefill(const std::vector<int32_t> &tokens) {
 
     // Input NDArray
     NDArray input = NDArray::Empty({length}, I32, model_->get_device());
-    input.CopyFromBytes(new_tokens.data(), new_tokens.size() * sizeof(int32_t));
+    input.CopyFromBytes(&*(new_tokens.begin() + i), length * sizeof(int32_t));
 
     // Embedding of the input
     NDArray embedding =
