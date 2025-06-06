@@ -16,16 +16,20 @@ By using the `Runtime` directly, you can send requests to the `VM` yourself.
 This is useful when you need more advanced configuration or want to call APIs
 that are not available through the high-level interfaces.
 
+{/* prettier-ignore-start */}
+
 :::info
 See [Internal Runtime APIs](../api-references/internal-runtime-apis.mdx) for
 the full list of available APIs.
 :::
 
+{/* prettier-ignore-end */}
 
 ## Operator
 
-Let’s take a look at how the lower-level API works, with the simplest example `echo`.
-The `echo` operator is a basic operator that returns the user's input as-is.
+Let’s take a look at how the lower-level API works, with the simplest example
+`echo`. The `echo` operator is a basic operator that returns the user's input
+as-is.
 
 Here’s how to call the echo operator:
 
@@ -59,18 +63,18 @@ import { startRuntime } from "ailoy-node";
 
 </CodeTabs>
 
-<TerminalBox>
-Hello world
-</TerminalBox>
+<TerminalBox>Hello world</TerminalBox>
 
 ### Text chunking
 
-Next, let’s try a more practical operator.
-The [`split_text`](../api-references/internal-runtime-apis.mdx#split_text)
-operator transforms a long document into a set of smaller chunks.
-This operation is essential for tasks like Retrieval-Augmented Generation (RAG).
+Next, let’s try a more practical operator. The
+[`split_text`](../api-references/internal-runtime-apis.mdx#split_text) operator
+transforms a long document into a set of smaller chunks. This operation is
+essential for tasks like Retrieval-Augmented Generation (RAG).
 
-We’ll use Lev Tolstoy’s [What Men Live by](https://www.gutenberg.org/files/6157/6157-h/6157-h.htm) to break a long passage into multiple chunks.
+We’ll use Lev Tolstoy’s
+[What Men Live by](https://www.gutenberg.org/files/6157/6157-h/6157-h.htm) to
+break a long passage into multiple chunks.
 
 <CodeTabs>
 
@@ -127,26 +131,57 @@ import { readFile } from "fs/promises";
 WHAT MEN LIVE BY
 A shoemaker named Simon, who had neither house nor land of his own, lived with his wife and children in a peasant’s hut, and earned his living by his work. Work was cheap, but bread was dear, and what he earned he spent for food. The man and his wife had but one sheepskin coat between them for winter wear, and even that was torn to tatters, and this was the second year he had been wanting to buy sheep-skins for a new coat. Before winter Simon saved up a little money: a three-rouble note lay hidden in his wife’s box, and five roubles and twenty kopeks were owed him by customers in the village.
 
-So one morning he prepared to go to the village to buy the sheep-skins. He put on over his shirt his wife’s wadded nankeen jacket, and over that he put his own cloth coat. He took the three-rouble note in his pocket, cut himself a stick to serve as a staff, and started off after breakfast. “I’ll collect the five roubles that are due to me,” thought he, “add the three I have got, and that will be enough to buy sheep-skins for the winter coat.”
+So one morning he prepared to go to the village to buy the sheep-skins. He put
+on over his shirt his wife’s wadded nankeen jacket, and over that he put his own
+cloth coat. He took the three-rouble note in his pocket, cut himself a stick to
+serve as a staff, and started off after breakfast. “I’ll collect the five
+roubles that are due to me,” thought he, “add the three I have got, and that
+will be enough to buy sheep-skins for the winter coat.”
 
-He came to the village and called at a peasant’s hut, but the man was not at home. The peasant’s wife promised that the money should be paid next week, but she would not pay it herself. Then Simon called on another peasant, but this one swore he had no money, and would only pay twenty kopeks which he owed for a pair of boots Simon had mended. Simon then tried to buy the sheep-skins on credit, but the dealer would not trust him.
+He came to the village and called at a peasant’s hut, but the man was not at
+home. The peasant’s wife promised that the money should be paid next week, but
+she would not pay it herself. Then Simon called on another peasant, but this one
+swore he had no money, and would only pay twenty kopeks which he owed for a pair
+of boots Simon had mended. Simon then tried to buy the sheep-skins on credit,
+but the dealer would not trust him.
 
-“Bring your money,” said he, “then you may have your pick of the skins. We know what debt-collecting is like.” So all the business the shoemaker did was to get the twenty kopeks for boots he had mended, and to take a pair of felt boots a peasant gave him to sole with leather.
+“Bring your money,” said he, “then you may have your pick of the skins. We know
+what debt-collecting is like.” So all the business the shoemaker did was to get
+the twenty kopeks for boots he had mended, and to take a pair of felt boots a
+peasant gave him to sole with leather.
 
-Simon felt downhearted. He spent the twenty kopeks on vodka, and started homewards without having bought any skins. In the morning he had felt the frost; but now, after drinking the vodka, he felt warm, even without a sheep-skin coat. He trudged along, striking his stick on the frozen earth with one hand, swinging the felt boots with the other, and talking to himself.
+Simon felt downhearted. He spent the twenty kopeks on vodka, and started
+homewards without having bought any skins. In the morning he had felt the frost;
+but now, after drinking the vodka, he felt warm, even without a sheep-skin coat.
+He trudged along, striking his stick on the frozen earth with one hand, swinging
+the felt boots with the other, and talking to himself.
 
+I “I’m quite warm,” said he, “though I have no sheep-skin coat. I’ve had a drop,
+and it runs through all my veins. I need no sheep-skins. I go along and don’t
+worry about anything. That’s the sort of man I am! What do I care? I can live
+without sheep-skins. I don’t need them. My wife will fret, to be sure. And, true
+enough, it is a shame; one works all day long, and then does not get paid. Stop
+a bit! If you don’t bring that money along, sure enough I’ll skin you, blessed
+if I don’t. How’s that? He pays twenty kopeks at a time! What can I do with
+twenty kopeks? Drink it-that’s all one can do! Hard up, he says he is! So he may
+be—but what about me? You have a house, and cattle, and everything; I’ve only
+what I stand up in! You have corn of your own growing; I have to buy every
+grain. Do what I will, I must spend three roubles every week for bread alone. I
+come home and find the bread all used up, and I have to fork out another rouble
+and a half. So just pay up what you owe, and no nonsense about it!”
 
+By this time he had nearly reached the shrine at the bend of the road. Looking
+up, he saw something whitish behind the shrine. The daylight was fading, and the
+shoemaker peered at the thing without being able to make out what it was. “There
+was no white stone here before. Can it be an ox? It’s not like an ox. It has a
+head like a man, but it’s too white; and what could a man be doing there?”
 
+He came closer, so that it was clearly visible. To his surprise it really was a
+man, alive or dead, sitting naked, leaning motionless against the shrine. Terror
+seized the shoemaker, and he thought, “Some one has killed him, stripped him,
+and left him there. If I meddle I shall surely get into trouble.”
 
-
-
-I
-“I’m quite warm,” said he, “though I have no sheep-skin coat. I’ve had a drop, and it runs through all my veins. I need no sheep-skins. I go along and don’t worry about anything. That’s the sort of man I am! What do I care? I can live without sheep-skins. I don’t need them. My wife will fret, to be sure. And, true enough, it is a shame; one works all day long, and then does not get paid. Stop a bit! If you don’t bring that money along, sure enough I’ll skin you, blessed if I don’t. How’s that? He pays twenty kopeks at a time! What can I do with twenty kopeks? Drink it-that’s all one can do! Hard up, he says he is! So he may be—but what about me? You have a house, and cattle, and everything; I’ve only what I stand up in! You have corn of your own growing; I have to buy every grain. Do what I will, I must spend three roubles every week for bread alone. I come home and find the bread all used up, and I have to fork out another rouble and a half. So just pay up what you owe, and no nonsense about it!”
-
-By this time he had nearly reached the shrine at the bend of the road. Looking up, he saw something whitish behind the shrine. The daylight was fading, and the shoemaker peered at the thing without being able to make out what it was. “There was no white stone here before. Can it be an ox? It’s not like an ox. It has a head like a man, but it’s too white; and what could a man be doing there?”
-
-He came closer, so that it was clearly visible. To his surprise it really was a man, alive or dead, sitting naked, leaning motionless against the shrine. Terror seized the shoemaker, and he thought, “Some one has killed him, stripped him, and left him there. If I meddle I shall surely get into trouble.”
-*********************************************************
+---
 
 `}
 
@@ -154,17 +189,20 @@ He came closer, so that it was clearly visible. To his surprise it really was a 
 
 ## Component
 
-Some jobs may require state, like member variables in a class.
-Ailoy provides support for this kind of stateful structure through a type called a `Component`.
+Some jobs may require state, like member variables in a class. Ailoy provides
+support for this kind of stateful structure through a type called a `Component`.
 
 ### Direct language model inference
 
 In this example, we’ll directly invoke an LLM using the low-level Runtime API.
-To begin, a `Component` must first be initialized using the `define` call.
-In here, we define a `Component` of type [tvm_language_model](../api-references/internal-runtime-apis.mdx#tvm_language_model) with the name `lm0`.
-It can later be removed using the `delete` call.
+To begin, a `Component` must first be initialized using the `define` call. In
+here, we define a `Component` of type
+[tvm_language_model](../api-references/internal-runtime-apis.mdx#tvm_language_model)
+with the name `lm0`. It can later be removed using the `delete` call.
 
-The tvm_language_model `Component` provides a **method** [`infer`](../api-references/internal-runtime-apis.mdx#tvm_language_model.infer), which can be used to perform LLM inference.
+The tvm_language_model `Component` provides a **method**
+[`infer`](../api-references/internal-runtime-apis.mdx#tvm_language_model.infer),
+which can be used to perform LLM inference.
 
 <CodeTabs>
 
@@ -176,7 +214,7 @@ rt = Runtime()
 rt.define("tvm_language_model", "lm0", {"model": "Qwen/Qwen3-0.6B"})
 
 for resp in rt.call_iter_method(
-    "lm0", "infer", {"messages": [{"role": "user", "content": "What's your name?"}]}
+    "lm0", "infer", {"messages": [{"role": "user", "content": [{"type": "text", "text": "What's your name?"}]}]}
 ):
     print(resp)
 
@@ -196,7 +234,9 @@ import { startRuntime } from "ailoy-node";
   });
 
   for await (const resp of rt.callIterMethod("lm0", "infer", {
-    messages: [{ role: "user", content: [{"type": "text", "text": "What's your name?"}]}],
+    messages: [
+      { role: "user", content: [{ type: "text", text: "What's your name?" }] },
+    ],
   })) {
     console.log(resp);
   }
@@ -210,7 +250,7 @@ import { startRuntime } from "ailoy-node";
 </CodeTabs>
 
 <TerminalBox>
-{`
+  {`
 {'message': {'role': 'assistant', 'content': 'My'}, 'finish_reason': None}
 {'message': {'role': 'assistant', 'content': ' name'}, 'finish_reason': None}
 {'message': {'role': 'assistant', 'content': ' is'}, 'finish_reason': None}
