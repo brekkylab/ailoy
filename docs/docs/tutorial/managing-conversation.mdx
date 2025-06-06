@@ -1,11 +1,10 @@
 # Managing conversation
 
-In language models, obtaining the desired answer is typically achieved 
-through a **conversation**. Depending on the response, users may ask follow-up 
-questions or provide additional information necessary for the answer.
-To support this, many models support multi-turn conversation, which
-implements a continuous flow of conversation by providing context for multiple
-stages of interactions.
+In language models, obtaining the desired answer is typically achieved through a
+**conversation**. Depending on the response, users may ask follow-up questions
+or provide additional information necessary for the answer. To support this,
+many models support multi-turn conversation, which implements a continuous flow
+of conversation by providing context for multiple stages of interactions.
 
 Ailoy's high-level API `Agent` maintains the query/response history, so a
 multi-turn conversation with LLM can be implemented naturally by repeatedly
@@ -78,10 +77,10 @@ await agent.delete();
 
 </CodeTabs>
 
-## Clearing message history
+## Working with message history
 
-If you want to check the previous messages, you can do with `.get_messages`.
-You can use `.clear_messages()` to clear the message history. Note that the
+You can use `.get_messages()` to check the history of conversation messages so
+far, and use `.clear_messages()` to clear the message history. Note that the
 system message is not removed and will always appear at the beginning of the
 message history.
 
@@ -92,10 +91,10 @@ with Agent(...) as agent:
     for resp in agent.query("The first question")
         agent.print(resp)
 
-    # Get the previous messages
-    prev_messages = agent.get_messages()
+    # Get the message history
+    messages = agent.get_messages()
 
-    # Clear the previous messages
+    # Clear the message history
     agent.clear_messages()
 ```
 
@@ -105,10 +104,10 @@ for await (const resp of agent.query("The first question")) {
   agent.print(resp);
 }
 
-# Get the previous messages
-const prevMessages = agent.getMessages();
+// Get the message history
+const messages = agent.getMessages();
 
-# Clear the previous messages
+// Clear the message history
 agent.clearMessages();
 ```
 
