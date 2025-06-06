@@ -10,7 +10,7 @@ Basically, an agent response has the following structure:
 {
   type: One of ["output_text" | "tool_call" | "tool_call_result" | "reasoning" | "error"]
   role: One of ["assistant" | "tool"];
-  end_of_turn: boolean
+  is_type_switched: boolean
   content: Depends on type;
 }
 ```
@@ -19,9 +19,12 @@ Basically, an agent response has the following structure:
   producing. Depending on the type, the structure of the response may vary.
 - The `role` field specifies who is speaking—either the Assistant (LLM model) or
   a Tool.
-- The `end_of_turn` flag indicates whether this response is the final message
-  for the current turn. If set to `true`, it means a new type of response will
-  follow.
+- The `is_type_switched` flag indicates whether this response is the first
+  message of a new type. You can use this flag to detect when a new type of
+  message has arrived and trigger actions in your application, such as creating
+  a new message box. See our
+  [Gradio chatbot example](https://github.com/brekkylab/ailoy/tree/main/examples/gradio_chatbot)
+  for a detailed use case.
 
 Here are the descriptions of each response type:
 

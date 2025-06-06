@@ -1,0 +1,114 @@
+# Managing conversation
+
+In language models, obtaining the desired answer is typically achieved through a
+**conversation**. Depending on the response, users may ask follow-up questions
+or provide additional information necessary for the answer. To support this,
+many models support multi-turn conversation, which implements a continuous flow
+of conversation by providing context for multiple stages of interactions.
+
+Ailoy's high-level API `Agent` maintains the query/response history, so a
+multi-turn conversation with LLM can be implemented naturally by repeatedly
+sending queries to `Agent` and receiving the responses in the code context.
+
+<CodeTabs>
+
+```python
+with Agent(...) as agent:
+    while True:
+        query = input("\nUser: ")
+
+        if query == "exit":
+            break
+        if query == "":
+            continue
+
+        for resp in agent.query(query):
+            agent.print(resp)
+```
+
+```typescript
+const agent = await defineAgent(...);
+while (true) {
+  const query = await getUserInput("User: ");
+
+  if (query === "exit")
+    break;
+  if (query === "")
+    continue;
+
+  process.stdout.write(`\nAssistant: `);
+  for await (const resp of agent.query(query)) {
+    agent.print(resp);
+  }
+}
+await agent.delete();
+```
+
+</CodeTabs>
+
+## Overriding system messages
+
+To override system message, you can pass the system message string as the
+optional `system_message` argument when you create your agent instance.
+
+<CodeTabs>
+
+```python
+with Agent(
+    rt,
+    model_name="Qwen/Qwen3-8B",
+    system_message="You are a friendly chatbot who always responds in the style of a pirate.",
+) as agent:
+    for resp in agent.query("Please give me a short poem about AI"):
+        agent.print(resp)
+```
+
+```typescript
+const agent = await defineAgent(rt, "Qwen/Qwen3-8B", {
+  systemMessage:
+    "You are a friendly chatbot who always responds in the style of a pirate.",
+});
+
+for await (const resp of agent.query("Please give me a short poem about AI")) {
+  agent.print(resp);
+}
+await agent.delete();
+```
+
+</CodeTabs>
+
+## Working with message history
+
+You can use `.get_messages()` to check the history of conversation messages so
+far, and use `.clear_messages()` to clear the message history. Note that the
+system message is not removed and will always appear at the beginning of the
+message history.
+
+<CodeTabs>
+
+```python
+with Agent(...) as agent:
+    for resp in agent.query("The first question")
+        agent.print(resp)
+
+    # Get the message history
+    messages = agent.get_messages()
+
+    # Clear the message history
+    agent.clear_messages()
+```
+
+```typescript
+const agent = await defineAgent(...);
+for await (const resp of agent.query("The first question")) {
+  agent.print(resp);
+}
+
+// Get the message history
+const messages = agent.getMessages();
+
+// Clear the message history
+agent.clearMessages();
+```
+
+</CodeTabs>

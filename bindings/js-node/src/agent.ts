@@ -684,7 +684,8 @@ export class Agent {
   }
 
   /**
-   * Get the history of conversation messages.
+   * Get the current conversation history.
+   * Each item in the list represents a message from either the user or the assistant.
    */
   getMessages() {
     return this.messages;

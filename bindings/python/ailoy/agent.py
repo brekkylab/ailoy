@@ -454,8 +454,9 @@ class Agent:
         Runs the agent with a new user message and yields streamed responses.
 
         :param message: The user message to send to the model.
-        :param reasoning: If True, enables reasoning capabilities. (default: False)
-        :yield: AgentResponse output of the LLM inference or tool calls
+        :param reasoning: If True, enables reasoning capabilities. (Default: False)
+        :return: An iterator over the output, where each item represents either a generated token from the assistant or a tool call.
+        :rtype: Iterator[:class:`AgentResponse`]
         """  # noqa: E501
         if not self._component_state.valid:
             raise ValueError("Agent is not valid. Create one or define newly.")
@@ -572,11 +573,12 @@ class Agent:
             # Finish this generator
             break
 
-    def get_messages(self):
+    def get_messages(self) -> list[Message]:
         """
-        Get the history of conversation messages.
+        Get the current conversation history.
+        Each item in the list represents a message from either the user or the assistant.
 
-        :returns: a list of messages
+        :return: The conversation history so far in the form of a list.
         :rtype: list[Message]
         """
         return self._messages
@@ -610,7 +612,7 @@ class Agent:
         Adds a Python function as a tool using callable.
 
         :param f: Function will be called when the tool invocation occured.
-        :param desc: Tool description.
+        :param desc: Tool description to override. If not given, parsed from docstring of function `f`.
 
         :raises ValueError: Docstring parsing is failed.
         :raises ValidationError: Given or parsed description is not a valid `ToolDescription`.
