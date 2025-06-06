@@ -1,11 +1,8 @@
 name: Build and Deploy Document
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - docs/**
+  release:
+    types: released
 
 defaults:
   run:

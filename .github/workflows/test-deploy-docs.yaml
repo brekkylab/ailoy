@@ -1,11 +1,6 @@
 name: Test Document Build
 
-on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - docs/**
+on: workflow_dispatch
 
 defaults:
   run:
