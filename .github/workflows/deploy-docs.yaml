@@ -22,6 +22,23 @@ jobs:
           cache: npm
           cache-dependency-path: "**/package-lock.json"
 
+      - name: Build Typescript API Document
+        run: npx typedoc ../bindings/js-node/src/index.ts --tsconfig ../bindings/js-node/tsconfig.json --favicon static/img/favicon.ico --out static/tsdocs
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install ailoy-python
+        run: pip install ../bindings/python
+
+      - name: Install pdoc
+        run: pip install pdoc
+
+      - name: Build Python API Document
+        run: pdoc -o static/pydocs --logo /ailoy/img/logo-letter.png --favicon /ailoy/img/favicon.ico ../bindings/python/ailoy
+
       - name: Install dependencies
         run: npm ci
       - name: Build website
