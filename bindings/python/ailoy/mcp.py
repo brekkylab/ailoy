@@ -2,7 +2,7 @@ import asyncio
 import json
 import multiprocessing
 import platform
-import subprocess
+import tempfile
 from multiprocessing.connection import Connection
 from typing import Annotated, Any, Literal, Union
 
@@ -13,6 +13,7 @@ from mcp.client.stdio import (
     StdioServerParameters,
     stdio_client,
 )
+from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, TypeAdapter
 
 __all__ = ["MCPServer"]
@@ -73,11 +74,15 @@ class MCPServer:
         self._parent_conn, self._child_conn = multiprocessing.Pipe()
 
         ctx = multiprocessing.get_context("fork" if platform.system() != "Windows" else "spawn")
-        self._proc = ctx.Process(target=self._run_process, args=(self._child_conn,))
+        self._proc: multiprocessing.Process = ctx.Process(target=self._run_process, args=(self._child_conn,))
         self._proc.start()
 
         # Wait for subprocess to signal initialization complete
-        self._recv_response()
+        try:
+            self._recv_response()
+        except RuntimeError as e:
+            self.cleanup()
+            raise e
 
     def __del__(self):
         self.cleanup()
@@ -86,52 +91,59 @@ class MCPServer:
         asyncio.run(self._process_main(conn))
 
     async def _process_main(self, conn: Connection):
-        async with stdio_client(self.params, errlog=subprocess.PIPE) as (read, write):
-            async with ClientSession(read, write) as session:
-                # Notify to main process that the initialization has been finished and ready to receive requests
-                try:
-                    await session.initialize()
-                    conn.send(ResultMessage(result=True).model_dump())
-                except Exception as e:
-                    conn.send(ErrorMessage(error=f"Failed to initialize MCP subprocess: {e}").model_dump())
-
-                while True:
-                    if not conn.poll(0.1):
-                        await asyncio.sleep(0.1)
-                        continue
-
+        with tempfile.TemporaryFile(mode="w+t") as _errlog:
+            async with stdio_client(self.params, errlog=_errlog) as (read, write):
+                async with ClientSession(read, write) as session:
+                    # Notify to main process that the initialization has been finished and ready to receive requests
                     try:
-                        raw = conn.recv()
-                        req = TypeAdapter(RequestMessage).validate_python(raw)
+                        await session.initialize()
+                        conn.send(ResultMessage(result=True).model_dump())
+                    except McpError:
+                        _errlog.seek(0)
+                        error = _errlog.read()
+                        conn.send(
+                            ErrorMessage(
+                                error=f"Failed to initialize MCP subprocess. Check the error output below.\n\n{error}"
+                            ).model_dump()
+                        )
 
-                        if isinstance(req, ListToolsRequest):
-                            result = await session.list_tools()
-                            conn.send(ResultMessage(result=result.tools).model_dump())
+                    while True:
+                        if not conn.poll(0.1):
+                            await asyncio.sleep(0.1)
+                            continue
 
-                        elif isinstance(req, CallToolRequest):
-                            result = await session.call_tool(req.tool.name, req.arguments)
-                            contents: list[str] = []
-                            for item in result.content:
-                                if isinstance(item, mcp_types.TextContent):
-                                    try:
-                                        content = json.loads(item.text)
-                                        contents.append(json.dumps(content))
-                                    except json.JSONDecodeError:
-                                        contents.append(item.text)
-                                elif isinstance(item, mcp_types.ImageContent):
-                                    contents.append(item.data)
-                                elif isinstance(item, mcp_types.EmbeddedResource):
-                                    if isinstance(item.resource, mcp_types.TextResourceContents):
-                                        contents.append(item.resource.text)
-                                    else:
-                                        contents.append(item.resource.blob)
-                            conn.send(ResultMessage(result=contents).model_dump())
+                        try:
+                            raw = conn.recv()
+                            req = TypeAdapter(RequestMessage).validate_python(raw)
 
-                        elif isinstance(req, ShutdownRequest):
-                            break
+                            if isinstance(req, ListToolsRequest):
+                                result = await session.list_tools()
+                                conn.send(ResultMessage(result=result.tools).model_dump())
 
-                    except Exception as e:
-                        conn.send(ErrorMessage(error=str(e)).model_dump())
+                            elif isinstance(req, CallToolRequest):
+                                result = await session.call_tool(req.tool.name, req.arguments)
+                                contents: list[str] = []
+                                for item in result.content:
+                                    if isinstance(item, mcp_types.TextContent):
+                                        try:
+                                            content = json.loads(item.text)
+                                            contents.append(json.dumps(content))
+                                        except json.JSONDecodeError:
+                                            contents.append(item.text)
+                                    elif isinstance(item, mcp_types.ImageContent):
+                                        contents.append(item.data)
+                                    elif isinstance(item, mcp_types.EmbeddedResource):
+                                        if isinstance(item.resource, mcp_types.TextResourceContents):
+                                            contents.append(item.resource.text)
+                                        else:
+                                            contents.append(item.resource.blob)
+                                conn.send(ResultMessage(result=contents).model_dump())
+
+                            elif isinstance(req, ShutdownRequest):
+                                break
+
+                        except Exception as e:
+                            conn.send(ErrorMessage(error=str(e)).model_dump())
 
     def _send_request(self, msg: RequestMessage):
         self._parent_conn.send(msg.model_dump())
