@@ -82,8 +82,8 @@ def test_mcp_tools_github(agent: Agent):
         ],
     )
     tool_names = set([tool.desc.name for tool in agent._tools])
-    assert "github/search_repositories" in tool_names
-    assert "github/get_file_contents" in tool_names
+    assert "github-search_repositories" in tool_names
+    assert "github-get_file_contents" in tool_names
 
     # query = "Summarize README.md from repository brekkylab/ailoy."
     query = "Briefly explain about the repository brekkylab/ailoy."
