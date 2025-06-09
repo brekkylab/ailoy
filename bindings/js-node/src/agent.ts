@@ -512,7 +512,7 @@ export class Agent {
         continue;
 
       const desc: ToolDescription = {
-        name: `${name}/${tool.name}`,
+        name: `${name}-${tool.name}`,
         description: tool.description || "",
         parameters: tool.inputSchema as ToolDescription["parameters"],
       };
@@ -538,7 +538,7 @@ export class Agent {
     this.mcpServers.splice(idx, 1);
 
     // Remove tools registered from the MCP server
-    this.tools = this.tools.filter((t) => !t.desc.name.startsWith(`${name}/`));
+    this.tools = this.tools.filter((t) => !t.desc.name.startsWith(`${name}-`));
   }
 
   getAvailableTools(): Array<ToolDescription> {

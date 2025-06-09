@@ -779,7 +779,7 @@ class Agent:
                 continue
 
             desc = ToolDescription(
-                name=f"{name}/{tool.name}", description=tool.description, parameters=tool.inputSchema
+                name=f"{name}-{tool.name}", description=tool.description, parameters=tool.inputSchema
             )
 
             def call(tool: MCPTool, **inputs: dict[str, Any]) -> list[str]:
@@ -803,4 +803,4 @@ class Agent:
         mcp_server.cleanup()
 
         # Remove tools registered from the MCP server
-        self._tools = list(filter(lambda t: not t.desc.name.startswith(f"{mcp_server.name}/"), self._tools))
+        self._tools = list(filter(lambda t: not t.desc.name.startswith(f"{mcp_server.name}-"), self._tools))
