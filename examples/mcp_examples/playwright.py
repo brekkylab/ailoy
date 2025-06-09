@@ -16,6 +16,12 @@ def main():
             "playwright",
             # https://github.com/microsoft/playwright-mcp?tab=readme-ov-file#getting-started
             StdioServerParameters(command="npx", args=["@playwright/mcp@latest"]),
+            tools_to_add=[
+                # You can whitelist tools you want to register to agent.
+                # https://github.com/microsoft/playwright-mcp?tab=readme-ov-file#tools
+                "browser_click",
+                "browser_navigate",
+            ],
         )
 
         print('Ailoy Playwright MCP Agent (Please type "exit" to stop conversation)')

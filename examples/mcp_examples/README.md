@@ -40,6 +40,9 @@ This example demonstrates how to use the [Playwright MCP Server](https://github.
 
 > ⚠️ This example uses an OpenAI model, so make sure the `OPENAI_API_KEY` environment variable is set.
 
+> ⚠️ The Playwright MCP server can quickly consume a large number of tokens due to the huge size of HTML page content, potentially leading to high costs if not used carefully.
+
+
 ### Prerequisites
 
 * [Node.js](https://nodejs.org/ko/download)
