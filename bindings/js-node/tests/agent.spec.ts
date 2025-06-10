@@ -1,3 +1,7 @@
+import { expect } from "chai";
+import fs from "node:fs";
+import path from "node:path";
+
 import { defineAgent } from "../src/agent";
 import { startRuntime, type Runtime } from "../src/runtime";
 
@@ -81,26 +85,27 @@ describe("Agent", async () => {
     await agent.delete();
   });
 
-  it("Tool Call: Github MCP tools", async () => {
+  it("Tool Call: Filesystem MCP tools", async () => {
     const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
-    await agent.addToolsFromMcpServer(
-      "github",
-      {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-github"],
-      },
-      {
-        toolsToAdd: ["search_repositories", "get_file_contents"],
-      }
-    );
+    const testPath = path.join(__dirname, "..");
+    await agent.addToolsFromMcpServer("filesystem", {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-filesystem", testPath],
+    });
 
-    const query =
-      "Search the repository named brekkylab/ailoy, and describe what this repo does based on its README.md";
+    const query = `Create a file hello.txt under ${testPath} and write 'hello world'.`;
     console.log(`Query: ${query}`);
 
     for await (const resp of agent.query(query)) {
       agent.print(resp);
     }
+
+    expect(fs.existsSync(`${testPath}/hello.txt`)).to.be.equal(true);
+    expect(
+      fs.readFileSync(`${testPath}/hello.txt`, { encoding: "utf-8" })
+    ).to.be.equal("hello world");
+
+    fs.unlinkSync(`${testPath}/hello.txt`);
 
     await agent.delete();
   });

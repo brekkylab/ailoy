@@ -18,7 +18,7 @@ class MCPServer {
 
   constructor(name: string, params: MCPClientStdio.StdioServerParameters) {
     this.name = name;
-    this.#params = params;
+    this.#params = { ...params, stderr: "pipe" };
     this.#client = new MCPClient.Client({
       name,
       version: "dummy-version",
@@ -28,8 +28,23 @@ class MCPServer {
   async start() {
     if (this.#connected) return;
     const transport = new MCPClientStdio.StdioClientTransport(this.#params);
-    await this.#client.connect(transport);
-    this.#connected = true;
+
+    let stderrOutput = "";
+
+    transport.stderr!.on("data", (chunk: Buffer | string) => {
+      stderrOutput += chunk.toString();
+    });
+
+    try {
+      await this.#client.connect(transport);
+      this.#connected = true;
+    } catch (err) {
+      await this.#client.close();
+      throw Error(
+        "Failed to start MCP server. Check the error output below.\n\n" +
+          stderrOutput.trim()
+      );
+    }
   }
 
   async cleanup() {

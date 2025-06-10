@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import mcp
 import pytest
 
@@ -67,28 +69,33 @@ def test_tool_call_py_function(agent: Agent):
         agent.print(resp)
 
 
-def test_mcp_tools_github(agent: Agent):
+def test_mcp_tools_filesystem(agent: Agent):
     agent.clear_messages()
     agent._tools.clear()
+
+    path = Path(__file__).parent.parent.absolute()
     agent.add_tools_from_mcp_server(
-        "github",
+        "filesystem",
         mcp.StdioServerParameters(
             command="npx",
-            args=["-y", "@modelcontextprotocol/server-github"],
+            args=[
+                "-y",
+                "@modelcontextprotocol/server-filesystem",
+                str(path),
+            ],
         ),
-        tools_to_add=[
-            "search_repositories",
-            "get_file_contents",
-        ],
     )
     tool_names = set([tool.desc.name for tool in agent._tools])
-    assert "github-search_repositories" in tool_names
-    assert "github-get_file_contents" in tool_names
+    assert "filesystem-list_directory" in tool_names
+    assert "filesystem-read_file" in tool_names
 
-    # query = "Summarize README.md from repository brekkylab/ailoy."
-    query = "Briefly explain about the repository brekkylab/ailoy."
+    query = f"Create a file hello.txt under {path} and write 'hello world'."
     for resp in agent.query(query):
         agent.print(resp)
+
+    assert (path / "hello.txt").exists()
+    assert (path / "hello.txt").read_text() == "hello world"
+    (path / "hello.txt").unlink()
 
 
 def test_simple_rag_pipeline(runtime: Runtime, agent: Agent):
