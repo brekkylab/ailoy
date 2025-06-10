@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include "chat_manager.hpp"
+#include "logging.hpp"
 
 namespace ailoy {
 /*
@@ -143,6 +144,21 @@ void from_json(const json &j, ailoy::openai_response_delta_t &obj) {
 
 namespace ailoy {
 
+nlohmann::json openai_chat_completion_request_t::to_json() {
+  // convert function call arguments as string if exists
+  g_dump_function_call_arguments_as_string = true;
+  nlohmann::json j = *this;
+  g_dump_function_call_arguments_as_string = false;
+  return j;
+}
+
+nlohmann::json openai_response_delta_t::to_json() { return *this; }
+
+openai_chat_completion_response_choice_t
+from_json_to_openai_chat_completion_response_choice_t(nlohmann::json j) {
+  return j;
+}
+
 std::unique_ptr<openai_chat_completion_request_t>
 convert_request_input(std::shared_ptr<const value_t> inputs) {
   if (!inputs->is_type_of<map_t>())
@@ -199,10 +215,7 @@ openai_response_delta_t openai_llm_engine_t::infer(
   }
 
   request->model = model_;
-  // convert function call arguments as string if exists
-  g_dump_function_call_arguments_as_string = true;
-  nlohmann::json body = *request;
-  g_dump_function_call_arguments_as_string = false;
+  nlohmann::json body = request->to_json();
 
   httplib::Request http_req;
   std::stringstream response_body;
@@ -219,13 +232,14 @@ openai_response_delta_t openai_llm_engine_t::infer(
                                std::string(httplib::to_string(result.error())));
 
   if (result->status != httplib::OK_200) {
-    std::cout << result->status << " " << result->body << std::endl;
+    debug("[{}] {}", result->status, result->body);
     throw ailoy::runtime_error(std::format("[OpenAI] Request failed: [{}] {}",
                                            result->status, result->body));
   }
 
   auto j = nlohmann::json::parse(result->body);
-  openai_chat_completion_response_choice_t choice = j["choices"][0];
+  auto choice =
+      from_json_to_openai_chat_completion_response_choice_t(j["choices"][0]);
   auto delta = openai_response_delta_t{.message = choice.message,
                                        .finish_reason = choice.finish_reason};
   return delta;
@@ -338,11 +352,14 @@ create_openai_component(std::shared_ptr<const value_t> attrs) {
       [&](std::shared_ptr<component_t> component,
           std::shared_ptr<const value_t> inputs) -> value_or_error_t {
         auto request = convert_request_input(inputs);
-        auto resp =
-            component->get_obj("engine")->as<openai_llm_engine_t>()->infer(
-                std::move(request));
-        auto rv = ailoy::from_nlohmann_json(resp)->as<map_t>();
-        return rv;
+        auto engine = component->get_obj("engine")->as<openai_llm_engine_t>();
+        try {
+          auto resp = engine->infer(std::move(request));
+          auto rv = ailoy::from_nlohmann_json(resp)->as<map_t>();
+          return rv;
+        } catch (const ailoy::runtime_error &e) {
+          return error_output_t(e.what());
+        }
       });
 
   auto ops = std::initializer_list<

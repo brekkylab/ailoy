@@ -231,4 +231,10 @@ if(AILOY_WITH_TEST)
     target_link_libraries(test_openai PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj httplib nlohmann_json::nlohmann_json GTest::gtest GTest::gmock)
     target_link_options(test_openai PRIVATE -fsanitize=undefined -fsanitize=address)
 
+    add_executable(test_gemini ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gemini.cpp)
+    add_test(NAME TestGemini COMMAND test_gemini)
+    target_include_directories(test_gemini PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_gemini PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj httplib nlohmann_json::nlohmann_json GTest::gtest GTest::gmock)
+    target_link_options(test_gemini PRIVATE -fsanitize=undefined -fsanitize=address)
+
 endif()

@@ -37,6 +37,9 @@ struct openai_chat_completion_response_choice_t {
   openai_chat_completion_message_t message;
 };
 
+openai_chat_completion_response_choice_t
+from_json_to_openai_chat_completion_response_choice_t(nlohmann::json j);
+
 struct openai_chat_completion_stream_response_choice_t {
   int index;
   openai_chat_completion_message_t delta;
@@ -60,6 +63,8 @@ struct openai_chat_completion_request_t {
   std::vector<openai_chat_completion_message_t> messages;
   std::optional<std::string> model = std::nullopt;
   std::optional<std::vector<openai_chat_tool_t>> tools = std::nullopt;
+
+  nlohmann::json to_json();
 };
 
 /* Structs for OpenAI component */
@@ -67,6 +72,8 @@ struct openai_chat_completion_request_t {
 struct openai_response_delta_t {
   openai_chat_completion_message_t message;
   std::string finish_reason;
+
+  nlohmann::json to_json();
 };
 
 class openai_llm_engine_t : public object_t {
@@ -80,6 +87,9 @@ private:
   std::string api_key_;
   std::string model_;
 };
+
+std::unique_ptr<openai_chat_completion_request_t>
+convert_request_input(std::shared_ptr<const value_t> inputs);
 
 component_or_error_t
 create_openai_component(std::shared_ptr<const value_t> attrs);
