@@ -2,7 +2,6 @@
 
 #include "chromadb_vector_store.hpp"
 #include "faiss/faiss_vector_store.hpp"
-#include "gemini.hpp"
 #include "openai.hpp"
 #include "split_text.hpp"
 #include "tvm/embedding_model.hpp"
@@ -73,14 +72,14 @@ std::shared_ptr<const module_t> get_language_module() {
 
   // Add Component: OpenAI
   if (!language_module->factories.contains("openai")) {
-    language_module->factories.insert_or_assign("openai",
-                                                create_openai_component);
+    language_module->factories.insert_or_assign(
+        "openai", create_openai_component<openai_llm_engine_t>);
   }
 
   // Add Component: Gemini
   if (!language_module->factories.contains("gemini")) {
-    language_module->factories.insert_or_assign("gemini",
-                                                create_gemini_component);
+    language_module->factories.insert_or_assign(
+        "gemini", create_openai_component<gemini_llm_engine_t>);
   }
 
   return language_module;

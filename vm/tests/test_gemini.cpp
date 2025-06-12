@@ -2,8 +2,8 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
-#include "gemini.hpp"
 #include "language.hpp"
+#include "openai.hpp"
 
 class GeminiTest : public ::testing::Test {
 protected:
