@@ -60,7 +60,9 @@ create_openai_component(std::shared_ptr<const value_t> attrs) {
       [&](std::shared_ptr<component_t> component,
           std::shared_ptr<const value_t> inputs) -> value_or_error_t {
         auto engine = component->get_obj("engine")->as<engine_t>();
-        auto request = engine->convert_request_input(inputs);
+        std::unique_ptr<openai_chat_completion_request_t> request =
+            engine->convert_request_input(inputs);
+
         try {
           auto resp = engine->infer(std::move(request));
           auto rv = ailoy::from_nlohmann_json(resp)->template as<map_t>();

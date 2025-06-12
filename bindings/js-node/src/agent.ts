@@ -60,7 +60,16 @@ export type TVMModelName =
 
 export type OpenAIModelName = "gpt-4o";
 
-export type ModelName = TVMModelName | OpenAIModelName;
+export type GeminiModelName =
+  | "gemini-2.5-flash-preview-05-20"
+  | "gemini-2.5-pro-preview-06-05"
+  | "gemini-2.0-flash"
+  | "gemini-2.0-flash-lite"
+  | "gemini-1.5-flash"
+  | "gemini-1.5-flash-8b"
+  | "gemini-1.5-pro";
+
+export type ModelName = TVMModelName | OpenAIModelName | GeminiModelName;
 
 interface ModelDescription {
   modelId: string;
@@ -96,6 +105,34 @@ const modelDescriptions: Record<ModelName, ModelDescription> = {
   "gpt-4o": {
     modelId: "gpt-4o",
     componentType: "openai",
+  },
+  "gemini-2.5-flash-preview-05-20": {
+    modelId: "gemini-2.5-flash-preview-05-20",
+    componentType: "gemini",
+  },
+  "gemini-2.5-pro-preview-06-05": {
+    modelId: "gemini-2.5-pro-preview-06-05",
+    componentType: "gemini",
+  },
+  "gemini-2.0-flash": {
+    modelId: "gemini-2.0-flash",
+    componentType: "gemini",
+  },
+  "gemini-2.0-flash-lite": {
+    modelId: "gemini-2.0-flash-lite",
+    componentType: "gemini",
+  },
+  "gemini-1.5-flash": {
+    modelId: "gemini-1.5-flash",
+    componentType: "gemini",
+  },
+  "gemini-1.5-flash-8b": {
+    modelId: "gemini-1.5-flash-8b",
+    componentType: "gemini",
+  },
+  "gemini-1.5-pro": {
+    modelId: "gemini-1.5-pro",
+    componentType: "gemini",
   },
 };
 
@@ -654,7 +691,7 @@ export class Agent {
                 role: "tool",
                 name: toolCall.function.name,
                 content: [{ type: "text", text: JSON.stringify(toolResult) }],
-                tool_call_id: toolCall.id || undefined,
+                tool_call_id: toolCall.id,
               };
               resolve(message);
             })

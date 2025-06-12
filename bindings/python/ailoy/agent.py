@@ -89,7 +89,16 @@ class MessageOutput(BaseModel):
 
 TVMModelName = Literal["Qwen/Qwen3-0.6B", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B"]
 OpenAIModelName = Literal["gpt-4o"]
-ModelName = Union[TVMModelName, OpenAIModelName]
+GeminiModelName = Literal[
+    "gemini-2.5-flash-preview-05-20",
+    "gemini-2.5-pro-preview-06-05",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro",
+]
+ModelName = Union[TVMModelName, OpenAIModelName, GeminiModelName]
 
 
 class TVMModel(BaseModel):
@@ -133,6 +142,34 @@ model_descriptions: dict[ModelName, ModelDescription] = {
     "gpt-4o": ModelDescription(
         model_id="gpt-4o",
         component_type="openai",
+    ),
+    "gemini-2.5-flash-preview-05-20": ModelDescription(
+        model_id="gemini-2.5-flash-preview-05-20",
+        component_type="gemini",
+    ),
+    "gemini-2.5-pro-preview-06-05": ModelDescription(
+        model_id="gemini-2.5-pro-preview-06-05",
+        component_type="gemini",
+    ),
+    "gemini-2.0-flash": ModelDescription(
+        model_id="gemini-2.0-flash",
+        component_type="gemini",
+    ),
+    "gemini-2.0-flash-lite": ModelDescription(
+        model_id="gemini-2.0-flash-lite",
+        component_type="gemini",
+    ),
+    "gemini-1.5-flash": ModelDescription(
+        model_id="gemini-1.5-flash",
+        component_type="gemini",
+    ),
+    "gemini-1.5-flash-8b": ModelDescription(
+        model_id="gemini-1.5-flash-8b",
+        component_type="gemini",
+    ),
+    "gemini-1.5-pro": ModelDescription(
+        model_id="gemini-1.5-pro",
+        component_type="gemini",
     ),
 }
 
@@ -553,7 +590,7 @@ class Agent:
                         role="tool",
                         name=tool_call.function.name,
                         content=[TextData(type="text", text=json.dumps(tool_result))],
-                        tool_call_id=tool_call.id if tool_call.id else None,
+                        tool_call_id=tool_call.id if tool_call.id is not None else None,
                     )
 
                 tool_call_results = [run_tool(tc) for tc in assistant_tool_calls]
