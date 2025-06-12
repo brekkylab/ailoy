@@ -590,7 +590,7 @@ class Agent:
                         role="tool",
                         name=tool_call.function.name,
                         content=[TextData(type="text", text=json.dumps(tool_result))],
-                        tool_call_id=tool_call.id if tool_call.id is not None else None,
+                        tool_call_id=tool_call.id,
                     )
 
                 tool_call_results = [run_tool(tc) for tc in assistant_tool_calls]
