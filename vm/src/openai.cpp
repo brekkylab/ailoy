@@ -16,7 +16,7 @@ openai_llm_engine_t::openai_llm_engine_t(const std::string &api_key,
 
 openai_response_delta_t openai_llm_engine_t::infer(
     std::unique_ptr<openai_chat_completion_request_t> request) {
-  httplib::Client client(api_url_);
+  httplib::Client client(api_url());
   std::unordered_map<std::string, std::string> headers = {
       {"Authorization", "Bearer " + api_key_},
       {"Content-Type", "application/json"},
@@ -34,7 +34,7 @@ openai_response_delta_t openai_llm_engine_t::infer(
   std::stringstream response_body;
 
   http_req.method = "POST";
-  http_req.path = api_path_;
+  http_req.path = api_path();
   http_req.headers = httplib_headers;
   http_req.body = body.dump();
 
@@ -42,13 +42,13 @@ openai_response_delta_t openai_llm_engine_t::infer(
 
   if (!result)
     throw ailoy::runtime_error(
-        std::format("[{}] Request failed: {}", name_,
+        std::format("[{}] Request failed: {}", name(),
                     std::string(httplib::to_string(result.error()))));
 
   if (result->status != httplib::OK_200) {
     debug("[{}] {}", result->status, result->body);
     throw ailoy::runtime_error(std::format(
-        "[{}] Request failed: [{}] {}", name_, result->status, result->body));
+        "[{}] Request failed: [{}] {}", name(), result->status, result->body));
   }
 
   auto j = nlohmann::json::parse(result->body);
@@ -62,7 +62,7 @@ std::unique_ptr<openai_chat_completion_request_t>
 openai_llm_engine_t::convert_request_input(
     std::shared_ptr<const value_t> inputs) {
   if (!inputs->is_type_of<map_t>())
-    throw ailoy::exception(std::format("[{}] input should be a map", name_));
+    throw ailoy::exception(std::format("[{}] input should be a map", name()));
 
   auto request = std::make_unique<openai_chat_completion_request_t>();
 
@@ -70,7 +70,7 @@ openai_llm_engine_t::convert_request_input(
   if (!input_map->contains("messages") ||
       !input_map->at("messages")->is_type_of<array_t>()) {
     throw ailoy::exception(std::format(
-        "[{}] input should have array type field 'messages'", name_));
+        "[{}] input should have array type field 'messages'", name()));
   }
 
   // Apply input conversion
@@ -85,7 +85,7 @@ openai_llm_engine_t::convert_request_input(
     auto tools = input_map->at("tools");
     if (!tools->is_type_of<array_t>()) {
       throw ailoy::exception(
-          std::format("[{}] tools should be an array type", name_));
+          std::format("[{}] tools should be an array type", name()));
     }
     request->tools = std::vector<openai_chat_tool_t>{};
     for (const auto &tool_val : *tools->as<array_t>()) {
@@ -188,39 +188,5 @@ openai_llm_engine_t::convert_request_input(
 //                                std::string(httplib::to_string(err)));
 //   }
 // }
-
-template <typename engine_t>
-  requires std::is_base_of_v<openai_llm_engine_t, engine_t>
-component_or_error_t
-create_openai_component(std::shared_ptr<const value_t> attrs) {
-  if (!attrs->is_type_of<map_t>())
-    throw runtime_error("Invalid input");
-
-  auto data = attrs->as<map_t>();
-  std::string api_key = *data->at<string_t>("api_key");
-  std::string model = *data->at<string_t>("model");
-  auto engine = ailoy::create<engine_t>(api_key, model);
-
-  auto infer = ailoy::create<instant_method_operator_t>(
-      [&](std::shared_ptr<component_t> component,
-          std::shared_ptr<const value_t> inputs) -> value_or_error_t {
-        auto engine = component->get_obj("engine")->as<engine_t>();
-        auto request = engine->convert_request_input(inputs);
-        try {
-          auto resp = engine->infer(std::move(request));
-          auto rv = ailoy::from_nlohmann_json(resp)->template as<map_t>();
-          return rv;
-        } catch (const ailoy::runtime_error &e) {
-          return error_output_t(e.what());
-        }
-      });
-
-  auto ops = std::initializer_list<
-      std::pair<const std::string, std::shared_ptr<method_operator_t>>>{
-      {"infer", infer}};
-  auto rv = ailoy::create<component_t>(ops);
-  rv->set_obj("engine", engine);
-  return rv;
-}
 
 } // namespace ailoy

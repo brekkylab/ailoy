@@ -144,7 +144,7 @@ nlohmann::json openai_chat_completion_request_t::to_json(
     bool function_call_arguments_as_string) {
   if (function_call_arguments_as_string) {
     g_dump_function_call_arguments_as_string = true;
-    auto j = *this;
+    nlohmann::json j = *this;
     g_dump_function_call_arguments_as_string = false;
     return j;
   } else {
