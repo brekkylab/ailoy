@@ -96,7 +96,17 @@ GeminiModelName = Literal[
     "gemini-1.5-flash",
     "gemini-1.5-pro",
 ]
-ModelName = Union[TVMModelName, OpenAIModelName, GeminiModelName]
+ClaudeModelName = Literal[
+    "claude-sonnet-4-20250514",
+    "claude-3-7-sonnet-20250219",
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-sonnet-20240620",
+    "claude-opus-4-20250514",
+    "claude-3-opus-20240229",
+    "claude-3-5-haiku-20241022",
+    "claude-3-haiku-20240307",
+]
+ModelName = Union[TVMModelName, OpenAIModelName, GeminiModelName, ClaudeModelName]
 
 
 class TVMModel(BaseModel):
@@ -160,6 +170,38 @@ model_descriptions: dict[ModelName, ModelDescription] = {
     "gemini-1.5-pro": ModelDescription(
         model_id="gemini-1.5-pro",
         component_type="gemini",
+    ),
+    "claude-sonnet-4-20250514": ModelDescription(
+        model_id="claude-sonnet-4-20250514",
+        component_type="claude",
+    ),
+    "claude-3-7-sonnet-20250219": ModelDescription(
+        model_id="claude-3-7-sonnet-20250219",
+        component_type="claude",
+    ),
+    "claude-3-5-sonnet-20241022": ModelDescription(
+        model_id="claude-3-5-sonnet-20241022",
+        component_type="claude",
+    ),
+    "claude-3-5-sonnet-20240620": ModelDescription(
+        model_id="claude-3-5-sonnet-20240620",
+        component_type="claude",
+    ),
+    "claude-opus-4-20250514": ModelDescription(
+        model_id="claude-opus-4-20250514",
+        component_type="claude",
+    ),
+    "claude-3-opus-20240229": ModelDescription(
+        model_id="claude-3-opus-20240229",
+        component_type="claude",
+    ),
+    "claude-3-5-haiku-20241022": ModelDescription(
+        model_id="claude-3-5-haiku-20241022",
+        component_type="claude",
+    ),
+    "claude-3-haiku-20240307": ModelDescription(
+        model_id="claude-3-haiku-20240307",
+        component_type="claude",
     ),
 }
 

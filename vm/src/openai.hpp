@@ -15,16 +15,22 @@ class openai_llm_engine_t : public object_t {
 public:
   openai_llm_engine_t(const std::string &api_key, const std::string &model);
 
-  std::unique_ptr<openai_chat_completion_request_t>
-  convert_request_input(std::shared_ptr<const value_t> inputs);
-
-  openai_response_delta_t
-  infer(std::unique_ptr<openai_chat_completion_request_t> request);
+  openai_response_delta_t infer(std::shared_ptr<const value_t> input);
 
 protected:
   virtual std::string name() const { return "OpenAI"; }
   virtual std::string api_url() const { return "https://api.openai.com"; }
   virtual std::string api_path() const { return "/v1/chat/completions"; }
+  virtual std::unordered_map<std::string, std::string> headers() {
+    return {
+        {"Authorization", "Bearer " + api_key_},
+        {"Content-Type", "application/json"},
+        {"Cache-Control", "no-cache"},
+    };
+  }
+  virtual nlohmann::json
+  convert_request_body(std::shared_ptr<const value_t> inputs);
+
   std::string api_key_;
   std::string model_;
 };
@@ -44,6 +50,27 @@ private:
   }
 };
 
+class claude_llm_engine_t : public openai_llm_engine_t {
+public:
+  claude_llm_engine_t(const std::string &api_key, const std::string &model)
+      : openai_llm_engine_t(api_key, model) {}
+
+private:
+  std::string name() const override { return "Claude"; }
+  std::string api_url() const override { return "https://api.anthropic.com"; }
+  std::string api_path() const override { return "/v1/chat/completions"; }
+  std::unordered_map<std::string, std::string> headers() override {
+    return {
+        {"x-api-key", api_key_},
+        {"anthropic-version", "2023-06-01"},
+        {"Content-Type", "application/json"},
+        {"Cache-Control", "no-cache"},
+    };
+  }
+  nlohmann::json
+  convert_request_body(std::shared_ptr<const value_t> inputs) override;
+};
+
 template <typename engine_t>
   requires std::is_base_of_v<openai_llm_engine_t, engine_t>
 component_or_error_t
@@ -60,11 +87,9 @@ create_openai_component(std::shared_ptr<const value_t> attrs) {
       [&](std::shared_ptr<component_t> component,
           std::shared_ptr<const value_t> inputs) -> value_or_error_t {
         auto engine = component->get_obj("engine")->as<engine_t>();
-        std::unique_ptr<openai_chat_completion_request_t> request =
-            engine->convert_request_input(inputs);
 
         try {
-          auto resp = engine->infer(std::move(request));
+          auto resp = engine->infer(inputs);
           auto rv = ailoy::from_nlohmann_json(resp)->template as<map_t>();
           return rv;
         } catch (const ailoy::runtime_error &e) {

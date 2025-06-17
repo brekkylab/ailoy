@@ -46,6 +46,21 @@ protected:
 };
 std::shared_ptr<ailoy::component_t> GeminiTest::comp_ = nullptr;
 
+class ClaudeTest : public ::testing::Test {
+protected:
+  static void SetUpTestSuite() {
+    char const *api_key = std::getenv("CLAUDE_API_KEY");
+    if (api_key == NULL) {
+      GTEST_SKIP() << "API key not configured. Skip the test.";
+      return;
+    }
+    comp_ =
+        create_api_model_comp("claude", api_key, "claude-sonnet-4-20250514");
+  }
+  static std::shared_ptr<ailoy::component_t> comp_;
+};
+std::shared_ptr<ailoy::component_t> ClaudeTest::comp_ = nullptr;
+
 void test_simple_chat(std::shared_ptr<ailoy::component_t> comp) {
   auto infer = comp->get_operator("infer");
 
@@ -229,6 +244,10 @@ TEST_F(OpenAITest, ToolCall) { test_tool_calling(comp_); }
 TEST_F(GeminiTest, SimpleChat) { test_simple_chat(comp_); }
 
 TEST_F(GeminiTest, ToolCall) { test_tool_calling(comp_); }
+
+TEST_F(ClaudeTest, SimpleChat) { test_simple_chat(comp_); }
+
+TEST_F(ClaudeTest, ToolCall) { test_tool_calling(comp_); }
 
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
