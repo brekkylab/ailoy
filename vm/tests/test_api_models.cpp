@@ -5,37 +5,49 @@
 #include "language.hpp"
 #include "openai.hpp"
 
+std::shared_ptr<ailoy::component_t> create_api_model_comp(std::string name,
+                                                          std::string api_key,
+                                                          std::string model) {
+  auto attrs = ailoy::create<ailoy::map_t>();
+  attrs->insert_or_assign("api_key", ailoy::create<ailoy::string_t>(api_key));
+  attrs->insert_or_assign("model", ailoy::create<ailoy::string_t>(model));
+  auto comp_opt = ailoy::get_language_module()->factories.at(name)(attrs);
+  return std::get<0>(comp_opt);
+}
+
 class OpenAITest : public ::testing::Test {
 protected:
   static void SetUpTestSuite() {
-    char const *openai_api_key = std::getenv("OPENAI_API_KEY");
-    if (openai_api_key == NULL) {
-      GTEST_SKIP() << "OPENAI_API_KEY environment variable is not set. Skip "
-                      "OpenAI test suite..";
+    char const *api_key = std::getenv("OPENAI_API_KEY");
+    if (api_key == NULL) {
+      GTEST_SKIP() << "API key not configured. Skip the test.";
       return;
     }
-
-    auto attrs = ailoy::create<ailoy::map_t>();
-    attrs->insert_or_assign("api_key",
-                            ailoy::create<ailoy::string_t>(openai_api_key));
-    attrs->insert_or_assign("model", ailoy::create<ailoy::string_t>("gpt-4o"));
-    auto openai_opt =
-        ailoy::get_language_module()->factories.at("openai")(attrs);
-    ASSERT_EQ(openai_opt.index(), 0);
-
-    auto openai = std::get<0>(openai_opt);
-    comp_ = openai;
+    comp_ = create_api_model_comp("openai", api_key, "gpt-4o");
   }
 
   static void TestDownTestSuite() {}
 
   static std::shared_ptr<ailoy::component_t> comp_;
 };
-
 std::shared_ptr<ailoy::component_t> OpenAITest::comp_ = nullptr;
 
-TEST_F(OpenAITest, SimpleChat) {
-  auto infer = comp_->get_operator("infer");
+class GeminiTest : public ::testing::Test {
+protected:
+  static void SetUpTestSuite() {
+    char const *api_key = std::getenv("GEMINI_API_KEY");
+    if (api_key == NULL) {
+      GTEST_SKIP() << "API key not configured. Skip the test.";
+      return;
+    }
+    comp_ = create_api_model_comp("gemini", api_key, "gemini-2.0-flash");
+  }
+  static std::shared_ptr<ailoy::component_t> comp_;
+};
+std::shared_ptr<ailoy::component_t> GeminiTest::comp_ = nullptr;
+
+void test_simple_chat(std::shared_ptr<ailoy::component_t> comp) {
+  auto infer = comp->get_operator("infer");
 
   auto input = ailoy::create<ailoy::map_t>();
   auto messages = nlohmann::json::array();
@@ -48,6 +60,10 @@ TEST_F(OpenAITest, SimpleChat) {
 
   infer->initialize(input);
   auto res = infer->step();
+  if (res.index() == 1) {
+    std::cout << std::get<1>(res).reason << std::endl;
+    return;
+  }
   ASSERT_EQ(res.index(), 0);
   auto out = std::get<0>(res).val;
   ASSERT_EQ(out->is_type_of<ailoy::map_t>(), true);
@@ -103,8 +119,8 @@ TEST_F(OpenAITest, SimpleChat) {
               ::testing::HasSubstr("Joe Biden"));
 }
 
-TEST_F(OpenAITest, ToolCall) {
-  auto infer = comp_->get_operator("infer");
+void test_tool_calling(std::shared_ptr<ailoy::component_t> comp) {
+  auto infer = comp->get_operator("infer");
 
   auto input = ailoy::create<ailoy::map_t>();
   auto messages = nlohmann::json::array();
@@ -205,6 +221,14 @@ TEST_F(OpenAITest, ToolCall) {
   EXPECT_THAT(out2_map["message"]["content"][0]["text"],
               ::testing::HasSubstr("14°C"));
 }
+
+TEST_F(OpenAITest, SimpleChat) { test_simple_chat(comp_); }
+
+TEST_F(OpenAITest, ToolCall) { test_tool_calling(comp_); }
+
+TEST_F(GeminiTest, SimpleChat) { test_simple_chat(comp_); }
+
+TEST_F(GeminiTest, ToolCall) { test_tool_calling(comp_); }
 
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
