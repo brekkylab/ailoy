@@ -64,9 +64,7 @@ export type GeminiModelName =
   | "gemini-2.5-flash-preview-05-20"
   | "gemini-2.5-pro-preview-06-05"
   | "gemini-2.0-flash"
-  | "gemini-2.0-flash-lite"
   | "gemini-1.5-flash"
-  | "gemini-1.5-flash-8b"
   | "gemini-1.5-pro";
 
 export type ModelName = TVMModelName | OpenAIModelName | GeminiModelName;
@@ -118,16 +116,8 @@ const modelDescriptions: Record<ModelName, ModelDescription> = {
     modelId: "gemini-2.0-flash",
     componentType: "gemini",
   },
-  "gemini-2.0-flash-lite": {
-    modelId: "gemini-2.0-flash-lite",
-    componentType: "gemini",
-  },
   "gemini-1.5-flash": {
     modelId: "gemini-1.5-flash",
-    componentType: "gemini",
-  },
-  "gemini-1.5-flash-8b": {
-    modelId: "gemini-1.5-flash-8b",
     componentType: "gemini",
   },
   "gemini-1.5-pro": {

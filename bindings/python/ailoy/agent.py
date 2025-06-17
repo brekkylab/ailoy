@@ -93,9 +93,7 @@ GeminiModelName = Literal[
     "gemini-2.5-flash-preview-05-20",
     "gemini-2.5-pro-preview-06-05",
     "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
     "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
     "gemini-1.5-pro",
 ]
 ModelName = Union[TVMModelName, OpenAIModelName, GeminiModelName]
@@ -155,16 +153,8 @@ model_descriptions: dict[ModelName, ModelDescription] = {
         model_id="gemini-2.0-flash",
         component_type="gemini",
     ),
-    "gemini-2.0-flash-lite": ModelDescription(
-        model_id="gemini-2.0-flash-lite",
-        component_type="gemini",
-    ),
     "gemini-1.5-flash": ModelDescription(
         model_id="gemini-1.5-flash",
-        component_type="gemini",
-    ),
-    "gemini-1.5-flash-8b": ModelDescription(
-        model_id="gemini-1.5-flash-8b",
         component_type="gemini",
     ),
     "gemini-1.5-pro": ModelDescription(
