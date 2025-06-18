@@ -88,7 +88,17 @@ class MessageOutput(BaseModel):
 ## Types for LLM Model Definitions
 
 TVMModelName = Literal["Qwen/Qwen3-0.6B", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B"]
-OpenAIModelName = Literal["gpt-4o"]
+OpenAIModelName = Literal[
+    "o4-mini",
+    "o3",
+    "o3-pro",
+    "o3-mini",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4.1-nano",
+]
 GeminiModelName = Literal[
     "gemini-2.5-flash-preview-05-20",
     "gemini-2.5-pro-preview-06-05",
@@ -137,10 +147,15 @@ model_descriptions: dict[ModelName, ModelDescription] = {
         component_type="tvm_language_model",
         default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
     ),
-    "gpt-4o": ModelDescription(
-        model_id="gpt-4o",
-        component_type="openai",
-    ),
+    "o4-mini": ModelDescription(model_id="o4-mini", component_type="openai"),
+    "o3": ModelDescription(model_id="o3", component_type="openai"),
+    "o3-pro": ModelDescription(model_id="o3-pro", component_type="openai"),
+    "o3-mini": ModelDescription(model_id="o3-mini", component_type="openai"),
+    "gpt-4o": ModelDescription(model_id="gpt-4o", component_type="openai"),
+    "gpt-4o-mini": ModelDescription(model_id="gpt-4o-mini", component_type="openai"),
+    "gpt-4.1": ModelDescription(model_id="gpt-4.1", component_type="openai"),
+    "gpt-4.1-mini": ModelDescription(model_id="gpt-4.1-mini", component_type="openai"),
+    "gpt-4.1-nano": ModelDescription(model_id="gpt-4.1-nano", component_type="openai"),
     "gemini-2.5-flash-preview-05-20": ModelDescription(
         model_id="gemini-2.5-flash-preview-05-20",
         component_type="gemini",
@@ -149,18 +164,9 @@ model_descriptions: dict[ModelName, ModelDescription] = {
         model_id="gemini-2.5-pro-preview-06-05",
         component_type="gemini",
     ),
-    "gemini-2.0-flash": ModelDescription(
-        model_id="gemini-2.0-flash",
-        component_type="gemini",
-    ),
-    "gemini-1.5-flash": ModelDescription(
-        model_id="gemini-1.5-flash",
-        component_type="gemini",
-    ),
-    "gemini-1.5-pro": ModelDescription(
-        model_id="gemini-1.5-pro",
-        component_type="gemini",
-    ),
+    "gemini-2.0-flash": ModelDescription(model_id="gemini-2.0-flash", component_type="gemini"),
+    "gemini-1.5-flash": ModelDescription(model_id="gemini-1.5-flash", component_type="gemini"),
+    "gemini-1.5-pro": ModelDescription(model_id="gemini-1.5-pro", component_type="gemini"),
 }
 
 
@@ -364,7 +370,7 @@ class Agent:
     def __init__(
         self,
         runtime: Runtime,
-        model_name: ModelName,
+        model_name: ModelName | ModelDescription,
         system_message: Optional[str] = None,
         api_key: Optional[str] = None,
         **attrs,
@@ -373,7 +379,8 @@ class Agent:
         Create an instance.
 
         :param runtime: The runtime environment associated with the agent.
-        :param model_name: The name of the LLM model to use.
+        :param model_name: The name of the LLM model to use. It can be a string if a model description exists for the
+                           given name. Alternatively, you can pass `ModelDescription` object to specify the model.
         :param system_message: Optional system message to set the initial assistant context.
         :param api_key: (web agent only) The API key for AI API.
         :param attrs: Additional initialization parameters (for `define_component` runtime call)
@@ -411,11 +418,12 @@ class Agent:
     def __exit__(self, type, value, traceback):
         self.delete()
 
-    def define(self, model_name: ModelName, api_key: Optional[str] = None, **attrs) -> None:
+    def define(self, model_name: ModelName | ModelDescription, api_key: Optional[str] = None, **attrs) -> None:
         """
         Initializes the agent by defining its model in the runtime.
         This must be called before running the agent. If already initialized, this is a no-op.
-        :param model_name: The name of the LLM model to use.
+        :param model_name: The name of the LLM model to use. It can be a string if a model description exists for the
+                           given name. Alternatively, you can pass `ModelDescription` object to specify the model.
         :param api_key: (web agent only) The API key for AI API.
         :param attrs: Additional initialization parameters (for `define_component` runtime call)
         """
@@ -425,10 +433,14 @@ class Agent:
         if not self._runtime.is_alive():
             raise ValueError("Runtime is currently stopped.")
 
-        if model_name not in model_descriptions:
-            raise ValueError(f"Model `{model_name}` not supported")
-
-        model_desc = model_descriptions[model_name]
+        if isinstance(model_name, ModelName):
+            if model_name not in model_descriptions:
+                raise ValueError(f"Model `{model_name}` not supported")
+            model_desc = model_descriptions[model_name]
+        else:
+            if not isinstance(model_name, ModelDescription):
+                model_desc = ModelDescription.model_validate(model_name)
+            model_desc = model_name
 
         # Add model name into attrs
         if "model" not in attrs:
