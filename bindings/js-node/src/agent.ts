@@ -58,7 +58,16 @@ export type TVMModelName =
   | "Qwen/Qwen3-1.7B"
   | "Qwen/Qwen3-0.6B";
 
-export type OpenAIModelName = "gpt-4o";
+export type OpenAIModelName =
+  | "o4-mini"
+  | "o3"
+  | "o3-pro"
+  | "o3-mini"
+  | "gpt-4o"
+  | "gpt-4o-mini"
+  | "gpt-4.1"
+  | "gpt-4.1-mini"
+  | "gpt-4.1-nano";
 
 export type GeminiModelName =
   | "gemini-2.5-flash-preview-05-20"
@@ -100,10 +109,15 @@ const modelDescriptions: Record<ModelName, ModelDescription> = {
     defaultSystemMessage:
       "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
   },
-  "gpt-4o": {
-    modelId: "gpt-4o",
-    componentType: "openai",
-  },
+  "o4-mini": { modelId: "o4-mini", componentType: "openai" },
+  o3: { modelId: "o3", componentType: "openai" },
+  "o3-pro": { modelId: "o3-pro", componentType: "openai" },
+  "o3-mini": { modelId: "o3-mini", componentType: "openai" },
+  "gpt-4o": { modelId: "gpt-4o", componentType: "openai" },
+  "gpt-4o-mini": { modelId: "gpt-4o-mini", componentType: "openai" },
+  "gpt-4.1": { modelId: "gpt-4o-mini", componentType: "openai" },
+  "gpt-4.1-mini": { modelId: "gpt-4.1-mini", componentType: "openai" },
+  "gpt-4.1-nano": { modelId: "gpt-4.1-nano", componentType: "openai" },
   "gemini-2.5-flash-preview-05-20": {
     modelId: "gemini-2.5-flash-preview-05-20",
     componentType: "gemini",
@@ -112,18 +126,9 @@ const modelDescriptions: Record<ModelName, ModelDescription> = {
     modelId: "gemini-2.5-pro-preview-06-05",
     componentType: "gemini",
   },
-  "gemini-2.0-flash": {
-    modelId: "gemini-2.0-flash",
-    componentType: "gemini",
-  },
-  "gemini-1.5-flash": {
-    modelId: "gemini-1.5-flash",
-    componentType: "gemini",
-  },
-  "gemini-1.5-pro": {
-    modelId: "gemini-1.5-pro",
-    componentType: "gemini",
-  },
+  "gemini-2.0-flash": { modelId: "gemini-2.0-flash", componentType: "gemini" },
+  "gemini-1.5-flash": { modelId: "gemini-1.5-flash", componentType: "gemini" },
+  "gemini-1.5-pro": { modelId: "gemini-1.5-pro", componentType: "gemini" },
 };
 
 /** Types for Agent's responses */
@@ -298,8 +303,8 @@ export class Agent {
    * This must be called before using any other method in the class. If already defined, this is a no-op.
    */
   async define(
-    /** The name of the LLM model to use in this instance */
-    modelName: ModelName,
+    /** The name of the LLM model to use. It can be a string if a model description exists for the given name. Alternatively, you can pass `ModelDescription` object to specify the model. */
+    modelName: ModelName | ModelDescription,
     /** `Additional input used as an attribute in the define call of Runtime */
     attrs: Record<string, any>
   ): Promise<void> {
@@ -308,7 +313,11 @@ export class Agent {
 
     if (!this.runtime.is_alive()) throw Error(`Runtime is currently stopped.`);
 
-    const modelDesc = modelDescriptions[modelName];
+    const modelDesc: ModelDescription =
+      typeof modelName === "string"
+        ? modelDescriptions[modelName]
+        : (modelName as ModelDescription);
+    if (!modelDesc) throw Error(`Model ${modelName} not supported`);
 
     // Add model name into attrs
     if (!attrs.model) attrs.model = modelDesc.modelId;
@@ -834,8 +843,8 @@ export class Agent {
 export async function defineAgent(
   /** The runtime environment associated with the agent */
   runtime: Runtime,
-  /** The name of the LLM model to use in this instance */
-  modelName: ModelName,
+  /** The name of the LLM model to use. It can be a string if a model description exists for the given name. Alternatively, you can pass `ModelDescription` object to specify the model. */
+  modelName: ModelName | ModelDescription,
   args?: {
     /** Optional system message to set the initial assistant context */
     systemMessage?: string;

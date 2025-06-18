@@ -17,10 +17,17 @@ def main():
             "Qwen/Qwen3-4B",
             "Qwen/Qwen3-1.7B",
             "Qwen/Qwen3-0.6B",
+            "o4-mini",
+            "o3",
+            "o3-mini",
             "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4.1-nano",
         ],
     ).ask()
-    if model_name == "gpt-4o":
+    if model_name.startswith("gpt") or model_name in ["o4-mini", "o3", "o3-mini"]:
         if "OPENAI_API_KEY" in os.environ:
             api_key = os.environ["OPENAI_API_KEY"]
         else:

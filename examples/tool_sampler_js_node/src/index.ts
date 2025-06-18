@@ -15,29 +15,25 @@ async function main() {
     const model_name = await select({
       message: "Select the model",
       choices: [
-        {
-          name: "Qwen/Qwen3-8B",
-          value: "Qwen/Qwen3-8B",
-        },
-        {
-          name: "Qwen/Qwen3-4B",
-          value: "Qwen/Qwen3-4B",
-        },
-        {
-          name: "Qwen/Qwen3-1.7B",
-          value: "Qwen/Qwen3-1.7B",
-        },
-        {
-          name: "Qwen/Qwen3-0.6B",
-          value: "Qwen/Qwen3-0.6B",
-        },
-        {
-          name: "gpt-4o",
-          value: "gpt-4o",
-        },
+        { name: "Qwen/Qwen3-8B", value: "Qwen/Qwen3-8B" },
+        { name: "Qwen/Qwen3-4B", value: "Qwen/Qwen3-4B" },
+        { name: "Qwen/Qwen3-1.7B", value: "Qwen/Qwen3-1.7B" },
+        { name: "Qwen/Qwen3-0.6B", value: "Qwen/Qwen3-0.6B" },
+        { name: "o4-mini", value: "o4-mini" },
+        { name: "o3", value: "o3" },
+        { name: "o3-mini", value: "o3-mini" },
+        { name: "gpt-4o", value: "gpt-4o" },
+        { name: "gpt-4o-mini", value: "gpt-4o-mini" },
+        { name: "gpt-4.1", value: "gpt-4.1" },
+        { name: "gpt-4.1-mini", value: "gpt-4.1-mini" },
+        { name: "gpt-4.1-nano", value: "gpt-4.1-nano" },
       ],
     });
-    if (model_name === "gpt-4o") {
+    if (
+      model_name.startsWith("gpt") ||
+      model_name.startsWith("o3") ||
+      model_name.startsWith("o4")
+    ) {
       let apiKey = process.env.OPENAI_API_KEY;
       if (apiKey === undefined)
         apiKey = await password({ message: "Enter OpenAI API key:" });
