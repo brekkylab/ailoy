@@ -1,5 +1,6 @@
 #include "embedding_model.hpp"
 
+#include <tvm/ffi/container/shape.h>
 #include <tvm/runtime/ndarray.h>
 
 #include "../ndarray_util.hpp"
@@ -7,7 +8,7 @@
 
 using namespace tvm;
 using namespace tvm::runtime;
-using namespace tvm::runtime::relax_vm;
+using namespace tvm::runtime::vm;
 
 namespace ailoy {
 
@@ -85,13 +86,14 @@ tvm_embedding_model_t::infer(std::vector<int> tokens) {
   maskNDArrayGPU.CopyFrom(maskNDArrayCPU);
 
   NDArray logitsCurBatchOnGPU =
-      fprefill_(inputNDArrayGPU, maskNDArrayGPU, engine_->get_params());
+      fprefill_(inputNDArrayGPU, maskNDArrayGPU, engine_->get_params())
+          .cast<NDArray>();
   NDArray logitsCurBatchOnCPU = NDArray::Empty(
       logitsCurBatchOnGPU.Shape(), logitsCurBatchOnGPU.DataType(), cpu);
   logitsCurBatchOnCPU.CopyFrom(logitsCurBatchOnGPU);
 
-  NDArray processed_embedding =
-      NDArray::Empty(ShapeTuple{logitsCurBatchOnCPU.Shape().back()}, F32, cpu);
+  NDArray processed_embedding = NDArray::Empty(
+      tvm::ffi::Shape{logitsCurBatchOnCPU.Shape().back()}, F32, cpu);
   postprocess_embedding_ndarray(logitsCurBatchOnCPU, processed_embedding);
 
   return processed_embedding;

@@ -3,9 +3,10 @@
 #include <optional>
 
 #include <nlohmann/json.hpp>
+#include <tvm/ffi/function.h>
 #include <tvm/runtime/device_api.h>
-#include <tvm/runtime/packed_func.h>
-#include <tvm/runtime/relax_vm/ndarray_cache_support.h>
+#include <tvm/runtime/module.h>
+#include <tvm/runtime/vm/ndarray_cache_support.h>
 
 #include "logging.hpp"
 #include "module.hpp"
@@ -34,12 +35,12 @@ public:
 
   const nlohmann::json &get_mlc_chat_config() const { return mlc_chat_config_; }
 
-  tvm::runtime::PackedFunc get_function(const std::string_view fname) {
-    return *tvm::runtime::Registry::Get(std::string(fname));
+  tvm::ffi::Function get_function(const std::string_view fname) {
+    return *tvm::ffi::Function::GetGlobal(std::string(fname));
   }
 
-  tvm::runtime::PackedFunc get_vm_function(const std::string_view fname,
-                                           bool query_imports = false) {
+  tvm::ffi::Function get_vm_function(const std::string_view fname,
+                                     bool query_imports = false) {
     return get_module().GetFunction(std::string(fname), query_imports);
   }
 
@@ -65,8 +66,8 @@ private:
   tvm::runtime::Module mod_;
   nlohmann::json metadata_ = {};
   nlohmann::json mlc_chat_config_ = {};
-  tvm::runtime::relax_vm::NDArrayCacheMetadata ndarray_cache_metadata_;
-  tvm::runtime::ObjectRef params_;
+  tvm::runtime::vm::NDArrayCacheMetadata ndarray_cache_metadata_;
+  tvm::Array<tvm::runtime::NDArray> params_;
 
   std::string err_;
 };

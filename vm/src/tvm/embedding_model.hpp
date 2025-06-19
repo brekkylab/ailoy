@@ -1,6 +1,6 @@
 #pragma once
 
-#include <tvm/runtime/packed_func.h>
+#include <tvm/ffi/function.h>
 
 #include "module.hpp"
 #include "tvm_model.hpp"
@@ -23,7 +23,7 @@ public:
   }
 
 private:
-  tvm::runtime::PackedFunc fprefill_;
+  tvm::ffi::Function fprefill_;
   std::shared_ptr<tvm_model_t> engine_ = nullptr;
 };
 
