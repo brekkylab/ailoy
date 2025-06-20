@@ -4,6 +4,8 @@ import * as ai from "../src";
 
 const testImageUrl =
   "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
+const testAudioUrl =
+  "https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav";
 
 if (process.env.OPENAI_API_KEY !== undefined) {
   describe("OpenAI Agent", () => {
@@ -38,7 +40,7 @@ if (process.env.OPENAI_API_KEY !== undefined) {
       }
     });
 
-    it("Image recognition from URL", async () => {
+    it("Image input from URL", async () => {
       for await (const resp of agent.query([
         "What is in this image?",
         {
@@ -50,7 +52,7 @@ if (process.env.OPENAI_API_KEY !== undefined) {
       }
     });
 
-    it("Image recognition from base64", async () => {
+    it("Image input from base64", async () => {
       const resp = await fetch(testImageUrl);
       const arrayBuffer = await resp.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
@@ -64,6 +66,33 @@ if (process.env.OPENAI_API_KEY !== undefined) {
       ])) {
         agent.print(resp);
       }
+    });
+
+    it("Audio input from base64", async () => {
+      const audioAgent = await ai.defineAgent(
+        rt,
+        ai.OpenAIModel({
+          // OpenAI general models cannot handle audio inputs.
+          id: "gpt-4o-audio-preview",
+          apiKey: process.env.OPENAI_API_KEY!,
+        })
+      );
+
+      const resp = await fetch(testAudioUrl);
+      const arrayBuffer = await resp.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      for await (const resp of audioAgent.query([
+        "What's in these recording?",
+        {
+          type: "audio_bytes",
+          data: buffer,
+          format: "wav",
+        },
+      ])) {
+        audioAgent.print(resp);
+      }
+
+      await audioAgent.delete();
     });
 
     after(async () => {

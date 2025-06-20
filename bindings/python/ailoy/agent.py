@@ -1,3 +1,4 @@
+import base64
 import json
 import warnings
 from abc import ABC, abstractmethod
@@ -41,6 +42,15 @@ class ImageContent(BaseModel):
     image_url: UrlData
 
 
+class AudioContent(BaseModel):
+    class AudioData(BaseModel):
+        data: str
+        format: Literal["mp3", "wav"]
+
+    type: Literal["input_audio"] = "input_audio"
+    input_audio: AudioData
+
+
 class FunctionData(BaseModel):
     class FunctionBody(BaseModel):
         name: str
@@ -58,7 +68,7 @@ class SystemMessage(BaseModel):
 
 class UserMessage(BaseModel):
     role: Literal["user"] = "user"
-    content: str | list[TextContent | ImageContent]
+    content: str | list[TextContent | ImageContent | AudioContent]
 
 
 class AssistantMessage(BaseModel):
@@ -93,10 +103,6 @@ class MessageOutput(BaseModel):
 ## Types for agent's message inputs
 
 
-class AgentInputText(BaseModel):
-    text: str
-
-
 class AgentInputImageUrl(BaseModel):
     url: str
 
@@ -105,6 +111,11 @@ class AgentInputImagePillow(BaseModel):
     image: Image
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class AgentInputAudioBytes(BaseModel):
+    data: bytes
+    format: Literal["mp3", "wav"]
 
 
 ## Types for agent's responses
@@ -375,7 +386,7 @@ class Agent:
 
     def query(
         self,
-        message: str | list[str | Image | AgentInputText | AgentInputImageUrl | AgentInputImagePillow],
+        message: str | list[str | Image | AgentInputImageUrl | AgentInputImagePillow | AgentInputAudioBytes],
         reasoning: bool = False,
     ) -> Generator[AgentResponse, None, None]:
         """
@@ -404,12 +415,19 @@ class Agent:
                     contents.append(TextContent(text=content))
                 elif isinstance(content, Image):
                     contents.append(ImageContent(image_url={"url": pillow_image_to_base64(content)}))
-                elif isinstance(content, AgentInputText):
-                    contents.append(TextContent(text=content.text))
                 elif isinstance(content, AgentInputImageUrl):
                     contents.append(ImageContent(image_url={"url": content.url}))
                 elif isinstance(content, AgentInputImagePillow):
                     contents.append(ImageContent(image_url={"url": pillow_image_to_base64(content.image)}))
+                elif isinstance(content, AgentInputAudioBytes):
+                    contents.append(
+                        AudioContent(
+                            input_audio={
+                                "data": base64.b64encode(content.data).decode("utf-8"),
+                                "format": content.format,
+                            }
+                        )
+                    )
                 else:
                     raise ValueError(f"Unsupported content type: {type(content)}")
 

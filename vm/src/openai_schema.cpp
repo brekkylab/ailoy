@@ -31,6 +31,17 @@ void from_json(const json &j, ailoy::openai_chat_image_content_t &obj) {
   j.at("image_url").at("url").get_to(obj.image_url.url);
 }
 
+void to_json(json &j, const ailoy::openai_chat_audio_content_t &obj) {
+  j = json{{"type", obj.type},
+           {"input_audio", json{{"data", obj.input_audio.data},
+                                {"format", obj.input_audio.format}}}};
+}
+void from_json(const json &j, ailoy::openai_chat_audio_content_t &obj) {
+  j.at("type").get_to(obj.type);
+  j.at("input_audio").at("data").get_to(obj.input_audio.data);
+  j.at("input_audio").at("format").get_to(obj.input_audio.format);
+}
+
 /* OpenAI API Tools */
 
 void to_json(json &j, const ailoy::openai_chat_function_t &obj) {
@@ -122,7 +133,8 @@ void from_json(const json &j,
     obj.content = j.at("content").get<std::string>();
   } else {
     std::vector<std::variant<ailoy::openai_chat_text_content_t,
-                             ailoy::openai_chat_image_content_t>>
+                             ailoy::openai_chat_image_content_t,
+                             ailoy::openai_chat_audio_content_t>>
         content;
     for (auto &item : j.at("content").get<std::vector<json>>()) {
       std::string type = item.at("type");
@@ -130,6 +142,8 @@ void from_json(const json &j,
         content.push_back(item.get<ailoy::openai_chat_text_content_t>());
       } else if (type == "image_url") {
         content.push_back(item.get<ailoy::openai_chat_image_content_t>());
+      } else if (type == "input_audio") {
+        content.push_back(item.get<ailoy::openai_chat_audio_content_t>());
       } else {
         throw std::runtime_error("invalid content type: " + type);
       }

@@ -4,6 +4,8 @@ import * as ai from "../src";
 
 const testImageUrl =
   "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
+const testAudioUrl =
+  "https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav";
 
 if (process.env.GEMINI_API_KEY !== undefined) {
   describe("Gemini Agent", () => {
@@ -52,6 +54,24 @@ if (process.env.GEMINI_API_KEY !== undefined) {
       ])) {
         agent.print(resp);
       }
+    });
+
+    it("Audio input from base64", async () => {
+      const resp = await fetch(testAudioUrl);
+      const arrayBuffer = await resp.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      for await (const resp of agent.query([
+        "What's in these recording?",
+        {
+          type: "audio_bytes",
+          data: buffer,
+          format: "wav",
+        },
+      ])) {
+        agent.print(resp);
+      }
+
+      await agent.delete();
     });
 
     after(async () => {

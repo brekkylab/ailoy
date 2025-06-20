@@ -23,6 +23,15 @@ struct openai_chat_image_content_t {
   openai_chat_image_url_content_t image_url;
 };
 
+struct openai_chat_audio_content_data_t {
+  std::string data;
+  std::string format;
+};
+struct openai_chat_audio_content_t {
+  std::string type = "input_audio";
+  openai_chat_audio_content_data_t input_audio;
+};
+
 /* Structs for OpenAI API Tools */
 
 struct openai_chat_function_t {
@@ -58,7 +67,8 @@ struct openai_chat_completion_user_message_t {
   std::string role = "user";
   std::variant<std::string,
                std::vector<std::variant<openai_chat_text_content_t,
-                                        openai_chat_image_content_t>>>
+                                        openai_chat_image_content_t,
+                                        openai_chat_audio_content_t>>>
       content;
   std::optional<std::string> name = std::nullopt;
 };
@@ -123,6 +133,9 @@ void from_json(const json &j, ailoy::openai_chat_text_content_t &obj);
 
 void to_json(json &j, const ailoy::openai_chat_image_content_t &obj);
 void from_json(const json &j, ailoy::openai_chat_image_content_t &obj);
+
+void to_json(json &j, const ailoy::openai_chat_audio_content_t &obj);
+void from_json(const json &j, ailoy::openai_chat_audio_content_t &obj);
 
 /* OpenAI API Tools */
 

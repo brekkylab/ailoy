@@ -23,6 +23,14 @@ interface ImageContent {
   };
 }
 
+interface AudioContent {
+  type: "input_audio";
+  input_audio: {
+    data: string;
+    format: "mp3" | "wav";
+  };
+}
+
 interface FunctionData {
   type: "function";
   id?: string;
@@ -39,7 +47,7 @@ interface SystemMessage {
 
 interface UserMessage {
   role: "user";
-  content: string | Array<TextContent | ImageContent>;
+  content: string | Array<TextContent | ImageContent | AudioContent>;
 }
 
 interface AssistantMessage {
@@ -81,6 +89,12 @@ export interface AgentInputImageUrl {
 export interface AgentInputImageSharp {
   type: "image_sharp";
   image: sharp.Sharp;
+}
+
+export interface AgentInputAudioBytes {
+  type: "audio_bytes";
+  data: Buffer;
+  format: "mp3" | "wav";
 }
 
 /** Types for Agent's responses */
@@ -526,7 +540,14 @@ export class Agent {
 
   async *query(
     /** The user message to send to the model */
-    message: string | Array<string | AgentInputImageUrl | AgentInputImageSharp>,
+    message:
+      | string
+      | Array<
+          | string
+          | AgentInputImageUrl
+          | AgentInputImageSharp
+          | AgentInputAudioBytes
+        >,
     options?: {
       /** If True, enables reasoning capabilities (default: False) */
       reasoning?: boolean;
@@ -547,7 +568,7 @@ export class Agent {
         throw Error("Message is empty");
       }
 
-      let contents: Array<TextContent | ImageContent> = [];
+      let contents: Array<TextContent | ImageContent | AudioContent> = [];
       for (const content of message) {
         if (typeof content === "string") {
           contents.push({ type: "text", text: content });
@@ -557,6 +578,14 @@ export class Agent {
           contents.push({
             type: "image_url",
             image_url: { url: await sharpImageToBase64(content.image) },
+          });
+        } else if (content.type === "audio_bytes") {
+          contents.push({
+            type: "input_audio",
+            input_audio: {
+              data: content.data.toString("base64"),
+              format: content.format,
+            },
           });
         } else {
           throw Error("Unsupported content type");

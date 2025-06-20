@@ -34,6 +34,7 @@ def agent(_agent: ai.Agent):
 
 
 test_image_url = "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385"
+test_audio_url = "https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav"
 
 
 def test_tool_call_calculator(agent: ai.Agent):
@@ -57,3 +58,16 @@ def test_image_input_from_pillow(agent: ai.Agent):
         ]
     ):
         resp.print()
+
+
+def test_audio_input_from_base64(agent: ai.Agent):
+    with urlopen(test_audio_url) as resp:
+        audio_data = resp.read()
+
+    for resp in agent.query(
+        [
+            "What's in these recording?",
+            ai.AgentInputAudioBytes(data=audio_data, format="wav"),
+        ]
+    ):
+        agent.print(resp)
