@@ -1,36 +1,44 @@
 import json
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Generator
+from collections.abc import Callable, Generator
 from functools import partial
 from pathlib import Path
 from typing import (
     Any,
     Literal,
     Optional,
-    TypeVar,
     Union,
 )
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import jmespath
+from PIL.Image import Image
 from pydantic import BaseModel, ConfigDict, Field
 from rich.console import Console
 from rich.panel import Panel
 
 from ailoy.ailoy_py import generate_uuid
 from ailoy.mcp import MCPServer, MCPTool, StdioServerParameters
+from ailoy.models import AiloyModel
 from ailoy.runtime import Runtime
 from ailoy.tools import DocstringParsingException, TypeHintParsingException, get_json_schema
-
-__all__ = ["Agent"]
+from ailoy.utils.image import pillow_image_to_base64
 
 ## Types for internal data structures
 
 
-class TextData(BaseModel):
-    type: Literal["text"]
+class TextContent(BaseModel):
+    type: Literal["text"] = "text"
     text: str
+
+
+class ImageContent(BaseModel):
+    class UrlData(BaseModel):
+        url: str
+
+    type: Literal["image_url"] = "image_url"
+    image_url: UrlData
 
 
 class FunctionData(BaseModel):
@@ -38,32 +46,34 @@ class FunctionData(BaseModel):
         name: str
         arguments: Any
 
-    type: Literal["function"]
+    type: Literal["function"] = "function"
     id: Optional[str] = None
     function: FunctionBody
 
 
 class SystemMessage(BaseModel):
-    role: Literal["system"]
-    content: list[TextData]
+    role: Literal["system"] = "system"
+    content: str | list[TextContent]
 
 
 class UserMessage(BaseModel):
-    role: Literal["user"]
-    content: list[TextData]
+    role: Literal["user"] = "user"
+    content: str | list[TextContent | ImageContent]
 
 
 class AssistantMessage(BaseModel):
-    role: Literal["assistant"]
-    reasoning: Optional[list[TextData]] = None
-    content: Optional[list[TextData]] = None
+    role: Literal["assistant"] = "assistant"
+    content: Optional[str | list[TextContent]] = None
+    name: Optional[str] = None
     tool_calls: Optional[list[FunctionData]] = None
+
+    # Non-OpenAI fields
+    reasoning: Optional[list[TextContent]] = None
 
 
 class ToolMessage(BaseModel):
-    role: Literal["tool"]
-    name: str
-    content: list[TextData]
+    role: Literal["tool"] = "tool"
+    content: str | list[TextContent]
     tool_call_id: Optional[str] = None
 
 
@@ -76,97 +86,25 @@ Message = Union[
 
 
 class MessageOutput(BaseModel):
-    class AssistantMessageDelta(BaseModel):
-        content: Optional[list[TextData]] = None
-        reasoning: Optional[list[TextData]] = None
-        tool_calls: Optional[list[FunctionData]] = None
-
-    message: AssistantMessageDelta
+    message: AssistantMessage
     finish_reason: Optional[Literal["stop", "tool_calls", "invalid_tool_call", "length", "error"]] = None
 
 
-## Types for LLM Model Definitions
-
-TVMModelName = Literal["Qwen/Qwen3-0.6B", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B"]
-OpenAIModelName = Literal["gpt-4o"]
-GeminiModelName = Literal[
-    "gemini-2.5-flash-preview-05-20",
-    "gemini-2.5-pro-preview-06-05",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
-]
-ModelName = Union[TVMModelName, OpenAIModelName, GeminiModelName]
+## Types for agent's message inputs
 
 
-class TVMModel(BaseModel):
-    name: TVMModelName
-    quantization: Optional[Literal["q4f16_1"]] = None
-    mode: Optional[Literal["interactive"]] = None
+class AgentInputText(BaseModel):
+    text: str
 
 
-class OpenAIModel(BaseModel):
-    name: OpenAIModelName
-    api_key: str
+class AgentInputImageUrl(BaseModel):
+    url: str
 
 
-class ModelDescription(BaseModel):
-    model_id: str
-    component_type: str
-    default_system_message: Optional[str] = None
+class AgentInputImagePillow(BaseModel):
+    image: Image
 
-
-model_descriptions: dict[ModelName, ModelDescription] = {
-    "Qwen/Qwen3-0.6B": ModelDescription(
-        model_id="Qwen/Qwen3-0.6B",
-        component_type="tvm_language_model",
-        default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-    ),
-    "Qwen/Qwen3-1.7B": ModelDescription(
-        model_id="Qwen/Qwen3-1.7B",
-        component_type="tvm_language_model",
-        default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-    ),
-    "Qwen/Qwen3-4B": ModelDescription(
-        model_id="Qwen/Qwen3-4B",
-        component_type="tvm_language_model",
-        default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-    ),
-    "Qwen/Qwen3-8B": ModelDescription(
-        model_id="Qwen/Qwen3-8B",
-        component_type="tvm_language_model",
-        default_system_message="You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-    ),
-    "gpt-4o": ModelDescription(
-        model_id="gpt-4o",
-        component_type="openai",
-    ),
-    "gemini-2.5-flash-preview-05-20": ModelDescription(
-        model_id="gemini-2.5-flash-preview-05-20",
-        component_type="gemini",
-    ),
-    "gemini-2.5-pro-preview-06-05": ModelDescription(
-        model_id="gemini-2.5-pro-preview-06-05",
-        component_type="gemini",
-    ),
-    "gemini-2.0-flash": ModelDescription(
-        model_id="gemini-2.0-flash",
-        component_type="gemini",
-    ),
-    "gemini-1.5-flash": ModelDescription(
-        model_id="gemini-1.5-flash",
-        component_type="gemini",
-    ),
-    "gemini-1.5-pro": ModelDescription(
-        model_id="gemini-1.5-pro",
-        component_type="gemini",
-    ),
-}
-
-
-class ComponentState(BaseModel):
-    name: str
-    valid: bool
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 ## Types for agent's responses
@@ -176,7 +114,7 @@ _console = Console(highlight=False, force_jupyter=False, force_terminal=True)
 
 class AgentResponseOutputText(BaseModel):
     type: Literal["output_text", "reasoning"]
-    role: Literal["assistant"]
+    role: Literal["assistant"] = "assistant"
     is_type_switched: bool = False
     content: str
 
@@ -187,14 +125,14 @@ class AgentResponseOutputText(BaseModel):
 
 
 class AgentResponseToolCall(BaseModel):
-    type: Literal["tool_call"]
-    role: Literal["assistant"]
+    type: Literal["tool_call"] = "tool_call"
+    role: Literal["assistant"] = "assistant"
     is_type_switched: bool = False
     content: FunctionData
 
     def print(self):
         title = f"[magenta]Tool Call[/magenta]: [bold]{self.content.function.name}[/bold]"
-        if self.content.id is not None:
+        if self.content.id is not None and len(self.content.id) > 0:
             title += f" ({self.content.id})"
         panel = Panel(
             json.dumps(self.content.function.arguments, indent=2),
@@ -205,8 +143,8 @@ class AgentResponseToolCall(BaseModel):
 
 
 class AgentResponseToolResult(BaseModel):
-    type: Literal["tool_call_result"]
-    role: Literal["tool"]
+    type: Literal["tool_call_result"] = "tool_call_result"
+    role: Literal["tool"] = "tool"
     is_type_switched: bool = False
     content: ToolMessage
 
@@ -221,8 +159,8 @@ class AgentResponseToolResult(BaseModel):
         if len(content) > 500:
             content = content[:500] + "...(truncated)"
 
-        title = f"[green]Tool Result[/green]: [bold]{self.content.name}[/bold]"
-        if self.content.tool_call_id is not None:
+        title = "[green]Tool Result[/green]"
+        if self.content.tool_call_id is not None and len(self.content.tool_call_id) > 0:
             title += f" ({self.content.tool_call_id})"
         panel = Panel(
             content,
@@ -233,8 +171,8 @@ class AgentResponseToolResult(BaseModel):
 
 
 class AgentResponseError(BaseModel):
-    type: Literal["error"]
-    role: Literal["assistant"]
+    type: Literal["error"] = "error"
+    role: Literal["assistant"] = "assistant"
     is_type_switched: bool = False
     content: str
 
@@ -335,22 +273,6 @@ class BearerAuthenticator(ToolAuthenticator):
         return {**request, "headers": headers}
 
 
-T_Retval = TypeVar("T_Retval")
-
-
-def run_async(coro: Callable[..., Awaitable[T_Retval]]) -> T_Retval:
-    try:
-        import anyio
-
-        # Running outside async loop
-        return anyio.run(lambda: coro)
-    except RuntimeError:
-        import anyio.from_thread
-
-        # Already in a running event loop: use anyio from_thread
-        return anyio.from_thread.run(coro)
-
-
 class Agent:
     """
     The `Agent` class provides a high-level interface for interacting with large language models (LLMs) in Ailoy.
@@ -364,28 +286,22 @@ class Agent:
     def __init__(
         self,
         runtime: Runtime,
-        model_name: ModelName,
+        model: AiloyModel,
         system_message: Optional[str] = None,
-        api_key: Optional[str] = None,
-        **attrs,
     ):
         """
         Create an instance.
 
         :param runtime: The runtime environment associated with the agent.
-        :param model_name: The name of the LLM model to use.
+        :param model: The model instance.
         :param system_message: Optional system message to set the initial assistant context.
-        :param api_key: (web agent only) The API key for AI API.
-        :param attrs: Additional initialization parameters (for `define_component` runtime call)
         :raises ValueError: If model name is not supported or validation fails.
         """
         self._runtime = runtime
 
         # Initialize component state
-        self._component_state = ComponentState(
-            name=generate_uuid(),
-            valid=False,
-        )
+        self._component_name = generate_uuid()
+        self._component_ready = False
 
         # Initialize messages
         self._messages: list[Message] = []
@@ -400,7 +316,7 @@ class Agent:
         self._mcp_servers: list[MCPServer] = []
 
         # Define the component
-        self.define(model_name, api_key=api_key, **attrs)
+        self.define(model)
 
     def __del__(self):
         self.delete()
@@ -411,70 +327,55 @@ class Agent:
     def __exit__(self, type, value, traceback):
         self.delete()
 
-    def define(self, model_name: ModelName, api_key: Optional[str] = None, **attrs) -> None:
+    def define(self, model: AiloyModel) -> None:
         """
         Initializes the agent by defining its model in the runtime.
         This must be called before running the agent. If already initialized, this is a no-op.
-        :param model_name: The name of the LLM model to use.
-        :param api_key: (web agent only) The API key for AI API.
-        :param attrs: Additional initialization parameters (for `define_component` runtime call)
+        :param model: The model instance.
         """
-        if self._component_state.valid:
+        if self._component_ready:
             return
 
         if not self._runtime.is_alive():
             raise ValueError("Runtime is currently stopped.")
 
-        if model_name not in model_descriptions:
-            raise ValueError(f"Model `{model_name}` not supported")
-
-        model_desc = model_descriptions[model_name]
-
-        # Add model name into attrs
-        if "model" not in attrs:
-            attrs["model"] = model_desc.model_id
-
         # Set default system message if not given; still can be None
         if self._system_message is None:
-            self._system_message = model_desc.default_system_message
+            self._system_message = getattr(model, "default_system_message", None)
 
         self.clear_messages()
 
-        # Add API key
-        if api_key:
-            attrs["api_key"] = api_key
-
         # Call runtime's define
         self._runtime.define(
-            model_descriptions[model_name].component_type,
-            self._component_state.name,
-            attrs,
+            model.component_type,
+            self._component_name,
+            model.to_attrs(),
         )
 
         # Mark as defined
-        self._component_state.valid = True
+        self._component_ready = True
 
     def delete(self) -> None:
         """
         Deinitializes the agent and releases resources in the runtime.
         This should be called when the agent is no longer needed. If already deinitialized, this is a no-op.
         """
-        if not self._component_state.valid:
+        if not self._component_ready:
             return
 
         if self._runtime.is_alive():
-            self._runtime.delete(self._component_state.name)
+            self._runtime.delete(self._component_name)
 
         self.clear_messages()
 
         for mcp_server in self._mcp_servers:
             mcp_server.cleanup()
 
-        self._component_state.valid = False
+        self._component_ready = False
 
     def query(
         self,
-        message: str,
+        message: str | list[str | Image | AgentInputText | AgentInputImageUrl | AgentInputImagePillow],
         reasoning: bool = False,
     ) -> Generator[AgentResponse, None, None]:
         """
@@ -485,13 +386,36 @@ class Agent:
         :return: An iterator over the output, where each item represents either a generated token from the assistant or a tool call.
         :rtype: Iterator[:class:`AgentResponse`]
         """  # noqa: E501
-        if not self._component_state.valid:
+        if not self._component_ready:
             raise ValueError("Agent is not valid. Create one or define newly.")
 
         if not self._runtime.is_alive():
             raise ValueError("Runtime is currently stopped.")
 
-        self._messages.append(UserMessage(role="user", content=[{"type": "text", "text": message}]))
+        if isinstance(message, str):
+            self._messages.append(UserMessage(content=[TextContent(text=message)]))
+        elif isinstance(message, list):
+            if len(message) == 0:
+                raise ValueError("Message is empty")
+
+            contents = []
+            for content in message:
+                if isinstance(content, str):
+                    contents.append(TextContent(text=content))
+                elif isinstance(content, Image):
+                    contents.append(ImageContent(image_url={"url": pillow_image_to_base64(content)}))
+                elif isinstance(content, AgentInputText):
+                    contents.append(TextContent(text=content.text))
+                elif isinstance(content, AgentInputImageUrl):
+                    contents.append(ImageContent(image_url={"url": content.url}))
+                elif isinstance(content, AgentInputImagePillow):
+                    contents.append(ImageContent(image_url={"url": pillow_image_to_base64(content.image)}))
+                else:
+                    raise ValueError(f"Unsupported content type: {type(content)}")
+
+            self._messages.append(UserMessage(content=contents))
+        else:
+            raise ValueError(f"Invalid message type: {type(message)}")
 
         prev_resp_type = None
 
@@ -507,7 +431,7 @@ class Agent:
             assistant_content = None
             assistant_tool_calls = None
             finish_reason = ""
-            for result in self._runtime.call_iter_method(self._component_state.name, "infer", infer_args):
+            for result in self._runtime.call_iter_method(self._component_name, "infer", infer_args):
                 msg = MessageOutput.model_validate(result)
 
                 if msg.message.reasoning:
@@ -518,13 +442,16 @@ class Agent:
                             assistant_reasoning[0].text += v.text
                         resp = AgentResponseOutputText(
                             type="reasoning",
-                            role="assistant",
                             is_type_switched=(prev_resp_type != "reasoning"),
                             content=v.text,
                         )
                         prev_resp_type = resp.type
                         yield resp
-                if msg.message.content:
+                if msg.message.content is not None:
+                    # Canonicalize message content to the array of TextContent
+                    if isinstance(msg.message.content, str):
+                        msg.message.content = [TextContent(text=msg.message.content)]
+
                     for v in msg.message.content:
                         if not assistant_content:
                             assistant_content = [v]
@@ -532,7 +459,6 @@ class Agent:
                             assistant_content[0].text += v.text
                         resp = AgentResponseOutputText(
                             type="output_text",
-                            role="assistant",
                             is_type_switched=(prev_resp_type != "output_text"),
                             content=v.text,
                         )
@@ -545,8 +471,6 @@ class Agent:
                         else:
                             assistant_tool_calls.append(v)
                         resp = AgentResponseToolCall(
-                            type="tool_call",
-                            role="assistant",
                             is_type_switched=True,
                             content=v,
                         )
@@ -559,7 +483,6 @@ class Agent:
             # Append output
             self._messages.append(
                 AssistantMessage(
-                    role="assistant",
                     reasoning=assistant_reasoning,
                     content=assistant_content,
                     tool_calls=assistant_tool_calls,
@@ -577,9 +500,7 @@ class Agent:
                         raise RuntimeError("Tool not found")
                     tool_result = tool_.call(**tool_call.function.arguments)
                     return ToolMessage(
-                        role="tool",
-                        name=tool_call.function.name,
-                        content=[TextData(type="text", text=json.dumps(tool_result))],
+                        content=[TextContent(text=json.dumps(tool_result))],
                         tool_call_id=tool_call.id,
                     )
 
@@ -587,8 +508,6 @@ class Agent:
                 for result_msg in tool_call_results:
                     self._messages.append(result_msg)
                     resp = AgentResponseToolResult(
-                        type="tool_call_result",
-                        role="tool",
                         is_type_switched=True,
                         content=result_msg,
                     )
@@ -598,6 +517,7 @@ class Agent:
                 continue
 
             # Finish this generator
+            yield AgentResponseOutputText(type="output_text", content="\n")
             break
 
     def get_messages(self) -> list[Message]:
@@ -616,9 +536,7 @@ class Agent:
         """
         self._messages.clear()
         if self._system_message is not None:
-            self._messages.append(
-                SystemMessage(role="system", content=[TextData(type="text", text=self._system_message)])
-            )
+            self._messages.append(SystemMessage(role="system", content=[TextContent(text=self._system_message)]))
 
     def print(self, resp: AgentResponse):
         resp.print()
@@ -831,3 +749,15 @@ class Agent:
 
         # Remove tools registered from the MCP server
         self._tools = list(filter(lambda t: not t.desc.name.startswith(f"{mcp_server.name}-"), self._tools))
+
+    def get_tools(self):
+        """
+        Get the list of registered tools.
+        """
+        return self._tools
+
+    def clear_tools(self):
+        """
+        Clear the registered tools.
+        """
+        self._tools.clear()

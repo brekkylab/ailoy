@@ -1,38 +1,59 @@
-import * as MCPClient from "@modelcontextprotocol/sdk/client/index.js";
 import * as MCPClientStdio from "@modelcontextprotocol/sdk/client/stdio.js";
 import boxen from "boxen";
 import chalk from "chalk";
 import { search } from "jmespath";
+import sharp from "sharp";
 
 import MCPServer from "./mcp";
+import { AiloyModel } from "./models";
 import { Runtime, generateUUID } from "./runtime";
+import { sharpImageToBase64 } from "./utils/image";
 
 /** Types for internal data structures */
 
+interface TextContent {
+  type: "text";
+  text: string;
+}
+
+interface ImageContent {
+  type: "image_url";
+  image_url: {
+    url: string;
+  };
+}
+
+interface FunctionData {
+  type: "function";
+  id?: string;
+  function: {
+    name: string;
+    arguments: any;
+  };
+}
+
 interface SystemMessage {
   role: "system";
-  content: Array<{ type: "text"; text: string }>;
+  content: string | Array<TextContent>;
 }
 
 interface UserMessage {
   role: "user";
-  content: Array<{ type: "text"; text: string }>;
+  content: string | Array<TextContent | ImageContent>;
 }
 
 interface AssistantMessage {
   role: "assistant";
-  content?: Array<{ type: "text"; text: string }>;
+  content?: string | Array<TextContent>;
+  name?: string;
+  tool_calls?: Array<FunctionData>;
+
+  // Non-OpenAI fields
   reasoning?: Array<{ type: "text"; text: string }>;
-  tool_calls?: Array<{
-    type: "function";
-    id?: string;
-    function: { name: string; arguments: any };
-  }>;
 }
 
 interface ToolMessage {
   role: "tool";
-  name: string;
   content: Array<{ type: "text"; text: string }>;
   tool_call_id?: string;
 }
@@ -40,6 +61,7 @@ interface ToolMessage {
 type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
 
 interface MessageOutput {
+  message: AssistantMessage;
   finish_reason:
     | "stop"
     | "tool_calls"
@@ -47,84 +69,19 @@ interface MessageOutput {
     | "length"
     | "error"
     | undefined;
-  message: Omit<AssistantMessage, "role">;
 }
 
-/** Types for LLM Model Definitions */
+/** Types for Agent's message inputs */
 
-export type TVMModelName =
-  | "Qwen/Qwen3-8B"
-  | "Qwen/Qwen3-4B"
-  | "Qwen/Qwen3-1.7B"
-  | "Qwen/Qwen3-0.6B";
-
-export type OpenAIModelName = "gpt-4o";
-
-export type GeminiModelName =
-  | "gemini-2.5-flash-preview-05-20"
-  | "gemini-2.5-pro-preview-06-05"
-  | "gemini-2.0-flash"
-  | "gemini-1.5-flash"
-  | "gemini-1.5-pro";
-
-export type ModelName = TVMModelName | OpenAIModelName | GeminiModelName;
-
-interface ModelDescription {
-  modelId: string;
-  componentType: string;
-  defaultSystemMessage?: string;
+export interface AgentInputImageUrl {
+  type: "image_url";
+  url: string;
 }
 
-const modelDescriptions: Record<ModelName, ModelDescription> = {
-  "Qwen/Qwen3-8B": {
-    modelId: "Qwen/Qwen3-8B",
-    componentType: "tvm_language_model",
-    defaultSystemMessage:
-      "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-  },
-  "Qwen/Qwen3-4B": {
-    modelId: "Qwen/Qwen3-4B",
-    componentType: "tvm_language_model",
-    defaultSystemMessage:
-      "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-  },
-  "Qwen/Qwen3-1.7B": {
-    modelId: "Qwen/Qwen3-1.7B",
-    componentType: "tvm_language_model",
-    defaultSystemMessage:
-      "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-  },
-  "Qwen/Qwen3-0.6B": {
-    modelId: "Qwen/Qwen3-0.6B",
-    componentType: "tvm_language_model",
-    defaultSystemMessage:
-      "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-  },
-  "gpt-4o": {
-    modelId: "gpt-4o",
-    componentType: "openai",
-  },
-  "gemini-2.5-flash-preview-05-20": {
-    modelId: "gemini-2.5-flash-preview-05-20",
-    componentType: "gemini",
-  },
-  "gemini-2.5-pro-preview-06-05": {
-    modelId: "gemini-2.5-pro-preview-06-05",
-    componentType: "gemini",
-  },
-  "gemini-2.0-flash": {
-    modelId: "gemini-2.0-flash",
-    componentType: "gemini",
-  },
-  "gemini-1.5-flash": {
-    modelId: "gemini-1.5-flash",
-    componentType: "gemini",
-  },
-  "gemini-1.5-pro": {
-    modelId: "gemini-1.5-pro",
-    componentType: "gemini",
-  },
-};
+export interface AgentInputImageSharp {
+  type: "image_sharp";
+  image: sharp.Sharp;
+}
 
 /** Types for Agent's responses */
 
@@ -147,11 +104,7 @@ export interface AgentResponseToolResult {
   type: "tool_call_result";
   role: "tool";
   isTypeSwitched: boolean;
-  content: {
-    name: string;
-    content: Array<{ type: "text"; text: string }>;
-    tool_call_id?: string;
-  };
+  content: ToolMessage;
 }
 export interface AgentResponseError {
   type: "error";
@@ -269,8 +222,10 @@ export class Agent {
   constructor(
     /** The runtime environment associated with the agent */
     runtime: Runtime,
-    /** Optional system message to set the initial assistant context */
-    systemMessage?: string
+    args?: {
+      /** Optional system message to set the initial assistant context */
+      systemMessage?: string;
+    }
   ) {
     this.runtime = runtime;
 
@@ -284,7 +239,7 @@ export class Agent {
     this.messages = [];
 
     // Initialize system message
-    this.systemMessage = systemMessage;
+    this.systemMessage = args?.systemMessage;
 
     // Initialize tools
     this.tools = [];
@@ -299,29 +254,26 @@ export class Agent {
    */
   async define(
     /** The name of the LLM model to use in this instance */
-    modelName: ModelName,
-    /** `Additional input used as an attribute in the define call of Runtime */
-    attrs: Record<string, any>
+    model: AiloyModel
   ): Promise<void> {
     // Skip if the component already exists
     if (this.componentState.valid) return;
 
     if (!this.runtime.is_alive()) throw Error(`Runtime is currently stopped.`);
 
-    const modelDesc = modelDescriptions[modelName];
-
-    // Add model name into attrs
-    if (!attrs.model) attrs.model = modelDesc.modelId;
-
     // Set default system message if not given; still can be undefined
-    this.systemMessage = this.systemMessage ?? modelDesc.defaultSystemMessage;
+    this.systemMessage =
+      this.systemMessage ??
+      ("defaultSystemMessage" in model
+        ? model.defaultSystemMessage()
+        : undefined);
     this.clearMessages();
 
     // Call runtime to define componenets
     const result = await this.runtime.define(
-      modelDesc.componentType,
+      model.componentType,
       this.componentState.name,
-      attrs
+      model.toAttrs()
     );
     if (!result) throw Error(`component define failed`);
 
@@ -574,7 +526,7 @@ export class Agent {
 
   async *query(
     /** The user message to send to the model */
-    message: string,
+    message: string | Array<string | AgentInputImageUrl | AgentInputImageSharp>,
     options?: {
       /** If True, enables reasoning capabilities (default: False) */
       reasoning?: boolean;
@@ -585,18 +537,42 @@ export class Agent {
 
     if (!this.runtime.is_alive()) throw Error(`Runtime is currently stopped.`);
 
-    this.messages.push({
-      role: "user",
-      content: [{ type: "text", text: message }],
-    });
+    if (typeof message === "string") {
+      this.messages.push({
+        role: "user",
+        content: [{ type: "text", text: message }],
+      });
+    } else {
+      if (message.length === 0) {
+        throw Error("Message is empty");
+      }
 
-    let finish_reason = "";
+      let contents: Array<TextContent | ImageContent> = [];
+      for (const content of message) {
+        if (typeof content === "string") {
+          contents.push({ type: "text", text: content });
+        } else if (content.type === "image_url") {
+          contents.push({ type: "image_url", image_url: { url: content.url } });
+        } else if (content.type === "image_sharp") {
+          contents.push({
+            type: "image_url",
+            image_url: { url: await sharpImageToBase64(content.image) },
+          });
+        } else {
+          throw Error("Unsupported content type");
+        }
+      }
+
+      this.messages.push({ role: "user", content: contents });
+    }
+
     let prevRespType: string | null = null;
 
     while (true) {
-      let assistantMessage: AssistantMessage = {
-        role: "assistant",
-      };
+      let assistantReasoning: Array<TextContent> | undefined = undefined;
+      let assistantContent: Array<TextContent> | undefined = undefined;
+      let assistantToolCalls: Array<FunctionData> | undefined = undefined;
+      let finishReason = "";
 
       for await (const result of this.runtime.callIterMethod(
         this.componentState.name,
@@ -611,9 +587,9 @@ export class Agent {
       ) as AsyncIterable<MessageOutput>) {
         if (result.message.reasoning) {
           for (const reasoningData of result.message.reasoning) {
-            if (!assistantMessage.reasoning)
-              assistantMessage.reasoning = [reasoningData];
-            else assistantMessage.reasoning[0].text += reasoningData.text;
+            if (assistantReasoning === undefined)
+              assistantReasoning = [reasoningData];
+            else assistantReasoning[0].text += reasoningData.text;
             const resp: AgentResponseText = {
               type: "reasoning",
               role: "assistant",
@@ -624,11 +600,17 @@ export class Agent {
             yield resp;
           }
         }
-        if (result.message.content) {
+        if (result.message.content !== undefined) {
+          // Canonicalize message content to the array of TextContent
+          if (typeof result.message.content == "string") {
+            result.message.content = [
+              { type: "text", text: result.message.content },
+            ];
+          }
           for (const contentData of result.message.content) {
-            if (!assistantMessage.content)
-              assistantMessage.content = [contentData];
-            else assistantMessage.content[0].text += contentData.text;
+            if (assistantContent === undefined)
+              assistantContent = [contentData];
+            else assistantContent[0].text += contentData.text;
             const resp: AgentResponseText = {
               type: "output_text",
               role: "assistant",
@@ -641,9 +623,9 @@ export class Agent {
         }
         if (result.message.tool_calls) {
           for (const tool_call_data of result.message.tool_calls) {
-            if (!assistantMessage.tool_calls)
-              assistantMessage.tool_calls = [tool_call_data];
-            else assistantMessage.tool_calls?.push(tool_call_data);
+            if (assistantToolCalls === undefined)
+              assistantToolCalls = [tool_call_data];
+            else assistantToolCalls.push(tool_call_data);
             const resp: AgentResponseToolCall = {
               type: "tool_call",
               role: "assistant",
@@ -656,17 +638,22 @@ export class Agent {
         }
 
         if (result.finish_reason) {
-          finish_reason = result.finish_reason;
+          finishReason = result.finish_reason;
           break;
         }
       }
       // Append output
-      this.messages.push(assistantMessage);
+      this.messages.push({
+        role: "assistant",
+        content: assistantContent,
+        reasoning: assistantReasoning,
+        tool_calls: assistantToolCalls,
+      });
 
       // Call tools in parallel
-      if (finish_reason == "tool_calls") {
+      if (finishReason == "tool_calls") {
         let toolCallPromises: Array<Promise<ToolMessage>> = [];
-        for (const toolCall of assistantMessage.tool_calls || []) {
+        for (const toolCall of assistantToolCalls ?? []) {
           toolCallPromises.push(
             new Promise(async (resolve, reject) => {
               const tool_ = this.tools.find(
@@ -679,7 +666,6 @@ export class Agent {
               const toolResult = await tool_.call(toolCall.function.arguments);
               const message: ToolMessage = {
                 role: "tool",
-                name: toolCall.function.name,
                 content: [{ type: "text", text: JSON.stringify(toolResult) }],
                 tool_call_id: toolCall.id,
               };
@@ -730,6 +716,20 @@ export class Agent {
       });
   }
 
+  /**
+   * Get the list of registered tools.
+   */
+  getTools() {
+    return this.tools;
+  }
+
+  /**
+   * Clear the registered tools.
+   */
+  clearTools() {
+    this.tools = [];
+  }
+
   private _printResponseText(resp: AgentResponseText) {
     if (resp.isTypeSwitched) {
       process.stdout.write("\n");
@@ -744,7 +744,7 @@ export class Agent {
       chalk.magenta("Tool Call") +
       ": " +
       chalk.bold(resp.content.function.name);
-    if (resp.content.id !== undefined) {
+    if (resp.content.id !== undefined && resp.content.id.length > 0) {
       title += ` (${resp.content.id})`;
     }
     const content = JSON.stringify(resp.content.function.arguments, null, 2);
@@ -762,9 +762,11 @@ export class Agent {
   }
 
   private _printResponseToolResult(resp: AgentResponseToolResult) {
-    let title =
-      chalk.green("Tool Result") + ": " + chalk.bold(resp.content.name);
-    if (resp.content.tool_call_id !== undefined) {
+    let title = chalk.green("Tool Result");
+    if (
+      resp.content.tool_call_id !== undefined &&
+      resp.content.tool_call_id.length > 0
+    ) {
       title += ` (${resp.content.tool_call_id})`;
     }
 
@@ -835,28 +837,16 @@ export async function defineAgent(
   /** The runtime environment associated with the agent */
   runtime: Runtime,
   /** The name of the LLM model to use in this instance */
-  modelName: ModelName,
+  model: AiloyModel,
   args?: {
     /** Optional system message to set the initial assistant context */
     systemMessage?: string;
-    /** Optional device id to set the device id to run LLM model */
-    device?: number;
-    /** A parameter for API key usage.
-     * This field is ignored if the model does not require authentication. */
-    apiKey?: string;
   }
 ): Promise<Agent> {
-  const args_ = args || {};
-
   // Call constructor
-  const agent = new Agent(runtime, args_.systemMessage);
+  const agent = new Agent(runtime, args);
 
-  // Attribute input for call `rt.define`
-  let attrs: Record<string, any> = {};
-  if (args_.device) attrs["device"] = args_.device;
-  if (args_.apiKey) attrs["api_key"] = args_.apiKey;
-
-  await agent.define(modelName, attrs);
+  await agent.define(model);
 
   // Return created agent
   return agent;

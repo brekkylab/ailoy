@@ -24,6 +24,7 @@ dependencies = [
     "jmespath>=1.0.1",
     "mcp>=1.8.0",
     "numpy>=2.0.2",
+    "pillow>=11.2.1",
     "pydantic>=2.11.4",
     "rich>=14.0.0",
     "typer>=0.15.4",
@@ -57,7 +58,10 @@ addopts = "--capture=tee-sys --strict-markers"
 asyncio_mode = "strict"
 markers = [
     "runtime: tests for low-level runtime APIs",
-    "agent: tests for high-level agent APIs"
+    "agent: tests for high-level agent APIs",
+    "agent_local: tests for local agent",
+    "agent_openai: tests for OpenAI agent",
+    "agent_gemini: tests for Gemini agent",
 ]
 pythonpath = "tests"
 testpaths = ["tests"]

@@ -2,31 +2,34 @@ import { expect } from "chai";
 import fs from "node:fs";
 import path from "node:path";
 
-import { defineAgent } from "../src/agent";
-import { startRuntime, type Runtime } from "../src/runtime";
+import * as ai from "../src";
 
-describe("Agent", async () => {
-  let rt: Runtime;
+describe("Local Agent", async () => {
+  let rt: ai.Runtime;
+  let agent: ai.Agent;
+
   before(async () => {
-    rt = await startRuntime("inproc://");
+    rt = await ai.startRuntime();
+    agent = await ai.defineAgent(rt, ai.TVMModel({ id: "Qwen/Qwen3-8B" }));
+  });
+
+  beforeEach(() => {
+    agent.clearMessages();
+    agent.clearTools();
   });
 
   it("Tool Call: calculator tools", async () => {
-    const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
     agent.addToolsFromPreset("calculator");
 
     const query = "Please calculate this formula: floor(ln(exp(e))+cos(2*pi))";
-    process.stdout.write(`Query: ${query}`);
+    console.log(`Query: ${query}`);
 
     for await (const resp of agent.query(query)) {
       agent.print(resp);
     }
-
-    await agent.delete();
   });
 
   it("Tool Call: frankfurter tools", async () => {
-    const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
     agent.addToolsFromPreset("frankfurter");
 
     const query =
@@ -36,12 +39,9 @@ describe("Agent", async () => {
     for await (const resp of agent.query(query)) {
       agent.print(resp);
     }
-
-    await agent.delete();
   });
 
   it("Tool Call: Custom function tools", async () => {
-    const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
     agent.addJSFunctionTool(
       ({ location, unit }) => {
         if (unit === "celsius") return 25;
@@ -81,12 +81,9 @@ describe("Agent", async () => {
     for await (const resp of agent.query(query)) {
       agent.print(resp);
     }
-
-    await agent.delete();
   });
 
   it("Tool Call: Filesystem MCP tools", async () => {
-    const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
     const testPath = path.join(__dirname, "..");
     await agent.addToolsFromMcpServer("filesystem", {
       command: "npx",
@@ -106,11 +103,10 @@ describe("Agent", async () => {
     ).to.be.equal("hello world");
 
     fs.unlinkSync(`${testPath}/hello.txt`);
-
-    await agent.delete();
   });
 
   after(async () => {
+    await agent.delete();
     await rt.stop();
   });
 });

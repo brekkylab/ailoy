@@ -16,6 +16,7 @@ if __doc__ is None:
     else:  # fallback docstring
         __doc__ = "# ailoy-py\n\nPython binding for Ailoy runtime APIs"
 
-from .agent import Agent  # noqa: F401
+from .agent import Agent, AgentInputImagePillow, AgentInputImageUrl, AgentInputText  # noqa: F401
+from .models import ClaudeModel, GeminiModel, OpenAIModel, TVMModel  # noqa: F401
 from .runtime import AsyncRuntime, Runtime  # noqa: F401
 from .vector_store import VectorStore  # noqa: F401
