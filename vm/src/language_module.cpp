@@ -82,6 +82,12 @@ std::shared_ptr<const module_t> get_language_module() {
         "gemini", create_openai_component<gemini_llm_engine_t>);
   }
 
+  // Add Component: Claude
+  if (!language_module->factories.contains("claude")) {
+    language_module->factories.insert_or_assign(
+        "claude", create_openai_component<claude_llm_engine_t>);
+  }
+
   return language_module;
 }
 
