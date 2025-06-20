@@ -501,20 +501,41 @@ download_model(const std::string &model_id, const std::string &quantization,
     }
   }
 
+  size_t num_total_files = manifest["files"].size();
+  size_t num_files_to_download = files_to_download.size();
+  size_t num_files_downloaded = num_total_files - num_files_to_download;
+
 #ifdef _WIN32
-  SetConsoleOutputCP(CP_UTF8);    // to print progress properly on Windows
+  SetConsoleOutputCP(CP_UTF8); // to print progress properly on Windows
 #endif
 
   indicators::DynamicProgress<indicators::BlockProgressBar> bars;
   bars.set_option(indicators::option::HideBarWhenComplete{true});
 
-  size_t total_files = files_to_download.size();
-  for (size_t i = 0; i < total_files; ++i) {
+  auto total_progress_bar = std::make_unique<indicators::BlockProgressBar>(
+      indicators::option::BarWidth{0}, indicators::option::Start{""},
+      indicators::option::End{""}, indicators::option::ShowPercentage{false},
+      indicators::option::ShowElapsedTime{true});
+  auto total_progress_bar_idx = bars.push_back(std::move(total_progress_bar));
+
+  for (size_t i = 0; i < num_files_to_download; ++i) {
     const auto &file = files_to_download[i];
     fs::path local_path = model_cache_path / file;
+
+    // Update total progress bar
+    if (print_progress_bar) {
+      bars[total_progress_bar_idx].set_option(indicators::option::PrefixText{
+          std::format("Downloading model files ({}/{})",
+                      num_files_downloaded + i + 1, num_total_files)});
+      bars[total_progress_bar_idx].set_progress(
+          static_cast<float>(num_files_downloaded + i + 1) * 100 /
+          num_total_files);
+    }
+
+    // Create a new progress bar for the current file
     auto bar = std::make_unique<indicators::BlockProgressBar>(
         indicators::option::BarWidth{50},
-        indicators::option::PrefixText{"Downloading " + file + " "},
+        indicators::option::PrefixText{file + " "},
         indicators::option::ShowPercentage{true},
         indicators::option::ShowElapsedTime{true});
     auto bar_idx = bars.push_back(std::move(bar));
@@ -525,7 +546,8 @@ download_model(const std::string &model_id, const std::string &quantization,
             local_path, [&](uint64_t current, uint64_t total) {
               float progress = static_cast<float>(current) / total * 100;
               if (callback.has_value())
-                callback.value()(i, total_files, file, progress);
+                callback.value()(i + num_files_downloaded, num_total_files,
+                                 file, progress);
               if (print_progress_bar)
                 bars[bar_idx].set_progress(progress);
               return true;
@@ -536,11 +558,15 @@ download_model(const std::string &model_id, const std::string &quantization,
       return result;
     }
 
-    if (print_progress_bar)
+    if (print_progress_bar) {
+      // Complete progress bar for the current file
       bars[bar_idx].mark_as_completed();
+    }
   }
   if (print_progress_bar) {
-    // ensure final flush
+    // Complete total progress bar
+    bars[total_progress_bar_idx].mark_as_completed();
+    // Ensure final flush
     bars.print_progress();
   }
 
