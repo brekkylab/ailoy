@@ -67,7 +67,21 @@ export type GeminiModelName =
   | "gemini-1.5-flash"
   | "gemini-1.5-pro";
 
-export type ModelName = TVMModelName | OpenAIModelName | GeminiModelName;
+export type ClaudeModelName =
+  | "claude-sonnet-4-20250514"
+  | "claude-3-7-sonnet-20250219"
+  | "claude-3-5-sonnet-20241022"
+  | "claude-3-5-sonnet-20240620"
+  | "claude-opus-4-20250514"
+  | "claude-3-opus-20240229"
+  | "claude-3-5-haiku-20241022"
+  | "claude-3-haiku-20240307";
+
+export type ModelName =
+  | TVMModelName
+  | OpenAIModelName
+  | GeminiModelName
+  | ClaudeModelName;
 
 interface ModelDescription {
   modelId: string;
@@ -123,6 +137,38 @@ const modelDescriptions: Record<ModelName, ModelDescription> = {
   "gemini-1.5-pro": {
     modelId: "gemini-1.5-pro",
     componentType: "gemini",
+  },
+  "claude-sonnet-4-20250514": {
+    modelId: "claude-sonnet-4-20250514",
+    componentType: "claude",
+  },
+  "claude-3-7-sonnet-20250219": {
+    modelId: "claude-3-7-sonnet-20250219",
+    componentType: "claude",
+  },
+  "claude-3-5-sonnet-20241022": {
+    modelId: "claude-3-5-sonnet-20241022",
+    componentType: "claude",
+  },
+  "claude-3-5-sonnet-20240620": {
+    modelId: "claude-3-5-sonnet-20240620",
+    componentType: "claude",
+  },
+  "claude-opus-4-20250514": {
+    modelId: "claude-opus-4-20250514",
+    componentType: "claude",
+  },
+  "claude-3-opus-20240229": {
+    modelId: "claude-3-opus-20240229",
+    componentType: "claude",
+  },
+  "claude-3-5-haiku-20241022": {
+    modelId: "claude-3-5-haiku-20241022",
+    componentType: "claude",
+  },
+  "claude-3-haiku-20240307": {
+    modelId: "claude-3-haiku-20240307",
+    componentType: "claude",
   },
 };
 

@@ -14,21 +14,16 @@ openai_llm_engine_t::openai_llm_engine_t(const std::string &api_key,
                                          const std::string &model)
     : api_key_(api_key), model_(model) {}
 
-openai_response_delta_t openai_llm_engine_t::infer(
-    std::unique_ptr<openai_chat_completion_request_t> request) {
+openai_response_delta_t
+openai_llm_engine_t::infer(std::shared_ptr<const value_t> input) {
   httplib::Client client(api_url());
-  std::unordered_map<std::string, std::string> headers = {
-      {"Authorization", "Bearer " + api_key_},
-      {"Content-Type", "application/json"},
-      {"Cache-Control", "no-cache"},
-  };
   httplib::Headers httplib_headers;
-  for (const auto &[key, value] : headers) {
+  for (const auto &[key, value] : headers()) {
     httplib_headers.emplace(key, value);
   }
 
-  request->model = model_;
-  nlohmann::json body = request->to_json(true);
+  nlohmann::json body = convert_request_body(input);
+  debug("[{}] Request body: {}", name(), body.dump());
 
   httplib::Request http_req;
   std::stringstream response_body;
@@ -58,13 +53,12 @@ openai_response_delta_t openai_llm_engine_t::infer(
   return delta;
 }
 
-std::unique_ptr<openai_chat_completion_request_t>
-openai_llm_engine_t::convert_request_input(
+nlohmann::json openai_llm_engine_t::convert_request_body(
     std::shared_ptr<const value_t> inputs) {
   if (!inputs->is_type_of<map_t>())
     throw ailoy::exception(std::format("[{}] input should be a map", name()));
 
-  auto request = std::make_unique<openai_chat_completion_request_t>();
+  openai_chat_completion_request_t request;
 
   auto input_map = inputs->as<map_t>();
   if (!input_map->contains("messages") ||
@@ -78,22 +72,49 @@ openai_llm_engine_t::convert_request_input(
   messages = melt_content_text(messages)->as<array_t>();
 
   for (const auto &msg_val : *messages) {
-    request->messages.push_back(msg_val->to_nlohmann_json());
+    request.messages.push_back(msg_val->to_nlohmann_json());
   }
 
+  // Convert tools
   if (input_map->contains("tools")) {
     auto tools = input_map->at("tools");
     if (!tools->is_type_of<array_t>()) {
       throw ailoy::exception(
           std::format("[{}] tools should be an array type", name()));
     }
-    request->tools = std::vector<openai_chat_tool_t>{};
+    request.tools = std::vector<openai_chat_tool_t>{};
     for (const auto &tool_val : *tools->as<array_t>()) {
-      request->tools.value().push_back(tool_val->to_nlohmann_json());
+      request.tools.value().push_back(tool_val->to_nlohmann_json());
     }
   }
 
-  return request;
+  // Dump with function call arguments as string
+  nlohmann::json body = request.to_json(true);
+  // Add model
+  body["model"] = model_;
+
+  return body;
+}
+
+nlohmann::json claude_llm_engine_t::convert_request_body(
+    std::shared_ptr<const value_t> inputs) {
+  auto body = openai_llm_engine_t::convert_request_body(inputs);
+
+  // Claude takes the tool result content as a string,
+  // not an array of {"type": "text", "text": "..."}
+  for (auto &message : body["messages"]) {
+    if (message["role"] == "tool") {
+      if (message["content"].is_string())
+        continue;
+      if (message["content"].size() == 0)
+        continue;
+      if (message["content"][0]["type"] != "text")
+        continue;
+      message["content"] = message["content"][0]["text"];
+    }
+  }
+
+  return body;
 }
 
 // TODO: enable iterative infer
