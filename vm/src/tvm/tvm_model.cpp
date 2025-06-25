@@ -3,23 +3,23 @@
 #include <filesystem>
 #include <regex>
 
+#include <tvm/ffi/any.h>
 #include <tvm/runtime/memory/memory_manager.h>
-#include <tvm/runtime/registry.h>
 
 #include "../file_util.hpp"
 #include "model_cache.hpp"
 
 using namespace tvm;
 using namespace tvm::runtime;
-using namespace tvm::runtime::relax_vm;
+using namespace tvm::runtime::vm;
 
 namespace ailoy {
 
 bool tvm_device_exist(DLDevice device) {
-  tvm::runtime::TVMRetValue rv;
+  tvm::ffi::Any rv;
   tvm::runtime::DeviceAPI::Get(device, true)
       ->GetAttr(device, tvm::runtime::DeviceAttrKind::kExist, &rv);
-  return rv;
+  return rv.cast<bool>();
 }
 
 std::optional<DLDevice> get_tvm_device(int32_t device_id) {
@@ -70,20 +70,20 @@ void from_json(const nlohmann::json &j,
   j.at("name").get_to(param_record.name);
   if (j.contains("dtype")) {
     param_record.dtype =
-        DataType(String2DLDataType(j["dtype"].get<std::string>()));
+        DataType(StringToDLDataType(j["dtype"].get<std::string>()));
   }
   j.at("format").get_to(param_record.format);
   j.at("nbytes").get_to(param_record.nbytes);
   j.at("byteOffset").get_to(param_record.byte_offset);
   if (j.contains("shape")) {
-    std::vector<ShapeTuple::index_type> shape;
+    std::vector<ffi::Shape::index_type> shape;
     nlohmann::json::array_t shape_json =
         j["shape"].get<nlohmann::json::array_t>();
     shape.reserve(shape_json.size());
     for (const auto &dim : shape_json) {
       shape.push_back(dim.get<int64_t>());
     }
-    param_record.shape = ShapeTuple(std::move(shape));
+    param_record.shape = ffi::Shape(std::move(shape));
   }
 }
 
@@ -132,8 +132,8 @@ void tvm_model_t::load_ndarray_cache_shard(const size_t &shard_idx,
       << "ValueError: Encountered an corrupted parameter shard. It means it is "
          "not downloaded completely or downloading is interrupted. Please try "
          "to download again.";
-  const PackedFunc *fupdate_cache =
-      Registry::Get("vm.builtin.ndarray_cache.update");
+  const tvm::ffi::Function fupdate_cache =
+      tvm::ffi::Function::GetGlobal("vm.builtin.ndarray_cache.update").value();
   Optional<NDArray> staging_buffer;
   for (const NDArrayCacheMetadata::FileRecord::ParamRecord &param_record :
        shard_rec.records) {
@@ -144,15 +144,15 @@ void tvm_model_t::load_ndarray_cache_shard(const size_t &shard_idx,
       LOG(FATAL) << "ValueError: Error when loading parameters for "
                  << param_record.name << ": " << e.what();
     }
-    (*fupdate_cache)(param_record.name, param, true);
+    fupdate_cache(param_record.name, param, true);
   }
 }
 
 void tvm_model_t::load_params_from_cache() {
   constexpr const char *name_loader =
       "vm.builtin.param_array_from_cache_by_name";
-  const PackedFunc *fload_params = Registry::Get(name_loader);
-  ICHECK(fload_params) << "Cannot find env function: " << name_loader;
+  const tvm::ffi::Function fload_params =
+      tvm::ffi::Function::GetGlobal(name_loader).value();
 
   Array<String> param_names;
   param_names.reserve(get_metadata()["params"].size());
@@ -160,7 +160,7 @@ void tvm_model_t::load_params_from_cache() {
     std::string param_name = param["name"];
     param_names.push_back(param_name);
   }
-  params_ = (*fload_params)(param_names);
+  params_ = fload_params(param_names).cast<Array<NDArray>>();
 }
 
 tvm_model_t::tvm_model_t(const std::string &model_name,
@@ -182,7 +182,7 @@ tvm_model_t::tvm_model_t(const std::string &model_name,
   auto fload_exec = executable->GetFunction("vm_load_executable");
   if (!fload_exec.defined())
     throw std::runtime_error("Failed to get executable loader");
-  auto vm = fload_exec().operator Module();
+  auto vm = fload_exec().cast<Module>();
   vm->GetFunction("vm_initialization")(
       static_cast<int>(device_.device_type), device_.device_id,
       static_cast<int>(memory::AllocatorType::kPooled),
@@ -191,7 +191,8 @@ tvm_model_t::tvm_model_t(const std::string &model_name,
   mod_ = vm;
 
   // Load model metadata
-  TypedPackedFunc<tvm::String()> fmetadata = vm.GetFunction("_metadata");
+  tvm::ffi::TypedFunction<tvm::String()> fmetadata =
+      vm.GetFunction("_metadata");
   metadata_ = nlohmann::json::parse(static_cast<std::string>(fmetadata()));
 
   // Load mlc-chat-config.json

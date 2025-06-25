@@ -4,6 +4,8 @@
 
 #include <dlpack/dlpack.h>
 #include <nlohmann/json.hpp>
+#include <tvm/ffi/container/shape.h>
+#include <tvm/runtime/int_tuple.h>
 #include <xgrammar/xgrammar.h>
 
 #include "../chat_manager.hpp"
@@ -34,13 +36,17 @@ public:
     auto fn = engine->get_vm_function("create_tir_paged_kv_cache");
     if (!fn.defined())
       throw exception("create_tir_paged_kv_cache not defined");
-    kv_cache_ = fn(
-        IntTuple{1}, // max_num_sequence
-        IntTuple{engine->get_metadata()["context_window_size"].operator int()},
-        IntTuple{engine->get_metadata()["prefill_chunk_size"].operator int()},
-        IntTuple{page_size}, // page size
-        IntTuple{engine->get_metadata()["sliding_window_size"].operator int() !=
-                 -1});
+    kv_cache_ =
+        fn(IntTuple{1}, // max_num_sequence
+           IntTuple{
+               engine->get_metadata()["context_window_size"].operator int()},
+           IntTuple{
+               engine->get_metadata()["prefill_chunk_size"].operator int()},
+           IntTuple{page_size}, // page size
+           IntTuple{
+               engine->get_metadata()["sliding_window_size"].operator int() !=
+               -1})
+            .cast<ObjectRef>();
     fkv_state_clear_ = engine->get_function("vm.builtin.kv_state_clear");
     fkv_state_add_sequence_ =
         engine->get_function("vm.builtin.kv_state_add_sequence");
@@ -91,33 +97,33 @@ public:
   }
 
   int get_num_available_pages() {
-    return fkv_cache_get_num_available_pages_(kv_cache_);
+    return fkv_cache_get_num_available_pages_(kv_cache_).cast<int>();
   }
 
   int get_total_sequence_length() {
-    return fkv_cache_get_total_sequence_length_(kv_cache_);
+    return fkv_cache_get_total_sequence_length_(kv_cache_).cast<int>();
   }
 
 private:
   ObjectRef kv_cache_;
 
-  PackedFunc fkv_state_clear_;
+  tvm::ffi::Function fkv_state_clear_;
 
-  PackedFunc fkv_state_add_sequence_;
+  tvm::ffi::Function fkv_state_add_sequence_;
 
-  PackedFunc fkv_state_fork_sequence_;
+  tvm::ffi::Function fkv_state_fork_sequence_;
 
-  PackedFunc fkv_state_remove_sequence_;
+  tvm::ffi::Function fkv_state_remove_sequence_;
 
-  PackedFunc fkv_state_begin_forward_;
+  tvm::ffi::Function fkv_state_begin_forward_;
 
-  PackedFunc fkv_state_end_forward_;
+  tvm::ffi::Function fkv_state_end_forward_;
 
-  PackedFunc fkv_state_popn_;
+  tvm::ffi::Function fkv_state_popn_;
 
-  PackedFunc fkv_cache_get_num_available_pages_;
+  tvm::ffi::Function fkv_cache_get_num_available_pages_;
 
-  PackedFunc fkv_cache_get_total_sequence_length_;
+  tvm::ffi::Function fkv_cache_get_total_sequence_length_;
 };
 
 struct tokenizer_info_t {
@@ -335,9 +341,10 @@ int32_t tvm_language_model_t::prefill(const std::vector<int32_t> &tokens) {
 
     // Embedding of the input
     NDArray embedding =
-        model_->get_vm_function("embed")(input, model_->get_params());
+        model_->get_vm_function("embed")(input, model_->get_params())
+            .cast<NDArray>();
     NDArray embedding_reshaped = embedding.CreateView(
-        ShapeTuple{1, embedding->shape[0], embedding->shape[1]},
+        tvm::ffi::Shape{1, embedding->shape[0], embedding->shape[1]},
         embedding.DataType());
 
     // Forward prefill
@@ -373,15 +380,17 @@ int32_t tvm_language_model_t::decode(int32_t last_token) {
 
   // Embed
   NDArray embed =
-      model_->get_vm_function("embed")(token_ids, model_->get_params());
+      model_->get_vm_function("embed")(token_ids, model_->get_params())
+          .cast<NDArray>();
   tvm::runtime::NDArray embed_reshaped = embed.CreateView(
-      tvm::ShapeTuple{1, 1, embed->shape[1]}, embed.DataType());
+      tvm::ffi::Shape{1, 1, embed->shape[1]}, embed.DataType());
 
   // In decode, the sequence length of new tokens are always 1
   kv_cache_->begin_forward(1);
   // Forward decode (output: [logits, kv_caches])
   ObjectRef output =
-      fdecode_(embed_reshaped, kv_cache_->get(), model_->get_params());
+      fdecode_(embed_reshaped, kv_cache_->get(), model_->get_params())
+          .cast<ObjectRef>();
   kv_cache_->end_forward();
 
   // Extract logits (1 x seq_len x vocab_size)
@@ -421,8 +430,10 @@ int32_t tvm_language_model_t::decode(int32_t last_token) {
   }
 
   // Sample token from logits
-  int32_t sampled_token = fsample_top_p_from_logits_(
-      logits, config.temperature, config.top_p, random_float(0.0, 1.0));
+  int32_t sampled_token =
+      fsample_top_p_from_logits_(logits, config.temperature, config.top_p,
+                                 random_float(0.0, 1.0))
+          .cast<int32_t>();
 
   // Register it to history
   history_.push_back(sampled_token);

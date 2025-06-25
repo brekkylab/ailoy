@@ -9,7 +9,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
-FetchContent_Declare(dlpack URL https://github.com/dmlc/dlpack/archive/refs/tags/v1.0.tar.gz EXCLUDE_FROM_ALL)
+FetchContent_Declare(dlpack URL https://github.com/dmlc/dlpack/archive/refs/tags/v1.1.tar.gz EXCLUDE_FROM_ALL)
 set(BUILD_MOCK OFF CACHE BOOL "DLPack disable mock build" FORCE)  # skip building mock in dlpack
 FetchContent_MakeAvailable(dlpack)
 

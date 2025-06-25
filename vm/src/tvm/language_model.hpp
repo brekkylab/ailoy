@@ -6,8 +6,8 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include <tvm/ffi/function.h>
 #include <tvm/runtime/ndarray.h>
-#include <tvm/runtime/packed_func.h>
 
 #include "exception.hpp"
 #include "module.hpp"
@@ -202,15 +202,15 @@ private:
 
   std::unordered_map<std::string, stream_mode_t> stream_modes_;
 
-  tvm::runtime::PackedFunc fembed_;
+  tvm::ffi::Function fembed_;
 
-  tvm::runtime::PackedFunc fprefill_;
+  tvm::ffi::Function fprefill_;
 
-  tvm::runtime::PackedFunc fdecode_;
+  tvm::ffi::Function fdecode_;
 
-  tvm::runtime::PackedFunc fapply_bitmask_inplace_;
+  tvm::ffi::Function fapply_bitmask_inplace_;
 
-  tvm::runtime::PackedFunc fsample_top_p_from_logits_;
+  tvm::ffi::Function fsample_top_p_from_logits_;
 };
 
 component_or_error_t
