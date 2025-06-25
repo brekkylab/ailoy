@@ -11,24 +11,47 @@ import { sharpImageToBase64 } from "./utils/image";
 
 /** Types for internal data structures */
 
-interface TextContent {
-  type: "text";
-  text: string;
+export class TextContent {
+  constructor(
+    public type: "text",
+    public text: string
+  ) {}
 }
 
-interface ImageContent {
-  type: "image_url";
-  image_url: {
-    url: string;
-  };
+export class ImageContent {
+  constructor(
+    public type: "image_url",
+    public image_url: {
+      url: string;
+    }
+  ) {}
+
+  static fromUrl(url: string) {
+    return new ImageContent("image_url", { url });
+  }
+
+  static async fromSharp(image: sharp.Sharp) {
+    return new ImageContent("image_url", {
+      url: await sharpImageToBase64(image),
+    });
+  }
 }
 
-interface AudioContent {
-  type: "input_audio";
-  input_audio: {
-    data: string;
-    format: "mp3" | "wav";
-  };
+export class AudioContent {
+  constructor(
+    public type: "input_audio",
+    public input_audio: {
+      data: string;
+      format: "mp3" | "wav";
+    }
+  ) {}
+
+  static async fromBytes(data: Buffer, format: "mp3" | "wav") {
+    return new AudioContent("input_audio", {
+      data: data.toString("base64"),
+      format,
+    });
+  }
 }
 
 interface FunctionData {
@@ -77,24 +100,6 @@ interface MessageOutput {
     | "length"
     | "error"
     | undefined;
-}
-
-/** Types for Agent's message inputs */
-
-export interface AgentInputImageUrl {
-  type: "image_url";
-  url: string;
-}
-
-export interface AgentInputImageSharp {
-  type: "image_sharp";
-  image: sharp.Sharp;
-}
-
-export interface AgentInputAudioBytes {
-  type: "audio_bytes";
-  data: Buffer;
-  format: "mp3" | "wav";
 }
 
 /** Types for Agent's responses */
@@ -540,14 +545,7 @@ export class Agent {
 
   async *query(
     /** The user message to send to the model */
-    message:
-      | string
-      | Array<
-          | string
-          | AgentInputImageUrl
-          | AgentInputImageSharp
-          | AgentInputAudioBytes
-        >,
+    message: string | Array<string | TextContent | ImageContent | AudioContent>,
     options?: {
       /** If True, enables reasoning capabilities (default: False) */
       reasoning?: boolean;
@@ -572,23 +570,8 @@ export class Agent {
       for (const content of message) {
         if (typeof content === "string") {
           contents.push({ type: "text", text: content });
-        } else if (content.type === "image_url") {
-          contents.push({ type: "image_url", image_url: { url: content.url } });
-        } else if (content.type === "image_sharp") {
-          contents.push({
-            type: "image_url",
-            image_url: { url: await sharpImageToBase64(content.image) },
-          });
-        } else if (content.type === "audio_bytes") {
-          contents.push({
-            type: "input_audio",
-            input_audio: {
-              data: content.data.toString("base64"),
-              format: content.format,
-            },
-          });
         } else {
-          throw Error("Unsupported content type");
+          contents.push(content);
         }
       }
 

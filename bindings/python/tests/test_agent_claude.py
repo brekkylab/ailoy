@@ -22,7 +22,7 @@ def runtime():
 
 @pytest.fixture(scope="module")
 def _agent(runtime: ai.Runtime):
-    with ai.Agent(runtime, ai.ClaudeModel(id="claude-sonnet-4-20250514", api_key=os.getenv("CLAUDE_API_KEY"))) as agent:
+    with ai.Agent(runtime, ai.APIModel(id="claude-sonnet-4-20250514", api_key=os.getenv("CLAUDE_API_KEY"))) as agent:
         yield agent
 
 

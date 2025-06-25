@@ -10,7 +10,7 @@ describe("Local Agent", async () => {
 
   before(async () => {
     rt = await ai.startRuntime();
-    agent = await ai.defineAgent(rt, ai.TVMModel({ id: "Qwen/Qwen3-8B" }));
+    agent = await ai.defineAgent(rt, ai.LocalModel({ id: "Qwen/Qwen3-8B" }));
   });
 
   beforeEach(() => {

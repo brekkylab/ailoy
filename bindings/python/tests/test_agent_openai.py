@@ -22,7 +22,7 @@ def runtime():
 
 @pytest.fixture(scope="module")
 def _agent(runtime: ai.Runtime):
-    with ai.Agent(runtime, ai.OpenAIModel(id="gpt-4.1-mini", api_key=os.getenv("OPENAI_API_KEY"))) as agent:
+    with ai.Agent(runtime, ai.APIModel(id="gpt-4.1-mini", api_key=os.getenv("OPENAI_API_KEY"))) as agent:
         yield agent
 
 
@@ -50,7 +50,7 @@ def test_image_input_from_url(agent: ai.Agent):
     for resp in agent.query(
         [
             "What is in this image",
-            ai.AgentInputImageUrl(url=test_image_url),
+            ai.ImageContent.from_url(test_image_url),
         ]
     ):
         resp.print()
@@ -68,7 +68,7 @@ def test_image_input_from_pillow(agent: ai.Agent):
 def test_audio_input_from_base64(runtime: ai.Runtime):
     with ai.Agent(
         runtime,
-        ai.OpenAIModel(id="gpt-4o-audio-preview", api_key=os.getenv("OPENAI_API_KEY")),
+        ai.APIModel(id="gpt-4o-audio-preview", provider="openai", api_key=os.getenv("OPENAI_API_KEY")),
     ) as agent:
         with urlopen(test_audio_url) as resp:
             audio_data = resp.read()
@@ -76,7 +76,7 @@ def test_audio_input_from_base64(runtime: ai.Runtime):
         for resp in agent.query(
             [
                 "What's in these recording?",
-                ai.AgentInputAudioBytes(data=audio_data, format="wav"),
+                ai.AudioContent.from_bytes(data=audio_data, format="wav"),
             ]
         ):
             agent.print(resp)

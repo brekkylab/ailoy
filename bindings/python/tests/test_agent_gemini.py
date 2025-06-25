@@ -22,7 +22,7 @@ def runtime():
 
 @pytest.fixture(scope="module")
 def _agent(runtime: ai.Runtime):
-    with ai.Agent(runtime, ai.GeminiModel(id="gemini-2.5-flash", api_key=os.getenv("GEMINI_API_KEY"))) as agent:
+    with ai.Agent(runtime, ai.APIModel(id="gemini-2.5-flash", api_key=os.getenv("GEMINI_API_KEY"))) as agent:
         yield agent
 
 
@@ -62,7 +62,7 @@ def test_audio_input_from_base64(agent: ai.Agent):
     for resp in agent.query(
         [
             "What's in these recording?",
-            ai.AgentInputAudioBytes(data=audio_data, format="wav"),
+            ai.AudioContent.from_bytes(data=audio_data, format="wav"),
         ]
     ):
         agent.print(resp)

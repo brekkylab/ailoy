@@ -1,0 +1,35 @@
+from typing import Literal, Optional
+
+from pydantic import BaseModel
+
+LocalModelProvider = Literal["tvm"]
+LocalModelId = Literal["Qwen/Qwen3-0.6B", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B"]
+Quantization = Literal["q4f16_1"]
+
+
+class LocalModel(BaseModel):
+    id: LocalModelId
+    provider: LocalModelProvider = "tvm"
+    quantization: Quantization = "q4f16_1"
+    device: int = 0
+
+    @property
+    def default_system_message(self) -> Optional[str]:
+        if self.id.startswith("Qwen"):
+            return "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
+        return None
+
+    @property
+    def component_type(self) -> str:
+        if self.provider == "tvm":
+            return "tvm_language_model"
+        raise ValueError(f"Unknown local model provider: {self.provider}")
+
+    def to_attrs(self) -> dict:
+        if self.provider == "tvm":
+            return {
+                "model": self.id,
+                "quantization": self.quantization,
+                "device": self.device,
+            }
+        raise ValueError(f"Unknown local model provider: {self.provider}")

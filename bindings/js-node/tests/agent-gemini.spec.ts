@@ -16,7 +16,7 @@ if (process.env.GEMINI_API_KEY !== undefined) {
       rt = await ai.startRuntime();
       agent = await ai.defineAgent(
         rt,
-        ai.GeminiModel({
+        ai.APIModel({
           id: "gemini-2.5-flash",
           apiKey: process.env.GEMINI_API_KEY!,
         })
@@ -47,10 +47,7 @@ if (process.env.GEMINI_API_KEY !== undefined) {
       const image = sharp(buffer);
       for await (const resp of agent.query([
         "What is in this image?",
-        {
-          type: "image_sharp",
-          image,
-        },
+        await ai.ImageContent.fromSharp(image),
       ])) {
         agent.print(resp);
       }
@@ -62,11 +59,7 @@ if (process.env.GEMINI_API_KEY !== undefined) {
       const buffer = Buffer.from(arrayBuffer);
       for await (const resp of agent.query([
         "What's in these recording?",
-        {
-          type: "audio_bytes",
-          data: buffer,
-          format: "wav",
-        },
+        await ai.AudioContent.fromBytes(buffer, "wav"),
       ])) {
         agent.print(resp);
       }

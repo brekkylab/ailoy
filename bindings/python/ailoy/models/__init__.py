@@ -1,14 +1,7 @@
-from .anthropic import ClaudeModel
-from .google import GeminiModel
-from .openai import OpenAIModel
-from .tvm import TVMModel
-
-AiloyModel = ClaudeModel | GeminiModel | OpenAIModel | TVMModel
+from .api_model import APIModel
+from .local_model import LocalModel
 
 __all__ = [
-    "AiloyModel",
-    "ClaudeModel",
-    "GeminiModel",
-    "OpenAIModel",
-    "TVMModel",
+    "APIModel",
+    "LocalModel",
 ]

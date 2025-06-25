@@ -14,7 +14,7 @@ if (process.env.CLAUDE_API_KEY !== undefined) {
       rt = await ai.startRuntime();
       agent = await ai.defineAgent(
         rt,
-        ai.ClaudeModel({
+        ai.APIModel({
           id: "claude-sonnet-4-20250514",
           apiKey: process.env.CLAUDE_API_KEY!,
         })
@@ -45,10 +45,7 @@ if (process.env.CLAUDE_API_KEY !== undefined) {
       const image = sharp(buffer);
       for await (const resp of agent.query([
         "What is in this image?",
-        {
-          type: "image_sharp",
-          image,
-        },
+        await ai.ImageContent.fromSharp(image),
       ])) {
         agent.print(resp);
       }

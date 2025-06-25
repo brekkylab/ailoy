@@ -6,6 +6,7 @@ from collections.abc import Callable, Generator
 from functools import partial
 from pathlib import Path
 from typing import (
+    Annotated,
     Any,
     Literal,
     Optional,
@@ -15,13 +16,13 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 import jmespath
 from PIL.Image import Image
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from rich.console import Console
 from rich.panel import Panel
 
 from ailoy.ailoy_py import generate_uuid
 from ailoy.mcp import MCPServer, MCPTool, StdioServerParameters
-from ailoy.models import AiloyModel
+from ailoy.models import APIModel, LocalModel
 from ailoy.runtime import Runtime
 from ailoy.tools import DocstringParsingException, TypeHintParsingException, get_json_schema
 from ailoy.utils.image import pillow_image_to_base64
@@ -41,6 +42,14 @@ class ImageContent(BaseModel):
     type: Literal["image_url"] = "image_url"
     image_url: UrlData
 
+    @staticmethod
+    def from_url(url: str):
+        return ImageContent(image_url={"url": url})
+
+    @staticmethod
+    def from_pillow(image: Image):
+        return ImageContent(image_url={"url": pillow_image_to_base64(image)})
+
 
 class AudioContent(BaseModel):
     class AudioData(BaseModel):
@@ -49,6 +58,10 @@ class AudioContent(BaseModel):
 
     type: Literal["input_audio"] = "input_audio"
     input_audio: AudioData
+
+    @staticmethod
+    def from_bytes(data: bytes, format: Literal["mp3", "wav"]):
+        return AudioContent(input_audio={"data": base64.b64encode(data).decode("utf-8"), "format": format})
 
 
 class FunctionData(BaseModel):
@@ -98,24 +111,6 @@ Message = Union[
 class MessageOutput(BaseModel):
     message: AssistantMessage
     finish_reason: Optional[Literal["stop", "tool_calls", "invalid_tool_call", "length", "error"]] = None
-
-
-## Types for agent's message inputs
-
-
-class AgentInputImageUrl(BaseModel):
-    url: str
-
-
-class AgentInputImagePillow(BaseModel):
-    image: Image
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-
-class AgentInputAudioBytes(BaseModel):
-    data: bytes
-    format: Literal["mp3", "wav"]
 
 
 ## Types for agent's responses
@@ -297,7 +292,7 @@ class Agent:
     def __init__(
         self,
         runtime: Runtime,
-        model: AiloyModel,
+        model: APIModel | LocalModel,
         system_message: Optional[str] = None,
     ):
         """
@@ -338,7 +333,7 @@ class Agent:
     def __exit__(self, type, value, traceback):
         self.delete()
 
-    def define(self, model: AiloyModel) -> None:
+    def define(self, model: APIModel | LocalModel) -> None:
         """
         Initializes the agent by defining its model in the runtime.
         This must be called before running the agent. If already initialized, this is a no-op.
@@ -386,7 +381,7 @@ class Agent:
 
     def query(
         self,
-        message: str | list[str | Image | AgentInputImageUrl | AgentInputImagePillow | AgentInputAudioBytes],
+        message: str | list[str | Image | dict | TextContent | ImageContent | AudioContent],
         reasoning: bool = False,
     ) -> Generator[AgentResponse, None, None]:
         """
@@ -414,22 +409,15 @@ class Agent:
                 if isinstance(content, str):
                     contents.append(TextContent(text=content))
                 elif isinstance(content, Image):
-                    contents.append(ImageContent(image_url={"url": pillow_image_to_base64(content)}))
-                elif isinstance(content, AgentInputImageUrl):
-                    contents.append(ImageContent(image_url={"url": content.url}))
-                elif isinstance(content, AgentInputImagePillow):
-                    contents.append(ImageContent(image_url={"url": pillow_image_to_base64(content.image)}))
-                elif isinstance(content, AgentInputAudioBytes):
-                    contents.append(
-                        AudioContent(
-                            input_audio={
-                                "data": base64.b64encode(content.data).decode("utf-8"),
-                                "format": content.format,
-                            }
-                        )
+                    contents.append(ImageContent.from_pillow(image=content))
+                elif isinstance(content, dict):
+                    ta: TypeAdapter[TextContent | ImageContent | AudioContent] = TypeAdapter(
+                        Annotated[TextContent | ImageContent | AudioContent, Field(discriminator="type")]
                     )
+                    validated_content = ta.validate_python(content)
+                    contents.append(validated_content)
                 else:
-                    raise ValueError(f"Unsupported content type: {type(content)}")
+                    contents.append(content)
 
             self._messages.append(UserMessage(content=contents))
         else:

@@ -1,7 +1,5 @@
 export { Runtime, startRuntime } from "./runtime";
 export type {
-  AgentInputImageUrl,
-  AgentInputImageSharp,
   AgentResponseText,
   AgentResponseToolCall,
   AgentResponseToolResult,
@@ -13,14 +11,15 @@ export type {
   ToolDefinitionRESTAPI,
   ToolDefinition,
 } from "./agent";
-export { bearerAutenticator, Agent, defineAgent } from "./agent";
 export {
-  AiloyModel,
-  ClaudeModel,
-  GeminiModel,
-  OpenAIModel,
-  TVMModel,
-} from "./models";
+  TextContent,
+  ImageContent,
+  AudioContent,
+  bearerAutenticator,
+  Agent,
+  defineAgent,
+} from "./agent";
+export { APIModel, LocalModel } from "./models";
 export type {
   VectorStoreInsertItem,
   VectorStoreRetrieveItem,

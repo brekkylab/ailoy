@@ -16,7 +16,7 @@ if (process.env.OPENAI_API_KEY !== undefined) {
       rt = await ai.startRuntime();
       agent = await ai.defineAgent(
         rt,
-        ai.OpenAIModel({
+        ai.APIModel({
           id: "gpt-4.1-mini",
           apiKey: process.env.OPENAI_API_KEY!,
         })
@@ -43,10 +43,7 @@ if (process.env.OPENAI_API_KEY !== undefined) {
     it("Image input from URL", async () => {
       for await (const resp of agent.query([
         "What is in this image?",
-        {
-          type: "image_url",
-          url: testImageUrl,
-        },
+        ai.ImageContent.fromUrl(testImageUrl),
       ])) {
         agent.print(resp);
       }
@@ -59,10 +56,7 @@ if (process.env.OPENAI_API_KEY !== undefined) {
       const image = sharp(buffer);
       for await (const resp of agent.query([
         "What is in this image?",
-        {
-          type: "image_sharp",
-          image,
-        },
+        await ai.ImageContent.fromSharp(image),
       ])) {
         agent.print(resp);
       }
@@ -71,9 +65,10 @@ if (process.env.OPENAI_API_KEY !== undefined) {
     it("Audio input from base64", async () => {
       const audioAgent = await ai.defineAgent(
         rt,
-        ai.OpenAIModel({
+        ai.APIModel({
           // OpenAI general models cannot handle audio inputs.
           id: "gpt-4o-audio-preview",
+          provider: "openai",
           apiKey: process.env.OPENAI_API_KEY!,
         })
       );
@@ -83,11 +78,7 @@ if (process.env.OPENAI_API_KEY !== undefined) {
       const buffer = Buffer.from(arrayBuffer);
       for await (const resp of audioAgent.query([
         "What's in these recording?",
-        {
-          type: "audio_bytes",
-          data: buffer,
-          format: "wav",
-        },
+        await ai.AudioContent.fromBytes(buffer, "wav"),
       ])) {
         audioAgent.print(resp);
       }

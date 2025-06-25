@@ -19,7 +19,7 @@ def runtime():
 
 @pytest.fixture(scope="module")
 def _agent(runtime: ai.Runtime):
-    with ai.Agent(runtime, ai.TVMModel(id="Qwen/Qwen3-8B")) as agent:
+    with ai.Agent(runtime, ai.LocalModel(id="Qwen/Qwen3-8B")) as agent:
         yield agent
 
 
