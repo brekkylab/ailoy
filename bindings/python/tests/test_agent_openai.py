@@ -61,12 +61,7 @@ def test_image_input_from_pillow(agent: ai.Agent):
         image_data = resp.read()
         image = Image.open(io.BytesIO(image_data))
 
-    for resp in agent.query(
-        [
-            "What is in this image",
-            ai.AgentInputImagePillow(image=image),
-        ]
-    ):
+    for resp in agent.query(["What is in this image", image]):
         resp.print()
 
 
