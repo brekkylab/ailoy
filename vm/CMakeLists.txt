@@ -68,7 +68,7 @@ target_link_libraries(ailoy_vm_obj PRIVATE magic_enum)
 FetchContent_Declare(
     tokenizers-cpp
     GIT_REPOSITORY https://github.com/mlc-ai/tokenizers-cpp.git
-    GIT_TAG aae12091f520ae2eababfa95e45436e9953992d4
+    GIT_TAG 8fd3b64057db4ddb5a49691cf02009f0373900d5
     EXCLUDE_FROM_ALL
 )
 if(NODE)
@@ -90,7 +90,7 @@ if(AILOY_WITH_TVM)
         FetchContent_Declare(
             tvm
             GIT_REPOSITORY https://github.com/brekkylab/relax.git
-            GIT_TAG a02a2d4cc7f20770429ccbb99d7c9b989574e0d6
+            GIT_TAG e2aa6d0ebf9bd82632a510c00f3966eeee89e68a
             EXCLUDE_FROM_ALL
         )
         if(APPLE)
