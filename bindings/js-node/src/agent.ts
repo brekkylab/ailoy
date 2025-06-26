@@ -54,7 +54,7 @@ export class AudioContent {
   }
 }
 
-interface FunctionData {
+export interface FunctionData {
   type: "function";
   id?: string;
   function: {
@@ -63,17 +63,17 @@ interface FunctionData {
   };
 }
 
-interface SystemMessage {
+export interface SystemMessage {
   role: "system";
   content: string | Array<TextContent>;
 }
 
-interface UserMessage {
+export interface UserMessage {
   role: "user";
   content: string | Array<TextContent | ImageContent | AudioContent>;
 }
 
-interface AssistantMessage {
+export interface AssistantMessage {
   role: "assistant";
   content?: string | Array<TextContent>;
   name?: string;
@@ -83,15 +83,19 @@ interface AssistantMessage {
   reasoning?: Array<{ type: "text"; text: string }>;
 }
 
-interface ToolMessage {
+export interface ToolMessage {
   role: "tool";
   content: Array<{ type: "text"; text: string }>;
   tool_call_id?: string;
 }
 
-type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
+export type Message =
+  | SystemMessage
+  | UserMessage
+  | AssistantMessage
+  | ToolMessage;
 
-interface MessageOutput {
+export interface MessageOutput {
   message: AssistantMessage;
   finish_reason:
     | "stop"
@@ -139,7 +143,7 @@ export type AgentResponse =
 
 /** Types and functions related to Tools */
 
-interface Tool {
+export interface Tool {
   desc: ToolDescription;
   call: (input: any) => Promise<any>;
 }

@@ -90,11 +90,12 @@ npm install ailoy-node
 import {
   startRuntime,
   defineAgent,
+  LocalModel
 } from "ailoy-node";
 
 (async () => {
   const rt = await startRuntime();
-  const agent = await defineAgent(rt, "Qwen/Qwen3-0.6B");
+  const agent = await defineAgent(rt, LocalModel({id: "Qwen/Qwen3-0.6B"}));
   for await (const resp of agent.query("Hello world!")) {
     agent.print(resp);
   }
@@ -110,10 +111,10 @@ pip install ailoy-py
 ```
 
 ```python
-from ailoy import Runtime, Agent
+from ailoy import Runtime, Agent, LocalModel
 
 rt = Runtime()
-with Agent(rt, model_name="Qwen/Qwen3-0.6B") as agent:
+with Agent(rt, LocalModel("Qwen/Qwen3-0.6B")) as agent:
     for resp in agent.query("Hello world!"):
         resp.print()
 rt.stop()

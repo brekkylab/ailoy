@@ -6,14 +6,14 @@ export type LocalModelId =
 export type LocalModelBackend = "tvm";
 export type Quantization = "q4f16_1";
 
-interface LocalModelArgs {
+export interface LocalModelArgs {
   id: LocalModelId;
   backend?: LocalModelBackend;
   quantization?: Quantization;
   device?: number;
 }
 
-export class LocalModel {
+export class _LocalModel {
   id: LocalModelId;
   backend: LocalModelBackend;
   quantization: Quantization;
@@ -52,6 +52,6 @@ export class LocalModel {
   }
 }
 
-export default function (args: LocalModelArgs): LocalModel {
-  return new LocalModel(args);
+export function LocalModel(args: LocalModelArgs): _LocalModel {
+  return new _LocalModel(args);
 }

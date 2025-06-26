@@ -1,5 +1,7 @@
-import APIModel, { APIModel as _APIModel } from "./apiModel";
-import LocalModel, { LocalModel as _LocalModel } from "./localModel";
+import { _APIModel } from "./apiModel";
+import { _LocalModel } from "./localModel";
 
-export type AiloyModel = _APIModel | _LocalModel;
-export { APIModel, LocalModel };
+type AiloyModel = _APIModel | _LocalModel;
+export { AiloyModel };
+export * from "./apiModel";
+export * from "./localModel";

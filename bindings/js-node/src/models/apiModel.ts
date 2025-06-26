@@ -1,4 +1,4 @@
-const openAIModelIds = [
+export const openAIModelIds = [
   "o4-mini",
   "o3",
   "o3-pro",
@@ -9,14 +9,16 @@ const openAIModelIds = [
   "gpt-4.1-mini",
   "gpt-4.1-nano",
 ] as const;
-const geminiModelIds = [
+
+export const geminiModelIds = [
   "gemini-2.5-flash",
   "gemini-2.5-pro",
   "gemini-2.0-flash",
   "gemini-1.5-flash",
   "gemini-1.5-pro",
 ] as const;
-const claudeModelIds = [
+
+export const claudeModelIds = [
   "claude-sonnet-4-20250514",
   "claude-3-7-sonnet-20250219",
   "claude-3-5-sonnet-20241022",
@@ -35,13 +37,13 @@ export type APIModelId =
 
 export type APIModelProvider = "openai" | "gemini" | "claude";
 
-interface APIModelArgs {
+export interface APIModelArgs {
   id: APIModelId;
   provider?: APIModelProvider;
   apiKey: string;
 }
 
-export class APIModel {
+export class _APIModel {
   id: APIModelId;
   provider: APIModelProvider;
   apiKey: string;
@@ -76,6 +78,6 @@ export class APIModel {
   }
 }
 
-export default function (args: APIModelArgs): APIModel {
-  return new APIModel(args);
+export function APIModel(args: APIModelArgs): _APIModel {
+  return new _APIModel(args);
 }
