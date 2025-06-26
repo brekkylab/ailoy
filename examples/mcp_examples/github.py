@@ -1,17 +1,17 @@
 import os
 
 from mcp import StdioServerParameters
-from ailoy import Runtime, Agent
+import ailoy as ai
 
 
 def main():
-    rt = Runtime()
+    rt = ai.Runtime()
 
     github_pat = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", None)
     if github_pat is None:
         github_pat = input("Enter GITHUB_PERSONAL_ACCESS_TOKEN: ")
 
-    with Agent(rt, model_name="Qwen/Qwen3-8B") as agent:
+    with ai.Agent(rt, ai.LocalModel("Qwen/Qwen3-8B")) as agent:
         agent.add_tools_from_mcp_server(
             "github",
             StdioServerParameters(
