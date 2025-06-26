@@ -3,33 +3,33 @@ export type LocalModelId =
   | "Qwen/Qwen3-4B"
   | "Qwen/Qwen3-1.7B"
   | "Qwen/Qwen3-0.6B";
-export type LocalModelProvider = "tvm";
+export type LocalModelBackend = "tvm";
 export type Quantization = "q4f16_1";
 
 interface LocalModelArgs {
   id: LocalModelId;
-  provider?: LocalModelProvider;
+  backend?: LocalModelBackend;
   quantization?: Quantization;
   device?: number;
 }
 
 export class LocalModel {
   id: LocalModelId;
-  provider: LocalModelProvider;
+  backend: LocalModelBackend;
   quantization: Quantization;
   device: number;
   readonly componentType: string;
 
   constructor(args: LocalModelArgs) {
     this.id = args.id;
-    this.provider = args.provider ?? "tvm";
+    this.backend = args.backend ?? "tvm";
     this.quantization = args.quantization ?? "q4f16_1";
     this.device = args.device ?? 0;
 
-    if (this.provider === "tvm") {
+    if (this.backend === "tvm") {
       this.componentType = "tvm_language_model";
     } else {
-      throw Error(`Unknown local model provider: ${this.provider}`);
+      throw Error(`Unknown local model backend: ${this.backend}`);
     }
   }
 
@@ -41,14 +41,14 @@ export class LocalModel {
   }
 
   toAttrs() {
-    if (this.provider === "tvm") {
+    if (this.backend === "tvm") {
       return {
         model: this.id,
         quantization: this.quantization,
         device: this.device,
       };
     }
-    throw Error(`Unknown local model provider: ${this.provider}`);
+    throw Error(`Unknown local model backend: ${this.backend}`);
   }
 }
 

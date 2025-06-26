@@ -2,14 +2,14 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-LocalModelProvider = Literal["tvm"]
+LocalModelBackend = Literal["tvm"]
 LocalModelId = Literal["Qwen/Qwen3-0.6B", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B"]
 Quantization = Literal["q4f16_1"]
 
 
 class LocalModel(BaseModel):
     id: LocalModelId
-    provider: LocalModelProvider = "tvm"
+    backend: LocalModelBackend = "tvm"
     quantization: Quantization = "q4f16_1"
     device: int = 0
 
@@ -21,15 +21,15 @@ class LocalModel(BaseModel):
 
     @property
     def component_type(self) -> str:
-        if self.provider == "tvm":
+        if self.backend == "tvm":
             return "tvm_language_model"
-        raise ValueError(f"Unknown local model provider: {self.provider}")
+        raise ValueError(f"Unknown local model backend: {self.backend}")
 
     def to_attrs(self) -> dict:
-        if self.provider == "tvm":
+        if self.backend == "tvm":
             return {
                 "model": self.id,
                 "quantization": self.quantization,
                 "device": self.device,
             }
-        raise ValueError(f"Unknown local model provider: {self.provider}")
+        raise ValueError(f"Unknown local model backend: {self.backend}")

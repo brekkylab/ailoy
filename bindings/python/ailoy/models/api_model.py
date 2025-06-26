@@ -51,7 +51,7 @@ class APIModel(BaseModel):
             elif self.id in get_args(ClaudeModelId):
                 self.provider = "claude"
             else:
-                raise ValidationError("Failed to infer the provider. Please provide an explicit provider.")
+                raise ValidationError("Failed to infer the model provider. Please provide an explicit model provider.")
 
         return self
 
