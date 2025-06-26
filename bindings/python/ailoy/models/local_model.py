@@ -1,13 +1,14 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic.dataclasses import dataclass
 
 LocalModelBackend = Literal["tvm"]
 LocalModelId = Literal["Qwen/Qwen3-0.6B", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B"]
 Quantization = Literal["q4f16_1"]
 
 
-class LocalModel(BaseModel):
+@dataclass
+class LocalModel:
     id: LocalModelId
     backend: LocalModelBackend = "tvm"
     quantization: Quantization = "q4f16_1"

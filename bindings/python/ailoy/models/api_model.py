@@ -1,6 +1,7 @@
 from typing import Literal, Optional, Self, get_args
 
-from pydantic import BaseModel, ValidationError, model_validator
+from pydantic import model_validator
+from pydantic.dataclasses import dataclass
 
 OpenAIModelId = Literal[
     "o4-mini",
@@ -36,10 +37,11 @@ ClaudeModelId = Literal[
 APIModelProvider = Literal["openai", "gemini", "claude"]
 
 
-class APIModel(BaseModel):
+@dataclass
+class APIModel:
     id: OpenAIModelId | GeminiModelId | ClaudeModelId | str
-    provider: Optional[APIModelProvider] = None
     api_key: str
+    provider: Optional[APIModelProvider] = None
 
     @model_validator(mode="after")
     def validate_provider(self) -> Self:
@@ -51,7 +53,10 @@ class APIModel(BaseModel):
             elif self.id in get_args(ClaudeModelId):
                 self.provider = "claude"
             else:
-                raise ValidationError("Failed to infer the model provider. Please provide an explicit model provider.")
+                raise ValueError(
+                    f'Failed to infer the model provider based on the model id "{self.id}". '
+                    "Please provide an explicit model provider."
+                )
 
         return self
 

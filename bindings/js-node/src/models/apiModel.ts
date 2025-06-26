@@ -59,7 +59,7 @@ export class APIModel {
         args.provider = "claude";
       } else {
         throw Error(
-          `Failed to infer the model provider. Please provide an explicit model provider.`
+          `Failed to infer the model provider based on the model id "${this.id}". Please provide an explicit model provider.`
         );
       }
     }

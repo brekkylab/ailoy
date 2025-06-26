@@ -22,7 +22,7 @@ def runtime():
 
 @pytest.fixture(scope="module")
 def _agent(runtime: ai.Runtime):
-    with ai.Agent(runtime, ai.APIModel(id="gemini-2.5-flash", api_key=os.getenv("GEMINI_API_KEY"))) as agent:
+    with ai.Agent(runtime, ai.APIModel("gemini-2.5-flash", api_key=os.getenv("GEMINI_API_KEY"))) as agent:
         yield agent
 
 

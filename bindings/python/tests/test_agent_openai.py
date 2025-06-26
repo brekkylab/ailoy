@@ -22,7 +22,7 @@ def runtime():
 
 @pytest.fixture(scope="module")
 def _agent(runtime: ai.Runtime):
-    with ai.Agent(runtime, ai.APIModel(id="gpt-4.1-mini", api_key=os.getenv("OPENAI_API_KEY"))) as agent:
+    with ai.Agent(runtime, ai.APIModel("gpt-4.1-mini", api_key=os.getenv("OPENAI_API_KEY"))) as agent:
         yield agent
 
 
