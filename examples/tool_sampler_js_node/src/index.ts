@@ -1,14 +1,9 @@
-import {
-  startRuntime,
-  defineAgent,
-  ToolAuthenticator,
-  bearerAutenticator,
-} from "ailoy-node";
+import * as ai from "ailoy-node";
 import { select, password, input } from "@inquirer/prompts";
 
 async function main() {
   // Start the Ailoy runtime
-  const rt = await startRuntime();
+  const rt = await ai.startRuntime();
 
   // Select and initialize an agent (model)
   async function getAgent() {
@@ -41,9 +36,12 @@ async function main() {
       let apiKey = process.env.OPENAI_API_KEY;
       if (apiKey === undefined)
         apiKey = await password({ message: "Enter OpenAI API key:" });
-      return await defineAgent(rt, model_name as any, { apiKey });
+      return await ai.defineAgent(
+        rt,
+        ai.APIModel({ id: model_name as any, apiKey })
+      );
     } else {
-      return await defineAgent(rt, model_name as any);
+      return await ai.defineAgent(rt, ai.LocalModel({ id: model_name as any }));
     }
   }
 
@@ -79,14 +77,14 @@ async function main() {
         api_key = await password({ message: "Enter TMDB API key:" });
       }
       agent.addToolsFromPreset("tmdb", {
-        authenticator: bearerAutenticator(api_key),
+        authenticator: ai.bearerAutenticator(api_key),
       });
     } else if (preset_name === "nytimes") {
       let api_key = process.env.NYTIMES_API_KEY;
       if (api_key === undefined) {
         api_key = await password({ message: "Enter NYTimes API key:" });
       }
-      const authenticator: ToolAuthenticator = (request: any) => {
+      const authenticator: ai.ToolAuthenticator = (request: any) => {
         let url = new URL(request.url);
         url.searchParams.append("api-key", api_key);
         request.url = url.toString();
@@ -123,6 +121,7 @@ async function main() {
     }
   }
 
+  await agent.delete();
   await rt.stop();
 }
 

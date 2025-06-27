@@ -13,14 +13,14 @@ pip install ailoy-py
 ## Quickstart
 
 ```python
-from ailoy import Runtime, Agent
+from ailoy import Runtime, Agent, LocalModel
 
 # The runtime must be started to use Ailoy
 rt = Runtime()
 
 # Defines an agent
 # During this step, the model parameters are downloaded and the LLM is set up for execution
-with Agent(rt, model_name="Qwen/Qwen3-0.6B") as agent:
+with Agent(rt, LocalModel("Qwen/Qwen3-0.6B")) as agent:
     # This is where the actual LLM call happens
     for resp in agent.query("Please give me a short poem about AI"):
         agent.print(resp)

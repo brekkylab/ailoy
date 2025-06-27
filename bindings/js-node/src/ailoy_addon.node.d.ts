@@ -1,4 +1,4 @@
-type NDArrayDtype =
+export type NDArrayDtype =
   | "uint8"
   | "uint16"
   | "uint32"
@@ -10,7 +10,7 @@ type NDArrayDtype =
   | "float32"
   | "float64";
 
-type NDArrayData =
+export type NDArrayData =
   | Uint8Array
   | Uint16Array
   | Uint32Array
@@ -22,7 +22,7 @@ type NDArrayData =
   | Float32Array
   | Float64Array;
 
-declare class NDArray {
+export declare class NDArray {
   constructor(arg: {
     shape: Array<number>;
     dtype: NDArrayDtype;
@@ -33,7 +33,7 @@ declare class NDArray {
   getData(): NDArrayData;
 }
 
-type PacketType =
+export type PacketType =
   | "connect"
   | "disconnect"
   | "subscribe"
@@ -42,20 +42,20 @@ type PacketType =
   | "respond"
   | "respond_execute";
 
-type InstructionType =
+export type InstructionType =
   | "call_function"
   | "call_method"
   | "define_compoennt"
   | "delete_component";
 
-interface Packet {
+export interface Packet {
   packet_type: PacketType;
   instruction_type: InstructionType | undefined;
   headers: Array<string | boolean | number>;
   body: Record<string, any>;
 }
 
-declare class BrokerClient {
+export declare class BrokerClient {
   constructor(url: string);
 
   send_type1(txid: string, ptype: "connect" | "disconnect"): boolean;
@@ -142,17 +142,8 @@ declare class BrokerClient {
   listen(): Promise<Packet | null>;
 }
 
-declare function startThreads(url: string): void;
+export declare function startThreads(url: string): void;
 
-declare function stopThreads(url: string): void;
+export declare function stopThreads(url: string): void;
 
-declare function generateUUID(): string;
-
-export {
-  Packet,
-  NDArray,
-  BrokerClient,
-  startThreads,
-  stopThreads,
-  generateUUID,
-};
+export declare function generateUUID(): string;

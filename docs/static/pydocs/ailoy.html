@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="generator" content="pdoc 15.0.3"/>
+    <meta name="generator" content="pdoc 15.0.4"/>
     <title>ailoy API documentation</title>
             <link rel="icon" href="/ailoy/img/favicon.ico"/>
 
@@ -39,8 +39,10 @@
                     <li><a href="ailoy/agent.html">agent</a></li>
                     <li><a href="ailoy/ailoy_py.html">ailoy_py</a></li>
                     <li><a href="ailoy/mcp.html">mcp</a></li>
+                    <li><a href="ailoy/models.html">models</a></li>
                     <li><a href="ailoy/runtime.html">runtime</a></li>
                     <li><a href="ailoy/tools.html">tools</a></li>
+                    <li><a href="ailoy/utils.html">utils</a></li>
                     <li><a href="ailoy/vector_store.html">vector_store</a></li>
             </ul>
 
@@ -74,14 +76,14 @@ ailoy    </h1>
 <h2 id="quickstart">Quickstart</h2>
 
 <div class="pdoc-code codehilite">
-<pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ailoy</span><span class="w"> </span><span class="kn">import</span> <span class="n">Runtime</span><span class="p">,</span> <span class="n">Agent</span>
+<pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ailoy</span><span class="w"> </span><span class="kn">import</span> <span class="n">Runtime</span><span class="p">,</span> <span class="n">Agent</span><span class="p">,</span> <span class="n">LocalModel</span>
 
 <span class="c1"># The runtime must be started to use Ailoy</span>
 <span class="n">rt</span> <span class="o">=</span> <span class="n">Runtime</span><span class="p">()</span>
 
 <span class="c1"># Defines an agent</span>
 <span class="c1"># During this step, the model parameters are downloaded and the LLM is set up for execution</span>
-<span class="k">with</span> <span class="n">Agent</span><span class="p">(</span><span class="n">rt</span><span class="p">,</span> <span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;Qwen/Qwen3-0.6B&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">agent</span><span class="p">:</span>
+<span class="k">with</span> <span class="n">Agent</span><span class="p">(</span><span class="n">rt</span><span class="p">,</span> <span class="n">LocalModel</span><span class="p">(</span><span class="s2">&quot;Qwen/Qwen3-0.6B&quot;</span><span class="p">))</span> <span class="k">as</span> <span class="n">agent</span><span class="p">:</span>
     <span class="c1"># This is where the actual LLM call happens</span>
     <span class="k">for</span> <span class="n">resp</span> <span class="ow">in</span> <span class="n">agent</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="s2">&quot;Please give me a short poem about AI&quot;</span><span class="p">):</span>
         <span class="n">agent</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">resp</span><span class="p">)</span>
@@ -152,9 +154,10 @@ ailoy    </h1>
 </span><span id="L-16"><a href="#L-16"><span class="linenos">16</span></a>    <span class="k">else</span><span class="p">:</span>  <span class="c1"># fallback docstring</span>
 </span><span id="L-17"><a href="#L-17"><span class="linenos">17</span></a>        <span class="vm">__doc__</span> <span class="o">=</span> <span class="s2">&quot;# ailoy-py</span><span class="se">\n\n</span><span class="s2">Python binding for Ailoy runtime APIs&quot;</span>
 </span><span id="L-18"><a href="#L-18"><span class="linenos">18</span></a>
-</span><span id="L-19"><a href="#L-19"><span class="linenos">19</span></a><span class="kn">from</span><span class="w"> </span><span class="nn">.agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">Agent</span>  <span class="c1"># noqa: F401</span>
-</span><span id="L-20"><a href="#L-20"><span class="linenos">20</span></a><span class="kn">from</span><span class="w"> </span><span class="nn">.runtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncRuntime</span><span class="p">,</span> <span class="n">Runtime</span>  <span class="c1"># noqa: F401</span>
-</span><span id="L-21"><a href="#L-21"><span class="linenos">21</span></a><span class="kn">from</span><span class="w"> </span><span class="nn">.vector_store</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorStore</span>  <span class="c1"># noqa: F401</span>
+</span><span id="L-19"><a href="#L-19"><span class="linenos">19</span></a><span class="kn">from</span><span class="w"> </span><span class="nn">.agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">Agent</span><span class="p">,</span> <span class="n">AudioContent</span><span class="p">,</span> <span class="n">BearerAuthenticator</span><span class="p">,</span> <span class="n">ImageContent</span><span class="p">,</span> <span class="n">TextContent</span><span class="p">,</span> <span class="n">ToolAuthenticator</span>  <span class="c1"># noqa: F401</span>
+</span><span id="L-20"><a href="#L-20"><span class="linenos">20</span></a><span class="kn">from</span><span class="w"> </span><span class="nn">.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIModel</span><span class="p">,</span> <span class="n">LocalModel</span>  <span class="c1"># noqa: F401</span>
+</span><span id="L-21"><a href="#L-21"><span class="linenos">21</span></a><span class="kn">from</span><span class="w"> </span><span class="nn">.runtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncRuntime</span><span class="p">,</span> <span class="n">Runtime</span>  <span class="c1"># noqa: F401</span>
+</span><span id="L-22"><a href="#L-22"><span class="linenos">22</span></a><span class="kn">from</span><span class="w"> </span><span class="nn">.vector_store</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorStore</span>  <span class="c1"># noqa: F401</span>
 </span></pre></div>
 
 

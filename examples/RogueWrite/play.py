@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-from ailoy import Agent, Runtime
+import ailoy as ai
 from rich.console import Console
 from rich.panel import Panel
 
@@ -65,8 +65,8 @@ def main():
 
     levels = [Level(i, **content) for i, content in enumerate(LEVEL_CONTENTS)]
 
-    rt = Runtime()
-    agent = Agent(rt, model_name="Qwen/Qwen3-8B", system_message=SYSTEM_MESSAGE)
+    rt = ai.Runtime()
+    agent = ai.Agent(rt, ai.LocalModel("Qwen/Qwen3-8B"), system_message=SYSTEM_MESSAGE)
 
     character = get_character_from_user(_console)
     for i, level in enumerate(levels):

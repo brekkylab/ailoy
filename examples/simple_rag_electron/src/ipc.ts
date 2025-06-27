@@ -1,23 +1,19 @@
 import { BrowserWindow, ipcMain, dialog } from "electron";
 import * as fs from "fs/promises";
-import * as ailoy from "ailoy-node";
+import * as ai from "ailoy-node";
 
-let runtime: ailoy.Runtime | undefined = undefined;
-let agent: ailoy.Agent | undefined = undefined;
-let vectorstore: ailoy.VectorStore | undefined = undefined;
+let runtime: ai.Runtime | undefined = undefined;
+let agent: ai.Agent | undefined = undefined;
+let vectorstore: ai.VectorStore | undefined = undefined;
 
 export const initializeComponents = async (mainWindow: BrowserWindow) => {
   if (runtime === undefined) {
-    runtime = new ailoy.Runtime();
+    runtime = new ai.Runtime();
     await runtime.start();
   }
 
   if (vectorstore === undefined) {
-    vectorstore = await ailoy.defineVectorStore(
-      runtime,
-      "BAAI/bge-m3",
-      "faiss"
-    );
+    vectorstore = await ai.defineVectorStore(runtime, "BAAI/bge-m3", "faiss");
   }
 
   if (agent === undefined) {
@@ -26,7 +22,10 @@ export const initializeComponents = async (mainWindow: BrowserWindow) => {
       "Loading AI model...",
       false
     );
-    agent = await ailoy.defineAgent(runtime, "Qwen/Qwen3-8B");
+    agent = await ai.defineAgent(
+      runtime,
+      ai.LocalModel({ id: "Qwen/Qwen3-8B" })
+    );
     mainWindow.webContents.send("indicate-loading", "", true);
   }
 };

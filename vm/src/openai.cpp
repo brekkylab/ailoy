@@ -3,9 +3,7 @@
 #include <format>
 
 #include <httplib.h>
-#include <nlohmann/json.hpp>
 
-#include "chat_manager.hpp"
 #include "logging.hpp"
 
 namespace ailoy {
@@ -46,6 +44,7 @@ openai_llm_engine_t::infer(std::shared_ptr<const value_t> input) {
         "[{}] Request failed: [{}] {}", name(), result->status, result->body));
   }
 
+  debug("[{}] Response body: {}", name(), result->body);
   auto j = nlohmann::json::parse(result->body);
   openai_chat_completion_response_choice_t choice = j["choices"][0];
   auto delta = openai_response_delta_t{.message = choice.message,
@@ -58,8 +57,6 @@ nlohmann::json openai_llm_engine_t::convert_request_body(
   if (!inputs->is_type_of<map_t>())
     throw ailoy::exception(std::format("[{}] input should be a map", name()));
 
-  openai_chat_completion_request_t request;
-
   auto input_map = inputs->as<map_t>();
   if (!input_map->contains("messages") ||
       !input_map->at("messages")->is_type_of<array_t>()) {
@@ -67,38 +64,24 @@ nlohmann::json openai_llm_engine_t::convert_request_body(
         "[{}] input should have array type field 'messages'", name()));
   }
 
-  // Apply input conversion
-  auto messages = input_map->at<array_t>("messages");
-  messages = melt_content_text(messages)->as<array_t>();
-
-  for (const auto &msg_val : *messages) {
-    request.messages.push_back(msg_val->to_nlohmann_json());
-  }
-
-  // Convert tools
-  if (input_map->contains("tools")) {
-    auto tools = input_map->at("tools");
-    if (!tools->is_type_of<array_t>()) {
-      throw ailoy::exception(
-          std::format("[{}] tools should be an array type", name()));
-    }
-    request.tools = std::vector<openai_chat_tool_t>{};
-    for (const auto &tool_val : *tools->as<array_t>()) {
-      request.tools.value().push_back(tool_val->to_nlohmann_json());
-    }
-  }
+  auto request = std::make_unique<openai_chat_completion_request_t>(
+      input_map->to_nlohmann_json());
+  request->model = model_;
 
   // Dump with function call arguments as string
-  nlohmann::json body = request.to_json(true);
-  // Add model
-  body["model"] = model_;
-
+  nlohmann::json body = request->to_json(true);
   return body;
 }
 
 nlohmann::json claude_llm_engine_t::convert_request_body(
     std::shared_ptr<const value_t> inputs) {
   auto body = openai_llm_engine_t::convert_request_body(inputs);
+
+  // Claude does not take empty tools list.
+  // We need to remove it if it's empty.
+  if (body["tools"].get<std::vector<nlohmann::json>>().size() == 0) {
+    body.erase("tools");
+  }
 
   // Claude takes the tool result content as a string,
   // not an array of {"type": "text", "text": "..."}

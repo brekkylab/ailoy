@@ -20,7 +20,7 @@ _Frankfurter API_ that provides real-time currency exchange rate information.
 
 ```python
 rt = Runtime()
-agent = Agent(rt, model_name="Qwen/Qwen3-8B")
+agent = Agent(rt, LocalModel("Qwen/Qwen3-8B"))
 
 frankfurter = {
     "type": "restapi",
@@ -55,7 +55,7 @@ agent.add_restapi_tool(frankfurter)
 
 ```typescript
 const rt = await startRuntime();
-const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
+const agent = await defineAgent(rt, LocalModel({ id: "Qwen/Qwen3-8B" }));
 
 const frankfurter = {
   type: "restapi",
@@ -122,25 +122,31 @@ To see the examples of tools, take a look at the
 
 ## Types
 
-There are three types of tools in Ailoy. While they all share a common `description` format, each type defines `behavior` differently.
+There are three types of tools in Ailoy. While they all share a common
+`description` format, each type defines `behavior` differently.
 
 ### REST API tools
 
-REST API tools allow the AI to access external APIs over HTTP. This is ideal for retrieving real-time or third-party information.
+REST API tools allow the AI to access external APIs over HTTP. This is ideal for
+retrieving real-time or third-party information.
 
 #### Behavior
+
 REST API tools basically send requests to get their results.
 
 The `behavior` object of a REST API tool definition can contain:
 
-- URL(`baseURL`), HTTP method(`method`) and headers(`headers`) to define the REST API request to send.
+- URL(`baseURL`), HTTP method(`method`) and headers(`headers`) to define the
+  REST API request to send.
 
-- Authentication method(`authentication`) to apply pre-defined authentication injection.
-If the API does not require authentication or needs custom one, the authentication field might not be contained.
+- Authentication method(`authentication`) to apply pre-defined authentication
+  injection. If the API does not require authentication or needs custom one, the
+  authentication field might not be contained.
 
 - Body content(`body`) to be the requests body of `POST` or `PUT` requests.
 
-- A JMESPath query string(`outputPath`) to process the raw results of the REST API into useful data.
+- A JMESPath query string(`outputPath`) to process the raw results of the REST
+  API into useful data.
 
 The parameters that the LLM decided to put into the REST API tool can become:
 
@@ -148,7 +154,7 @@ The parameters that the LLM decided to put into the REST API tool can become:
 - Body parameters: Ones included as `{param_name}` in the `body` field
 - Query parameters: Ones other than path parameters or body parameters
 
-***Tool definition*** for a REST API tool finally looks like:
+**_Tool definition_** for a REST API tool finally looks like:
 
 ```json
 {
@@ -168,20 +174,25 @@ The parameters that the LLM decided to put into the REST API tool can become:
 
 #### How to add your own tools
 
-You can make your `Agent` call any REST API you want by adding a REST API tool through:
+You can make your `Agent` call any REST API you want by adding a REST API tool
+through:
 
-- `agent.add_restapi_tool()` (for ***Python***)
-- `agent.addRESTAPITool()` (for ***Node.js***).
+- `agent.add_restapi_tool()` (for **_Python_**)
+- `agent.addRESTAPITool()` (for **_Node.js_**).
 
-These functions get a ***tool definition***, and an ***authenticator*** optionally as their parameters.  
-- **Tool definition**: Object including type, description, and behavior of the tool
-- **Authenticator**(*optional*): Callable object that injects authentication to the REST API calls
+These functions get a **_tool definition_**, and an **_authenticator_**
+optionally as their parameters.
+
+- **Tool definition**: Object including type, description, and behavior of the
+  tool
+- **Authenticator**(_optional_): Callable object that injects authentication to
+  the REST API calls
 
 <CodeTabs>
 
 ```python
 with Agent(...) as agent:
-    bearer_api_key = ...;
+    bearer_api_key = ...
 
     agent.add_restapi_tool(
         tool_def={...},      # Tool definition
@@ -199,17 +210,22 @@ agent.addRESTAPITool(
   { authenticator: bearerAutenticator(bearerApiKey) }
 );
 ```
+
 </CodeTabs>
 
 ### Built-in tools
 
-Built-in tools uses the function of Ailoy’s internal module system. It work across all the environments supported. These tools are pre-registered and can be referenced by name.
+Built-in tools uses the function of Ailoy’s internal module system. It work
+across all the environments supported. These tools are pre-registered and can be
+referenced by name.
 
 #### Behavior
 
-Defined by preset behavior implemented inside Ailoy. The only thing defined outside of Ailoy is the JMESPath query string(`outputPath`) to process the raw results of the function into useful data.
+Defined by preset behavior implemented inside Ailoy. The only thing defined
+outside of Ailoy is the JMESPath query string(`outputPath`) to process the raw
+results of the function into useful data.
 
-***Tool definition*** for a built-in tool looks like:
+**_Tool definition_** for a built-in tool looks like:
 
 ```json
 {
@@ -221,23 +237,29 @@ Defined by preset behavior implemented inside Ailoy. The only thing defined outs
 }
 ```
 
-> *Built-in tools are not designed to be added at runtime.*
+> _Built-in tools are not designed to be added at runtime._
 
 ### Native tools
 
-Native tools allow developers to define custom Python functions that will be executed when the AI requests a tool call. This is useful for logic that lives inside your application.
+Native tools allow developers to define custom Python functions that will be
+executed when the AI requests a tool call. This is useful for logic that lives
+inside your application.
 
 #### Behavior
 
-A Python or Node.js function or coroutine that will be called with arguments from the AI.
+A Python or Node.js function or coroutine that will be called with arguments
+from the AI.
 
 #### How to add your own tools
 
-You can write your own tool as a native function and add it to the `Agent` through:
-- `agent.add_py_function_tool()` (for ***Python***)
-- `agent.addJsFunctionTool()` (for ***Node.js***).
+You can write your own tool as a native function and add it to the `Agent`
+through:
 
-These functions get a ***custom native function*** and its ***tool description*** as their parameters.  
+- `agent.add_py_function_tool()` (for **_Python_**)
+- `agent.addJsFunctionTool()` (for **_Node.js_**).
+
+These functions get a **_custom native function_** and its **_tool
+description_** as their parameters.
 
 <CodeTabs>
 
@@ -336,34 +358,42 @@ with Agent(...) as agent:
 
 ## Out-of-the-box tools
 
-These are the **[preset tools](https://github.com/brekkylab/ailoy/tree/main/presets/tools)** in Ailoy that you can use.
+These are the
+**[preset tools](https://github.com/brekkylab/ailoy/tree/main/presets/tools)**
+in Ailoy that you can use.
 
 ### Calculator
+
 A calculator that evaluates a mathatical expression as a floating-point number.
 
-The expression string can include floating-point numbers, arithmetic operators (`+`, `-`, `*`, `/`, `%`, `^`), parentheses, and the mathematical constants and functions listed below.
+The expression string can include floating-point numbers, arithmetic operators
+(`+`, `-`, `*`, `/`, `%`, `^`), parentheses, and the mathematical constants and
+functions listed below.
 
 For example,
+
 - `"sqrt(3^2 + 4^2)"` evaluates to `5.0`
 - `"6/2*(1+2)"` evaluates to `9.0`
 - `"sin(pi/2)"` evaluates to `1.0`.
 
 #### Mathematical Constants and Functions
-Behaviors of these are same as ones in **[cmath](https://en.cppreference.com/w/cpp/header/cmath)**.
 
+Behaviors of these are same as ones in
+**[cmath](https://en.cppreference.com/w/cpp/header/cmath)**.
 
-| Symbols | Descriptions |
-|---|---|
-| `e`, `pi` | Mathematical constants |
+| Symbols                                                 | Descriptions                      |
+| ------------------------------------------------------- | --------------------------------- |
+| `e`, `pi`                                               | Mathematical constants            |
 | `abs(x)`, `round(x)`, `trunc(x)`, `floor(x)`, `ceil(x)` | Common value adjustment functions |
-| `sqrt(x)`, `cbrt(x)` | Root of the value functions |
-| `ln(x)`, `log(x)`, `log10(x)` | Logarithms |
-| `sin(x)`, `cos(x)`, `tan(x)` | Trigonometric functions |
-| `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y,x)` | Inverse trigonometric functions |
-| `sinh(x)`, `cosh(x)`, `tanh(x)` | Hyperbolic functions |
-| `fac(n)`, `ncr(n,r)`, `npr(n,r)` | Combinatorial functions |
+| `sqrt(x)`, `cbrt(x)`                                    | Root of the value functions       |
+| `ln(x)`, `log(x)`, `log10(x)`                           | Logarithms                        |
+| `sin(x)`, `cos(x)`, `tan(x)`                            | Trigonometric functions           |
+| `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y,x)`           | Inverse trigonometric functions   |
+| `sinh(x)`, `cosh(x)`, `tanh(x)`                         | Hyperbolic functions              |
+| `fac(n)`, `ncr(n,r)`, `npr(n,r)`                        | Combinatorial functions           |
 
 #### Code to apply this tool
+
 <CodeTabs>
 
 ```python
@@ -377,20 +407,24 @@ const agent = await defineAgent(...);
 agent.addToolsFromPreset("calculator");
 agent.query("Evaluate sin(pi/2).")
 ```
+
 </CodeTabs>
 
-
 #### Example message to use this tool
+
 `Evaluate sin(pi/2).`  
 `I want to know the value of sqrt(3^2 + 4^2).`  
 `Calculate "6/2*(1+2)"`
 
 ### Frankfurter (Currency exchange rates)
-A public API provided by the European Central Bank that provides currency exchange rate information.
+
+A public API provided by the European Central Bank that provides currency
+exchange rate information.
 
 You can get exchange rates for one currency against another.
 
 #### Code to apply this tool
+
 <CodeTabs>
 
 ```python
@@ -404,28 +438,38 @@ const agent = await defineAgent(...);
 agent.addToolsFromPreset("frankfurter");
 agent.query("I want to buy 100 U.S. Dollar with my Korean Won. How much do I need to take?")
 ```
+
 </CodeTabs>
 
 #### Example message to use this tool
+
 `I want to buy 100 U.S. Dollar with my Korean Won. How much do I need to take?`  
 `Please summarize the current exchange rate situation of major currencies.`  
 `I have 3000 yen, how much is this in USD?`
 
 ### TMDB
-The API provided by **[TMDB](https://www.themoviedb.org/)**, the fully open source movie database service. 
+
+The API provided by **[TMDB](https://www.themoviedb.org/)**, the fully open
+source movie database service.
 
 #### Tools
-- `tmdb_trending_movies`: *Get the trending movies on TMDB.*
-- `tmdb_movie_search`: *Search for movies by their original, translated and alternative titles.*
-- `tmdb_movie_reviews`: *Get the user reviews for a movie.*
-- `tmdb_movie_recommendations`: *Recommend movies based on the movie ID.*
-- `tmdb_movie_watch_providers`: *Get the list of streaming providers we have for a movie in some coutries.*
-- `tmdb_movie_genre_names`: *Get the list of genre names with their ids.*
+
+- `tmdb_trending_movies`: _Get the trending movies on TMDB._
+- `tmdb_movie_search`: _Search for movies by their original, translated and
+  alternative titles._
+- `tmdb_movie_reviews`: _Get the user reviews for a movie._
+- `tmdb_movie_recommendations`: _Recommend movies based on the movie ID._
+- `tmdb_movie_watch_providers`: _Get the list of streaming providers we have for
+  a movie in some coutries._
+- `tmdb_movie_genre_names`: _Get the list of genre names with their ids._
 
 #### API key
-You can get a TMDB API key here: **[link](https://www.themoviedb.org/settings/api)**
+
+You can get a TMDB API key here:
+**[link](https://www.themoviedb.org/settings/api)**
 
 #### Code to apply this tool with API key
+
 <CodeTabs>
 
 ```python
@@ -448,29 +492,37 @@ agent.addToolsFromPreset("tmdb", {
 });
 agent.query("Show me some famous movies recently.")
 ```
+
 </CodeTabs>
 
 #### Example message to use this tool
+
 `Show me some famous movies recently.`  
 `Can you find me every Iron Man movies?`  
 `Recommend me some movies similar to Inception of Christopher Nolan.`
 
-
 ### New York Times
-The API provided by **[New York Times](https://nytimes.com/)**, a famous American daily newspaper based in New York City.
+
+The API provided by **[New York Times](https://nytimes.com/)**, a famous
+American daily newspaper based in New York City.
 
 #### Tools
-- `nytimes_article_search`: *Search New York Times articles by keyword*
+
+- `nytimes_article_search`: _Search New York Times articles by keyword_
 
 #### API key
-You can get a New York Times API key here: **[link](https://developer.nytimes.com/get-started)**
 
-When you add tool to your agent, the API key can be provided.
-NY Times API requires to put API key in the query parameter, so you can add it to the query parameter as below.
+You can get a New York Times API key here:
+**[link](https://developer.nytimes.com/get-started)**
+
+When you add tool to your agent, the API key can be provided. NY Times API
+requires to put API key in the query parameter, so you can add it to the query
+parameter as below.
 
 This is an example of applying authentication in the way you want.
 
 #### Code to apply this tool with API key
+
 <CodeTabs>
 
 ```python
@@ -512,9 +564,11 @@ for await (const resp of agent.query("Find me some articles about 'Agentic AI'."
 }
 await agent.delete();
 ```
+
 </CodeTabs>
 
 #### Example message to use this tool
+
 `Find me some articles about 'Agentic AI'.`  
 `News on financial market trends, please.`  
 `Search for the latest scientific research results.`

@@ -16,7 +16,7 @@ yarn add ailoy-node
 ## Quickstart
 
 ```typescript
-import { startRuntime, defineAgent } from "ailoy-node";
+import { startRuntime, defineAgent, LocalModel } from "ailoy-node";
 
 (async () => {
   // The runtime must be started to use Ailoy
@@ -24,7 +24,7 @@ import { startRuntime, defineAgent } from "ailoy-node";
 
   // Defines an agent
   // During this step, the model parameters are downloaded and the LLM is set up for execution
-  const agent = await defineAgent(rt, "Qwen/Qwen3-0.6B");
+  const agent = await defineAgent(rt, LocalModel({id: "Qwen/Qwen3-0.6B"}));
 
   // This is where the actual LLM call happens
   for await (const resp of agent.query("Please give me a short poem about AI")) {

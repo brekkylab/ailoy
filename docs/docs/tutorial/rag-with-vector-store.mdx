@@ -43,8 +43,8 @@ const vs = await defineVectorStore(rt, "BAAI/bge-m3", "faiss");
 > the official configuration guide for backend-specific options.
 
 > 💡 **Note:** At this time, the only supported embedding model is
-> [`BAAI/bge-m3`](https://huggingface.co/BAAI/bge-m3). Additional embedding models
-> will be supported in future releases.
+> [`BAAI/bge-m3`](https://huggingface.co/BAAI/bge-m3). Additional embedding
+> models will be supported in future releases.
 
 ### Inserting Documents into the Vector Store
 
@@ -146,7 +146,7 @@ for await (const resp of agent.query(prompt)) {
 <CodeTabs>
 
 ```python
-from ailoy import Runtime, Agent, VectorStore
+from ailoy import Runtime, Agent, LocalModel, VectorStore
 
 # Initialize Runtime
 
@@ -154,7 +154,7 @@ rt = Runtime()
 
 # Initialize Agent and VectorStore
 
-with Agent(rt, "Qwen/Qwen3-8B") as agent, VectorStore(rt, "BAAI/bge-m3", "faiss") as vs:
+with Agent(rt, LocalModel("Qwen/Qwen3-8B")) as agent, VectorStore(rt, "BAAI/bge-m3", "faiss") as vs:
     # Insert items
     vs.insert(
         "Ailoy is a lightweight library for building AI applications",
@@ -178,13 +178,18 @@ with Agent(rt, "Qwen/Qwen3-8B") as agent, VectorStore(rt, "BAAI/bge-m3", "faiss"
 ```
 
 ```typescript
-import { createRuntime, defineAgent, defineVectorStore } from "ailoy-node";
+import {
+  createRuntime,
+  defineAgent,
+  defineVectorStore,
+  LocalModel,
+} from "ailoy-node";
 
 async function main() {
   // Initialize Runtime
   const rt = await createRuntime();
   // Initialize Agent
-  const agent = await defineAgent(rt, "Qwen/Qwen3-8B");
+  const agent = await defineAgent(rt, LocalModel({ id: "Qwen/Qwen3-8B" }));
   // Initialize VectorStore
   const vs = await defineVectorStore(rt, "BAAI/bge-m3", "faiss");
 

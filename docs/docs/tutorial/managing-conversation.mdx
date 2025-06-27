@@ -55,8 +55,7 @@ optional `system_message` argument when you create your agent instance.
 
 ```python
 with Agent(
-    rt,
-    model_name="Qwen/Qwen3-8B",
+    ...,
     system_message="You are a friendly chatbot who always responds in the style of a pirate.",
 ) as agent:
     for resp in agent.query("Please give me a short poem about AI"):
@@ -64,7 +63,7 @@ with Agent(
 ```
 
 ```typescript
-const agent = await defineAgent(rt, "Qwen/Qwen3-8B", {
+const agent = await defineAgent(..., {
   systemMessage:
     "You are a friendly chatbot who always responds in the style of a pirate.",
 });

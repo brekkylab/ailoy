@@ -6,7 +6,7 @@ import gradio as gr
 
 rt = ai.Runtime()
 
-with gr.Blocks() as demo, ai.Agent(rt, "Qwen/Qwen3-8B") as agent:
+with gr.Blocks() as demo, ai.Agent(rt, ai.LocalModel("Qwen/Qwen3-8B")) as agent:
     agent.add_tools_from_preset("frankfurter")
 
     gr.Markdown("# Chat with Ailoy Agent")
@@ -34,7 +34,7 @@ with gr.Blocks() as demo, ai.Agent(rt, "Qwen/Qwen3-8B") as agent:
                     gr.ChatMessage(
                         role="assistant",
                         content=resp.content.content[0].text,
-                        metadata={"title": f"📄 Tool Result: **{resp.content.name}**"},
+                        metadata={"title": "📄 Tool Result"},
                     )
                 )
             elif resp.type == "reasoning":
