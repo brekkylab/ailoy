@@ -40,20 +40,17 @@ if (process.env.GEMINI_API_KEY !== undefined) {
       }
     });
 
-    it("Image recognition from base64", async () => {
+    it("Image recognition from Sharp", async () => {
       const resp = await fetch(testImageUrl);
       const arrayBuffer = await resp.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       const image = sharp(buffer);
-      for await (const resp of agent.query([
-        "What is in this image?",
-        await ai.ImageContent.fromSharp(image),
-      ])) {
+      for await (const resp of agent.query(["What is in this image?", image])) {
         agent.print(resp);
       }
     });
 
-    it("Audio input from base64", async () => {
+    it("Audio input from bytes", async () => {
       const resp = await fetch(testAudioUrl);
       const arrayBuffer = await resp.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);

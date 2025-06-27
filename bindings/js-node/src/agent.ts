@@ -549,7 +549,9 @@ export class Agent {
 
   async *query(
     /** The user message to send to the model */
-    message: string | Array<string | TextContent | ImageContent | AudioContent>,
+    message:
+      | string
+      | Array<string | sharp.Sharp | TextContent | ImageContent | AudioContent>,
     options?: {
       /** If True, enables reasoning capabilities (default: False) */
       reasoning?: boolean;
@@ -574,6 +576,10 @@ export class Agent {
       for (const content of message) {
         if (typeof content === "string") {
           contents.push({ type: "text", text: content });
+        } else if (
+          ((obj: any): obj is sharp.Sharp => obj instanceof sharp)(content)
+        ) {
+          contents.push(await ImageContent.fromSharp(content));
         } else {
           contents.push(content);
         }
