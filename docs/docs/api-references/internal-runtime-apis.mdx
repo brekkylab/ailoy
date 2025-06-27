@@ -237,6 +237,43 @@ top-k results along with similarity scores.
 
 `iterative`: **`false`**
 
+## `claude`
+
+- Type: **Component**
+- Module: `language`
+
+A language model using the Claude APIs.
+
+#### Parameters
+
+| Name      | Type   | Description                                  | Required |
+| --------- | ------ | -------------------------------------------- | -------- |
+| `api_key` | string | API key to use on inference                  | ✅       |
+| `model`   | string | Model name (e.g. `claude-sonnet-4-20250514`) |          |
+
+### `infer`<a name="claude.infer"></a>
+
+- Type: **Method**
+- Component: `claude`
+
+Performs inference, generates outputs.
+
+#### Parameters
+
+| Name       | Type         | Description                                | Required |
+| ---------- | ------------ | ------------------------------------------ | -------- |
+| `messages` | array\<map\> | array of messages (OpenAI API compatible)  | ✅       |
+| `tools`    | array\<map\> | tools to be used (defaults to empty array) |          |
+
+#### Outputs
+
+| Name            | Type   | Description                                                                   |
+| --------------- | ------ | ----------------------------------------------------------------------------- |
+| `message`       | map    | result message                                                                |
+| `finish_reason` | string | finished reason.<br/>Available values: `stop`, `tool_call`, `length`, `error` |
+
+`iterative`: **`false`**
+
 ## `download_model`
 
 - Type: **Function**
@@ -399,6 +436,43 @@ top-k results along with similarity scores.
 
 `iterative`: **`false`**
 
+## `gemini`
+
+- Type: **Component**
+- Module: `language`
+
+A language model using the Gemini APIs.
+
+#### Parameters
+
+| Name      | Type   | Description                          | Required |
+| --------- | ------ | ------------------------------------ | -------- |
+| `api_key` | string | API key to use on inference          | ✅       |
+| `model`   | string | Model name (e.g. `gemini-2.5-flash`) |          |
+
+### `infer`<a name="gemini.infer"></a>
+
+- Type: **Method**
+- Component: `gemini`
+
+Performs inference, generates outputs.
+
+#### Parameters
+
+| Name       | Type         | Description                                | Required |
+| ---------- | ------------ | ------------------------------------------ | -------- |
+| `messages` | array\<map\> | array of messages (OpenAI API compatible)  | ✅       |
+| `tools`    | array\<map\> | tools to be used (defaults to empty array) |          |
+
+#### Outputs
+
+| Name            | Type   | Description                                                                   |
+| --------------- | ------ | ----------------------------------------------------------------------------- |
+| `message`       | map    | result message                                                                |
+| `finish_reason` | string | finished reason.<br/>Available values: `stop`, `tool_call`, `length`, `error` |
+
+`iterative`: **`false`**
+
 ## `list_local_models`
 
 - Type: **Function**
@@ -429,16 +503,16 @@ None
 - Type: **Component**
 - Module: `language`
 
-A `tvm_language_model` compatible using the OpenAI API, an LLM component.
+A language model using the OpenAI APIs.
 
 #### Parameters
 
-| Name      | Type   | Description                                                      | Required |
-| --------- | ------ | ---------------------------------------------------------------- | -------- |
-| `api_key` | string | API key to use on inference                                      | ✅       |
-| `model`   | string | Model name<br/>Available values: `gpt-4o` (defaults to `gpt-4o`) |          |
+| Name      | Type   | Description                 | Required |
+| --------- | ------ | --------------------------- | -------- |
+| `api_key` | string | API key to use on inference | ✅       |
+| `model`   | string | Model name (e.g. `gpt-4o`)  |          |
 
-### `infer`<a name="tvm_language_model.infer"></a>
+### `infer`<a name="openai.infer"></a>
 
 - Type: **Method**
 - Component: `openai`
@@ -447,10 +521,10 @@ Performs inference, generates outputs.
 
 #### Parameters
 
-| Name       | Type         | Description                                 | Required |
-| ---------- | ------------ | ------------------------------------------- | -------- |
-| `messages` | array\<map\> | array of messages (OpenAI API compatible)   | ✅       |
-| `tools`    | array\<map\> | tools to be used (defaults to empty string) |          |
+| Name       | Type         | Description                                | Required |
+| ---------- | ------------ | ------------------------------------------ | -------- |
+| `messages` | array\<map\> | array of messages (OpenAI API compatible)  | ✅       |
+| `tools`    | array\<map\> | tools to be used (defaults to empty array) |          |
 
 #### Outputs
 

@@ -32,9 +32,9 @@ const sidebars: SidebarsConfig = {
       label: "Concepts",
       items: [
         "concepts/architecture",
-        "concepts/agent-response-format",
-        "concepts/devices-environments",
+        "concepts/agent",
         "concepts/tools",
+        "concepts/devices-environments",
         "concepts/command-line-interfaces",
       ],
     },

@@ -24,23 +24,6 @@ yarn add ailoy-node
 Let’s start right away with a simple code example. Below is the simplest way to
 run an LLM — it’s like Ailoy’s “Hello, World!”
 
-```python showLineNumbers
-from ailoy import Runtime, Agent, LocalModel
-
-# The runtime must be started to use Ailoy
-rt = Runtime()
-
-# Defines an agent
-# During this step, the model parameters are downloaded and the LLM is set up for execution
-with Agent(rt, LocalModel("Qwen/Qwen3-0.6B")) as agent:
-    # This is where the actual LLM call happens
-    for resp in agent.query("Please give me a short poem about AI"):
-        agent.print(resp)
-
-# Stop the runtime
-rt.stop()
-```
-
 <CodeTabs>
 
 ```python
@@ -201,4 +184,4 @@ for await (const resp of agent.query("Please give me a short poem about AI")) {
 
 The response is structured according to Ailoy’s defined output format. For a
 detailed specification of this format, please refer to
-[Agent Response Format](../concepts/agent-response-format).
+**[Agent > Agent Responses](../concepts/agent#agent-responses)**.
