@@ -611,10 +611,11 @@ Defines an on-device embedding model using TVM as the provider.
 
 #### Parameters
 
-| Name           | Type   | Description                                                                        | Required |
-| -------------- | ------ | ---------------------------------------------------------------------------------- | -------- |
-| `model`        | string | Model name to use.<br/>Available values: `BAAI/bge-m3` (defaults to `BAAI/bge-m3`) |          |
-| `quantization` | string | Quantization method.<br/>Available values: `q4f16_1` (defaults to `q4f16_1`)       |          |
+| Name           | Type   | Description                                                                 | Required |
+| -------------- | ------ | --------------------------------------------------------------------------- | -------- |
+| `model`        | string | Model name to use                                                           | ✅       |
+| `quantization` | string | Quantization method<br/>Available values: `q4f16_1` (defaults to `q4f16_1`) |          |
+| `device`       | int    | Device ID to use (defaults to `0`)                                          |          |
 
 ### `infer`
 
@@ -668,11 +669,11 @@ Defines an on-device language model using TVM as the provider.
 
 #### Parameters
 
-| Name           | Type   | Description                                                                                                     | Required |
-| -------------- | ------ | --------------------------------------------------------------------------------------------------------------- | -------- |
-| `model`        | string | Model name to use.<br/>Available values: `Qwen/Qwen3-0.6B`, `Qwen/Qwen3-1.7B`, `Qwen/Qwen3-4B`, `Qwen/Qwen3-8B` | ✅       |
-| `quantization` | string | Quantization method.<br/>Available values: `q4f16_1` (defaults to `q4f16_1`)                                    |          |
-| `mode`         | string | Mode to initialize the model<br/>Available values: `interactive`, `local`, `server` (defaults to `interactive`) |          |
+| Name           | Type   | Description                                                                 | Required |
+| -------------- | ------ | --------------------------------------------------------------------------- | -------- |
+| `model`        | string | Model name to use                                                           | ✅       |
+| `quantization` | string | Quantization method<br/>Available values: `q4f16_1` (defaults to `q4f16_1`) |          |
+| `device`       | int    | Device ID to use (defaults to `0`)                                          |          |
 
 ### `apply_chat_template`
 

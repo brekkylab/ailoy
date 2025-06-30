@@ -68,7 +68,7 @@ target_link_libraries(ailoy_vm_obj PRIVATE magic_enum)
 FetchContent_Declare(
     tokenizers-cpp
     GIT_REPOSITORY https://github.com/mlc-ai/tokenizers-cpp.git
-    GIT_TAG 4fbe996658ddd003b88e1650d799b351fe83b2d6
+    GIT_TAG 8fd3b64057db4ddb5a49691cf02009f0373900d5
     EXCLUDE_FROM_ALL
 )
 if(NODE)
@@ -90,7 +90,7 @@ if(AILOY_WITH_TVM)
         FetchContent_Declare(
             tvm
             GIT_REPOSITORY https://github.com/brekkylab/relax.git
-            GIT_TAG dcda2cfd38a8183990d27a0ec6fbeecbb74a46b4
+            GIT_TAG e2aa6d0ebf9bd82632a510c00f3966eeee89e68a
             EXCLUDE_FROM_ALL
         )
         if(APPLE)
@@ -113,6 +113,7 @@ if(AILOY_WITH_TVM)
     endif()
     target_include_directories(ailoy_vm_obj PUBLIC
         ${TVM_SOURCE_DIR}/3rdparty/dmlc-core/include
+        ${TVM_SOURCE_DIR}/ffi/include
         ${TVM_SOURCE_DIR}/include
     )
     target_link_libraries(tvm_runtime PRIVATE dlpack)
