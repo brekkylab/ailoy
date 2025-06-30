@@ -1,13 +1,12 @@
 import os
 
-from ailoy import Runtime, Agent
-from ailoy.agent import BearerAuthenticator
+import ailoy as ai
 import questionary
 
 
 def main():
     # Start the Ailoy runtime
-    rt = Runtime()
+    rt = ai.Runtime()
 
     # Select and initialize an agent (model)
     model_name: str = questionary.select(
@@ -27,9 +26,9 @@ def main():
             api_key = questionary.password("Enter OpenAI API key:").ask()
         if not api_key:
             raise RuntimeError("OpenAI API key not specified")
-        agent = Agent(rt, model_name, api_key=api_key)
+        agent = ai.Agent(rt, ai.APIModel(model_name, api_key=api_key))
     else:
-        agent = Agent(rt, model_name)
+        agent = ai.Agent(rt, ai.LocalModel(model_name))
 
     # Select and configure tool to use
     preset_name: str = questionary.select(
@@ -57,7 +56,9 @@ def main():
         api_key = os.getenv("TMDB_API_KEY")
         if api_key is None:
             api_key = questionary.password("Enter TMDB API key:").ask()
-        agent.add_tools_from_preset("tmdb", authenticator=BearerAuthenticator(api_key))
+        agent.add_tools_from_preset(
+            "tmdb", authenticator=ai.BearerAuthenticator(api_key)
+        )
     elif preset_name == "nytimes":
         api_key = os.getenv("NYTIMES_API_KEY")
         if api_key is None:

@@ -1,7 +1,9 @@
 # Devices & Environments
 
-**On-device AI** is one of biggest feature of Ailoy that make it different from other AI tools.  
-To make it feasible, you might need to check the conditions for the devices & environments to run AIs.
+**On-device AI** is one of biggest feature of Ailoy that make it different from
+other AI tools.  
+To make it feasible, you might need to check the conditions for the devices &
+environments to run AIs.
 
 ## Supported environments
 
@@ -13,11 +15,11 @@ To see the lastest details on system requirements, refer to the official reposit
 
 {/* prettier-ignore-end */}
 
-- ***macOS*** devices running on Apple Silicon with *Metal* support
-- ***Windows*** PC running on latest x86_64 CPU & GPU with *Vulkan 1.3* support
-- ***Linux*** PC running on latest x86_64 CPU & GPU with *Vulkan 1.3* support
+- **_macOS_** devices running on Apple Silicon with _Metal_ support
+- **_Windows_** PC running on latest x86*64 CPU & GPU with \_Vulkan 1.3* support
+- **_Linux_** PC running on latest x86*64 CPU & GPU with \_Vulkan 1.3* support
 
-...and *WebGPU* and *Mobile devices* supports are on plan!
+...and _WebGPU_ and _Mobile devices_ supports are on plan!
 
 ### VRAM requirements
 
@@ -31,27 +33,29 @@ These values may vary depending on the environment and circumstances.
 
 Requirements for available VRAM size by models are estimated as follows:
 
-| Model           | Context length | VRAM (params) | VRAM (total) |
-|-----------------|:--------------:|:-------------:|:------------:|
-|`Qwen/Qwen3-0.6B`| 32k            | ≈ 0.5GB       | ≈ 4.5GB      |
-|`Qwen/Qwen3-1.7B`| 32k            | ≈ 1.0GB       | ≈ 5.0GB      |
-|`Qwen/Qwen3-4B`  | 32k            | ≈ 2.4GB       | ≈ 6.4GB      |
-|`Qwen/Qwen3-8B`  | 32k            | ≈ 4.5GB       | ≈ 8.5GB      |
-|`BAAI/bge-m3`    | 8k             | ≈ 0.3GB       | ≈ 0.3GB      |
-
+| Model             | Context length | VRAM (params) | VRAM (total) |
+| ----------------- | :------------: | :-----------: | :----------: |
+| `Qwen/Qwen3-0.6B` |      32k       |    ≈ 0.5GB    |   ≈ 4.5GB    |
+| `Qwen/Qwen3-1.7B` |      32k       |    ≈ 1.0GB    |   ≈ 5.0GB    |
+| `Qwen/Qwen3-4B`   |      32k       |    ≈ 2.4GB    |   ≈ 6.4GB    |
+| `Qwen/Qwen3-8B`   |      32k       |    ≈ 4.5GB    |   ≈ 8.5GB    |
+| `BAAI/bge-m3`     |       8k       |    ≈ 0.3GB    |   ≈ 0.3GB    |
 
 ## Device selection
 
-In some cases, you may want to exploit Ailoy in an environment with multiple accelerators, in which case you may want to select the accelerator on which to run AI.  
-e.g.) Running Embedding model and Language model on separate devices in a RAG application
+In some cases, you may want to exploit Ailoy in an environment with multiple
+accelerators, in which case you may want to select the accelerator on which to
+run AI.  
+e.g.) Running Embedding model and Language model on separate devices in a RAG
+application
 
-Each AI model exists as a `component` in Ailoy, and components can be created by giving them a device ID to load each model onto the corresponding device.  
+Each AI model exists as a `component` in Ailoy, and components can be created by
+giving them a device ID to load each model onto the corresponding device.  
 The default device ID is `0`, which uses the first device in the system.
 
 #### Using Agent & VectorStore
 
 <CodeTabs>
-
 
 {/* prettier-ignore-start */}
 
@@ -62,7 +66,7 @@ To see the full context of RAG application example, visit **[RAG with Vector Sto
 {/* prettier-ignore-end */}
 
 ```python
-agent = Agent(runtime, "Qwen/Qwen3-8B", attrs={"device": 1})
+agent = Agent(runtime, LocalModel("Qwen/Qwen3-8B", device=1))
 vs = VectorStore(runtime, "BAAI/bge-m3", "faiss", embedding_model_attrs={"device": 0})
 
 ...
@@ -72,7 +76,7 @@ vs.delete()
 ```
 
 ```typescript
-const agent = await defineAgent(rt, "Qwen/Qwen3-8B", { device : 1 });
+const agent = await defineAgent(rt, LocalModel({id: "Qwen/Qwen3-8B", device: 1}));
 const vs = await defineVectorStore(rt, "BAAI/bge-m3", "faiss", { device : 0 });
 
 ...
@@ -81,6 +85,7 @@ await agent.delete()
 await vs.delete()
 ...
 ```
+
 </CodeTabs>
 
 #### Using Runtime APIs
@@ -102,4 +107,5 @@ await rt.define("tvm_embedding_model", "em0", {
   device: 0,
 });
 ```
+
 </CodeTabs>

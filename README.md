@@ -24,25 +24,30 @@ Ailoy is a lightweight library for building AI applications — such as **agent 
 
 ## Features
 
-- Run AI models either on-device or via cloud APIs
-- Built-in vector store support (via `Faiss` or `ChromaDB`)
-- Tool calling capabilities (including `MCP` integration)
-- Support for reasoning-based workflows
+- Run AI models either in local or via cloud APIs
 - Multi-turn conversation and system message customization
+- Support for reasoning-based workflows
+- Tool calling capabilities (including `MCP` integration)
+- Built-in vector store support (via `Faiss` or `ChromaDB`)
 
 For more details, please refer to the [documentation](https://brekkylab.github.io/ailoy/).
 
 Currently, the following AI models are supported:
 - Language Models
-  - Qwen/Qwen3-0.6B (on-device)
-  - Qwen/Qwen3-1.7B (on-device)
-  - Qwen/Qwen3-4B (on-device)
-  - Qwen/Qwen3-8B (on-device)
-  - gpt-4o (API; key needed)
+  - Local Models
+    - Qwen/Qwen3-0.6B
+    - Qwen/Qwen3-1.7B
+    - Qwen/Qwen3-4B
+    - Qwen/Qwen3-8B
+  - API Models
+    - OpenAI
+    - Gemini
+    - Claude
 - Embedding Models
-  - BAAI/bge-m3 (on-device)
+  - Local Models
+    - BAAI/bge-m3
 
-You can check out examples for tool usage and retrieval-augmented generation (RAG).
+You can check out examples for a simple chatbot, tool usages and retrieval-augmented generation (RAG).
 
 ## Requirements
 
@@ -51,7 +56,7 @@ Ailoy supports the following operating systems:
 - macOS (Apple Silicon, with Metal)
 - Linux (x86_64, with Vulkan)
 
-To use Ailoy with on-device inference, a compatible device is required.
+To use Ailoy with local models, a compatible device is required.
 However, if your system doesn't meet the hardware requirements, you can still run Ailoy using external APIs such as OpenAI.
 
 AI models typically consume a significant amount of memory.
@@ -59,7 +64,7 @@ The exact usage depends on the model size, but we recommend at least **8GB of GP
 Running the Qwen 8B model requires at least **12GB of GPU memory**.
 On macOS, this refers to unified memory, as Apple Silicon uses a shared memory architecture.
 
-### For running on-device AI
+### For running AI locally
 
 **Windows**
 - CPU: Intel Skylake or newer (and compatible AMD), x86_64 is required
@@ -90,11 +95,12 @@ npm install ailoy-node
 import {
   startRuntime,
   defineAgent,
+  LocalModel
 } from "ailoy-node";
 
 (async () => {
   const rt = await startRuntime();
-  const agent = await defineAgent(rt, "Qwen/Qwen3-0.6B");
+  const agent = await defineAgent(rt, LocalModel({id: "Qwen/Qwen3-0.6B"}));
   for await (const resp of agent.query("Hello world!")) {
     agent.print(resp);
   }
@@ -110,10 +116,10 @@ pip install ailoy-py
 ```
 
 ```python
-from ailoy import Runtime, Agent
+from ailoy import Runtime, Agent, LocalModel
 
 rt = Runtime()
-with Agent(rt, model_name="Qwen/Qwen3-0.6B") as agent:
+with Agent(rt, LocalModel("Qwen/Qwen3-0.6B")) as agent:
     for resp in agent.query("Hello world!"):
         resp.print()
 rt.stop()

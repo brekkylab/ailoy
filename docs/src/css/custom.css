@@ -27,3 +27,8 @@
   --ifm-color-primary-lightest: #c2ecf5;
   --docusaurus-highlighted-code-line-bg: rgba(127, 196, 217, 0.1);
 }
+
+/* Remove right padding on CodeBlock lines */
+.codeLineContent_feaV {
+  padding-right: 0 !important;
+}

@@ -11,7 +11,7 @@ def main():
     if openai_api_key is None:
         openai_api_key = input("Enter OPENAI_API_KEY: ")
 
-    with ai.Agent(rt, "gpt-4o", api_key=openai_api_key) as agent:
+    with ai.Agent(rt, ai.APIModel("gpt-4o", api_key=openai_api_key)) as agent:
         agent.add_tools_from_mcp_server(
             "playwright",
             # https://github.com/microsoft/playwright-mcp?tab=readme-ov-file#getting-started
