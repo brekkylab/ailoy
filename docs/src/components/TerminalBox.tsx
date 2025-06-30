@@ -9,7 +9,7 @@ export default function TerminalBox({
     <div
       style={{
         borderRadius: "10px",
-        overflow: "hidden",
+        overflow: "scroll",
         boxShadow: "0 0 10px rgba(0,0,0,0.2)",
         fontFamily: "Menlo, Consolas, monospace",
         marginBottom: "1rem",
@@ -60,6 +60,7 @@ export default function TerminalBox({
           whiteSpace: "pre-wrap",
           fontSize: "0.9rem",
           maxHeight: "500px", // Scroll after approx. 40 lines
+          minWidth: "1000px",
           overflowY: "auto",
           borderTopLeftRadius: 0,
           borderTopRightRadius: 0,
