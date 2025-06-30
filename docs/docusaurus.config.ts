@@ -79,7 +79,11 @@ const config: Config = {
           position: "left",
           label: "Documents",
         },
-        { to: "/blog", label: "Blog", position: "left" },
+        {
+          href: "https://medium.com/ailoy",
+          label: "Blog",
+          position: "left",
+        },
         {
           href: "https://github.com/brekkylab/ailoy",
           label: "GitHub",
@@ -123,7 +127,7 @@ const config: Config = {
           items: [
             {
               label: "Blog",
-              to: "/blog",
+              href: "https://medium.com/ailoy",
             },
             {
               label: "GitHub",
