@@ -1,8 +1,11 @@
 export type LocalModelId =
-  | "Qwen/Qwen3-8B"
-  | "Qwen/Qwen3-4B"
+  | "Qwen/Qwen3-0.6B"
   | "Qwen/Qwen3-1.7B"
-  | "Qwen/Qwen3-0.6B";
+  | "Qwen/Qwen3-4B"
+  | "Qwen/Qwen3-8B"
+  | "Qwen/Qwen3-14B"
+  | "Qwen/Qwen3-32B"
+  | "Qwen/Qwen3-30B-A3B";
 export type LocalModelBackend = "tvm";
 export type Quantization = "q4f16_1";
 
