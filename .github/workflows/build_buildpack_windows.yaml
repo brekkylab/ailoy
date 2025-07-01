@@ -1,0 +1,23 @@
+name: Build Buildpack Image for Windows
+
+on:
+  push:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        shell: powershell
+        run: |
+          docker build -f ./docker/buildpack/windows/Dockerfile -t ghcr.io/brekkylab/ailoy-buildpack-windows:latest .
+          docker push ghcr.io/brekkylab/ailoy-buildpack-windows:latest
