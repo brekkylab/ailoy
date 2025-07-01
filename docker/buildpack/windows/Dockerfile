@@ -12,23 +12,22 @@ RUN Invoke-WebRequest `
         -Uri "https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe" `
         -OutFile "PortableGit.7z.exe"; `
     Start-Process -FilePath "PortableGit.7z.exe" -ArgumentList '-y', '-oC:\git' -Wait
-ENV PATH="C:\\git\\cmd;%PATH%"
-RUN echo $env:PATH
+RUN setx /M PATH "C:\git\cmd;%PATH%"
 
 # Install CMake portable
 RUN Invoke-WebRequest `
         -Uri "https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-windows-x86_64.zip" `
         -OutFile "cmake.zip"; `
     Expand-Archive -Path "cmake.zip" -DestinationPath "C:\\cmake" -Force
-ENV PATH="C:\\cmake\\cmake-4.0.3-windows-x86_64\\bin;%PATH%"
+RUN setx /M PATH "C:\cmake\cmake-4.0.3-windows-x86_64\bin;%PATH%"
 
 # Clone and bootstrap vcpkg
-ENV VCPKG_ROOT="C:\\vcpkg"
+RUN setx /M VCPKG_ROOT "C:\vcpkg"
 RUN git clone https://github.com/microsoft/vcpkg.git C:\vcpkg; `
     cd C:\vcpkg; `
     .\bootstrap-vcpkg.bat
-ENV VCPKG_DEFAULT_TRIPLET="x64-windows-static"
-ENV PATH="C:\\vcpkg\\installed\\x64-windows-static\\bin;%PATH%"
+RUN setx /M VCPKG_DEFAULT_TRIPLET "x64-windows-static"
+RUN setx /M PATH "C:\vcpkg\installed\x64-windows-static\bin;%PATH%"
 
 # Install OpenBLAS and LAPACK
 RUN & "C:\\vcpkg\\vcpkg.exe" install openblas:x64-windows-static lapack-reference:x64-windows-static
@@ -56,11 +55,11 @@ FROM mcr.microsoft.com/windows/servercore:ltsc2022
 SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
 # Set environment variables
-ENV BLAS_ROOT="C:\\vcpkg\\installed\\x64-windows-static"
-ENV LAPACK_ROOT="C:\\vcpkg\\installed\\x64-windows-static"
-ENV VULKAN_SDK="C:\\VulkanSDK"
-ENV OPENSSL_ROOT_DIR="C:\\OpenSSL"
-ENV PATH="C:\\vcpkg\\installed\\x64-windows-static\\bin;C:\\VulkanSDK\\Bin;C:\\VulkanSDK\\Lib;C:\\OpenSSL\\bin;%PATH%"
+RUN setx /M BLAS_ROOT "C:\vcpkg\installed\x64-windows-static"
+RUN setx /M LAPACK_ROOT "C:\vcpkg\installed\x64-windows-static"
+RUN setx /M VULKAN_SDK "C:\VulkanSDK"
+RUN setx /M OPENSSL_ROOT_DIR="C:\OpenSSL"
+RUN setx /M PATH "C:\vcpkg\installed\x64-windows-static\bin;C:\VulkanSDK\Bin;C:\VulkanSDK\Lib;C:\OpenSSL\bin;%PATH%"
 
 # Copy runtime dependencies only
 COPY --from=builder C:\vcpkg\ C:\vcpkg\
