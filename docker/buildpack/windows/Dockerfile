@@ -8,41 +8,43 @@ FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS builder
 SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
 # Install Git portable
-RUN $git_url = "https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe"; `
-    $git_installer = "PortableGit.7z.exe"; `
-    Invoke-WebRequest -Uri $git_url -OutFile $git_installer; `
-    Start-Process -FilePath $git_installer -ArgumentList '-y -oC:\git' -Wait
+RUN Invoke-WebRequest `
+        -Uri "https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe" `
+        -OutFile "PortableGit.7z.exe"; `
+    Start-Process -FilePath "PortableGit.7z.exe" -ArgumentList '-y -oC:\git' -Wait
 ENV PATH="C:\\git\\cmd;%PATH%"
 
-# Install CMake portable (precompiled win64 zip)
-RUN $cmake_url = "https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-windows-x86_64.zip"; `
-    $cmake_zip = "cmake.zip"; `
-    Invoke-WebRequest -Uri $cmake_url -OutFile $cmake_zip; `
-    Expand-Archive -Path $cmake_zip -DestinationPath C:\cmake -Force
-ENV PATH="C:\\cmake\\cmake-3.27.7-windows-x86_64\\bin;%PATH%"
+# Install CMake portable
+RUN Invoke-WebRequest `
+        -Uri "https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-windows-x86_64.zip" `
+        -OutFile "cmake.zip"; `
+    Expand-Archive -Path "cmake.zip" -DestinationPath "C:\\cmake" -Force
+ENV PATH="C:\\cmake\\cmake-4.0.3-windows-x86_64\\bin;%PATH%"
 
 # Clone and bootstrap vcpkg
 ENV VCPKG_ROOT="C:\\vcpkg"
-RUN git clone https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT; `
-    cd $env:VCPKG_ROOT; `
+RUN git clone https://github.com/microsoft/vcpkg.git C:\vcpkg; `
+    cd C:\vcpkg; `
     .\bootstrap-vcpkg.bat
 ENV VCPKG_DEFAULT_TRIPLET="x64-windows-static"
 ENV PATH="C:\\vcpkg\\installed\\x64-windows-static\\bin;%PATH%"
 
 # Install OpenBLAS and LAPACK
-RUN & "$env:VCPKG_ROOT\\vcpkg.exe" install openblas lapack-reference
+RUN & "C:\\vcpkg\\vcpkg.exe" install openblas:x64-windows-static lapack-reference:x64-windows-static
 
-# Install OpenSSL into C:\OpenSSL to avoid Program Files
-RUN $url = "https://slproweb.com/download/Win64OpenSSL-3_5_0.exe"; `
-    $installer = "openssl-installer.exe"; `
-    Invoke-WebRequest -Uri $url -OutFile $installer; `
-    Start-Process -FilePath $installer -ArgumentList '/silent /verysilent /sp- /SUPPRESSMSGBOXES /DIR=C:\OpenSSL' -Wait
+# Install OpenSSL (to C:\OpenSSL)
+RUN Invoke-WebRequest `
+        -Uri "https://slproweb.com/download/Win64OpenSSL-3_5_0.exe" `
+        -OutFile "openssl-installer.exe"; `
+    Start-Process -FilePath "openssl-installer.exe" `
+        -ArgumentList '/silent', '/verysilent', '/sp-', '/SUPPRESSMSGBOXES', '/DIR=C:\OpenSSL' -Wait
 
 # Install Vulkan SDK
-RUN $url = "https://sdk.lunarg.com/sdk/download/1.3.283.0/windows/vulkan-sdk.exe"; `
-    $installer = "vulkan-sdk.exe"; `
-    Invoke-WebRequest -Uri $url -OutFile $installer; `
-    Start-Process -FilePath $installer -ArgumentList '--accept-licenses --default-answer --confirm-command install --root C:\VulkanSDK' -Wait
+RUN Invoke-WebRequest `
+        -Uri "https://sdk.lunarg.com/sdk/download/1.3.283.0/windows/vulkan-sdk.exe" `
+        -OutFile "vulkan-sdk.exe"; `
+    Start-Process -FilePath "vulkan-sdk.exe" `
+        -ArgumentList '--accept-licenses', '--default-answer', '--confirm-command', 'install', '--root', 'C:\VulkanSDK' -Wait
 
 
 ### ─────────────────────────────
