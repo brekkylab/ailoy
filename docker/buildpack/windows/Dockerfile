@@ -10,8 +10,7 @@ SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPref
 # Install Chocolatey and build tools
 RUN Set-ExecutionPolicy Bypass -Scope Process -Force; `
     iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1')); `
-    choco install -y git cmake; `
-    choco clean --yes
+    choco install -y git cmake
 
 # Set environment variables
 ENV VCPKG_ROOT="C:\\vcpkg" `
@@ -30,21 +29,19 @@ RUN & "$env:VCPKG_ROOT\\vcpkg.exe" install openblas lapack-reference
 RUN $url = "https://slproweb.com/download/Win64OpenSSL-3_5_0.exe"; `
     $installer = "openssl-installer.exe"; `
     Invoke-WebRequest -Uri $url -OutFile $installer; `
-    Start-Process -FilePath $installer -ArgumentList "/silent", "/verysilent", "/sp-", "/SUPPRESSMSGBOXES", "/DIR=C:\OpenSSL" -Wait; `
-    Remove-Item $installer
+    Start-Process -FilePath $installer -ArgumentList "/silent", "/verysilent", "/sp-", "/SUPPRESSMSGBOXES", "/DIR=C:\OpenSSL" -Wait
 
 # Install Vulkan SDK
 RUN $url = "https://sdk.lunarg.com/sdk/download/1.3.283.0/windows/vulkan-sdk.exe"; `
     $installer = "vulkan-sdk.exe"; `
     Invoke-WebRequest -Uri $url -OutFile $installer; `
-    Start-Process -FilePath $installer -ArgumentList "--accept-licenses", "--default-answer", "--confirm-command", "install", "--root", "C:\VulkanSDK" -Wait; `
-    Remove-Item $installer
+    Start-Process -FilePath $installer -ArgumentList "--accept-licenses", "--default-answer", "--confirm-command", "install", "--root", "C:\VulkanSDK" -Wait
 
 
 ### ─────────────────────────────
 ### Stage 2: Final runtime image
 ### ─────────────────────────────
-FROM mcr.microsoft.com/windows/servercore:20348
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
 
 SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
