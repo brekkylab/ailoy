@@ -7,6 +7,14 @@ FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS builder
 
 SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
+# Install Git portable
+RUN Invoke-WebRequest `
+        -Uri "https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe" `
+        -OutFile "PortableGit.7z.exe"; `
+    ls; `
+    Start-Process -FilePath "PortableGit.7z.exe" -ArgumentList '-y', '-oC:\git' -Wait
+ENV PATH="C:\\git\\cmd;%PATH%"
+
 # Install CMake portable
 RUN Invoke-WebRequest `
         -Uri "https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-windows-x86_64.zip" `
@@ -14,13 +22,6 @@ RUN Invoke-WebRequest `
     ls; `
     Expand-Archive -Path "cmake.zip" -DestinationPath "C:\\cmake" -Force
 ENV PATH="C:\\cmake\\cmake-4.0.3-windows-x86_64\\bin;%PATH%"
-
-# Install Git portable
-RUN Invoke-WebRequest `
-        -Uri "https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe" `
-        -OutFile "PortableGit.7z.exe"; `
-    Start-Process -FilePath "PortableGit.7z.exe" -ArgumentList '-y -oC:\git' -Wait
-ENV PATH="C:\\git\\cmd;%PATH%"
 
 # Clone and bootstrap vcpkg
 ENV VCPKG_ROOT="C:\\vcpkg"
