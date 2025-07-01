@@ -7,6 +7,20 @@ FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS builder
 
 SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
+# Install Visual Studio Build Tools with C++ support
+RUN Invoke-WebRequest `
+        -Uri "https://aka.ms/vs/17/release/vs_BuildTools.exe" `
+        -OutFile "vs_buildtools.exe"; `
+    Start-Process -FilePath "vs_buildtools.exe" `
+        -ArgumentList `
+            "--quiet", "--wait", "--norestart", `
+            "--nocache", `
+            "--installPath", "C:\BuildTools", `
+            "--add", "Microsoft.VisualStudio.Workload.VCTools", `
+            "--includeRecommended" `
+        -Wait
+RUN setx /M PATH \"C:\\BuildTools\\VC\\Tools\\MSVC\\14.*/bin\\Hostx64\\x64;C:\\BuildTools\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
+
 # Install Git portable
 RUN Invoke-WebRequest `
         -Uri "https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe" `
