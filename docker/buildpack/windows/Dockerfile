@@ -11,13 +11,12 @@ SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPref
 RUN Set-ExecutionPolicy Bypass -Scope Process -Force; `
     iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1')); `
     choco install -y git cmake
-
-# Set environment variables
-ENV VCPKG_ROOT="C:\\vcpkg" `
-    VCPKG_DEFAULT_TRIPLET="x64-windows-static" `
-    PATH="C:\\vcpkg;C:\\vcpkg\\installed\\x64-windows-static\\bin;%PATH%"
+ENV PATH="C:\\ProgramData\\chocolatey\\bin;%PATH%"
 
 # Clone and bootstrap vcpkg
+ENV VCPKG_ROOT="C:\\vcpkg" `
+    VCPKG_DEFAULT_TRIPLET="x64-windows-static" `
+    PATH="C:\\vcpkg\\installed\\x64-windows-static\\bin;%PATH%"
 RUN git clone https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT; `
     cd $env:VCPKG_ROOT; `
     .\bootstrap-vcpkg.bat
