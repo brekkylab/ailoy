@@ -12,6 +12,9 @@ RUN Invoke-WebRequest `
         -Uri "https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe" `
         -OutFile "PortableGit.7z.exe"; `
     Start-Process -FilePath "PortableGit.7z.exe" -ArgumentList '-y', '-oC:\git' -Wait
+RUN ls C:\; `
+    ls C:\git; `
+    ls C:\git\cmd
 RUN setx /M PATH "%PATH%;C:\git\cmd"
 
 # Install CMake portable
