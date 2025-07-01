@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkailoy_docs=self.webpackChunkailoy_docs||[]).push([[341],{380:o=>{o.exports=JSON.parse('{"tags":[{"label":"Ailoy","permalink":"/ailoy/blog/tags/ailoy","description":"Ailoy tag description","count":1}]}')}}]);

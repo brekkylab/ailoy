@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkailoy_docs=self.webpackChunkailoy_docs||[]).push([[903],{1912:o=>{o.exports=JSON.parse('{"blogBasePath":"/ailoy/blog","blogTitle":"Blog","authorsListPath":"/ailoy/blog/authors"}')}}]);
