@@ -181,7 +181,8 @@ void from_json(const json &j,
   if (j.contains("name") && !j["name"].is_null())
     obj.name = j.at("name");
   if (j.contains("tool_calls") && !j["tool_calls"].is_null()) {
-    obj.tool_calls = j.at("tool_calls");
+    obj.tool_calls =
+        j.at("tool_calls").get<std::vector<ailoy::openai_chat_tool_call_t>>();
   }
 }
 
