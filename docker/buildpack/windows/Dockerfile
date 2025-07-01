@@ -3,7 +3,7 @@
 ### ─────────────────────────────
 ### Stage 1: Build environment
 ### ─────────────────────────────
-FROM mcr.microsoft.com/windows/servercore:20348 AS builder
+FROM mcr.microsoft.com/windows/servercore:2022 AS builder
 
 SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
