@@ -8,7 +8,7 @@ FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS builder
 SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
 # Install Git portable
-RUN $git_url = "https://github.com/git-for-windows/git/releases/download/v2.41.0.windows.1/PortableGit-2.41.0-64-bit.7z.exe"; `
+RUN $git_url = "https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe"; `
     $git_installer = "PortableGit.7z.exe"; `
     Invoke-WebRequest -Uri $git_url -OutFile $git_installer; `
     Start-Process -FilePath $git_installer -ArgumentList '-y -oC:\git' -Wait
