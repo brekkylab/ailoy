@@ -11,15 +11,14 @@ SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPref
 RUN Invoke-WebRequest `
         -Uri "https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe" `
         -OutFile "PortableGit.7z.exe"; `
-    ls; `
     Start-Process -FilePath "PortableGit.7z.exe" -ArgumentList '-y', '-oC:\git' -Wait
 ENV PATH="C:\\git\\cmd;%PATH%"
+RUN echo $env:PATH
 
 # Install CMake portable
 RUN Invoke-WebRequest `
         -Uri "https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-windows-x86_64.zip" `
         -OutFile "cmake.zip"; `
-    ls; `
     Expand-Archive -Path "cmake.zip" -DestinationPath "C:\\cmake" -Force
 ENV PATH="C:\\cmake\\cmake-4.0.3-windows-x86_64\\bin;%PATH%"
 
