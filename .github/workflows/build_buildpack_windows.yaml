@@ -20,4 +20,8 @@ jobs:
         shell: powershell
         run: |
           docker build -f ./docker/buildpack/windows/Dockerfile -t ghcr.io/brekkylab/ailoy-buildpack-windows:latest .
+      
+      - name: Push image
+        shell: powershell
+        run: |
           docker push ghcr.io/brekkylab/ailoy-buildpack-windows:latest
