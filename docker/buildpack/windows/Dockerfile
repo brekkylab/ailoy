@@ -11,7 +11,7 @@ SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPref
 RUN $git_url = "https://github.com/git-for-windows/git/releases/download/v2.41.0.windows.1/PortableGit-2.41.0-64-bit.7z.exe"; `
     $git_installer = "PortableGit.7z.exe"; `
     Invoke-WebRequest -Uri $git_url -OutFile $git_installer; `
-    Start-Process -FilePath $git_installer -ArgumentList "-y", "-oC:\git" -Wait
+    Start-Process -FilePath $git_installer -ArgumentList '-y -oC:\git' -Wait
 ENV PATH="C:\\git\\cmd;%PATH%"
 
 # Install CMake portable (precompiled win64 zip)
@@ -36,13 +36,13 @@ RUN & "$env:VCPKG_ROOT\\vcpkg.exe" install openblas lapack-reference
 RUN $url = "https://slproweb.com/download/Win64OpenSSL-3_5_0.exe"; `
     $installer = "openssl-installer.exe"; `
     Invoke-WebRequest -Uri $url -OutFile $installer; `
-    Start-Process -FilePath $installer -ArgumentList "/silent", "/verysilent", "/sp-", "/SUPPRESSMSGBOXES", "/DIR=C:\OpenSSL" -Wait
+    Start-Process -FilePath $installer -ArgumentList '/silent /verysilent /sp- /SUPPRESSMSGBOXES /DIR=C:\OpenSSL' -Wait
 
 # Install Vulkan SDK
 RUN $url = "https://sdk.lunarg.com/sdk/download/1.3.283.0/windows/vulkan-sdk.exe"; `
     $installer = "vulkan-sdk.exe"; `
     Invoke-WebRequest -Uri $url -OutFile $installer; `
-    Start-Process -FilePath $installer -ArgumentList "--accept-licenses", "--default-answer", "--confirm-command", "install", "--root", "C:\VulkanSDK" -Wait
+    Start-Process -FilePath $installer -ArgumentList '--accept-licenses --default-answer --confirm-command install --root C:\VulkanSDK' -Wait
 
 
 ### ─────────────────────────────
