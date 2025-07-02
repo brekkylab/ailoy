@@ -29,7 +29,10 @@ export default [
         exports: "named",
       },
     ],
-    external: [fileURLToPath(new URL("src/ailoy_addon.node", import.meta.url))],
+    external: [
+      fileURLToPath(new URL("src/ailoy_addon.node", import.meta.url)),
+      "sharp",
+    ],
     plugins: [
       resolve(),
       commonjs(),
