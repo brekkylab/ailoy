@@ -3,6 +3,9 @@ name: Build Buildpack Image for Windows
 on:
   push:
 
+env:
+  IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows
+
 jobs:
   build:
     runs-on: windows-latest
@@ -19,12 +22,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set date as image tag
+        shell: powershell
+        run: |
+          $date = Get-Date -Format "yyyyMMdd"
+          echo "TAG=$date" >> $env:GITHUB_ENV
+
       - name: Build image
         shell: powershell
         run: |
-          docker build -f ./docker/buildpack/windows/Dockerfile -t ghcr.io/brekkylab/ailoy-buildpack-windows:latest .
-      
+          docker build -f ./docker/buildpack/windows/Dockerfile -t ${{ env.IMAGE }}:${{ env.TAG }} .
+
       - name: Push image
         shell: powershell
         run: |
-          docker push ghcr.io/brekkylab/ailoy-buildpack-windows:latest
+          docker push ${{ env.IMAGE }}:${{ env.TAG }}
