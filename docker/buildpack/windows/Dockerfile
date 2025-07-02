@@ -35,7 +35,7 @@ RUN setx /M VCPKG_DEFAULT_TRIPLET "x64-windows-static"
 RUN setx /M PATH \"C:\\vcpkg\\installed\\x64-windows-static\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
 
 # Install OpenBLAS and LAPACK
-RUN & "C:\\vcpkg\\vcpkg.exe" install openblas:x64-windows-static lapack-reference:x64-windows-static
+RUN & "C:\\vcpkg\\vcpkg.exe" install openblas:x64-windows-static lapack-reference:x64-windows-static --configuration=Release
 
 # Install OpenSSL
 RUN Invoke-WebRequest `
