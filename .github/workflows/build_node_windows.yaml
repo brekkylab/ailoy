@@ -31,7 +31,7 @@ jobs:
       - name: Install OpenSSL
         shell: powershell
         run: |
-          $url = "https://slproweb.com/download/Win64OpenSSL-3_5_0.exe"
+          $url = "https://slproweb.com/download/Win64OpenSSL-3_5_1.exe"
           $output = "openssl-installer.exe"
           Invoke-WebRequest -Uri $url -OutFile $output
           Start-Process -FilePath ".\openssl-installer.exe" -ArgumentList "/silent", "/verysilent", "/sp-", "/SUPPRESSMSGBOXES" -Wait
