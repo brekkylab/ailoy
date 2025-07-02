@@ -25,6 +25,6 @@ RUN yum install -y gcc-gfortran && \
 
 FROM quay.io/pypa/manylinux_2_28_x86_64
 
-COPY --from=build /opt/vulkan-sdk /opt/vulkan/sdk
+COPY --from=build /opt/vulkan-sdk /opt/vulkan-sdk
 COPY --from=build /opt/openssl /opt/openssl
 COPY --from=build /opt/openblas /opt/openblas
