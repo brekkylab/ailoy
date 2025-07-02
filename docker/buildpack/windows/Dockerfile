@@ -33,7 +33,7 @@ RUN git clone https://github.com/microsoft/vcpkg.git C:\vcpkg; `
 
 # Install OpenBLAS and LAPACK
 COPY vcpkg.json ./
-RUN $env:VCPKG_BUILD_TYPE="release"; `
+RUN $env:VCPKG_BUILD_TYPE = \"release\"; `
     & "C:\\vcpkg\\vcpkg.exe" install --triplet x64-windows-static --configuration Release; `
     rm -fo vcpkg.json
 RUN setx /M PATH \"C:\\vcpkg\\installed\\x64-windows-static\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
