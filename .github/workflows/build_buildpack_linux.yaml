@@ -1,7 +1,7 @@
 name: Build Buildpack Image for Linux
 
 on:
-  push:
+  workflow_dispatch:
 
 env:
   IMAGE: ghcr.io/brekkylab/ailoy-buildpack-linux

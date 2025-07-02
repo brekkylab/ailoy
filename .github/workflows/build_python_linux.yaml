@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: quay.io/pypa/manylinux_2_28_x86_64
+      image: ghcr.io/brekkylab/ailoy-buildpack-linux:20250702
 
     strategy:
       matrix:
@@ -22,40 +22,13 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
       - name: Install Python build dependencies
         run: |
           $PYTHON_BIN/pip install -U pip
           $PYTHON_BIN/pip install build scikit-build-core
-
-      - name: Install Vulkan SDK
-        run: |
-          curl -LO https://sdk.lunarg.com/sdk/download/1.3.283.0/linux/vulkansdk-linux-x86_64-1.3.283.0.tar.xz
-          mkdir -p /opt/vulkan-sdk
-          tar -xJf vulkansdk-linux-x86_64-1.3.283.0.tar.xz --strip-components=2 -C /opt/vulkan-sdk
-
-      - name: Install OpenSSL 3.0.16
-        run: |
-          yum install -y perl-IPC-Cmd
-          curl -LO https://www.openssl.org/source/openssl-3.0.16.tar.gz
-          tar -xzf openssl-3.0.16.tar.gz
-          cd openssl-3.0.16
-          ./config --prefix=/opt/openssl --openssldir=/opt/openssl no-shared
-          make -j$(nproc)
-          make install_sw
-
-      - name: Install Rust (cargo)
-        run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-      - name: Build and Install OpenBLAS
-        run: |
-          yum install -y gcc-gfortran
-          curl -LO https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.29/OpenBLAS-0.3.29.tar.gz
-          tar -xzf OpenBLAS-0.3.29.tar.gz
-          cd OpenBLAS-0.3.29
-          make -j$(nproc) NO_SHARED=1 USE_OPENMP=0
-          make PREFIX=/opt/openblas NO_SHARED=1 USE_OPENMP=0 install
 
       - name: Build wheel
         working-directory: bindings/python
