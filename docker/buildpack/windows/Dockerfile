@@ -27,19 +27,19 @@ RUN Invoke-WebRequest `
 RUN setx /M PATH \"C:\\git\\cmd;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
 
 # Clone and bootstrap vcpkg
-RUN setx /M VCPKG_ROOT "C:\vcpkg"
 RUN git clone https://github.com/microsoft/vcpkg.git C:\vcpkg; `
     cd C:\vcpkg; `
     .\bootstrap-vcpkg.bat
-RUN setx /M VCPKG_DEFAULT_TRIPLET "x64-windows-static"
-RUN setx /M PATH \"C:\\vcpkg\\installed\\x64-windows-static\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
 
 # Install OpenBLAS and LAPACK
-RUN & "C:\\vcpkg\\vcpkg.exe" install openblas:x64-windows-static lapack-reference:x64-windows-static --configuration=Release
+COPY vcpkg.json ./
+RUN & "C:\\vcpkg\\vcpkg.exe" install --triplet x64-windows-static --configuration Release; `
+    rm -fo vcpkg.json
+RUN setx /M PATH \"C:\\vcpkg\\installed\\x64-windows-static\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
 
 # Install OpenSSL
 RUN Invoke-WebRequest `
-        -Uri "https://slproweb.com/download/Win64OpenSSL-3_5_0.exe" `
+        -Uri "https://slproweb.com/download/Win64OpenSSL-3_5_1.exe" `
         -OutFile "openssl-installer.exe"; `
     Start-Process -FilePath "openssl-installer.exe" `
         -ArgumentList '/silent', '/verysilent', '/sp-', '/SUPPRESSMSGBOXES', '/DIR=C:\OpenSSL' -Wait; `
