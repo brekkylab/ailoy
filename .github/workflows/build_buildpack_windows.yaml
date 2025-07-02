@@ -31,7 +31,8 @@ jobs:
       - name: Build image
         shell: powershell
         run: |
-          docker build -f ./docker/buildpack/windows/Dockerfile -t ${{ env.IMAGE }}:${{ env.TAG }} .
+          cd ./docker/buildpack/windows
+          docker build -t ${{ env.IMAGE }}:${{ env.TAG }} .
 
       - name: Push image
         shell: powershell
