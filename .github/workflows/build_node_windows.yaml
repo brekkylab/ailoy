@@ -2,68 +2,152 @@ name: Node Windows Build
 
 on:
   workflow_dispatch:
+  
+env:
+  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20250702
 
 jobs:
   build-windows:
     runs-on: windows-2022
 
-    strategy:
-      matrix:
-        node: [20, 22, 24]
+    # strategy:
+    #   matrix:
+    #     node: [20, 22, 24]
 
     steps:
-      - name: Enable Windows long path support
-        shell: powershell
-        run: |
-          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
-          git config --system core.longpaths true
-
-      - name: Set up MSVC dev command prompt
-        uses: ilammy/msvc-dev-cmd@v1
+      # - name: Enable Windows long path support
+      #   shell: powershell
+      #   run: |
+      #     Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
+      #     git config --system core.longpaths true
 
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      # - name: Set up Node.js
+      #   uses: actions/setup-node@v4
+      #   with:
+      #     node-version: ${{ matrix.node }}
+    
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
         with:
-          node-version: ${{ matrix.node }}
-
-      - name: Install OpenSSL
-        shell: powershell
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Pull buildpack image
         run: |
-          $url = "https://slproweb.com/download/Win64OpenSSL-3_5_0.exe"
-          $output = "openssl-installer.exe"
-          Invoke-WebRequest -Uri $url -OutFile $output
-          Start-Process -FilePath ".\openssl-installer.exe" -ArgumentList "/silent", "/verysilent", "/sp-", "/SUPPRESSMSGBOXES" -Wait
-
-      - name: Install OpenBLAS
-        shell: powershell
+          docker pull ${{ env.BUILDPACK_IMAGE }}
+      
+      - name: Build package
         run: |
-          & "C:\vcpkg\vcpkg.exe" install openblas:x64-windows-static lapack-reference:x64-windows-static
-          $root = "C:\vcpkg\installed\x64-windows-static"
-          echo "BLAS_ROOT=$root" >> $env:GITHUB_ENV
-          echo "LAPACK_ROOT=$root" >> $env:GITHUB_ENV
-          echo "$root\bin" >> $env:GITHUB_PATH
+          docker run --rm `
+            -v "${PWD}:C\workspace" `
+            -w C:\workspace `
+            ${{ env.BUILDPACK_IMAGE }} `
+            powershell -Command "
+              Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
 
-      - name: Install Vulkan SDK
-        shell: powershell
-        run: |
-          $url = "https://sdk.lunarg.com/sdk/download/1.3.283.0/windows/vulkan-sdk.exe"
-          $output = "vulkan-sdk.exe"
-          Invoke-WebRequest -Uri $url -OutFile $output
-          Start-Process -FilePath ".\vulkan-sdk.exe" -ArgumentList "--accept-licenses", "--default-answer", "--confirm-command", "install", "--root", "C:\VulkanSDK" -Wait
-          echo "VULKAN_SDK=C:\VulkanSDK" >> $env:GITHUB_ENV
-          echo "PATH=C:\VulkanSDK\Bin;C:\VulkanSDK\Lib;$env:PATH" >> $env:GITHUB_ENV
+              # Function to download files
+              function Download-File {
+                param([string]`$Url, [string]`$Output)
+                Write-Host \"Downloading `$Url to `$Output\"
+                try {
+                  Invoke-WebRequest -Uri `$Url -OutFile `$Output -UseBasicParsing
+                  Write-Host \"Download completed successfully\"
+                } catch {
+                  Write-Error \"Failed to download `$Url : `$_\"
+                  exit 1
+                }
+              }
 
-      - name: Create package
-        shell: powershell
+              # Create temp directory
+              `$TempDir = 'C:\temp_setup'
+              New-Item -ItemType Directory -Path `$TempDir -Force | Out-Null
+
+              # =============================================
+              # Install Node.js
+              # =============================================
+              Write-Host '=== Installing Node.js 22 ==='
+              `$NodeUrl = \"https://nodejs.org/dist/v22.17.0/node-v22.17.0-x64.msi\"
+              `$NodeInstaller = \"`$TempDir\node-installer.msi\"
+              
+              Download-File -Url `$NodeUrl -Output `$NodeInstaller
+
+              Write-Host 'Installing Node.js...'
+              Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', `$NodeInstaller, '/quiet', '/norestart' -Wait -NoNewWindow
+
+              # Refresh PATH
+              `$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')
+              
+              # Verify Node.js installation
+              node --version
+              if (`$LASTEXITCODE -ne 0) {
+                Write-Error 'Node.js installation failed'
+                exit 1
+              }
+              
+              npm --version
+              if (`$LASTEXITCODE -ne 0) {
+                Write-Error 'npm installation failed'
+                exit 1
+              }
+
+              # =============================================
+              # Install Rust
+              # =============================================
+              Write-Host '=== Installing Rust 1.88.0 ==='
+              `$RustUrl = 'https://forge.rust-lang.org/infra/channel-build.html'
+              `$RustInitUrl = 'https://win.rustup.rs/x86_64'
+              `$RustInstaller = \"`$TempDir\rustup-init.exe\"
+              
+              Download-File -Url `$RustInitUrl -Output `$RustInstaller
+              
+              Write-Host 'Installing Rust...'
+              Start-Process -FilePath `$RustInstaller -ArgumentList '-y', '--default-toolchain', '1.88.0', '--profile', 'default' -Wait -NoNewWindow
+              
+              # Add Rust to PATH
+              `$env:PATH += ';C:\Users\ContainerUser\.cargo\bin'
+              
+              # Verify Rust installation
+              rustc --version
+              if (`$LASTEXITCODE -ne 0) {
+                Write-Error 'Rust installation failed'
+                exit 1
+              }
+              
+              cargo --version
+              if (`$LASTEXITCODE -ne 0) {
+                Write-Error 'Cargo installation failed'
+                exit 1
+              }
+
+              # =============================================
+              # Build ailoy-node
+              # =============================================
+              Write-Host '=== Build Ailoy ==='
+
+              cd C:\workspace\bindings\js-node
+              npm install
+              npm pack
+            "
+
+      # - name: Create package
+      #   shell: powershell
+      #   run: |
+      #     npm install
+      #     npm pack
+      #     $packageName = Get-ChildItem -Name "ailoy-*.tgz" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+      #     echo "packageName=$packageName"
+      #     echo "packageName=$packageName" >> $env:GITHUB_ENV
+      #   working-directory: ${{ github.workspace }}/bindings/js-node
+
+      - name: Get package name
+        working-directory: ${{ github.workspace }}/bindings/js-node
         run: |
-          npm install
-          npm pack
           $packageName = Get-ChildItem -Name "ailoy-*.tgz" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           echo "packageName=$packageName"
           echo "packageName=$packageName" >> $env:GITHUB_ENV
-        working-directory: ${{ github.workspace }}/bindings/js-node
 
       - name: Upload npm package
         uses: actions/upload-artifact@v4
