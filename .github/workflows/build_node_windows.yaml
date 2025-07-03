@@ -47,14 +47,11 @@ jobs:
       - name: Build package
         run: |
           $currentPath = (Get-Location).Path
-          Write-Host "Current path: $currnetPath"
-
-          $dockerVolume = $currentPath -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
-          Write-Host "Docker volume: $dockerVolume"
+          Write-Host "Current path: $currentPath"
           
           docker run --rm `
-            -v "${dockerVolume}:/workspace" `
-            -w /workspace `
+            -v "${currentPath}:C:\workspace" `
+            -w "C:\workspace" `
             ${{ env.BUILDPACK_IMAGE }} `
             powershell -Command "
               Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
