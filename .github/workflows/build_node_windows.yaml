@@ -28,6 +28,11 @@ jobs:
       #   with:
       #     node-version: ${{ matrix.node }}
     
+      - name: Print Docker info
+        run: |
+          docker version
+          docker info
+    
       - name: Login to ghcr.io
         uses: docker/login-action@v3
         with:
@@ -37,12 +42,18 @@ jobs:
       
       - name: Pull buildpack image
         run: |
-          docker pull ${{ env.BUILDPACK_IMAGE }}
+          docker pull --verbose ${{ env.BUILDPACK_IMAGE }}
       
       - name: Build package
         run: |
+          $currentPath = (Get-Location).Path
+          Write-Host "Current path: $currnetPath"
+
+          $dockerVolume = $currentPath -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
+          Write-Host "Docker volume: $dockerVolume"
+          
           docker run --rm `
-            -v "${PWD}:/workspace" `
+            -v "${dockerVolume}:/workspace" `
             -w /workspace `
             ${{ env.BUILDPACK_IMAGE }} `
             powershell -Command "
