@@ -148,8 +148,8 @@ jobs:
               }
 
               # set envs
-              `$env:BLAS_ROOT = "C:\vcpkg\installed\x64-windows-static"
-              `$env:LAPACK_ROOT = "C:\vcpkg\installed\x64-windows-static"
+              `$env:BLAS_ROOT = "C:\vcpkg\installed\x64-windows-static-release"
+              `$env:LAPACK_ROOT = "C:\vcpkg\installed\x64-windows-static-release"
               `$env:VULKAN_SDK = "C:\VulkanSDK"
 
               npm pack

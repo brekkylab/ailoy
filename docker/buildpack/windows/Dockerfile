@@ -29,15 +29,15 @@ RUN Invoke-WebRequest `
 # Clone and bootstrap vcpkg
 RUN git clone https://github.com/microsoft/vcpkg.git C:\vcpkg; `
     cd C:\vcpkg; `
-    .\bootstrap-vcpkg.bat
+    .\bootstrap-vcpkg.bat -disableMetrics
 
 # Install OpenBLAS and LAPACK
 COPY vcpkg.json ./
 RUN "C:\\vcpkg\\vcpkg.exe" install --triplet x64-windows-static-release; `
     rm -fo vcpkg.json; `
-    setx /M BLAS_ROOT \"C:\\vcpkg\\installed\\x64-windows-static\"; `
-    setx /M LAPACK_ROOT \"C:\\vcpkg\\installed\\x64-windows-static\"; `
-    setx /M PATH \"C:\\vcpkg\\installed\\x64-windows-static\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
+    setx /M BLAS_ROOT \"C:\\vcpkg\\installed\\x64-windows-static-release\"; `
+    setx /M LAPACK_ROOT \"C:\\vcpkg\\installed\\x64-windows-static-release\"; `
+    setx /M PATH \"C:\\vcpkg\\installed\\x64-windows-static-release\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
 
 # Install OpenSSL
 RUN Invoke-WebRequest `
