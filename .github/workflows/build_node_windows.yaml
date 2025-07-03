@@ -10,29 +10,13 @@ jobs:
   build-windows:
     runs-on: windows-2022
 
-    # strategy:
-    #   matrix:
-    #     node: [20, 22, 24]
+    strategy:
+      matrix:
+        node: ["20.19.3", "22.17.0", "24.3.0"]
 
     steps:
-      # - name: Enable Windows long path support
-      #   shell: powershell
-      #   run: |
-      #     Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
-      #     git config --system core.longpaths true
-
       - uses: actions/checkout@v4
 
-      # - name: Set up Node.js
-      #   uses: actions/setup-node@v4
-      #   with:
-      #     node-version: ${{ matrix.node }}
-    
-      - name: Print Docker info
-        run: |
-          docker version
-          docker info
-    
       - name: Login to ghcr.io
         uses: docker/login-action@v3
         with:
@@ -80,8 +64,8 @@ jobs:
               # =============================================
               # Install Node.js
               # =============================================
-              Write-Host "=== Installing Node.js 22 ==="
-              `$NodeUrl = "https://nodejs.org/dist/v22.17.0/node-v22.17.0-x64.msi"
+              Write-Host "=== Installing Node.js ${{ matrix.node }} ==="
+              `$NodeUrl = "https://nodejs.org/dist/v${{ matrix.node }}/node-v${{ matrix.node }}-x64.msi"
               `$NodeInstaller = "`$TempDir\node-installer.msi"
 
               Download-File -Url `$NodeUrl -Output `$NodeInstaller
@@ -125,16 +109,6 @@ jobs:
 
               Write-Host '=== Build Complete ==='
           "@
-
-      # - name: Create package
-      #   shell: powershell
-      #   run: |
-      #     npm install
-      #     npm pack
-      #     $packageName = Get-ChildItem -Name "ailoy-*.tgz" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-      #     echo "packageName=$packageName"
-      #     echo "packageName=$packageName" >> $env:GITHUB_ENV
-      #   working-directory: ${{ github.workspace }}/bindings/js-node
 
       - name: Get package name
         working-directory: ${{ github.workspace }}/bindings/js-node
