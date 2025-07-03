@@ -42,8 +42,8 @@ jobs:
       - name: Build package
         run: |
           docker run --rm `
-            -v "${PWD}:C\workspace" `
-            -w C:\workspace `
+            -v "${PWD}:/workspace" `
+            -w /workspace `
             ${{ env.BUILDPACK_IMAGE }} `
             powershell -Command "
               Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
@@ -127,9 +127,20 @@ jobs:
               # =============================================
               Write-Host '=== Build Ailoy ==='
 
-              cd C:\workspace\bindings\js-node
+              Set-Location 'bindings\js-node'
               npm install
+              if (`$LASTEXITCODE -ne 0) {
+                Write-Error 'npm install failed'
+                exit 1
+              }
+              
               npm pack
+              if (`$LASTEXITCODE -ne 0) {
+                Write-Error 'npm pack failed'
+                exit 1
+              }
+
+              Write-Host '=== Build Complete ==='
             "
 
       # - name: Create package
