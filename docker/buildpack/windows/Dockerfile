@@ -15,16 +15,16 @@ RUN Invoke-WebRequest `
             "--add", "Microsoft.VisualStudio.Workload.VCTools", `
             "--includeRecommended" `
         -Wait; `
-    Remove-Item "vs_buildtools.exe"
-RUN setx /M PATH \"C:\\BuildTools\\VC\\Tools\\MSVC\\14.*/bin\\Hostx64\\x64;C:\\BuildTools\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
+    Remove-Item "vs_buildtools.exe" `
+    setx /M PATH \"C:\\BuildTools\\VC\\Tools\\MSVC\\14.*/bin\\Hostx64\\x64;C:\\BuildTools\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
 
 # Install Git portable
 RUN Invoke-WebRequest `
         -Uri "https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe" `
         -OutFile "PortableGit.7z.exe"; `
     Start-Process -FilePath "PortableGit.7z.exe" -ArgumentList '-y', '-oC:\git' -Wait; `
-    Remove-Item "PortableGit.7z.exe"
-RUN setx /M PATH \"C:\\git\\cmd;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
+    Remove-Item "PortableGit.7z.exe" `
+    setx /M PATH \"C:\\git\\cmd;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
 
 # Clone and bootstrap vcpkg
 RUN git clone https://github.com/microsoft/vcpkg.git C:\vcpkg; `
@@ -33,10 +33,11 @@ RUN git clone https://github.com/microsoft/vcpkg.git C:\vcpkg; `
 
 # Install OpenBLAS and LAPACK
 COPY vcpkg.json ./
-RUN $env:VCPKG_BUILD_TYPE = \"release\"; `
-    & "C:\\vcpkg\\vcpkg.exe" install --triplet x64-windows-static; `
-    rm -fo vcpkg.json
-RUN setx /M PATH \"C:\\vcpkg\\installed\\x64-windows-static\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
+RUN "C:\\vcpkg\\vcpkg.exe" install --triplet x64-windows-static-rel; `
+    rm -fo vcpkg.json `
+    setx /M BLAS_ROOT \"C:\\vcpkg\\installed\\x64-windows-static\" `
+    setx /M LAPACK_ROOT \"C:\\vcpkg\\installed\\x64-windows-static\" `
+    setx /M PATH \"C:\\vcpkg\\installed\\x64-windows-static\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
 
 # Install OpenSSL
 RUN Invoke-WebRequest `
@@ -52,4 +53,5 @@ RUN Invoke-WebRequest `
         -OutFile "vulkan-sdk.exe"; `
     Start-Process -FilePath "vulkan-sdk.exe" `
         -ArgumentList '--accept-licenses', '--default-answer', '--confirm-command', 'install', '--root', 'C:\VulkanSDK' -Wait; `
-    Remove-Item "vulkan-sdk.exe"
+    Remove-Item "vulkan-sdk.exe" `
+    setx -M VULKAN_SDK \"C:\\VulkanSDK\"
