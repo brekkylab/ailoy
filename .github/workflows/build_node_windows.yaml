@@ -1,7 +1,7 @@
 name: Node Windows Build
 
 on:
-  workflow_dispatch:
+  push:
   
 env:
   BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20250702
@@ -42,7 +42,7 @@ jobs:
       
       - name: Pull buildpack image
         run: |
-          docker pull --verbose ${{ env.BUILDPACK_IMAGE }}
+          docker pull ${{ env.BUILDPACK_IMAGE }}
       
       - name: Build package
         run: |
