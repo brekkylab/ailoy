@@ -5,6 +5,6 @@ description = "Ailoy + Gradio integration example"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "ailoy-py>=0.0.2",
+    "ailoy-py>=0.0.3",
     "gradio>=5.31.0",
 ]
