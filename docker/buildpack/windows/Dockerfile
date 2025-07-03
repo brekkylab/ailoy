@@ -33,11 +33,11 @@ RUN git clone https://github.com/microsoft/vcpkg.git C:\vcpkg; `
 
 # Install OpenBLAS and LAPACK
 COPY vcpkg.json ./
-RUN "C:\\vcpkg\\vcpkg.exe" install --triplet x64-windows-static-release --x-manifest-root=\"C:\vcpkg\installed\"; `
+RUN "C:\\vcpkg\\vcpkg.exe" install --triplet x64-windows-static-release\"; `
     rm -fo vcpkg.json; `
-    setx /M BLAS_ROOT \"C:\\vcpkg\\installed\\x64-windows-static-release\"; `
-    setx /M LAPACK_ROOT \"C:\\vcpkg\\installed\\x64-windows-static-release\"; `
-    setx /M PATH \"C:\\vcpkg\\installed\\x64-windows-static-release\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
+    setx /M BLAS_ROOT \"C:\\vcpkg_installed\\x64-windows-static-release\"; `
+    setx /M LAPACK_ROOT \"C:\\vcpkg_installed\\x64-windows-static-release\"; `
+    setx /M PATH \"C:\\vcpkg_installed\\x64-windows-static-release\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
 
 # Install OpenSSL
 RUN Invoke-WebRequest `
@@ -55,3 +55,12 @@ RUN Invoke-WebRequest `
         -ArgumentList '--accept-licenses', '--default-answer', '--confirm-command', 'install', '--root', 'C:\VulkanSDK' -Wait; `
     Remove-Item "vulkan-sdk.exe"; `
     setx -M VULKAN_SDK \"C:\\VulkanSDK\"
+
+# Install Rust
+RUN Invoke-WebRequest `
+        -Uri "https://win.rustup.rs/x86_64" `
+        -OutFile "rustup-init.exe"; `
+    Start-Process -FilePath "rustup-init.exe" `
+        -ArgumentList '-y', '--default-toolchain', '1.88.0', '--profile', 'default' -Wait -NoNewWindow; `
+    Remove-Item "rustup-init.exe"; `
+    setx /M PATH \"$env:USERPROFILE\\.cargo\\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"

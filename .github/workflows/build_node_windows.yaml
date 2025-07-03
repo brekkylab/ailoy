@@ -106,36 +106,6 @@ jobs:
               }
 
               # =============================================
-              # Install Rust
-              # =============================================
-              Write-Host '=== Installing Rust 1.88.0 ==='
-              `$RustUrl = 'https://forge.rust-lang.org/infra/channel-build.html'
-              `$RustInitUrl = 'https://win.rustup.rs/x86_64'
-              `$RustInstaller = "`$TempDir\rustup-init.exe"
-
-              Download-File -Url `$RustInitUrl -Output `$RustInstaller
-
-              Write-Host 'Installing Rust...'
-              Start-Process -FilePath `$RustInstaller -ArgumentList '-y', '--default-toolchain', '1.88.0', '--profile', 'default' -Wait -NoNewWindow
-
-              # Add Rust to PATH
-              `$cargoPath = Join-Path `$env:USERPROFILE '.cargo\bin'
-              `$env:PATH += [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ";" + `$cargoPath
-
-              # Verify Rust installation
-              rustc --version
-              if (`$LASTEXITCODE -ne 0) {
-                Write-Error 'Rust installation failed'
-                exit 1
-              }
-
-              cargo --version
-              if (`$LASTEXITCODE -ne 0) {
-                Write-Error 'Cargo installation failed'
-                exit 1
-              }
-
-              # =============================================
               # Build ailoy-node
               # =============================================
               Write-Host '=== Build Ailoy ==='
@@ -146,12 +116,6 @@ jobs:
                 Write-Error 'npm install failed'
                 exit 1
               }
-
-              # set envs
-              `$env:BLAS_ROOT = "C:\vcpkg_installed\x64-windows-static-release"
-              `$env:LAPACK_ROOT = "C:\vcpkg_installed\x64-windows-static-release"
-              `$env:PATH += [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ";" + "C:\vcpkg_installed\x64-windows-static-release/bin"
-              `$env:VULKAN_SDK = "C:\VulkanSDK"
 
               npm pack
               if (`$LASTEXITCODE -ne 0) {
