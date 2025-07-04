@@ -69,7 +69,7 @@ jobs:
               Download-File -Url `$PythonUrl -Output `$PythonInstaller
 
               Write-Host 'Installing Python...'
-              Start-Process -FilePath `$PythonInstaller -ArgumentList '/quiet', 'InstallAllUsers=1', 'PrependPath=1', 'Include_test=0', 'Include_doc=0', 'Include_dev=0', 'Include_debug=0', 'Include_launcher=1', 'InstallLauncherAllUsers=1' -Wait -NoNewWindow
+              Start-Process -FilePath `$PythonInstaller -ArgumentList '/quiet', 'InstallAllUsers=1', 'PrependPath=1', 'Include_test=0', 'Include_doc=0', 'Include_dev=1', 'Include_debug=0', 'Include_launcher=1', 'InstallLauncherAllUsers=1' -Wait -NoNewWindow
 
               # Refresh PATH
               `$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')
