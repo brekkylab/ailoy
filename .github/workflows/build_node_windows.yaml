@@ -100,7 +100,7 @@ jobs:
                 exit 1
               }
 
-              $env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
+              `$env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
               npm pack
               if (`$LASTEXITCODE -ne 0) {
                 Write-Error 'npm pack failed'
