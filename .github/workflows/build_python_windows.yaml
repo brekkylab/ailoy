@@ -99,8 +99,8 @@ jobs:
                 exit 1
               }
 
-              $dist_wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
-              python -m delvewheel repair -w wheelhouse $dist_wheel --add-path "C:\workspace\bindings\python\build\_deps\tvm-build\Release"
+              `$dist_wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+              python -m delvewheel repair -w wheelhouse `$dist_wheel --add-path "$(Get-Location)\build\_deps\tvm-build\Release"
               if (`$LASTEXITCODE -ne 0) {
                 Write-Error 'delvewheel failed'
                 exit 1
