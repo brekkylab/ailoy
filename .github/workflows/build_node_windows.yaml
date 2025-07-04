@@ -30,6 +30,7 @@ jobs:
 
       - name: Build package
         run: |
+          $currentPath = (Get-Location).Path
           docker run --rm `
             -v "${currentPath}:C:\workspace" `
             -w "C:\workspace" `
