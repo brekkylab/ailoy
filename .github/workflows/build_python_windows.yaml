@@ -3,6 +3,9 @@ name: Python Windows Build
 on:
   push:
 
+env:
+  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20250703
+
 jobs:
   build-windows:
     runs-on: windows-2022
