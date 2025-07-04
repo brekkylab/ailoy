@@ -4,7 +4,7 @@ on:
   push:
 
 env:
-  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20250703
+  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20250704
 
 jobs:
   build-windows:
@@ -93,6 +93,8 @@ jobs:
               Set-Location 'bindings\python'
 
               python -m pip install build scikit-build-core delvewheel
+
+              `$env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
               python -m build -w --outdir dist
               if (`$LASTEXITCODE -ne 0) {
                 Write-Error 'python build failed'

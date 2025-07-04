@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20250703
+  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20250704
 
 jobs:
   build-windows:
@@ -93,12 +93,14 @@ jobs:
               Write-Host '=== Build Ailoy ==='
 
               Set-Location 'bindings\js-node'
+
               npm install
               if (`$LASTEXITCODE -ne 0) {
                 Write-Error 'npm install failed'
                 exit 1
               }
 
+              $env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
               npm pack
               if (`$LASTEXITCODE -ne 0) {
                 Write-Error 'npm pack failed'
