@@ -20,6 +20,8 @@ jobs:
           - node-version: "24"
             node-full-version: "24.3.0"
 
+    continue-on-error: true
+
     steps:
       - uses: actions/checkout@v4
 

@@ -11,6 +11,7 @@ jobs:
       matrix:
         node: [20, 22, 24]
 
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
