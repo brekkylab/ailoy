@@ -76,7 +76,7 @@ if (DEFINED NODE)
       # Find in ignorelist
       set(skip FALSE)
       get_filename_component(dep_filename "${dep}" NAME)
-      string(TOLOWER "${dep_filename} dep_filename_lower")
+      string(TOLOWER "${dep_filename}" dep_filename_lower)
       foreach(ignore IN LISTS ignorelist)
         if(dep_filename_lower STREQUAL ignore)
           set(skip TRUE)
