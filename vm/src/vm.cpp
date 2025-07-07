@@ -260,6 +260,11 @@ void vm_start(const std::string &url,
       raise_exception("Disconnection response packet not arrived");
     client->recv();
   }
+
+  // Remove vm_id from vm_states
+  if (vm_states.contains(vm_id)) {
+    vm_states.erase(vm_id);
+  }
 }
 
 void vm_stop(const std::string &url, const std::string &name) {
@@ -267,7 +272,6 @@ void vm_stop(const std::string &url, const std::string &name) {
   auto it = vm_states.find(vm_id);
   if (it != vm_states.end()) {
     it->second->stop->stop();
-    vm_states.erase(it);
   }
 }
 
