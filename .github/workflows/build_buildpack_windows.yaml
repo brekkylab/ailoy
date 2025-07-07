@@ -1,0 +1,40 @@
+name: Build Buildpack Image for Windows
+
+on:
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set date as image tag
+        shell: powershell
+        run: |
+          $date = Get-Date -Format "yyyyMMdd"
+          echo "TAG=$date" >> $env:GITHUB_ENV
+
+      - name: Build image
+        shell: powershell
+        run: |
+          cd ./docker/buildpack/windows
+          docker build -t ${{ env.IMAGE }}:${{ env.TAG }} .
+
+      - name: Push image
+        shell: powershell
+        run: |
+          docker push ${{ env.IMAGE }}:${{ env.TAG }}

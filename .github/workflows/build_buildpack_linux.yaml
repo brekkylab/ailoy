@@ -1,0 +1,48 @@
+name: Build Buildpack Image for Linux
+
+on:
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/brekkylab/ailoy-buildpack-linux
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Docker buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+    
+      - name: Docker Metadata
+        id: docker-metadata
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            ${{ env.IMAGE }}
+          tags: |
+            type=raw,value={{date 'YYYYMMDD'}}
+
+      - name: Build and Push
+        uses: docker/build-push-action@v4
+        with:
+          context: ./docker/buildpack/linux
+          labels: ${{ steps.docker-metadata.outputs.labels }}
+          tags: ${{ steps.docker-metadata.outputs.tags }}
+          push: true
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
+          platforms: |
+            linux/amd64
