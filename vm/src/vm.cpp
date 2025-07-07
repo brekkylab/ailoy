@@ -267,6 +267,7 @@ void vm_stop(const std::string &url, const std::string &name) {
   auto it = vm_states.find(vm_id);
   if (it != vm_states.end()) {
     it->second->stop->stop();
+    vm_states.erase(it);
   }
 }
 

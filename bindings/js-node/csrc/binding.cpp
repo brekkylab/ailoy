@@ -49,14 +49,16 @@ void stop_threads(const Napi::CallbackInfo &info) {
         .ThrowAsJavaScriptException();
   std::string url = info[0].As<Napi::String>();
 
-  std::unordered_map<std::string, std::thread>::iterator vm_thread;
-  if ((vm_thread = vm_threads.find(url)) != vm_threads.end()) {
+  std::unordered_map<std::string, std::thread>::iterator vm_thread =
+      vm_threads.find(url);
+  if (vm_thread != vm_threads.end()) {
     ailoy::vm_stop(url);
     vm_thread->second.join();
     vm_threads.erase(vm_thread);
   }
-  std::unordered_map<std::string, std::thread>::iterator broker_thread;
-  if ((broker_thread = broker_threads.find(url)) != broker_threads.end()) {
+  std::unordered_map<std::string, std::thread>::iterator broker_thread =
+      broker_threads.find(url);
+  if (broker_thread != broker_threads.end()) {
     ailoy::broker_stop(url);
     broker_thread->second.join();
     broker_threads.erase(broker_thread);

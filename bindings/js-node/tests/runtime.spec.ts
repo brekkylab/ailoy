@@ -2,7 +2,7 @@ import { expect } from "chai";
 
 import { Runtime, NDArray } from "../src/index";
 
-describe("JSVM", () => {
+describe("Runtime", () => {
   it("run-echo", async () => {
     const rt = new Runtime();
     await rt.start();

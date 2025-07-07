@@ -86,15 +86,12 @@ export class Runtime {
         this.alive = false;
         const current_count = Runtime.client_count.get(this.url) ?? 0;
         Runtime.client_count.set(this.url, current_count - 1);
+        if (Runtime.client_count.get(this.url) === 0) {
+          stopThreads(this.url);
+        }
       });
     } else promise = Promise.resolve();
-    return promise.then(() => {
-      const current_count = Runtime.client_count.get(this.url) ?? 0;
-      if (current_count <= 0) {
-        stopThreads(this.url);
-        Runtime.client_count.delete(this.url);
-      }
-    });
+    return promise;
   }
 
   is_alive(): boolean {
