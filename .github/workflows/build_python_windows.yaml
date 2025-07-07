@@ -1,7 +1,7 @@
 name: Python Windows Build
 
 on:
-  push:
+  workflow_dispatch:
 
 env:
   BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20250704
@@ -10,9 +10,17 @@ jobs:
   build-windows:
     runs-on: windows-2022
 
-    # strategy:
-    #   matrix:
-    #     python-version: ["3.10", "3.11", "3.12", "3.13"]
+    strategy:
+      matrix:
+        include:
+          - py-version: "3.10"
+            py-full-version: "3.10.18"
+          - py-version: "3.11"
+            py-full-version: "3.11.13"
+          - py-version: "3.12"
+            py-full-version: "3.12.11"
+          - py-version: "3.13"
+            py-full-version: "3.13.5"
 
     steps:
       - uses: actions/checkout@v4
@@ -62,8 +70,8 @@ jobs:
               # =============================================
               # Install Python
               # =============================================
-              Write-Host "=== Installing Python 3.13.5 ==="
-              `$PythonUrl = "https://www.python.org/ftp/python/3.13.5/python-3.13.5-amd64.exe"
+              Write-Host "=== Installing Python ${{ matrix.py-version }} ==="
+              `$PythonUrl = "https://www.python.org/ftp/python/${{ matrix.py-full-version }}/python-${{ matrix.py-full-version }}-amd64.exe"
               `$PythonInstaller = "`$TempDir\\python-installer.exe"
 
               Download-File -Url `$PythonUrl -Output `$PythonInstaller
