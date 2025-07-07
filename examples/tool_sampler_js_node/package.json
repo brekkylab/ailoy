@@ -11,7 +11,7 @@
   "description": "",
   "dependencies": {
     "@inquirer/prompts": "^7.5.3",
-    "ailoy-node": "file:../../bindings/js-node"
+    "ailoy-node": "^0.0.4"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
