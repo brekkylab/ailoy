@@ -2,9 +2,9 @@ import { expect } from "chai";
 
 import { Runtime, NDArray } from "../src/index";
 
-describe("JSVM", () => {
+describe("Runtime", () => {
   it("run-echo", async () => {
-    const rt = new Runtime("inproc://echo");
+    const rt = new Runtime();
     await rt.start();
     const sentence = "hello world";
     const resp = await rt.call("echo", { text: sentence });
@@ -13,7 +13,7 @@ describe("JSVM", () => {
   });
 
   it("run-spell", async () => {
-    const rt = new Runtime("inproc://spell");
+    const rt = new Runtime();
     await rt.start();
     const sentence = "abcdefghijk";
     let i = 0;
@@ -25,7 +25,7 @@ describe("JSVM", () => {
   });
 
   it("run-multiple", async () => {
-    const rt = new Runtime("inproc://multiple");
+    const rt = new Runtime();
     await rt.start();
     const sentence = "artificial intelligence";
     const prom1 = rt.callIter("spell", { text: sentence });
@@ -52,7 +52,7 @@ describe("JSVM", () => {
   });
 
   it("run-embedding-model", async () => {
-    const rt = new Runtime("inproc://embedding_model");
+    const rt = new Runtime();
     await rt.start();
     let resp1 = await rt.define("tvm_embedding_model", "em0", {});
     expect(resp1).to.be.equal(true);
@@ -66,7 +66,7 @@ describe("JSVM", () => {
   });
 
   it("run-faiss-vector-store", async () => {
-    const rt = new Runtime("inproc://faiss_vector_store");
+    const rt = new Runtime();
     await rt.start();
     expect(
       await rt.define("faiss_vector_store", "vs0", {
@@ -131,7 +131,7 @@ describe("JSVM", () => {
   });
 
   it("run-chromadb-vector-store", async () => {
-    const rt = new Runtime("inproc://chromadb_vector_store");
+    const rt = new Runtime();
     await rt.start();
 
     let resp = await rt.define("chromadb_vector_store", "vs0", {
@@ -193,7 +193,7 @@ describe("JSVM", () => {
   });
 
   it("run-split-text", async () => {
-    const rt = new Runtime("inproc://split_text");
+    const rt = new Runtime();
     await rt.start();
     const text = `
   Madam Speaker, Madam Vice President, our First Lady and Second Gentleman. Members of Congress and the Cabinet. Justices of the Supreme Court. My fellow Americans.
@@ -244,7 +244,7 @@ describe("JSVM", () => {
   });
 
   it("run-http-request", async () => {
-    const rt = new Runtime("inproc://http-request");
+    const rt = new Runtime();
     await rt.start();
     const args = {
       url: "https://api.frankfurter.dev/v1/latest?base=USD&symbols=KRW",
