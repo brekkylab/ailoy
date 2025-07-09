@@ -1,4 +1,4 @@
-from typing import Literal, Optional, Self, get_args
+from typing import Literal, Optional, get_args
 
 from pydantic import model_validator
 from pydantic.dataclasses import dataclass
@@ -44,7 +44,7 @@ class APIModel:
     provider: Optional[APIModelProvider] = None
 
     @model_validator(mode="after")
-    def validate_provider(self) -> Self:
+    def validate_provider(self):
         if self.provider is None:
             if self.id in get_args(OpenAIModelId):
                 self.provider = "openai"
