@@ -19,6 +19,25 @@ FetchContent_MakeAvailable(stduuid)
 FetchContent_Declare(spdlog URL https://github.com/gabime/spdlog/archive/refs/tags/v1.15.2.tar.gz EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(spdlog)
 
+if(NOT DEFINED EMSCRIPTEN)
+    FetchContent_Declare(
+        httplib
+        GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+        GIT_TAG v0.20.0
+        EXCLUDE_FROM_ALL
+    )
+    set(HTTPLIB_REQUIRE_OPENSSL ON)
+    set(BROTLI_USE_STATIC_LIBS ON)
+    set(OPENSSL_USE_STATIC_LIBS ON)
+    if(NODE)
+        set(OPENSSL_MSVC_STATIC_RT ON)
+    endif()
+    FetchContent_MakeAvailable(httplib)
+
+    # openssl
+    find_package(OpenSSL REQUIRED)
+endif()
+
 if(NOT DEFINED EMSCRIPTEN) 
     FetchContent_Declare(cpptrace URL https://github.com/jeremy-rifkin/cpptrace/archive/refs/tags/v0.7.5.tar.gz EXCLUDE_FROM_ALL)
     FetchContent_MakeAvailable(cpptrace)
@@ -35,6 +54,12 @@ target_link_libraries(ailoy_core_obj PUBLIC dlpack::dlpack)
 target_link_libraries(ailoy_core_obj PRIVATE stduuid)
 target_link_libraries(ailoy_core_obj PRIVATE spdlog)
 target_link_libraries(ailoy_core_obj PRIVATE magic_enum)
+if(NOT DEFINED EMSCRIPTEN)
+    target_link_libraries(ailoy_core_obj PRIVATE httplib)
+    target_link_libraries(ailoy_core_obj PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+endif()
+
+target_compile_definitions(ailoy_core_obj PUBLIC "HTTP_REQUEST_METHOD=${AILOY_HTTP_REQUEST_METHOD}")
 
 if(AILOY_WITH_TEST)
     add_executable(test_packet ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_packet.cpp)

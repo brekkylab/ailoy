@@ -14,24 +14,26 @@ target_include_directories(ailoy_vm_obj PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inclu
 target_link_libraries(ailoy_vm_obj PUBLIC ailoy_broker_client_obj ailoy_core_obj)
 
 # cpp-httplib
-FetchContent_Declare(
-    httplib
-    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-    GIT_TAG v0.20.0
-    EXCLUDE_FROM_ALL
-)
-set(HTTPLIB_REQUIRE_OPENSSL ON)
-set(BROTLI_USE_STATIC_LIBS ON)
-set(OPENSSL_USE_STATIC_LIBS ON)
-if(NODE)
-    set(OPENSSL_MSVC_STATIC_RT ON)
-endif()
-FetchContent_MakeAvailable(httplib)
-target_link_libraries(ailoy_vm_obj PRIVATE httplib)
+if(AILOY_HTTP_REQUEST_METHOD EQUAL "impl")
+    # FetchContent_Declare(
+    #     httplib
+    #     GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    #     GIT_TAG v0.20.0
+    #     EXCLUDE_FROM_ALL
+    # )
+    # set(HTTPLIB_REQUIRE_OPENSSL ON)
+    # set(BROTLI_USE_STATIC_LIBS ON)
+    # set(OPENSSL_USE_STATIC_LIBS ON)
+    # if(NODE)
+    #     set(OPENSSL_MSVC_STATIC_RT ON)
+    # endif()
+    # FetchContent_MakeAvailable(httplib)
+    target_link_libraries(ailoy_vm_obj PRIVATE httplib)
 
-# openssl
-find_package(OpenSSL REQUIRED)
-target_link_libraries(ailoy_vm_obj PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+    # # openssl
+    # find_package(OpenSSL REQUIRED)
+    # target_link_libraries(ailoy_vm_obj PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+endif()
 
 # indicators
 FetchContent_Declare(
@@ -120,6 +122,23 @@ if(AILOY_WITH_TVM)
     target_link_directories(ailoy_vm_obj PUBLIC ${TVM_BINARY_DIR})
     target_link_libraries(ailoy_vm_obj PRIVATE tvm_runtime)
     target_compile_definitions(ailoy_vm_obj PUBLIC DMLC_USE_LOGGING_LIBRARY=<tvm/runtime/logging.h>)
+    target_compile_definitions(ailoy_vm_obj PUBLIC AILOY_USE_TVM=1)
+
+    # xgrammar
+    FetchContent_Declare(
+        xgrammar
+        URL https://github.com/mlc-ai/xgrammar/archive/refs/tags/v0.1.19.tar.gz
+        EXCLUDE_FROM_ALL
+    )
+    # Since xgrammar overrides settings via a config file, calling `set` in here has no effect.
+    # Instead, create a `config.cmake` file to set the configuration.
+    if(NOT EXISTS "${CMAKE_BINARY_DIR}/config.cmake")
+    file(WRITE "${CMAKE_BINARY_DIR}/config.cmake" "")
+    endif()
+    file(APPEND "${CMAKE_BINARY_DIR}/config.cmake" "set(XGRAMMAR_BUILD_PYTHON_BINDINGS OFF)\n")
+    FetchContent_MakeAvailable(xgrammar)
+    target_link_libraries(xgrammar PRIVATE dlpack)
+    target_link_libraries(ailoy_vm_obj PRIVATE xgrammar)
 endif()
 
 # faiss
@@ -149,23 +168,8 @@ if(AILOY_WITH_FAISS)
     set(BUILD_TESTING OFF CACHE BOOL "Disable build tests" FORCE)
     FetchContent_MakeAvailable(faiss)
     target_link_libraries(ailoy_vm_obj PUBLIC faiss)
+    target_compile_definitions(ailoy_vm_obj PUBLIC AILOY_USE_FAISS=1)
 endif()
-
-# xgrammar
-FetchContent_Declare(
-    xgrammar
-    URL https://github.com/mlc-ai/xgrammar/archive/refs/tags/v0.1.19.tar.gz
-    EXCLUDE_FROM_ALL
-)
-# Since xgrammar overrides settings via a config file, calling `set` in here has no effect.
-# Instead, create a `config.cmake` file to set the configuration.
-if(NOT EXISTS "${CMAKE_BINARY_DIR}/config.cmake")
-  file(WRITE "${CMAKE_BINARY_DIR}/config.cmake" "")
-endif()
-file(APPEND "${CMAKE_BINARY_DIR}/config.cmake" "set(XGRAMMAR_BUILD_PYTHON_BINDINGS OFF)\n")
-FetchContent_MakeAvailable(xgrammar)
-target_link_libraries(xgrammar PRIVATE dlpack)
-target_link_libraries(ailoy_vm_obj PRIVATE xgrammar)
 
 if(AILOY_WITH_TEST)
     add_executable(test_debug_module ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_debug_module.cpp)
