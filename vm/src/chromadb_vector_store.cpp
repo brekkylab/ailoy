@@ -3,6 +3,7 @@
 #include <format>
 
 #include "exception.hpp"
+#include "http.hpp"
 #include "uuid.hpp"
 
 namespace ailoy {
@@ -13,14 +14,13 @@ const std::string DEFAULT_TENANT = "default_tenant";
 const std::string DEFAULT_DATABASE = "default_database";
 
 const std::string COLLECTIONS_BASE_URL =
-    std::format("/api/v2/tenants/{}/databases/{}/collections", DEFAULT_TENANT,
+    std::format("api/v2/tenants/{}/databases/{}/collections", DEFAULT_TENANT,
                 DEFAULT_DATABASE);
 
 chromadb_vector_store_t::chromadb_vector_store_t(
     const std::string &url, const std::string &collection,
     bool delete_collection_on_cleanup)
-    : cli_(std::make_shared<httplib::Client>(url)),
-      collection_name_(collection),
+    : url_(url), collection_name_(collection),
       delete_collection_on_cleanup_(delete_collection_on_cleanup) {
   _create_collection();
 }
@@ -33,29 +33,38 @@ void chromadb_vector_store_t::_create_collection() {
       nlohmann::json{{"hnsw", nlohmann::json{{"space", "cosine"}}}};
 
   std::string body = params.dump();
-  httplib::Result create_result = cli_->Post(COLLECTIONS_BASE_URL, body.data(),
-                                             body.size(), "application/json");
+  auto create_result = ailoy::http::request(
+      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
+          .url = std::format("{}/{}", url_, COLLECTIONS_BASE_URL),
+          .method = ailoy::http::method_t::POST,
+          .headers = {{"Content-Type", "application/json"}},
+          .body = body.data(),
+      }));
 
   // Request has been failed
-  if (!create_result)
+  if (create_result->error.has_value())
     throw ailoy::runtime_error("[Chromadb] Failed to request: " +
-                               httplib::to_string(create_result.error()));
+                               create_result->error.value());
 
   // Created the collection successfully
-  if (create_result->status == httplib::OK_200) {
+  if (create_result->status_code == 200) {
     auto j = nlohmann::json::parse(create_result->body);
     collection_id_ = j["id"];
     return;
   }
 
   // The collection is already created. Get existing collection's id.
-  if (create_result->status == httplib::Conflict_409) {
-    httplib::Result get_result =
-        cli_->Get(std::format("{}/{}", COLLECTIONS_BASE_URL, collection_name_));
-    if (get_result->status != httplib::OK_200) {
+  if (create_result->status_code == 409) {
+    auto get_result = ailoy::http::request(
+        std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
+            .url = std::format("{}/{}/{}", url_, COLLECTIONS_BASE_URL,
+                               collection_name_),
+            .method = ailoy::http::method_t::GET,
+        }));
+    if (get_result->status_code != 200) {
       throw ailoy::runtime_error(
-          "[Chromadb] Failed to get existing collection: " +
-          std::string(httplib::status_message(get_result->status)));
+          "[Chromadb] Failed to get existing collection: HTTP " +
+          std::to_string(get_result->status_code));
     }
     auto j = nlohmann::json::parse(get_result->body);
     collection_id_ = j["id"];
@@ -64,16 +73,19 @@ void chromadb_vector_store_t::_create_collection() {
 
   throw ailoy::runtime_error(
       "[Chromadb] Failed to create collection: " +
-      std::string(httplib::status_message(create_result->status)));
+      std::string(httplib::status_message(create_result->status_code)));
 }
 
 void chromadb_vector_store_t::_delete_collection() {
-  httplib::Result result = cli_->Delete(
-      std::format("{}/{}", COLLECTIONS_BASE_URL, collection_name_));
-  if (result->status != httplib::OK_200) {
-    throw ailoy::runtime_error(
-        "[Chromadb] Failed to delete collection: " +
-        std::string(httplib::status_message(result->status)));
+  auto result = ailoy::http::request(
+      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
+          .url = std::format("{}/{}/{}", url_, COLLECTIONS_BASE_URL,
+                             collection_name_),
+          .method = ailoy::http::method_t::DELETE,
+      }));
+  if (result->status_code != 200) {
+    throw ailoy::runtime_error("[Chromadb] Failed to delete collection: HTTP " +
+                               std::to_string(result->status_code));
   }
 }
 
@@ -100,7 +112,7 @@ chromadb_vector_store_t::chromadb_vector_store_t(
     }
     collection = *attr_collection->as<string_t>();
   }
-  cli_ = std::make_shared<httplib::Client>(url);
+  url_ = url;
   collection_name_ = collection;
   delete_collection_on_cleanup_ = false;
   _create_collection();
@@ -129,13 +141,18 @@ chromadb_vector_store_t::add_vector(const vector_store_add_input_t &input) {
   }
 
   std::string body = params.dump();
-  httplib::Result result =
-      cli_->Post(std::format("{}/{}/add", COLLECTIONS_BASE_URL, collection_id_),
-                 body.data(), body.size(), "application/json");
-  if (result->status != httplib::Created_201) {
+  auto result = ailoy::http::request(
+      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
+          .url = std::format("{}/{}/{}/add", url_, COLLECTIONS_BASE_URL,
+                             collection_id_),
+          .method = ailoy::http::method_t::POST,
+          .headers = {{"Content-Type", "application/json"}},
+          .body = body,
+      }));
+  if (result->status_code != 201) {
     throw ailoy::runtime_error(
-        "[Chromadb] Failed to add vector to collection: " +
-        std::string(httplib::status_message(result->status)));
+        "[Chromadb] Failed to add vector to collection: HTTP " +
+        std::to_string(result->status_code));
   }
 
   return id;
@@ -161,13 +178,18 @@ std::vector<std::string> chromadb_vector_store_t::add_vectors(
   }
 
   std::string body = params.dump();
-  httplib::Result result =
-      cli_->Post(std::format("{}/{}/add", COLLECTIONS_BASE_URL, collection_id_),
-                 body.data(), body.size(), "application/json");
-  if (result->status != httplib::Created_201) {
+  auto result = ailoy::http::request(
+      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
+          .url = std::format("{}/{}/{}/add", url_, COLLECTIONS_BASE_URL,
+                             collection_id_),
+          .method = ailoy::http::method_t::POST,
+          .headers = {{"Content-Type", "application/json"}},
+          .body = body,
+      }));
+  if (result->status_code != 201) {
     throw ailoy::runtime_error(
-        "[Chromadb] Failed to add vectors to collection: " +
-        std::string(httplib::status_message(result->status)));
+        "[Chromadb] Failed to add vectors to collection: HTTP " +
+        std::to_string(result->status_code));
   }
 
   return params["ids"].get<std::vector<std::string>>();
@@ -181,10 +203,16 @@ chromadb_vector_store_t::get_by_id(const std::string &id) {
       std::vector<std::string>{"embeddings", "documents", "metadatas"};
 
   std::string body = params.dump();
-  httplib::Result result =
-      cli_->Post(std::format("{}/{}/get", COLLECTIONS_BASE_URL, collection_id_),
-                 body.data(), body.size(), "application/json");
-  if (result->status != httplib::OK_200) {
+
+  auto result = ailoy::http::request(
+      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
+          .url = std::format("{}/{}/{}/get", url_, COLLECTIONS_BASE_URL,
+                             collection_id_),
+          .method = ailoy::http::method_t::POST,
+          .headers = {{"Content-Type", "application/json"}},
+          .body = body,
+      }));
+  if (result->status_code != 200) {
     return std::nullopt;
   }
 
@@ -218,13 +246,17 @@ chromadb_vector_store_t::retrieve(embedding_t query_embedding, uint64_t top_k) {
   params["n_results"] = top_k;
 
   std::string body = params.dump();
-  httplib::Result result = cli_->Post(
-      std::format("{}/{}/query", COLLECTIONS_BASE_URL, collection_id_),
-      body.data(), body.size(), "application/json");
-  if (result->status != httplib::OK_200) {
-    throw ailoy::runtime_error(
-        "[Chromadb] Failed to get query results: " +
-        std::string(httplib::status_message(result->status)));
+  auto result = ailoy::http::request(
+      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
+          .url = std::format("{}/{}/{}/query", url_, COLLECTIONS_BASE_URL,
+                             collection_id_),
+          .method = ailoy::http::method_t::POST,
+          .headers = {{"Content-Type", "application/json"}},
+          .body = body,
+      }));
+  if (result->status_code != 200) {
+    throw ailoy::runtime_error("[Chromadb] Failed to get query results: " +
+                               std::to_string(result->status_code));
   }
 
   std::vector<vector_store_retrieve_result_t> results;
@@ -247,13 +279,17 @@ void chromadb_vector_store_t::remove_vector(const std::string &id) {
   params["ids"] = std::vector<std::string>{id};
 
   std::string body = params.dump();
-  httplib::Result result = cli_->Post(
-      std::format("{}/{}/delete", COLLECTIONS_BASE_URL, collection_id_),
-      body.data(), body.size(), "application/json");
-  if (result->status != httplib::OK_200) {
-    throw ailoy::runtime_error(
-        "[Chromadb] Failed to delete embedding: " +
-        std::string(httplib::status_message(result->status)));
+  auto result = ailoy::http::request(
+      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
+          .url = std::format("{}/{}/{}/delete", url_, COLLECTIONS_BASE_URL,
+                             collection_id_),
+          .method = ailoy::http::method_t::POST,
+          .headers = {{"Content-Type", "application/json"}},
+          .body = body,
+      }));
+  if (result->status_code != 200) {
+    throw ailoy::runtime_error("[Chromadb] Failed to delete embedding: " +
+                               std::to_string(result->status_code));
   }
 }
 void chromadb_vector_store_t::clear() {

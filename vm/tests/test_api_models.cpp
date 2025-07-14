@@ -100,38 +100,10 @@ void test_simple_chat(std::shared_ptr<ailoy::component_t> comp) {
             "assistant");
   ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
                   ->at("content")
-                  ->is_type_of<ailoy::array_t>());
-  ASSERT_EQ(out_map->at<ailoy::map_t>("message")
-                ->at<ailoy::array_t>("content")
-                ->size(),
-            1);
-  ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
-                  ->at<ailoy::array_t>("content")
-                  ->at(0)
-                  ->is_type_of<ailoy::map_t>());
-  ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
-                  ->at<ailoy::array_t>("content")
-                  ->at<ailoy::map_t>(0)
-                  ->contains("type"));
-  ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
-                  ->at<ailoy::array_t>("content")
-                  ->at<ailoy::map_t>(0)
-                  ->at("type")
                   ->is_type_of<ailoy::string_t>());
-  ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
-                  ->at<ailoy::array_t>("content")
-                  ->at<ailoy::map_t>(0)
-                  ->contains("text"));
-  ASSERT_TRUE(out_map->at<ailoy::map_t>("message")
-                  ->at<ailoy::array_t>("content")
-                  ->at<ailoy::map_t>(0)
-                  ->at("text")
-                  ->is_type_of<ailoy::string_t>());
-  EXPECT_THAT(*out_map->at<ailoy::map_t>("message")
-                   ->at<ailoy::array_t>("content")
-                   ->at<ailoy::map_t>(0)
-                   ->at<ailoy::string_t>("text"),
-              ::testing::HasSubstr("Joe Biden"));
+  EXPECT_THAT(
+      *out_map->at<ailoy::map_t>("message")->at<ailoy::string_t>("content"),
+      ::testing::HasSubstr("Joe Biden"));
 }
 
 void test_tool_calling(std::shared_ptr<ailoy::component_t> comp) {
@@ -233,8 +205,7 @@ void test_tool_calling(std::shared_ptr<ailoy::component_t> comp) {
   */
   ASSERT_EQ(out2_map["finish_reason"], "stop");
   ASSERT_EQ(out2_map["message"]["role"], "assistant");
-  EXPECT_THAT(out2_map["message"]["content"][0]["text"],
-              ::testing::HasSubstr("14°C"));
+  EXPECT_THAT(out2_map["message"]["content"], ::testing::HasSubstr("14°C"));
 }
 
 TEST_F(OpenAITest, SimpleChat) { test_simple_chat(comp_); }

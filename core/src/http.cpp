@@ -118,12 +118,25 @@ std::unique_ptr<response_t> request(const std::unique_ptr<request_t> &req) {
   }
   auto url_parsed = std::get<0>(parse_result);
 
-  httplib::SSLClient client(url_parsed.host);
-  client.set_follow_location(true);
-  client.set_connection_timeout(5, 0);
-  client.set_read_timeout(60, 0);
-  client.enable_server_certificate_verification(false);
-  client.enable_server_hostname_verification(false);
+  std::variant<std::shared_ptr<httplib::Client>,
+               std::shared_ptr<httplib::SSLClient>>
+      client;
+
+  if (url_parsed.scheme == "https") {
+    auto client_ = std::make_shared<httplib::SSLClient>(url_parsed.host);
+    client_->set_follow_location(true);
+    client_->set_connection_timeout(5, 0);
+    client_->set_read_timeout(60, 0);
+    client_->enable_server_certificate_verification(false);
+    client_->enable_server_hostname_verification(false);
+    client = client_;
+  } else {
+    auto client_ = std::make_shared<httplib::Client>(url_parsed.host);
+    client_->set_follow_location(true);
+    client_->set_connection_timeout(5, 0);
+    client_->set_read_timeout(60, 0);
+    client = client_;
+  }
 
   httplib::Headers httplib_headers;
   for (const auto &[key, value] : req->headers) {
@@ -144,63 +157,87 @@ std::unique_ptr<response_t> request(const std::unique_ptr<request_t> &req) {
     if (req->data_callback.has_value()) {
       // If data_callback is provided, the response body becomes empty.
       // The data_callback is responsible for handling the arrived partial data.
-      result = client.Get(
-          url_parsed.path, httplib_headers,
-          [&](const char *data, size_t data_length) {
-            return req->data_callback.value()(data, data_length);
+      std::visit(
+          [&](auto &&client_) {
+            result = client_->Get(
+                url_parsed.path, httplib_headers,
+                [&](const char *data, size_t data_length) {
+                  return req->data_callback.value()(data, data_length);
+                },
+                [&](uint64_t current, uint64_t total) {
+                  if (req->progress_callback.has_value()) {
+                    return req->progress_callback.value()(current, total);
+                  }
+                  return true;
+                });
           },
-          [&](uint64_t current, uint64_t total) {
-            if (req->progress_callback.has_value()) {
-              return req->progress_callback.value()(current, total);
-            }
-            return true;
-          });
+          client);
     } else {
-      result =
-          client.Get(url_parsed.path, httplib_headers,
-                     [&](uint64_t current, uint64_t total) {
-                       if (req->progress_callback.has_value()) {
-                         return req->progress_callback.value()(current, total);
-                       }
-                       return true;
-                     });
+      std::visit(
+          [&](auto &&client_) {
+            result = client_->Get(url_parsed.path, httplib_headers,
+                                  [&](uint64_t current, uint64_t total) {
+                                    if (req->progress_callback.has_value()) {
+                                      return req->progress_callback.value()(
+                                          current, total);
+                                    }
+                                    return true;
+                                  });
+          },
+          client);
     }
   } else if (req->method == method_t::POST) {
-    result =
-        client.Post(url_parsed.path, httplib_headers, body_str, content_type,
-                    [&](uint64_t current, uint64_t total) {
-                      if (req->progress_callback.has_value()) {
-                        return req->progress_callback.value()(current, total);
-                      }
-                      return true;
-                    });
+    std::visit(
+        [&](auto &&client_) {
+          result = client_->Post(
+              url_parsed.path, httplib_headers, body_str, content_type,
+              [&](uint64_t current, uint64_t total) {
+                if (req->progress_callback.has_value()) {
+                  return req->progress_callback.value()(current, total);
+                }
+                return true;
+              });
+        },
+        client);
   } else if (req->method == method_t::PUT) {
-    result =
-        client.Put(url_parsed.path, httplib_headers, body_str, content_type,
-                   [&](uint64_t current, uint64_t total) {
-                     if (req->progress_callback.has_value()) {
-                       return req->progress_callback.value()(current, total);
-                     }
-                     return true;
-                   });
+    std::visit(
+        [&](auto &&client_) {
+          result = client_->Put(
+              url_parsed.path, httplib_headers, body_str, content_type,
+              [&](uint64_t current, uint64_t total) {
+                if (req->progress_callback.has_value()) {
+                  return req->progress_callback.value()(current, total);
+                }
+                return true;
+              });
+        },
+        client);
   } else if (req->method == method_t::PATCH) {
-    result =
-        client.Patch(url_parsed.path, httplib_headers, body_str, content_type,
-                     [&](uint64_t current, uint64_t total) {
-                       if (req->progress_callback.has_value()) {
-                         return req->progress_callback.value()(current, total);
-                       }
-                       return true;
-                     });
+    std::visit(
+        [&](auto &&client_) {
+          result = client_->Patch(
+              url_parsed.path, httplib_headers, body_str, content_type,
+              [&](uint64_t current, uint64_t total) {
+                if (req->progress_callback.has_value()) {
+                  return req->progress_callback.value()(current, total);
+                }
+                return true;
+              });
+        },
+        client);
   } else if (req->method == method_t::DELETE) {
-    result =
-        client.Delete(url_parsed.path, httplib_headers, body_str, content_type,
-                      [&](uint64_t current, uint64_t total) {
-                        if (req->progress_callback.has_value()) {
-                          return req->progress_callback.value()(current, total);
-                        }
-                        return true;
-                      });
+    std::visit(
+        [&](auto &&client_) {
+          result = client_->Delete(
+              url_parsed.path, httplib_headers, body_str, content_type,
+              [&](uint64_t current, uint64_t total) {
+                if (req->progress_callback.has_value()) {
+                  return req->progress_callback.value()(current, total);
+                }
+                return true;
+              });
+        },
+        client);
   } else {
     return std::make_unique<response_t>(response_t{
         .status_code = 400,
