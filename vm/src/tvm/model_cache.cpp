@@ -16,7 +16,7 @@
 #include <sys/utsname.h>
 #endif
 
-#include <httplib.h>
+#include <http.hpp>
 #include <indicators/block_progress_bar.hpp>
 #include <indicators/dynamic_progress.hpp>
 #include <nlohmann/json.hpp>
@@ -257,15 +257,19 @@ std::string get_models_url() {
     return "https://models.download.ailoy.co";
 }
 
-std::pair<bool, std::string> download_file(httplib::SSLClient &client,
-                                           const std::string &remote_path,
+std::pair<bool, std::string> download_file(const std::string &remote_path,
                                            const fs::path &local_path) {
-  httplib::Result res = client.Get(("/" + remote_path).c_str());
-  if (!res || (res->status != httplib::OK_200)) {
+  auto res = ailoy::http::request(
+      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
+          .url = std::format("{}/{}", get_models_url(), remote_path),
+          .method = ailoy::http::method_t::GET,
+      }));
+  if (res->status_code != 200) {
     return std::make_pair<bool, std::string>(
-        false, "Failed to download " + remote_path + ": HTTP " +
-                   (res ? std::to_string(res->status)
-                        : httplib::to_string(res.error())));
+        false, "Failed to download " + remote_path + ": " +
+                   (res->error.has_value()
+                        ? res->error.value()
+                        : "HTTP " + std::to_string(res->status_code)));
   }
 
   std::ofstream ofs(local_path, std::ios::binary);
@@ -275,30 +279,36 @@ std::pair<bool, std::string> download_file(httplib::SSLClient &client,
 }
 
 std::pair<bool, std::string> download_file_with_progress(
-    httplib::SSLClient &client, const std::string &remote_path,
-    const fs::path &local_path,
+    const std::string &remote_path, const fs::path &local_path,
     std::function<bool(uint64_t, uint64_t)> progress_callback) {
   SigintGuard sigint_guard;
 
   size_t existing_size = 0;
-  httplib::Result res = client.Get(
-      ("/" + remote_path).c_str(),
-      [&](const char *data, size_t data_length) {
-        // Stop on SIGINT
-        if (sigint_guard.interrupted())
-          return false;
 
-        std::ofstream ofs(local_path, existing_size > 0
-                                          ? std::ios::app | std::ios::binary
-                                          : std::ios::binary);
-        ofs.seekp(existing_size);
-        ofs.write(data, data_length);
-        existing_size += data_length;
-        return ofs.good();
-      },
-      progress_callback);
-  if (!res || (res->status != httplib::OK_200 &&
-               res->status != httplib::PartialContent_206)) {
+  auto res = ailoy::http::request(
+      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
+          .url = std::format("{}/{}", get_models_url(), remote_path),
+          .method = ailoy::http::method_t::GET,
+          .data_callback =
+              [&](const char *data, size_t data_length) {
+                // Stop on SIGINT
+                if (sigint_guard.interrupted())
+                  return false;
+
+                std::ofstream ofs(local_path,
+                                  existing_size > 0
+                                      ? std::ios::app | std::ios::binary
+                                      : std::ios::binary);
+                ofs.seekp(existing_size);
+                ofs.write(data, data_length);
+                existing_size += data_length;
+                return ofs.good();
+              },
+          .progress_callback = progress_callback,
+      }));
+  if (res->status_code != 200 && // ok
+      res->status_code != 206    // partial content
+  ) {
     // If SIGINT interrupted, return error message about interrupted
     if (sigint_guard.interrupted())
       return std::make_pair<bool, std::string>(
@@ -306,9 +316,10 @@ std::pair<bool, std::string> download_file_with_progress(
 
     // Otherwise, return error message about HTTP error
     return std::make_pair<bool, std::string>(
-        false, "Failed to download " + remote_path + ": HTTP " +
-                   (res ? std::to_string(res->status)
-                        : httplib::to_string(res.error())));
+        false, "Failed to download " + remote_path + ": " +
+                   (res->error.has_value()
+                        ? res->error.value()
+                        : "HTTP " + std::to_string(res->status_code)));
   }
 
   return std::make_pair<bool, std::string>(true, "");
@@ -433,13 +444,6 @@ download_model(const std::string &model_id, const std::string &quantization,
                bool print_progress_bar) {
   model_cache_download_result_t result{.success = false};
 
-  auto client = httplib::SSLClient(
-      std::regex_replace(get_models_url(), std::regex("^http(s)://"), ""));
-  client.set_connection_timeout(10, 0);
-  client.set_read_timeout(60, 0);
-  client.enable_server_certificate_verification(false);
-  client.enable_server_hostname_verification(false);
-
   // Create local cache directory
   fs::path model_base_path = get_model_base_path(model_id);
   fs::path model_cache_path = get_cache_root() / model_base_path / quantization;
@@ -455,7 +459,7 @@ download_model(const std::string &model_id, const std::string &quantization,
   fs::path manifest_path = model_cache_path / manifest_filename;
   if (!fs::exists(manifest_path)) {
     auto [success, error_message] = download_file(
-        client, (model_base_path / quantization / manifest_filename).string(),
+        (model_base_path / quantization / manifest_filename).string(),
         manifest_path);
     if (!success) {
       result.error_message = error_message;
@@ -542,8 +546,8 @@ download_model(const std::string &model_id, const std::string &quantization,
 
     auto [download_success, download_error_message] =
         download_file_with_progress(
-            client, (model_base_path / quantization / file).string(),
-            local_path, [&](uint64_t current, uint64_t total) {
+            (model_base_path / quantization / file).string(), local_path,
+            [&](uint64_t current, uint64_t total) {
               float progress = static_cast<float>(current) / total * 100;
               if (callback.has_value())
                 callback.value()(i + num_files_downloaded, num_total_files,
