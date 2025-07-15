@@ -116,10 +116,10 @@ void run_tests() {
 
 #else
 
-TEST(AiloyHTTPRequest, GetRequest) { test_get_request(); }
-TEST(AiloyHTTPRequest, PostRequest) { test_post_request(); }
-TEST(AiloyHTTPRequest, Headers) { test_headers(); }
-TEST(AiloyHTTPRequest, ErrorHandling) { test_error_handling(); }
+TEST(AiloyHTTPTest, GetRequest) { test_get_request(); }
+TEST(AiloyHTTPTest, PostRequest) { test_post_request(); }
+TEST(AiloyHTTPTest, Headers) { test_headers(); }
+TEST(AiloyHTTPTest, ErrorHandling) { test_error_handling(); }
 
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);

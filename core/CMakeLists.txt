@@ -61,8 +61,6 @@ if(NOT DEFINED EMSCRIPTEN)
     target_link_libraries(ailoy_core_obj PRIVATE cpptrace::cpptrace)
 endif()
 
-target_compile_definitions(ailoy_core_obj PUBLIC "HTTP_REQUEST_METHOD=${AILOY_HTTP_REQUEST_METHOD}")
-
 if(AILOY_WITH_TEST)
     if(EMSCRIPTEN)
         set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s ASYNCIFY=1 -s FETCH=1 -s ALLOW_MEMORY_GROWTH=1")
