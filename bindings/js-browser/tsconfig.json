@@ -1,0 +1,19 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",  // Use ESNext or ES6 to support async/await natively
+        "module": "ESNext",  // This ensures the output is compatible with ES modules
+        "moduleResolution": "bundler",  // Resolve modules like Node.js
+        "strict": true,  // Enable strict type-checking options
+        "esModuleInterop": true,  // Allows default imports from CommonJS modules
+        "skipLibCheck": true,  // Skips type checking of declaration files
+        "forceConsistentCasingInFileNames": true,  // Enforces file name casing
+        "outDir": "dist",  // Output directory for compiled JS files
+        "sourceMap": true,  // Generate source maps
+    },
+    "include": [
+        "src/**/*"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
+}

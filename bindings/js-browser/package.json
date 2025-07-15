@@ -1,0 +1,26 @@
+{
+  "name": "js-browser",
+  "version": "1.0.0",
+  "source": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "emcmake cmake -S$(pwd)/../.. -B$(pwd)/build && cmake --build $(pwd)/build --parallel",
+    "build:js": "rollup -c",
+    "build": "${npm_execpath} run build:wasm && ${npm_execpath} run build:js",
+    "start": "DEV_SERVER=ON ${npm_execpath} run build:wasm && rollup -c --watch",
+    "test": "playwright test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@playwright/test": "^1.50.1",
+    "@rollup/plugin-commonjs": "^28.0.3",
+    "rollup": "^4.35.0",
+    "rollup-plugin-copy": "^3.5.0",
+    "rollup-plugin-serve": "^3.0.0",
+    "rollup-plugin-typescript2": "^0.36.0",
+    "typescript": "^5.8.2"
+  }
+}
