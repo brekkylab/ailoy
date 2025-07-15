@@ -8,17 +8,16 @@
 
 std::string get_file_content(const std::string &url, const std::string &path) {
   std::string rv;
-  auto res = ailoy::http::request(
-      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
-          .url = std::format("{}/{}", url, path),
-          .method = ailoy::http::method_t::GET,
-      }));
+  auto res = ailoy::http::request({
+      .url = std::format("{}/{}", url, path),
+      .method = ailoy::http::method_t::GET,
+  });
 
-  if (!res->error.has_value()) {
+  if (res) {
     if (res->status_code == 200)
       rv = res->body;
   } else {
-    std::cout << "HTTP error: " << res->error.value() << std::endl;
+    std::cout << "HTTP error: " << res.error() << std::endl;
   }
 
   return rv;
