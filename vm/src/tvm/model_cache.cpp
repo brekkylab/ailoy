@@ -19,9 +19,6 @@
 #include <indicators/block_progress_bar.hpp>
 #include <indicators/dynamic_progress.hpp>
 #include <nlohmann/json.hpp>
-#include <openssl/evp.h>
-#include <openssl/opensslv.h>
-#include <openssl/sha.h>
 
 #include "exception.hpp"
 #include "http.hpp"
@@ -104,55 +101,170 @@ utsname get_uname() {
   return uts;
 }
 
+class SHA1 {
+private:
+  // SHA-1 constants
+  static const uint32_t K[4];
+
+  // Initial hash values
+  uint32_t h[5];
+
+  // Message buffer
+  std::vector<uint8_t> buffer;
+  uint64_t totalLength;
+
+  // Rotate left function
+  uint32_t rotateLeft(uint32_t value, int shift) {
+    return (value << shift) | (value >> (32 - shift));
+  }
+
+  // Process a 512-bit block
+  void processBlock(const uint8_t *block) {
+    uint32_t w[80];
+
+    // Copy block into first 16 words of w array
+    for (int i = 0; i < 16; i++) {
+      w[i] = (block[i * 4] << 24) | (block[i * 4 + 1] << 16) |
+             (block[i * 4 + 2] << 8) | block[i * 4 + 3];
+    }
+
+    // Extend the first 16 words into the remaining 64 words
+    for (int i = 16; i < 80; i++) {
+      w[i] = rotateLeft(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+    }
+
+    // Initialize hash value for this chunk
+    uint32_t a = h[0];
+    uint32_t b = h[1];
+    uint32_t c = h[2];
+    uint32_t d = h[3];
+    uint32_t e = h[4];
+
+    // Main loop
+    for (int i = 0; i < 80; i++) {
+      uint32_t f, k;
+
+      if (i < 20) {
+        f = (b & c) | (~b & d);
+        k = K[0];
+      } else if (i < 40) {
+        f = b ^ c ^ d;
+        k = K[1];
+      } else if (i < 60) {
+        f = (b & c) | (b & d) | (c & d);
+        k = K[2];
+      } else {
+        f = b ^ c ^ d;
+        k = K[3];
+      }
+
+      uint32_t temp = rotateLeft(a, 5) + f + e + k + w[i];
+      e = d;
+      d = c;
+      c = rotateLeft(b, 30);
+      b = a;
+      a = temp;
+    }
+
+    // Add this chunk's hash to result so far
+    h[0] += a;
+    h[1] += b;
+    h[2] += c;
+    h[3] += d;
+    h[4] += e;
+  }
+
+public:
+  SHA1() { reset(); }
+
+  void reset() {
+    // Initialize hash values (first 32 bits of the fractional parts
+    // of the square roots of the first 5 primes 2..11)
+    h[0] = 0x67452301;
+    h[1] = 0xEFCDAB89;
+    h[2] = 0x98BADCFE;
+    h[3] = 0x10325476;
+    h[4] = 0xC3D2E1F0;
+
+    buffer.clear();
+    totalLength = 0;
+  }
+
+  void update(const uint8_t *data, size_t length) {
+    totalLength += length;
+
+    for (size_t i = 0; i < length; i++) {
+      buffer.push_back(data[i]);
+
+      // Process complete 512-bit blocks
+      if (buffer.size() == 64) {
+        processBlock(buffer.data());
+        buffer.clear();
+      }
+    }
+  }
+
+  void update(const std::string &data) {
+    update(reinterpret_cast<const uint8_t *>(data.c_str()), data.length());
+  }
+
+  std::string finalize() {
+    // Pre-processing: adding padding bits
+    buffer.push_back(0x80); // APpend bit '1' to message
+
+    // If buffer size if > 56 bytes, we need another block
+    while (buffer.size() % 64 != 56) {
+      buffer.push_back(0x00);
+    }
+
+    // Append original length in bits as 64-bit big-endian integer
+    uint64_t bitLength = totalLength * 8;
+    for (int i = 7; i >= 0; i--) {
+      buffer.push_back((bitLength >> (i * 8)) & 0xFF);
+    }
+
+    // Process final block(s)
+    for (size_t i = 0; i < buffer.size(); i += 64) {
+      processBlock(buffer.data() + i);
+    }
+
+    // Produce the final hash value as a 160-bit number (20 bytes)
+    std::stringstream ss;
+    for (int i = 0; i < 5; i++) {
+      ss << std::hex << std::setfill('0') << std::setw(8) << h[i];
+    }
+
+    return ss.str();
+  }
+
+  static std::string hash(const std::string &input) {
+    SHA1 sha1;
+    sha1.update(input);
+    return sha1.finalize();
+  }
+};
+
+// SHA-1 constants definition
+const uint32_t SHA1::K[4] = {
+    0x5A827999, // 0 <= t <= 19
+    0x6ED9EBA1, // 20 <= t <= 39
+    0x8F1BBCDC, // 40 <= t <= 59
+    0xCA62C1D6  // 60 <= t <= 79
+};
+
 std::string sha1_checksum(const std::filesystem::path &filepath) {
   std::ifstream file(filepath, std::ios::binary);
   if (!file) {
     throw std::runtime_error("Cannot open file: " + filepath.string());
   }
 
-  unsigned char hash[SHA_DIGEST_LENGTH];
-
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
-  EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-  if (!ctx)
-    throw std::runtime_error("Failed to create EVP_MD_CTX");
-
-  if (EVP_DigestInit_ex(ctx, EVP_sha1(), nullptr) != 1)
-    throw std::runtime_error("EVP_DigestInit_ex failed");
-
-  char buffer[8192];
+  SHA1 sha1;
+  char buffer[65536];
   while (file.read(buffer, sizeof(buffer)) || file.gcount()) {
-    if (EVP_DigestUpdate(ctx, buffer, file.gcount()) != 1) {
-      EVP_MD_CTX_free(ctx);
-      throw std::runtime_error("EVP_DigestUpdate failed");
-    }
+    sha1.update(reinterpret_cast<const uint8_t *>(buffer), file.gcount());
   }
 
-  unsigned int len;
-  if (EVP_DigestFinal_ex(ctx, hash, &len) != 1) {
-    EVP_MD_CTX_free(ctx);
-    throw std::runtime_error("EVP_DigestFinal_ex failed");
-  }
-
-  EVP_MD_CTX_free(ctx);
-#else
-  SHA_CTX sha1;
-  SHA1_Init(&sha1);
-
-  char buffer[8192];
-  while (file.read(buffer, sizeof(buffer)) || file.gcount()) {
-    SHA1_Update(&sha1, buffer, file.gcount());
-  }
-
-  SHA1_Final(hash, &sha1);
-#endif
-
-  std::ostringstream result;
-  for (int i = 0; i < SHA_DIGEST_LENGTH; ++i) {
-    result << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
-  }
-
-  return result.str();
+  return sha1.finalize();
 }
 
 class SigintGuard {

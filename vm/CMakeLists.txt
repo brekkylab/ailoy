@@ -13,10 +13,6 @@ add_library(ailoy_vm_obj OBJECT ${AILOY_VM_SRCS})
 target_include_directories(ailoy_vm_obj PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(ailoy_vm_obj PUBLIC ailoy_broker_client_obj ailoy_core_obj)
 
-# openssl
-find_package(OpenSSL REQUIRED)
-target_link_libraries(ailoy_vm_obj PRIVATE OpenSSL::Crypto OpenSSL::SSL)
-
 # indicators
 FetchContent_Declare(
     indicators
