@@ -10,7 +10,7 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#elif defined(__EMSCRIPTEN__)
+#elif defined(EMSCRIPTEN)
 #include <emscripten.h>
 #else
 #include <sys/utsname.h>
@@ -84,7 +84,7 @@ utsname get_uname() {
   uts.sysname = "Emscripten";
   uts.nodename = "localhost"; // Browser has no traditional hostname
   uts.release = "1.0";        // Placeholder, no kernel version
-  uts.version = EMSCRIPTEN_VERSION;
+  uts.version = "EMSCRIPTEN_VERSION";
   uts.machine = "wasm32";
 #else
   struct ::utsname posix_uts;

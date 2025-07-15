@@ -48,6 +48,8 @@ if(DEFINED EMSCRIPTEN)
     set(AILOY_WITH_TVM OFF CACHE BOOL "Enable tvm support")
     set(AILOY_WITH_FAISS OFF CACHE BOOL "Enable faiss support")
     set(AILOY_USE_DUMMY_OPENMP ON CACHE BOOL "Use dummy OpenMP")
+
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s ASYNCIFY=1 -s FETCH=1")
 else()
     set(AILOY_WITH_TVM ON CACHE BOOL "Enable tvm support")
     set(AILOY_WITH_FAISS ON CACHE BOOL "Enable faiss support")
@@ -60,7 +62,7 @@ if(AILOY_USE_DUMMY_OPENMP)
 endif()
 
 include(FetchContent)
-    
+
 FetchContent_Declare(magic_enum URL https://github.com/Neargye/magic_enum/archive/refs/tags/v0.9.7.tar.gz EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(magic_enum)
 

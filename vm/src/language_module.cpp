@@ -1,12 +1,18 @@
 #include "language.hpp"
 
 #include "chromadb_vector_store.hpp"
-#include "faiss/faiss_vector_store.hpp"
 #include "openai.hpp"
 #include "split_text.hpp"
+
+#ifdef AILOY_USE_FAISS
+#include "faiss/faiss_vector_store.hpp"
+#endif
+
+#ifdef AILOY_USE_TVM
 #include "tvm/embedding_model.hpp"
 #include "tvm/language_model.hpp"
 #include "tvm/model_cache.hpp"
+#endif
 
 namespace ailoy {
 

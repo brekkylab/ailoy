@@ -8,6 +8,7 @@
 #endif
 
 #include <magic_enum/magic_enum.hpp>
+#include <nlohmann/json.hpp>
 
 #include "exception.hpp"
 #include "http.hpp"
@@ -51,60 +52,151 @@ std::variant<url_t, std::string> parse_url(const std::string &url) {
 
 #if defined(EMSCRIPTEN)
 
-EM_ASYNC_JS(void, do_fetch, (const char *url, const char *method), {
-  const url = UTF8ToString(url);
-  const method = UTF8ToString(method);
-  out("waiting for a fetch");
-  const response = await fetch(url);
-  out("got the fetch response");
-  // (normally you would do something with the fetch here)
-});
+EM_ASYNC_JS(char *, do_fetch_async,
+            (const char *url, const char *method, const char *body,
+             const char *headers_json),
+            {
+              // clang-format off
+              const urlStr = UTF8ToString(url);
+              const methodStr = UTF8ToString(method);
+              const bodyStr = UTF8ToString(body);
+              const headersJsonStr = UTF8ToString(headers_json);
 
-response_t request(const request_t &req) {
-  do_fetch(req.url.c_str(), "GET");
-  // switch (req.method) {
-  // case method_t::GET:
-  //   strcpy(attr.requestMethod, "GET");
-  //   break;
-  // case method_t::POST:
-  //   strcpy(attr.requestMethod, "POST");
-  //   break;
-  // case method_t::PUT:
-  //   strcpy(attr.requestMethod, "PUT");
-  //   break;
-  // case method_t::DELETE:
-  //   strcpy(attr.requestMethod, "DELETE");
-  //   break;
-  // default:
-  //   return response_t{
-  //       .status_code = 400, .headers = {}, .body = "Unsupported HTTP
-  //       method"};
-  // }
+              try {
+                // Parse headers
+                let headers = {};
+                if (headersJsonStr.length > 0) {
+                  headers = JSON.parse(headersJsonStr);
+                }
 
-  // attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
+                // Prepare fetch options
+                let fetchOptions = {
+                  method: methodStr, 
+                  headers: headers
+                };
 
-  // std::string body_str = req.body.value_or("");
-  // if (!body_str.empty()) {
-  //   attr.requestData = body_str.c_str();
-  //   attr.requestDataSize = body_str.size();
-  // }
+                // Add body if provided and method supports it
+                if (bodyStr.length > 0 && methodStr !== 'GET') {
+                  fetchOptions.body = bodyStr;
+                }
 
-  // std::string header_str;
-  // for (const auto &[key, value] : req.headers) {
-  //   header_str += key + ": " + value + "\n";
-  // }
-  // attr.requestHeaders = header_str.c_str();
+                // Perform fetch
+                const response = await fetch(urlStr, fetchOptions);
 
-  // emscripten_fetch_t *fetch = emscripten_fetch(&attr, full_url.c_str());
-  // emscripten_fetch_wait(fetch); // ❗ blocks until fetch completes
+                // Read response body
+                const responseBody = await response.text();
 
-  // response_t res;
-  // res.status_code = fetch->status;
-  // res.body = std::string(fetch->data, fetch->numBytes);
-  // // NOTE: fetch->responseHeaders not available unless using JS bridge
+                // Extract headers
+                const responseHeaders = {};
+                for (let[key, value] of response.headers) {
+                  responseHeaders[key] = value;
+                }
 
-  // emscripten_fetch_close(fetch);
-  // return res;
+                const result = {
+                  status_code: response.status,
+                  body: responseBody,
+                  headers: responseHeaders,
+                  error: null
+                };
+
+                const resultJson = JSON.stringify(result);
+                return stringToNewUTF8(resultJson);
+
+              } catch (error) {
+                const errorResult = {
+                  status_code: -1,
+                  body: "",
+                  headers: {},
+                  error: error.toString()
+                };
+
+                const resultJson = JSON.stringify(errorResult);
+                return stringToNewUTF8(resultJson);
+              }
+              // clang-format on
+            });
+
+// Helper function to convert headers map to JSON string
+std::string headers_to_json(const headers_t &headers) {
+  nlohmann::json json_obj(headers);
+  return json_obj.dump();
+}
+
+// Helper function to parse JSON headers string
+headers_t parse_headers_json(const std::string &json) {
+  try {
+    if (json.empty())
+      return {};
+
+    nlohmann::json json_obj = nlohmann::json::parse(json);
+    return json_obj.get<headers_t>();
+  } catch (const nlohmann::json::exception &e) {
+    // Return empty map if JSON parsing fails
+    return {};
+  }
+}
+
+result_t request(const request_t &req) {
+  // Convert headers to JSON string
+  std::string headers_json = headers_to_json(req.headers);
+  std::string body_str = req.body.value_or("");
+
+  // Get method string
+  std::string method_str;
+  switch (req.method) {
+  case method_t::GET:
+    method_str = "GET";
+    break;
+  case method_t::POST:
+    method_str = "POST";
+    break;
+  case method_t::PUT:
+    method_str = "PUT";
+    break;
+  case method_t::PATCH:
+    method_str = "PATCH";
+    break;
+  case method_t::DELETE:
+    method_str = "DELETE";
+    break;
+  default:
+    return result_t(nullptr, std::format("Unsupported HTTP method: {}",
+                                         magic_enum::enum_name(req.method)));
+  }
+
+  // Call async fetch function - this will block until complete due to ASYNCIFY
+  char *result_json_ptr =
+      do_fetch_async(req.url.c_str(), method_str.c_str(), body_str.c_str(),
+                     headers_json.c_str());
+
+  if (!result_json_ptr) {
+    return result_t(nullptr, "Failed to get result from JavaScript");
+  }
+
+  // Parse the JSON result
+  std::string result_json(result_json_ptr);
+  free(result_json_ptr); // Free the memory allocated by stringToNewUTF8
+
+  try {
+    nlohmann::json json_result = nlohmann::json::parse(result_json);
+
+    // Check for error
+    if (!json_result["error"].is_null()) {
+      std::string error = json_result["error"].get<std::string>();
+      return result_t(nullptr, std::format("Fetch failed: {}", error));
+    }
+
+    // Create response
+    response_t response;
+    response.status_code = json_result["status_code"].get<int>();
+    response.body = json_result["body"].get<std::string>();
+    response.headers = json_result["headers"].get<headers_t>();
+
+    return result_t(std::make_unique<response_t>(response));
+
+  } catch (const nlohmann::json::exception &e) {
+    return result_t(nullptr, std::format("JSON parsing error: {}", e.what()));
+  }
 }
 
 #else
