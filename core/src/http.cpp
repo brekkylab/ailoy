@@ -72,7 +72,7 @@ EM_ASYNC_JS(char *, do_fetch_async,
                 // Prepare fetch options
                 let fetchOptions = {
                   method: methodStr, 
-                  headers: headers
+                  headers: headers,
                 };
 
                 // Add body if provided and method supports it
@@ -88,7 +88,7 @@ EM_ASYNC_JS(char *, do_fetch_async,
 
                 // Extract headers
                 const responseHeaders = {};
-                for (let[key, value] of response.headers) {
+                for (let [key, value] of response.headers) {
                   responseHeaders[key] = value;
                 }
 
@@ -96,7 +96,7 @@ EM_ASYNC_JS(char *, do_fetch_async,
                   status_code: response.status,
                   body: responseBody,
                   headers: responseHeaders,
-                  error: null
+                  error: null,
                 };
 
                 const resultJson = JSON.stringify(result);
@@ -107,7 +107,7 @@ EM_ASYNC_JS(char *, do_fetch_async,
                   status_code: -1,
                   body: "",
                   headers: {},
-                  error: error.toString()
+                  error: error.toString(),
                 };
 
                 const resultJson = JSON.stringify(errorResult);
