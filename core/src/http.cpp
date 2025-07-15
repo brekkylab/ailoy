@@ -1,3 +1,5 @@
+#include <format>
+
 #if defined(EMSCRIPTEN)
 #include <emscripten.h>
 #include <emscripten/fetch.h>
@@ -5,7 +7,7 @@
 #include <httplib.h>
 #endif
 
-#include <format>
+#include <magic_enum/magic_enum.hpp>
 
 #include "exception.hpp"
 #include "http.hpp"
@@ -107,14 +109,11 @@ response_t request(const request_t &req) {
 
 #else
 
-std::unique_ptr<response_t> request(const std::unique_ptr<request_t> &req) {
-  auto parse_result = parse_url(req->url);
+result_t request(const request_t &req) {
+  auto parse_result = parse_url(req.url);
   if (parse_result.index() != 0) {
-    return std::make_unique<response_t>(
-        response_t{.status_code = 400,
-                   .headers = {},
-                   .body = std::format("URL parsing failed: {}",
-                                       std::get<1>(parse_result))});
+    return result_t(nullptr, std::format("URL parsing failed: {}",
+                                         std::get<1>(parse_result)));
   }
   auto url_parsed = std::get<0>(parse_result);
 
@@ -139,22 +138,22 @@ std::unique_ptr<response_t> request(const std::unique_ptr<request_t> &req) {
   }
 
   httplib::Headers httplib_headers;
-  for (const auto &[key, value] : req->headers) {
+  for (const auto &[key, value] : req.headers) {
     httplib_headers.emplace(key, value);
   }
 
   httplib::Result result;
-  std::string body_str = req->body.has_value() ? req->body->data() : "";
+  std::string body_str = req.body.has_value() ? req.body->data() : "";
 
   std::string content_type;
-  if (req->headers.contains("Content-Type")) {
-    content_type = req->headers.find("Content-Type")->second;
+  if (req.headers.contains("Content-Type")) {
+    content_type = req.headers.find("Content-Type")->second;
   } else {
     content_type = "text/plain";
   }
 
-  if (req->method == method_t::GET) {
-    if (req->data_callback.has_value()) {
+  if (req.method == method_t::GET) {
+    if (req.data_callback.has_value()) {
       // If data_callback is provided, the response body becomes empty.
       // The data_callback is responsible for handling the arrived partial data.
       std::visit(
@@ -162,11 +161,11 @@ std::unique_ptr<response_t> request(const std::unique_ptr<request_t> &req) {
             result = client_->Get(
                 url_parsed.path, httplib_headers,
                 [&](const char *data, size_t data_length) {
-                  return req->data_callback.value()(data, data_length);
+                  return req.data_callback.value()(data, data_length);
                 },
                 [&](uint64_t current, uint64_t total) {
-                  if (req->progress_callback.has_value()) {
-                    return req->progress_callback.value()(current, total);
+                  if (req.progress_callback.has_value()) {
+                    return req.progress_callback.value()(current, total);
                   }
                   return true;
                 });
@@ -177,8 +176,8 @@ std::unique_ptr<response_t> request(const std::unique_ptr<request_t> &req) {
           [&](auto &&client_) {
             result = client_->Get(url_parsed.path, httplib_headers,
                                   [&](uint64_t current, uint64_t total) {
-                                    if (req->progress_callback.has_value()) {
-                                      return req->progress_callback.value()(
+                                    if (req.progress_callback.has_value()) {
+                                      return req.progress_callback.value()(
                                           current, total);
                                     }
                                     return true;
@@ -186,81 +185,75 @@ std::unique_ptr<response_t> request(const std::unique_ptr<request_t> &req) {
           },
           client);
     }
-  } else if (req->method == method_t::POST) {
+  } else if (req.method == method_t::POST) {
     std::visit(
         [&](auto &&client_) {
           result = client_->Post(
               url_parsed.path, httplib_headers, body_str, content_type,
               [&](uint64_t current, uint64_t total) {
-                if (req->progress_callback.has_value()) {
-                  return req->progress_callback.value()(current, total);
+                if (req.progress_callback.has_value()) {
+                  return req.progress_callback.value()(current, total);
                 }
                 return true;
               });
         },
         client);
-  } else if (req->method == method_t::PUT) {
+  } else if (req.method == method_t::PUT) {
     std::visit(
         [&](auto &&client_) {
           result = client_->Put(
               url_parsed.path, httplib_headers, body_str, content_type,
               [&](uint64_t current, uint64_t total) {
-                if (req->progress_callback.has_value()) {
-                  return req->progress_callback.value()(current, total);
+                if (req.progress_callback.has_value()) {
+                  return req.progress_callback.value()(current, total);
                 }
                 return true;
               });
         },
         client);
-  } else if (req->method == method_t::PATCH) {
+  } else if (req.method == method_t::PATCH) {
     std::visit(
         [&](auto &&client_) {
           result = client_->Patch(
               url_parsed.path, httplib_headers, body_str, content_type,
               [&](uint64_t current, uint64_t total) {
-                if (req->progress_callback.has_value()) {
-                  return req->progress_callback.value()(current, total);
+                if (req.progress_callback.has_value()) {
+                  return req.progress_callback.value()(current, total);
                 }
                 return true;
               });
         },
         client);
-  } else if (req->method == method_t::DELETE) {
+  } else if (req.method == method_t::DELETE) {
     std::visit(
         [&](auto &&client_) {
           result = client_->Delete(
               url_parsed.path, httplib_headers, body_str, content_type,
               [&](uint64_t current, uint64_t total) {
-                if (req->progress_callback.has_value()) {
-                  return req->progress_callback.value()(current, total);
+                if (req.progress_callback.has_value()) {
+                  return req.progress_callback.value()(current, total);
                 }
                 return true;
               });
         },
         client);
   } else {
-    return std::make_unique<response_t>(response_t{
-        .status_code = 400,
-        .headers = {},
-        .body = "Unsupporting HTTP method",
-    });
+    return result_t(nullptr, std::format("Unsupported HTTP method: {}",
+                                         magic_enum::enum_name(req.method)));
+  }
+
+  if (!result) {
+    return result_t(nullptr, httplib::to_string(result.error()));
   }
 
   response_t response;
-  if (result) {
-    response.status_code = result->status;
-    response.body = result->body;
-
-    for (const auto &[key, value] : result->headers) {
-      response.headers[key] = value;
-    }
-  } else {
-    response.status_code = -1;
-    response.body = "Request Failed";
-    response.error = httplib::to_string(result.error());
+  response.status_code = result->status;
+  response.body = result->body;
+  for (const auto &[key, value] : result->headers) {
+    response.headers[key] = value;
   }
 
-  return std::make_unique<response_t>(response);
+  return result_t(std::make_unique<response_t>(response));
 }
 
 #endif

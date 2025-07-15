@@ -16,7 +16,6 @@
 #include <sys/utsname.h>
 #endif
 
-#include <http.hpp>
 #include <indicators/block_progress_bar.hpp>
 #include <indicators/dynamic_progress.hpp>
 #include <nlohmann/json.hpp>
@@ -25,6 +24,7 @@
 #include <openssl/sha.h>
 
 #include "exception.hpp"
+#include "http.hpp"
 
 using namespace std::chrono_literals;
 
@@ -259,17 +259,15 @@ std::string get_models_url() {
 
 std::pair<bool, std::string> download_file(const std::string &remote_path,
                                            const fs::path &local_path) {
-  auto res = ailoy::http::request(
-      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
-          .url = std::format("{}/{}", get_models_url(), remote_path),
-          .method = ailoy::http::method_t::GET,
-      }));
-  if (res->status_code != 200) {
+  auto res = ailoy::http::request({
+      .url = std::format("{}/{}", get_models_url(), remote_path),
+      .method = ailoy::http::method_t::GET,
+  });
+  if (res->status_code != ailoy::http::OK_200) {
     return std::make_pair<bool, std::string>(
-        false, "Failed to download " + remote_path + ": " +
-                   (res->error.has_value()
-                        ? res->error.value()
-                        : "HTTP " + std::to_string(res->status_code)));
+        false,
+        "Failed to download " + remote_path + ": " +
+            (res ? "HTTP " + std::to_string(res->status_code) : res.error()));
   }
 
   std::ofstream ofs(local_path, std::ios::binary);
@@ -285,30 +283,27 @@ std::pair<bool, std::string> download_file_with_progress(
 
   size_t existing_size = 0;
 
-  auto res = ailoy::http::request(
-      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
-          .url = std::format("{}/{}", get_models_url(), remote_path),
-          .method = ailoy::http::method_t::GET,
-          .data_callback =
-              [&](const char *data, size_t data_length) {
-                // Stop on SIGINT
-                if (sigint_guard.interrupted())
-                  return false;
+  auto res = ailoy::http::request({
+      .url = std::format("{}/{}", get_models_url(), remote_path),
+      .method = ailoy::http::method_t::GET,
+      .data_callback =
+          [&](const char *data, size_t data_length) {
+            // Stop on SIGINT
+            if (sigint_guard.interrupted())
+              return false;
 
-                std::ofstream ofs(local_path,
-                                  existing_size > 0
-                                      ? std::ios::app | std::ios::binary
-                                      : std::ios::binary);
-                ofs.seekp(existing_size);
-                ofs.write(data, data_length);
-                existing_size += data_length;
-                return ofs.good();
-              },
-          .progress_callback = progress_callback,
-      }));
-  if (res->status_code != 200 && // ok
-      res->status_code != 206    // partial content
-  ) {
+            std::ofstream ofs(local_path, existing_size > 0
+                                              ? std::ios::app | std::ios::binary
+                                              : std::ios::binary);
+            ofs.seekp(existing_size);
+            ofs.write(data, data_length);
+            existing_size += data_length;
+            return ofs.good();
+          },
+      .progress_callback = progress_callback,
+  });
+  if (res->status_code != ailoy::http::OK_200 &&
+      res->status_code != ailoy::http::PartialContent_206) {
     // If SIGINT interrupted, return error message about interrupted
     if (sigint_guard.interrupted())
       return std::make_pair<bool, std::string>(
@@ -316,10 +311,9 @@ std::pair<bool, std::string> download_file_with_progress(
 
     // Otherwise, return error message about HTTP error
     return std::make_pair<bool, std::string>(
-        false, "Failed to download " + remote_path + ": " +
-                   (res->error.has_value()
-                        ? res->error.value()
-                        : "HTTP " + std::to_string(res->status_code)));
+        false,
+        "Failed to download " + remote_path + ": " +
+            (res ? "HTTP " + std::to_string(res->status_code) : res.error()));
   }
 
   return std::make_pair<bool, std::string>(true, "");

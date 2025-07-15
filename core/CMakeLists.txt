@@ -2,6 +2,7 @@ include(FetchContent)
 include(ExternalProject)
 include(GNUInstallDirs)
 
+# nlohmann_json
 FetchContent_Declare(
     nlohmann_json
     URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
@@ -9,17 +10,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# dlpack
 FetchContent_Declare(dlpack URL https://github.com/dmlc/dlpack/archive/refs/tags/v1.1.tar.gz EXCLUDE_FROM_ALL)
 set(BUILD_MOCK OFF CACHE BOOL "DLPack disable mock build" FORCE)  # skip building mock in dlpack
 FetchContent_MakeAvailable(dlpack)
 
+# stduuid
 FetchContent_Declare(stduuid URL https://github.com/mariusbancila/stduuid/archive/refs/tags/v1.2.3.tar.gz EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(stduuid)
 
+# spdlog
 FetchContent_Declare(spdlog URL https://github.com/gabime/spdlog/archive/refs/tags/v1.15.2.tar.gz EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(spdlog)
 
 if(NOT DEFINED EMSCRIPTEN)
+    # cpp-httplib
     FetchContent_Declare(
         httplib
         GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
@@ -36,9 +41,8 @@ if(NOT DEFINED EMSCRIPTEN)
 
     # openssl
     find_package(OpenSSL REQUIRED)
-endif()
 
-if(NOT DEFINED EMSCRIPTEN) 
+    # cpptrace
     FetchContent_Declare(cpptrace URL https://github.com/jeremy-rifkin/cpptrace/archive/refs/tags/v0.7.5.tar.gz EXCLUDE_FROM_ALL)
     FetchContent_MakeAvailable(cpptrace)
 endif()
@@ -46,9 +50,6 @@ endif()
 file(GLOB_RECURSE AILOY_CORE_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 add_library(ailoy_core_obj OBJECT ${AILOY_CORE_SRCS})
 target_include_directories(ailoy_core_obj PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-if(NOT DEFINED EMSCRIPTEN) 
-    target_link_libraries(ailoy_core_obj PRIVATE cpptrace::cpptrace)
-endif()
 target_link_libraries(ailoy_core_obj PUBLIC nlohmann_json::nlohmann_json)
 target_link_libraries(ailoy_core_obj PUBLIC dlpack::dlpack)
 target_link_libraries(ailoy_core_obj PRIVATE stduuid)
@@ -57,6 +58,7 @@ target_link_libraries(ailoy_core_obj PRIVATE magic_enum)
 if(NOT DEFINED EMSCRIPTEN)
     target_link_libraries(ailoy_core_obj PRIVATE httplib)
     target_link_libraries(ailoy_core_obj PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+    target_link_libraries(ailoy_core_obj PRIVATE cpptrace::cpptrace)
 endif()
 
 target_compile_definitions(ailoy_core_obj PUBLIC "HTTP_REQUEST_METHOD=${AILOY_HTTP_REQUEST_METHOD}")

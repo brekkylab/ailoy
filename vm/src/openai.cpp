@@ -2,8 +2,7 @@
 
 #include <format>
 
-#include <http.hpp>
-
+#include "http.hpp"
 #include "logging.hpp"
 
 namespace ailoy {
@@ -17,19 +16,18 @@ openai_llm_engine_t::infer(std::shared_ptr<const value_t> input) {
   nlohmann::json body = convert_request_body(input);
   debug("[{}] Request body: {}", name(), body.dump());
 
-  auto res = ailoy::http::request(
-      std::make_unique<ailoy::http::request_t>(ailoy::http::request_t{
-          .url = std::format("{}/{}", api_url(), api_path()),
-          .method = ailoy::http::method_t::POST,
-          .headers = headers(),
-          .body = body.dump(),
-      }));
+  auto res = ailoy::http::request({
+      .url = std::format("{}/{}", api_url(), api_path()),
+      .method = ailoy::http::method_t::POST,
+      .headers = headers(),
+      .body = body.dump(),
+  });
 
-  if (res->error.has_value())
+  if (!res)
     throw ailoy::runtime_error(
-        std::format("[{}] Request failed: {}", name(), res->error.value()));
+        std::format("[{}] Request failed: {}", name(), res.error()));
 
-  if (res->status_code != 200) {
+  if (res->status_code != ailoy::http::OK_200) {
     debug("[{}] {}", res->status_code, res->body);
     throw ailoy::runtime_error(std::format(
         "[{}] Request failed: [{}] {}", name(), res->status_code, res->body));

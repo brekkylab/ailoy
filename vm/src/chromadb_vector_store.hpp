@@ -1,7 +1,5 @@
 #pragma once
 
-#include <httplib.h>
-
 #include "vector_store.hpp"
 
 namespace ailoy {
