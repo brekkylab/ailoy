@@ -13,27 +13,9 @@ add_library(ailoy_vm_obj OBJECT ${AILOY_VM_SRCS})
 target_include_directories(ailoy_vm_obj PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(ailoy_vm_obj PUBLIC ailoy_broker_client_obj ailoy_core_obj)
 
-# cpp-httplib
-if(AILOY_HTTP_REQUEST_METHOD EQUAL "impl")
-    # FetchContent_Declare(
-    #     httplib
-    #     GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-    #     GIT_TAG v0.20.0
-    #     EXCLUDE_FROM_ALL
-    # )
-    # set(HTTPLIB_REQUIRE_OPENSSL ON)
-    # set(BROTLI_USE_STATIC_LIBS ON)
-    # set(OPENSSL_USE_STATIC_LIBS ON)
-    # if(NODE)
-    #     set(OPENSSL_MSVC_STATIC_RT ON)
-    # endif()
-    # FetchContent_MakeAvailable(httplib)
-    target_link_libraries(ailoy_vm_obj PRIVATE httplib)
-
-    # # openssl
-    # find_package(OpenSSL REQUIRED)
-    # target_link_libraries(ailoy_vm_obj PRIVATE OpenSSL::Crypto OpenSSL::SSL)
-endif()
+# openssl
+find_package(OpenSSL REQUIRED)
+target_link_libraries(ailoy_vm_obj PRIVATE OpenSSL::Crypto OpenSSL::SSL)
 
 # indicators
 FetchContent_Declare(
