@@ -61,6 +61,20 @@ protected:
 };
 std::shared_ptr<ailoy::component_t> ClaudeTest::comp_ = nullptr;
 
+class GrokTest : public ::testing::Test {
+protected:
+  static void SetUpTestSuite() {
+    char const *api_key = std::getenv("XAI_API_KEY");
+    if (api_key == NULL) {
+      GTEST_SKIP() << "API key not configured. Skip the test.";
+      return;
+    }
+    comp_ = create_api_model_comp("grok", api_key, "grok-4");
+  }
+  static std::shared_ptr<ailoy::component_t> comp_;
+};
+std::shared_ptr<ailoy::component_t> GrokTest::comp_ = nullptr;
+
 void test_simple_chat(std::shared_ptr<ailoy::component_t> comp) {
   auto infer = comp->get_operator("infer");
 
@@ -219,6 +233,10 @@ TEST_F(GeminiTest, ToolCall) { test_tool_calling(comp_); }
 TEST_F(ClaudeTest, SimpleChat) { test_simple_chat(comp_); }
 
 TEST_F(ClaudeTest, ToolCall) { test_tool_calling(comp_); }
+
+TEST_F(GrokTest, SimpleChat) { test_simple_chat(comp_); }
+
+TEST_F(GrokTest, ToolCall) { test_tool_calling(comp_); }
 
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);

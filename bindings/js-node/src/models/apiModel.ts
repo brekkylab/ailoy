@@ -29,13 +29,27 @@ export const claudeModelIds = [
   "claude-3-haiku-20240307",
 ] as const;
 
+export const grokModelIds = [
+  "grok-4",
+  "grok-4-0709",
+  "grok-3",
+  "grok-3-fast",
+  "grok-3-mini",
+  "grok-3-mini-fast",
+  "grok-2",
+  "grok-2-1212",
+  "grok-2-vision-1212",
+  "grok-2-image-1212",
+] as const;
+
 export type APIModelId =
   | (typeof openAIModelIds)[number]
   | (typeof geminiModelIds)[number]
   | (typeof claudeModelIds)[number]
+  | (typeof grokModelIds)[number]
   | (string & {});
 
-export type APIModelProvider = "openai" | "gemini" | "claude";
+export type APIModelProvider = "openai" | "gemini" | "claude" | "grok";
 
 export interface APIModelArgs {
   id: APIModelId;
@@ -59,6 +73,8 @@ export class _APIModel {
         args.provider = "gemini";
       } else if (claudeModelIds.includes(this.id as any)) {
         args.provider = "claude";
+      } else if (grokModelIds.includes(this.id as any)) {
+        args.provider = "grok";
       } else {
         throw Error(
           `Failed to infer the model provider based on the model id "${this.id}". Please provide an explicit model provider.`

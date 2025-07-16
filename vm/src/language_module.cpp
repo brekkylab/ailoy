@@ -98,6 +98,12 @@ std::shared_ptr<const module_t> get_language_module() {
         "claude", create_openai_component<claude_llm_engine_t>);
   }
 
+  // Add Component: Grok
+  if (!language_module->factories.contains("grok")) {
+    language_module->factories.insert_or_assign(
+        "grok", create_openai_component<grok_llm_engine_t>);
+  }
+
   return language_module;
 }
 

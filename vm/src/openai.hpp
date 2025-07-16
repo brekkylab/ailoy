@@ -15,10 +15,12 @@ public:
   openai_response_delta_t infer(std::shared_ptr<const value_t> input);
 
 protected:
-  virtual std::string name() const { return "OpenAI"; }
-  virtual std::string api_url() const { return "https://api.openai.com"; }
-  virtual std::string api_path() const { return "/v1/chat/completions"; }
-  virtual std::unordered_map<std::string, std::string> headers() {
+  virtual inline std::string name() const { return "OpenAI"; }
+  virtual inline std::string api_url() const {
+    return "https://api.openai.com";
+  }
+  virtual inline std::string api_path() const { return "/v1/chat/completions"; }
+  virtual inline std::unordered_map<std::string, std::string> headers() {
     return {
         {"Authorization", "Bearer " + api_key_},
         {"Content-Type", "application/json"},
@@ -27,6 +29,8 @@ protected:
   }
   virtual nlohmann::json
   convert_request_body(std::shared_ptr<const value_t> inputs);
+
+  virtual void postprocess_response_body(nlohmann::json &body);
 
   std::string api_key_;
   std::string model_;
@@ -38,11 +42,11 @@ public:
       : openai_llm_engine_t(api_key, model) {}
 
 private:
-  std::string name() const override { return "Gemini"; }
-  std::string api_url() const override {
+  inline std::string name() const override { return "Gemini"; }
+  inline std::string api_url() const override {
     return "https://generativelanguage.googleapis.com";
   }
-  std::string api_path() const override {
+  inline std::string api_path() const override {
     return "/v1beta/openai/chat/completions";
   }
 };
@@ -53,10 +57,11 @@ public:
       : openai_llm_engine_t(api_key, model) {}
 
 private:
-  std::string name() const override { return "Claude"; }
-  std::string api_url() const override { return "https://api.anthropic.com"; }
-  std::string api_path() const override { return "/v1/chat/completions"; }
-  std::unordered_map<std::string, std::string> headers() override {
+  inline std::string name() const override { return "Claude"; }
+  inline std::string api_url() const override {
+    return "https://api.anthropic.com";
+  }
+  inline std::unordered_map<std::string, std::string> headers() override {
     return {
         {"x-api-key", api_key_},
         {"anthropic-version", "2023-06-01"},
@@ -66,6 +71,18 @@ private:
   }
   nlohmann::json
   convert_request_body(std::shared_ptr<const value_t> inputs) override;
+};
+
+class grok_llm_engine_t : public openai_llm_engine_t {
+public:
+  grok_llm_engine_t(const std::string &api_key, const std::string &model)
+      : openai_llm_engine_t(api_key, model) {}
+
+private:
+  inline std::string name() const override { return "Grok"; }
+  inline std::string api_url() const override { return "https://api.x.ai"; }
+
+  void postprocess_response_body(nlohmann::json &body) override;
 };
 
 template <typename engine_t>

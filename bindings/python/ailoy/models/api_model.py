@@ -34,7 +34,20 @@ ClaudeModelId = Literal[
     "claude-3-haiku-20240307",
 ]
 
-APIModelProvider = Literal["openai", "gemini", "claude"]
+GrokModelId = Literal[
+    "grok-4",
+    "grok-4-0709",
+    "grok-3",
+    "grok-3-fast",
+    "grok-3-mini",
+    "grok-3-mini-fast",
+    "grok-2",
+    "grok-2-1212",
+    "grok-2-vision-1212",
+    "grok-2-image-1212",
+]
+
+APIModelProvider = Literal["openai", "gemini", "claude", "grok"]
 
 
 @dataclass
@@ -52,6 +65,8 @@ class APIModel:
                 self.provider = "gemini"
             elif self.id in get_args(ClaudeModelId):
                 self.provider = "claude"
+            elif self.id in get_args(GrokModelId):
+                self.provider = "grok"
             else:
                 raise ValueError(
                     f'Failed to infer the model provider based on the model id "{self.id}". '
