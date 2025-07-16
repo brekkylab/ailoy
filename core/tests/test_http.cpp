@@ -20,7 +20,7 @@ void test_get_request() {
   auto result = ailoy::http::request(req);
 
   if (!result) {
-    std::cout << "ERROR: " << result.error() << std::endl;
+    std::cerr << result.error() << std::endl;
     return;
   }
 
@@ -51,7 +51,7 @@ void test_post_request() {
   auto result = ailoy::http::request(req);
 
   if (!result) {
-    std::cout << "ERROR: " << result.error() << std::endl;
+    std::cerr << result.error() << std::endl;
   }
 
   std::cout << "Status: " << result->status_code << std::endl;
@@ -72,7 +72,7 @@ void test_headers() {
   auto result = ailoy::http::request(req);
 
   if (!result) {
-    std::cout << "ERROR: " << result.error() << std::endl;
+    std::cerr << result.error() << std::endl;
   }
 
   std::cout << "Status: " << result->status_code << std::endl;
@@ -90,11 +90,11 @@ void test_error_handling() {
   auto result = ailoy::http::request(req);
 
   if (!result) {
-    std::cout << "ERROR: " << result.error() << std::endl;
+    std::cerr << result.error() << std::endl;
   }
 
-  std::cout << "Status: " << result->status_code << std::endl;
-  std::cout << "Body: " << result->body << std::endl;
+  std::cerr << "Status: " << result->status_code << std::endl;
+  std::cerr << "Body: " << result->body << std::endl;
   std::cout << std::endl;
 }
 
