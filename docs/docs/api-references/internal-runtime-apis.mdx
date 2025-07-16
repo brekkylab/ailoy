@@ -267,10 +267,10 @@ Performs inference, generates outputs.
 
 #### Outputs
 
-| Name            | Type   | Description                                                                   |
-| --------------- | ------ | ----------------------------------------------------------------------------- |
-| `message`       | map    | result message                                                                |
-| `finish_reason` | string | finished reason.<br/>Available values: `stop`, `tool_call`, `length`, `error` |
+| Name            | Type   | Description                                                                    |
+| --------------- | ------ | ------------------------------------------------------------------------------ |
+| `message`       | map    | result message                                                                 |
+| `finish_reason` | string | finished reason.<br/>Available values: `stop`, `tool_calls`, `length`, `error` |
 
 `iterative`: **`false`**
 
@@ -466,10 +466,47 @@ Performs inference, generates outputs.
 
 #### Outputs
 
-| Name            | Type   | Description                                                                   |
-| --------------- | ------ | ----------------------------------------------------------------------------- |
-| `message`       | map    | result message                                                                |
-| `finish_reason` | string | finished reason.<br/>Available values: `stop`, `tool_call`, `length`, `error` |
+| Name            | Type   | Description                                                                    |
+| --------------- | ------ | ------------------------------------------------------------------------------ |
+| `message`       | map    | result message                                                                 |
+| `finish_reason` | string | finished reason.<br/>Available values: `stop`, `tool_calls`, `length`, `error` |
+
+`iterative`: **`false`**
+
+## `grok`
+
+- Type: **Component**
+- Module: `language`
+
+A language model using the Grok APIs.
+
+#### Parameters
+
+| Name      | Type   | Description                 | Required |
+| --------- | ------ | --------------------------- | -------- |
+| `api_key` | string | API key to use on inference | ✅       |
+| `model`   | string | Model name (e.g. `grok-4`)  |          |
+
+### `infer`<a name="grok.infer"></a>
+
+- Type: **Method**
+- Component: `grok`
+
+Performs inference, generates outputs.
+
+#### Parameters
+
+| Name       | Type         | Description                                | Required |
+| ---------- | ------------ | ------------------------------------------ | -------- |
+| `messages` | array\<map\> | array of messages (OpenAI API compatible)  | ✅       |
+| `tools`    | array\<map\> | tools to be used (defaults to empty array) |          |
+
+#### Outputs
+
+| Name            | Type   | Description                                                                    |
+| --------------- | ------ | ------------------------------------------------------------------------------ |
+| `message`       | map    | result message                                                                 |
+| `finish_reason` | string | finished reason.<br/>Available values: `stop`, `tool_calls`, `length`, `error` |
 
 `iterative`: **`false`**
 
@@ -528,10 +565,10 @@ Performs inference, generates outputs.
 
 #### Outputs
 
-| Name            | Type   | Description                                                                   |
-| --------------- | ------ | ----------------------------------------------------------------------------- |
-| `message`       | map    | result message                                                                |
-| `finish_reason` | string | finished reason.<br/>Available values: `stop`, `tool_call`, `length`, `error` |
+| Name            | Type   | Description                                                                    |
+| --------------- | ------ | ------------------------------------------------------------------------------ |
+| `message`       | map    | result message                                                                 |
+| `finish_reason` | string | finished reason.<br/>Available values: `stop`, `tool_calls`, `length`, `error` |
 
 `iterative`: **`false`**
 
@@ -715,9 +752,9 @@ Performs inference, generates outputs.
 
 #### Outputs
 
-| Name            | Type           | Description                                                                   |
-| --------------- | -------------- | ----------------------------------------------------------------------------- |
-| `message`       | map            | result message from this iteration                                            |
-| `finish_reason` | string or null | finished reason.<br/>Available values: `stop`, `tool_call`, `length`, `error` |
+| Name            | Type           | Description                                                                    |
+| --------------- | -------------- | ------------------------------------------------------------------------------ |
+| `message`       | map            | result message from this iteration                                             |
+| `finish_reason` | string or null | finished reason.<br/>Available values: `stop`, `tool_calls`, `length`, `error` |
 
 `iterative`: **`true`**
