@@ -1,20 +1,23 @@
 #include <gtest/gtest.h>
-#include <httplib.h>
 
 #include <iostream>
 
+#include "http.hpp"
 #include "language.hpp"
 #include "module.hpp"
 
 std::string get_file_content(const std::string &url, const std::string &path) {
-  httplib::Client cli(url);
   std::string rv;
+  auto res = ailoy::http::request({
+      .url = std::format("{}/{}", url, path),
+      .method = ailoy::http::method_t::GET,
+  });
 
-  if (auto res = cli.Get(path)) {
-    if (res->status == httplib::StatusCode::OK_200)
+  if (res) {
+    if (res->status_code == 200)
       rv = res->body;
   } else {
-    std::cout << "HTTP error: " << httplib::to_string(res.error()) << std::endl;
+    std::cout << "HTTP error: " << res.error() << std::endl;
   }
 
   return rv;

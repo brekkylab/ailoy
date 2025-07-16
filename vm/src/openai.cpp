@@ -2,8 +2,7 @@
 
 #include <format>
 
-#include <httplib.h>
-
+#include "http.hpp"
 #include "logging.hpp"
 
 namespace ailoy {
@@ -14,38 +13,28 @@ openai_llm_engine_t::openai_llm_engine_t(const std::string &api_key,
 
 openai_response_delta_t
 openai_llm_engine_t::infer(std::shared_ptr<const value_t> input) {
-  httplib::Client client(api_url());
-  httplib::Headers httplib_headers;
-  for (const auto &[key, value] : headers()) {
-    httplib_headers.emplace(key, value);
-  }
-
   nlohmann::json body = convert_request_body(input);
   debug("[{}] Request body: {}", name(), body.dump());
 
-  httplib::Request http_req;
-  std::stringstream response_body;
+  auto res = ailoy::http::request({
+      .url = std::format("{}/{}", api_url(), api_path()),
+      .method = ailoy::http::method_t::POST,
+      .headers = headers(),
+      .body = body.dump(),
+  });
 
-  http_req.method = "POST";
-  http_req.path = api_path();
-  http_req.headers = httplib_headers;
-  http_req.body = body.dump();
-
-  auto result = client.send(http_req);
-
-  if (!result)
+  if (!res)
     throw ailoy::runtime_error(
-        std::format("[{}] Request failed: {}", name(),
-                    std::string(httplib::to_string(result.error()))));
+        std::format("[{}] Request failed: {}", name(), res.error()));
 
-  if (result->status != httplib::OK_200) {
-    debug("[{}] {}", result->status, result->body);
+  if (res->status_code != ailoy::http::OK_200) {
+    debug("[{}] {}", res->status_code, res->body);
     throw ailoy::runtime_error(std::format(
-        "[{}] Request failed: [{}] {}", name(), result->status, result->body));
+        "[{}] Request failed: [{}] {}", name(), res->status_code, res->body));
   }
 
-  debug("[{}] Response body: {}", name(), result->body);
-  auto j = nlohmann::json::parse(result->body);
+  debug("[{}] Response body: {}", name(), res->body);
+  auto j = nlohmann::json::parse(res->body);
   openai_chat_completion_response_choice_t choice = j["choices"][0];
   auto delta = openai_response_delta_t{.message = choice.message,
                                        .finish_reason = choice.finish_reason};

@@ -1,18 +1,25 @@
 #include "language.hpp"
 
 #include "chromadb_vector_store.hpp"
-#include "faiss/faiss_vector_store.hpp"
 #include "openai.hpp"
 #include "split_text.hpp"
+
+#ifdef AILOY_USE_FAISS
+#include "faiss/faiss_vector_store.hpp"
+#endif
+
+#ifdef AILOY_USE_TVM
 #include "tvm/embedding_model.hpp"
 #include "tvm/language_model.hpp"
 #include "tvm/model_cache.hpp"
+#endif
 
 namespace ailoy {
 
 static std::shared_ptr<module_t> language_module = create<module_t>();
 
 std::shared_ptr<const module_t> get_language_module() {
+#ifdef AILOY_USE_TVM
   // Add Component: TVM Embedding model
   if (!language_module->factories.contains("tvm_embedding_model")) {
     language_module->factories.insert_or_assign(
@@ -41,6 +48,7 @@ std::shared_ptr<const module_t> get_language_module() {
         "remove_model",
         create<instant_operator_t>(ailoy::operators::remove_model));
   }
+#endif
 
   // Add Operators: Split Text
   if (!language_module->ops.contains("split_text_by_separator")) {
@@ -58,12 +66,14 @@ std::shared_ptr<const module_t> get_language_module() {
         create<instant_operator_t>(split_text_by_separators_recursively_op));
   }
 
-  // Add Components: Vectorstores
+// Add Components: Vectorstores
+#ifdef AILOY_USE_FAISS
   if (!language_module->factories.contains("faiss_vector_store")) {
     language_module->factories.insert_or_assign(
         "faiss_vector_store",
         create_vector_store_component<faiss_vector_store_t>);
   }
+#endif
   if (!language_module->factories.contains("chromadb_vector_store")) {
     language_module->factories.insert_or_assign(
         "chromadb_vector_store",

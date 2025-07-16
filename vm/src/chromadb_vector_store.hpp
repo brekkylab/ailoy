@@ -1,7 +1,5 @@
 #pragma once
 
-#include <httplib.h>
-
 #include "vector_store.hpp"
 
 namespace ailoy {
@@ -38,7 +36,7 @@ public:
   void clear() override;
 
 private:
-  std::shared_ptr<httplib::Client> cli_;
+  std::string url_;
   std::string collection_id_;
   std::string collection_name_;
   bool delete_collection_on_cleanup_;
