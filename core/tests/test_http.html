@@ -70,22 +70,22 @@
     </div>
 
     <script type="text/javascript">
-        // let Module = {
-        //     print: function(text) {
-        //         const output = document.getElementById('output');
-        //         output.innerHTML += text + '\n';
-        //         output.scrollTop = output.scrollHeight;
-        //     },
-        //     printErr: function(text) {
-        //         const output = document.getElementById('output');
-        //         output.innerHTML += '<span class="error">ERROR: ' + text + '</span>\n';
-        //         output.scrollTop = output.scrollHeight;
-        //     },
-        //     onRuntimeInitialized: function() {
-        //         document.getElementById('runTests').disabled = false;
-        //         console.log('Module initialized');
-        //     }
-        // };
+        var Module = {
+            print: function(text) {
+                const output = document.getElementById('output');
+                output.innerHTML += text + '\n';
+                output.scrollTop = output.scrollHeight;
+            },
+            printErr: function(text) {
+                const output = document.getElementById('output');
+                output.innerHTML += '<span class="error">ERROR: ' + text + '</span>\n';
+                output.scrollTop = output.scrollHeight;
+            },
+            onRuntimeInitialized: function() {
+                document.getElementById('runTests').disabled = false;
+                console.log('Module initialized');
+            }
+        };
 
         function runTests() {
             const button = document.getElementById('runTests');
@@ -113,9 +113,9 @@
         }
 
         // Initially disable the button until module is loaded
-        // document.addEventListener('DOMContentLoaded', function() {
-        //     document.getElementById('runTests').disabled = true;
-        // });
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('runTests').disabled = true;
+        });
     </script>
 
     <!-- Load the compiled WebAssembly module -->

@@ -122,47 +122,10 @@ std::string headers_to_json(const headers_t &headers) {
   return json_obj.dump();
 }
 
-// Helper function to parse JSON headers string
-headers_t parse_headers_json(const std::string &json) {
-  try {
-    if (json.empty())
-      return {};
-
-    nlohmann::json json_obj = nlohmann::json::parse(json);
-    return json_obj.get<headers_t>();
-  } catch (const nlohmann::json::exception &e) {
-    // Return empty map if JSON parsing fails
-    return {};
-  }
-}
-
 result_t request(const request_t &req) {
-  // Convert headers to JSON string
+  std::string method_str = std::string(magic_enum::enum_name(req.method));
   std::string headers_json = headers_to_json(req.headers);
   std::string body_str = req.body.value_or("");
-
-  // Get method string
-  std::string method_str;
-  switch (req.method) {
-  case method_t::GET:
-    method_str = "GET";
-    break;
-  case method_t::POST:
-    method_str = "POST";
-    break;
-  case method_t::PUT:
-    method_str = "PUT";
-    break;
-  case method_t::PATCH:
-    method_str = "PATCH";
-    break;
-  case method_t::DELETE:
-    method_str = "DELETE";
-    break;
-  default:
-    return result_t(nullptr, std::format("Unsupported HTTP method: {}",
-                                         magic_enum::enum_name(req.method)));
-  }
 
   // Call async fetch function - this will block until complete due to ASYNCIFY
   char *result_json_ptr =
