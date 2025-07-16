@@ -176,7 +176,8 @@ tvm_language_model_t::tvm_language_model_t(const std::string &model,
                                            DLDevice device) {
   model_ = create<tvm_model_t>(model, quantization, device);
   template_engine_ = chat_manager_t::make_from_config_file(
-      model_->get_model_path() / "chat-template-config.json");
+      ailoy::fs::path_t(model_->get_model_path().string()) /
+      "chat-template-config.json");
   tokenizer_ = create<tokenizer_t>(model_->get_model_path() / "tokenizer.json");
   kv_cache_ = create<kv_cache_t>(model_);
   config = config_t{.temperature = model_->get_mlc_chat_config()["temperature"],
