@@ -17,7 +17,7 @@ openai_llm_engine_t::infer(std::shared_ptr<const value_t> input) {
   debug("[{}] Request body: {}", name(), body.dump());
 
   auto res = ailoy::http::request({
-      .url = std::format("{}/{}", api_url(), api_path()),
+      .url = std::format("{}{}", api_url(), api_path()),
       .method = ailoy::http::method_t::POST,
       .headers = headers(),
       .body = body.dump(),
@@ -33,8 +33,10 @@ openai_llm_engine_t::infer(std::shared_ptr<const value_t> input) {
         "[{}] Request failed: [{}] {}", name(), res->status_code, res->body));
   }
 
-  debug("[{}] Response body: {}", name(), res->body);
   auto j = nlohmann::json::parse(res->body);
+  postprocess_response_body(j);
+  debug("[{}] Processed Response body: {}", name(), j.dump());
+
   openai_chat_completion_response_choice_t choice = j["choices"][0];
   auto delta = openai_response_delta_t{.message = choice.message,
                                        .finish_reason = choice.finish_reason};
@@ -62,6 +64,10 @@ nlohmann::json openai_llm_engine_t::convert_request_body(
   return body;
 }
 
+void openai_llm_engine_t::postprocess_response_body(nlohmann::json &body) {
+  // do nothing
+}
+
 nlohmann::json claude_llm_engine_t::convert_request_body(
     std::shared_ptr<const value_t> inputs) {
   auto body = openai_llm_engine_t::convert_request_body(inputs);
@@ -87,6 +93,17 @@ nlohmann::json claude_llm_engine_t::convert_request_body(
   }
 
   return body;
+}
+
+void grok_llm_engine_t::postprocess_response_body(nlohmann::json &body) {
+  // Grok returns finish_reason as "stop" even tool calling has been invoked.
+  // So we modify finish_reason to "tool_calls" to make it compatible to other
+  // API services.
+  for (auto &choice : body["choices"]) {
+    if (choice["message"].contains("tool_calls")) {
+      choice["finish_reason"] = "tool_calls";
+    }
+  }
 }
 
 // TODO: enable iterative infer

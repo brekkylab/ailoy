@@ -63,6 +63,7 @@ markers = [
     "agent_openai: tests for OpenAI agent",
     "agent_gemini: tests for Gemini agent",
     "agent_claude: tests for Claude agent",
+    "agent_grok: tests for Grok agent",
 ]
 pythonpath = "tests"
 testpaths = ["tests"]

@@ -106,8 +106,8 @@ with Agent(rt, LocalModel("Qwen/Qwen3-0.6B")) as agent:
 ## Agent Models
 
 The models used by agents can be either local models (running on your machine)
-or API-based models (hosted by external providers like OpenAI, Google, or
-Anthropic). The setup differs slightly depending on the model type.
+or API-based models (hosted by external providers like OpenAI, Google, Anthropic
+or xAI). The setup differs slightly depending on the model type.
 
 ### Local Models
 
@@ -168,6 +168,8 @@ agent = Agent(rt, APIModel("gpt-4o", api_key="<OPENAI_API_KEY>"))
 agent = Agent(rt, APIModel("gemini-2.5-flash", api_key="<GEMINI_API_KEY>"))
 # Use Claude
 agent = Agent(rt, APIModel("claude-sonnet-4-20250514", api_key="<CLAUDE_API_KEY>"))
+# Use Grok
+agent = Agent(rt, APIModel("grok-4", api_key="<XAI_API_KEY>"))
 ```
 
 ```typescript
@@ -188,6 +190,11 @@ const agent = await defineAgent(
 const agent = await defineAgent(
   rt,
   APIModel({ id: "claude-sonnet-4-20250514", apiKey: "<CLAUDE_API_KEY>" })
+);
+// Use Grok
+const agent = await defineAgent(
+  rt,
+  APIModel({ id: "grok-4", apiKey: "<XAI_API_KEY>" })
 );
 ```
 
@@ -235,6 +242,23 @@ Supported API model providers and model IDs:
 - `claude-3-opus-20240229`
 - `claude-3-5-haiku-20241022`
 - `claude-3-haiku-20240307`
+
+</details>
+
+<details>
+
+<summary>**Grok**</summary>
+
+- `grok-4`
+- `grok-4-0709`
+- `grok-3`
+- `grok-3-fast`
+- `grok-3-mini`
+- `grok-3-mini-fast`
+- `grok-2`
+- `grok-2-1212`
+- `grok-2-vision-1212`
+- `grok-2-image-1212`
 
 </details>
 
@@ -401,6 +425,7 @@ Capabilities vary by provider:
 | **OpenAI**     |       ✅       |         ✅         |       ✅       |
 | **Gemini**     |       ✅       |         ❌         |       ✅       |
 | **Claude**     |       ✅       |         ❌         |       ❌       |
+| **Grok**       |       ✅       |         ✅         |       ❌       |
 
 :::
 
