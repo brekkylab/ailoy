@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "filesystem.hpp"
 #include "object.hpp"
 
 namespace ailoy {
@@ -12,7 +13,7 @@ class tokenizer_t : public object_t {
   using token_t = int32_t;
 
 public:
-  tokenizer_t(const std::filesystem::path &json_file_path);
+  tokenizer_t(const ailoy::fs::path_t &json_file_path);
 
   ~tokenizer_t();
 

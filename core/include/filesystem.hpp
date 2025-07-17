@@ -53,6 +53,22 @@ template <typename T> struct result_value_t {
 
   result_value_t(const T &val) : result_(error_code_t::Success), value_(val) {}
 
+  T unwrap() const {
+    if (!value_.has_value()) {
+      throw std::runtime_error("Attemting to convert failed result to value: " +
+                               result_.message);
+    }
+    return value_.value();
+  }
+
+  T &unwrap() {
+    if (!value_.has_value()) {
+      throw std::runtime_error("Attemting to convert failed result to value: " +
+                               result_.message);
+    }
+    return value_.value();
+  }
+
   operator T() const {
     if (!value_.has_value()) {
       throw std::runtime_error("Attemting to convert failed result to value: " +
@@ -81,6 +97,7 @@ template <typename T> struct result_value_t {
 // Path class for operator/ support
 class path_t {
 public:
+  path_t() = default;
   path_t(const std::string &p) : path_(p) {}
   path_t(const char *p) : path_(p) {}
 

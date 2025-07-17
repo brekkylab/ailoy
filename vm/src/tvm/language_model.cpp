@@ -9,7 +9,6 @@
 #include <xgrammar/xgrammar.h>
 
 #include "../chat_manager.hpp"
-#include "../file_util.hpp"
 #include "model_cache.hpp"
 #include "tokenizer.hpp"
 #include "tvm_model.hpp"
@@ -176,8 +175,7 @@ tvm_language_model_t::tvm_language_model_t(const std::string &model,
                                            DLDevice device) {
   model_ = create<tvm_model_t>(model, quantization, device);
   template_engine_ = chat_manager_t::make_from_config_file(
-      ailoy::fs::path_t(model_->get_model_path().string()) /
-      "chat-template-config.json");
+      model_->get_model_path() / "chat-template-config.json");
   tokenizer_ = create<tokenizer_t>(model_->get_model_path() / "tokenizer.json");
   kv_cache_ = create<kv_cache_t>(model_);
   config = config_t{.temperature = model_->get_mlc_chat_config()["temperature"],
@@ -191,10 +189,6 @@ tvm_language_model_t::tvm_language_model_t(const std::string &model,
     std::vector<std::string> vocabs(tokenizer_->get_vocab_size());
     for (int32_t i = 0; i < vocabs.size(); i++)
       vocabs[i] = tokenizer_->token_id_to_str(i);
-
-    // 2. tokenizer.json → backend_str
-    std::string backend_str =
-        utils::LoadBytesFromFile(model_->get_model_path() / "tokenizer.json");
 
     // 3. Create tokenizer info
     tokenizer_info_ =
