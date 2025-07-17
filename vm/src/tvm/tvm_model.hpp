@@ -8,6 +8,7 @@
 #include <tvm/runtime/module.h>
 #include <tvm/runtime/vm/ndarray_cache_support.h>
 
+#include "filesystem.hpp"
 #include "logging.hpp"
 #include "module.hpp"
 #include "value.hpp"
@@ -48,11 +49,9 @@ public:
 
   DLDevice get_device() const { return device_; }
 
-  std::filesystem::path get_model_path() const { return model_path_; }
+  ailoy::fs::path_t get_model_path() const { return model_path_; }
 
 private:
-  void load_ndarray_cache_metadata(const std::string &bytes);
-
   void load_ndarray_cache_shard(const size_t &shard_idx,
                                 const std::string &bytes);
 
@@ -62,7 +61,7 @@ private:
   std::string quantization_;
   DLDevice device_;
 
-  std::filesystem::path model_path_;
+  ailoy::fs::path_t model_path_;
   tvm::runtime::Module mod_;
   nlohmann::json metadata_ = {};
   nlohmann::json mlc_chat_config_ = {};

@@ -252,7 +252,7 @@ const uint32_t SHA1::K[4] = {
     0xCA62C1D6  // 60 <= t <= 79
 };
 
-std::string sha1_checksum(const std::filesystem::path &filepath) {
+std::string sha1_checksum(const fs::path_t &filepath) {
   std::ifstream file(filepath, std::ios::binary);
   if (!file) {
     throw std::runtime_error("Cannot open file: " + filepath.string());
@@ -329,14 +329,13 @@ struct sigaction SigintGuard::old_action_;
 #endif
 std::atomic<bool> SigintGuard::g_sigint{false};
 
-namespace fs = std::filesystem;
 using json = nlohmann::json;
 
-std::filesystem::path get_cache_root() {
-  fs::path cache_root;
+fs::path_t get_cache_root() {
+  fs::path_t cache_root;
   if (std::getenv("AILOY_CACHE_ROOT")) {
     // Check environment variable
-    cache_root = fs::path(std::getenv("AILOY_CACHE_ROOT"));
+    cache_root = fs::path_t(std::getenv("AILOY_CACHE_ROOT"));
   } else {
     // Set to default cache root
 #if defined(_WIN32)
@@ -344,18 +343,15 @@ std::filesystem::path get_cache_root() {
       cache_root = fs::path(std::getenv("LOCALAPPDATA")) / "ailoy";
 #else
     if (std::getenv("HOME"))
-      cache_root = fs::path(std::getenv("HOME")) / ".cache" / "ailoy";
+      cache_root = fs::path_t(std::getenv("HOME")) / ".cache" / "ailoy";
 #endif
   }
-  if (cache_root.empty()) {
+  if (cache_root.string().empty()) {
     throw exception("Cannot get cache root");
   }
 
-  try {
-    // Create a directory
-    // It returns false if already exists
-    fs::create_directories(cache_root);
-  } catch (const fs::filesystem_error &e) {
+  auto result = fs::create_directory(cache_root, true);
+  if (!result.success() && result.code != fs::error_code_t::AlreadyExists) {
     throw exception("cache root directory creation failed");
   }
 
@@ -370,7 +366,7 @@ std::string get_models_url() {
 }
 
 std::pair<bool, std::string> download_file(const std::string &remote_path,
-                                           const fs::path &local_path) {
+                                           const fs::path_t &local_path) {
   auto res = ailoy::http::request({
       .url = std::format("{}/{}", get_models_url(), remote_path),
       .method = ailoy::http::method_t::GET,
@@ -389,7 +385,7 @@ std::pair<bool, std::string> download_file(const std::string &remote_path,
 }
 
 std::pair<bool, std::string> download_file_with_progress(
-    const std::string &remote_path, const fs::path &local_path,
+    const std::string &remote_path, const fs::path_t &local_path,
     std::function<bool(uint64_t, uint64_t)> progress_callback) {
   SigintGuard sigint_guard;
 
@@ -431,10 +427,10 @@ std::pair<bool, std::string> download_file_with_progress(
   return std::make_pair<bool, std::string>(true, "");
 }
 
-fs::path get_model_base_path(const std::string &model_id) {
+fs::path_t get_model_base_path(const std::string &model_id) {
   std::string model_id_escaped =
       std::regex_replace(model_id, std::regex("/"), "--");
-  fs::path model_base_path = fs::path("tvm-models") / model_id_escaped;
+  fs::path_t model_base_path = fs::path_t("tvm-models") / model_id_escaped;
 
   return model_base_path;
 }
@@ -442,11 +438,11 @@ fs::path get_model_base_path(const std::string &model_id) {
 std::vector<model_cache_list_result_t> list_local_models() {
   std::vector<model_cache_list_result_t> results;
 
-  fs::path cache_base_path = get_cache_root();
+  fs::path_t cache_base_path = get_cache_root();
 
   // TVM models
-  fs::path tvm_models_path = cache_base_path / "tvm-models";
-  if (!fs::exists(tvm_models_path))
+  fs::path_t tvm_models_path = cache_base_path / "tvm-models";
+  if (!fs::exists(tvm_models_path).unwrap())
     return results;
 
   // Directory structure example for TVM models:
@@ -454,35 +450,38 @@ std::vector<model_cache_list_result_t> list_local_models() {
   // └── q4f16_1 (quantization)
   //     ├── manifest-arm64-Darwin-metal.json (manifest)
   //     └── ...files...
-  for (const auto &model_entry : fs::directory_iterator{tvm_models_path}) {
+  auto model_entries = fs::list_directory(tvm_models_path).unwrap();
+  for (const auto &model_entry : model_entries) {
     if (!model_entry.is_directory())
       continue;
 
     // Get model id and denormalize it
     // e.g. "BAAI--bge-m3" -> "BAAI/bge-m3"
-    std::string model_id = model_entry.path().filename().string();
-    model_id = std::regex_replace(model_id, std::regex("--"), "/");
+    std::string model_id =
+        std::regex_replace(model_entry.name, std::regex("--"), "/");
 
     // Iterate over quantizations
-    for (const auto &quant_entry : fs::directory_iterator(model_entry.path())) {
+    auto quant_entries = fs::list_directory(model_entry.path).unwrap();
+    for (const auto &quant_entry : quant_entries) {
       if (!quant_entry.is_directory())
         continue;
 
-      std::string quantization = quant_entry.path().filename().string();
-      fs::path quant_dir = fs::absolute(quant_entry.path());
+      std::string quantization = quant_entry.name;
+      fs::path_t quant_dir = quant_entry.path;
 
       // Iterate over files
-      for (const auto &file_entry : fs::directory_iterator(quant_dir)) {
-        if (!file_entry.is_regular_file())
+      auto file_entries = fs::list_directory(quant_dir).unwrap();
+      for (const auto &file_entry : file_entries) {
+        if (file_entry.is_regular_file())
           continue;
 
         // Find the manifest file
-        std::string filename = file_entry.path().filename().string();
+        std::string filename = file_entry.name;
         if (filename.rfind("manifest-", 0) != 0 ||
-            file_entry.path().extension() != ".json")
+            file_entry.path.extension() != ".json")
           continue;
 
-        std::string manifest_stem = file_entry.path().stem().string();
+        std::string manifest_stem = file_entry.path.stem();
         auto parts_start = manifest_stem.find("-");
         if (parts_start == std::string::npos)
           continue;
@@ -501,7 +500,7 @@ std::vector<model_cache_list_result_t> list_local_models() {
         std::string device = parts[2];
 
         // Read manifest json
-        std::ifstream manifest_in(file_entry.path());
+        std::ifstream manifest_in(file_entry.path);
         if (!manifest_in)
           continue;
         nlohmann::json manifest_json;
@@ -517,9 +516,10 @@ std::vector<model_cache_list_result_t> list_local_models() {
             manifest_json["files"].is_array()) {
           for (const auto &file_pair : manifest_json["files"]) {
             if (file_pair.is_array() && file_pair.size() >= 1) {
-              fs::path file_path = quant_dir / file_pair[0].get<std::string>();
-              if (fs::exists(file_path) && fs::is_regular_file(file_path)) {
-                total_bytes += fs::file_size(file_path);
+              fs::path_t file_path =
+                  quant_dir / file_pair[0].get<std::string>();
+              if (fs::file_exists(file_path)) {
+                total_bytes += fs::get_file_size(file_path);
               }
             }
           }
@@ -551,9 +551,11 @@ download_model(const std::string &model_id, const std::string &quantization,
   model_cache_download_result_t result{.success = false};
 
   // Create local cache directory
-  fs::path model_base_path = get_model_base_path(model_id);
-  fs::path model_cache_path = get_cache_root() / model_base_path / quantization;
-  fs::create_directories(model_cache_path);
+  fs::path_t model_base_path = get_model_base_path(model_id);
+  fs::path_t model_cache_path =
+      get_cache_root() / model_base_path / quantization;
+  std::cout << "creating directory: " << model_cache_path << std::endl;
+  fs::create_directory(model_cache_path, true);
 
   // Assemble manifest filename based on arch, os and target device
   auto uname = get_uname();
@@ -562,8 +564,8 @@ download_model(const std::string &model_id, const std::string &quantization,
   std::string manifest_filename = std::format("manifest-{}.json", target_lib);
 
   // Download manifest if not already present
-  fs::path manifest_path = model_cache_path / manifest_filename;
-  if (!fs::exists(manifest_path)) {
+  fs::path_t manifest_path = model_cache_path / manifest_filename;
+  if (!fs::file_exists(manifest_path)) {
     auto [success, error_message] = download_file(
         (model_base_path / quantization / manifest_filename).string(),
         manifest_path);
@@ -587,7 +589,7 @@ download_model(const std::string &model_id, const std::string &quantization,
   } catch (const json::parse_error &e) {
     // Remove manifest if it's not a valid format
     manifest_file.close();
-    fs::remove(manifest_path);
+    fs::delete_file(manifest_path);
 
     result.error_message = "Failed to parse manifest: " + std::string(e.what());
     return result;
@@ -630,7 +632,7 @@ download_model(const std::string &model_id, const std::string &quantization,
 
   for (size_t i = 0; i < num_files_to_download; ++i) {
     const auto &file = files_to_download[i];
-    fs::path local_path = model_cache_path / file;
+    fs::path_t local_path = model_cache_path / file;
 
     // Update total progress bar
     if (print_progress_bar) {
@@ -682,7 +684,7 @@ download_model(const std::string &model_id, const std::string &quantization,
 
   // Get model lib file path
   std::string model_lib_file = manifest["lib"].get<std::string>();
-  fs::path model_lib_path = model_cache_path / model_lib_file;
+  fs::path_t model_lib_path = model_cache_path / model_lib_file;
 
   result.success = true;
   result.model_path = model_cache_path;
@@ -694,7 +696,7 @@ model_cache_remove_result_t remove_model(const std::string &model_id,
                                          bool ask_prompt) {
   model_cache_remove_result_t result{.success = false};
 
-  fs::path model_path = get_cache_root() / get_model_base_path(model_id);
+  fs::path_t model_path = get_cache_root() / get_model_base_path(model_id);
   if (!fs::exists(model_path)) {
     result.error_message = std::format(
         "The model id \"{}\" does not exist in local cache", model_id);
@@ -718,7 +720,7 @@ model_cache_remove_result_t remove_model(const std::string &model_id,
     }
   }
 
-  fs::remove_all(model_path);
+  fs::delete_directory(model_path, true);
   result.success = true;
   result.model_path = model_path;
   return result;

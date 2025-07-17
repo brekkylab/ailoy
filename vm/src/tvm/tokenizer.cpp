@@ -4,14 +4,12 @@
 
 #include <tokenizers_c.h>
 
-#include "../file_util.hpp"
-
 namespace ailoy {
 
 /* tokenizer_t */
 
-tokenizer_t::tokenizer_t(const std::filesystem::path &json_file_path) {
-  auto contents = utils::LoadBytesFromFile(json_file_path);
+tokenizer_t::tokenizer_t(const ailoy::fs::path_t &json_file_path) {
+  auto contents = ailoy::fs::read_file_text(json_file_path).unwrap();
   handle_ = tokenizers_new_from_str(contents.data(), contents.size());
 }
 

@@ -6,6 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "filesystem.hpp"
 #include "module.hpp"
 
 namespace ailoy {
@@ -21,21 +22,21 @@ struct model_cache_list_result_t {
   std::string model_type;
   std::string model_id;
   nlohmann::json attributes;
-  std::filesystem::path model_path;
+  fs::path_t model_path;
   size_t total_bytes;
 };
 
 struct model_cache_download_result_t {
   bool success;
-  std::optional<std::filesystem::path> model_path = std::nullopt;
-  std::optional<std::filesystem::path> model_lib_path = std::nullopt;
+  std::optional<fs::path_t> model_path = std::nullopt;
+  std::optional<fs::path_t> model_lib_path = std::nullopt;
   std::optional<std::string> error_message = std::nullopt;
 };
 
 struct model_cache_remove_result_t {
   bool success;
   bool skipped = false;
-  std::optional<std::filesystem::path> model_path = std::nullopt;
+  std::optional<fs::path_t> model_path = std::nullopt;
   std::optional<std::string> error_message = std::nullopt;
 };
 
@@ -43,7 +44,7 @@ struct model_cache_remove_result_t {
  * @brief Get the cache root directory. If the AILOY_CACHE_ROOT environment
  * variable is set, it will be used; otherwise, the default path will be used.
  */
-std::filesystem::path get_cache_root();
+fs::path_t get_cache_root();
 
 std::vector<model_cache_list_result_t> list_local_models();
 

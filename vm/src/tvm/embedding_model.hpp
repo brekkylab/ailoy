@@ -2,6 +2,7 @@
 
 #include <tvm/ffi/function.h>
 
+#include "filesystem.hpp"
 #include "module.hpp"
 #include "tvm_model.hpp"
 #include "value.hpp"
@@ -18,8 +19,8 @@ public:
 
   const tvm::runtime::NDArray infer(std::vector<int> tokens);
 
-  std::filesystem::path get_model_path() const {
-    return engine_->get_model_path();
+  ailoy::fs::path_t get_model_path() const {
+    return engine_->get_model_path().string();
   }
 
 private:

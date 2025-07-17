@@ -6,7 +6,6 @@
 #include <tvm/ffi/any.h>
 #include <tvm/runtime/memory/memory_manager.h>
 
-#include "../file_util.hpp"
 #include "model_cache.hpp"
 
 using namespace tvm;
@@ -117,11 +116,6 @@ void from_json(const nlohmann::json &j, NDArrayCacheMetadata &metadata) {
   }
 }
 
-void tvm_model_t::load_ndarray_cache_metadata(const std::string &bytes) {
-  auto j = nlohmann::json::parse(bytes);
-  from_json(j, ndarray_cache_metadata_);
-}
-
 void tvm_model_t::load_ndarray_cache_shard(const size_t &shard_idx,
                                            const std::string &bytes) {
   const NDArrayCacheMetadata::FileRecord &shard_rec =
@@ -173,7 +167,7 @@ tvm_model_t::tvm_model_t(const std::string &model_name,
     throw ailoy::runtime_error(download_model_result.error_message.value());
   }
 
-  model_path_ = download_model_result.model_path.value();
+  model_path_ = download_model_result.model_path.value().string();
 
   Module executable = tvm::runtime::Module::LoadFromFile(
       download_model_result.model_lib_path.value().string());
@@ -197,23 +191,22 @@ tvm_model_t::tvm_model_t(const std::string &model_name,
 
   // Load mlc-chat-config.json
   mlc_chat_config_ = nlohmann::json::parse(
-      utils::LoadBytesFromFile(model_path_ / "mlc-chat-config.json"));
+      ailoy::fs::read_file_text(model_path_ / "mlc-chat-config.json").unwrap());
 
   // Load ndarray cache metadata
-  auto contents = utils::LoadBytesFromFile(model_path_ / "ndarray-cache.json");
-  load_ndarray_cache_metadata(contents);
+  from_json(nlohmann::json::parse(
+                ailoy::fs::read_file_text(model_path_ / "ndarray-cache.json")
+                    .unwrap()),
+            ndarray_cache_metadata_);
 
   // Load ndarray cache
-  std::regex re("params_shard_(\\d+)\\.bin");
-  std::smatch match;
-  for (const auto &entry : std::filesystem::directory_iterator(model_path_)) {
-    auto file_path = entry.path().string();
-    auto file_name = entry.path().filename().string();
-    if (std::regex_match(file_name, match, re)) {
-      size_t i = std::stoi(match[1].str());
-      auto contents = utils::LoadBytesFromFile(file_path);
-      load_ndarray_cache_shard(i, contents);
-    }
+  int record_idx = 0;
+  for (const auto &record : ndarray_cache_metadata_.records) {
+    auto contents =
+        ailoy::fs::read_file_bytes(model_path_ / record.data_path).unwrap();
+    load_ndarray_cache_shard(record_idx,
+                             std::string(contents.begin(), contents.end()));
+    record_idx++;
   }
 
   // Initialize parameters
