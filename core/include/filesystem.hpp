@@ -10,13 +10,187 @@ namespace ailoy {
 
 namespace fs {
 
+class path_t {
+public:
+  path_t() = default;
+  path_t(const std::string &p) : path_(p) {}
+  path_t(const char *p) : path_(p) {}
+
+  // Allow implicit conversion to string
+  operator std::string() const { return path_; }
+  const std::string &string() const { return path_; }
+
+  // Implicit operator/ for path concatenation
+  path_t operator/(const std::string &other) const { return join_paths(other); }
+  path_t operator/(const char *other) const {
+    return join_paths(std::string(other));
+  }
+  path_t operator/(const path_t &other) const {
+    return join_paths(other.path_);
+  }
+
+  // Assignment operators
+  path_t &operator/=(const std::string &other) {
+    path_ = join_paths(other);
+    return *this;
+  }
+  path_t &operator/=(const char *other) {
+    path_ = join_paths(std::string(other));
+    return *this;
+  }
+  path_t &operator/=(const path_t &other) {
+    path_ = join_paths(other.path_);
+    return *this;
+  }
+
+  // Comparison operators
+  bool operator==(const path_t &other) const { return path_ == other.path_; }
+  bool operator!=(const path_t &other) const { return path_ != other.path_; }
+  bool operator<(const path_t &other) const { return path_ < other.path_; }
+
+  // stream output
+  friend std::ostream &operator<<(std::ostream &os, const path_t &p) {
+    return os << p.path_;
+  }
+
+  path_t parent() const {
+    if (path_.empty() || path_ == "/")
+      return path_t("/");
+
+    // Remove trailing slash if present (except for root)
+    std::string working_path = path_;
+    if (working_path.length() > 1 && working_path.back() == '/') {
+      working_path.pop_back();
+    }
+
+    // Find the last slash
+    size_t last_slash = working_path.find_last_of('/');
+    if (last_slash == std::string::npos) {
+      // No slash found, return empty or current directory
+      return path_t("");
+    }
+
+    if (last_slash == 0) {
+      // Root directory case
+      return path_t("/");
+    }
+
+    // Return everything up to (but not including) the last slash
+    return path_t(working_path.substr(0, last_slash));
+  }
+
+  std::string filename() const {
+    if (path_.empty()) {
+      return "";
+    }
+
+    // Handle root path
+    if (path_ == "/") {
+      return "";
+    }
+
+    // Remove trailing slashes (except for root)
+    std::string working_path = path_;
+    while (working_path.length() > 1 && working_path.back() == '/') {
+      working_path.pop_back();
+    }
+
+    // Find the last slash
+    size_t last_slash = working_path.find_last_of('/');
+    if (last_slash == std::string::npos) {
+      // No slash found, entire path is the filename
+      return working_path;
+    }
+
+    // Return everything after the last slash
+    return working_path.substr(last_slash + 1);
+  }
+
+  std::string extension() const {
+    std::string fname = filename();
+
+    // Empty filename or filename starting with '.' (hidden files)
+    if (fname.empty() || fname == "." || fname == "..") {
+      return "";
+    }
+
+    // If filename starts with '.' and has no other dots, no extension
+    if (fname[0] == '.' && fname.find('.', 1) == std::string::npos) {
+      return "";
+    }
+
+    // Find the last dot
+    size_t last_dot = fname.find_last_of('.');
+    if (last_dot == std::string::npos || last_dot == 0) {
+      return "";
+    }
+
+    // Return everything from the last dot onwards
+    return fname.substr(last_dot);
+  }
+
+  std::string stem() const {
+    std::string fname = filename();
+
+    // Empty filename or special cases
+    if (fname.empty() || fname == "." || fname == "..") {
+      return fname;
+    }
+
+    // If filename starts with '.' and has no other dots, return as is
+    if (fname[0] == '.' && fname.find('.', 1) == std::string::npos) {
+      return fname;
+    }
+
+    // Find the last dot
+    size_t last_dot = fname.find_last_of('.');
+    if (last_dot == std::string::npos || last_dot == 0) {
+      return fname;
+    }
+
+    // Return everything before the last dot
+    return fname.substr(0, last_dot);
+  }
+
+private:
+  std::string path_;
+
+  path_t join_paths(std::string other) const {
+    if (path_.empty())
+      return other;
+    if (other.empty())
+      return *this;
+
+    // Handle ".." - go to parent directory
+    if (other == "..") {
+      return parent();
+    }
+
+    // Normal path joining
+    if (path_.back() == '/')
+      return path_ + other;
+    return path_ + "/" + other;
+  }
+};
+
+// Global operator/ for string / path_t combinations
+inline path_t operator/(const std::string &left, const path_t &right) {
+  return path_t(left) / right;
+}
+inline path_t operator/(const char *left, const path_t &right) {
+  return path_t(left) / right;
+}
+
 enum class file_type_t { Regular, Directory, Unknown };
 
-struct file_info_t {
+struct dir_entry_t {
   std::string name;
-  std::string path;
+  path_t path;
   file_type_t type;
   size_t size;
+
+  bool is_regular_file() const { return type == file_type_t::Regular; }
+  bool is_directory() const { return type == file_type_t::Directory; }
 };
 
 enum class error_code_t {
@@ -94,135 +268,28 @@ template <typename T> struct result_value_t {
   }
 };
 
-// Path class for operator/ support
-class path_t {
-public:
-  path_t() = default;
-  path_t(const std::string &p) : path_(p) {}
-  path_t(const char *p) : path_(p) {}
-
-  // Allow implicit conversion to string
-  operator std::string() const { return path_; }
-  const std::string &string() const { return path_; }
-
-  // Implicit operator/ for path concatenation
-  path_t operator/(const std::string &other) const {
-    return path_t(join_paths(path_, other));
-  }
-  path_t operator/(const char *other) const {
-    return path_t(join_paths(path_, std::string(other)));
-  }
-  path_t operator/(const path_t &other) const {
-    return path_t(join_paths(path_, other.path_));
-  }
-
-  // Assignment operators
-  path_t &operator/=(const std::string &other) {
-    path_ = join_paths(path_, other);
-    return *this;
-  }
-  path_t &operator/=(const char *other) {
-    path_ = join_paths(path_, std::string(other));
-    return *this;
-  }
-  path_t &operator/=(const path_t &other) {
-    path_ = join_paths(path_, other.path_);
-    return *this;
-  }
-
-  // Comparison operators
-  bool operator==(const path_t &other) const { return path_ == other.path_; }
-  bool operator!=(const path_t &other) const { return path_ != other.path_; }
-  bool operator<(const path_t &other) const { return path_ < other.path_; }
-
-  // stream output
-  friend std::ostream &operator<<(std::ostream &os, const path_t &p) {
-    return os << p.path_;
-  }
-
-private:
-  std::string path_;
-
-  static std::string join_paths(const std::string &path1,
-                                const std::string &path2) {
-    if (path1.empty())
-      return path2;
-    if (path2.empty())
-      return path1;
-
-    // Handle ".." - go to parent directory
-    if (path2 == "..") {
-      return get_parent_path(path1);
-    }
-
-    // Normal path joining
-    if (path1.back() == '/')
-      return path1 + path2;
-    return path1 + "/" + path2;
-  }
-
-  static std::string get_parent_path(const std::string &path) {
-    if (path.empty() || path == "/")
-      return "/";
-
-    // Remove trailing slash if present (except for root)
-    std::string working_path = path;
-    if (working_path.length() > 1 && working_path.back() == '/') {
-      working_path.pop_back();
-    }
-
-    // Find the last slash
-    size_t last_slash = working_path.find_last_of('/');
-    if (last_slash == std::string::npos) {
-      // No slash found, return empty or current directory
-      return "";
-    }
-
-    if (last_slash == 0) {
-      // Root directory case
-      return "/";
-    }
-
-    // Return everything up to (but not including) the last slash
-    return working_path.substr(0, last_slash);
-  }
-};
-
-// Global operator/ for string / path_t combinations
-inline path_t operator/(const std::string &left, const path_t &right) {
-  return path_t(left) / right;
-}
-inline path_t operator/(const char *left, const path_t &right) {
-  return path_t(left) / right;
-}
-
 // Directory operations
-result_t create_directory(const std::string &path, bool recursive = false);
-result_t delete_directory(const std::string &path, bool recursive = false);
-result_value_t<bool> directory_exists(const std::string &path);
-result_value_t<std::vector<file_info_t>>
-list_directory(const std::string &path);
+result_t create_directory(const path_t &path, bool recursive = false);
+result_t delete_directory(const path_t &path, bool recursive = false);
+result_value_t<bool> directory_exists(const path_t &path);
+result_value_t<std::vector<dir_entry_t>> list_directory(const path_t &path);
 
 // File operations
-result_t create_file(const std::string &path);
-result_t delete_file(const std::string &path);
-result_value_t<bool> file_exists(const std::string &path);
-result_value_t<size_t> get_file_size(const std::string &path);
+result_t create_file(const path_t &path);
+result_t delete_file(const path_t &path);
+result_value_t<bool> file_exists(const path_t &path);
+result_value_t<size_t> get_file_size(const path_t &path);
+
+// Directory/File common operations
+result_value_t<bool> exists(const path_t &path);
 
 // Read/Write operations
-result_t write_file(const std::string &path, const std::string &content,
+result_t write_file(const path_t &path, const std::string &content,
                     bool append = false);
-result_t write_file(const std::string &path, const std::vector<uint8_t> &data,
+result_t write_file(const path_t &path, const std::vector<uint8_t> &data,
                     bool append = false);
-result_value_t<std::string> read_file_text(const std::string &path);
-result_value_t<std::vector<uint8_t>> read_file_bytes(const std::string &path);
-
-// Path operations
-std::string get_absolute_path(const std::string &path);
-std::string get_parent_path(const std::string &path);
-std::string get_file_name(const std::string &path);
-std::string join_path(const std::string &path1, const std::string &path2);
-bool is_absolute(const std::string &path);
+result_value_t<std::string> read_file_text(const path_t &path);
+result_value_t<std::vector<uint8_t>> read_file_bytes(const path_t &path);
 
 } // namespace fs
 

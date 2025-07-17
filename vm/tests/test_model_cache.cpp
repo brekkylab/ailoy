@@ -69,7 +69,6 @@ TEST(ModelCacheTest, BGEM3_Callback) {
     throw std::runtime_error(remove_result.error_message.value());
   }
 
-  std::string current_downloading_file;
   size_t last_line_length = 0;
   auto callback = [&](const size_t current_file_idx, const size_t total_files,
                       const std::string &filename, const float progress) {
