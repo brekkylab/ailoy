@@ -62,13 +62,6 @@ if(NOT DEFINED EMSCRIPTEN)
 endif()
 
 if(AILOY_WITH_TEST)
-    if(EMSCRIPTEN)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s ASYNCIFY=1 -s FETCH=1 -s ALLOW_MEMORY_GROWTH=1 -fexceptions -lembind")
-        # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s EXPORTED_FUNCTIONS=['_run_tests']")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','stringToNewUTF8']")
-    endif()
-
     add_executable(test_http ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_http.cpp)
     target_link_libraries(test_http PRIVATE ailoy_core_obj)
     set_target_properties(test_http PROPERTIES OUTPUT_NAME "test_http")

@@ -28,6 +28,42 @@ error_code_t js_error_to_code(val error) {
   return error_code_t::Unknown;
 }
 
+EM_JS(EM_VAL, js_get_file_handle,
+      (EM_VAL current_handle, const char *part, bool create), {
+        // clang-format off
+        return Asyncify.handleAsync(async() => {
+          try {
+            const handle = Emval.toValue(current_handle);
+            const options = {create: create};
+            const result =
+                await handle.getFileHandle(UTF8ToString(part), options);
+            return Emval.toHandle(result);
+          } catch (error) {
+            // Convert JavaScript exception to Emscripten exception
+            return Emval.toHandle(error);
+          }
+        });
+        // clang-format on
+      });
+
+EM_JS(EM_VAL, js_get_directory_handle,
+      (EM_VAL current_handle, const char *part, bool create), {
+        // clang-format off
+        return Asyncify.handleAsync(async() => {
+          try {
+            const handle = Emval.toValue(current_handle);
+            const options = {create: create};
+            const result =
+                await handle.getDirectoryHandle(UTF8ToString(part), options);
+            return Emval.toHandle(result);
+          } catch (error) {
+            // Convert JavaScript exception to Emscripten exception
+            return Emval.toHandle(error);
+          }
+        });
+        // clang-format on
+      });
+
 // Helper to get a handle (file or directory) from a path.
 // Throws val on error.
 val get_handle(const std::string &path_str, bool is_dir,
@@ -40,34 +76,25 @@ val get_handle(const std::string &path_str, bool is_dir,
 
   for (int i = 0; i < num_parts; ++i) {
     std::string part = path_parts[i].as<std::string>();
-    std::cout << "part: " << part << std::endl;
     if (part.empty())
       continue;
 
     bool is_last_part = (i == num_parts - 1);
-    try {
-      if (is_last_part && !is_dir) {
-        std::cout << "get file: " << part << std::endl;
-        val options = val::object();
-        options.set("create", create_if_not_exists);
-        current_handle =
-            current_handle.call<val>("getFileHandle", val(part), options)
-                .await();
-      } else {
-        std::cout << "get directory: " << part << std::endl;
-        val options = val::object();
-        options.set("create", create_if_not_exists);
-        current_handle =
-            current_handle.call<val>("getDirectoryHandle", val(part), options)
-                .await();
 
-        std::string name = current_handle["name"].as<std::string>();
-        std::cout << "name: " << name << std::endl;
+    if (is_last_part && !is_dir) {
+      val result = val::take_ownership(js_get_file_handle(
+          current_handle.as_handle(), part.c_str(), create_if_not_exists));
+      if (result.instanceof(val::global("Error"))) {
+        throw result;
       }
-    } catch (const val &e) {
-      std::cout << "SSIbal" << std::endl;
-      // Re-throw to be caught by the calling C++ function
-      throw e;
+      current_handle = result;
+    } else {
+      val result = val::take_ownership(js_get_directory_handle(
+          current_handle.as_handle(), part.c_str(), create_if_not_exists));
+      if (result.instanceof(val::global("Error"))) {
+        throw result;
+      }
+      current_handle = result;
     }
   }
 
@@ -180,8 +207,6 @@ result_value_t<bool> file_exists(const std::string &path) {
     get_handle(path, false, false);
     return result_value_t<bool>(true);
   } catch (const val &e) {
-    std::cout << "[file_exists] error: "
-              << magic_enum::enum_name(js_error_to_code(e)) << std::endl;
     if (js_error_to_code(e) == error_code_t::NotFound) {
       return result_value_t<bool>(false);
     }

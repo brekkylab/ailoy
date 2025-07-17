@@ -22,13 +22,11 @@
             // Redirect stdout and stderr from C++ to our textarea.
             print: function(text) {
                 if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
-                console.log(text);
                 textarea.value += text + "\n";
                 textarea.scrollTop = textarea.scrollHeight; // Auto-scroll
             },
             printErr: function(text) {
                 if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
-                console.error(text);
                 textarea.value += "ERROR: " + text + "\n";
                 textarea.scrollTop = textarea.scrollHeight; // Auto-scroll
             }

@@ -20,7 +20,7 @@ void check(const ailoy::fs::result_value_t<T> &res,
   if (res.result_.success()) {
     std::cout << "[SUCCESS] " << message << std::endl;
   } else {
-    std::cout << "[FAILED]  " << message << " - Error: " << res.result_.message
+    std::cout << "[FAILED] " << message << " - Error: " << res.result_.message
               << std::endl;
     exit(1);
   }
@@ -64,7 +64,7 @@ int main() {
   if (read_result.value_.value_or("") == file_content) {
     std::cout << "[SUCCESS] File content matches!" << std::endl;
   } else {
-    std::cout << "[FAILED]  File content does not match!" << std::endl;
+    std::cout << "[FAILED] File content does not match!" << std::endl;
     return 1;
   }
 
@@ -87,12 +87,10 @@ int main() {
         "Recursively deleted directory " + base_dir.string());
 
   auto file_gone = ailoy::fs::file_exists(file_path);
-  std::cout << "file_gone" << std::endl;
-  if (!file_gone.result_.success() &&
-      file_gone.result_.code == ailoy::fs::error_code_t::NotFound) {
+  if (file_gone.result_.success() && file_gone.value_ == false) {
     std::cout << "[SUCCESS] File no longer exists." << std::endl;
   } else {
-    std::cout << "[FAILED]  File still exists or an error occurred."
+    std::cout << "[FAILED] File still exists or an error occurred."
               << std::endl;
   }
 
