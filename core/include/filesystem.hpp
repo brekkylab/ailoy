@@ -207,21 +207,6 @@ std::string get_file_name(const std::string &path);
 std::string join_path(const std::string &path1, const std::string &path2);
 bool is_absolute(const std::string &path);
 
-// // Async operations (for OPFS)
-// void create_directory_async(const std::string &path, bool recursive,
-//                             std::function<void(result_t)> callback);
-// void write_file_async(const std::string &path, const std::string &content,
-//                       std::function<void(result_t)> callback);
-// void write_file_async(const std::string &path, const std::vector<uint8_t>
-// &data,
-//                       std::function<void(result_t)> callback);
-// void read_file_text_async(
-//     const std::string &path,
-//     std::function<void(result_value_t<std::string>)> callback);
-// void read_file_bytes_async(
-//     const std::string &path,
-//     std::function<void(result_value_t<std::vector<uint8_t>>)> callback);
-
 } // namespace fs
 
 } // namespace ailoy

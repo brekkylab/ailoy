@@ -5,7 +5,6 @@
 #include <emscripten.h>
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
-#include <magic_enum/magic_enum.hpp>
 
 #include "filesystem.hpp"
 

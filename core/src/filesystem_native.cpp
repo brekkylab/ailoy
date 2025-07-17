@@ -179,34 +179,6 @@ bool is_absolute(const std::string &path) {
   return std::filesystem::path(path).is_absolute();
 }
 
-// void create_directory_async(const std::string &path, bool recursive,
-//                             std::function<void(result_t)> callback) {
-//   callback(create_directory(path, recursive));
-// }
-
-// void write_file_async(const std::string &path, const std::string &content,
-//                       std::function<void(result_t)> callback) {
-//   callback(write_file(path, content));
-// }
-
-// void write_file_async(const std::string &path, const std::vector<uint8_t>
-// &data,
-//                       std::function<void(result_t)> callback) {
-//   callback(write_file(path, data));
-// }
-
-// void read_file_text_async(
-//     const std::string &path,
-//     std::function<void(result_value_t<std::string>)> callback) {
-//   callback(read_file_text(path));
-// }
-
-// void read_file_bytes_async(
-//     const std::string &path,
-//     std::function<void(result_value_t<std::vector<uint8_t>>)> callback) {
-//   callback(read_file_bytes(path));
-// }
-
 } // namespace fs
 
 } // namespace ailoy
