@@ -2,10 +2,7 @@
 #include <string>
 #include <vector>
 
-#include <magic_enum/magic_enum.hpp>
-
 #include "filesystem.hpp"
-#include "http.hpp"
 #include "model_cache.hpp"
 
 int main() {
