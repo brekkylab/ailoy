@@ -1,6 +1,7 @@
 #include "language.hpp"
 
 #include "chromadb_vector_store.hpp"
+#include "model_cache.hpp"
 #include "openai.hpp"
 #include "split_text.hpp"
 
@@ -11,7 +12,6 @@
 #ifdef AILOY_USE_TVM
 #include "tvm/embedding_model.hpp"
 #include "tvm/language_model.hpp"
-#include "tvm/model_cache.hpp"
 #endif
 
 namespace ailoy {
@@ -31,7 +31,7 @@ std::shared_ptr<const module_t> get_language_module() {
     language_module->factories.insert_or_assign(
         "tvm_language_model", create_tvm_language_model_component);
   }
-
+#endif
   // Add Operators: Model Cache
   if (!language_module->ops.contains("list_local_models")) {
     language_module->ops.insert_or_assign(
@@ -48,7 +48,6 @@ std::shared_ptr<const module_t> get_language_module() {
         "remove_model",
         create<instant_operator_t>(ailoy::operators::remove_model));
   }
-#endif
 
   // Add Operators: Split Text
   if (!language_module->ops.contains("split_text_by_separator")) {

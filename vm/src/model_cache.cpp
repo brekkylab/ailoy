@@ -4,7 +4,6 @@
 #include <atomic>
 #include <cctype>
 #include <csignal>
-#include <fstream>
 #include <regex>
 #include <string>
 #ifdef _WIN32
@@ -253,15 +252,17 @@ const uint32_t SHA1::K[4] = {
 };
 
 std::string sha1_checksum(const fs::path_t &filepath) {
-  std::ifstream file(filepath, std::ios::binary);
+  // std::ifstream file(filepath, std::ios::binary);
+  auto file = fs::ifstream(filepath);
   if (!file) {
     throw std::runtime_error("Cannot open file: " + filepath.string());
   }
 
   SHA1 sha1;
-  char buffer[65536];
-  while (file.read(buffer, sizeof(buffer)) || file.gcount()) {
-    sha1.update(reinterpret_cast<const uint8_t *>(buffer), file.gcount());
+  std::vector<char> buffer(1048576);
+  while (file->read(buffer.data(), buffer.size()) || file->gcount()) {
+    sha1.update(reinterpret_cast<const uint8_t *>(buffer.data()),
+                file->gcount());
   }
 
   return sha1.finalize();
@@ -341,6 +342,8 @@ fs::path_t get_cache_root() {
 #if defined(_WIN32)
     if (std::getenv("LOCALAPPDATA"))
       cache_root = fs::path(std::getenv("LOCALAPPDATA")) / "ailoy";
+#elif defined(EMSCRIPTEN)
+    cache_root = "/ailoy";
 #else
     if (std::getenv("HOME"))
       cache_root = fs::path_t(std::getenv("HOME")) / ".cache" / "ailoy";
@@ -378,8 +381,9 @@ std::pair<bool, std::string> download_file(const std::string &remote_path,
             (res ? "HTTP " + std::to_string(res->status_code) : res.error()));
   }
 
-  std::ofstream ofs(local_path, std::ios::binary);
-  ofs.write(res->body.c_str(), res->body.size());
+  // std::ofstream ofs(local_path, std::ios::binary);
+  auto ofs = fs::ofstream(local_path);
+  ofs->write(res->body.c_str(), res->body.size());
 
   return std::make_pair<bool, std::string>(true, "");
 }
@@ -391,8 +395,10 @@ std::pair<bool, std::string> download_file_with_progress(
 
   size_t existing_size = 0;
 
+  auto file_url = std::format("{}/{}", get_models_url(), remote_path);
+
   auto res = ailoy::http::request({
-      .url = std::format("{}/{}", get_models_url(), remote_path),
+      .url = file_url,
       .method = ailoy::http::method_t::GET,
       .data_callback =
           [&](const char *data, size_t data_length) {
@@ -400,16 +406,15 @@ std::pair<bool, std::string> download_file_with_progress(
             if (sigint_guard.interrupted())
               return false;
 
-            std::ofstream ofs(local_path, existing_size > 0
-                                              ? std::ios::app | std::ios::binary
-                                              : std::ios::binary);
-            ofs.seekp(existing_size);
-            ofs.write(data, data_length);
+            auto ofs = fs::ofstream(local_path, existing_size > 0);
+            ofs->seekp(existing_size);
+            ofs->write(data, data_length);
             existing_size += data_length;
-            return ofs.good();
+            return ofs->good();
           },
       .progress_callback = progress_callback,
   });
+
   if (res->status_code != ailoy::http::OK_200 &&
       res->status_code != ailoy::http::PartialContent_206) {
     // If SIGINT interrupted, return error message about interrupted
@@ -442,7 +447,7 @@ std::vector<model_cache_list_result_t> list_local_models() {
 
   // TVM models
   fs::path_t tvm_models_path = cache_base_path / "tvm-models";
-  if (!fs::exists(tvm_models_path).unwrap())
+  if (!fs::directory_exists(tvm_models_path).unwrap())
     return results;
 
   // Directory structure example for TVM models:
@@ -500,15 +505,8 @@ std::vector<model_cache_list_result_t> list_local_models() {
         std::string device = parts[2];
 
         // Read manifest json
-        std::ifstream manifest_in(file_entry.path);
-        if (!manifest_in)
-          continue;
-        nlohmann::json manifest_json;
-        try {
-          manifest_in >> manifest_json;
-        } catch (...) {
-          continue;
-        }
+        auto manifest_json =
+            nlohmann::json::parse(fs::read_file_text(file_entry.path).unwrap());
 
         // Calculate total bytes
         size_t total_bytes = 0;
@@ -554,13 +552,12 @@ download_model(const std::string &model_id, const std::string &quantization,
   fs::path_t model_base_path = get_model_base_path(model_id);
   fs::path_t model_cache_path =
       get_cache_root() / model_base_path / quantization;
-  std::cout << "creating directory: " << model_cache_path << std::endl;
   fs::create_directory(model_cache_path, true);
 
   // Assemble manifest filename based on arch, os and target device
   auto uname = get_uname();
-  std::string target_lib =
-      std::format("{}-{}-{}", uname.machine, uname.sysname, target_device);
+  std::string target_lib = "arm64-Darwin-metal";
+  // std::format("{}-{}-{}", uname.machine, uname.sysname, target_device);
   std::string manifest_filename = std::format("manifest-{}.json", target_lib);
 
   // Download manifest if not already present
@@ -576,25 +573,18 @@ download_model(const std::string &model_id, const std::string &quantization,
   }
 
   // Read and parse manifest
-  std::ifstream manifest_file(manifest_path);
-  if (!manifest_file.is_open()) {
-    result.error_message =
-        "Failed to open manifest at " + manifest_path.string();
-    return result;
-  }
 
   json manifest;
   try {
-    manifest_file >> manifest;
+    manifest =
+        nlohmann::json::parse(fs::read_file_text(manifest_path).unwrap());
   } catch (const json::parse_error &e) {
     // Remove manifest if it's not a valid format
-    manifest_file.close();
     fs::delete_file(manifest_path);
 
     result.error_message = "Failed to parse manifest: " + std::string(e.what());
     return result;
   }
-  manifest_file.close();
 
   // Get files from "files" section
   if (!manifest.contains("files") || !manifest["files"].is_array()) {
@@ -607,7 +597,7 @@ download_model(const std::string &model_id, const std::string &quantization,
        manifest["files"]
            .get<std::vector<std::pair<std::string, std::string>>>()) {
     // Add to files_to_download if neither file exists nor sha1 checksum is same
-    if (!(fs::exists(model_cache_path / file) &&
+    if (!(fs::file_exists(model_cache_path / file).unwrap() &&
           sha1 == sha1_checksum(model_cache_path / file))) {
       files_to_download.emplace_back(file);
     }
@@ -697,7 +687,7 @@ model_cache_remove_result_t remove_model(const std::string &model_id,
   model_cache_remove_result_t result{.success = false};
 
   fs::path_t model_path = get_cache_root() / get_model_base_path(model_id);
-  if (!fs::exists(model_path)) {
+  if (!fs::directory_exists(model_path)) {
     result.error_message = std::format(
         "The model id \"{}\" does not exist in local cache", model_id);
     return result;

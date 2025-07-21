@@ -6,7 +6,7 @@
 #include <tvm/ffi/any.h>
 #include <tvm/runtime/memory/memory_manager.h>
 
-#include "model_cache.hpp"
+#include "../model_cache.hpp"
 
 using namespace tvm;
 using namespace tvm::runtime;

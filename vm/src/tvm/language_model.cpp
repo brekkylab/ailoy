@@ -9,7 +9,7 @@
 #include <xgrammar/xgrammar.h>
 
 #include "../chat_manager.hpp"
-#include "model_cache.hpp"
+#include "../model_cache.hpp"
 #include "tokenizer.hpp"
 #include "tvm_model.hpp"
 

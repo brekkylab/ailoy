@@ -1,5 +1,6 @@
 #pragma once
 
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -290,6 +291,101 @@ result_t write_file(const path_t &path, const std::vector<uint8_t> &data,
                     bool append = false);
 result_value_t<std::string> read_file_text(const path_t &path);
 result_value_t<std::vector<uint8_t>> read_file_bytes(const path_t &path);
+
+class stream_base {
+public:
+  virtual ~stream_base() = default;
+  virtual bool is_open() const = 0;
+  virtual void close() = 0;
+  virtual bool good() const = 0;
+  virtual bool eof() const = 0;
+  virtual bool fail() const = 0;
+  virtual bool bad() const = 0;
+  virtual operator bool() const { return good(); }
+  virtual bool operator!() const { return !good(); }
+
+protected:
+  path_t path_;
+  bool is_open_ = false;
+  bool good_ = true;
+  bool eof_ = false;
+  bool fail_ = false;
+  bool bad_ = false;
+};
+
+class ifstream_ : public stream_base {
+public:
+  ifstream_() = default;
+  explicit ifstream_(const path_t &path);
+  virtual ~ifstream_() = default;
+
+  // Open/close operations
+  virtual result_t open(const path_t &path) = 0;
+  virtual void close() override = 0;
+
+  // Read operations
+  virtual ifstream_ &read(char *buffer, std::streamsize count) = 0;
+  virtual ifstream_ &getline(std::string &line, char delim = '\n') = 0;
+  virtual std::string read_all() = 0;
+  virtual std::vector<uint8_t> read_all_bytes() = 0;
+
+  // Position operations
+  virtual std::streampos tellg() = 0;
+  virtual ifstream_ &seekg(std::streampos pos) = 0;
+  virtual ifstream_ &seekg(std::streamoff off, std::ios_base::seekdir dir) = 0;
+
+  // Character operations
+  virtual int get() = 0;
+  virtual ifstream_ &get(char &c) = 0;
+  virtual int peek() = 0;
+  virtual ifstream_ &unget() = 0;
+  virtual std::streamsize gcount() const = 0;
+
+  // Stream extraction operators
+  virtual ifstream_ &operator>>(std::string &str) = 0;
+  virtual ifstream_ &operator>>(int &val) = 0;
+  virtual ifstream_ &operator>>(double &val) = 0;
+  virtual ifstream_ &operator>>(float &val) = 0;
+  virtual ifstream_ &operator>>(long &val) = 0;
+  virtual ifstream_ &operator>>(char &c) = 0;
+};
+
+class ofstream_ : public stream_base {
+public:
+  ofstream_() = default;
+  explicit ofstream_(const path_t &path, bool append = false);
+  virtual ~ofstream_() = default;
+
+  // Open/close operations
+  virtual result_t open(const path_t &path, bool append = false) = 0;
+  virtual void close() override = 0;
+
+  // Write operations
+  virtual ofstream_ &write(const char *buffer, std::streamsize count) = 0;
+  virtual ofstream_ &write(const std::string &str) = 0;
+  virtual ofstream_ &write(const std::vector<uint8_t> &data) = 0;
+  virtual result_t flush() = 0;
+
+  // Position operations
+  virtual std::streampos tellp() = 0;
+  virtual ofstream_ &seekp(std::streampos pos) = 0;
+  virtual ofstream_ &seekp(std::streamoff off, std::ios_base::seekdir dir) = 0;
+
+  // Character operations
+  virtual ofstream_ &put(char c) = 0;
+
+  // Stream insertion operators
+  virtual ofstream_ &operator<<(const std::string &str) = 0;
+  virtual ofstream_ &operator<<(const char *str) = 0;
+  virtual ofstream_ &operator<<(char c) = 0;
+  virtual ofstream_ &operator<<(int val) = 0;
+  virtual ofstream_ &operator<<(double val) = 0;
+  virtual ofstream_ &operator<<(float val) = 0;
+  virtual ofstream_ &operator<<(long val) = 0;
+};
+
+std::unique_ptr<ifstream_> ifstream(const path_t &path);
+std::unique_ptr<ofstream_> ofstream(const path_t &path, bool append = false);
 
 } // namespace fs
 
