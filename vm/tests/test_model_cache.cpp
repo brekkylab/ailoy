@@ -104,7 +104,7 @@ int main(int argc, char **argv) {
 #else
 
 int main() {
-  ailoy::remove_model("BAAI/bge-m3");
+  ailoy::remove_model("Qwen/Qwen3-0.6B");
 
   size_t last_line_length = 0;
   auto callback = [&](const size_t current_file_idx, const size_t total_files,
@@ -125,7 +125,8 @@ int main() {
     }
   };
 
-  ailoy::download_model("BAAI/bge-m3", "q4f16_1", "webgpu", callback, false);
+  ailoy::download_model("Qwen/Qwen3-0.6B", "q4f16_1", "webgpu", callback,
+                        false);
 
   std::function<void(ailoy::fs::dir_entry_t, int)> print_directory_entries =
       [&](ailoy::fs::dir_entry_t entry, int tab) {
