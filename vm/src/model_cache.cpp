@@ -252,7 +252,6 @@ const uint32_t SHA1::K[4] = {
 };
 
 std::string sha1_checksum(const fs::path_t &filepath) {
-  // std::ifstream file(filepath, std::ios::binary);
   auto file = fs::ifstream(filepath);
   if (!file) {
     throw std::runtime_error("Cannot open file: " + filepath.string());

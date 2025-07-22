@@ -58,7 +58,9 @@ EM_ASYNC_JS(EM_VAL, js_create_directory,
 
                 return Emval.toHandle(undefined);
               } catch (error) {
-                return Emval.toHandle({name: error.name, message: error.message});
+                const e = new Error(error.message);
+                e.name = error.name;
+                return Emval.toHandle(e);
               }
               // clang-format on
             });
@@ -101,7 +103,9 @@ EM_ASYNC_JS(EM_VAL, js_delete_directory,
 
                 return Emval.toHandle(undefined);
               } catch (error) {
-                return Emval.toHandle({name: error.name, message: error.message});
+                const e = new Error(error.message);
+                e.name = error.name;
+                return Emval.toHandle(e);
               }
               // clang-format on
             });
@@ -140,7 +144,9 @@ EM_ASYNC_JS(EM_VAL, js_directory_exists, (const char *path_str), {
         if (error.name === "NotFoundError") {
             return Emval.toHandle(false);
         } else {
-            return Emval.toHandle({name: error.name, message: error.message});
+            const e = new Error(error.message);
+            e.name = error.name;
+            return Emval.toHandle(e);
         }
     }
   // clang-format on
@@ -190,7 +196,9 @@ EM_ASYNC_JS(EM_VAL, js_list_directory, (const char *path_str), {
 
         return Emval.toHandle(entries);
     } catch (error) {
-        return Emval.toHandle({name: error.name, message: error.message});
+        const e = new Error(error.message);
+        e.name = error.name;
+        return Emval.toHandle(e);
     }
   // clang-format on
 });
@@ -254,7 +262,9 @@ EM_ASYNC_JS(EM_VAL, js_create_file,
 
                 return Emval.toHandle(undefined);
               } catch (error) {
-                return Emval.toHandle({name: error.name, message: error.message});
+                const e = new Error(error.message);
+                e.name = error.name;
+                return Emval.toHandle(e);
               }
               // clang-format on
             });
@@ -295,7 +305,9 @@ EM_ASYNC_JS(EM_VAL, js_delete_file,
 
                 return Emval.toHandle(undefined);
               } catch (error) {
-                return Emval.toHandle({name: error.name, message: error.message});
+                const e = new Error(error.message);
+                e.name = error.name;
+                return Emval.toHandle(e);
               }
               // clang-format on
             });
@@ -339,7 +351,9 @@ EM_ASYNC_JS(EM_VAL, js_file_exists,
                 if (error.name === "NotFoundError") {
                     return Emval.toHandle(false);
                 } else {
-                    return Emval.toHandle({name: error.name, message: error.message});
+                    const e = new Error(error.message);
+                    e.name = error.name;
+                    return Emval.toHandle(e);
                 }
               }
               // clang-format on
@@ -382,7 +396,9 @@ EM_ASYNC_JS(EM_VAL, js_get_file_size,
 
                 return Emval.toHandle(file.size);
               } catch (error) {
-                return Emval.toHandle({name: error.name, message: error.message});
+                const e = new Error(error.message);
+                e.name = error.name;
+                return Emval.toHandle(e);
               }
               // clang-format on
             });
@@ -457,7 +473,9 @@ EM_ASYNC_JS(EM_VAL, js_write_file,
 
                 return Emval.toHandle(undefined);
               } catch (error) {
-                return Emval.toHandle(error);
+                const e = new Error(error.message);
+                e.name = error.name;
+                return Emval.toHandle(e);
               }
               // clang-format on
             });
@@ -522,7 +540,9 @@ EM_ASYNC_JS(EM_VAL, js_read_file_bytes,
   
                   return Emval.toHandle(undefined);
               } catch (error) {
-                  return Emval.toHandle(error);
+                  const e = new Error(error.message);
+                  e.name = error.name;
+                  return Emval.toHandle(e);
               }
               // clang-format on
             });
