@@ -556,8 +556,8 @@ download_model(const std::string &model_id, const std::string &quantization,
 
   // Assemble manifest filename based on arch, os and target device
   auto uname = get_uname();
-  std::string target_lib = "arm64-Darwin-metal";
-  // std::format("{}-{}-{}", uname.machine, uname.sysname, target_device);
+  std::string target_lib =
+      std::format("{}-{}-{}", uname.machine, uname.sysname, target_device);
   std::string manifest_filename = std::format("manifest-{}.json", target_lib);
 
   // Download manifest if not already present
@@ -646,7 +646,10 @@ download_model(const std::string &model_id, const std::string &quantization,
         download_file_with_progress(
             (model_base_path / quantization / file).string(), local_path,
             [&](uint64_t current, uint64_t total) {
-              float progress = static_cast<float>(current) / total * 100;
+              float progress = std::min(
+                  static_cast<float>(current) /
+                      (total + std::numeric_limits<float>::min()) * 100,
+                  100.0f);
               if (callback.has_value())
                 callback.value()(i + num_files_downloaded, num_total_files,
                                  file, progress);

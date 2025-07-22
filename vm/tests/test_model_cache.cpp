@@ -1,12 +1,18 @@
 #include <csignal>
 #include <format>
+#include <iostream>
 #include <thread>
 
+#ifndef EMSCRIPTEN
 #include <gtest/gtest.h>
+#endif
 
+#include "filesystem.hpp"
 #include "model_cache.hpp"
 
 using namespace std::chrono_literals;
+
+#ifndef EMSCRIPTEN
 
 #if defined(USE_METAL)
 std::string device = "metal";
@@ -94,3 +100,57 @@ int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+
+#else
+
+int main() {
+  ailoy::remove_model("BAAI/bge-m3");
+
+  size_t last_line_length = 0;
+  auto callback = [&](const size_t current_file_idx, const size_t total_files,
+                      const std::string &filename, const float progress) {
+    std::ostringstream oss;
+    oss << std::format("[{}/{}] Downloading {}: {}%", current_file_idx + 1,
+                       total_files, filename, progress);
+    std::string line = oss.str();
+    if (line.length() < last_line_length) {
+      line += std::string(last_line_length - line.length(), ' ');
+    }
+    std::cout << "\r" << line << std::flush;
+    last_line_length = line.length();
+
+    if (progress >= 100) {
+      std::cout << std::endl;
+      last_line_length = 0;
+    }
+  };
+
+  ailoy::download_model("BAAI/bge-m3", "q4f16_1", "webgpu", callback, false);
+
+  std::function<void(ailoy::fs::dir_entry_t, int)> print_directory_entries =
+      [&](ailoy::fs::dir_entry_t entry, int tab) {
+        std::cout << std::string(tab, ' ') << entry.name
+                  << (entry.is_directory() ? "/" : "")
+                  << (entry.is_regular_file()
+                          ? "\t" + std::to_string(entry.size) + "B"
+                          : "")
+                  << std::endl;
+        if (entry.is_directory()) {
+          auto entries = ailoy::fs::list_directory(entry.path).unwrap();
+          for (const auto &subentry : entries) {
+            print_directory_entries(subentry, tab + 2);
+          }
+        }
+      };
+
+  ailoy::fs::path_t base_dir = "/ailoy";
+  auto list_result = ailoy::fs::list_directory(base_dir);
+  std::cout << base_dir.string() << "/" << std::endl;
+  for (const auto &info : list_result.unwrap()) {
+    print_directory_entries(info, 2);
+  }
+
+  return 0;
+}
+
+#endif
