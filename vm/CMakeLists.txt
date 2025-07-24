@@ -35,7 +35,7 @@ set(MINIJINJA_INSTALL OFF)
 FetchContent_Declare(
     minijinja
     GIT_REPOSITORY https://github.com/brekkylab/minijinja.git
-    GIT_TAG 896b67e79cc985ac31ed01f054bbb0ec36818727
+    GIT_TAG ff639249a0e502aa1efff3ca4e326df6516ef3dd
     SOURCE_SUBDIR minijinja-cabi
 )
 FetchContent_MakeAvailable(minijinja)
@@ -55,6 +55,19 @@ target_link_libraries(ailoy_vm_obj PUBLIC tinyexpr)
 
 # magic_enum
 target_link_libraries(ailoy_vm_obj PRIVATE magic_enum)
+
+# tokenizers-cpp
+FetchContent_Declare(
+    tokenizers-cpp
+    GIT_REPOSITORY https://github.com/mlc-ai/tokenizers-cpp.git
+    GIT_TAG 8fd3b64057db4ddb5a49691cf02009f0373900d5
+    EXCLUDE_FROM_ALL
+)
+if(NODE)
+    set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
+endif()
+FetchContent_MakeAvailable(tokenizers-cpp)
+target_link_libraries(ailoy_vm_obj PRIVATE tokenizers_c tokenizers_cpp)
 
 
 # tvm
@@ -101,19 +114,6 @@ if(AILOY_WITH_TVM)
     target_link_libraries(ailoy_vm_obj PRIVATE tvm_runtime)
     target_compile_definitions(ailoy_vm_obj PUBLIC DMLC_USE_LOGGING_LIBRARY=<tvm/runtime/logging.h>)
     target_compile_definitions(ailoy_vm_obj PUBLIC AILOY_USE_TVM=1)
-
-    # tokenizers-cpp
-    FetchContent_Declare(
-        tokenizers-cpp
-        GIT_REPOSITORY https://github.com/mlc-ai/tokenizers-cpp.git
-        GIT_TAG 8fd3b64057db4ddb5a49691cf02009f0373900d5
-        EXCLUDE_FROM_ALL
-    )
-    if(NODE)
-        set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
-    endif()
-    FetchContent_MakeAvailable(tokenizers-cpp)
-    target_link_libraries(ailoy_vm_obj PRIVATE tokenizers_c tokenizers_cpp)
 
     # xgrammar
     FetchContent_Declare(
