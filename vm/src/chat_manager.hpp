@@ -1,5 +1,6 @@
 #pragma once
 
+#include <minijinja.h>
 #include <minja/chat-template.hpp>
 #include <nlohmann/json.hpp>
 

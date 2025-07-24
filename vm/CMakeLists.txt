@@ -29,6 +29,18 @@ file(DOWNLOAD https://raw.githubusercontent.com/google/minja/f06140fa52fd140fe38
 
 target_include_directories(ailoy_vm_obj PRIVATE ${MINJA_ROOT}/include)
 
+# minijinja
+set(MINIJINJA_BUILD_SHARED OFF)
+set(MINIJINJA_INSTALL OFF)
+FetchContent_Declare(
+    minijinja
+    GIT_REPOSITORY https://github.com/brekkylab/minijinja.git
+    GIT_TAG 896b67e79cc985ac31ed01f054bbb0ec36818727
+    SOURCE_SUBDIR minijinja-cabi
+)
+FetchContent_MakeAvailable(minijinja)
+target_link_libraries(ailoy_vm_obj PRIVATE minijinja::cabi)
+
 # tinyexpr
 set(TINYEXPR_ROOT ${CMAKE_BINARY_DIR}/_deps/tinyexpr)
 add_compile_definitions(TE_NAT_LOG)
