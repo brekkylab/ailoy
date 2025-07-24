@@ -3,6 +3,7 @@
 #include <minja/chat-template.hpp>
 #include <nlohmann/json.hpp>
 
+#include "filesystem.hpp"
 #include "module.hpp"
 
 namespace ailoy {
@@ -19,7 +20,7 @@ public:
         eotc_token_(eotc_token) {}
 
   static std::shared_ptr<chat_manager_t>
-  make_from_config_file(std::filesystem::path config_file_path);
+  make_from_config_file(ailoy::fs::path_t config_file_path);
 
   const std::string
   apply_chat_template(std::shared_ptr<const value_t> conversation,

@@ -8,7 +8,7 @@ namespace ailoy {
 
 namespace http {
 
-enum class method_t { GET, POST, PUT, PATCH, DELETE };
+enum class method_t { GET, POST, PUT, PATCH, DELETE, HEAD };
 
 // Copied from cpp-httplib
 enum status_code_t {

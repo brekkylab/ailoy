@@ -2,9 +2,7 @@
 
 #include <iostream>
 
-#ifdef EMSCRIPTEN
-#include <emscripten.h>
-#else
+#ifndef EMSCRIPTEN
 #include <gtest/gtest.h>
 #endif
 
@@ -100,9 +98,7 @@ void test_error_handling() {
 
 #ifdef EMSCRIPTEN
 
-extern "C" {
-EMSCRIPTEN_KEEPALIVE
-void run_tests() {
+int main() {
   std::cout << "Starting HTTP tests..." << std::endl;
 
   test_get_request();
@@ -111,7 +107,7 @@ void run_tests() {
   test_error_handling();
 
   std::cout << "All tests completed!" << std::endl;
-}
+  return 0;
 }
 
 #else

@@ -52,114 +52,132 @@ std::variant<url_t, std::string> parse_url(const std::string &url) {
 
 #if defined(EMSCRIPTEN)
 
-EM_ASYNC_JS(char *, do_fetch_async,
-            (const char *url, const char *method, const char *body,
-             const char *headers_json),
-            {
-              // clang-format off
-              const urlStr = UTF8ToString(url);
-              const methodStr = UTF8ToString(method);
-              const bodyStr = UTF8ToString(body);
-              const headersJsonStr = UTF8ToString(headers_json);
+struct EmscriptenRequestContext {
+  std::function<bool(const char *, size_t)> data_callback;
+  std::function<bool(uint64_t, uint64_t)> progress_callback;
+  std::unique_ptr<response_t> response;
+  std::string error_message;
+  bool completed = false;
+};
 
-              try {
-                // Parse headers
-                let headers = {};
-                if (headersJsonStr.length > 0) {
-                  headers = JSON.parse(headersJsonStr);
-                }
+// Emscripten fetch callbacks
+void on_fetch_success(emscripten_fetch_t *fetch) {
+  EmscriptenRequestContext *ctx =
+      static_cast<EmscriptenRequestContext *>(fetch->userData);
 
-                // Prepare fetch options
-                let fetchOptions = {
-                  method: methodStr, 
-                  headers: headers,
-                };
+  // Create response
+  ctx->response = std::make_unique<response_t>();
+  ctx->response->status_code = fetch->status;
+  ctx->response->body = std::string(fetch->data, fetch->numBytes);
 
-                // Add body if provided and method supports it
-                if (bodyStr.length > 0 && methodStr !== 'GET') {
-                  fetchOptions.body = bodyStr;
-                }
+  size_t headers_len = emscripten_fetch_get_response_headers_length(fetch);
+  std::vector<char> headers_buf(headers_len + 1);
+  emscripten_fetch_get_response_headers(fetch, headers_buf.data(),
+                                        headers_len + 1);
+  char **unpacked_headers =
+      emscripten_fetch_unpack_response_headers(headers_buf.data());
+  if (unpacked_headers) {
+    for (int i = 0; unpacked_headers[i]; i += 2) {
+      std::string key = unpacked_headers[i];
+      std::string value = unpacked_headers[i + 1];
+      ctx->response->headers[key] = value;
+    }
+  }
+  emscripten_fetch_free_unpacked_response_headers(unpacked_headers);
 
-                // Perform fetch
-                const response = await fetch(urlStr, fetchOptions);
+  ctx->completed = true;
+  emscripten_fetch_close(fetch);
+}
 
-                // Read response body
-                const responseBody = await response.text();
+void on_fetch_error(emscripten_fetch_t *fetch) {
+  EmscriptenRequestContext *ctx =
+      static_cast<EmscriptenRequestContext *>(fetch->userData);
+  ctx->error_message =
+      std::format("Fetch failed with status: {}", fetch->status);
+  ctx->completed = true;
+  emscripten_fetch_close(fetch);
+}
 
-                // Extract headers
-                const responseHeaders = {};
-                for (let [key, value] of response.headers) {
-                  responseHeaders[key] = value;
-                }
+void on_fetch_progress(emscripten_fetch_t *fetch) {
+  EmscriptenRequestContext *ctx =
+      static_cast<EmscriptenRequestContext *>(fetch->userData);
 
-                const result = {
-                  status_code: response.status,
-                  body: responseBody,
-                  headers: responseHeaders,
-                  error: null,
-                };
-
-                const resultJson = JSON.stringify(result);
-                return stringToNewUTF8(resultJson);
-
-              } catch (error) {
-                const errorResult = {
-                  status_code: -1,
-                  body: "",
-                  headers: {},
-                  error: error.toString(),
-                };
-
-                const resultJson = JSON.stringify(errorResult);
-                return stringToNewUTF8(resultJson);
-              }
-              // clang-format on
-            });
-
-// Helper function to convert headers map to JSON string
-std::string headers_to_json(const headers_t &headers) {
-  nlohmann::json json_obj(headers);
-  return json_obj.dump();
+  if (ctx->progress_callback) {
+    ctx->progress_callback(fetch->dataOffset + fetch->numBytes,
+                           fetch->totalBytes);
+  }
 }
 
 result_t request(const request_t &req) {
+  // Create context
+  auto ctx = std::make_unique<EmscriptenRequestContext>();
+  if (req.data_callback.has_value()) {
+    ctx->data_callback = req.data_callback.value();
+  }
+  if (req.progress_callback.has_value()) {
+    ctx->progress_callback = req.progress_callback.value();
+  }
+
+  // Setup fetch attributes
+  emscripten_fetch_attr_t attr;
+  emscripten_fetch_attr_init(&attr);
+
+  // Set method
   std::string method_str = std::string(magic_enum::enum_name(req.method));
-  std::string headers_json = headers_to_json(req.headers);
-  std::string body_str = req.body.value_or("");
+  strcpy(attr.requestMethod, method_str.c_str());
 
-  // Call async fetch function - this will block until complete due to ASYNCIFY
-  char *result_json_ptr =
-      do_fetch_async(req.url.c_str(), method_str.c_str(), body_str.c_str(),
-                     headers_json.c_str());
+  // Set callbacks
+  attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
 
-  if (!result_json_ptr) {
-    return result_t(nullptr, "Failed to get result from JavaScript");
+  // For GET requests with progress callback, enable onprogress.
+  if (req.method == method_t::GET && req.progress_callback.has_value()) {
+    attr.onprogress = on_fetch_progress;
   }
 
-  // Parse the JSON result
-  std::string result_json(result_json_ptr);
-  free(result_json_ptr); // Free the memory allocated by stringToNewUTF8
+  attr.onsuccess = on_fetch_success;
+  attr.onerror = on_fetch_error;
+  attr.userData = ctx.get();
 
-  try {
-    nlohmann::json json_result = nlohmann::json::parse(result_json);
+  // Set headers
+  std::vector<const char *> headers;
+  std::vector<std::string> header_strings;
 
-    // Check for error
-    if (!json_result["error"].is_null()) {
-      std::string error = json_result["error"].get<std::string>();
-      return result_t(nullptr, std::format("Fetch failed: {}", error));
-    }
-
-    // Create response
-    response_t response;
-    response.status_code = json_result["status_code"].get<int>();
-    response.body = json_result["body"].get<std::string>();
-    response.headers = json_result["headers"].get<headers_t>();
-
-    return result_t(std::make_unique<response_t>(response));
-
-  } catch (const nlohmann::json::exception &e) {
-    return result_t(nullptr, std::format("JSON parsing error: {}", e.what()));
+  for (const auto &[key, value] : req.headers) {
+    header_strings.push_back(key + ": " + value);
   }
+
+  for (const auto &header : header_strings) {
+    headers.push_back(header.c_str());
+  }
+  headers.push_back(nullptr); // Null terminate
+
+  // Set body for non-GET requests
+  if (req.body.has_value() && req.method != method_t::GET) {
+    attr.requestData = req.body->c_str();
+    attr.requestDataSize = req.body->size();
+  }
+
+  // Start fetch
+  emscripten_fetch_t *fetch = emscripten_fetch(&attr, req.url.c_str());
+
+  if (!fetch) {
+    return result_t(nullptr, "Failed to start fetch");
+  }
+
+  // Wait for completion (this will block due to ASYNCIFY)
+  while (!ctx->completed) {
+    emscripten_sleep(1);
+  }
+
+  // NOTE: data_callback is not available inside onprogress due to the "memory
+  // access out of bounds" error. So we call it after Emscripten fetch is
+  // entirely finished.
+  if (req.data_callback.has_value()) {
+    ctx->data_callback(ctx->response->body.data(), ctx->response->body.size());
+    ctx->response->body.clear();
+  }
+
+  return result_t(std::move(ctx->response));
 }
 
 #else
