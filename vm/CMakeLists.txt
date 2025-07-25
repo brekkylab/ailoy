@@ -35,7 +35,7 @@ set(MINIJINJA_INSTALL OFF)
 FetchContent_Declare(
     minijinja
     GIT_REPOSITORY https://github.com/brekkylab/minijinja.git
-    GIT_TAG ff639249a0e502aa1efff3ca4e326df6516ef3dd
+    GIT_TAG 005650c89c9c3b45df230f9894684a457da84b1f
     SOURCE_SUBDIR minijinja-cabi
 )
 FetchContent_MakeAvailable(minijinja)
@@ -179,7 +179,7 @@ if(AILOY_WITH_TEST)
         add_executable(test_tvm_language_model ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tvm_language_model.cpp)
         add_test(NAME TestTVMLanguageModel COMMAND test_tvm_language_model)
         target_include_directories(test_tvm_language_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        target_link_libraries(test_tvm_language_model PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
+        target_link_libraries(test_tvm_language_model PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest GTest::gmock)
         target_link_options(test_tvm_language_model PRIVATE -fsanitize=undefined -fsanitize=address)
 
         add_executable(test_tvm_embedding_model ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tvm_embedding_model.cpp)
