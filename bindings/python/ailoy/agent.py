@@ -216,8 +216,11 @@ class ToolParameters(BaseModel):
     required: Optional[list[str]] = []
 
 
+JsonSchemaTypes = Literal["string", "integer", "number", "boolean", "object", "array", "null"]
+
+
 class ToolParametersProperty(BaseModel):
-    type: Literal["string", "integer", "number", "boolean", "object", "array", "null"]
+    type: JsonSchemaTypes | list[JsonSchemaTypes]
     description: Optional[str] = None
     model_config = ConfigDict(extra="allow")
 

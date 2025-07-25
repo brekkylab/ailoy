@@ -148,6 +148,15 @@ export interface Tool {
   call: (input: any) => Promise<any>;
 }
 
+export type JsonSchemaTypes =
+  | "string"
+  | "integer"
+  | "number"
+  | "boolean"
+  | "object"
+  | "array"
+  | "null";
+
 export interface ToolDescription {
   name: string;
   description: string;
@@ -155,7 +164,7 @@ export interface ToolDescription {
     type: "object";
     properties: {
       [key: string]: {
-        type: "string" | "number" | "boolean" | "object" | "array" | "null";
+        type: JsonSchemaTypes | JsonSchemaTypes[];
         description?: string;
         [key: string]: any;
       };
