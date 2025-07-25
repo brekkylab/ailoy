@@ -1,6 +1,6 @@
 #pragma once
 
-#include <minja/chat-template.hpp>
+#include <minijinja.h>
 #include <nlohmann/json.hpp>
 
 #include "filesystem.hpp"
@@ -14,10 +14,22 @@ public:
                  const std::string &eos_token,
                  const std::string &botc_token = "",
                  const std::string &eotc_token = "")
-      : template_(std::make_unique<minja::chat_template>(chat_template,
-                                                         bos_token, eos_token)),
-        bos_token_(bos_token), eos_token_(eos_token), botc_token_(botc_token),
-        eotc_token_(eotc_token) {}
+      : minijinja_env_(mj_env_new()), bos_token_(bos_token),
+        eos_token_(eos_token), botc_token_(botc_token),
+        eotc_token_(eotc_token) {
+    bool ok =
+        mj_env_add_template(minijinja_env_, "template", chat_template.c_str());
+    if (!ok) {
+      throw std::runtime_error("[chat_manager_t] Failed to add chat template");
+    }
+  }
+
+  ~chat_manager_t() {
+    if (minijinja_env_) {
+      mj_env_free(minijinja_env_);
+      minijinja_env_ = nullptr;
+    }
+  }
 
   static std::shared_ptr<chat_manager_t>
   make_from_config_file(ailoy::fs::path_t config_file_path);
@@ -56,7 +68,7 @@ public:
   get_json_str_if_valid(const std::vector<std::string> &tokens);
 
 private:
-  std::unique_ptr<minja::chat_template> template_;
+  struct mj_env *minijinja_env_;
 
   const std::string bos_token_;
 

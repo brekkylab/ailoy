@@ -1,8 +1,7 @@
 #include "chat_manager.hpp"
 
-#include "string_util.hpp"
-
 #include "module.hpp"
+#include "string_util.hpp"
 
 namespace ailoy {
 
@@ -20,6 +19,43 @@ chat_manager_t::make_from_config_file(ailoy::fs::path_t config_file_path) {
   return template_engine;
 }
 
+mj_value value_to_mj_val(std::shared_ptr<const value_t> val) {
+  if (!val || val->is_type_of<null_t>()) {
+    return mj_value_new_none();
+  } else if (val->is_type_of<map_t>()) {
+    mj_value obj = mj_value_new_object();
+    for (const auto &[key, value] : *val->as<map_t>()) {
+      mj_value_set_string_key(&obj, key.c_str(), value_to_mj_val(value));
+    }
+    return obj;
+  } else if (val->is_type_of<array_t>()) {
+    mj_value arr = mj_value_new_list();
+    for (const auto &value : *val->as<array_t>()) {
+      mj_value_append(&arr, value_to_mj_val(value));
+    }
+    return arr;
+  } else if (val->is_type_of<string_t>()) {
+    return mj_value_new_string(val->as<string_t>()->c_str());
+  } else if (val->is_type_of<bool_t>()) {
+    return mj_value_new_bool(*val->as<bool_t>());
+  } else if (val->is_type_of<bytes_t>()) {
+    auto bytes = val->as<bytes_t>();
+    return mj_value_new_bytes(reinterpret_cast<const char *>(bytes->data()),
+                              bytes->size());
+  } else if (val->is_type_of<float_t>()) {
+    return mj_value_new_f32(*val->as<float_t>());
+  } else if (val->is_type_of<double_t>()) {
+    return mj_value_new_f64(*val->as<double_t>());
+  } else if (val->is_type_of<int_t>()) {
+    return mj_value_new_i32(*val->as<int_t>());
+  } else if (val->is_type_of<uint_t>()) {
+    return mj_value_new_u32(*val->as<uint_t>());
+  } else {
+    throw std::runtime_error(
+        std::format("Undefined value type: {}", val->get_type()));
+  }
+}
+
 const std::string
 chat_manager_t::apply_chat_template(std::shared_ptr<const value_t> conversation,
                                     std::shared_ptr<const value_t> tools,
@@ -33,21 +69,27 @@ chat_manager_t::apply_chat_template(std::shared_ptr<const value_t> conversation,
   conversation = merge_text_data(conversation);
   conversation = melt_content_text(conversation);
 
-  minja::chat_template_inputs inputs;
-  inputs.messages = conversation->operator nlohmann::json();
-  if (tools)
-    inputs.tools = tools->operator nlohmann::json();
-  inputs.add_generation_prompt = add_generation_prompt;
-  // TODO: consider other ways of enable/disable reasoning
-  //       & models without reasoning
-  if (!reasoning)
-    inputs.extra_context = {{"enable_thinking", false}};
-  minja::chat_template_options options;
-  // TODO: remove after minja issue fixed
-  options.polyfill_tools = false;
-  options.polyfill_tool_calls = false;
-  options.polyfill_tool_responses = false;
-  return template_->apply(inputs, options);
+  mj_value ctx = mj_value_new_object();
+  mj_value_set_string_key(&ctx, "messages", value_to_mj_val(conversation));
+
+  if (tools) {
+    mj_value_set_string_key(&ctx, "tools", value_to_mj_val(tools));
+  }
+  mj_value_set_string_key(&ctx, "add_generation_prompt",
+                          mj_value_new_bool(add_generation_prompt));
+  if (!reasoning) {
+    mj_value_set_string_key(&ctx, "enable_thinking", mj_value_new_bool(false));
+  }
+
+  char *rv = mj_env_render_template(minijinja_env_, "template", ctx);
+  if (!rv) {
+    mj_err_print();
+    return "";
+  }
+
+  std::string str = rv;
+  mj_str_free(rv);
+  return str;
 }
 
 const std::optional<std::string>

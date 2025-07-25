@@ -4,7 +4,7 @@
 #include <tvm/runtime/ndarray.h>
 
 #include "../ndarray_util.hpp"
-#include "tokenizer.hpp"
+#include "../tokenizer.hpp"
 
 using namespace tvm;
 using namespace tvm::runtime;

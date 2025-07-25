@@ -1,7 +1,5 @@
 #include "tokenizer.hpp"
 
-#include <filesystem>
-
 #include <tokenizers_c.h>
 
 namespace ailoy {

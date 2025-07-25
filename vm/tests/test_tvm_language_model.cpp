@@ -1,22 +1,24 @@
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include "logging.hpp"
 #include "tvm/language_model.hpp"
 #include "value.hpp"
 
-std::shared_ptr<ailoy::component_t> get_model() {
-  static std::shared_ptr<ailoy::component_t> model;
-  if (!model) {
+class TVMLanguageModelTest : public ::testing::Test {
+protected:
+  static void SetUpTestSuite() {
     auto in = ailoy::create<ailoy::map_t>();
     in->insert_or_assign("model",
                          ailoy::create<ailoy::string_t>("Qwen/Qwen3-0.6B"));
     auto model_opt = ailoy::create_tvm_language_model_component(in);
-    if (model_opt.index() != 0)
-      return nullptr;
     model = std::get<0>(model_opt);
   }
-  return model;
-}
+  static void TearDownTestSuite() { model = nullptr; }
+
+  static std::shared_ptr<ailoy::component_t> model;
+};
+std::shared_ptr<ailoy::component_t> TVMLanguageModelTest::model = nullptr;
 
 std::string infer(std::shared_ptr<ailoy::component_t> model,
                   std::shared_ptr<ailoy::value_t> messages,
@@ -64,7 +66,7 @@ std::string infer(std::shared_ptr<ailoy::component_t> model,
   return agg_out;
 }
 
-TEST(TestTVMLanguageModel, TestSimple) {
+TEST_F(TVMLanguageModelTest, TestSimple) {
   auto messages_str = R"([
   {
     "role": "user",
@@ -77,7 +79,6 @@ TEST(TestTVMLanguageModel, TestSimple) {
   }
 ])";
 
-  std::shared_ptr<ailoy::component_t> model = get_model();
   auto messages = ailoy::decode(messages_str, ailoy::encoding_method_t::json);
   auto out = infer(model, messages);
   ASSERT_EQ(
@@ -85,7 +86,7 @@ TEST(TestTVMLanguageModel, TestSimple) {
       R"(I am a language model, and I am here to assist you with language learning and other tasks.)");
 }
 
-TEST(TestTVMLanguageModel, TestMultiTurn) {
+TEST_F(TVMLanguageModelTest, TestMultiTurn) {
   auto messages_str1 = R"([
   {
     "role": "system",
@@ -106,7 +107,6 @@ TEST(TestTVMLanguageModel, TestMultiTurn) {
     ]
   }
 ])";
-  std::shared_ptr<ailoy::component_t> model = get_model();
   auto messages1 = ailoy::decode(messages_str1, ailoy::encoding_method_t::json);
   auto answer1 = infer(model, messages1);
   ASSERT_EQ(answer1,
@@ -156,7 +156,7 @@ TEST(TestTVMLanguageModel, TestMultiTurn) {
             "I am Qwen, a helpful assistant created by Alibaba Cloud.");
 }
 
-TEST(TestTVMLanguageModel, TestToolCall) {
+TEST_F(TVMLanguageModelTest, TestToolCall) {
   const std::string tools_str = R"([
   {
     "type": "function",
@@ -224,7 +224,6 @@ TEST(TestTVMLanguageModel, TestToolCall) {
     ]
   }
 ])";
-  std::shared_ptr<ailoy::component_t> model = get_model();
   auto messages = ailoy::decode(messages_str, ailoy::encoding_method_t::json);
   auto tools = ailoy::decode(tools_str, ailoy::encoding_method_t::json);
 
@@ -267,12 +266,11 @@ TEST(TestTVMLanguageModel, TestToolCall) {
   ailoy::debug(answer2);
 }
 
-TEST(TestTVMLanguageModel, TestReasoning) {
+TEST_F(TVMLanguageModelTest, TestReasoning) {
   auto messages_str = R"([
   {"role": "user", "content": [{"type": "text","text": "Introduce yourself."}]}
 ])";
 
-  std::shared_ptr<ailoy::component_t> model = get_model();
   auto messages = ailoy::decode(messages_str, ailoy::encoding_method_t::json);
   auto out = infer(model, messages, nullptr, true);
   ailoy::debug(out);

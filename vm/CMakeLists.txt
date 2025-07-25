@@ -22,12 +22,17 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(indicators)
 target_link_libraries(ailoy_vm_obj PRIVATE indicators::indicators)
 
-# minja
-set(MINJA_ROOT ${CMAKE_BINARY_DIR}/_deps/minja)
-file(DOWNLOAD https://raw.githubusercontent.com/google/minja/f06140fa52fd140fe38e531ec373d8dc9c86aa06/include/minja/minja.hpp ${MINJA_ROOT}/include/minja/minja.hpp)
-file(DOWNLOAD https://raw.githubusercontent.com/google/minja/f06140fa52fd140fe38e531ec373d8dc9c86aa06/include/minja/chat-template.hpp ${MINJA_ROOT}/include/minja/chat-template.hpp)
-
-target_include_directories(ailoy_vm_obj PRIVATE ${MINJA_ROOT}/include)
+# minijinja
+set(MINIJINJA_BUILD_SHARED OFF)
+set(MINIJINJA_INSTALL OFF)
+FetchContent_Declare(
+    minijinja
+    GIT_REPOSITORY https://github.com/brekkylab/minijinja.git
+    GIT_TAG 005650c89c9c3b45df230f9894684a457da84b1f
+    SOURCE_SUBDIR minijinja-cabi
+)
+FetchContent_MakeAvailable(minijinja)
+target_link_libraries(ailoy_vm_obj PUBLIC minijinja::cabi)
 
 # tinyexpr
 set(TINYEXPR_ROOT ${CMAKE_BINARY_DIR}/_deps/tinyexpr)
@@ -43,6 +48,19 @@ target_link_libraries(ailoy_vm_obj PUBLIC tinyexpr)
 
 # magic_enum
 target_link_libraries(ailoy_vm_obj PRIVATE magic_enum)
+
+# tokenizers-cpp
+FetchContent_Declare(
+    tokenizers-cpp
+    GIT_REPOSITORY https://github.com/mlc-ai/tokenizers-cpp.git
+    GIT_TAG 8fd3b64057db4ddb5a49691cf02009f0373900d5
+    EXCLUDE_FROM_ALL
+)
+if(NODE)
+    set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
+endif()
+FetchContent_MakeAvailable(tokenizers-cpp)
+target_link_libraries(ailoy_vm_obj PUBLIC tokenizers_c tokenizers_cpp)
 
 
 # tvm
@@ -89,19 +107,6 @@ if(AILOY_WITH_TVM)
     target_link_libraries(ailoy_vm_obj PRIVATE tvm_runtime)
     target_compile_definitions(ailoy_vm_obj PUBLIC DMLC_USE_LOGGING_LIBRARY=<tvm/runtime/logging.h>)
     target_compile_definitions(ailoy_vm_obj PUBLIC AILOY_USE_TVM=1)
-
-    # tokenizers-cpp
-    FetchContent_Declare(
-        tokenizers-cpp
-        GIT_REPOSITORY https://github.com/mlc-ai/tokenizers-cpp.git
-        GIT_TAG 8fd3b64057db4ddb5a49691cf02009f0373900d5
-        EXCLUDE_FROM_ALL
-    )
-    if(NODE)
-        set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
-    endif()
-    FetchContent_MakeAvailable(tokenizers-cpp)
-    target_link_libraries(ailoy_vm_obj PRIVATE tokenizers_c tokenizers_cpp)
 
     # xgrammar
     FetchContent_Declare(
@@ -167,7 +172,7 @@ if(AILOY_WITH_TEST)
         add_executable(test_tvm_language_model ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tvm_language_model.cpp)
         add_test(NAME TestTVMLanguageModel COMMAND test_tvm_language_model)
         target_include_directories(test_tvm_language_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        target_link_libraries(test_tvm_language_model PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
+        target_link_libraries(test_tvm_language_model PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest GTest::gmock)
         target_link_options(test_tvm_language_model PRIVATE -fsanitize=undefined -fsanitize=address)
 
         add_executable(test_tvm_embedding_model ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tvm_embedding_model.cpp)
