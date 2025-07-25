@@ -5,6 +5,7 @@ import types
 from typing import (
     Any,
     Callable,
+    Literal,
     Optional,
     Union,
     get_args,
@@ -41,7 +42,7 @@ class DocstringParsingException(Exception):
     pass
 
 
-def _get_json_schema_type(param_type: str) -> dict[str, str]:
+def _get_json_schema_type(param_type: type) -> dict[str, str]:
     type_mapping = {
         int: {"type": "integer"},
         float: {"type": "number"},
@@ -85,6 +86,20 @@ def _parse_type_hint(hint: str) -> dict:
             return_dict["nullable"] = True
         return return_dict
 
+    elif origin is Literal and len(args) > 0:
+        LITERAL_TYPES = (int, float, str, bool, type(None))
+        args_types = []
+        for arg in args:
+            if type(arg) not in LITERAL_TYPES:
+                raise TypeHintParsingException("Only the valid python literals can be listed in typing.Literal.")
+            arg_type = _get_json_schema_type(type(arg)).get("type")
+            if arg_type is not None and arg_type not in args_types:
+                args_types.append(arg_type)
+        return {
+            "type": args_types.pop() if len(args_types) == 1 else list(args_types),
+            "enum": list(args),
+        }
+
     elif origin is list:
         if not args:
             return {"type": "array"}
@@ -100,13 +115,13 @@ def _parse_type_hint(hint: str) -> dict:
                 f"The type hint {str(hint).replace('typing.', '')} is a Tuple with a single element, which "
                 "we do not automatically convert to JSON schema as it is rarely necessary. If this input can contain "
                 "more than one element, we recommend "
-                "using a List[] type instead, or if it really is a single element, remove the Tuple[] wrapper and just "
+                "using a list[] type instead, or if it really is a single element, remove the tuple[] wrapper and just "
                 "pass the element directly."
             )
         if ... in args:
             raise TypeHintParsingException(
                 "Conversion of '...' is not supported in Tuple type hints. "
-                "Use List[] types for variable-length"
+                "Use list[] types for variable-length"
                 " inputs instead."
             )
         return {"type": "array", "prefixItems": [_parse_type_hint(t) for t in args]}

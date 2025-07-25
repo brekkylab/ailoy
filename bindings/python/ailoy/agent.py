@@ -216,8 +216,11 @@ class ToolParameters(BaseModel):
     required: Optional[list[str]] = []
 
 
+JsonSchemaTypes = Literal["string", "integer", "number", "boolean", "object", "array", "null"]
+
+
 class ToolParametersProperty(BaseModel):
-    type: Literal["string", "number", "boolean", "object", "array", "null"]
+    type: JsonSchemaTypes | list[JsonSchemaTypes]
     description: Optional[str] = None
     model_config = ConfigDict(extra="allow")
 
@@ -506,7 +509,9 @@ class Agent:
                         raise RuntimeError("Tool not found")
                     tool_result = tool_.call(**tool_call.function.arguments)
                     return ToolMessage(
-                        content=[TextContent(text=json.dumps(tool_result))],
+                        content=[
+                            TextContent(text=tool_result if isinstance(tool_result, str) else json.dumps(tool_result))
+                        ],
                         tool_call_id=tool_call.id,
                     )
 
