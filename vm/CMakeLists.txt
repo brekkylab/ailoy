@@ -53,7 +53,7 @@ target_link_libraries(ailoy_vm_obj PRIVATE magic_enum)
 FetchContent_Declare(
     tokenizers-cpp
     GIT_REPOSITORY https://github.com/mlc-ai/tokenizers-cpp.git
-    GIT_TAG 8fd3b64057db4ddb5a49691cf02009f0373900d5
+    GIT_TAG f77710965a3bcae85b7a00bdddbfc1adadef0e32
     EXCLUDE_FROM_ALL
 )
 if(NODE)
@@ -61,6 +61,11 @@ if(NODE)
 endif()
 FetchContent_MakeAvailable(tokenizers-cpp)
 target_link_libraries(ailoy_vm_obj PUBLIC tokenizers_c tokenizers_cpp)
+if(EMSCRIPTEN)
+    # Need to disable TOKENIZERS_PARALLELISM on WASM
+    # https://github.com/mlc-ai/tokenizers-cpp/pull/42
+    target_compile_definitions(tokenizers_cpp PRIVATE COMPILE_WASM_RUNTIME)
+endif()
 
 
 # tvm
@@ -185,11 +190,12 @@ if(AILOY_WITH_TEST)
     add_executable(test_model_cache ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_model_cache.cpp)
     add_test(NAME TestModelCache COMMAND test_model_cache)
     target_include_directories(test_model_cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(test_model_cache PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj)
-    target_link_options(test_model_cache PRIVATE -fsanitize=undefined -fsanitize=address)
+    target_link_libraries(test_model_cache PRIVATE ailoy_vm_obj ailoy_core_obj)
     if(EMSCRIPTEN)
         configure_file("${CMAKE_CURRENT_SOURCE_DIR}/tests/test_model_cache.html" "${CMAKE_CURRENT_BINARY_DIR}/test_model_cache.html" COPYONLY)
     else()
+        # NOTE: Do not add sanitizer options on Emscripten. It leads to poor performance!
+        target_link_options(test_model_cache PRIVATE -fsanitize=undefined -fsanitize=address)
         target_link_libraries(test_model_cache PRIVATE GTest::gtest)
     endif()
 
@@ -228,4 +234,15 @@ if(AILOY_WITH_TEST)
     target_include_directories(test_api_models PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(test_api_models PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj nlohmann_json::nlohmann_json GTest::gtest GTest::gmock)
     target_link_options(test_api_models PRIVATE -fsanitize=undefined -fsanitize=address)
+
+    add_executable(test_tokenizers ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tokenizers.cpp)
+    target_include_directories(test_tokenizers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_tokenizers PRIVATE ailoy_vm_obj ailoy_core_obj)
+    if(EMSCRIPTEN)
+        configure_file("${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tokenizers.html" "${CMAKE_CURRENT_BINARY_DIR}/test_tokenizers.html" COPYONLY)
+    else()
+        # NOTE: Do not add sanitizer options on Emscripten. It leads to poor performance!
+        target_link_options(test_tokenizers PRIVATE -fsanitize=undefined -fsanitize=address)
+        target_link_libraries(test_tokenizers PRIVATE GTest::gtest)
+    endif()
 endif()
