@@ -32,7 +32,7 @@ FetchContent_Declare(
     SOURCE_SUBDIR minijinja-cabi
 )
 FetchContent_MakeAvailable(minijinja)
-target_link_libraries(ailoy_vm_obj PRIVATE minijinja::cabi)
+target_link_libraries(ailoy_vm_obj PUBLIC minijinja::cabi)
 
 # tinyexpr
 set(TINYEXPR_ROOT ${CMAKE_BINARY_DIR}/_deps/tinyexpr)
@@ -60,7 +60,7 @@ if(NODE)
     set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
 endif()
 FetchContent_MakeAvailable(tokenizers-cpp)
-target_link_libraries(ailoy_vm_obj PRIVATE tokenizers_c tokenizers_cpp)
+target_link_libraries(ailoy_vm_obj PUBLIC tokenizers_c tokenizers_cpp)
 
 
 # tvm
