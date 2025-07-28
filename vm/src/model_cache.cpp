@@ -340,7 +340,7 @@ fs::path_t get_cache_root() {
     // Set to default cache root
 #if defined(_WIN32)
     if (std::getenv("LOCALAPPDATA"))
-      cache_root = fs::path(std::getenv("LOCALAPPDATA")) / "ailoy";
+      cache_root = fs::path_t(std::getenv("LOCALAPPDATA")) / "ailoy";
 #elif defined(EMSCRIPTEN)
     cache_root = "/ailoy";
 #else
