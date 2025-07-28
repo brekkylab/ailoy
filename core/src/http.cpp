@@ -1,4 +1,5 @@
 #include <format>
+#include <variant>
 
 #if defined(EMSCRIPTEN)
 #include <emscripten.h>
