@@ -1,0 +1,13 @@
+[package]
+name = "ailoy_components_rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+minijinja = { version = "2.11.0", features = ["loader"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.141"
+
+[lib]
+crate-type = ["staticlib"]
+path = "rsrc/lib.rs"

@@ -30,6 +30,9 @@
             "source.fixAll.ruff": "explicit"
         },
     },
+    "[rust]": {
+        "editor.formatOnSave": true,
+    },
     "cmake.configureOnOpen": true,
     "cmake.configureArgs": [
         "-DOpenMP_ROOT=/opt/homebrew/opt/libomp",
@@ -127,6 +130,10 @@
         "numeric": "cpp",
         "cinttypes": "cpp",
         "filesystem": "cpp",
-        "ranges": "cpp"
+        "ranges": "cpp",
+        "cfenv": "cpp",
+        "source_location": "cpp"
     },
+    "rust-analyzer.cargo.buildScripts.enable": true,
+    "rust-analyzer.procMacro.enable": true
 }
