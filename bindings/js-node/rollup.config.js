@@ -46,7 +46,7 @@ export default [
       copy({
         targets: [
           {
-            src: ["src/ailoy_addon.node", "src/postinstall.js"],
+            src: ["src/ailoy_addon.node"],
             dest: "dist",
           },
           {

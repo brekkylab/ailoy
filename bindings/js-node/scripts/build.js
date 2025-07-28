@@ -2,9 +2,10 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-const srcDir = path.resolve(__dirname, "../..");
-const buildDir = path.resolve(__dirname, "build");
-const installDir = path.resolve(__dirname, "src");
+const baseDir = path.resolve(__dirname, "..");
+const srcDir = path.resolve(baseDir, "../..");
+const buildDir = path.resolve(baseDir, "build");
+const installDir = path.resolve(baseDir, "src");
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -64,11 +65,11 @@ function listDir(dir) {
       "--parallel",
       `${require("os").cpus().length}`,
     ];
-    await runCommand("npx", buildArgs, { cwd: __dirname });
+    await runCommand("npx", buildArgs, { cwd: baseDir });
 
     console.log("Installing...");
     const installArgs = ["--install", buildDir, "--prefix", installDir];
-    await runCommand("cmake", installArgs, { cwd: __dirname });
+    await runCommand("cmake", installArgs, { cwd: baseDir });
 
     console.log(`📂 Files under ${installDir}:\n`);
     listDir(installDir);

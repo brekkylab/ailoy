@@ -1,5 +1,5 @@
 if (DEFINED NODE)
-  add_definitions(-DNAPI_VERSION=7)
+  add_definitions(-DNAPI_VERSION=9)
   # Add node-addon-api include
   execute_process(
     COMMAND node -p "require('node-addon-api').include"
@@ -12,8 +12,7 @@ if (DEFINED NODE)
   add_library(ailoy_addon SHARED ${AILOY_JS_NODE_SHIM_SRCS} ${CMAKE_JS_SRC})
   set_target_properties(ailoy_addon PROPERTIES PREFIX "" SUFFIX ".node")
   target_include_directories(ailoy_addon PRIVATE ${CMAKE_JS_INC} ${NODE_ADDON_API_INCLUDE_DIR})
-  find_package(OpenSSL REQUIRED)
-  target_link_libraries(ailoy_addon PUBLIC ailoy_core_obj ailoy_broker_client_obj ailoy_broker_obj ailoy_vm_obj OpenSSL::Crypto OpenSSL::SSL ${CMAKE_JS_LIB})
+  target_link_libraries(ailoy_addon PUBLIC ailoy_core_obj ailoy_broker_client_obj ailoy_broker_obj ailoy_vm_obj ${CMAKE_JS_LIB})
 
   # On Linux, do not expose static libstdc++ symbols globally
   if(UNIX AND NOT APPLE)

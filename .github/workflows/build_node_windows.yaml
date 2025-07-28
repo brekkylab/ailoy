@@ -5,20 +5,11 @@ on:
 
 env:
   BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20250704
+  NODE_VERSION: "20.19.4"
 
 jobs:
   build-windows:
     runs-on: windows-2022
-
-    strategy:
-      matrix:
-        include:
-          - node-version: "20"
-            node-full-version: "20.19.3"
-          - node-version: "22"
-            node-full-version: "22.17.0"
-          - node-version: "24"
-            node-full-version: "24.3.0"
 
     continue-on-error: true
 
@@ -70,8 +61,8 @@ jobs:
               # =============================================
               # Install Node.js
               # =============================================
-              Write-Host "=== Installing Node.js ${{ matrix.node-version }} ==="
-              `$NodeUrl = "https://nodejs.org/dist/v${{ matrix.node-full-version }}/node-v${{ matrix.node-full-version }}-x64.msi"
+              Write-Host "=== Installing Node.js ==="
+              `$NodeUrl = "https://nodejs.org/dist/v${{ env.NODE_VERSION }}/node-v${{ env.NODE_VERSION }}-x64.msi"
               `$NodeInstaller = "`$TempDir\node-installer.msi"
 
               Download-File -Url `$NodeUrl -Output `$NodeInstaller
@@ -128,5 +119,5 @@ jobs:
       - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.packageName }}.${{ matrix.node-version }}
+          name: ${{ env.packageName }}
           path: ${{ github.workspace }}/bindings/js-node/${{ env.packageName }}
