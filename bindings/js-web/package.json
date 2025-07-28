@@ -1,0 +1,36 @@
+{
+  "name": "ailoy-node",
+  "version": "0.0.4",
+  "author": "Brekkylab Inc. <contact@brekkylab.com>",
+  "license": "Apache-2.0",
+  "description": "Node.js binding for Ailoy runtime APIs",
+  "homepage": "https://brekkylab.github.io/ailoy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brekkylab/ailoy"
+  },
+  "main": "src/index.js",
+  "module": "./dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "npm run build:tsc && npm run build:rollup && npm run build:wasm",
+    "build:tsc": "tsc",
+    "build:rollup": "rollup -c --bundleConfigAsCjs",
+    "build:wasm": "cp node_modules/minijinja-js/dist/web/minijinja_js_bg.wasm dist",
+    "clean": "rm -rf dist/"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^28.0.6",
+    "@rollup/plugin-node-resolve": "^16.0.1",
+    "@types/node": "^24.1.0",
+    "rollup": "^4.45.1",
+    "rollup-plugin-ignore": "^1.0.10",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@mlc-ai/web-runtime": "^0.18.0-dev2",
+    "@mlc-ai/web-tokenizers": "^0.1.6",
+    "loglevel": "^1.9.2",
+    "minijinja-js": "^2.11.0"
+  }
+}
