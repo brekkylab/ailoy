@@ -77,7 +77,7 @@ void chromadb_vector_store_t::_delete_collection() {
   auto result = ailoy::http::request({
       .url =
           std::format("{}/{}/{}", url_, COLLECTIONS_BASE_URL, collection_name_),
-      .method = ailoy::http::method_t::DELETE,
+      .method = ailoy::http::method_t::DELETE_,
   });
   if (result->status_code != ailoy::http::OK_200) {
     throw ailoy::runtime_error("[Chromadb] Failed to delete collection: HTTP " +

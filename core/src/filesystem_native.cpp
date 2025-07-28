@@ -16,7 +16,7 @@ namespace fs {
 
 result_t create_directory(const path_t &path, bool recursive) {
   try {
-    std::filesystem::path p(path);
+    std::filesystem::path p(path.string());
     if (recursive) {
       std::filesystem::create_directories(p);
     } else {
@@ -36,7 +36,7 @@ result_t create_directory(const path_t &path, bool recursive) {
 
 result_t delete_directory(const path_t &path, bool recursive) {
   try {
-    std::filesystem::path p(path);
+    std::filesystem::path p(path.string());
     if (recursive) {
       std::filesystem::remove_all(p);
     } else {

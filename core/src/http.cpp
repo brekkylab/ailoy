@@ -1,4 +1,5 @@
 #include <format>
+#include <variant>
 
 #if defined(EMSCRIPTEN)
 #include <emscripten.h>
@@ -297,7 +298,7 @@ result_t request(const request_t &req) {
               });
         },
         client);
-  } else if (req.method == method_t::DELETE) {
+  } else if (req.method == method_t::DELETE_) {
     std::visit(
         [&](auto &&client_) {
           result = client_->Delete(

@@ -2,6 +2,9 @@ name: Node Linux Build
 
 on:
   workflow_dispatch:
+  
+env:
+  NODE_VERSION: "20.19.4"
 
 jobs:
   build-linux:
@@ -10,20 +13,14 @@ jobs:
     container:
       image: ghcr.io/brekkylab/ailoy-buildpack-linux:20250702
 
-    strategy:
-      matrix:
-        node: [20, 22, 24]
-
-    continue-on-error: true
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup Node.js ${{ matrix.node }}
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -44,5 +41,5 @@ jobs:
       - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PACKAGE_NAME }}.${{ matrix.node }}
+          name: ${{ env.PACKAGE_NAME }}
           path: ${{ github.workspace }}/bindings/js-node/${{ env.PACKAGE_NAME }}
