@@ -13,8 +13,6 @@ jobs:
     container:
       image: ghcr.io/brekkylab/ailoy-buildpack-linux:20250702
 
-    continue-on-error: true
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
