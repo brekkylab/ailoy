@@ -136,27 +136,43 @@ if(AILOY_WITH_FAISS)
     if(NOT OpenMP_FOUND)
         message(FATAL_ERROR "OpenMP not found. You have to specify OpenMP Root directory by either -DOpenMP_ROOT option or `OpenMP_ROOT` environment variable")
     endif()
-    FetchContent_Declare(
-        faiss
-        GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
-        GIT_TAG v1.10.0
-        EXCLUDE_FROM_ALL
-    )
-    find_package(MKL QUIET)
-    if (MKL_FOUND)
-        message(STATUS "Enable MKL Support")
-        set(BLA_STATIC ON CACHE BOOL "Use static libraries for BLAS" FORCE)
-        set(FAISS_ENABLE_MKL ON CACHE BOOL "Enable MKL support" FORCE)
-    else()
-        message(STATUS "Disable MKL Support")
-        set(FAISS_ENABLE_MKL OFF CACHE BOOL "Enable MKL support" FORCE)
+    if (DEFINED EMSCRIPTEN)
+        FetchContent_Declare(
+            faiss
+            GIT_REPOSITORY https://github.com/grf53/faiss-web.git
+            GIT_TAG        21894001792117d82792e8af2d292a52946cb893
+        )
+        FetchContent_Populate(faiss)
+        set(FAISS_LIB_DIR ${PROJECT_SOURCE_DIR}/_deps/faiss-web)
+        set(FAISS_LIBS ${FAISS_LIB_DIR}/libfaiss.a ${FAISS_LIB_DIR}/libblas.a ${FAISS_LIB_DIR}/liblapack.a)
+
+        target_link_libraries(ailoy_vm_obj PUBLIC ${FAISS_LIBS})
+        target_include_directories(ailoy_vm_obj PUBLIC ${faiss_SOURCE_DIR})
+    else() # NOT EMSCRIPTEN
+        FetchContent_Declare(
+            faiss
+            GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
+            GIT_TAG v1.10.0
+            EXCLUDE_FROM_ALL
+        )
+        find_package(MKL QUIET)
+        if (MKL_FOUND)
+            message(STATUS "Enable MKL Support")
+            set(BLA_STATIC ON CACHE BOOL "Use static libraries for BLAS" FORCE)
+            set(FAISS_ENABLE_MKL ON CACHE BOOL "Enable MKL support" FORCE)
+        else()
+            message(STATUS "Disable MKL Support")
+            set(FAISS_ENABLE_MKL OFF CACHE BOOL "Enable MKL support" FORCE)
+        endif()
+        set(FAISS_ENABLE_GPU OFF CACHE BOOL "Disable GPU support" FORCE)
+        set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable Python bindings" FORCE)
+        set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "Disable extra components" FORCE)
+        set(BUILD_TESTING OFF CACHE BOOL "Disable build tests" FORCE)
+        
+        FetchContent_MakeAvailable(faiss)
+        target_link_libraries(ailoy_vm_obj PUBLIC faiss)
     endif()
-    set(FAISS_ENABLE_GPU OFF CACHE BOOL "Disable GPU support" FORCE)
-    set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable Python bindings" FORCE)
-    set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "Disable extra components" FORCE)
-    set(BUILD_TESTING OFF CACHE BOOL "Disable build tests" FORCE)
-    FetchContent_MakeAvailable(faiss)
-    target_link_libraries(ailoy_vm_obj PUBLIC faiss)
+    
     target_compile_definitions(ailoy_vm_obj PUBLIC AILOY_USE_FAISS=1)
 endif()
 
@@ -204,7 +220,13 @@ if(AILOY_WITH_TEST)
         add_test(NAME TestFaissVectorStore COMMAND test_faiss_vector_store)
         target_include_directories(test_faiss_vector_store PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
         target_link_libraries(test_faiss_vector_store PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
-        target_link_options(test_faiss_vector_store PRIVATE -fsanitize=undefined -fsanitize=address)
+        if(EMSCRIPTEN)
+            configure_file("${CMAKE_CURRENT_SOURCE_DIR}/tests/test_faiss_vector_store.html" "${CMAKE_CURRENT_BINARY_DIR}/test_faiss_vector_store.html" COPYONLY)
+        else()
+            # NOTE: Do not add sanitizer options on Emscripten. It leads to poor performance!
+            target_link_options(test_faiss_vector_store PRIVATE -fsanitize=undefined -fsanitize=address)
+            target_link_libraries(test_faiss_vector_store PRIVATE GTest::gtest)
+        endif()
     endif()
 
     add_executable(test_chromadb_vector_store ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_chromadb_vector_store.cpp)
