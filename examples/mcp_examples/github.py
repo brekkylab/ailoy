@@ -1,7 +1,7 @@
 import os
 
-from mcp import StdioServerParameters
 import ailoy as ai
+from mcp import StdioServerParameters
 
 
 def main():

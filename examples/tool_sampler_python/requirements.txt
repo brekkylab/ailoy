@@ -1,2 +1,2 @@
-ailoy-py>=0.0.3
+ailoy-py>=0.0.5
 questionary
