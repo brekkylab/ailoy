@@ -49,7 +49,7 @@ if(DEFINED EMSCRIPTEN)
     set(AILOY_WITH_FAISS OFF CACHE BOOL "Enable faiss support")
     set(AILOY_USE_DUMMY_OPENMP ON CACHE BOOL "Use dummy OpenMP")
 
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions -pthread")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s ASYNCIFY=1 -s FETCH=1 -s ALLOW_MEMORY_GROWTH=1 -fexceptions -lembind")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','stringToNewUTF8']")
 else()
@@ -86,3 +86,4 @@ add_subdirectory(vm)
 
 add_subdirectory(bindings/python)
 add_subdirectory(bindings/js-node)
+add_subdirectory(bindings/js-web)
