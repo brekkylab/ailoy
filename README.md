@@ -46,6 +46,7 @@ Currently, the following AI models are supported:
     - OpenAI
     - Gemini
     - Claude
+    - Grok
 - Embedding Models
   - Local Models
     - BAAI/bge-m3
