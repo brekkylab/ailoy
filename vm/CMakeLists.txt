@@ -5,10 +5,7 @@ if(AILOY_WITH_TVM)
     file(GLOB_RECURSE AILOY_VM_TVM_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/tvm/*.cpp)
     list(APPEND AILOY_VM_SRCS ${AILOY_VM_TVM_SRCS})
 endif()
-if(AILOY_WITH_FAISS)
-    file(GLOB_RECURSE AILOY_VM_FAISS_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/faiss/*.cpp)
-    list(APPEND AILOY_VM_SRCS ${AILOY_VM_FAISS_SRCS})
-endif()
+
 add_library(ailoy_vm_obj OBJECT ${AILOY_VM_SRCS})
 target_include_directories(ailoy_vm_obj PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(ailoy_vm_obj PUBLIC ailoy_broker_client_obj ailoy_core_obj)
@@ -131,7 +128,18 @@ if(AILOY_WITH_TVM)
 endif()
 
 # faiss
-if(AILOY_WITH_FAISS)
+if(DEFINED EMSCRIPTEN)
+    FetchContent_Declare(
+        faiss
+        URL https://github.com/brekkylab/faiss-web/releases/download/v1.11.0-wasm/faiss-v1.11.0-wasm.tar.gz
+        URL_HASH SHA256=b10884dfc61025d3de3f1c26565e5a0601d54b247e6b4abcc8408472d93479d6
+        DOWNLOAD_EXTRACT_TIMESTAMP YES
+        EXCLUDE_FROM_ALL
+    )
+    FetchContent_MakeAvailable(faiss)
+    set(faiss_DIR "${faiss_SOURCE_DIR}/share/faiss")
+    find_package(faiss REQUIRED CONFIG)
+else()
     find_package(OpenMP)
     if(NOT OpenMP_FOUND)
         message(FATAL_ERROR "OpenMP not found. You have to specify OpenMP Root directory by either -DOpenMP_ROOT option or `OpenMP_ROOT` environment variable")
@@ -139,7 +147,7 @@ if(AILOY_WITH_FAISS)
     FetchContent_Declare(
         faiss
         GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
-        GIT_TAG v1.10.0
+        GIT_TAG v1.11.0
         EXCLUDE_FROM_ALL
     )
     find_package(MKL QUIET)
@@ -156,9 +164,8 @@ if(AILOY_WITH_FAISS)
     set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "Disable extra components" FORCE)
     set(BUILD_TESTING OFF CACHE BOOL "Disable build tests" FORCE)
     FetchContent_MakeAvailable(faiss)
-    target_link_libraries(ailoy_vm_obj PUBLIC faiss)
-    target_compile_definitions(ailoy_vm_obj PUBLIC AILOY_USE_FAISS=1)
 endif()
+target_link_libraries(ailoy_vm_obj PUBLIC faiss)
 
 if(AILOY_WITH_TEST)
     add_executable(test_debug_module ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_debug_module.cpp)
@@ -199,12 +206,16 @@ if(AILOY_WITH_TEST)
         target_link_libraries(test_model_cache PRIVATE GTest::gtest)
     endif()
 
-    if(AILOY_WITH_FAISS)
-        add_executable(test_faiss_vector_store ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_faiss_vector_store.cpp)
-        add_test(NAME TestFaissVectorStore COMMAND test_faiss_vector_store)
-        target_include_directories(test_faiss_vector_store PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        target_link_libraries(test_faiss_vector_store PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
+    add_executable(test_faiss_vector_store ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_faiss_vector_store.cpp)
+    add_test(NAME TestFaissVectorStore COMMAND test_faiss_vector_store)
+    target_include_directories(test_faiss_vector_store PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_faiss_vector_store PRIVATE ailoy_vm_obj ailoy_broker_obj ailoy_broker_client_obj ailoy_core_obj GTest::gtest)
+    if(EMSCRIPTEN)
+        configure_file("${CMAKE_CURRENT_SOURCE_DIR}/tests/test_faiss_vector_store.html" "${CMAKE_CURRENT_BINARY_DIR}/test_faiss_vector_store.html" COPYONLY)
+    else()
+        # NOTE: Do not add sanitizer options on Emscripten. It leads to poor performance!
         target_link_options(test_faiss_vector_store PRIVATE -fsanitize=undefined -fsanitize=address)
+        target_link_libraries(test_faiss_vector_store PRIVATE GTest::gtest)
     endif()
 
     add_executable(test_chromadb_vector_store ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_chromadb_vector_store.cpp)

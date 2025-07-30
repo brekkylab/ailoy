@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-#include "faiss/faiss_vector_store.hpp"
+#include "faiss_vector_store.hpp"
 #include "language.hpp"
 
 std::string dump_vector(std::vector<float> &vec) {
