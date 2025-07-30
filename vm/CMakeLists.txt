@@ -131,52 +131,44 @@ if(AILOY_WITH_TVM)
 endif()
 
 # faiss
-if(AILOY_WITH_FAISS)
+if(DEFINED EMSCRIPTEN)
+    FetchContent_Declare(
+        faiss
+        URL https://github.com/brekkylab/faiss-web/releases/download/v1.11.0-wasm/faiss-v1.11.0-wasm.tar.gz
+        URL_HASH SHA256=b10884dfc61025d3de3f1c26565e5a0601d54b247e6b4abcc8408472d93479d6
+        DOWNLOAD_EXTRACT_TIMESTAMP YES
+        EXCLUDE_FROM_ALL
+    )
+    FetchContent_MakeAvailable(faiss)
+    set(faiss_DIR "${faiss_SOURCE_DIR}/share/faiss")
+    find_package(faiss REQUIRED CONFIG)
+else()
     find_package(OpenMP)
     if(NOT OpenMP_FOUND)
         message(FATAL_ERROR "OpenMP not found. You have to specify OpenMP Root directory by either -DOpenMP_ROOT option or `OpenMP_ROOT` environment variable")
     endif()
-    if (DEFINED EMSCRIPTEN)
-        FetchContent_Declare(
-            faiss
-            GIT_REPOSITORY https://github.com/grf53/faiss-web.git
-            GIT_TAG        v1.11.0-wasm
-        )
-        FetchContent_Populate(faiss)
-        file(DOWNLOAD https://github.com/grf53/faiss-web/releases/download/v1.11.0-wasm/libfaiss.a ${faiss_BINARY_DIR}/faiss/libfaiss.a)
-        file(DOWNLOAD https://github.com/grf53/faiss-web/releases/download/v1.11.0-wasm/libblas.a ${faiss_BINARY_DIR}/faiss/libblas.a)
-        file(DOWNLOAD https://github.com/grf53/faiss-web/releases/download/v1.11.0-wasm/liblapack.a ${faiss_BINARY_DIR}/faiss/liblapack.a)
-        set(FAISS_LIBS ${faiss_BINARY_DIR}/faiss/libfaiss.a ${faiss_BINARY_DIR}/faiss/libblas.a ${faiss_BINARY_DIR}/faiss/liblapack.a)
-
-        target_link_libraries(ailoy_vm_obj PUBLIC ${FAISS_LIBS})
-        target_include_directories(ailoy_vm_obj PUBLIC ${faiss_SOURCE_DIR})
-    else() # NOT EMSCRIPTEN
-        FetchContent_Declare(
-            faiss
-            GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
-            GIT_TAG v1.10.0
-            EXCLUDE_FROM_ALL
-        )
-        find_package(MKL QUIET)
-        if (MKL_FOUND)
-            message(STATUS "Enable MKL Support")
-            set(BLA_STATIC ON CACHE BOOL "Use static libraries for BLAS" FORCE)
-            set(FAISS_ENABLE_MKL ON CACHE BOOL "Enable MKL support" FORCE)
-        else()
-            message(STATUS "Disable MKL Support")
-            set(FAISS_ENABLE_MKL OFF CACHE BOOL "Enable MKL support" FORCE)
-        endif()
-        set(FAISS_ENABLE_GPU OFF CACHE BOOL "Disable GPU support" FORCE)
-        set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable Python bindings" FORCE)
-        set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "Disable extra components" FORCE)
-        set(BUILD_TESTING OFF CACHE BOOL "Disable build tests" FORCE)
-        
-        FetchContent_MakeAvailable(faiss)
-        target_link_libraries(ailoy_vm_obj PUBLIC faiss)
+    FetchContent_Declare(
+        faiss
+        GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
+        GIT_TAG v1.11.0
+        EXCLUDE_FROM_ALL
+    )
+    find_package(MKL QUIET)
+    if (MKL_FOUND)
+        message(STATUS "Enable MKL Support")
+        set(BLA_STATIC ON CACHE BOOL "Use static libraries for BLAS" FORCE)
+        set(FAISS_ENABLE_MKL ON CACHE BOOL "Enable MKL support" FORCE)
+    else()
+        message(STATUS "Disable MKL Support")
+        set(FAISS_ENABLE_MKL OFF CACHE BOOL "Enable MKL support" FORCE)
     endif()
-    
-    target_compile_definitions(ailoy_vm_obj PUBLIC AILOY_USE_FAISS=1)
+    set(FAISS_ENABLE_GPU OFF CACHE BOOL "Disable GPU support" FORCE)
+    set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable Python bindings" FORCE)
+    set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "Disable extra components" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "Disable build tests" FORCE)
+    FetchContent_MakeAvailable(faiss)
 endif()
+target_link_libraries(ailoy_vm_obj PUBLIC faiss)
 
 if(AILOY_WITH_TEST)
     add_executable(test_debug_module ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_debug_module.cpp)
