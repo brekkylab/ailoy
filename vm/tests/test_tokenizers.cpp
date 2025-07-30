@@ -24,7 +24,7 @@ int main() {
     std::cout << "tokenizer.json for Qwen/Qwen3-0.6B is not present. Download "
                  "the model first."
               << std::endl;
-    return;
+    return 0;
   }
 
   ailoy::tokenizer_t tokenizer(tokenizer_path);
