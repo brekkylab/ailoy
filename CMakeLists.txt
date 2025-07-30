@@ -46,20 +46,14 @@ project(ailoy C CXX)
 set(AILOY_WITH_TEST ON CACHE BOOL "Build test")
 if(DEFINED EMSCRIPTEN)
     set(AILOY_WITH_TVM OFF CACHE BOOL "Enable tvm support")
-    set(AILOY_USE_DUMMY_OPENMP ON CACHE BOOL "Use dummy OpenMP")
 
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s ASYNCIFY=1 -s FETCH=1 -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1 -fexceptions -lembind")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','stringToNewUTF8']")
 else()
     set(AILOY_WITH_TVM ON CACHE BOOL "Enable tvm support")
-    set(AILOY_USE_DUMMY_OPENMP OFF CACHE BOOL "Use dummy openmp")
 endif()
 set(TVM_ROOT "" CACHE PATH "Root directory of mlc-llm. If AILOY_WITH_TVM is ON and this is empty, it will be downloaded automatically.")
-
-if(AILOY_USE_DUMMY_OPENMP)
-    list(PREPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/_deps/dummy_openmp/cmake")
-endif()
 
 include(FetchContent)
 
