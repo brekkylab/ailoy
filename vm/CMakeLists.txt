@@ -140,11 +140,13 @@ if(AILOY_WITH_FAISS)
         FetchContent_Declare(
             faiss
             GIT_REPOSITORY https://github.com/grf53/faiss-web.git
-            GIT_TAG        21894001792117d82792e8af2d292a52946cb893
+            GIT_TAG        v1.11.0-wasm
         )
         FetchContent_Populate(faiss)
-        set(FAISS_LIB_DIR ${PROJECT_SOURCE_DIR}/_deps/faiss-web)
-        set(FAISS_LIBS ${FAISS_LIB_DIR}/libfaiss.a ${FAISS_LIB_DIR}/libblas.a ${FAISS_LIB_DIR}/liblapack.a)
+        file(DOWNLOAD https://github.com/grf53/faiss-web/releases/download/v1.11.0-wasm/libfaiss.a ${faiss_BINARY_DIR}/faiss/libfaiss.a)
+        file(DOWNLOAD https://github.com/grf53/faiss-web/releases/download/v1.11.0-wasm/libblas.a ${faiss_BINARY_DIR}/faiss/libblas.a)
+        file(DOWNLOAD https://github.com/grf53/faiss-web/releases/download/v1.11.0-wasm/liblapack.a ${faiss_BINARY_DIR}/faiss/liblapack.a)
+        set(FAISS_LIBS ${faiss_BINARY_DIR}/faiss/libfaiss.a ${faiss_BINARY_DIR}/faiss/libblas.a ${faiss_BINARY_DIR}/faiss/liblapack.a)
 
         target_link_libraries(ailoy_vm_obj PUBLIC ${FAISS_LIBS})
         target_include_directories(ailoy_vm_obj PUBLIC ${faiss_SOURCE_DIR})
