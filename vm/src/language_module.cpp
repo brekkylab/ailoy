@@ -6,7 +6,7 @@
 #endif
 
 #include "chromadb_vector_store.hpp"
-#include "faiss/faiss_vector_store.hpp"
+#include "faiss_vector_store.hpp"
 #include "model_cache.hpp"
 #include "openai.hpp"
 #include "split_text.hpp"

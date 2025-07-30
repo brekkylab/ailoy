@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../vector_store.hpp"
+#include "vector_store.hpp"
 
 namespace ailoy {
 
