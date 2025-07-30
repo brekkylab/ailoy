@@ -1,5 +1,5 @@
-import { GenerationConfig } from "./config";
-import { Engine } from "./engine";
+import { GenerationConfig } from "./llm/config";
+import { Engine } from "./llm/engine";
 
 async function main() {
   const engine = new Engine("Qwen/Qwen3-0.6B");
@@ -43,10 +43,9 @@ async function main() {
     false,
     genConfig
   )) as AsyncGenerator<any, void, void>;
-  console.log(generator);
 
   for await (const resp of generator) {
-    console.log(resp.choices[0].delta.content, "");
+    console.log(resp.choices[0].delta.content);
     // Module.print(resp.choices[0].delta.content, "");
   }
 }

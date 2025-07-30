@@ -115,18 +115,20 @@ export class Engine {
   async getTokenizer(config: ChatConfig) {
     if (config.tokenizer_files.includes("tokenizer.json")) {
       const url = new URL("tokenizer.json", this.modelUrl).href;
-      const model = await fetchFromUrl(url);
-      if (model === undefined) {
+      const tokenizer_json = await fetchFromUrl(url);
+      if (tokenizer_json === undefined) {
         throw new FetchFileFromURLError(url);
       }
-      console.log(model);
-      return Tokenizer.fromJSON(model);
+      console.log(
+        `tokenizer.json(size: ${tokenizer_json.byteLength}) downloaded. `
+      );
+      return Tokenizer.fromJSON(tokenizer_json);
     }
     throw new UnsupportedTokenizerFilesError(config.tokenizer_files);
   }
 
   async loadModel() {
-    console.log("loadModel start");
+    console.log("START: Model Load");
     await init_minijinja();
     this.templateEnv = new Environment();
     this.templateEnv.enablePyCompat();
@@ -138,16 +140,15 @@ export class Engine {
         ? ModelType.LLM
         : modelRecord.model_type;
 
-    console.log(modelRecord);
-    console.log(this.modelUrl);
-
+    const template_filename = modelRecord.model_id.replace("/", "--") + ".j2";
+    console.log("Download template file:", template_filename);
     const templateContent = await fetchFromUrl(
-      "Qwen--Qwen3-0.6B.j2",
+      template_filename,
       "text",
       this.modelUrl
     );
 
-    console.log(templateContent);
+    console.log("Template file:", templateContent.slice(0, 100));
 
     this.templateEnv.addTemplate(this.modelId, templateContent);
 
@@ -205,7 +206,7 @@ export class Engine {
     });
     tvm.initWebGPU(gpuDetectOutput.device);
 
-    console.log(this.chatConfig);
+    console.log("chatConfing:", this.chatConfig);
     // be replaced with VM function
     const tokenizer = await this.getTokenizer(this.chatConfig);
 
@@ -228,9 +229,9 @@ export class Engine {
     }
     await this.pipeline.asyncLoadWebGPUPipelines();
 
-    console.log(this.pipeline);
-
     this.lock = new CustomLock();
+
+    console.log("DONE: Model Load");
   }
 
   async inferEM(prompt: string) {

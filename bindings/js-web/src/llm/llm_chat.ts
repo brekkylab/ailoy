@@ -96,7 +96,7 @@ export class LLMChatPipeline {
     const metadataStr = ret_value.toString();
     const metadata = JSON.parse(metadataStr);
 
-    console.log(metadata);
+    console.log("lib metadata: ", metadata);
 
     // 3. Load parameters by name
     const paramNames: string[] = [];
@@ -271,7 +271,6 @@ export class LLMChatPipeline {
     this.stopTriggered = false;
 
     const retGetInputData = this.getInputData(input_str);
-    console.log(retGetInputData);
     const inputData: Array<Array<number>> = retGetInputData[0];
     const promptLen: number = retGetInputData[1];
 
