@@ -1,5 +1,3 @@
-#include <optional>
-
 #include <tinyexpr.h>
 
 #include "module.hpp"
