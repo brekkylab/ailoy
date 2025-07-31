@@ -13,7 +13,7 @@ if(DEFINED EMSCRIPTEN)
                     -sALLOW_MEMORY_GROWTH=1 \
                     -sMODULARIZE=1 \
                     -sEXPORT_ES6=1 \
-                    -sENVIRONMENT='worker' \
+                    -sENVIRONMENT='web,worker' \
                     -sUSE_PTHREADS=1 \
                     --emit-tsd=ailoy_js_web.d.ts \
                     --no-entry"

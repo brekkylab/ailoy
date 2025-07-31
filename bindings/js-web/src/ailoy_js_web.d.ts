@@ -18,10 +18,42 @@ declare namespace RuntimeExports {
 interface WasmModule {
 }
 
+type EmbindString = ArrayBuffer|Uint8Array|Uint8ClampedArray|Int8Array|string;
+export interface ClassHandle {
+  isAliasOf(other: ClassHandle): boolean;
+  delete(): void;
+  deleteLater(): this;
+  isDeleted(): boolean;
+  // @ts-ignore - If targeting lower than ESNext, this symbol might not exist.
+  [Symbol.dispose](): void;
+  clone(): this;
+}
+export interface VectorString extends ClassHandle {
+  push_back(_0: EmbindString): void;
+  resize(_0: number, _1: EmbindString): void;
+  size(): number;
+  get(_0: number): EmbindString | undefined;
+  set(_0: number, _1: EmbindString): boolean;
+}
+
+export interface BrokerClient extends ClassHandle {
+  send_type1(_0: EmbindString, _1: EmbindString): boolean;
+  send_type2(_0: EmbindString, _1: EmbindString, _2: EmbindString, _3: VectorString): boolean;
+  send_type3(_0: EmbindString, _1: EmbindString, _2: number, _3: boolean): boolean;
+  send_type4(_0: EmbindString, _1: EmbindString, _2: number, _3: EmbindString): boolean;
+  listen(): any;
+}
+
 interface EmbindModule {
+  VectorString: {
+    new(): VectorString;
+  };
   start_threads(): void;
   stop_threads(): void;
   generate_uuid(): any;
+  BrokerClient: {
+    new(_0: EmbindString): BrokerClient;
+  };
 }
 
 export type MainModule = WasmModule & typeof RuntimeExports & EmbindModule;
