@@ -1,6 +1,6 @@
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use minijinja::Environment;
+use minijinja::{Environment, context};
 
 use crate::message::Message;
 
@@ -27,14 +27,11 @@ pub fn remove_chat_template(name: &str) {
     get_env().remove_template(name);
 }
 
-pub fn apply_chat_template(name: &str, context: &Vec<Message>) -> String {
-    use minijinja::Value;
-
+pub fn apply_chat_template(name: &str, ctx: &Vec<Message>) -> String {
     let env = get_env();
 
     let template = env.get_template(name).unwrap();
-    let ctx = Value::from_serialize(context);
-    template.render(ctx).unwrap()
+    template.render(context!(messages => ctx)).unwrap()
 }
 
 mod ffi {
@@ -90,19 +87,19 @@ mod ffi {
     #[unsafe(no_mangle)]
     pub extern "C" fn ailoy_apply_chat_template(
         name: *const c_char,
-        context: *const c_char,
+        ctx: *const c_char,
         out: *mut *mut c_char,
     ) -> c_int {
         let name = match from_const_char(name) {
             Ok(v) => v,
             Err(_) => return 1,
         };
-        let context = match from_const_char(context) {
+        let ctx = match from_const_char(ctx) {
             Ok(v) => v,
             Err(_) => return 1,
         };
-        let context: Vec<Message> = serde_json::from_str(context).unwrap();
-        let rendered = apply_chat_template(name, &context);
+        let ctx: Vec<Message> = serde_json::from_str(ctx).unwrap();
+        let rendered = apply_chat_template(name, &ctx);
         unsafe { *out = to_char(rendered.as_str()) };
         0
     }

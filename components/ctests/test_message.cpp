@@ -15,16 +15,25 @@ TEST(TestMessage, TestMessage) {
   msgs.push_back(message_t{role_t::assistant, content_category_t::reasoning,
                            "Thinking about what is my name..."});
   msgs.push_back(message_t{role_t::assistant, "You can call me Jaden."});
-  msgs.push_back(message_t{role_t::user, "Are you exist?"});
+  msgs.push_back(message_t{role_t::user, "Are you existing?"});
   std::cout << msgs << std::endl;
 }
 
 TEST(TestMessage, TestChatTemplate) {
-  ailoy_add_chat_template("qwen3", "hello {{v}}");
-  char *tmpl;
-  ailoy_get_chat_template("qwen3", &tmpl);
-  std::cout << tmpl << std::endl;
-  free(tmpl);
+  messages_t msgs;
+  msgs.push_back(message_t{role_t::system, "You are a helpful assistant."});
+  msgs.push_back(message_t{role_t::user, "Hi what's your name?"});
+  nlohmann::json v = msgs;
+
+  ailoy_add_chat_template("qwen3", "hello {{messages[0].role}}");
+  char *out = nullptr;
+  ailoy_apply_chat_template("qwen3", v.dump().c_str(), &out);
+  if (*out) {
+    ASSERT_EQ(std::string(out), "hello system");
+    free(out);
+  } else {
+    throw std::runtime_error("No output");
+  }
 }
 
 int main(int argc, char **argv) {
