@@ -1,6 +1,6 @@
 {
   "name": "ailoy-web",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "author": "Brekkylab Inc. <contact@brekkylab.com>",
   "license": "Apache-2.0",
   "description": "WASM binding for Ailoy runtime APIs",
