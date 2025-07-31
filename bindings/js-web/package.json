@@ -12,6 +12,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
+    "build:wasm": "cd ../.. && cmake --preset emscripten-release && cmake --build ./build/emscripten-release -t ailoy_js_web --parallel 10",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "devDependencies": {
