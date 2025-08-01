@@ -171,4 +171,7 @@ std::shared_ptr<value_t> merge_text_data(std::shared_ptr<const value_t> in,
  */
 std::shared_ptr<value_t> melt_content_text(std::shared_ptr<const value_t> in);
 
+component_or_error_t
+create_chat_manager_component(std::shared_ptr<const value_t> inputs);
+
 } // namespace ailoy

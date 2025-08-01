@@ -5,14 +5,15 @@
 #include <vector>
 
 #include "filesystem.hpp"
+#include "module.hpp"
 #include "object.hpp"
 
 namespace ailoy {
 
 class tokenizer_t : public object_t {
+public:
   using token_t = int32_t;
 
-public:
   tokenizer_t(const ailoy::fs::path_t &json_file_path);
 
   ~tokenizer_t();
@@ -35,5 +36,8 @@ private:
    */
   void *handle_;
 };
+
+component_or_error_t
+create_tokenizer_component(std::shared_ptr<const value_t> inputs);
 
 } // namespace ailoy
