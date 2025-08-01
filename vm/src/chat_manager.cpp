@@ -1,5 +1,6 @@
 #include "chat_manager.hpp"
 
+#include "filesystem.hpp"
 #include "model_cache.hpp"
 #include "module.hpp"
 #include "string_util.hpp"

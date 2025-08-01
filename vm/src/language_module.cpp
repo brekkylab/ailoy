@@ -11,6 +11,7 @@
 #include "model_cache.hpp"
 #include "openai.hpp"
 #include "split_text.hpp"
+#include "tokenizer.hpp"
 
 namespace ailoy {
 
@@ -51,6 +52,12 @@ std::shared_ptr<const module_t> get_language_module() {
   if (!language_module->factories.contains("chat_manager")) {
     language_module->factories.insert_or_assign("chat_manager",
                                                 create_chat_manager_component);
+  }
+
+  // Add Component: Tokenizer
+  if (!language_module->factories.contains("tokenizer")) {
+    language_module->factories.insert_or_assign("tokenizer",
+                                                create_tokenizer_component);
   }
 
   // Add Operators: Split Text
