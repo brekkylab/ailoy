@@ -22,6 +22,7 @@ target_link_libraries(ailoy_vm_obj PRIVATE indicators::indicators)
 # minijinja
 set(MINIJINJA_BUILD_SHARED OFF)
 set(MINIJINJA_INSTALL OFF)
+set(MINIJINJA_RUST_NIGHTLY ON)
 set(MINIJINJA_RUST_FLAGS "${RUSTFLAGS}")
 set(MINIJINJA_CARGO_BUILD_FLAGS "${CARGO_BUILD_FLAGS}")
 FetchContent_Declare(

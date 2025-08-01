@@ -4,6 +4,4 @@ async function getModule() {
   return await AiloyModule();
 }
 
-window.getModule = getModule;
-
 export { getModule };

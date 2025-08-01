@@ -15,6 +15,9 @@
 #include "uuid.hpp"
 #include "vm.hpp"
 
+#include "./ndarray.hpp"
+#include "./value_converters.hpp"
+
 using namespace std::chrono_literals;
 using namespace emscripten;
 
@@ -109,10 +112,10 @@ public:
   }
 
   bool send_type2(const std::string &txid, const std::string &ptype,
-                  const std::string &itype,
-                  const std::vector<std::string> args) {
+                  const std::string &itype, const val &args) {
+    auto args_ = *(from_em_val(args)->as<ailoy::array_t>());
     if (itype == "call_function") {
-      std::string fname = args[0];
+      std::string fname = *args_[0]->as<ailoy::string_t>();
       if (ptype == "subscribe")
         return client_->send<ailoy::packet_type::subscribe,
                              ailoy::instruction_type::call_function>(txid,
@@ -122,15 +125,13 @@ public:
                              ailoy::instruction_type::call_function>(txid,
                                                                      fname);
       else {
-        // TODO: convert second arg to value_t
-        // auto in = py::cast<std::shared_ptr<ailoy::value_t>>(args[4]);
-        auto in = ailoy::create<ailoy::map_t>();
+        auto in = args_[1]->as<ailoy::map_t>();
         return client_->send<ailoy::packet_type::execute,
                              ailoy::instruction_type::call_function>(txid,
                                                                      fname, in);
       }
     } else if (itype == "define_component") {
-      auto ctname = args[0];
+      std::string ctname = *args_[0]->as<ailoy::string_t>();
       if (ptype == "subscribe")
         return client_->send<ailoy::packet_type::subscribe,
                              ailoy::instruction_type::define_component>(txid,
@@ -140,16 +141,14 @@ public:
                              ailoy::instruction_type::define_component>(txid,
                                                                         ctname);
       else {
-        // auto cname = py::cast<std::string>(args[4]);
-        // auto in = py::cast<std::shared_ptr<ailoy::value_t>>(args[5]);
-        auto cname = args[1];
-        auto in = ailoy::create<ailoy::map_t>();
+        std::string cname = *args_[1]->as<ailoy::string_t>();
+        auto in = args_[2]->as<ailoy::map_t>();
         return client_->send<ailoy::packet_type::execute,
                              ailoy::instruction_type::define_component>(
             txid, ctname, cname, in);
       }
     } else if (itype == "delete_component") {
-      auto cname = args[0];
+      std::string cname = *args_[0]->as<ailoy::string_t>();
       if (ptype == "subscribe")
         return client_->send<ailoy::packet_type::subscribe,
                              ailoy::instruction_type::delete_component>(txid,
@@ -164,8 +163,8 @@ public:
                                                                         cname);
       }
     } else if (itype == "call_method") {
-      auto cname = args[0];
-      auto fname = args[1];
+      std::string cname = *args_[0]->as<ailoy::string_t>();
+      std::string fname = *args_[1]->as<ailoy::string_t>();
       if (ptype == "subscribe")
         return client_->send<ailoy::packet_type::subscribe,
                              ailoy::instruction_type::call_method>(txid, cname,
@@ -175,8 +174,7 @@ public:
                              ailoy::instruction_type::call_method>(txid, cname,
                                                                    fname);
       else {
-        // auto in = py::cast<std::shared_ptr<ailoy::value_t>>(args[5]);
-        auto in = ailoy::create<ailoy::map_t>();
+        auto in = args_[2]->as<ailoy::map_t>();
         return client_->send<ailoy::packet_type::execute,
                              ailoy::instruction_type::call_method>(txid, cname,
                                                                    fname, in);
@@ -187,17 +185,18 @@ public:
   }
 
   bool send_type3(const std::string &txid, const std::string &ptype,
-                  uint32_t sequence, bool done) {
-    //   auto out = py::cast<std::shared_ptr<ailoy::value_t>>(args[5]);
-    auto out = ailoy::create<ailoy::map_t>();
-    return client_->send<ailoy::packet_type::respond_execute, true>(
-        txid, sequence, done, out);
-  }
-
-  bool send_type4(const std::string &txid, const std::string &ptype,
-                  uint32_t sequence, const std::string &reason) {
-    return client_->send<ailoy::packet_type::respond_execute, false>(
-        txid, sequence, reason);
+                  bool status, uint32_t sequence, const val &args) {
+    auto args_ = *(from_em_val(args)->as<ailoy::array_t>());
+    if (status) {
+      bool done = *args_[0]->as<ailoy::bool_t>();
+      auto out = args_[1]->as<ailoy::map_t>();
+      return client_->send<ailoy::packet_type::respond_execute, true>(
+          txid, sequence, done, out);
+    } else {
+      std::string reason = *args_[0]->as<ailoy::string_t>();
+      return client_->send<ailoy::packet_type::respond_execute, false>(
+          txid, sequence, reason);
+    }
   }
 
   val listen() {
@@ -206,19 +205,19 @@ public:
       return val::null();
 
     auto ret = val::object();
-    ret.set("packet_type", packet_type_to_string(resp->ptype));
+    std::string ptype = packet_type_to_string(resp->ptype);
+    ret.set("packet_type", ptype);
 
     if (resp->itype.has_value()) {
-      ret.set("instruction_type",
-              instruction_type_to_string(resp->itype.value()));
+      std::string itype = instruction_type_to_string(resp->itype.value());
+      ret.set("instruction_type", itype);
     } else {
       ret.set("instruction_type", val::null());
     }
-    // TODO: parse headers and body
-    // ret.set("headers", resp->headers);
-    // ret.set("body", resp->body);
-    ret.set("headers", val::array());
-    ret.set("body", val::object());
+
+    ret.set("headers", to_em_val(resp->headers));
+    ret.set("body", to_em_val(resp->body));
+
     return ret;
   }
 
@@ -233,11 +232,16 @@ EMSCRIPTEN_BINDINGS(ailoy_web) {
   function("stop_threads", &stop_threads);
   function("generate_uuid", &generate_uuid);
 
+  class_<js_ndarray_t>("NDArray")
+      .constructor<const val &>()
+      .function("getShape", &js_ndarray_t::get_shape)
+      .function("getDtype", &js_ndarray_t::get_dtype)
+      .function("getData", &js_ndarray_t::get_data);
+
   class_<broker_client_wrapper_t>("BrokerClient")
       .constructor<std::string>()
       .function("send_type1", &broker_client_wrapper_t::send_type1)
       .function("send_type2", &broker_client_wrapper_t::send_type2)
       .function("send_type3", &broker_client_wrapper_t::send_type3)
-      .function("send_type4", &broker_client_wrapper_t::send_type4)
       .function("listen", &broker_client_wrapper_t::listen);
 }

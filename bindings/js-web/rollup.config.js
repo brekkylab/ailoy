@@ -29,6 +29,16 @@ module.exports = {
       ],
     }),
     enableDevServer
+      ? copy({
+          targets: [
+            {
+              src: ["src/index.html"],
+              dest: "dist",
+            },
+          ],
+        })
+      : undefined,
+    enableDevServer
       ? serve({
           contentBase: "dist",
           port: 8000,

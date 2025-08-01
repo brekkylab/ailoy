@@ -12,7 +12,8 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "build:wasm": "cd ../.. && cmake --preset emscripten-release && cmake --build ./build/emscripten-release -t ailoy_js_web --parallel 10",
+    "build:configure": "cd ../.. && cmake --preset emscripten-release",
+    "build:wasm": "cd ../.. && cmake --build ./build/emscripten-release -t ailoy_js_web --parallel 10",
     "build:ts": "rollup -c --bundleConfigAsCjs",
     "dev": "AILOY_WEB_DEV_SERVER=ON rollup -c --bundleConfigAsCjs --watch",
     "test": "echo \"Error: no test specified\" && exit 1"

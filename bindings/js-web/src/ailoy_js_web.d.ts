@@ -36,11 +36,16 @@ export interface VectorString extends ClassHandle {
   set(_0: number, _1: EmbindString): boolean;
 }
 
+export interface NDArray extends ClassHandle {
+  getShape(): any;
+  getDtype(): string;
+  getData(): any;
+}
+
 export interface BrokerClient extends ClassHandle {
   send_type1(_0: EmbindString, _1: EmbindString): boolean;
-  send_type2(_0: EmbindString, _1: EmbindString, _2: EmbindString, _3: VectorString): boolean;
-  send_type3(_0: EmbindString, _1: EmbindString, _2: number, _3: boolean): boolean;
-  send_type4(_0: EmbindString, _1: EmbindString, _2: number, _3: EmbindString): boolean;
+  send_type2(_0: EmbindString, _1: EmbindString, _2: EmbindString, _3: any): boolean;
+  send_type3(_0: EmbindString, _1: EmbindString, _2: boolean, _3: number, _4: any): boolean;
   listen(): any;
 }
 
@@ -51,6 +56,9 @@ interface EmbindModule {
   start_threads(): void;
   stop_threads(): void;
   generate_uuid(): any;
+  NDArray: {
+    new(_0: any): NDArray;
+  };
   BrokerClient: {
     new(_0: EmbindString): BrokerClient;
   };
