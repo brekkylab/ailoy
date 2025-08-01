@@ -46,6 +46,8 @@ struct model_cache_remove_result_t {
  */
 fs::path_t get_cache_root();
 
+fs::path_t get_model_base_path(const std::string &model_id);
+
 std::vector<model_cache_list_result_t> list_local_models();
 
 model_cache_download_result_t

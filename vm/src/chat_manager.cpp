@@ -1,5 +1,6 @@
 #include "chat_manager.hpp"
 
+#include "model_cache.hpp"
 #include "module.hpp"
 #include "string_util.hpp"
 
@@ -258,6 +259,123 @@ std::shared_ptr<value_t> melt_content_text(std::shared_ptr<const value_t> in) {
     }
   }
   return out;
+}
+
+component_or_error_t
+create_chat_manager_component(std::shared_ptr<const value_t> inputs) {
+  if (!inputs->is_type_of<map_t>())
+    return error_output_t(type_error("ChatManager: create", "inputs", "map_t",
+                                     inputs->get_type()));
+
+  auto inputs_map = inputs->as<map_t>();
+
+  if (!inputs_map->contains("model"))
+    return error_output_t(range_error("ChatManager: create", "model"));
+  if (!inputs_map->at("model")->is_type_of<string_t>())
+    return error_output_t(type_error("ChatManager: create", "model", "string_t",
+                                     inputs_map->at("model")->get_type()));
+  std::string model = *inputs_map->at<string_t>("model");
+
+  std::string quantization;
+  if (inputs_map->contains("quantization")) {
+    if (inputs_map->at("quantization")->is_type_of<string_t>())
+      quantization = *inputs_map->at<string_t>("quantization");
+    else
+      return error_output_t(
+          type_error("ChatManager: create", "quantization", "string_t",
+                     inputs_map->at("quantization")->get_type()));
+  } else
+    quantization = "q4f16_1";
+
+  auto model_path =
+      get_cache_root() / get_model_base_path(model) / quantization;
+  if (!fs::directory_exists(model_path))
+    return error_output_t(
+        std::format("ChatManager: model \"{}\"(quantization: {}) does not "
+                    "exist. Download the model first.",
+                    model, quantization));
+
+  auto chat_template_config_path = model_path / "chat-template-config.json";
+  if (!fs::file_exists(chat_template_config_path))
+    return error_output_t(
+        "ChatManager: Chat template config file does not exist.");
+
+  auto chat_manager =
+      chat_manager_t::make_from_config_file(chat_template_config_path);
+
+  auto apply = [](std::shared_ptr<component_t> component,
+                  std::shared_ptr<const value_t> inputs) -> value_or_error_t {
+    if (!inputs->is_type_of<map_t>())
+      return error_output_t(type_error("ChatManager: apply", "inputs", "map_t",
+                                       inputs->get_type()));
+
+    auto inputs_map = inputs->as<map_t>();
+
+    // Get messages
+    if (!inputs_map->contains("messages"))
+      return error_output_t(range_error("ChatManager: apply", "messages"));
+    if (!inputs_map->at("messages")->is_type_of<array_t>())
+      return error_output_t(type_error("ChatManager: apply", "messages",
+                                       "array_t",
+                                       inputs_map->at("messages")->get_type()));
+    auto messages = inputs_map->at<array_t>("messages");
+
+    // Get tools (optional)
+    std::shared_ptr<const array_t> tools = nullptr;
+    if (inputs_map->contains("tools")) {
+      auto tools_val = inputs_map->at("tools");
+      if (!(tools_val->is_type_of<array_t>() ||
+            tools_val->is_type_of<string_t>()))
+        return error_output_t(type_error("ChatManager: apply", "tools",
+                                         "array_t | string_t",
+                                         tools_val->get_type()));
+      tools = tools_val->as<array_t>();
+    }
+
+    // Get reasoning (optional)
+    bool reasoning = false;
+    if (inputs_map->contains("reasoning")) {
+      auto reasoning_val = inputs_map->at("reasoning");
+      if (reasoning_val->is_type_of<bool_t>()) {
+        reasoning = *reasoning_val->as<bool_t>();
+      } else if (reasoning_val->is_type_of<null_t>()) {
+        reasoning = false;
+      } else {
+        return error_output_t(type_error("ChatManager: apply", "reasoning",
+                                         "bool_t", reasoning_val->get_type()));
+      }
+    }
+
+    // Get add_generation_prompt (optional)
+    bool add_generation_prompt = true;
+    if (inputs_map->contains("add_generation_prompt")) {
+      auto val = inputs_map->at("add_generation_prompt");
+      if (val->is_type_of<bool_t>()) {
+        add_generation_prompt = *val->as<bool_t>();
+      } else if (val->is_type_of<null_t>()) {
+        add_generation_prompt = false;
+      } else {
+        return error_output_t(type_error("ChatManager: apply",
+                                         "add_generation_prompt", "bool_t",
+                                         val->get_type()));
+      }
+    }
+
+    auto m = component->get_obj("chat_manager")->as<chat_manager_t>();
+    std::string result = m->apply_chat_template(messages, tools, reasoning,
+                                                add_generation_prompt);
+
+    auto rv = create<map_t>();
+    rv->insert_or_assign("result", create<string_t>(result));
+    return rv;
+  };
+
+  auto comp = create<component_t>(
+      std::initializer_list<
+          std::pair<const std::string, std::shared_ptr<method_operator_t>>>{
+          {"apply_chat_template", create<instant_method_operator_t>(apply)}});
+  comp->set_obj("chat_manager", chat_manager);
+  return comp;
 }
 
 } // namespace ailoy
