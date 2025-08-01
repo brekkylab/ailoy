@@ -28,7 +28,7 @@ set(MINIJINJA_CARGO_BUILD_FLAGS "${CARGO_BUILD_FLAGS}")
 FetchContent_Declare(
     minijinja
     GIT_REPOSITORY https://github.com/brekkylab/minijinja.git
-    GIT_TAG 2671e3b0d8817f499177e669f4edf8d5b870950a
+    GIT_TAG eb1937382d02df4442a7dbcbe0cb6b2c3c281fd4
     SOURCE_SUBDIR minijinja-cabi
 )
 FetchContent_MakeAvailable(minijinja)
@@ -52,6 +52,7 @@ target_link_libraries(ailoy_vm_obj PRIVATE magic_enum)
 # tokenizers-cpp
 set(TOKENIZERS_CPP_RUST_FLAGS "${RUSTFLAGS}")
 set(TOKENIZERS_CPP_CARGO_FLAGS "${CARGO_BUILD_FLAGS}")
+set(TOKENIZERS_CPP_RUST_NIGHTLY ON)
 if(NODE)
     set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
 endif()
@@ -59,7 +60,7 @@ FetchContent_Declare(
     tokenizers-cpp
     # GIT_REPOSITORY https://github.com/mlc-ai/tokenizers-cpp.git
     GIT_REPOSITORY https://github.com/brekkylab/tokenizers-cpp.git
-    GIT_TAG a8934c69c01338de39fa4f05c4ef25b596fc552f
+    GIT_TAG f9f20717addbe42951c99a8b60ed31d98f9dfd04
     EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(tokenizers-cpp)
