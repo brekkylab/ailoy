@@ -126,10 +126,13 @@ create_tokenizer_component(std::shared_ptr<const value_t> inputs) {
     auto t = component->get_obj("tokenizer")->as<tokenizer_t>();
     auto encoded = t->encode(text);
 
-    auto res = create<array_t>();
+    auto tokens = create<array_t>();
     for (const auto &token : encoded) {
-      res->push_back(create<int_t>(token));
+      tokens->push_back(create<int_t>(token));
     }
+
+    auto res = create<map_t>();
+    res->insert_or_assign("tokens", tokens);
     return res;
   };
 
@@ -156,9 +159,10 @@ create_tokenizer_component(std::shared_ptr<const value_t> inputs) {
     }
 
     auto t = component->get_obj("tokenizer")->as<tokenizer_t>();
-    auto decoded = t->decode(tokens_);
+    auto decoded = t->decode(tokens_, false);
 
-    auto res = create<string_t>(decoded);
+    auto res = create<map_t>();
+    res->insert_or_assign("text", create<string_t>(decoded));
     return res;
   };
 
