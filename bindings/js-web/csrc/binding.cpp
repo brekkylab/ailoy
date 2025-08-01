@@ -60,11 +60,6 @@ void stop_threads() {
   }
 }
 
-val generate_uuid() {
-  auto uuid = ailoy::generate_uuid();
-  return val(uuid);
-}
-
 std::string packet_type_to_string(const ailoy::packet_type &ptype) {
   if (ptype == ailoy::packet_type::connect)
     return "connect";
@@ -230,7 +225,7 @@ EMSCRIPTEN_BINDINGS(ailoy_web) {
 
   function("start_threads", &start_threads);
   function("stop_threads", &stop_threads);
-  function("generate_uuid", &generate_uuid);
+  function("generate_uuid", &ailoy::generate_uuid);
 
   class_<js_ndarray_t>("NDArray")
       .constructor<const val &>()

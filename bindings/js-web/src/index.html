@@ -11,8 +11,30 @@
     <script type="module">
         import * as Ailoy from "./index.js"
 
-        var Module = await Ailoy.getModule();
-        window.Module = Module;
+        const rt = new Ailoy.Runtime();
+        await rt.start();
+        window.runtime = rt;
+
+        await rt.define("chat_manager", "cm0", {model: "Qwen/Qwen3-0.6B"});
+        await rt.define("tokenizer", "t0", {model: "Qwen/Qwen3-0.6B"});
+
+        let templated = await rt.callMethod("cm0", "apply_chat_template", {
+            messages: [
+                {role: "system", content: [{type: "text", text: "You are awesome model."}]},
+                {role: "user", content: [{type: "text", text: "What is your name?"}]},
+            ],
+            tools: [],
+            reasoning: true,
+            add_generation_prompt: true,
+        });
+        console.log(templated.result);
+
+        let encoded = await rt.callMethod("t0", "encode", {text: templated.result});
+        console.log(encoded.tokens);
+
+        let decoded = await rt.callMethod("t0", "decode", {tokens: encoded.tokens});
+        console.log(decoded.text);
+
     </script>
     
 </body>

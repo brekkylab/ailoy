@@ -1,7 +1,3 @@
-import AiloyModule from "./ailoy_js_web";
+import Runtime from "./runtime";
 
-async function getModule() {
-  return await AiloyModule();
-}
-
-export { getModule };
+export { Runtime };

@@ -55,7 +55,7 @@ interface EmbindModule {
   };
   start_threads(): void;
   stop_threads(): void;
-  generate_uuid(): any;
+  generate_uuid(): string;
   NDArray: {
     new(_0: any): NDArray;
   };
