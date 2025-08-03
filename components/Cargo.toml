@@ -4,9 +4,24 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-minijinja = { version = "2.11.0", features = ["loader"] }
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.141"
+async-stream = "0.3"
+bytes = "1.10.1"
+futures = "0.3.31"
+minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
+minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
+sha1 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
+reqwest = { version = "0.12", features = ["stream"] }
+url = "2.5.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread"] }
 
 [lib]
 crate-type = ["staticlib"]

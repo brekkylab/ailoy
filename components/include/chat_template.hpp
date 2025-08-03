@@ -2,25 +2,28 @@
 
 extern "C" {
 
-/**
- * Real implementation in rust
- */
-extern int ailoy_add_chat_template(const char *name, const char *source);
+struct ailoy_chat_template_t;
 
 /**
  * Real implementation in rust
  */
-extern int ailoy_remove_chat_template(const char *name);
+extern int ailoy_chat_template_create(const char *, ailoy_chat_template_t **);
 
 /**
  * Real implementation in rust
  */
-extern int ailoy_get_chat_template(const char *name, char **source);
+extern int ailoy_chat_template_destroy(const ailoy_chat_template_t *);
+
+/**
+ * Real implementation in rust
+ */
+extern int ailoy_chat_template_get(const ailoy_chat_template_t *,
+                                   char **source);
 
 /**
  * Real implementation in rust
  * context must be JSON-serialized message_t
  */
-extern int ailoy_apply_chat_template(const char *name, const char *context,
-                                     char **out);
+extern int ailoy_chat_template_apply(const ailoy_chat_template_t *,
+                                     const char *messages, char **out);
 }

@@ -25,15 +25,17 @@ TEST(TestMessage, TestChatTemplate) {
   msgs.push_back(message_t{role_t::user, "Hi what's your name?"});
   nlohmann::json v = msgs;
 
-  ailoy_add_chat_template("qwen3", "hello {{messages[0].role}}");
+  ailoy_chat_template_t *tmpl;
   char *out = nullptr;
-  ailoy_apply_chat_template("qwen3", v.dump().c_str(), &out);
+  ASSERT_EQ(ailoy_chat_template_create("hello {{messages[0].role}}", &tmpl), 0);
+  ASSERT_EQ(ailoy_chat_template_apply(tmpl, v.dump().c_str(), &out), 0);
   if (*out) {
     ASSERT_EQ(std::string(out), "hello system");
     free(out);
   } else {
     throw std::runtime_error("No output");
   }
+  ASSERT_EQ(ailoy_chat_template_destroy(tmpl), 0);
 }
 
 int main(int argc, char **argv) {

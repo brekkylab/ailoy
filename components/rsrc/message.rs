@@ -5,57 +5,86 @@ use serde::{
     de::{self, MapAccess, Visitor},
     ser::SerializeMap as _,
 };
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum MessageDataType {
-    Text,
-    Image,
-    Audio,
-}
+use serde_json::Value;
+use url::Url;
 
 #[derive(Clone, Debug)]
-pub struct MessageContent {
-    pub ty: MessageDataType,
-    pub key: String,
-    pub value: String,
+pub enum Part {
+    Text(String),
+    Json(Value),
+    ImageURL(Url),
+    ImageBase64(String),
 }
 
-impl Serialize for MessageContent {
+impl Part {
+    pub fn text<T: Into<String>>(text: T) -> Part {
+        Part::Text(text.into())
+    }
+
+    pub fn json<T: Into<Value>>(json: T) -> Part {
+        Part::Json(json.into())
+    }
+
+    pub fn image_url<T: Into<Url>>(url: T) -> Part {
+        Part::ImageURL(url.into())
+    }
+
+    pub fn image_base64<T: Into<String>>(encoded: T) -> Part {
+        Part::ImageBase64(encoded.into())
+    }
+}
+
+impl Serialize for Part {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let mut map = serializer.serialize_map(Some(2))?;
-        map.serialize_entry("type", &self.ty)?;
-        map.serialize_entry(&self.key, &self.value)?;
+        match self {
+            Part::Text(text) => {
+                map.serialize_entry("type", "text")?;
+                map.serialize_entry("text", text)?;
+            }
+            Part::Json(value) => {
+                map.serialize_entry("type", "json")?;
+                map.serialize_entry("json", value)?;
+            }
+            Part::ImageURL(url) => {
+                map.serialize_entry("type", "image")?;
+                map.serialize_entry("url", url.as_str())?;
+            }
+            Part::ImageBase64(encoded) => {
+                map.serialize_entry("type", "image")?;
+                map.serialize_entry("base64", encoded)?;
+            }
+        };
         map.end()
     }
 }
 
-impl<'de> Deserialize<'de> for MessageContent {
+impl<'de> Deserialize<'de> for Part {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_map(MessageContentVisitor)
+        deserializer.deserialize_map(PartVisitor)
     }
 }
 
-struct MessageContentVisitor;
+struct PartVisitor;
 
-impl<'de> Visitor<'de> for MessageContentVisitor {
-    type Value = MessageContent;
+impl<'de> Visitor<'de> for PartVisitor {
+    type Value = Part;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(r#"a map with "type" field and one other content key"#)
     }
 
-    fn visit_map<M>(self, mut map: M) -> Result<MessageContent, M::Error>
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
     where
         M: MapAccess<'de>,
     {
-        let mut ty: Option<MessageDataType> = None;
+        let mut ty: Option<String> = None;
         let mut key: Option<String> = None;
         let mut value: Option<String> = None;
 
@@ -67,7 +96,7 @@ impl<'de> Visitor<'de> for MessageContentVisitor {
                 ty = Some(map.next_value()?);
             } else {
                 if key.is_some() {
-                    return Err(de::Error::custom("multiple data fields found"));
+                    return Err(de::Error::custom("multiple part fields found"));
                 }
                 key = Some(k);
                 value = Some(map.next_value()?);
@@ -75,16 +104,40 @@ impl<'de> Visitor<'de> for MessageContentVisitor {
         }
 
         let ty = ty.ok_or_else(|| de::Error::missing_field("type"))?;
-        let key = key.ok_or_else(|| de::Error::custom("missing data field"))?;
-        let value = value.ok_or_else(|| de::Error::custom("missing data value"))?;
+        let key = key.ok_or_else(|| de::Error::custom("missing part key"))?;
+        let value = value.ok_or_else(|| de::Error::custom("missing part value"))?;
 
-        Ok(MessageContent { ty, key, value })
+        if ty == "text" && key == "text" {
+            Ok(Part::Text(value))
+        } else if ty == "json" && key == "json" {
+            match serde_json::from_str(&value) {
+                Ok(value) => Ok(Part::Json(value)),
+                Err(err) => Err(de::Error::custom(format!(
+                    "Invalid Json part: {} {}",
+                    value,
+                    err.to_string(),
+                ))),
+            }
+        } else if ty == "image" && key == "url" {
+            match url::Url::parse(&value) {
+                Ok(value) => Ok(Part::ImageURL(value)),
+                Err(err) => Err(de::Error::custom(format!(
+                    "Invalid URL: {} {}",
+                    value,
+                    err.to_string()
+                ))),
+            }
+        } else if ty == "image" && key == "base64" {
+            Ok(Part::ImageBase64(value))
+        } else {
+            Err(de::Error::custom("Invalid type"))
+        }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum RoleType {
+pub enum Role {
     System,
     User,
     Assistant,
@@ -93,9 +146,42 @@ pub enum RoleType {
 
 #[derive(Clone, Debug)]
 pub struct Message {
-    role: RoleType,
-    key: String,
-    value: Vec<MessageContent>,
+    role: Role,
+    content: Vec<Part>,
+    reasoning: Vec<Part>,
+    tool_calls: Vec<Part>,
+}
+
+impl Message {
+    pub fn new(role: Role) -> Message {
+        Message {
+            role,
+            content: Vec::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+        }
+    }
+
+    pub fn with_content(role: Role, content: Part) -> Message {
+        Message {
+            role,
+            content: vec![content],
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+        }
+    }
+
+    pub fn push_content(&mut self, content: Part) -> () {
+        self.content.push(content);
+    }
+
+    pub fn push_reasoning(&mut self, reasoning: Part) -> () {
+        self.reasoning.push(reasoning);
+    }
+
+    pub fn push_tool_calls(&mut self, tool_calls: Part) -> () {
+        self.tool_calls.push(tool_calls);
+    }
 }
 
 impl Serialize for Message {
@@ -105,7 +191,15 @@ impl Serialize for Message {
     {
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("role", &self.role)?;
-        map.serialize_entry(&self.key, &self.value)?;
+        if !self.reasoning.is_empty() {
+            map.serialize_entry("reasoning", &self.reasoning)?;
+        }
+        if !self.content.is_empty() {
+            map.serialize_entry("content", &self.content)?;
+        }
+        if !self.tool_calls.is_empty() {
+            map.serialize_entry("tool_calls", &self.tool_calls)?;
+        }
         map.end()
     }
 }
@@ -132,9 +226,10 @@ impl<'de> Visitor<'de> for MessageVisitor {
     where
         M: MapAccess<'de>,
     {
-        let mut role: Option<RoleType> = None;
-        let mut key: Option<String> = None;
-        let mut value: Option<Vec<MessageContent>> = None;
+        let mut role: Option<Role> = None;
+        let mut content: Vec<Part> = Vec::new();
+        let mut reasoning: Vec<Part> = Vec::new();
+        let mut tool_calls: Vec<Part> = Vec::new();
 
         while let Some(k) = map.next_key::<String>()? {
             if k == "role" {
@@ -142,19 +237,26 @@ impl<'de> Visitor<'de> for MessageVisitor {
                     return Err(de::Error::duplicate_field("role"));
                 }
                 role = Some(map.next_value()?);
+            } else if k == "content" {
+                content = map.next_value()?;
+            } else if k == "reasoning" {
+                reasoning = map.next_value()?;
+            } else if k == "tool_calls" {
+                tool_calls = map.next_value()?;
             } else {
-                if key.is_some() {
-                    return Err(de::Error::custom("multiple content fields found"));
-                }
-                key = Some(k);
-                value = Some(map.next_value()?);
+                return Err(de::Error::unknown_field(
+                    &k,
+                    &["content", "reasoning", "tool_calls"],
+                ));
             }
         }
-
         let role = role.ok_or_else(|| de::Error::missing_field("role"))?;
-        let key = key.ok_or_else(|| de::Error::custom("missing content field"))?;
-        let value = value.ok_or_else(|| de::Error::custom("missing content value"))?;
 
-        Ok(Message { role, key, value })
+        Ok(Message {
+            role,
+            content,
+            reasoning,
+            tool_calls,
+        })
     }
 }

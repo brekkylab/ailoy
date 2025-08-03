@@ -1,0 +1,15 @@
+{
+    "version": "1",
+    "files": {
+        "chat_template.j2": {
+            "*": {
+                "sha1": "d2c2fe19b88050110439b5584aff25a086e8b265"
+            }
+        },
+        "tokenizer.json": {
+            "*": {
+                "sha1": "a1de58e2833d77bb504a8e430b1b25d359912a98"
+            }
+        }
+    }
+}
