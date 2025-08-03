@@ -141,16 +141,12 @@ result_t request(const request_t &req) {
 
   // Set headers
   std::vector<const char *> headers;
-  std::vector<std::string> header_strings;
-
   for (const auto &[key, value] : req.headers) {
-    header_strings.push_back(key + ": " + value);
-  }
-
-  for (const auto &header : header_strings) {
-    headers.push_back(header.c_str());
+    headers.push_back(key.c_str());
+    headers.push_back(value.c_str());
   }
   headers.push_back(nullptr); // Null terminate
+  attr.requestHeaders = headers.data();
 
   // Set body for non-GET requests
   if (req.body.has_value() && req.method != method_t::GET) {

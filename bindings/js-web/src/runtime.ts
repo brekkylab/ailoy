@@ -59,7 +59,7 @@ class Runtime {
   }
 
   async start() {
-    if (this.module !== undefined) return;
+    if (this.isAlive()) return;
 
     // initialize Emscripten module
     this.module = await AiloyModule();
@@ -79,7 +79,7 @@ class Runtime {
   }
 
   async stop() {
-    if (this.module === undefined) return;
+    if (!this.isAlive()) return;
 
     // disconnect from broker
     const txid = this.#_sendType1("disconnect");
@@ -93,8 +93,16 @@ class Runtime {
     });
   }
 
+  isAlive() {
+    return this.module !== undefined && this.brokerClient !== undefined;
+  }
+
+  generateUUID() {
+    return this.module!.generate_uuid();
+  }
+
   #_sendType1(ptype: "connect" | "disconnect") {
-    const txid = this.module!.generate_uuid();
+    const txid = this.generateUUID();
     let retryCount = 0;
     while (retryCount < 3) {
       if (this.brokerClient!.send_type1(txid, ptype)) {
@@ -121,7 +129,7 @@ class Runtime {
   }
 
   callIter(funcName: string, inputs: any = null): AsyncIterableIterator<any> {
-    const txid = this.module!.generate_uuid();
+    const txid = this.generateUUID();
     const sendResult = this.brokerClient!.send_type2(
       txid,
       "execute",
@@ -139,7 +147,7 @@ class Runtime {
     componentName: string,
     inputs: any = {}
   ): Promise<boolean> {
-    const txid = this.module!.generate_uuid();
+    const txid = this.generateUUID();
     const sendResult = this.brokerClient!.send_type2(
       txid,
       "execute",
@@ -151,7 +159,7 @@ class Runtime {
   }
 
   delete(componentName: string): Promise<boolean> {
-    const txid = this.module!.generate_uuid();
+    const txid = this.generateUUID();
     const sendResult = this.brokerClient!.send_type2(
       txid,
       "execute",
@@ -190,7 +198,7 @@ class Runtime {
     methodName: string,
     inputs: any = null
   ): AsyncIterableIterator<any> {
-    const txid = this.module!.generate_uuid();
+    const txid = this.generateUUID();
     const sendResult = this.brokerClient!.send_type2(
       txid,
       "execute",
@@ -360,4 +368,4 @@ class Runtime {
   }
 }
 
-export default Runtime;
+export { Runtime };
