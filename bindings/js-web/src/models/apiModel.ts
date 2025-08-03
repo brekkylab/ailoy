@@ -87,12 +87,10 @@ export class _APIModel {
   }
 
   toAttrs() {
-    const attrs = {
+    return {
       model: this.id,
       api_key: this.apiKey,
     };
-    console.log("toAttrs: ", attrs);
-    return attrs;
   }
 }
 

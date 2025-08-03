@@ -1,9 +1,10 @@
 import { search } from "jmespath";
+import { Image } from "wasm-vips";
 
 import { AiloyModel } from "./models";
 import { Runtime } from "./runtime";
 import { MCPClient, MCPClientTransport, MCPClientStartOptions } from "./mcp";
-// import { sharpImageToBase64 } from "./utils/image";
+import { isVipsImage, vipsImageToBase64 } from "./utils/image";
 
 /** Types for internal data structures */
 
@@ -23,11 +24,11 @@ export class ImageContent {
     return new ImageContent("image_url", { url });
   }
 
-  //   static async fromSharp(image: sharp.Sharp) {
-  //     return new ImageContent("image_url", {
-  //       url: await sharpImageToBase64(image),
-  //     });
-  //   }
+  static async fromVips(image: Image) {
+    return new ImageContent("image_url", {
+      url: vipsImageToBase64(image),
+    });
+  }
 }
 
 export class AudioContent {
@@ -550,7 +551,9 @@ export class Agent {
 
   async *query(
     /** The user message to send to the model */
-    message: string | Array<string | TextContent | ImageContent | AudioContent>,
+    message:
+      | string
+      | Array<string | Image | TextContent | ImageContent | AudioContent>,
     options?: {
       /** If True, enables reasoning capabilities (default: False) */
       reasoning?: boolean;
@@ -575,13 +578,9 @@ export class Agent {
       for (const content of message) {
         if (typeof content === "string") {
           contents.push({ type: "text", text: content });
-        }
-        // else if (
-        //   ((obj: any): obj is sharp.Sharp => obj instanceof sharp)(content)
-        // ) {
-        //   contents.push(await ImageContent.fromSharp(content));
-        // }
-        else {
+        } else if (isVipsImage(content)) {
+          contents.push(await ImageContent.fromVips(content));
+        } else {
           contents.push(content);
         }
       }

@@ -36,6 +36,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.1",
-    "jmespath": "^0.16.0"
+    "jmespath": "^0.16.0",
+    "wasm-vips": "^0.0.14"
   }
 }

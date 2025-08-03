@@ -27,8 +27,19 @@ module.exports = [
       json(),
       copy({
         targets: [
+          // ailoy wasm
           {
             src: ["src/ailoy_js_web.js", "src/ailoy_js_web.wasm"],
+            dest: "dist",
+          },
+          // vips wasm
+          {
+            src: [
+              "node_modules/wasm-vips/lib/vips-es6.js",
+              "node_modules/wasm-vips/lib/vips.wasm",
+              "node_modules/wasm-vips/lib/vips-jxl.wasm",
+              "node_modules/wasm-vips/lib/vips-heif.wasm",
+            ],
             dest: "dist",
           },
         ],
@@ -55,6 +66,18 @@ module.exports = [
           })
         : undefined,
     ],
+    onwarn(warning, warn) {
+      // Suppress eval-related warnings from wasm-vips
+      if (
+        warning.code === "EVAL" &&
+        /node_modules\/wasm-vips/.test(warning.loc.file)
+      ) {
+        return;
+      }
+
+      // Log other warnings using the default handler
+      warn(warning);
+    },
   },
   // index.d.ts
   {
