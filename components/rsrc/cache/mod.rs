@@ -1,4 +1,5 @@
 mod cache;
+mod compat;
 mod fs;
 mod manifest;
 

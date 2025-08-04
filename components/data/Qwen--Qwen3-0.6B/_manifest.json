@@ -3,11 +3,13 @@
     "files": {
         "chat_template.j2": {
             "*": {
+                "size": 4193,
                 "sha1": "d2c2fe19b88050110439b5584aff25a086e8b265"
             }
         },
         "tokenizer.json": {
             "*": {
+                "size": 11422654,
                 "sha1": "a1de58e2833d77bb504a8e430b1b25d359912a98"
             }
         }

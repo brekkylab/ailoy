@@ -6,12 +6,13 @@ use sha1::{Digest, Sha1};
 
 #[derive(Clone, Debug)]
 pub struct Manifest {
+    size: u64,
     sha1: String,
 }
 
 impl Manifest {
-    pub fn new(sha1: String) -> Self {
-        Manifest { sha1 }
+    pub fn new(size: u64, sha1: String) -> Self {
+        Manifest { size, sha1 }
     }
 
     pub fn from_bytes(bytes: Bytes) -> Self {
@@ -19,7 +20,7 @@ impl Manifest {
         hasher.update(&bytes);
         let hash = hasher.finalize();
         let hash_hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
-        Manifest::new(hash_hex)
+        Manifest::new(bytes.len() as u64, hash_hex)
     }
 
     pub fn sha1(&self) -> &str {
@@ -40,6 +41,7 @@ impl<'de> de::Visitor<'de> for ManifestVisitor {
     where
         M: de::MapAccess<'de>,
     {
+        let mut size: Option<u64> = None;
         let mut sha1: Option<String> = None;
         while let Some(key) = map.next_key::<String>()? {
             if key == "*" {
@@ -49,14 +51,17 @@ impl<'de> de::Visitor<'de> for ManifestVisitor {
                 // 1. Definition of the key scheme (version specifier)
                 // 2. Implementing filtering logic to compare it against the current library version (ailoy) for compatibility.
                 return Ok(map.next_value()?);
+            } else if key == "size" {
+                size = Some(map.next_value()?);
             } else if key == "sha1" {
                 sha1 = Some(map.next_value()?);
             } else {
                 return Err(de::Error::unknown_field(&key, &["sha1"]));
             }
         }
+        let size = size.ok_or_else(|| de::Error::missing_field("sha1"))?;
         let sha1 = sha1.ok_or_else(|| de::Error::missing_field("sha1"))?;
-        Ok(Manifest { sha1 })
+        Ok(Manifest { size, sha1 })
     }
 }
 

@@ -135,5 +135,6 @@
         "source_location": "cpp"
     },
     "rust-analyzer.cargo.buildScripts.enable": true,
+    // "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
     "rust-analyzer.procMacro.enable": true
 }

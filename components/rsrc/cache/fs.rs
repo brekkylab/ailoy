@@ -19,6 +19,10 @@ fn get_default_cache_root() -> PathBuf {
             {
                 PathBuf::from(var("LOCALAPPDATA").unwrap()).join("ailoy")
             }
+            #[cfg(target_arch = "wasm32")]
+            {
+                PathBuf::from("/").join("ailoy")
+            }
         }
     }
 }
@@ -37,10 +41,6 @@ impl FSCache {
 
     pub fn from_root<T: Into<std::path::PathBuf>>(root: T) -> FSCache {
         FSCache { root: root.into() }
-    }
-
-    pub fn exists(&self, dir: &str, name: &str) -> bool {
-        self.root.join(dir).join(name).exists()
     }
 
     pub fn get(
@@ -99,16 +99,16 @@ impl FSCache {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[cfg(test)]
 mod tests {
     use futures::StreamExt;
     use sha1::Digest;
 
     use super::*;
-
     #[tokio::test]
     async fn test1() {
-        let mut cache =
+        let cache =
             FSCache::from_root("/Users/ijaehwan/Workspace/ailoy/components/data".to_owned());
         let mut buf = bytes::BytesMut::new();
         let mut strm = cache.get("Qwen--Qwen3-0.6B", "tokenizer.json");

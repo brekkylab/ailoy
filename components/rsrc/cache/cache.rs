@@ -1,11 +1,13 @@
 use std::{collections::HashMap, env::var, sync::Arc};
 
 use bytes::{Bytes, BytesMut};
-use futures::StreamExt;
-use tokio::sync::RwLock;
+use futures::stream::StreamExt;
 use url::Url;
 
-use crate::cache::manifest::{Manifest, ManifestDirectory};
+use crate::cache::{
+    compat::RwLock,
+    manifest::{Manifest, ManifestDirectory},
+};
 
 fn get_remote_cache_url() -> Url {
     if let Ok(env_value) = var("AILOY_REMOTE_CACHE_URL") {
@@ -24,9 +26,7 @@ fn build_url(url: Url, dir: &str, name: &str) -> Result<Url, String> {
         .map_err(|_| format!("Invalid URL: {} path: {}", url, path))
 }
 
-fn download(
-    url: Url,
-) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, String>> + Send>> {
+fn download(url: Url) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, String>>>> {
     let req = reqwest::get(url);
 
     Box::pin(async_stream::try_stream! {
@@ -60,7 +60,7 @@ impl Cache {
         &self,
         dir: &str,
         name: &str,
-    ) -> std::pin::Pin<Box<dyn futures::Future<Output = Result<Manifest, String>> + Send>> {
+    ) -> std::pin::Pin<Box<dyn futures::Future<Output = Result<Manifest, String>>>> {
         let fs_cache = self.fs_cache.clone();
         let dir = dir.to_owned();
         let name = name.to_owned();
@@ -94,7 +94,7 @@ impl Cache {
         &self,
         dir: &str,
         name: &str,
-    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, String>> + Send>> {
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, String>>>> {
         let fs_cache = self.fs_cache.clone();
         let local = match self.fs_cache.get_sync(dir, name) {
             Ok(v) => Some(v),
@@ -134,27 +134,41 @@ impl Cache {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt;
-
     use super::*;
+    use bytes::BytesMut;
+    use futures::StreamExt;
+    use indicatif::{ProgressBar, ProgressStyle};
 
     #[tokio::test]
     async fn test1() {
         let cache = Cache::new();
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         let mut strm = cache.get("Qwen--Qwen3-0.6B", "tokenizer.json");
+
+        let total_size = 11422654;
+        let pb = ProgressBar::new(total_size);
+        pb.set_style(
+            ProgressStyle::with_template("{bar:40.cyan/blue} {bytes}/{total_bytes} ({eta})")
+                .unwrap()
+                .progress_chars("##-"),
+        );
 
         while let Some(chunk) = strm.next().await {
             match chunk {
                 Ok(chunk) => {
+                    pb.inc(chunk.len() as u64);
                     buf.extend_from_slice(&chunk);
                 }
                 Err(e) => {
+                    pb.abandon_with_message("Download failed");
                     panic!("{:?}", e);
                 }
             }
         }
+
+        pb.finish_with_message("Download complete");
     }
 }
