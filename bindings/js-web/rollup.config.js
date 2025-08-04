@@ -1,16 +1,15 @@
 import { nodeResolve } from "@rollup/plugin-node-resolve";
 import commonjs from "@rollup/plugin-commonjs";
-import typescript from "@rollup/plugin-typescript";
 import ignore from "rollup-plugin-ignore";
 import copy from "rollup-plugin-copy";
 import serve from "rollup-plugin-serve";
 import json from "@rollup/plugin-json";
 import { dts } from "rollup-plugin-dts";
-import terser from "@rollup/plugin-terser";
+import esbuild from "rollup-plugin-esbuild";
 
-const enableDevServer = Boolean(process.env.AILOY_WEB_DEV_SERVER);
+const enableDevServer = process.env.NODE_ENV === "development";
 
-module.exports = [
+export default [
   {
     input: "src/index.ts",
     output: {
@@ -22,9 +21,18 @@ module.exports = [
       nodeResolve({
         browser: true,
       }),
-      typescript(),
       commonjs(),
       json(),
+      esbuild({
+        include: /\.[jt]s$/,
+        exclude: /node_modules/,
+        sourceMap: true,
+        minify: process.env.NODE_ENV === "production",
+        target: "esnext",
+        loaders: {
+          ".json": "json",
+        },
+      }),
       copy({
         targets: [
           // ailoy wasm
@@ -42,9 +50,13 @@ module.exports = [
             ],
             dest: "dist",
           },
+          // preset tools
+          {
+            src: ["src/presets/*"],
+            dest: "dist/presets",
+          },
         ],
       }),
-      terser(),
       enableDevServer
         ? copy({
             targets: [

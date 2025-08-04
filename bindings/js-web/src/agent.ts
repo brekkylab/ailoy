@@ -24,7 +24,7 @@ export class ImageContent {
     return new ImageContent("image_url", { url });
   }
 
-  static async fromVips(image: Image) {
+  static fromVips(image: Image) {
     return new ImageContent("image_url", {
       url: vipsImageToBase64(image),
     });
@@ -446,8 +446,13 @@ export class Agent {
       // Call
       let output: any;
       const resp = await this.runtime.call("http_request", request);
-      // @jhlee: How to parse it?
-      output = JSON.parse(resp.body);
+      output = resp.body;
+
+      // parse as JSON if "accept" header is "application/json"
+      if (tool.behavior.headers.accept === "application/json") {
+        const decoder = new TextDecoder();
+        output = JSON.parse(decoder.decode(output));
+      }
 
       // Parse output path
       if (outputPath) output = search(output, outputPath);
@@ -459,18 +464,23 @@ export class Agent {
   }
 
   /** Loads tools from a predefined JSON preset file */
-  addToolsFromPreset(
+  async addToolsFromPreset(
     /** Name of the tool preset */
     presetName: string,
     args?: {
       /** Optional authenticator to inject into the request */
       authenticator?: ToolAuthenticator;
     }
-  ): boolean {
-    const presetJson = require(`./presets/tools/${presetName}.json`);
-    if (presetJson === undefined) {
+  ): Promise<boolean> {
+    const presetJsonUrl = new URL(
+      `./presets/tools/${presetName}.json`,
+      import.meta.url
+    );
+    const presetJsonResp = await fetch(presetJsonUrl);
+    if (!presetJsonResp.ok) {
       throw Error(`Preset "${presetName}" does not exist`);
     }
+    const presetJson = await presetJsonResp.json();
 
     for (const tool of Object.values(
       presetJson as Record<string, ToolDefinition>
@@ -579,7 +589,7 @@ export class Agent {
         if (typeof content === "string") {
           contents.push({ type: "text", text: content });
         } else if (isVipsImage(content)) {
-          contents.push(await ImageContent.fromVips(content));
+          contents.push(ImageContent.fromVips(content));
         } else {
           contents.push(content);
         }
