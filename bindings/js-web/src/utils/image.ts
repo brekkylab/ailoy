@@ -1,5 +1,7 @@
 import { Image } from "wasm-vips";
 
+import { uint8ArrayToBase64 } from "./base64";
+
 export function isVipsImage(obj: any): obj is Image {
   return (
     obj != null &&
@@ -17,7 +19,7 @@ export function isVipsImage(obj: any): obj is Image {
 export function vipsImageToBase64(image: Image) {
   try {
     const pngBuffer = image.writeToBuffer(".png");
-    const base64String = btoa(String.fromCharCode(...pngBuffer));
+    const base64String = uint8ArrayToBase64(pngBuffer);
     return `data:image/png;base64,${base64String}`;
   } catch (err) {
     throw new Error(

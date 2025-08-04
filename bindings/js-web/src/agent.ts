@@ -5,6 +5,7 @@ import { AiloyModel } from "./models";
 import { Runtime } from "./runtime";
 import { MCPClient, MCPClientTransport, MCPClientStartOptions } from "./mcp";
 import { isVipsImage, vipsImageToBase64 } from "./utils/image";
+import { uint8ArrayToBase64 } from "./utils/base64";
 
 /** Types for internal data structures */
 
@@ -40,9 +41,12 @@ export class AudioContent {
     }
   ) {}
 
-  static async fromBytes(data: Buffer, format: "mp3" | "wav") {
+  static async fromBytes(
+    data: Uint8Array<ArrayBufferLike>,
+    format: "mp3" | "wav"
+  ) {
     return new AudioContent("input_audio", {
-      data: data.toString("base64"),
+      data: uint8ArrayToBase64(data),
       format,
     });
   }
