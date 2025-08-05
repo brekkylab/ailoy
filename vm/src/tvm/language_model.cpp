@@ -174,7 +174,7 @@ tvm_language_model_t::tvm_language_model_t(const std::string &model,
                                            const std::string &quantization,
                                            DLDevice device) {
   model_ = create<tvm_model_t>(model, quantization, device);
-  template_engine_ = chat_manager_t::make_from_config_file(
+  chat_manager_ = chat_manager_t::make_from_config_file(
       model_->get_model_path() / "chat-template-config.json");
   tokenizer_ = create<tokenizer_t>(model_->get_model_path() / "tokenizer.json");
   kv_cache_ = create<kv_cache_t>(model_);
@@ -200,8 +200,8 @@ tvm_language_model_t::tvm_language_model_t(const std::string &model,
   stream_modes_.insert_or_assign("reasoning",
                                  stream_mode_t(this, "<think>", "</think>"));
   stream_modes_.insert_or_assign(
-      "tool_call", stream_mode_t(this, template_engine_->get_botc_token(),
-                                 template_engine_->get_eotc_token()));
+      "tool_call", stream_mode_t(this, chat_manager_->get_botc_token(),
+                                 chat_manager_->get_eotc_token()));
 
   // Packed functions
   fembed_ = model_->get_vm_function("embed");
@@ -232,8 +232,8 @@ std::string tvm_language_model_t::apply_chat_template(
     std::shared_ptr<const value_t> conversation,
     std::shared_ptr<const value_t> tools, bool reasoning,
     bool add_generation_prompt) const {
-  return template_engine_->apply_chat_template(conversation, tools, reasoning,
-                                               add_generation_prompt);
+  return chat_manager_->apply_chat_template(conversation, tools, reasoning,
+                                            add_generation_prompt);
 }
 
 bool tvm_language_model_t::is_bor(const std::string &tok) const {
@@ -253,7 +253,7 @@ bool tvm_language_model_t::is_eor(int32_t tok) const {
 }
 
 bool tvm_language_model_t::is_bos(const std::string &tok) const {
-  return template_engine_->is_bos_token(tok);
+  return chat_manager_->is_bos_token(tok);
 }
 
 bool tvm_language_model_t::is_bos(int32_t tok) const {
@@ -261,7 +261,7 @@ bool tvm_language_model_t::is_bos(int32_t tok) const {
 }
 
 bool tvm_language_model_t::is_eos(const std::string &tok) const {
-  return template_engine_->is_eos_token(tok);
+  return chat_manager_->is_eos_token(tok);
 }
 
 bool tvm_language_model_t::is_eos(int32_t tok) const {
@@ -269,7 +269,7 @@ bool tvm_language_model_t::is_eos(int32_t tok) const {
 }
 
 bool tvm_language_model_t::is_botc(const std::string &tok) const {
-  return template_engine_->is_botc_token(tok);
+  return chat_manager_->is_botc_token(tok);
 }
 
 bool tvm_language_model_t::is_botc(int32_t tok) const {
@@ -277,7 +277,7 @@ bool tvm_language_model_t::is_botc(int32_t tok) const {
 }
 
 bool tvm_language_model_t::is_eotc(const std::string &tok) const {
-  return template_engine_->is_eotc_token(tok);
+  return chat_manager_->is_eotc_token(tok);
 }
 
 bool tvm_language_model_t::is_eotc(int32_t tok) const {

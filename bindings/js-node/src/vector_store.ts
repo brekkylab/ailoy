@@ -109,7 +109,7 @@ export class VectorStore {
       this.componentState.vecstoreName,
       vectorStoreAttrs
     );
-    if (!result2) throw Error("Embedding model define failed");
+    if (!result2) throw Error("FAISS vector store define failed");
 
     this.componentState.valid = true;
   }
