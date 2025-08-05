@@ -134,6 +134,38 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn prepare_files() {
+        let src_dir = PathBuf::from_str("/Users/ijaehwan/.cache/ailoy/Qwen--Qwen3-0.6B").unwrap();
+        let dst_dir =
+            PathBuf::from_str("/Users/ijaehwan/Workspace/ailoy/out/Qwen--Qwen3-0.6B").unwrap();
+        if dst_dir.exists() {
+            std::fs::remove_dir_all(&dst_dir).unwrap();
+        }
+        std::fs::create_dir(&dst_dir).unwrap();
+        let mut manifests = ManifestDirectory::new();
+
+        for entry in std::fs::read_dir(src_dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+
+            if path.is_file() {
+                if path.file_name().unwrap() == "_manifest.json" {
+                    continue;
+                }
+                let content = std::fs::read(&path).unwrap();
+                let manifest = Manifest::from_u8(&content);
+                std::fs::write(dst_dir.join(manifest.sha1()), content).unwrap();
+                manifests.insert_file(
+                    path.file_name().unwrap().to_str().unwrap().to_owned(),
+                    manifest,
+                );
+            }
+        }
+        let contents = serde_json::to_string(&manifests).unwrap();
+        std::fs::write(dst_dir.join("_manifest.json"), contents).unwrap();
+    }
+
+    #[tokio::test]
     async fn test1() {
         let cache = Cache::new();
         let bytes = cache

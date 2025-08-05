@@ -1,7 +1,6 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
-use bytes::Bytes;
-use serde::{Deserialize, de};
+use serde::{Deserialize, Serialize, Serializer, de, ser::SerializeMap as _};
 use sha1::{Digest, Sha1};
 
 #[derive(Clone, Debug)]
@@ -26,6 +25,40 @@ impl Manifest {
 
     pub fn sha1(&self) -> &str {
         &self.sha1
+    }
+}
+
+impl Serialize for Manifest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        struct Inner<'a> {
+            size: u64,
+            sha1: &'a str,
+        }
+
+        impl<'a> Serialize for Inner<'a> {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("size", &self.size)?;
+                map.serialize_entry("sha1", &self.sha1)?;
+                map.end()
+            }
+        }
+
+        let mut outer = serializer.serialize_map(Some(1))?;
+        outer.serialize_entry(
+            "*",
+            &Inner {
+                size: self.size,
+                sha1: &self.sha1,
+            },
+        )?;
+        outer.end()
     }
 }
 
@@ -79,8 +112,21 @@ impl<'de> de::Deserialize<'de> for Manifest {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
-pub(super) struct ManifestDirectory {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManifestDirectory {
     pub version: String,
-    pub files: HashMap<String, Manifest>,
+    pub files: BTreeMap<String, Manifest>,
+}
+
+impl ManifestDirectory {
+    pub fn new() -> Self {
+        ManifestDirectory {
+            version: "1".to_owned(),
+            files: BTreeMap::new(),
+        }
+    }
+
+    pub fn insert_file(&mut self, filename: String, manifest: Manifest) {
+        self.files.insert(filename, manifest);
+    }
 }

@@ -1,7 +1,9 @@
+use std::{path::PathBuf, pin::Pin};
+
 use minijinja::{Environment, context};
 
 use crate::{
-    cache::{Cache, FromCache},
+    cache::{Cache, TryFromCache},
     message::Message,
 };
 
@@ -16,12 +18,6 @@ impl<'a> ChatTemplate<'a> {
         let _ = env.add_template_owned("_default", source.to_owned());
         Self { env }
     }
-
-    // pub async fn try_from_cache(cache: Cache) -> Result<Self, String> {
-    //     let src = std::str::from_utf8(cache.get(dir, name).await?)
-    //         .map_err(|e| format!("`std::str::from_utf8 failed`: {}", e.to_string()))?;
-    //     Ok(Self::new(src.to_owned()))
-    // }
 
     pub fn get(&self) -> String {
         self.env
@@ -53,18 +49,19 @@ impl<'a> ChatTemplate<'a> {
     }
 }
 
-impl<'a> FromCache for ChatTemplate<'a> {
-    fn from_cache(
-        cache: Cache,
+impl<'a> TryFromCache for ChatTemplate<'a> {
+    fn claim_files(
+        _: Cache,
         key: impl AsRef<str>,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Self, String>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, String>>>> {
         let dir = key.as_ref().replace("/", "--");
-        Box::pin(async move {
-            let v = cache.get(dir, "chat_template.j2").await?;
-            let v = std::str::from_utf8(&v)
-                .map_err(|_| format!("chat_template.j2 is not valid utf-8 string"))?;
-            Ok(ChatTemplate::new(v))
-        })
+        Box::pin(async move { Ok(vec![PathBuf::from(dir).join("chat_template.j2".to_owned())]) })
+    }
+
+    fn try_from_files(files: Vec<(PathBuf, Vec<u8>)>) -> Result<Self, String> {
+        let v = files.get(0).unwrap();
+        let v = std::str::from_utf8(&v.1).map_err(|_| "Utf-8 conversion failed".to_owned())?;
+        Ok(ChatTemplate::new(v))
     }
 }
 
@@ -105,15 +102,5 @@ Who made you?<|im_end|>
 "#;
         let result = ct.apply_with_vec(&msgs, true);
         assert_eq!(expected, result);
-    }
-
-    #[tokio::test]
-    async fn test_cache() {
-        let cache = crate::cache::Cache::new();
-        let ct = ChatTemplate::from_cache(cache, "Qwen/Qwen3-0.6B")
-            .await
-            .unwrap();
-        println!("{}", ct.get());
-        // let ct = ChatTemplate::(QWEN3_CHAT_TEMPLATE.to_owned());
     }
 }

@@ -1,8 +1,8 @@
-use std::str::FromStr;
+use std::{path::PathBuf, pin::Pin, str::FromStr};
 
 use tokenizers::tokenizer::Tokenizer as HFTokenizer;
 
-use crate::cache::{Cache, FromCache};
+use crate::cache::{Cache, TryFromCache};
 
 #[derive(Debug)]
 pub struct Tokenizer {
@@ -26,18 +26,19 @@ impl Tokenizer {
     }
 }
 
-impl FromCache for Tokenizer {
-    fn from_cache(
-        cache: Cache,
+impl TryFromCache for Tokenizer {
+    fn claim_files(
+        _: Cache,
         key: impl AsRef<str>,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Self, String>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, String>>>> {
         let dir = key.as_ref().replace("/", "--");
-        Box::pin(async move {
-            let v = cache.get(dir, "tokenizer.json").await?;
-            let v = std::str::from_utf8(&v)
-                .map_err(|_| format!("tokenizer.json is not valid utf-8 string"))?;
-            Ok(Tokenizer::new(v))
-        })
+        Box::pin(async move { Ok(vec![PathBuf::from(dir).join("chat_template.j2".to_owned())]) })
+    }
+
+    fn try_from_files(files: Vec<(PathBuf, Vec<u8>)>) -> Result<Self, String> {
+        let v = files.get(0).unwrap();
+        let v = std::str::from_utf8(&v.1).map_err(|_| "Utf-8 conversion failed".to_owned())?;
+        Ok(Tokenizer::new(v))
     }
 }
 
