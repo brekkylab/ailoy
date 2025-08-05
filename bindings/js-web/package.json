@@ -14,27 +14,17 @@
   "scripts": {
     "build:configure": "cd ../.. && cmake --preset emscripten-release",
     "build:wasm": "cd ../.. && cmake --build ./build/emscripten-release -t ailoy_js_web --parallel 10",
-    "build:ts": "NODE_ENV=production rollup -c",
-    "dev": "NODE_ENV=development rollup -c --watch",
+    "build:ts": "NODE_ENV=production vite build",
+    "dev": "NODE_ENV=development vite dev",
     "test": "vitest"
   },
   "devDependencies": {
-    "@rollup/plugin-commonjs": "^28.0.6",
-    "@rollup/plugin-json": "^6.1.0",
-    "@rollup/plugin-node-resolve": "^16.0.1",
     "@types/jmespath": "^0.15.2",
-    "@types/node": "^24.1.0",
     "@vitest/browser": "^3.2.4",
     "playwright": "^1.54.2",
-    "rollup": "^4.46.2",
-    "rollup-plugin-copy": "^3.5.0",
-    "rollup-plugin-dts": "^6.2.1",
-    "rollup-plugin-esbuild": "^6.2.1",
-    "rollup-plugin-ignore": "^1.0.10",
-    "rollup-plugin-serve": "^3.0.0",
     "tslib": "^2.8.1",
     "typescript": "^5.8.3",
-    "vite-plugin-static-copy": "^3.1.1"
+    "vite-plugin-dts": "^4.5.4"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.1",

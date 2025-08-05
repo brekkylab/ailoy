@@ -22,6 +22,10 @@ interface Packet {
   body: Record<string, any>;
 }
 
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 class Runtime {
   private module: MainModule | undefined;
   private brokerClient: BrokerClient | undefined;
@@ -65,13 +69,13 @@ class Runtime {
     this.module = await AiloyModule();
 
     // start broker and vm threads
-    this.module.start_threads();
+    await this.module.start_threads();
 
     // initialize broker client
     this.brokerClient = new this.module.BrokerClient("inproc://");
 
     // connect to broker
-    const txid = this.#_sendType1("connect");
+    const txid = await this.#_sendType1("connect");
     return new Promise<void>(async (resolve, reject) => {
       this.#_registerResolver(txid, resolve, reject);
       while (this.resolvers.has(txid)) await this.#_listen();
@@ -82,7 +86,7 @@ class Runtime {
     if (!this.isAlive()) return;
 
     // disconnect from broker
-    const txid = this.#_sendType1("disconnect");
+    const txid = await this.#_sendType1("disconnect");
     return new Promise<void>(async (resolve, reject) => {
       this.#_registerResolver(txid, resolve, reject);
       while (this.resolvers.has(txid)) await this.#_listen();
@@ -101,7 +105,7 @@ class Runtime {
     return this.module!.generate_uuid();
   }
 
-  #_sendType1(ptype: "connect" | "disconnect") {
+  async #_sendType1(ptype: "connect" | "disconnect") {
     const txid = this.generateUUID();
     let retryCount = 0;
     while (retryCount < 3) {
@@ -109,8 +113,9 @@ class Runtime {
         return txid;
       }
       retryCount += 1;
+      await sleep(100);
     }
-    throw Error(`Failed to send package "${ptype}`);
+    throw Error(`Failed to send package "${ptype}"`);
   }
 
   async call(funcName: string, inputs: any = null): Promise<any> {

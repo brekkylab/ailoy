@@ -18,8 +18,10 @@
         window.runtime = rt;
 
         const agent = await Ailoy.defineAgent(rt, Ailoy.APIModel({id: "gpt-4o", apiKey: "<OPENAI_API_KEY>"}));
-        agent.addToolsFromMcpClient("test", new Ailoy.MCPStreamableHTTPClientTransport("http://localhost:8123/mcp"));
+        await agent.addToolsFromMcpClient("test", new Ailoy.MCPStreamableHTTPClientTransport("http://localhost:8123/mcp"));
         window.agent = agent;
+
+        console.log(agent.getTools());
 
         // await rt.define("chat_manager", "cm0", {model: "Qwen/Qwen3-0.6B"});
         // await rt.define("tokenizer", "t0", {model: "Qwen/Qwen3-0.6B"});

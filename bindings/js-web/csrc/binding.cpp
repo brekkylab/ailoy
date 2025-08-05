@@ -37,7 +37,11 @@ void start_threads() {
         ailoy::get_debug_module()};
     std::thread vm_thread = std::thread{[&]() { ailoy::vm_start(url, mods); }};
     vm_threads.insert_or_assign(url, std::move(vm_thread));
-    std::this_thread::sleep_for(100ms);
+  }
+
+  // Wait until VM is ready
+  while (!ailoy::vm_ready.load()) {
+    emscripten_sleep(1);
   }
 }
 

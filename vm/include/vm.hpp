@@ -24,6 +24,7 @@
  */
 #pragma once
 
+#include <atomic>
 #include <span>
 #include <string>
 
@@ -47,5 +48,7 @@ void vm_start(const std::string &url,
  * @param name name of VM
  */
 void vm_stop(const std::string &url, const std::string &name = "default_vm");
+
+std::atomic_bool vm_ready{false};
 
 } // namespace ailoy

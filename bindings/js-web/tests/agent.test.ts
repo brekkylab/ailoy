@@ -1,9 +1,9 @@
 import { test, expect, expectTypeOf } from "vitest";
+import Vips from "wasm-vips";
 
 import { defineAgent, AudioContent } from "../src/agent";
 import { Runtime } from "../src/runtime";
 import { APIModel } from "../src/models";
-import { Vips } from "../src/index";
 
 test.sequential("OpenAI Agent - Hello World", async ({ skip }) => {
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -23,7 +23,7 @@ test.sequential("OpenAI Agent - Hello World", async ({ skip }) => {
   const resp = await iter.next();
   /**
    * Example response
-   * {
+    {
       "content": "Hi there! How can I assist you today?",
       "isTypeSwitched": true,
       "role": "assistant",
@@ -65,7 +65,7 @@ test.sequential("OpenAI Agent - Tool Calling", async ({ skip }) => {
   const toolCallResp = await iter.next();
   /**
    * Example toolCallResp
-   * {
+    {
       "content": {
         "function": {
           "arguments": {
@@ -101,21 +101,21 @@ test.sequential("OpenAI Agent - Tool Calling", async ({ skip }) => {
   const toolCallResultResp = await iter.next();
   /**
    * Example toolCallResultResp
-   * {
-        "content": {
-          "content": [
-            {
-              "text": "{"KRW":1404.62}",
-              "type": "text",
-            },
-          ],
-          "role": "tool",
-          "tool_call_id": "call_GHiqPOWq2KGMlntor4zkJtb6",
-        },
-        "isTypeSwitched": true,
+    {
+      "content": {
+        "content": [
+          {
+            "text": "{"KRW":1404.62}",
+            "type": "text",
+          },
+        ],
         "role": "tool",
-        "type": "tool_call_result",
-      }
+        "tool_call_id": "call_GHiqPOWq2KGMlntor4zkJtb6",
+      },
+      "isTypeSwitched": true,
+      "role": "tool",
+      "type": "tool_call_result",
+    }
    */
   expect(toolCallResultResp.value).to.have.property("content");
   expect(toolCallResultResp.value).to.have.property("role", "tool");
@@ -168,7 +168,7 @@ test.sequential("OpenAI Agent - Image Inputs", async ({ skip }) => {
   const resp = await iter.next();
   /**
    * Example response
-   * {
+    {
       "content": "The image shows a person wearing glasses and a leather jacket, smiling at the camera.",
       "isTypeSwitched": true,
       "role": "assistant",
@@ -214,9 +214,9 @@ test.sequential("OpenAI Agent - Audio Inputs", async ({ skip }) => {
 
   const iter = agent.query(["What's in these recording?", audioContent]);
   const resp = await iter.next();
-  /** 
+  /**
    * Example response
-   * {
+    {
       "content": "The recording contains a statement about the fact that the sun rises in the east and sets in the west, and mentions that this observation has been made by humans for thousands of years.",
       "isTypeSwitched": true,
       "role": "assistant",

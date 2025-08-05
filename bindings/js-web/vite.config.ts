@@ -1,6 +1,6 @@
 import { loadEnv } from "vite";
 import { defineConfig } from "vitest/config";
-import { viteStaticCopy } from "vite-plugin-static-copy";
+import dts from "vite-plugin-dts";
 
 const SAFARI = process.env.BROWSER === "safari";
 
@@ -8,26 +8,40 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
 
   return {
-    define: {
-      "process.env.OPENAI_API_KEY": JSON.stringify(env.OPENAI_API_KEY),
+    build: {
+      lib: {
+        entry: ["src/index.ts"],
+        formats: ["es"],
+      },
+      minify: true,
+      sourcemap: true,
+      rollupOptions: {
+        onwarn(warning, warn) {
+          // Suppress eval-related warnings from wasm-vips
+          if (
+            warning.code === "EVAL" &&
+            warning.loc !== undefined &&
+            warning.loc.file !== undefined &&
+            /node_modules\/wasm-vips/.test(warning.loc.file)
+          ) {
+            return;
+          }
+
+          // Log other warnings using the default handler
+          warn(warning);
+        },
+      },
     },
     plugins: [
-      viteStaticCopy({
-        targets: [
-          {
-            src: [
-              "node_modules/wasm-vips/lib/vips-es6.js",
-              "node_modules/wasm-vips/lib/vips.wasm",
-              "node_modules/wasm-vips/lib/vips-jxl.wasm",
-              "node_modules/wasm-vips/lib/vips-heif.wasm",
-            ],
-            dest: "./",
-          },
-        ],
+      dts({
+        rollupTypes: true,
       }),
     ],
     optimizeDeps: {
-      exclude: ["wasm-vips"],
+      exclude: ["wasm-vips", "ailoy_js_web"],
+    },
+    define: {
+      "process.env.OPENAI_API_KEY": JSON.stringify(env.OPENAI_API_KEY),
     },
     test: {
       exclude: ["**/node_modules/**"],
@@ -61,7 +75,6 @@ export default defineConfig(({ mode }) => {
         "Cross-Origin-Embedder-Policy": "require-corp",
         "Cross-Origin-Opener-Policy": "same-origin",
       },
-      hmr: false,
     },
   };
 });
