@@ -33,6 +33,9 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    optimizeDeps: {
+      exclude: ["wasm-vips"],
+    },
     plugins: [
       dts({
         rollupTypes: true,
@@ -49,6 +52,9 @@ export default defineConfig(({ mode }) => {
     ],
     define: {
       "process.env.OPENAI_API_KEY": JSON.stringify(env.OPENAI_API_KEY),
+      "process.env.GEMINI_API_KEY": JSON.stringify(env.GEMINI_API_KEY),
+      "process.env.CLAUDE_API_KEY": JSON.stringify(env.CLAUDE_API_KEY),
+      "process.env.XAI_API_KEY": JSON.stringify(env.XAI_API_KEY),
     },
     test: {
       exclude: ["**/node_modules/**"],
@@ -76,6 +82,7 @@ export default defineConfig(({ mode }) => {
       typecheck: {
         enabled: true,
       },
+      testTimeout: 60000,
     },
     server: {
       headers: {

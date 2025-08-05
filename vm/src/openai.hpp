@@ -65,6 +65,8 @@ private:
     return {
         {"x-api-key", api_key_},
         {"anthropic-version", "2023-06-01"},
+        {"anthropic-dangerous-direct-browser-access",
+         "true"}, // necessary for requests from browser
         {"Content-Type", "application/json"},
         {"Cache-Control", "no-cache"},
     };
