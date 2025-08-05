@@ -15,7 +15,124 @@
         await rt.start();
         window.runtime = rt;
 
-        const agent = await Ailoy.defineAgent(rt, Ailoy.APIModel({id: "gpt-4o", apiKey: "<OPENAI_API_KEY>"}));
+        // const agent = await Ailoy.defineAgent(rt, Ailoy.APIModel({id: "gpt-4o", apiKey: "<OPENAI_API_KEY>"}));
+        const agent = await Ailoy.defineAgent(rt, Ailoy.LocalModel({id: "Qwen/Qwen3-0.6B"}));
+        // await agent.addToolsFromMcpClient("test", new Ailoy.MCPStreamableHTTPClientTransport("http://localhost:8123/mcp"));
+        const tokens = await agent.testTokenizer("You may call one or more functions to assist with the user query.");
+        console.log(tokens);
+
+        const messages = [
+                {
+                    role: "system",
+                    content: [{type: "text", text: "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."}],
+                    // content: "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+                },
+                {
+                    role: "user",
+                    content: [{type: "text", text: "How is the current weather in Seoul?"}],
+                    // content: "How is the current weather in Seoul?",
+                },
+                {
+                    role: "assistant",
+                    tool_calls: [
+                        {
+                            function: {
+                                arguments: { location: "Seoul, South Korea", unit: "celsius" },
+                                name: "get_current_temperature",
+                            },
+                            type: "function",
+                        },
+                    ],
+                },
+                {
+                    role: "tool",
+                    content: [{ type: "text", text: "20.5" }],
+                    // content: "20.5",
+                },
+            ]
+
+        const prompt = (await agent.testChatManager(
+            messages,
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the temperature for, in the format \"City, Country\""
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": ["celsius", "fahrenheit"],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": ["location", "unit"]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current temperature at the specified location in the specified units, as a float."
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the temperature for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": ["location"]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed at the given location in km/h, as a float."
+                        }
+                    }
+                }
+                ],
+            false)
+        );
+        console.log(prompt);
+
+        agent.addJSFunctionTool(
+            ()=>{},
+            {
+                name: "multiply",
+                description: "A function that multiplies two numbers",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        a: {
+                            type: "number",
+                            description: "The first number to multiply",
+                        },
+                        b: {
+                            type: "number",
+                            description: "The second number to multiply",
+                        },
+                    },
+                    required: ["a", "b"],
+                },
+            },
+        );
+        for await (const resp of agent.query("Hello, who are you?")) {
+            if (resp.type === "output_text")
+                console.log(resp.content);
+            else
+                console.log(resp.content);
+        }
         window.agent = agent;
 
     </script>
