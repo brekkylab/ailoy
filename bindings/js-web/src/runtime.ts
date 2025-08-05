@@ -118,7 +118,7 @@ class Runtime {
     throw Error(`Failed to send package "${ptype}"`);
   }
 
-  async call(funcName: string, inputs: any = null): Promise<any> {
+  async call(funcName: string, inputs: any = {}): Promise<any> {
     let rv: any[] = [];
     for await (const out of this.callIter(funcName, inputs)) {
       rv.push(out);
@@ -133,7 +133,7 @@ class Runtime {
     }
   }
 
-  callIter(funcName: string, inputs: any = null): AsyncIterableIterator<any> {
+  callIter(funcName: string, inputs: any = {}): AsyncIterableIterator<any> {
     const txid = this.generateUUID();
     const sendResult = this.brokerClient!.send_type2(
       txid,
