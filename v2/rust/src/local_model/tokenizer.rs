@@ -2,6 +2,8 @@ use std::str::FromStr;
 
 use tokenizers::tokenizer::Tokenizer as HFTokenizer;
 
+use crate::cache::{Cache, FromCache};
+
 #[derive(Debug)]
 pub struct Tokenizer {
     inner: HFTokenizer,
@@ -24,11 +26,26 @@ impl Tokenizer {
     }
 }
 
+impl FromCache for Tokenizer {
+    fn from_cache(
+        cache: Cache,
+        key: impl AsRef<str>,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Self, String>>>> {
+        let dir = key.as_ref().replace("/", "--");
+        Box::pin(async move {
+            let v = cache.get(dir, "tokenizer.json").await?;
+            let v = std::str::from_utf8(&v)
+                .map_err(|_| format!("tokenizer.json is not valid utf-8 string"))?;
+            Ok(Tokenizer::new(v))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const QWEN3_TOKENIZER: &str = include_str!("../../data/Qwen--Qwen3-0.6B/tokenizer.json");
+    const QWEN3_TOKENIZER: &str = include_str!("../../../data/Qwen--Qwen3-0.6B/tokenizer.json");
 
     #[test]
     fn test_qwen3_encode() {

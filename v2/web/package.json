@@ -1,0 +1,16 @@
+{
+    "name": "ailoy-web",
+    "version": "0.1.0",
+    "description": "WebAssembly OPFS test using wasm-bindgen and Playwright",
+    "scripts": {
+        "start": "serve .",
+        "build": "wasm-pack build ../rust --target web --out-dir ../web/pkg",
+        "test": "playwright test",
+        "postinstall": "playwright install"
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.54.2",
+        "serve": "^14.2.0"
+    },
+    "type": "module"
+}

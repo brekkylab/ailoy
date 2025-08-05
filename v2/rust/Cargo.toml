@@ -1,5 +1,5 @@
 [package]
-name = "ailoy_components_rs"
+name = "ailoy_core"
 version = "0.1.0"
 edition = "2024"
 
@@ -15,18 +15,21 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokenizers = { version = "0.21.4", default-features = false, features = [] }
 url = "2.5.4"
+opfs = "0.1.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
+js-sys = "0.3"
 tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex"] }
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt", "sync"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["FileSystemFileHandle", "FileSystemRemoveOptions"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-indicatif = "0.17"
 tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
-tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
 
 [lib]
-crate-type = ["staticlib"]
-path = "rsrc/lib.rs"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"

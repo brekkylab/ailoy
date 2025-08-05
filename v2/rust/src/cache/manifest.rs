@@ -15,7 +15,8 @@ impl Manifest {
         Manifest { size, sha1 }
     }
 
-    pub fn from_bytes(bytes: Bytes) -> Self {
+    pub fn from_u8(bytes: impl AsRef<[u8]>) -> Self {
+        let bytes = bytes.as_ref();
         let mut hasher = Sha1::new();
         hasher.update(&bytes);
         let hash = hasher.finalize();
@@ -44,19 +45,23 @@ impl<'de> de::Visitor<'de> for ManifestVisitor {
         let mut size: Option<u64> = None;
         let mut sha1: Option<String> = None;
         while let Some(key) = map.next_key::<String>()? {
+            if key == "size" {
+                size = Some(map.next_value()?);
+                continue;
+            } else if key == "sha1" {
+                sha1 = Some(map.next_value()?);
+                continue;
+            };
+
             if key == "*" {
                 // @jhlee
                 // This field intended to version control of files. However, currently keys other than "*" are not supported.
                 // We should implement:
                 // 1. Definition of the key scheme (version specifier)
                 // 2. Implementing filtering logic to compare it against the current library version (ailoy) for compatibility.
-                return Ok(map.next_value()?);
-            } else if key == "size" {
-                size = Some(map.next_value()?);
-            } else if key == "sha1" {
-                sha1 = Some(map.next_value()?);
+                return Ok(map.next_value::<Manifest>()?);
             } else {
-                return Err(de::Error::unknown_field(&key, &["sha1"]));
+                return Err(de::Error::unknown_field(&key, &["sha1", "size"]));
             }
         }
         let size = size.ok_or_else(|| de::Error::missing_field("sha1"))?;
