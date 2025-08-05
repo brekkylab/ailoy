@@ -173,7 +173,7 @@ public:
                              ailoy::instruction_type::call_method>(txid, cname,
                                                                    fname);
       else {
-        auto in = args_[2]->as<ailoy::map_t>();
+        auto in = args_[2];
         return client_->send<ailoy::packet_type::execute,
                              ailoy::instruction_type::call_method>(txid, cname,
                                                                    fname, in);
@@ -233,6 +233,8 @@ EMSCRIPTEN_BINDINGS(ailoy_web) {
 
   class_<js_ndarray_t>("NDArray")
       .constructor<const val &>()
+      .function("toString", &js_ndarray_t::to_string)
+      .function("valueOf", &js_ndarray_t::to_string)
       .function("getShape", &js_ndarray_t::get_shape)
       .function("getDtype", &js_ndarray_t::get_dtype)
       .function("getData", &js_ndarray_t::get_data);

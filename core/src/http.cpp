@@ -61,6 +61,18 @@ struct EmscriptenRequestContext {
   bool completed = false;
 };
 
+inline void trim(std::string &s) {
+  // ltrim
+  s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+          }));
+  // rtrim
+  s.erase(std::find_if(s.rbegin(), s.rend(),
+                       [](unsigned char ch) { return !std::isspace(ch); })
+              .base(),
+          s.end());
+}
+
 // Emscripten fetch callbacks
 void on_fetch_success(emscripten_fetch_t *fetch) {
   EmscriptenRequestContext *ctx =
@@ -81,6 +93,8 @@ void on_fetch_success(emscripten_fetch_t *fetch) {
     for (int i = 0; unpacked_headers[i]; i += 2) {
       std::string key = unpacked_headers[i];
       std::string value = unpacked_headers[i + 1];
+      trim(key);
+      trim(value);
       ctx->response->headers[key] = value;
     }
   }

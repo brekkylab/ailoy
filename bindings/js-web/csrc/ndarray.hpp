@@ -90,6 +90,18 @@ public:
 
   val get_data() { return data_; }
 
+  std::string to_string() const {
+    std::ostringstream oss;
+    oss << "NDArray(shape=[";
+    for (size_t i = 0; i < shape_.size(); ++i) {
+      if (i > 0)
+        oss << ", ";
+      oss << shape_[i];
+    }
+    oss << "], dtype=" << dtype_ << ")";
+    return oss.str();
+  }
+
 private:
   bool is_typed_array(const val &v) {
     return v.instanceof(val::global("Int8Array")) ||

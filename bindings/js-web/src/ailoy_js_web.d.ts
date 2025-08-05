@@ -37,6 +37,8 @@ export interface VectorString extends ClassHandle {
 }
 
 export interface NDArray extends ClassHandle {
+  toString(): string;
+  valueOf(): string;
   getShape(): any;
   getDtype(): string;
   getData(): any;

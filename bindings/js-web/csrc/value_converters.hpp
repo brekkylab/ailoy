@@ -83,7 +83,7 @@ static std::shared_ptr<ailoy::value_t> from_em_val(const val &arg) {
         val::global("Uint8Array")
             .new_(buffer, arg["byteOffset"].as<int>(), byte_length);
     for (int i = 0; i < byte_length; i++) {
-      ndarray->data[i] = static_cast<uint8_t>(uint8_view[i].as<int>());
+      ndarray->data[i] = uint8_view[i].as<uint8_t>();
     }
 
     // Set dtype based on TypedArray type
@@ -299,7 +299,7 @@ static val to_em_val(std::shared_ptr<ailoy::value_t> v) {
     params.set("dtype", val(dtype_str));
     params.set("data", typed_array);
 
-    return val::global("Module")["NDArray"].new_(params);
+    return val(js_ndarray_t(params));
   } else {
     return val("[Value: " + type + "]");
   }
