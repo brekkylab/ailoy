@@ -2,10 +2,13 @@ import { search } from "jmespath";
 import { Image } from "wasm-vips";
 
 import { MCPClient, MCPClientTransport, MCPClientStartOptions } from "./mcp";
-import { AiloyModel } from "./models";
+import { _LocalModel, AiloyModel } from "./models";
 import { Runtime } from "./runtime";
 import { uint8ArrayToBase64 } from "./utils/base64";
 import { isVipsImage, vipsImageToBase64 } from "./utils/image";
+import { GenerationConfig } from "./llm/config";
+import { Engine } from "./llm/engine";
+import { ChatManager, Tokenizer } from "./components";
 
 /** Types for internal data structures */
 
@@ -237,6 +240,7 @@ export function bearerAutenticator(
  * Agents can be extended with external tools or APIs to provide real-time or domain-specific knowledge, enabling
  * more powerful and context-aware interactions.
  */
+
 export class Agent {
   private runtime: Runtime;
 
@@ -244,6 +248,12 @@ export class Agent {
     name: string;
     valid: boolean;
   };
+
+  // tvmjs related
+  private chatManager?: ChatManager;
+  private tokenizer?: Tokenizer;
+  private engine?: Engine;
+  private genConfig?: GenerationConfig;
 
   private tools: Tool[];
 
@@ -302,13 +312,51 @@ export class Agent {
         : undefined);
     this.clearMessages();
 
-    // Call runtime to define componenets
-    const result = await this.runtime.define(
-      model.componentType,
-      this.componentState.name,
-      model.toAttrs()
-    );
-    if (!result) throw Error(`component define failed`);
+    // if model file required
+    if (["tvm_language_model"].includes(model.componentType)) {
+      const local_model = model as _LocalModel;
+      const list_models =
+        (await this.runtime.call("list_local_models")).results ?? [];
+      if (
+        !list_models.some(
+          (model_entry: any) => model_entry.model_id === model.id
+        )
+      )
+        await this.runtime.call("download_model", {
+          model_id: model.id,
+          quantization: local_model.quantization,
+          device: local_model.device,
+        });
+
+      this.chatManager = new ChatManager(
+        this.runtime,
+        local_model.id,
+        local_model.quantization
+      );
+      await this.chatManager.init();
+
+      this.tokenizer = new Tokenizer(
+        this.runtime,
+        local_model.id,
+        local_model.quantization
+      );
+      await this.tokenizer.init();
+
+      this.engine = new Engine(model.id, this.chatManager, this.tokenizer);
+      await this.engine.loadModel();
+
+      this.genConfig = {
+        // temperature: 1.0,
+      };
+    } else {
+      // Call runtime to define model component
+      const result1 = await this.runtime.define(
+        model.componentType,
+        this.componentState.name,
+        model.toAttrs()
+      );
+      if (!result1) throw Error(`model component define failed`);
+    }
 
     // Mark component as defined
     this.componentState.valid = true;
@@ -566,13 +614,29 @@ export class Agent {
     return this.tools.map((tool) => tool.desc);
   }
 
+  async testTokenizer(text: string) {
+    const res = await this.tokenizer?.encode(text);
+    return res;
+  }
+
+  async testChatManager(
+    messages: Message[],
+    tools: { type: "function"; function: ToolDescription }[],
+    reasoning?: boolean
+  ) {
+    const res = await this.engine?.applyChatTemplate(
+      messages,
+      tools,
+      reasoning
+    );
+    return res;
+  }
+
   async *query(
-    /** The user message to send to the model */
     message:
       | string
       | Array<string | Image | TextContent | ImageContent | AudioContent>,
     options?: {
-      /** If True, enables reasoning capabilities (default: False) */
       reasoning?: boolean;
     }
   ): AsyncGenerator<AgentResponse> {
@@ -613,17 +677,27 @@ export class Agent {
       let assistantToolCalls: Array<FunctionData> | undefined = undefined;
       let finishReason = "";
 
-      for await (const result of this.runtime.callIterMethod(
-        this.componentState.name,
-        "infer",
-        {
+      let it: AsyncIterable<MessageOutput>;
+      if (this.engine === undefined) {
+        it = this.runtime.callIterMethod(this.componentState.name, "infer", {
           messages: this.messages,
           tools: this.tools.map((v) => {
             return { type: "function", function: v.desc };
           }),
           reasoning: options?.reasoning,
-        }
-      ) as AsyncIterable<MessageOutput>) {
+        });
+      } else {
+        it = (await this.engine.inferLM(
+          this.messages,
+          tools: this.tools.map((v) => {
+            return { type: "function", function: v.desc };
+          }),
+          options?.reasoning,
+          this.genConfig ?? {}
+        ))!;
+      }
+
+      for await (const result of it) {
         if (result.message.reasoning) {
           for (const reasoningData of result.message.reasoning) {
             if (assistantReasoning === undefined)
