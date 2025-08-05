@@ -79,6 +79,7 @@ export default defineConfig(({ mode }) => {
               },
             },
       },
+      globalSetup: "./tests/globalSetup.ts",
       typecheck: {
         enabled: true,
       },
