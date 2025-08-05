@@ -1,7 +1,4 @@
-import Vips from "wasm-vips";
-
 export * from "./agent";
 export * from "./mcp";
-export * from "./models/index";
+export * from "./models";
 export * from "./runtime";
-export { Vips };

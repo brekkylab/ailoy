@@ -1,4 +1,4 @@
-import AiloyModule, { MainModule, BrokerClient } from "./ailoy_js_web";
+import AiloyModule, { MainModule, BrokerClient } from "./ailoy_js_web.js";
 
 type PacketType =
   | "connect"

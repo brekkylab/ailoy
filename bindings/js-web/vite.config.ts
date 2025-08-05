@@ -1,6 +1,8 @@
 import { loadEnv } from "vite";
 import { defineConfig } from "vitest/config";
 import dts from "vite-plugin-dts";
+import { viteStaticCopy } from "vite-plugin-static-copy";
+import { transform } from "esbuild";
 
 const SAFARI = process.env.BROWSER === "safari";
 
@@ -13,9 +15,8 @@ export default defineConfig(({ mode }) => {
         entry: ["src/index.ts"],
         formats: ["es"],
       },
-      minify: true,
-      sourcemap: true,
       rollupOptions: {
+        external: ["./ailoy_js_web.js"],
         onwarn(warning, warn) {
           // Suppress eval-related warnings from wasm-vips
           if (
@@ -36,10 +37,16 @@ export default defineConfig(({ mode }) => {
       dts({
         rollupTypes: true,
       }),
+      minifyEs(),
+      viteStaticCopy({
+        targets: [
+          {
+            src: ["./src/ailoy_js_web.js", "./src/ailoy_js_web.wasm"],
+            dest: "./",
+          },
+        ],
+      }),
     ],
-    optimizeDeps: {
-      exclude: ["wasm-vips", "ailoy_js_web"],
-    },
     define: {
       "process.env.OPENAI_API_KEY": JSON.stringify(env.OPENAI_API_KEY),
     },
@@ -78,3 +85,19 @@ export default defineConfig(({ mode }) => {
     },
   };
 });
+
+// Workaround for https://github.com/vitejs/vite/issues/6555
+function minifyEs() {
+  return {
+    name: "minifyEs",
+    renderChunk: {
+      order: "post" as const,
+      async handler(code, chunk, outputOptions) {
+        if (outputOptions.format === "es") {
+          return await transform(code, { minify: true });
+        }
+        return code;
+      },
+    },
+  };
+}
