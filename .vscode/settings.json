@@ -39,6 +39,7 @@
     ],
     "cmake.environment": {
     },
+    "cmake.sourceDirectory": "${workspaceFolder}/v2/cpp",
     "cmake.useCMakePresets": "always",
     "files.associations": {
         ".prettierrc": "typescript",

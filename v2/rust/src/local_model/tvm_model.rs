@@ -1,6 +1,6 @@
 use std::{path::PathBuf, pin::Pin, str::FromStr};
 
-use crate::cache::{Cache, TryFromCache};
+use crate::cache::{Cache, TryFromCache, get_cache_root};
 
 pub fn get_accelerator() -> &'static str {
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -122,7 +122,7 @@ impl TryFromCache for TVMModel {
                 || path_str.ends_with("lib.dll")
                 || path_str.ends_with("lib.wasm")
             {
-                lib_filename = Some(path.file_name().unwrap().to_str().unwrap().to_owned());
+                lib_filename = Some(path.to_str().unwrap().to_owned());
                 continue;
             }
             let ret = unsafe {
@@ -139,9 +139,10 @@ impl TryFromCache for TVMModel {
             }
         }
         let mut tvm_model: *mut ffi::TvmModel = std::ptr::null_mut();
+        let lib_full_path = get_cache_root().join(lib_filename.unwrap().to_owned());
         let ret = unsafe {
             ffi::ailoy_tvm_model_create(
-                lib_filename.unwrap().as_ptr() as *const _,
+                lib_full_path.as_os_str().to_string_lossy().as_ptr() as *const _,
                 contents,
                 &mut tvm_model,
             )

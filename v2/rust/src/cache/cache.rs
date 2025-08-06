@@ -1,13 +1,16 @@
-use std::{collections::HashMap, env::var, path::PathBuf, str::FromStr, sync::Arc};
+use std::{collections::HashMap, env::var, path::PathBuf, sync::Arc};
 
 use tokio::sync::RwLock;
 use url::Url;
 
-use crate::compat::filesystem::{read, write};
+use crate::{
+    cache::TryFromCache,
+    compat::filesystem::{read, write},
+};
 
 use super::manifest::{Manifest, ManifestDirectory};
 
-fn get_cache_root() -> PathBuf {
+pub fn get_cache_root() -> PathBuf {
     match var("AILOY_CACHE_ROOT") {
         Ok(env_path) => PathBuf::from(env_path),
         Err(_) => {
@@ -62,6 +65,7 @@ async fn download(url: Url) -> Result<Vec<u8>, String> {
 #[derive(Debug, Clone)]
 pub struct Cache {
     base_url: Url,
+    cache_root: PathBuf,
     manifests: Arc<RwLock<HashMap<String, ManifestDirectory>>>,
 }
 
@@ -69,6 +73,7 @@ impl Cache {
     pub fn new() -> Self {
         Self {
             base_url: get_remote_cache_url(),
+            cache_root: get_cache_root(),
             manifests: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -105,16 +110,16 @@ impl Cache {
     ) -> Result<Vec<u8>, String> {
         let dir = dir.as_ref();
         let name = name.as_ref();
+        let local_filepath = self.cache_root.join(dir).join(name);
 
         // Get manifest
         let manifest = self.get_manifest(dir, name).await?;
 
         // Get local
-        let (local_manifest, local_bytes) =
-            match read(&PathBuf::from_str(dir).unwrap().join(name)).await {
-                Ok(v) => (Some(Manifest::from_u8(&v)), Some(v)),
-                Err(_) => (None, None),
-            };
+        let (local_manifest, local_bytes) = match read(&local_filepath).await {
+            Ok(v) => (Some(Manifest::from_u8(&v)), Some(v)),
+            Err(_) => (None, None),
+        };
 
         // Return local if sha matches, or download
         if local_manifest.is_some() && local_manifest.unwrap().sha1() == manifest.sha1() {
@@ -123,21 +128,57 @@ impl Cache {
             let url = build_url(&self.base_url, dir, manifest.sha1())?;
             let bytes = download(url).await?;
             // Write back
-            write(get_cache_root().join(dir).join(name), &bytes).await?;
+            write(&local_filepath, &bytes).await?;
             Ok(bytes)
         }
+    }
+
+    pub async fn try_create_from_cache<T: TryFromCache>(
+        &self,
+        key: impl AsRef<str>,
+    ) -> Result<T, String> {
+        use futures::future::join_all;
+
+        let key = key.as_ref();
+        let files = T::claim_files(self.clone(), key.to_owned()).await?;
+        let futures = files.iter().map(|f| {
+            let this = self.clone();
+            let dir = f
+                .parent()
+                .unwrap()
+                .as_os_str()
+                .to_string_lossy()
+                .to_string();
+            let file = f.file_name().unwrap().to_string_lossy().to_string();
+            async move {
+                let bytes = this.get(dir, file).await.map(|v| (f.clone(), v))?;
+                Ok::<_, String>(bytes)
+            }
+        });
+        let file_and_bytes: Vec<(PathBuf, Vec<u8>)> = join_all(futures)
+            .await
+            .into_iter()
+            .collect::<Result<_, _>>()?;
+        T::try_from_files(file_and_bytes)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr as _;
+
     use super::*;
 
     #[tokio::test]
     async fn prepare_files() {
-        let src_dir = PathBuf::from_str("/Users/ijaehwan/.cache/ailoy/Qwen--Qwen3-0.6B").unwrap();
-        let dst_dir =
-            PathBuf::from_str("/Users/ijaehwan/Workspace/ailoy/out/Qwen--Qwen3-0.6B").unwrap();
+        let src_dir = PathBuf::from_str(
+            "/Users/ijaehwan/.cache/ailoy/Qwen--Qwen3-0.6B--aarch64-apple-darwin--metal",
+        )
+        .unwrap();
+        let dst_dir = PathBuf::from_str(
+            "/Users/ijaehwan/Workspace/ailoy/out/Qwen--Qwen3-0.6B--aarch64-apple-darwin--metal",
+        )
+        .unwrap();
         if dst_dir.exists() {
             std::fs::remove_dir_all(&dst_dir).unwrap();
         }

@@ -27,24 +27,16 @@ mod tests {
     #[tokio::test]
     async fn test1() {
         let cache = crate::cache::Cache::new();
-        let mut files: Vec<PathBuf> = Vec::new();
+        // let mut files: Vec<PathBuf> = Vec::new();
         let key = "Qwen/Qwen3-0.6B";
 
-        let v = ChatTemplate::claim_files(cache.clone(), key.to_owned())
-            .await
-            .unwrap();
-        files.extend(v);
+        // let ct = cache
+        //     .try_create_from_cache::<ChatTemplate>(key)
+        //     .await
+        //     .unwrap();
 
-        let v = Tokenizer::claim_files(cache.clone(), key.to_owned())
-            .await
-            .unwrap();
-        files.extend(v);
+        // let tok = cache.try_create_from_cache::<Tokenizer>(key).await.unwrap();
 
-        let v = TVMModel::claim_files(cache.clone(), key.to_owned())
-            .await
-            .unwrap();
-        files.extend(v);
-
-        println!("{:?}", files);
+        let model = cache.try_create_from_cache::<TVMModel>(key).await.unwrap();
     }
 }

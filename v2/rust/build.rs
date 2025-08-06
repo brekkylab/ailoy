@@ -29,7 +29,6 @@ fn main() {
         .nth(3)
         .expect("Failed to determine Rust target directory")
         .to_path_buf();
-    let cmake_install_prefix = rust_target_dir.join("deps").clone();
 
     // Run cmake configure
     let status = Command::new("cmake")
@@ -57,7 +56,7 @@ fn main() {
         .arg("--install")
         .arg(&cmake_build_dir)
         .arg("--prefix")
-        .arg(&cmake_install_prefix)
+        .arg(&rust_target_dir.join("deps"))
         .status()
         .expect("Failed to install with cmake");
     assert!(status.success(), "CMake install failed");
@@ -76,6 +75,8 @@ fn main() {
 
     // Re-run triggers
     println!("cargo:rerun-if-changed=../cpp/CMakeLists.txt");
+    println!("cargo:rerun-if-changed=../cpp/include/tvm_model.hpp");
+    println!("cargo:rerun-if-changed=../cpp/src/tvm_model.cpp");
     println!("cargo:rerun-if-env-changed=TARGET");
     println!("cargo:rerun-if-env-changed=PROFILE");
 }
