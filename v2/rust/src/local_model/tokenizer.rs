@@ -32,7 +32,7 @@ impl TryFromCache for Tokenizer {
         key: impl AsRef<str>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, String>>>> {
         let dir = key.as_ref().replace("/", "--");
-        Box::pin(async move { Ok(vec![PathBuf::from(dir).join("chat_template.j2".to_owned())]) })
+        Box::pin(async move { Ok(vec![PathBuf::from(dir).join("tokenizer.json".to_owned())]) })
     }
 
     fn try_from_files(files: Vec<(PathBuf, Vec<u8>)>) -> Result<Self, String> {

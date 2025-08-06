@@ -23,6 +23,13 @@ fn main() {
     if !cmake_build_dir.exists() {
         create_dir_all(&cmake_build_dir).unwrap();
     }
+    let rust_out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let rust_target_dir = rust_out_dir
+        .ancestors()
+        .nth(3)
+        .expect("Failed to determine Rust target directory")
+        .to_path_buf();
+    let cmake_install_prefix = rust_target_dir.join("deps").clone();
 
     // Run cmake configure
     let status = Command::new("cmake")
@@ -35,7 +42,7 @@ fn main() {
         .expect("Failed to cmake configure");
     assert!(status.success(), "CMake configure failed");
 
-    // CMake build
+    // Run CMake build
     let status = Command::new("cmake")
         .arg("--build")
         .arg(&cmake_build_dir)
@@ -45,16 +52,27 @@ fn main() {
         .expect("Failed to build with cmake");
     assert!(status.success(), "CMake build failed");
 
+    // Run CMake install
+    let status = Command::new("cmake")
+        .arg("--install")
+        .arg(&cmake_build_dir)
+        .arg("--prefix")
+        .arg(&cmake_install_prefix)
+        .status()
+        .expect("Failed to install with cmake");
+    assert!(status.success(), "CMake install failed");
+
     // Link library
     let lib_dir = cmake_build_dir.clone();
+    println!("cargo:rustc-link-lib=c++");
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=static=ailoy_cpp");
-    println!("cargo:rustc-link-lib=dylib=tvm_runtime");
     println!(
         "cargo:rustc-link-search=native={}/_deps/tvm-build",
         cmake_build_dir.to_str().unwrap(),
     );
-    println!("cargo:rustc-link-lib=c++");
+    println!("cargo:rustc-link-lib=dylib=tvm_runtime");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
 
     // Re-run triggers
     println!("cargo:rerun-if-changed=../cpp/CMakeLists.txt");

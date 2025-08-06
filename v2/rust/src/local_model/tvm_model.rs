@@ -35,6 +35,18 @@ impl TVMModel {
     pub fn new(inner: *mut ffi::TvmModel) -> Self {
         TVMModel { inner }
     }
+
+    pub fn embed(&self, input: impl AsRef<[u8]>) -> () {
+        todo!()
+    }
+
+    pub fn prefill(&self, input: impl AsRef<[u8]>) -> u64 {
+        todo!()
+    }
+
+    pub fn decode(&self, input: impl AsRef<[u8]>) -> u64 {
+        todo!()
+    }
 }
 
 impl Drop for TVMModel {
@@ -99,7 +111,7 @@ impl TryFromCache for TVMModel {
         let mut contents: *mut ffi::FileContents = std::ptr::null_mut();
 
         if unsafe { ffi::ailoy_file_contents_create(&mut contents) } != 0 {
-            return Err("".to_owned());
+            return Err("ailoy_file_contents_create failed".to_owned());
         }
 
         let mut lib_filename: Option<String> = None;

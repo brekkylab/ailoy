@@ -132,3 +132,12 @@ if(AILOY_WITH_TEST)
     target_link_libraries(test_tvm PRIVATE GTest::gtest)
     target_link_options(test_tvm PRIVATE -fsanitize=undefined -fsanitize=address)
 endif()
+
+###########
+# Install #
+###########
+
+install(TARGETS ailoy_cpp ARCHIVE DESTINATION .)
+if(AILOY_WITH_TVM)
+    install(FILES ${TVM_BINARY_DIR}/libtvm_runtime.dylib DESTINATION .)
+endif()
