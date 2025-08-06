@@ -20,27 +20,12 @@ import {
   FetchFileFromURLError,
   MissingModelWasmError,
   ShaderF16SupportError,
-  UnsupportedTokenizerFilesError,
   WebGPUNotAvailableError,
 } from "./error";
 
 const appConfig = prebuiltAppConfig;
 
 // const logger: (msg: string) => void = log.info;
-
-const baseUrl = "https://models.download.ailoy.co/";
-
-const fetchFromUrl = async (
-  url: string,
-  to: "arraybuffer" | "text" | "json" = "arraybuffer",
-  base: string = baseUrl
-) => {
-  let url_inst = url.startsWith("http") ? new URL(url) : new URL(url, base);
-  const body = await fetch(url_inst.href);
-  if (to === "json") return body.json();
-  else if (to === "text") return body.text();
-  else return body.arrayBuffer();
-};
 
 export interface Embedding {
   embedding: Array<number>;
@@ -168,7 +153,7 @@ export class Engine {
     console.log("chatConfing:", this.chatConfig);
 
     await tvm.fetchNDArrayCache(
-      this.modelUrl,
+      this.modelPath,
       tvm.webgpu(),
       "webllm/model",
       "cache"

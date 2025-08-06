@@ -203,7 +203,7 @@ export const prebuiltAppConfig: AppConfig = {
   model_list: [
     // Qwen-3
     {
-      model: "tvm-models/Qwen--Qwen3-0.6B/q4f16_1/",
+      model: "ailoy/tvm-models/Qwen--Qwen3-0.6B/q4f16_1/",
       // model: "Qwen3-0.6B-q4f16_1-MLC/resolve/main/",
       model_id: "Qwen/Qwen3-0.6B",
       model_lib: "lib-wasm32-Emscripten-webgpu.wasm",

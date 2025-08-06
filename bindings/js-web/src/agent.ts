@@ -325,7 +325,7 @@ export class Agent {
         await this.runtime.call("download_model", {
           model_id: model.id,
           quantization: local_model.quantization,
-          device: local_model.device,
+          device: "webgpu",
         });
 
       this.chatManager = new ChatManager(
@@ -689,7 +689,7 @@ export class Agent {
       } else {
         it = (await this.engine.inferLM(
           this.messages,
-          tools: this.tools.map((v) => {
+          this.tools.map((v) => {
             return { type: "function", function: v.desc };
           }),
           options?.reasoning,

@@ -2,7 +2,7 @@
 /* eslint-disable no-prototype-builtins */
 // import { Tokenizer } from "@mlc-ai/web-tokenizers";
 // import * as tvmjs from "@mlc-ai/web-runtime";
-import { Tokenizer } from "../agent";
+import { Tokenizer } from "../components";
 import * as tvmjs from "../tvmjs";
 import { ChatConfig, GenerationConfig } from "./config";
 import { getChunkedPrefillInputData } from "./support";
