@@ -17,30 +17,33 @@
  * under the License.
  */
 
+export type {
+  PackedFunc,
+  InitProgressCallback,
+  InitProgressReport,
+} from "./runtime";
 export {
   Scalar,
   DLDevice,
   DLDataType,
-  PackedFunc,
   Module,
   NDArray,
   TVMArray,
   TVMObject,
   VirtualMachine,
-  InitProgressCallback,
-  InitProgressReport,
   Instance,
   instantiate,
 } from "./runtime";
+export type { ArtifactCacheTemplate } from "./artifact_cache";
 export {
-  ArtifactCacheTemplate,
   ArtifactCache,
   ArtifactIndexedDBCache,
   hasNDArrayInCache,
   deleteNDArrayCache,
 } from "./artifact_cache";
-export { Disposable, LibraryProvider } from "./types";
+export type { Disposable, LibraryProvider } from "./types";
 // export { RPCServer } from "./rpc_server";
 export { assert, wasmPath, LinearCongruentialGenerator } from "./support";
-export { detectGPUDevice, GPUDeviceDetectOutput } from "./webgpu";
+export type { GPUDeviceDetectOutput } from "./webgpu";
+export { detectGPUDevice } from "./webgpu";
 export { createPolyfillWASI } from "./compact";
