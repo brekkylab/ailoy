@@ -1,6 +1,7 @@
 use std::{path::PathBuf, pin::Pin};
 
 use minijinja::{Environment, context};
+use minijinja_contrib::add_to_environment;
 
 use crate::{
     cache::{Cache, TryFromCache},
@@ -15,7 +16,10 @@ pub struct ChatTemplate<'a> {
 impl<'a> ChatTemplate<'a> {
     pub fn new(source: &str) -> Self {
         let mut env = Environment::new();
-        let _ = env.add_template_owned("_default", source.to_owned());
+        add_to_environment(&mut env);
+        env.set_unknown_method_callback(minijinja_contrib::pycompat::unknown_method_callback);
+        env.add_template_owned("_default", source.to_owned())
+            .unwrap();
         Self { env }
     }
 
@@ -27,14 +31,22 @@ impl<'a> ChatTemplate<'a> {
             .to_owned()
     }
 
-    pub fn apply_with_vec(&self, messages: &Vec<Message>, add_generation_prompt: bool) -> String {
+    pub fn apply_with_vec(
+        &self,
+        messages: &Vec<Message>,
+        add_generation_prompt: bool,
+    ) -> Result<String, String> {
         let template = self.env.get_template("_default").unwrap();
         template
             .render(context!(messages => messages, add_generation_prompt=>add_generation_prompt))
-            .unwrap()
+            .map_err(|e| format!("minijinja::render failed: {}", e.to_string()))
     }
 
-    pub fn apply_with_json(&self, messages: &str, add_generation_prompt: bool) -> String {
+    pub fn apply_with_json(
+        &self,
+        messages: &str,
+        add_generation_prompt: bool,
+    ) -> Result<String, String> {
         let messages: Vec<Message> = serde_json::from_str(messages).unwrap();
         self.apply_with_vec(&messages, add_generation_prompt)
     }
@@ -43,7 +55,7 @@ impl<'a> ChatTemplate<'a> {
         &self,
         messages: impl IntoIterator<Item = Message>,
         add_generation_prompt: bool,
-    ) -> String {
+    ) -> Result<String, String> {
         let messages: Vec<Message> = messages.into_iter().collect();
         self.apply_with_vec(&messages, add_generation_prompt)
     }
@@ -100,7 +112,7 @@ Who made you?<|im_end|>
 </think>
 
 "#;
-        let result = ct.apply_with_vec(&msgs, true);
+        let result = ct.apply_with_vec(&msgs, true).unwrap();
         assert_eq!(expected, result);
     }
 }

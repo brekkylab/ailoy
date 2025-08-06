@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 async-stream = "0.3"
-bytes = "1.10.1"
 futures = "0.3.31"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
@@ -15,7 +14,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokenizers = { version = "0.21.4", default-features = false, features = [] }
 url = "2.5.4"
-opfs = "0.1.2"
+
+[build-dependencies]
+cmake = "0.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }

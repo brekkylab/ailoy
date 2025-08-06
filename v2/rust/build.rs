@@ -1,82 +1,37 @@
-use std::{env, fs::create_dir_all, path::PathBuf, process::Command};
+use std::{env, path::PathBuf, process::Command};
+
+use cmake::Config;
 
 fn main() {
     // Set target triple
     let target = env::var("TARGET").expect("TARGET not set");
     println!("cargo:rustc-env=BUILD_TARGET_TRIPLE={}", target);
-    let cmake_build_type = match env::var("PROFILE").unwrap().as_str() {
-        "debug" => "Debug",
-        "release" => "Release",
-        _ => "",
-    };
-    if cmake_build_type == "" {
-        panic!(
-            "Unsupported build type: {}",
-            env::var("PROFILE").unwrap().as_str()
-        );
-    }
 
-    // CMake build + install paths
+    // Set directories
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let cmake_source_dir = manifest_dir.join("../cpp"); // Update this
-    let cmake_build_dir = manifest_dir.join("build").join(&target);
-    if !cmake_build_dir.exists() {
-        create_dir_all(&cmake_build_dir).unwrap();
-    }
-    let rust_out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let rust_target_dir = rust_out_dir
+    let cmake_source_dir = manifest_dir.join("../cpp");
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let target_dir = out_dir
         .ancestors()
         .nth(3)
         .expect("Failed to determine Rust target directory")
         .to_path_buf();
 
-    // Run cmake configure
-    let status = Command::new("cmake")
-        .arg("-S")
-        .arg(&cmake_source_dir)
-        .arg("-B")
-        .arg(&cmake_build_dir)
-        .arg(format!("-DCMAKE_BUILD_TYPE={}", cmake_build_type))
-        .status()
-        .expect("Failed to cmake configure");
-    assert!(status.success(), "CMake configure failed");
-
-    // Run CMake build
-    let status = Command::new("cmake")
-        .arg("--build")
-        .arg(&cmake_build_dir)
-        .arg("--config")
-        .arg(cmake_build_type)
-        .status()
-        .expect("Failed to build with cmake");
-    assert!(status.success(), "CMake build failed");
-
-    // Run CMake install
-    let status = Command::new("cmake")
+    // CMake
+    let dst = Config::new(&cmake_source_dir)
+        .define("CMAKE_INSTALL_PREFIX", &target_dir.join("deps"))
+        .build();
+    Command::new("cmake")
         .arg("--install")
-        .arg(&cmake_build_dir)
-        .arg("--prefix")
-        .arg(&rust_target_dir.join("deps"))
+        .arg(&dst)
         .status()
-        .expect("Failed to install with cmake");
-    assert!(status.success(), "CMake install failed");
-
-    // Link library
-    let lib_dir = cmake_build_dir.clone();
+        .expect("failed to run cmake install");
     println!("cargo:rustc-link-lib=c++");
-    println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    println!("cargo:rustc-link-lib=static=ailoy_cpp");
     println!(
-        "cargo:rustc-link-search=native={}/_deps/tvm-build",
-        cmake_build_dir.to_str().unwrap(),
+        "cargo:rustc-link-search=native={}",
+        target_dir.join("deps").display()
     );
+    println!("cargo:rustc-link-lib=static=ailoy_cpp");
     println!("cargo:rustc-link-lib=dylib=tvm_runtime");
     println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
-
-    // Re-run triggers
-    println!("cargo:rerun-if-changed=../cpp/CMakeLists.txt");
-    println!("cargo:rerun-if-changed=../cpp/include/tvm_model.hpp");
-    println!("cargo:rerun-if-changed=../cpp/src/tvm_model.cpp");
-    println!("cargo:rerun-if-env-changed=TARGET");
-    println!("cargo:rerun-if-env-changed=PROFILE");
 }
