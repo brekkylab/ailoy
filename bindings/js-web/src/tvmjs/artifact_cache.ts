@@ -17,6 +17,14 @@
  * under the License.
  */
 
+import {
+  isOPFSFile,
+  joinPath,
+  readOPFSFile,
+  removeOPFSFile,
+  writeOPFSFile,
+} from "../utils/opfs";
+
 export interface NDArrayCacheEntry {
   name: string;
   shape: Array<number>;
@@ -385,6 +393,70 @@ export class ArtifactIndexedDBCache implements ArtifactCacheTemplate {
   }
 }
 
+export class ArtifactOPFSCache implements ArtifactCacheTemplate {
+  private root: string;
+
+  constructor(root: string) {
+    this.root = root;
+  }
+
+  async fetchWithCache(
+    url: string,
+    storetype?: string,
+    signal?: AbortSignal
+  ): Promise<any> {
+    const path = joinPath(
+      this.root,
+      url.startsWith("http") ? new URL(url).pathname : url
+    );
+    if (!(await isOPFSFile(path))) {
+      this.addToCache(url, storetype, signal);
+    }
+    if (
+      storetype !== "text" &&
+      storetype !== "json" &&
+      storetype !== "arraybuffer"
+    ) {
+      throw Error(`Not supported storetype: ${storetype}`);
+    }
+    return readOPFSFile(path, storetype);
+  }
+
+  async addToCache(
+    url: string,
+    storetype?: string,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const response = await fetch(url, signal ? { signal } : undefined);
+    if (!response.ok) {
+      throw new TypeError("bad response status");
+    }
+    let data: string | object | ArrayBuffer;
+    if (storetype === "json") {
+      data = response.json();
+    } else if (storetype === "arraybuffer") {
+      data = response.arrayBuffer();
+    } else if (storetype === "text") {
+      data = response.text();
+    } else {
+      throw Error(`Not supported storetype: ${storetype}`);
+    }
+    const path = joinPath(this.root, new URL(url).pathname);
+    writeOPFSFile(path, data);
+  }
+
+  async deleteInCache(url: string): Promise<void> {
+    const path = joinPath(this.root, new URL(url).pathname);
+    await removeOPFSFile(path);
+  }
+
+  async hasAllKeys(keys: string[]): Promise<boolean> {
+    return Promise.all(
+      keys.map((key) => isOPFSFile(joinPath(this.root, key)))
+    ).then((results) => results.every(Boolean));
+  }
+}
+
 /**
  * Function to check if NDarray is in Cache or not
  *
@@ -403,6 +475,8 @@ export async function hasNDArrayInCache(
     artifactCache = new ArtifactCache(cacheScope);
   } else if (cacheType.toLowerCase() == "indexeddb") {
     artifactCache = new ArtifactIndexedDBCache(cacheScope);
+  } else if (cacheType.toLowerCase() == "opfs") {
+    artifactCache = new ArtifactOPFSCache(cacheScope);
   } else {
     console.error(
       "Unsupported cacheType: " + cacheType + ", using default ArtifactCache."
@@ -440,6 +514,8 @@ export async function deleteNDArrayCache(
     artifactCache = new ArtifactCache(cacheScope);
   } else if (cacheType.toLowerCase() == "indexeddb") {
     artifactCache = new ArtifactIndexedDBCache(cacheScope);
+  } else if (cacheType.toLowerCase() == "opfs") {
+    artifactCache = new ArtifactOPFSCache(cacheScope);
   } else {
     console.error(
       "Unsupported cacheType: " + cacheType + ", using default ArtifactCache."

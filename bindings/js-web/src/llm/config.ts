@@ -203,12 +203,9 @@ export const prebuiltAppConfig: AppConfig = {
   model_list: [
     // Qwen-3
     {
-      model: "ailoy/tvm-models/Qwen--Qwen3-0.6B/q4f16_1/",
-      // model: "Qwen3-0.6B-q4f16_1-MLC/resolve/main/",
+      model: "tvm-models/Qwen--Qwen3-0.6B/q4f16_1/",
       model_id: "Qwen/Qwen3-0.6B",
       model_lib: "lib-wasm32-Emscripten-webgpu.wasm",
-      // model_lib:
-      //   "https://raw.githubusercontent.com/mlc-ai/binary-mlc-llm-libs/main/web-llm-models/v0_2_48/Qwen3-0.6B-q4f16_1-ctx4k_cs1k-webgpu.wasm",
       vram_required_MB: 1403.34,
       low_resource_required: true,
       overrides: {

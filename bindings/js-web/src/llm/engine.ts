@@ -45,6 +45,7 @@ export class Engine {
   private modelId: string;
   private modelUrl: string | undefined = undefined;
   private modelPath: string | undefined = undefined;
+  private cacheScope: string = "ailoy";
   private modelType: ModelType | undefined = undefined;
   private chatConfig: ChatConfig | undefined = undefined;
   private pipeline: LLMChatPipeline | EmbeddingPipeline | undefined = undefined;
@@ -97,7 +98,7 @@ export class Engine {
 
     this.chatConfig = {
       ...((await readOPFSFile(
-        joinPath(this.modelPath, "mlc-chat-config.json"),
+        joinPath(this.cacheScope, this.modelPath, "mlc-chat-config.json"),
         "json"
       )) as any),
       ...modelRecord.overrides,
@@ -108,7 +109,7 @@ export class Engine {
       throw new MissingModelWasmError(modelRecord.model_id);
     }
     const wasmSource = (await readOPFSFile(
-      joinPath(this.modelPath, wasmUrl),
+      joinPath(this.cacheScope, this.modelPath, wasmUrl),
       "arraybuffer"
     )) as ArrayBuffer;
     if (wasmSource === undefined) {
@@ -155,8 +156,9 @@ export class Engine {
     await tvm.fetchNDArrayCache(
       this.modelPath,
       tvm.webgpu(),
-      "webllm/model",
-      "cache"
+      this.cacheScope,
+      "opfs"
+      // "cache"
     );
 
     if (modelRecord.model_type === ModelType.embedding) {

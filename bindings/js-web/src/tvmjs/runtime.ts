@@ -35,11 +35,12 @@ import {
   ArtifactCache,
   ArtifactCacheTemplate,
   ArtifactIndexedDBCache,
+  ArtifactOPFSCache,
   NDArrayShardEntry,
 } from "./artifact_cache";
 import * as compact from "./compact";
 import * as ctypes from "./ctypes";
-import { joinPath, readOPFSFile } from "../utils/opfs";
+import { joinPath } from "../utils/opfs";
 
 /**
  * Type for PackedFunc in the TVMRuntime.
@@ -1332,20 +1333,18 @@ export class Instance implements Disposable {
       artifactCache = new ArtifactCache(cacheScope);
     } else if (cacheType.toLowerCase() == "indexeddb") {
       artifactCache = new ArtifactIndexedDBCache(cacheScope);
+    } else if (cacheType.toLowerCase() == "opfs") {
+      artifactCache = new ArtifactOPFSCache(cacheScope);
     } else {
       console.error(
         "Unsupported cacheType: " + cacheType + ", using default ArtifactCache."
       );
       artifactCache = new ArtifactCache(cacheScope);
     }
-    let list;
-    if (ndarrayCacheUrl.startsWith("http")) {
-      const jsonUrl = new URL("ndarray-cache.json", ndarrayCacheUrl).href;
-      list = await artifactCache.fetchWithCache(jsonUrl, "json");
-    } else {
-      const jsonPath = joinPath(ndarrayCacheUrl, "ndarray-cache.json");
-      list = await readOPFSFile(jsonPath, "json");
-    }
+    const jsonUrl = ndarrayCacheUrl.startsWith("http")
+      ? new URL("ndarray-cache.json", ndarrayCacheUrl).href
+      : joinPath(ndarrayCacheUrl, "ndarray-cache.json");
+    const list = await artifactCache.fetchWithCache(jsonUrl, "json");
     await this.fetchNDArrayCacheInternal(
       ndarrayCacheUrl,
       list["records"] as Array<NDArrayShardEntry>,
@@ -1434,56 +1433,46 @@ export class Instance implements Disposable {
       });
     }
 
-    if (ndarrayCacheUrl.startsWith("http")) {
-      // First download all shards to cache parallely if not yet in cache
-      const downloadCache = async (start: number, end: number) => {
-        // Download params [start, end) from `list`
-        for (let i = start; i < end; i++) {
-          const shard = list[i];
-          const dataUrl = new URL(shard.dataPath, ndarrayCacheUrl).href;
-          try {
-            await artifactCache.addToCache(dataUrl, "arraybuffer", signal);
-          } catch (err) {
-            this.env.logger("Error: Cannot fetch " + dataUrl + " err= " + err);
-            throw err;
-          }
-          timeElapsed = Math.ceil((perf.now() - tstart) / 1000);
-          fetchedBytes += shard.nbytes;
-          reportCallback(fetchedShards++, /*loading=*/ false);
+    // First download all shards to cache parallely if not yet in cache
+    const downloadCache = async (start: number, end: number) => {
+      // Download params [start, end) from `list`
+      for (let i = start; i < end; i++) {
+        const shard = list[i];
+        const dataUrl = new URL(shard.dataPath, ndarrayCacheUrl).href;
+        try {
+          await artifactCache.addToCache(dataUrl, "arraybuffer", signal);
+        } catch (err) {
+          this.env.logger("Error: Cannot fetch " + dataUrl + " err= " + err);
+          throw err;
         }
-      };
-      // We launch 4 parallel for loops to limit the max concurrency to 4 download
-      if (!cacheOnly) {
-        const loopSize = Math.floor(list.length / 4);
-        await Promise.all([
-          downloadCache(0, loopSize),
-          downloadCache(loopSize, 2 * loopSize),
-          downloadCache(2 * loopSize, 3 * loopSize),
-          downloadCache(3 * loopSize, list.length),
-        ]);
+        timeElapsed = Math.ceil((perf.now() - tstart) / 1000);
+        fetchedBytes += shard.nbytes;
+        reportCallback(fetchedShards++, /*loading=*/ false);
       }
+    };
+    // We launch 4 parallel for loops to limit the max concurrency to 4 download
+    if (!cacheOnly) {
+      const loopSize = Math.floor(list.length / 4);
+      await Promise.all([
+        downloadCache(0, loopSize),
+        downloadCache(loopSize, 2 * loopSize),
+        downloadCache(2 * loopSize, 3 * loopSize),
+        downloadCache(3 * loopSize, list.length),
+      ]);
     }
 
     // Then iteratively, load the shard from cache
     for (let i = 0; i < list.length; ++i) {
       const shard = list[i];
+      const dataUrl = ndarrayCacheUrl.startsWith("http")
+        ? new URL(shard.dataPath, ndarrayCacheUrl).href
+        : joinPath(ndarrayCacheUrl, shard.dataPath);
       let buffer;
-      if (ndarrayCacheUrl.startsWith("http")) {
-        const dataUrl = new URL(shard.dataPath, ndarrayCacheUrl).href;
-        try {
-          buffer = await artifactCache.fetchWithCache(dataUrl, "arraybuffer");
-        } catch (err) {
-          this.env.logger("Error: Cannot fetch " + dataUrl + " err= " + err);
-          throw err;
-        }
-      } else {
-        const dataPath = joinPath(ndarrayCacheUrl, shard.dataPath);
-        try {
-          buffer = await readOPFSFile(dataPath, "arraybuffer");
-        } catch (err) {
-          this.env.logger("Error: Cannot fetch " + dataPath + " err= " + err);
-          throw err;
-        }
+      try {
+        buffer = await artifactCache.fetchWithCache(dataUrl, "arraybuffer");
+      } catch (err) {
+        this.env.logger("Error: Cannot fetch " + dataUrl + " err= " + err);
+        throw err;
       }
       const shardRecords = shard.records;
       for (let j = 0; j < shardRecords.length; ++j) {

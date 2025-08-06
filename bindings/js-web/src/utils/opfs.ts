@@ -1,14 +1,20 @@
 type DataType = "text" | "json" | "arraybuffer";
 
-export function joinPath(basePath: string, fileName: string) {
-  return [basePath, fileName].join("/").replace(/\/+/g, "/");
+/**
+ * Joins a base path and a file name into a single normalized path.
+ * Ensures that duplicate slashes are replaced with a single slash.
+ * @param paths The path segments to join.
+ * @returns The combined and normalized file path.
+ */
+export function joinPath(...paths: string[]): string {
+  return paths.join("/").replace(/\/+/g, "/");
 }
 
 /**
- * OPFS에서 파일을 읽어옵니다.
- * @param path 파일 경로 (예시: "/folder/file.txt")
- * @param type 가져올 데이터 타입: 'text' | 'json' | 'arraybuffer'
- * @returns 파일 내용 (타입에 따라 텍스트, 객체, 또는 ArrayBuffer)
+ * Reads a file from OPFS.
+ * @param path The file path (e.g., "/folder/file.txt")
+ * @param type The type of data to retrieve: 'text' | 'json' | 'arraybuffer'
+ * @returns The file contents (as text, object, or ArrayBuffer depending on the type)
  */
 export async function readOPFSFile(
   path: string,
@@ -38,16 +44,14 @@ export async function readOPFSFile(
 }
 
 /**
- * OPFS에 파일을 저장합니다.
- * @param path 저장할 파일 전체 경로 (예: "/folder/file.txt")
- * @param data 저장할 데이터 (string, object, 또는 ArrayBuffer)
- * @param type 데이터 타입 구분: text, json, arraybuffer
+ * Saves a file to OPFS.
+ * @param path The full file path to save to (e.g., "/folder/file.txt")
+ * @param data The data to be saved (string, object, or ArrayBuffer)
  */
 export async function writeOPFSFile(
   path: string,
-  data: string | object | ArrayBuffer,
-  type: DataType = "text"
-): Promise<void> {
+  data: string | object | ArrayBuffer
+): Promise<DataType> {
   let dirHandle = await navigator.storage.getDirectory();
   const parts = path.split("/").filter(Boolean);
 
@@ -58,19 +62,48 @@ export async function writeOPFSFile(
   const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
   const writable = await fileHandle.createWritable();
 
-  if (type === "text") {
+  let ret: DataType = "arraybuffer";
+  if (typeof data === "string") {
     await writable.write(data as string);
-  } else if (type === "json") {
-    await writable.write(JSON.stringify(data));
-  } else if (type === "arraybuffer") {
+    ret = "text";
+  } else if (data instanceof ArrayBuffer) {
     await writable.write(data as ArrayBuffer);
+    ret = "arraybuffer";
+  } else if (typeof data === "object" && data !== null) {
+    await writable.write(JSON.stringify(data));
+    ret = "json";
   } else {
-    throw new Error("지원하지 않는 타입입니다.");
+    throw new Error(`Not supported type: ${typeof data}`);
   }
 
   await writable.close();
+  return ret;
 }
 
+/**
+ * Removes a file from OPFS at the given path.
+ * @param path The full file path to remove (e.g., "folder/file.txt")
+ */
+export async function removeOPFSFile(path: string): Promise<void> {
+  const root = await navigator.storage.getDirectory();
+
+  const parts = path.split("/").filter(Boolean); // 공백이나 루트 슬래시 제거
+  if (parts.length === 0) throw new Error("Invalid path");
+
+  const fileName = parts.pop()!;
+  let currentDir = root;
+  for (const dir of parts) {
+    currentDir = await currentDir.getDirectoryHandle(dir, { create: false });
+  }
+
+  await currentDir.removeEntry(fileName);
+}
+
+/**
+ * Checks if the given path corresponds to a file in OPFS.
+ * @param path The file path to check.
+ * @returns true if the path is a file, false otherwise.
+ */
 export async function isOPFSFile(path: string): Promise<boolean> {
   try {
     const root = await navigator.storage.getDirectory();
@@ -98,6 +131,11 @@ export async function isOPFSFile(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Checks if the given path corresponds to a directory in OPFS.
+ * @param path The directory path to check.
+ * @returns true if the path is a directory, false otherwise.
+ */
 export async function isOPFSDir(path: string): Promise<boolean> {
   try {
     const root = await navigator.storage.getDirectory();
