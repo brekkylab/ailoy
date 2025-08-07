@@ -1,16 +1,19 @@
 import { search } from "jmespath";
 import { Image } from "wasm-vips";
 
+import { MCPClient, MCPClientTransport, MCPClientStartOptions } from "./mcp";
 import { AiloyModel } from "./models";
 import { Runtime } from "./runtime";
-import { MCPClient, MCPClientTransport, MCPClientStartOptions } from "./mcp";
-import { isVipsImage, vipsImageToBase64 } from "./utils/image";
 import { uint8ArrayToBase64 } from "./utils/base64";
+import { isVipsImage, vipsImageToBase64 } from "./utils/image";
 
 /** Types for internal data structures */
 
 export class TextContent {
-  constructor(public type: "text", public text: string) {}
+  constructor(
+    public type: "text",
+    public text: string
+  ) {}
 }
 
 export class ImageContent {

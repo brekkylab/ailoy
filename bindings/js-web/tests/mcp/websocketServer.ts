@@ -1,9 +1,10 @@
+import { IncomingMessage } from "node:http";
+import { Readable, Writable } from "node:stream";
+
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import express from "express";
 import cors from "cors";
+import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
-import { IncomingMessage } from "http";
-import { Readable, Writable } from "stream";
 
 import createMcpServer from "./common";
 

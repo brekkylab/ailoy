@@ -1,6 +1,7 @@
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import express from "express";
 import cors from "cors";
+import express from "express";
+
 import createMcpServer from "./common";
 
 let transport: StreamableHTTPServerTransport;

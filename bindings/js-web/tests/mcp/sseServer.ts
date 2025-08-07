@@ -1,6 +1,7 @@
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import express from "express";
 import cors from "cors";
+import express from "express";
+
 import createMcpServer from "./common";
 
 const mcpServer = createMcpServer();
