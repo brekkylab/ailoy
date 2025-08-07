@@ -1,8 +1,8 @@
-use std::{path::PathBuf, pin::Pin, str::FromStr};
+use std::{pin::Pin, str::FromStr};
 
 use tokenizers::tokenizer::Tokenizer as HFTokenizer;
 
-use crate::cache::{Cache, TryFromCache};
+use crate::cache::{Cache, CacheElement, TryFromCache};
 
 #[derive(Debug)]
 pub struct Tokenizer {
@@ -30,12 +30,12 @@ impl TryFromCache for Tokenizer {
     fn claim_files(
         _: Cache,
         key: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, String>>>> {
-        let dir = key.as_ref().replace("/", "--");
-        Box::pin(async move { Ok(vec![PathBuf::from(dir).join("tokenizer.json".to_owned())]) })
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheElement>, String>>>> {
+        let dirname = key.as_ref().replace("/", "--");
+        Box::pin(async move { Ok(vec![CacheElement::new(dirname, "tokenizer.json")]) })
     }
 
-    fn try_from_files(files: Vec<(PathBuf, Vec<u8>)>) -> Result<Self, String> {
+    fn try_from_files(files: Vec<(CacheElement, Vec<u8>)>) -> Result<Self, String> {
         let v = files.get(0).unwrap();
         let v = std::str::from_utf8(&v.1).map_err(|_| "Utf-8 conversion failed".to_owned())?;
         Ok(Tokenizer::new(v))

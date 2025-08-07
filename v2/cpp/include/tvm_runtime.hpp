@@ -1,18 +1,8 @@
-#include <dlpack/dlpack.h>
-#include <string>
-#include <unordered_map>
+#include <cstddef>
 
 namespace ailoy {
 
-class tvm_runtime_t {
-public:
-  tvm_runtime_t(
-      const std::string &lib_filename,
-      const std::unordered_map<std::string, std::string> file_contents,
-      DLDevice device);
-
-private:
-};
+class tvm_runtime_t;
 
 } // namespace ailoy
 

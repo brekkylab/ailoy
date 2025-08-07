@@ -1,53 +1,19 @@
-use std::{collections::HashMap, env::var, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    env::var,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use tokio::sync::RwLock;
 use url::Url;
 
 use crate::{
-    cache::TryFromCache,
+    cache::{CacheElement, TryFromCache},
     compat::filesystem::{read, write},
 };
 
 use super::manifest::{Manifest, ManifestDirectory};
-
-pub fn get_cache_root() -> PathBuf {
-    match var("AILOY_CACHE_ROOT") {
-        Ok(env_path) => PathBuf::from(env_path),
-        Err(_) => {
-            #[cfg(any(target_family = "unix"))]
-            {
-                PathBuf::from(var("HOME").unwrap())
-                    .join(".cache")
-                    .join("ailoy")
-            }
-            #[cfg(target_family = "windows")]
-            {
-                PathBuf::from(var("LOCALAPPDATA").unwrap()).join("ailoy")
-            }
-            #[cfg(target_family = "wasm")]
-            {
-                PathBuf::from("/").join("ailoy")
-            }
-        }
-    }
-}
-
-fn get_cache_remote_url() -> Url {
-    if let Ok(env_value) = var("AILOY_CACHE_REMOTE_URL") {
-        if let Ok(value) = Url::parse(&env_value) {
-            return value;
-        } else {
-            panic!("Invalid AILOY_CACHE_REMOTE_URL value: {}", env_value)
-        }
-    };
-    Url::parse("https://pub-9bacbd05eeb6446c9bf8285fe54c9f9e.r2.dev").unwrap()
-}
-
-fn build_url(url: &Url, dir: &str, name: &str) -> Result<Url, String> {
-    let path = format!("{}/{}", dir, name);
-    url.join(&path)
-        .map_err(|_| format!("Invalid URL: {} path: {}", url, path))
-}
 
 async fn download(url: Url) -> Result<Vec<u8>, String> {
     let req = reqwest::get(url);
@@ -71,52 +37,102 @@ pub struct Cache {
 
 impl Cache {
     pub fn new() -> Self {
+        let root = match var("AILOY_CACHE_ROOT") {
+            Ok(env_path) => PathBuf::from(env_path),
+            Err(_) => {
+                #[cfg(any(target_family = "unix"))]
+                {
+                    PathBuf::from(var("HOME").unwrap())
+                        .join(".cache")
+                        .join("ailoy")
+                }
+                #[cfg(target_family = "windows")]
+                {
+                    PathBuf::from(var("LOCALAPPDATA").unwrap()).join("ailoy")
+                }
+                #[cfg(target_family = "wasm")]
+                {
+                    PathBuf::from("/").join("ailoy")
+                }
+            }
+        };
+        let remote_url = {
+            let default = Url::parse("https://pub-9bacbd05eeb6446c9bf8285fe54c9f9e.r2.dev");
+            if let Ok(env_value) = var("AILOY_CACHE_REMOTE_URL") {
+                if let Ok(value) = Url::parse(&env_value) {
+                    value
+                } else {
+                    eprintln!("Invalid AILOY_CACHE_REMOTE_URL value: {}", env_value);
+                    default.unwrap()
+                }
+            } else {
+                default.unwrap()
+            }
+        };
         Self {
-            root: get_cache_root(),
-            remote_url: get_cache_remote_url(),
+            root,
+            remote_url,
             manifests: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    async fn get_manifest(
-        &self,
-        dir: impl AsRef<str>,
-        name: impl AsRef<str>,
-    ) -> Result<Manifest, String> {
-        let dir = dir.as_ref();
-        let name = name.as_ref();
+    pub fn get_root(&self) -> &Path {
+        return &self.root;
+    }
 
-        if !self.manifests.read().await.contains_key(dir) {
-            let url = build_url(&self.remote_url, dir, "_manifest.json")?;
-            let bytes = download(url).await?;
-            let text = String::from_utf8_lossy(&bytes);
-            let elem: ManifestDirectory = serde_json::from_str(&text)
+    pub fn get_remote_url(&self) -> &Url {
+        return &self.remote_url;
+    }
+
+    pub fn get_path(&self, elem: impl AsRef<CacheElement>) -> PathBuf {
+        self.root
+            .join(&elem.as_ref().dirname)
+            .join(&elem.as_ref().filename)
+    }
+
+    pub fn get_url(&self, elem: impl AsRef<CacheElement>) -> Url {
+        self.remote_url
+            .join(&format!(
+                "{}/{}",
+                elem.as_ref().dirname,
+                elem.as_ref().filename
+            ))
+            .unwrap()
+    }
+
+    async fn get_manifest(&self, elem: &CacheElement) -> Result<Manifest, String> {
+        if !self.manifests.read().await.contains_key(&elem.dirname) {
+            let elem_manifest = CacheElement::new(&elem.dirname, "_manifest.json");
+            let bytes = download(self.get_url(&elem_manifest)).await?;
+            let text = std::str::from_utf8(&bytes)
+                .map_err(|e| format!("std::str::from_utf_8 failed: {}", e.to_string()))?;
+            let value = serde_json::from_str::<ManifestDirectory>(text)
                 .map_err(|e| format!("`serde_json::from_str` failed: {}", e.to_string()))?;
-            self.manifests.write().await.insert(dir.to_owned(), elem);
+            self.manifests
+                .write()
+                .await
+                .insert(elem.dirname.clone(), value);
         };
         let manifests_lock = self.manifests.read().await;
-        let files = &manifests_lock.get(dir).unwrap().files;
-        if files.contains_key(name) {
-            Ok(files.get(name).unwrap().to_owned())
+        let files = &manifests_lock.get(&elem.dirname).unwrap().files;
+        if files.contains_key(&elem.filename) {
+            Ok(files.get(&elem.filename).unwrap().to_owned())
         } else {
-            Err(format!("The file {} not exists in manifest", name))
+            Err(format!(
+                "The file {} not exists in manifest",
+                &elem.filename
+            ))
         }
     }
 
-    pub async fn get(
-        &self,
-        dir: impl AsRef<str>,
-        name: impl AsRef<str>,
-    ) -> Result<Vec<u8>, String> {
-        let dir = dir.as_ref();
-        let name = name.as_ref();
-        let local_filepath = self.root.join(dir).join(name);
+    pub async fn get(&self, elem: impl AsRef<CacheElement>) -> Result<Vec<u8>, String> {
+        let elem = elem.as_ref();
 
         // Get manifest
-        let manifest = self.get_manifest(dir, name).await?;
+        let manifest = self.get_manifest(elem).await?;
 
         // Get local
-        let (local_manifest, local_bytes) = match read(&local_filepath).await {
+        let (local_manifest, local_bytes) = match read(&self.get_path(elem)).await {
             Ok(v) => (Some(Manifest::from_u8(&v)), Some(v)),
             Err(_) => (None, None),
         };
@@ -125,10 +141,11 @@ impl Cache {
         if local_manifest.is_some() && local_manifest.unwrap().sha1() == manifest.sha1() {
             Ok(local_bytes.unwrap())
         } else {
-            let url = build_url(&self.remote_url, dir, manifest.sha1())?;
+            let remote_elem = CacheElement::new(&elem.dirname, manifest.sha1());
+            let url = self.get_url(&remote_elem);
             let bytes = download(url).await?;
             // Write back
-            write(&local_filepath, &bytes).await?;
+            write(&self.get_path(elem), &bytes).await?;
             Ok(bytes)
         }
     }
@@ -138,21 +155,14 @@ impl Cache {
 
         let key = key.as_ref();
         let files = T::claim_files(self.clone(), key.to_owned()).await?;
-        let futures = files.iter().map(|f| {
+        let futures = files.into_iter().map(|elem| {
             let this = self.clone();
-            let dir = f
-                .parent()
-                .unwrap()
-                .as_os_str()
-                .to_string_lossy()
-                .to_string();
-            let file = f.file_name().unwrap().to_string_lossy().to_string();
             async move {
-                let bytes = this.get(dir, file).await.map(|v| (f.clone(), v))?;
+                let bytes = this.get(&elem).await.map(|v| (elem, v))?;
                 Ok::<_, String>(bytes)
             }
         });
-        let file_and_bytes: Vec<(PathBuf, Vec<u8>)> = join_all(futures)
+        let file_and_bytes: Vec<(CacheElement, Vec<u8>)> = join_all(futures)
             .await
             .into_iter()
             .collect::<Result<_, _>>()?;
@@ -207,7 +217,7 @@ mod tests {
     async fn test1() {
         let cache = Cache::new();
         let bytes = cache
-            .get("Qwen--Qwen3-0.6B", "tokenizer.json")
+            .get(&CacheElement::new("Qwen--Qwen3-0.6B", "tokenizer.json"))
             .await
             .unwrap();
         println!("Downloaded {}", bytes.len());

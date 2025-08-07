@@ -1,10 +1,10 @@
-use std::{path::PathBuf, pin::Pin};
+use std::pin::Pin;
 
 use minijinja::{Environment, context};
 use minijinja_contrib::add_to_environment;
 
 use crate::{
-    cache::{Cache, TryFromCache},
+    cache::{Cache, CacheElement, TryFromCache},
     message::Message,
 };
 
@@ -65,12 +65,12 @@ impl<'a> TryFromCache for ChatTemplate<'a> {
     fn claim_files(
         _: Cache,
         key: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, String>>>> {
-        let dir = key.as_ref().replace("/", "--");
-        Box::pin(async move { Ok(vec![PathBuf::from(dir).join("chat_template.j2".to_owned())]) })
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheElement>, String>>>> {
+        let dirname = key.as_ref().replace("/", "--");
+        Box::pin(async move { Ok(vec![CacheElement::new(dirname, "chat_template.j2")]) })
     }
 
-    fn try_from_files(files: Vec<(PathBuf, Vec<u8>)>) -> Result<Self, String> {
+    fn try_from_files(files: Vec<(CacheElement, Vec<u8>)>) -> Result<Self, String> {
         let v = files.get(0).unwrap();
         let v = std::str::from_utf8(&v.1).map_err(|_| "Utf-8 conversion failed".to_owned())?;
         Ok(ChatTemplate::new(v))

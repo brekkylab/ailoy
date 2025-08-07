@@ -2,17 +2,48 @@
 
 #include <filesystem>
 #include <format>
+#include <string>
+#include <unordered_map>
 
+#include <dlpack/dlpack.h>
 #include <nlohmann/json.hpp>
 #include <tvm/runtime/memory/memory_manager.h>
 #include <tvm/runtime/module.h>
+#include <tvm/runtime/vm/ndarray_cache_support.h>
 
 #include <iostream>
 
 using namespace tvm;
 using namespace tvm::runtime;
+using namespace tvm::runtime::vm;
 
 namespace ailoy {
+
+// Array<NDArray> load_params_from_cache() {
+//   constexpr const char *name_loader =
+//       "vm.builtin.param_array_from_cache_by_name";
+//   const tvm::ffi::Function fload_params =
+//       tvm::ffi::Function::GetGlobal(name_loader).value();
+
+//   Array<String> param_names;
+//   param_names.reserve(get_metadata()["params"].size());
+//   for (const auto &param : get_metadata()["params"]) {
+//     std::string param_name = param["name"];
+//     param_names.push_back(param_name);
+//   }
+//   return fload_params(param_names).cast<Array<NDArray>>();
+// }
+
+class tvm_runtime_t {
+public:
+  tvm_runtime_t(
+      const std::string &lib_filename,
+      const std::unordered_map<std::string, std::string> file_contents,
+      DLDevice device);
+
+private:
+  Module vm_;
+};
 
 tvm_runtime_t::tvm_runtime_t(
     const std::string &lib_filename,
@@ -35,7 +66,7 @@ tvm_runtime_t::tvm_runtime_t(
       static_cast<int>(memory::AllocatorType::kPooled),
       static_cast<int>(kDLCPU), 0,
       static_cast<int>(memory::AllocatorType::kPooled));
-  auto mod = vm;
+  vm_ = vm;
 
   // // Load model metadata
   // tvm::ffi::TypedFunction<tvm::String()> fmetadata =
@@ -45,6 +76,8 @@ tvm_runtime_t::tvm_runtime_t(
   // metadata << std::endl;
 
   // Load ndarray cache metadata
+  // NDArrayCacheMetadata::LoadFromStr()
+
   // from_json(nlohmann::json::parse(
   //               ailoy::fs::read_file_text(model_path_ / "ndarray-cache.json")
   //                   .unwrap()),

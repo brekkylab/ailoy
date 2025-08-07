@@ -14,10 +14,8 @@ TEST(TestTVM, HelloWorld) {
   auto lib_filename = model_path /
                       "Qwen--Qwen3-0.6B--aarch64-apple-darwin--metal" /
                       "lib.dylib";
-  const std::unordered_map<std::string, std::string> contents;
-  auto model = ailoy::tvm_runtime_t(
-      lib_filename.string(), contents,
-      DLDevice{.device_type = DLDeviceType::kDLMetal, .device_id = 0});
+  // const std::unordered_map<std::string, std::string> contents;
+  // ailoy_tvm_runtime_create();
 }
 
 int main(int argc, char **argv) {

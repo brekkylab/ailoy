@@ -1,8 +1,8 @@
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 mod tvm_runtime {
-    use std::{path::PathBuf, pin::Pin, str::FromStr};
+    use std::pin::Pin;
 
-    use crate::cache::{Cache, TryFromCache, get_cache_root};
+    use crate::cache::{Cache, CacheElement, TryFromCache};
 
     pub fn get_accelerator() -> &'static str {
         #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -76,14 +76,14 @@ mod tvm_runtime {
         fn claim_files(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, String>>>> {
-            let dir = vec![key.as_ref().replace("/", "--")].join("--");
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheElement>, String>>>> {
+            let dirname = vec![key.as_ref().replace("/", "--")].join("--");
+            let elem = CacheElement::new(&dirname, "ndarray-cache.json");
             Box::pin(async move {
-                let ndarray_cache =
-                    std::str::from_utf8(&cache.get(&dir, "ndarray-cache.json").await?)
-                        .map_err(|_| format!("Internal error"))?
-                        .to_owned();
-                let ndarray_cache: serde_json::Value = serde_json::from_str(&ndarray_cache)
+                let ndarray_cache_bytes = cache.get(&elem).await?;
+                let ndarray_cache_str = std::str::from_utf8(&ndarray_cache_bytes)
+                    .map_err(|_| format!("Internal error"))?;
+                let ndarray_cache: serde_json::Value = serde_json::from_str(ndarray_cache_str)
                     .map_err(|e| format!("JSON deserialization failed: {}", e.to_string()))?;
                 let mut rv = ndarray_cache
                     .as_object()
@@ -94,38 +94,34 @@ mod tvm_runtime {
                     .unwrap()
                     .iter()
                     .map(|v| {
-                        PathBuf::from_str(&dir).unwrap().join(
+                        CacheElement::new(
+                            &dirname,
                             v.as_object()
                                 .unwrap()
                                 .get("dataPath")
                                 .unwrap()
                                 .as_str()
-                                .unwrap()
-                                .to_owned(),
+                                .unwrap(),
                         )
                     })
                     .collect::<Vec<_>>();
-                rv.push(
-                    PathBuf::from_str(&dir)
-                        .unwrap()
-                        .join("ndarray-cache.json".to_owned()),
-                );
-                rv.push(
-                    PathBuf::from_str(&format!(
+                rv.push(CacheElement::new(&dirname, "ndarray-cache.json"));
+                rv.push(CacheElement::new(
+                    format!(
                         "{}--{}--{}",
-                        &dir,
+                        dirname,
                         env!("BUILD_TARGET_TRIPLE"),
                         get_accelerator()
-                    ))
-                    .unwrap()
-                    .join("lib.dylib".to_owned()),
-                );
+                    ),
+                    "lib",
+                ));
+                todo!()
 
-                Ok(rv)
+                // Ok(rv)
             })
         }
 
-        fn try_from_files(files: Vec<(PathBuf, Vec<u8>)>) -> Result<Self, String> {
+        fn try_from_files(files: Vec<(CacheElement, Vec<u8>)>) -> Result<Self, String> {
             todo!()
             // let mut contents: *mut ffi::FileContents = std::ptr::null_mut();
 
