@@ -10,7 +10,7 @@ use url::Url;
 
 use crate::{
     cache::{CacheElement, TryFromCache},
-    compat::filesystem::{read, write},
+    filesystem::{read, write},
 };
 
 use super::manifest::{Manifest, ManifestDirectory};
@@ -166,7 +166,7 @@ impl Cache {
             .await
             .into_iter()
             .collect::<Result<_, _>>()?;
-        T::try_from_files(file_and_bytes)
+        T::try_from_files(self, file_and_bytes)
     }
 }
 

@@ -43,4 +43,9 @@ fn build_native() {
     println!("cargo:rustc-link-lib=static=ailoy_cpp");
     println!("cargo:rustc-link-lib=dylib=tvm_runtime");
     println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
+    println!("cargo:rerun-if-changed=../cpp/src/tvm_runtime.hpp");
+    println!("cargo:rerun-if-changed=../cpp/src/tvm_runtime.cpp");
+    println!("cargo:rerun-if-changed=../cpp/src/language_model.hpp");
+    println!("cargo:rerun-if-changed=../cpp/src/language_model.cpp");
+    println!("cargo:rerun-if-changed=../cpp/CMakeLists.txt");
 }

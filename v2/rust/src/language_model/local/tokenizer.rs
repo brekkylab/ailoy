@@ -35,7 +35,7 @@ impl TryFromCache for Tokenizer {
         Box::pin(async move { Ok(vec![CacheElement::new(dirname, "tokenizer.json")]) })
     }
 
-    fn try_from_files(files: Vec<(CacheElement, Vec<u8>)>) -> Result<Self, String> {
+    fn try_from_files(_: &Cache, files: Vec<(CacheElement, Vec<u8>)>) -> Result<Self, String> {
         let v = files.get(0).unwrap();
         let v = std::str::from_utf8(&v.1).map_err(|_| "Utf-8 conversion failed".to_owned())?;
         Ok(Tokenizer::new(v))

@@ -1,6 +1,6 @@
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 mod tvm_runtime {
-    use std::pin::Pin;
+    use std::{path::PathBuf, pin::Pin};
 
     use crate::cache::{Cache, CacheElement, TryFromCache};
 
@@ -30,29 +30,10 @@ mod tvm_runtime {
 
     #[derive(Debug)]
     pub struct Inferencer {
-        inner: *mut ffi::TvmModel,
+        inner: *mut ffi::TVMRuntime,
     }
 
     impl Inferencer {
-        pub fn new(lib_filename: &str) -> Self {
-            // let mut inner: *mut ffi::TvmModel = std::ptr::null_mut();
-            // let lib_full_path = get_cache_root().join(lib_filename);
-            todo!()
-            // let ret = unsafe {
-            //     ffi::ailoy_tvm_model_create(
-            //         lib_full_path.as_os_str().to_string_lossy().as_ptr() as *const _,
-            //         contents,
-            //         &mut tvm_model,
-            //     )
-            // };
-            // if ret != 0 {
-            //     unsafe { ffi::ailoy_file_contents_destroy(contents) };
-            //     return Err(format!("ailoy_tvm_model_create failed"));
-            // }
-
-            // Inferencer { inner }
-        }
-
         pub fn embed(&self, input: impl AsRef<[u8]>) -> () {
             todo!()
         }
@@ -68,7 +49,7 @@ mod tvm_runtime {
 
     impl Drop for Inferencer {
         fn drop(&mut self) {
-            unsafe { ffi::ailoy_tvm_model_destroy(self.inner) };
+            unsafe { ffi::ailoy_tvm_runtime_destroy(self.inner) };
         }
     }
 
@@ -113,58 +94,74 @@ mod tvm_runtime {
                         env!("BUILD_TARGET_TRIPLE"),
                         get_accelerator()
                     ),
-                    "lib",
+                    "rt.dylib",
                 ));
-                todo!()
-
-                // Ok(rv)
+                Ok(rv)
             })
         }
 
-        fn try_from_files(files: Vec<(CacheElement, Vec<u8>)>) -> Result<Self, String> {
-            todo!()
-            // let mut contents: *mut ffi::FileContents = std::ptr::null_mut();
+        fn try_from_files(
+            cache: &Cache,
+            files: Vec<(CacheElement, Vec<u8>)>,
+        ) -> Result<Self, String> {
+            let cache_root = cache.get_root();
+            let mut lib_path: Option<PathBuf> = None;
+            let mut files_c: *mut ffi::FileContents = std::ptr::null_mut();
+            unsafe { ffi::ailoy_file_contents_create(&mut files_c) };
+            for (elem, data) in files {
+                if elem.filename().starts_with("rt.") {
+                    lib_path = Some(cache_root.join(elem.dirname()).join(elem.filename()));
+                    continue;
+                }
+                unsafe {
+                    ffi::ailoy_file_contents_insert(
+                        files_c,
+                        elem.filename().as_ptr() as *const _,
+                        data.len(),
+                        data.as_ptr() as *const _,
+                    );
+                }
+            }
 
-            // if unsafe { ffi::ailoy_file_contents_create(&mut contents) } != 0 {
-            //     return Err("ailoy_file_contents_create failed".to_owned());
-            // }
+            let lib_path = match lib_path {
+                Some(v) => {
+                    if !v.exists() {
+                        return Err("Runtime not exists".to_owned());
+                    };
+                    v
+                }
+                None => return Err("No rt found".to_owned()),
+            };
+            let mut inferencer_c: *mut ffi::TVMRuntime = std::ptr::null_mut();
+            unsafe {
+                let ret = ffi::ailoy_tvm_runtime_create(
+                    lib_path.as_os_str().to_string_lossy().as_ptr() as *const _,
+                    files_c,
+                    &mut inferencer_c,
+                );
+                if ret != 0 {
+                    return Err(format!("ailoy_tvm_runtime_create failed: {}", ret));
+                }
+            }
 
-            // let mut lib_filename: Option<String> = None;
-            // for (path, data) in files {
-            //     let path_str = path.as_os_str().to_string_lossy();
-            //     if path_str.ends_with("lib.dylib")
-            //         || path_str.ends_with("lib.so")
-            //         || path_str.ends_with("lib.dll")
-            //         || path_str.ends_with("lib.wasm")
-            //     {
-            //         lib_filename = Some(path.to_str().unwrap().to_owned());
-            //         continue;
-            //     }
-            //     let ret = unsafe {
-            //         ffi::ailoy_file_contents_insert(
-            //             contents,
-            //             path_str.as_ptr() as *const _,
-            //             data.len(),
-            //             data.as_ptr() as *const _,
-            //         )
-            //     };
-            //     if ret != 0 {
-            //         unsafe { ffi::ailoy_file_contents_destroy(contents) };
-            //         return Err(format!("Failed to insert file: {}", path.to_string_lossy()));
-            //     }
-            // }
+            unsafe { ffi::ailoy_file_contents_destroy(files_c) };
 
-            // unsafe { ffi::ailoy_file_contents_destroy(contents) };
-            // Ok(Inferencer::new())
+            Ok(Inferencer {
+                inner: inferencer_c,
+            })
         }
     }
 
     mod ffi {
         #[repr(C)]
-        pub struct FileContents;
+        pub struct FileContents {
+            _private: (),
+        }
 
         #[repr(C)]
-        pub struct TvmModel;
+        pub struct TVMRuntime {
+            _private: (),
+        }
 
         unsafe extern "C" {
             pub fn ailoy_file_contents_create(out: *mut *mut FileContents) -> i32;
@@ -178,31 +175,13 @@ mod tvm_runtime {
                 content: *const std::os::raw::c_char,
             ) -> i32;
 
-            pub fn ailoy_tvm_model_create(
-                lib_filename: *const std::os::raw::c_char,
+            pub fn ailoy_tvm_runtime_create(
+                lib_path: *const std::os::raw::c_char,
                 contents: *const FileContents,
-                out: *mut *mut TvmModel,
+                out: *mut *mut TVMRuntime,
             ) -> i32;
 
-            pub fn ailoy_tvm_model_destroy(model: *mut TvmModel) -> i32;
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(test)]
-    mod tests {
-
-        use super::*;
-
-        #[tokio::test]
-        async fn test_tvm_model() {
-            let cache = crate::cache::Cache::new();
-            println!(
-                "{:?}",
-                Inferencer::claim_files(cache, "Qwen/Qwen3-0.6B")
-                    .await
-                    .unwrap()
-            );
+            pub fn ailoy_tvm_runtime_destroy(model: *mut TVMRuntime) -> i32;
         }
     }
 }

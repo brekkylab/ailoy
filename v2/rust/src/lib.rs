@@ -1,5 +1,5 @@
 pub mod cache;
-pub mod compat;
+pub mod filesystem;
 pub mod language_model;
 // pub mod local_model;
 mod message;
