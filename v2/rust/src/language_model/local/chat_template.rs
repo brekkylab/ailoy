@@ -82,17 +82,16 @@ mod tests {
     use super::*;
     use crate::message::{Part, Role};
 
-    const QWEN3_CHAT_TEMPLATE: &str =
-        include_str!("../../../data/Qwen--Qwen3-0.6B/chat_template.j2");
+    const QWEN3_CHAT_TEMPLATE: &str = include_str!("./data/Qwen--Qwen3-0.6B/chat_template.j2");
 
     #[test]
     fn test_qwen3_no_reasoning() {
         let ct = ChatTemplate::new(QWEN3_CHAT_TEMPLATE);
         let msgs = vec![
-            Message::with_content(Role::System, Part::text("You are an assistant.")),
-            Message::with_content(Role::User, Part::text("Hi what's your name?")),
-            Message::with_content(Role::Assistant, Part::text("You can call me Jaden.")),
-            Message::with_content(Role::User, Part::text("Who made you?")),
+            Message::with_content(Role::System, Part::from_text("You are an assistant.")),
+            Message::with_content(Role::User, Part::from_text("Hi what's your name?")),
+            Message::with_content(Role::Assistant, Part::from_text("You can call me Jaden.")),
+            Message::with_content(Role::User, Part::from_text("Who made you?")),
         ];
         let expected = r#"<|im_start|>system
 You are an assistant.<|im_end|>

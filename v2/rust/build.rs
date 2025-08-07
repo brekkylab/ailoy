@@ -1,11 +1,20 @@
-use std::{env, path::PathBuf, process::Command};
-
-use cmake::Config;
-
 fn main() {
     // Set target triple
-    let target = env::var("TARGET").expect("TARGET not set");
+    let target = std::env::var("TARGET").expect("TARGET not set");
     println!("cargo:rustc-env=BUILD_TARGET_TRIPLE={}", target);
+
+    if target.starts_with("wasm") {
+        return;
+    } else {
+        build_native();
+        return;
+    }
+}
+
+fn build_native() {
+    use std::{env, path::PathBuf, process::Command};
+
+    use cmake::Config;
 
     // Set directories
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());

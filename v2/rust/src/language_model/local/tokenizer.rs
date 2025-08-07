@@ -46,7 +46,7 @@ impl TryFromCache for Tokenizer {
 mod tests {
     use super::*;
 
-    const QWEN3_TOKENIZER: &str = include_str!("../../../data/Qwen--Qwen3-0.6B/tokenizer.json");
+    const QWEN3_TOKENIZER: &str = include_str!("./data/Qwen--Qwen3-0.6B/tokenizer.json");
 
     #[test]
     fn test_qwen3_encode() {

@@ -32,12 +32,12 @@ pub fn get_cache_root() -> PathBuf {
     }
 }
 
-fn get_remote_cache_url() -> Url {
-    if let Ok(env_value) = var("AILOY_REMOTE_CACHE_URL") {
+fn get_cache_remote_url() -> Url {
+    if let Ok(env_value) = var("AILOY_CACHE_REMOTE_URL") {
         if let Ok(value) = Url::parse(&env_value) {
             return value;
         } else {
-            panic!("Invalid AILOY_REMOTE_CACHE_URL value: {}", env_value)
+            panic!("Invalid AILOY_CACHE_REMOTE_URL value: {}", env_value)
         }
     };
     Url::parse("https://pub-9bacbd05eeb6446c9bf8285fe54c9f9e.r2.dev").unwrap()
@@ -64,16 +64,16 @@ async fn download(url: Url) -> Result<Vec<u8>, String> {
 
 #[derive(Debug, Clone)]
 pub struct Cache {
-    base_url: Url,
-    cache_root: PathBuf,
+    root: PathBuf,
+    remote_url: Url,
     manifests: Arc<RwLock<HashMap<String, ManifestDirectory>>>,
 }
 
 impl Cache {
     pub fn new() -> Self {
         Self {
-            base_url: get_remote_cache_url(),
-            cache_root: get_cache_root(),
+            root: get_cache_root(),
+            remote_url: get_cache_remote_url(),
             manifests: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -87,7 +87,7 @@ impl Cache {
         let name = name.as_ref();
 
         if !self.manifests.read().await.contains_key(dir) {
-            let url = build_url(&self.base_url, dir, "_manifest.json")?;
+            let url = build_url(&self.remote_url, dir, "_manifest.json")?;
             let bytes = download(url).await?;
             let text = String::from_utf8_lossy(&bytes);
             let elem: ManifestDirectory = serde_json::from_str(&text)
@@ -110,7 +110,7 @@ impl Cache {
     ) -> Result<Vec<u8>, String> {
         let dir = dir.as_ref();
         let name = name.as_ref();
-        let local_filepath = self.cache_root.join(dir).join(name);
+        let local_filepath = self.root.join(dir).join(name);
 
         // Get manifest
         let manifest = self.get_manifest(dir, name).await?;
@@ -125,7 +125,7 @@ impl Cache {
         if local_manifest.is_some() && local_manifest.unwrap().sha1() == manifest.sha1() {
             Ok(local_bytes.unwrap())
         } else {
-            let url = build_url(&self.base_url, dir, manifest.sha1())?;
+            let url = build_url(&self.remote_url, dir, manifest.sha1())?;
             let bytes = download(url).await?;
             // Write back
             write(&local_filepath, &bytes).await?;
@@ -133,10 +133,7 @@ impl Cache {
         }
     }
 
-    pub async fn try_create_from_cache<T: TryFromCache>(
-        &self,
-        key: impl AsRef<str>,
-    ) -> Result<T, String> {
+    pub async fn try_create<T: TryFromCache>(&self, key: impl AsRef<str>) -> Result<T, String> {
         use futures::future::join_all;
 
         let key = key.as_ref();

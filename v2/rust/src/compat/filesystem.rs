@@ -19,7 +19,7 @@ mod native {
     pub async fn write(path: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), String> {
         tokio_write(path, data)
             .await
-            .map_err(|e| format!("tokio::fs::read failed: {}", e.to_string()))
+            .map_err(|e| format!("tokio::fs::write failed: {}", e.to_string()))
     }
 
     pub async fn remove(path: impl AsRef<Path>) -> Result<(), String> {

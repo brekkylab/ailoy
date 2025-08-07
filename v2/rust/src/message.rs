@@ -8,6 +8,9 @@ use serde::{
 use serde_json::Value;
 use url::Url;
 
+/// Represents a unit of message content.
+///
+/// A `Part` can be one of several types, such as plain text, JSON data, or an image.
 #[derive(Clone, Debug)]
 pub enum Part {
     Text(String),
@@ -17,23 +20,56 @@ pub enum Part {
 }
 
 impl Part {
-    pub fn text<T: Into<String>>(text: T) -> Part {
+    /// Constructor for text part
+    pub fn from_text<T: Into<String>>(text: T) -> Part {
         Part::Text(text.into())
     }
 
-    pub fn json<T: Into<Value>>(json: T) -> Part {
+    pub fn is_text(&self) -> bool {
+        match self {
+            Part::Text(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn get_text(&self) -> Option<&str> {
+        match self {
+            Part::Text(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Constructor for JSON part
+    pub fn from_json<T: Into<Value>>(json: T) -> Part {
         Part::Json(json.into())
     }
 
-    pub fn image_url<T: Into<Url>>(url: T) -> Part {
+    pub fn is_json(&self) -> bool {
+        match self {
+            Part::Json(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn get_json(&self) -> Option<&Value> {
+        match self {
+            Part::Json(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Constructor for image URL part
+    pub fn from_image_url<T: Into<Url>>(url: T) -> Part {
         Part::ImageURL(url.into())
     }
 
-    pub fn image_base64<T: Into<String>>(encoded: T) -> Part {
+    /// Constructor for image base64 part
+    pub fn from_image_base64<T: Into<String>>(encoded: T) -> Part {
         Part::ImageBase64(encoded.into())
     }
 }
 
+// Serialization logic for Part
 impl Serialize for Part {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -62,6 +98,7 @@ impl Serialize for Part {
     }
 }
 
+// Deserialization logic for Part
 impl<'de> Deserialize<'de> for Part {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -135,6 +172,45 @@ impl<'de> Visitor<'de> for PartVisitor {
     }
 }
 
+/// A data structure to represent which part of the message is being updated.
+#[derive(Clone, Debug)]
+pub enum MessageDelta {
+    Content(Part),
+    Reasoning(Part),
+    ToolCall(Part),
+}
+
+impl MessageDelta {
+    pub fn content(part: Part) -> MessageDelta {
+        MessageDelta::Content(part)
+    }
+
+    pub fn reasoning(part: Part) -> MessageDelta {
+        MessageDelta::Reasoning(part)
+    }
+
+    pub fn tool_call(part: Part) -> MessageDelta {
+        MessageDelta::ToolCall(part)
+    }
+
+    pub fn get_part(&self) -> &Part {
+        match self {
+            MessageDelta::Content(part) => part,
+            MessageDelta::Reasoning(part) => part,
+            MessageDelta::ToolCall(part) => part,
+        }
+    }
+
+    pub fn take_part(self) -> Part {
+        match self {
+            MessageDelta::Content(part) => part,
+            MessageDelta::Reasoning(part) => part,
+            MessageDelta::ToolCall(part) => part,
+        }
+    }
+}
+
+/// Role of the message sender
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -144,6 +220,10 @@ pub enum Role {
     Tool,
 }
 
+/// Represents a full message with multiple sections.
+///
+/// Its serialization and deserialization logic is compatible with HuggingFace-style messages (also known as OpenAI-compatible format).
+/// The only exception is that, since this structure supports multi-modal content, the `Part` logic may differ from text-only implementations.
 #[derive(Clone, Debug)]
 pub struct Message {
     role: Role,
@@ -153,6 +233,7 @@ pub struct Message {
 }
 
 impl Message {
+    /// Create an empty message
     pub fn new(role: Role) -> Message {
         Message {
             role,
@@ -162,6 +243,7 @@ impl Message {
         }
     }
 
+    /// Create a message with initial content
     pub fn with_content(role: Role, content: Part) -> Message {
         Message {
             role,
@@ -171,19 +253,23 @@ impl Message {
         }
     }
 
+    /// Append content to the content vector
     pub fn push_content(&mut self, content: Part) -> () {
         self.content.push(content);
     }
 
+    /// Append reasoning part
     pub fn push_reasoning(&mut self, reasoning: Part) -> () {
         self.reasoning.push(reasoning);
     }
 
+    /// Append tool call part
     pub fn push_tool_calls(&mut self, tool_calls: Part) -> () {
         self.tool_calls.push(tool_calls);
     }
 }
 
+// Serialization logic for Message
 impl Serialize for Message {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -204,6 +290,7 @@ impl Serialize for Message {
     }
 }
 
+/// Deserialization logic for Message
 impl<'de> Deserialize<'de> for Message {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -258,5 +345,69 @@ impl<'de> Visitor<'de> for MessageVisitor {
             reasoning,
             tool_calls,
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct MessageAggregator {
+    last_delta: Option<MessageDelta>,
+    aggregated: Message,
+}
+
+impl MessageAggregator {
+    pub fn new(role: Role) -> Self {
+        MessageAggregator {
+            last_delta: None,
+            aggregated: Message::new(role),
+        }
+    }
+
+    fn finalize_last_delta(&mut self) {
+        if let Some(last_delta) = self.last_delta.take() {
+            match last_delta {
+                MessageDelta::Content(part) => {
+                    self.aggregated.push_content(part);
+                }
+                MessageDelta::Reasoning(part) => {
+                    self.aggregated.push_reasoning(part);
+                }
+                MessageDelta::ToolCall(part) => {
+                    self.aggregated.push_tool_calls(part);
+                }
+            }
+        };
+    }
+
+    pub fn update(&mut self, delta: MessageDelta) {
+        match (&mut self.last_delta, delta) {
+            (
+                Some(MessageDelta::Content(Part::Text(last_text))),
+                MessageDelta::Content(Part::Text(text)),
+            ) => {
+                // Text concat
+                last_text.push_str(&text);
+            }
+            (
+                Some(MessageDelta::Reasoning(Part::Text(last_text))),
+                MessageDelta::Reasoning(Part::Text(text)),
+            ) => {
+                // Text concat
+                last_text.push_str(&text);
+            }
+            (None, delta) => {
+                self.last_delta = Some(delta);
+            }
+            (Some(_), delta) => {
+                // Current last_delta -> registred into `self.aggregated`
+                self.finalize_last_delta();
+                // Current delta -> last delta
+                self.last_delta = Some(delta);
+            }
+        };
+    }
+
+    pub fn finalize(mut self) -> Message {
+        self.finalize_last_delta();
+        self.aggregated
     }
 }

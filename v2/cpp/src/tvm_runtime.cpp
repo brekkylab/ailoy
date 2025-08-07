@@ -1,4 +1,4 @@
-#include "tvm_model.hpp"
+#include "tvm_runtime.hpp"
 
 #include <filesystem>
 #include <format>
@@ -14,7 +14,7 @@ using namespace tvm::runtime;
 
 namespace ailoy {
 
-tvm_model_t::tvm_model_t(
+tvm_runtime_t::tvm_runtime_t(
     const std::string &lib_filename,
     const std::unordered_map<std::string, std::string> file_contents,
     DLDevice device) {
@@ -84,14 +84,14 @@ int ailoy_file_contents_insert(ailoy_file_contents_t *contents,
   return 0;
 }
 
-int ailoy_tvm_model_create(char const *lib_filename,
-                           ailoy_file_contents_t const *contents,
-                           ailoy::tvm_model_t **out) {
-  *out = new ailoy::tvm_model_t(
+int ailoy_tvm_runtime_create(char const *lib_filename,
+                             ailoy_file_contents_t const *contents,
+                             ailoy::tvm_runtime_t **out) {
+  *out = new ailoy::tvm_runtime_t(
       lib_filename, contents->inner,
       DLDevice{.device_type = DLDeviceType::kDLMetal, .device_id = 0});
   return 0;
 }
 
-void ailoy_tvm_model_destroy(ailoy::tvm_model_t *model) { delete model; }
+void ailoy_tvm_runtime_destroy(ailoy::tvm_runtime_t *model) { delete model; }
 }

@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 
-#include "tvm_model.hpp"
+#include "tvm_runtime.hpp"
 
 TEST(TestTVM, HelloWorld) {
   const char *home = std::getenv("HOME");
@@ -15,7 +15,7 @@ TEST(TestTVM, HelloWorld) {
                       "Qwen--Qwen3-0.6B--aarch64-apple-darwin--metal" /
                       "lib.dylib";
   const std::unordered_map<std::string, std::string> contents;
-  auto model = ailoy::tvm_model_t(
+  auto model = ailoy::tvm_runtime_t(
       lib_filename.string(), contents,
       DLDevice{.device_type = DLDeviceType::kDLMetal, .device_id = 0});
 }
