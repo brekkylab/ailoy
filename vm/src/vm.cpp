@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <set>
+#include <thread>
 
 #include <magic_enum/magic_enum.hpp>
 
@@ -13,6 +14,8 @@
 using namespace std::chrono_literals;
 
 namespace ailoy {
+
+std::atomic_bool vm_ready{false};
 
 struct vm_state_t : public notify_t {
   vm_state_t(std::shared_ptr<monitor_t> monitor) : stop(create<stop_t>()) {
@@ -139,8 +142,17 @@ void vm_start(const std::string &url,
   // Send connection & Receive response
   {
     auto tx_id = generate_uuid();
-    if (!client->send<packet_type::connect>(tx_id))
-      raise_exception("Connection packet send failed");
+    int connect_retry_count = 0;
+    while (true) {
+      if (client->send<packet_type::connect>(tx_id))
+        break;
+      if (connect_retry_count >= 3)
+        raise_exception("Connection packet send failed");
+
+      std::this_thread::sleep_for(100ms);
+      connect_retry_count++;
+    }
+
     if (!monitor->monitor(1s))
       raise_exception("Connection response packet not arrived");
     auto packet = client->recv();
@@ -163,6 +175,12 @@ void vm_start(const std::string &url,
       if (!client->send_bytes(pkt))
         raise_exception("Initialization packet send failed");
     }
+  }
+
+  {
+    vm_ready.wait(true);
+    vm_ready.store(true);
+    vm_ready.notify_all();
   }
 
   // Main event loop
@@ -209,6 +227,12 @@ void vm_start(const std::string &url,
         }
       }
     }
+  }
+
+  {
+    vm_ready.wait(false);
+    vm_ready.store(false);
+    vm_ready.notify_all();
   }
 
   // Squeeze all remaining responses

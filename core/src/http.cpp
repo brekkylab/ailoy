@@ -61,6 +61,18 @@ struct EmscriptenRequestContext {
   bool completed = false;
 };
 
+inline void trim(std::string &s) {
+  // ltrim
+  s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+          }));
+  // rtrim
+  s.erase(std::find_if(s.rbegin(), s.rend(),
+                       [](unsigned char ch) { return !std::isspace(ch); })
+              .base(),
+          s.end());
+}
+
 // Emscripten fetch callbacks
 void on_fetch_success(emscripten_fetch_t *fetch) {
   EmscriptenRequestContext *ctx =
@@ -81,6 +93,8 @@ void on_fetch_success(emscripten_fetch_t *fetch) {
     for (int i = 0; unpacked_headers[i]; i += 2) {
       std::string key = unpacked_headers[i];
       std::string value = unpacked_headers[i + 1];
+      trim(key);
+      trim(value);
       ctx->response->headers[key] = value;
     }
   }
@@ -141,16 +155,12 @@ result_t request(const request_t &req) {
 
   // Set headers
   std::vector<const char *> headers;
-  std::vector<std::string> header_strings;
-
   for (const auto &[key, value] : req.headers) {
-    header_strings.push_back(key + ": " + value);
-  }
-
-  for (const auto &header : header_strings) {
-    headers.push_back(header.c_str());
+    headers.push_back(key.c_str());
+    headers.push_back(value.c_str());
   }
   headers.push_back(nullptr); // Null terminate
+  attr.requestHeaders = headers.data();
 
   // Set body for non-GET requests
   if (req.body.has_value() && req.method != method_t::GET) {

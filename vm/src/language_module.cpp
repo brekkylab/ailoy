@@ -5,11 +5,13 @@
 #include "tvm/language_model.hpp"
 #endif
 
+#include "chat_manager.hpp"
 #include "chromadb_vector_store.hpp"
 #include "faiss_vector_store.hpp"
 #include "model_cache.hpp"
 #include "openai.hpp"
 #include "split_text.hpp"
+#include "tokenizer.hpp"
 
 namespace ailoy {
 
@@ -44,6 +46,18 @@ std::shared_ptr<const module_t> get_language_module() {
     language_module->ops.insert_or_assign(
         "remove_model",
         create<instant_operator_t>(ailoy::operators::remove_model));
+  }
+
+  // Add Component: Chat Manager
+  if (!language_module->factories.contains("chat_manager")) {
+    language_module->factories.insert_or_assign("chat_manager",
+                                                create_chat_manager_component);
+  }
+
+  // Add Component: Tokenizer
+  if (!language_module->factories.contains("tokenizer")) {
+    language_module->factories.insert_or_assign("tokenizer",
+                                                create_tokenizer_component);
   }
 
   // Add Operators: Split Text

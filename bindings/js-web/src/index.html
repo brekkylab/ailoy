@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ailoy WASM Test</title>
+</head>
+<body>
+    <h1>Ailoy WASM Test</h1>
+
+    <script type="module">
+        import * as Ailoy from "./index.js"
+
+        const rt = new Ailoy.Runtime();
+        await rt.start();
+        window.runtime = rt;
+
+        const agent = await Ailoy.defineAgent(rt, Ailoy.APIModel({id: "gpt-4o", apiKey: "<OPENAI_API_KEY>"}));
+        window.agent = agent;
+
+    </script>
+    
+</body>
+</html>

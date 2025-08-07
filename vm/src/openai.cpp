@@ -102,6 +102,10 @@ void grok_llm_engine_t::postprocess_response_body(nlohmann::json &body) {
   for (auto &choice : body["choices"]) {
     if (choice["message"].contains("tool_calls")) {
       choice["finish_reason"] = "tool_calls";
+      // content should be empty on "tool_calls" message
+      if (choice["message"].contains("content")) {
+        choice["message"].erase("content");
+      }
     }
   }
 }
