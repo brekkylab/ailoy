@@ -1,14 +1,14 @@
 import { search } from "jmespath";
 import { Image } from "wasm-vips";
 
+import { ChatManager, Tokenizer } from "./components";
+import { GenerationConfig } from "./llm/config";
+import { Engine } from "./llm/engine";
 import { MCPClient, MCPClientTransport, MCPClientStartOptions } from "./mcp";
 import { _LocalModel, AiloyModel } from "./models";
 import { Runtime } from "./runtime";
 import { uint8ArrayToBase64 } from "./utils/base64";
 import { isVipsImage, vipsImageToBase64 } from "./utils/image";
-import { GenerationConfig } from "./llm/config";
-import { Engine } from "./llm/engine";
-import { ChatManager, Tokenizer } from "./components";
 
 /** Types for internal data structures */
 
@@ -240,7 +240,6 @@ export function bearerAutenticator(
  * Agents can be extended with external tools or APIs to provide real-time or domain-specific knowledge, enabling
  * more powerful and context-aware interactions.
  */
-
 export class Agent {
   private runtime: Runtime;
 
@@ -842,107 +841,6 @@ export class Agent {
   clearTools() {
     this.tools = [];
   }
-
-  //   private _printResponseText(resp: AgentResponseText) {
-  //     if (resp.isTypeSwitched) {
-  //       process.stdout.write("\n");
-  //     }
-  //     const content =
-  //       resp.type === "reasoning" ? chalk.yellow(resp.content) : resp.content;
-  //     process.stdout.write(content);
-  //   }
-
-  //   private _printResponseToolCall(resp: AgentResponseToolCall) {
-  //     let title =
-  //       chalk.magenta("Tool Call") +
-  //       ": " +
-  //       chalk.bold(resp.content.function.name);
-  //     if (resp.content.id !== undefined && resp.content.id.length > 0) {
-  //       title += ` (${resp.content.id})`;
-  //     }
-  //     const content = JSON.stringify(resp.content.function.arguments, null, 2);
-  //     const box = boxen(content, {
-  //       title,
-  //       titleAlignment: "left",
-  //       padding: {
-  //         left: 1,
-  //         right: 1,
-  //         top: 0,
-  //         bottom: 0,
-  //       },
-  //     });
-  //     console.log(box);
-  //   }
-
-  //   private _printResponseToolResult(resp: AgentResponseToolResult) {
-  //     let title = chalk.green("Tool Result");
-  //     if (
-  //       resp.content.tool_call_id !== undefined &&
-  //       resp.content.tool_call_id.length > 0
-  //     ) {
-  //       title += ` (${resp.content.tool_call_id})`;
-  //     }
-
-  //     let content: string;
-  //     try {
-  //       // Try to parse as json
-  //       content = JSON.stringify(
-  //         JSON.parse(resp.content.content[0].text),
-  //         null,
-  //         2
-  //       );
-  //     } catch (e) {
-  //       // Use original content if not json deserializable
-  //       content = resp.content.content[0].text;
-  //     }
-  //     // Truncate long contents
-  //     if (content.length > 500) {
-  //       content = content.slice(0, 500) + "...(truncated)";
-  //     }
-
-  //     const box = boxen(content, {
-  //       title,
-  //       titleAlignment: "left",
-  //       padding: {
-  //         left: 1,
-  //         right: 1,
-  //         top: 0,
-  //         bottom: 0,
-  //       },
-  //     });
-  //     console.log(box);
-  //   }
-
-  //   private _printResponseError(resp: AgentResponseError) {
-  //     const title = chalk.red.bold("Error");
-  //     const box = boxen(resp.content, {
-  //       title,
-  //       titleAlignment: "left",
-  //       padding: {
-  //         left: 1,
-  //         right: 1,
-  //         top: 0,
-  //         bottom: 0,
-  //       },
-  //     });
-  //     console.log(box);
-  //   }
-
-  /** Prints agent's responses in a pretty format */
-  //   print(
-  //     /** agent's response yielded from `query()` */
-  //     resp: AgentResponse
-  //   ) {
-  //     if (resp.type === "output_text" || resp.type === "reasoning") {
-  //       this._printResponseText(resp);
-  //     } else if (resp.type === "tool_call") {
-  //       this._printResponseToolCall(resp);
-  //     } else if (resp.type === "tool_call_result") {
-  //       this._printResponseToolResult(resp);
-  //     } else if (resp.type === "error") {
-  //       this._printResponseError(resp);
-  //     }
-  //   }
 }
 
 /** Define a new agent */

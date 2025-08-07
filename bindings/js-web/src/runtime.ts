@@ -373,4 +373,10 @@ class Runtime {
   }
 }
 
-export { Runtime };
+async function startRuntime(): Promise<Runtime> {
+  const rt = new Runtime();
+  await rt.start();
+  return rt;
+}
+
+export { Runtime, startRuntime };

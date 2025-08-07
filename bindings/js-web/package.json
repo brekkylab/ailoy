@@ -11,13 +11,20 @@
   },
   "type": "module",
   "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build:configure": "cd ../.. && cmake --preset emscripten-release",
     "build:wasm": "cd ../.. && cmake --build ./build/emscripten-release -t ailoy_js_web --parallel 10",
     "build:tvm": "make -C ../../build/emscripten-release/_deps/tvm-src/web && cp ../../build/emscripten-release/_deps/tvm-src/web/src/*.js ./src/tvmjs",
     "build:ts": "NODE_ENV=production vite build",
+    "build": "npm run build:configure && npm run build:wasm && npm run build:ts",
     "dev": "NODE_ENV=development vite dev",
-    "test": "vitest"
+    "test": "vitest",
+    "prepack": "clean-package",
+    "postpack": "clean-package restore"
   },
   "devDependencies": {
     "@trivago/prettier-plugin-sort-imports": "^5.2.2",
@@ -25,6 +32,7 @@
     "@types/jmespath": "^0.15.2",
     "@types/node": "^24.2.0",
     "@vitest/browser": "^3.2.4",
+    "clean-package": "^2.2.0",
     "@webgpu/types": "^0.1.64",
     "cors": "^2.8.5",
     "esbuild": "^0.25.8",
@@ -41,5 +49,13 @@
     "@modelcontextprotocol/sdk": "^1.17.1",
     "jmespath": "^0.16.0",
     "wasm-vips": "^0.0.14"
+  },
+  "clean-package": {
+    "indent": 2,
+    "remove": [
+      "scripts",
+      "devDependencies",
+      "clean-package"
+    ]
   }
 }
