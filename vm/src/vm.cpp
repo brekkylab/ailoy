@@ -15,6 +15,8 @@ using namespace std::chrono_literals;
 
 namespace ailoy {
 
+std::atomic_bool vm_ready{false};
+
 struct vm_state_t : public notify_t {
   vm_state_t(std::shared_ptr<monitor_t> monitor) : stop(create<stop_t>()) {
     stop->set_monitor(monitor);

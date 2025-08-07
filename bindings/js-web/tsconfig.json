@@ -19,6 +19,7 @@
     "experimentalDecorators": true,
     "noImplicitOverride": true,
     "allowSyntheticDefaultImports": true,
+    "isolatedModules": true,
     "noEmit": false,
     "module": "esnext",
     "outDir": "dist",

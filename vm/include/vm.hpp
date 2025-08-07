@@ -49,6 +49,6 @@ void vm_start(const std::string &url,
  */
 void vm_stop(const std::string &url, const std::string &name = "default_vm");
 
-std::atomic_bool vm_ready{false};
+extern std::atomic_bool vm_ready;
 
 } // namespace ailoy
