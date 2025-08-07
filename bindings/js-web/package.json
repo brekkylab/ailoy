@@ -14,6 +14,7 @@
   "scripts": {
     "build:configure": "cd ../.. && cmake --preset emscripten-release",
     "build:wasm": "cd ../.. && cmake --build ./build/emscripten-release -t ailoy_js_web --parallel 10",
+    "build:tvm": "make -C csrc/tvm",
     "build:ts": "NODE_ENV=production vite build",
     "dev": "NODE_ENV=development vite dev",
     "test": "vitest"
