@@ -73,39 +73,47 @@ endif()
 
 
 # tvm
-if(AILOY_WITH_TVM)
-    if(TVM_ROOT)
-        if(NOT DEFINED TVM_SOURCE_DIR)
-            set(TVM_SOURCE_DIR ${TVM_ROOT})
-        endif()
-        if(NOT DEFINED TVM_BINARY_DIR)
-            set(TVM_BINARY_DIR ${TVM_ROOT}/build)
-        endif()
-    else()
-        FetchContent_Declare(
-            tvm
-            GIT_REPOSITORY https://github.com/brekkylab/relax.git
-            GIT_TAG e2aa6d0ebf9bd82632a510c00f3966eeee89e68a
-            EXCLUDE_FROM_ALL
-        )
-        if(APPLE)
-            set(USE_METAL ON)
-            target_compile_definitions(ailoy_vm_obj PUBLIC USE_METAL=1)
-        elseif(WIN32)
-            set(USE_VULKAN ON)
-            target_compile_definitions(ailoy_vm_obj PUBLIC USE_VULKAN=1)
-        elseif(LINUX)
-            set(USE_VULKAN ON)
-            target_compile_definitions(ailoy_vm_obj PUBLIC USE_VULKAN=1)
-        else()
-            message(FATAL_ERROR "Not implemented")
-        endif()
-        set(BUILD_DUMMY_LIBTVM ON)
-        set(USE_LIBBACTRACE OFF)
-        FetchContent_MakeAvailable(tvm)
-        set(TVM_SOURCE_DIR ${tvm_SOURCE_DIR})
-        set(TVM_BINARY_DIR ${tvm_BINARY_DIR})
+if(TVM_ROOT)
+    if(NOT DEFINED TVM_SOURCE_DIR)
+        set(TVM_SOURCE_DIR ${TVM_ROOT})
     endif()
+    if(NOT DEFINED TVM_BINARY_DIR)
+        set(TVM_BINARY_DIR ${TVM_ROOT}/build)
+    endif()
+else()
+    FetchContent_Declare(
+        tvm
+        GIT_REPOSITORY https://github.com/brekkylab/relax.git
+        GIT_TAG e2aa6d0ebf9bd82632a510c00f3966eeee89e68a
+        EXCLUDE_FROM_ALL
+    )
+    if(APPLE)
+        set(USE_METAL ON)
+        target_compile_definitions(ailoy_vm_obj PUBLIC USE_METAL=1)
+    elseif(WIN32)
+        set(USE_VULKAN ON)
+        target_compile_definitions(ailoy_vm_obj PUBLIC USE_VULKAN=1)
+    elseif(LINUX)
+        set(USE_VULKAN ON)
+        target_compile_definitions(ailoy_vm_obj PUBLIC USE_VULKAN=1)
+    elseif(EMSCRIPTEN)
+    else()
+        message(FATAL_ERROR "Not implemented")
+    endif()
+    set(BUILD_DUMMY_LIBTVM ON)
+    set(USE_LIBBACTRACE OFF)
+    if(AILOY_WITH_TVM)
+        FetchContent_MakeAvailable(tvm)
+    else()
+        FetchContent_GetProperties(tvm)
+        if(NOT tvm_POPULATED)
+            FetchContent_Populate(tvm)
+        endif()
+    endif()
+    set(TVM_SOURCE_DIR ${tvm_SOURCE_DIR})
+    set(TVM_BINARY_DIR ${tvm_BINARY_DIR})
+endif()
+if(AILOY_WITH_TVM)
     target_include_directories(ailoy_vm_obj PUBLIC
         ${TVM_SOURCE_DIR}/3rdparty/dmlc-core/include
         ${TVM_SOURCE_DIR}/ffi/include

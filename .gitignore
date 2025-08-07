@@ -561,5 +561,5 @@ test_*
 ailoy_js_browser.d.ts
 ailoy_js_browser.js
 ailoy_js_browser.wasm
-
+bindings/js-web/**/*.js
 !**/tvm/Makefile
