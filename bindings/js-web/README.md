@@ -1,0 +1,132 @@
+# ailoy-web
+
+WebAssembly (WASM) bindings for the Ailoy runtime APIs, enabling AI agent development directly in web browsers.
+
+For comprehensive documentation and guides, visit our [official documentation](https://brekkylab.github.io/ailoy).
+
+## Install
+
+```bash
+# Using npm
+npm install ailoy-web
+# Using yarn
+yarn add ailoy-web
+```
+
+## Quickstart
+
+```typescript
+import { startRuntime, defineAgent, LocalModel } from "ailoy-web";
+
+(async () => {
+  // The runtime must be started to use Ailoy
+  const rt = await startRuntime();
+
+  // Defines an agent
+  // During this step, the model parameters are downloaded and the LLM is set up for execution
+  const agent = await defineAgent(rt, LocalModel({id: "Qwen/Qwen3-0.6B"}));
+
+  // This is where the actual LLM call happens
+  for await (const resp of agent.query("Please give me a short poem about AI")) {
+    console.log(resp);
+  }
+
+  // Once the agent is no longer needed, it can be released
+  await agent.delete();
+
+  // Stop the runtime
+  await rt.stop();
+})();
+```
+
+## Vite Configurations
+
+When using [Vite](https://vite.dev/) as your build tool, apply these essential configurations in your `vite.config.js` to ensure ailoy-web works optimally:
+
+- **Exclude from optimization**: Add `ailoy-web` to `optimizeDeps.exclude` to prevent bundling during development
+- **Enable cross-origin isolation**: Set required headers for `SharedArrayBuffer` support (required for WebAssembly threading)
+- **Optimized build chunks**: Configure manual chunks to reduce bundle size
+
+```js
+// vite.config.js
+export default defineConfig({
+  // ... other config
+  optimizeDeps: {
+    exclude: ["ailoy-web"],
+  },
+  server: {
+    headers: {
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Opener-Policy": "same-origin",
+    },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          ailoy: ["ailoy-web"]
+        },
+      },
+    },
+  },
+  // ... other config
+});
+```
+
+> Note: Cross-origin isolation headers are required because ailoy-web uses `SharedArrayBuffer` for threading. Learn more about [cross-origin isolation](https://web.dev/articles/coop-coep).
+
+
+## Building from source
+
+### Prerequisites
+
+Ensure you have the following tools installed:
+
+- **Node.js** >= 20
+- **C/C++ compiler** (choose one):
+  - GCC >= 13
+  - LLVM Clang >= 17
+  - Apple Clang >= 15
+  - MSVC >= 19.29
+- **Emscripten** >= 4.0.0
+- **CMake** >= 3.28.0
+- **Git**
+- **Rust & Cargo** >= 1.82.0
+
+### Build Process
+
+```bash
+# Install Node.js dependencies
+npm install
+
+# Configure CMake build system
+npm run build:configure
+
+# Compile WebAssembly modules
+npm run build:wasm
+
+# Build TypeScript files
+npm run build:ts
+```
+
+### Testing
+
+The project uses Vitest with Playwright for comprehensive testing.
+
+```bash
+# Setup API keys for testing (optional - enable specific provider tests)
+export OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
+export GEMINI_API_KEY="<YOUR_GEMINI_API_KEY>"
+export CLAUDE_API_KEY="<YOUR_CLAUDE_API_KEY>"
+export XAI_API_KEY="<YOUR_XAI_API_KEY>"
+
+# Run the test suites
+npm run test
+```
+
+### Creating Distribution Package
+
+```bash
+# Generate npm package
+npm pack
+```

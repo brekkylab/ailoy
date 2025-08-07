@@ -1,2 +1,3 @@
 *.wasm
 ailoy_js_web.js
+/package/
