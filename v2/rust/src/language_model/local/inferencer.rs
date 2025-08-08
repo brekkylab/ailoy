@@ -49,7 +49,7 @@ mod tvm_runtime {
 
     impl Drop for Inferencer {
         fn drop(&mut self) {
-            unsafe { ffi::ailoy_tvm_runtime_destroy(self.inner) };
+            // unsafe { ffi::ailoy_tvm_runtime_destroy(self.inner) };
         }
     }
 
@@ -104,51 +104,53 @@ mod tvm_runtime {
             cache: &Cache,
             files: Vec<(CacheElement, Vec<u8>)>,
         ) -> Result<Self, String> {
-            let cache_root = cache.get_root();
-            let mut lib_path: Option<PathBuf> = None;
-            let mut files_c: *mut ffi::FileContents = std::ptr::null_mut();
-            unsafe { ffi::ailoy_file_contents_create(&mut files_c) };
-            for (elem, data) in files {
-                if elem.filename().starts_with("rt.") {
-                    lib_path = Some(cache_root.join(elem.dirname()).join(elem.filename()));
-                    continue;
-                }
-                unsafe {
-                    ffi::ailoy_file_contents_insert(
-                        files_c,
-                        elem.filename().as_ptr() as *const _,
-                        data.len(),
-                        data.as_ptr() as *const _,
-                    );
-                }
-            }
+            // let v = dlpackrs::ManagedTensor::new(tensor, manager_ctx)
+            // let cache_root = cache.get_root();
+            // let mut lib_path: Option<PathBuf> = None;
+            // let mut files_c: *mut ffi::FileContents = std::ptr::null_mut();
+            // unsafe { ffi::ailoy_file_contents_create(&mut files_c) };
+            // for (elem, data) in files {
+            //     if elem.filename().starts_with("rt.") {
+            //         lib_path = Some(cache_root.join(elem.dirname()).join(elem.filename()));
+            //         continue;
+            //     }
+            //     unsafe {
+            //         ffi::ailoy_file_contents_insert(
+            //             files_c,
+            //             elem.filename().as_ptr() as *const _,
+            //             data.len(),
+            //             data.as_ptr() as *const _,
+            //         );
+            //     }
+            // }
 
-            let lib_path = match lib_path {
-                Some(v) => {
-                    if !v.exists() {
-                        return Err("Runtime not exists".to_owned());
-                    };
-                    v
-                }
-                None => return Err("No rt found".to_owned()),
-            };
-            let mut inferencer_c: *mut ffi::TVMRuntime = std::ptr::null_mut();
-            unsafe {
-                let ret = ffi::ailoy_tvm_runtime_create(
-                    lib_path.as_os_str().to_string_lossy().as_ptr() as *const _,
-                    files_c,
-                    &mut inferencer_c,
-                );
-                if ret != 0 {
-                    return Err(format!("ailoy_tvm_runtime_create failed: {}", ret));
-                }
-            }
+            // let lib_path = match lib_path {
+            //     Some(v) => {
+            //         if !v.exists() {
+            //             return Err("Runtime not exists".to_owned());
+            //         };
+            //         v
+            //     }
+            //     None => return Err("No rt found".to_owned()),
+            // };
+            // let mut inferencer_c: *mut ffi::TVMRuntime = std::ptr::null_mut();
+            // unsafe {
+            //     let ret = ffi::ailoy_tvm_runtime_create(
+            //         lib_path.as_os_str().to_string_lossy().as_ptr() as *const _,
+            //         files_c,
+            //         &mut inferencer_c,
+            //     );
+            //     if ret != 0 {
+            //         return Err(format!("ailoy_tvm_runtime_create failed: {}", ret));
+            //     }
+            // }
 
-            unsafe { ffi::ailoy_file_contents_destroy(files_c) };
+            // unsafe { ffi::ailoy_file_contents_destroy(files_c) };
 
-            Ok(Inferencer {
-                inner: inferencer_c,
-            })
+            // Ok(Inferencer {
+            //     inner: inferencer_c,
+            // })
+            todo!()
         }
     }
 
@@ -164,24 +166,28 @@ mod tvm_runtime {
         }
 
         unsafe extern "C" {
-            pub fn ailoy_file_contents_create(out: *mut *mut FileContents) -> i32;
-
-            pub fn ailoy_file_contents_destroy(contents: *mut FileContents) -> i32;
-
-            pub fn ailoy_file_contents_insert(
-                contents: *mut FileContents,
-                filename: *const std::os::raw::c_char,
+            pub fn ailoy_tvm_language_model_prefill(
                 len: usize,
-                content: *const std::os::raw::c_char,
-            ) -> i32;
+                v: *const dlpackrs::ffi::DLManagedTensor,
+            );
+            // pub fn ailoy_file_contents_create(out: *mut *mut FileContents) -> i32;
 
-            pub fn ailoy_tvm_runtime_create(
-                lib_path: *const std::os::raw::c_char,
-                contents: *const FileContents,
-                out: *mut *mut TVMRuntime,
-            ) -> i32;
+            // pub fn ailoy_file_contents_destroy(contents: *mut FileContents) -> i32;
 
-            pub fn ailoy_tvm_runtime_destroy(model: *mut TVMRuntime) -> i32;
+            // pub fn ailoy_file_contents_insert(
+            //     contents: *mut FileContents,
+            //     filename: *const std::os::raw::c_char,
+            //     len: usize,
+            //     content: *const std::os::raw::c_char,
+            // ) -> i32;
+
+            // pub fn ailoy_tvm_runtime_create(
+            //     lib_path: *const std::os::raw::c_char,
+            //     contents: *const FileContents,
+            //     out: *mut *mut TVMRuntime,
+            // ) -> i32;
+
+            // pub fn ailoy_tvm_runtime_destroy(model: *mut TVMRuntime) -> i32;
         }
     }
 }

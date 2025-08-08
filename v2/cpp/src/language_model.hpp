@@ -16,17 +16,7 @@ namespace ailoy {
 
 class tvm_model_t;
 
-class chat_manager_t;
-
-class tokenizer_t;
-
 struct kv_cache_t;
-
-struct tokenizer_info_t;
-
-struct grammar_t;
-
-struct grammar_matcher_t;
 
 class tvm_language_model_t {
 public:
