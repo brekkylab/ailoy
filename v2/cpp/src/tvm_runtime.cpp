@@ -19,10 +19,8 @@ using namespace tvm::runtime::vm;
 
 namespace ailoy {
 
-tvm_runtime_t::tvm_runtime_t(
-    const std::string &lib_path,
-    std::unordered_map<std::string, std::string> &file_contents,
-    DLDevice device) {
+tvm_runtime_t::tvm_runtime_t(const std::string &lib_path,
+                             cache_t cache_contents, const DLDevice &device) {
   // Device
   device_ = device;
 
@@ -54,13 +52,13 @@ tvm_runtime_t::tvm_runtime_t(
 
   // Load ndarray cache metadata
   auto ndarray_cache_metadata = NDArrayCacheMetadata::LoadFromStr(
-      file_contents.at("ndarray-cache.json"), "ndarray-cache.json");
+      *cache_contents.read_and_remove("ndarray-cache.json"),
+      "ndarray-cache.json");
 
   // Load ndarray cache
   int shard_idx = 0;
   for (const auto &record : ndarray_cache_metadata.records) {
-    auto bytes = file_contents.at(record.data_path);
-    file_contents.erase(record.data_path);
+    auto bytes = *cache_contents.read_and_remove(record.data_path);
     {
       const NDArrayCacheMetadata::FileRecord &shard_rec =
           ndarray_cache_metadata.records[shard_idx];
@@ -98,36 +96,3 @@ tvm_runtime_t::tvm_runtime_t(
 }
 
 } // namespace ailoy
-
-// extern "C" {
-// struct ailoy_file_contents_t {
-//   std::unordered_map<std::string, std::string> inner;
-// };
-
-// int ailoy_file_contents_create(ailoy_file_contents_t **out) {
-//   *out = new ailoy_file_contents_t{};
-//   return 0;
-// }
-
-// void ailoy_file_contents_destroy(ailoy_file_contents_t *contents) {
-//   delete contents;
-// }
-
-// int ailoy_file_contents_insert(ailoy_file_contents_t *contents,
-//                                char const *filename, size_t len,
-//                                char const *content) {
-//   contents->inner.insert_or_assign(filename, std::string(content, len));
-//   return 0;
-// }
-
-// int ailoy_tvm_runtime_create(const char *lib_path,
-//                              ailoy_file_contents_t const *contents,
-//                              ailoy::tvm_runtime_t **out) {
-//   *out = new ailoy::tvm_runtime_t(
-//       lib_path, contents->inner,
-//       DLDevice{.device_type = DLDeviceType::kDLMetal, .device_id = 0});
-//   return 0;
-// }
-
-// void ailoy_tvm_runtime_destroy(ailoy::tvm_runtime_t *model) { delete model; }
-// }

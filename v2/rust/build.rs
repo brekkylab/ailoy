@@ -12,7 +12,12 @@ fn main() {
 }
 
 fn build_native() {
-    use std::{env, fs::read_dir, path::PathBuf, process::Command};
+    use std::{
+        env,
+        fs::read_dir,
+        path::{Path, PathBuf},
+        process::Command,
+    };
 
     use cmake::Config;
 
@@ -34,49 +39,78 @@ fn build_native() {
         }
     }
 
+    fn clone(name: &str, url: &str, dir: &Path) {
+        use std::fs;
+        use std::process::Command;
+
+        if dir.exists() {
+            println!("cargo:warning={} already exists. Skipping clone.", name);
+            return;
+        }
+
+        fs::create_dir_all(dir.parent().unwrap()).unwrap();
+
+        let status = Command::new("git")
+            .args([
+                "clone",
+                "--depth",
+                "1",
+                if name == "tvm" { "--recursive" } else { "" },
+                url,
+                dir.to_str().unwrap(),
+            ])
+            .status()
+            .expect(&format!("Failed to run git clone for {}", name));
+
+        if !status.success() {
+            panic!("Git clone of {} failed", name);
+        }
+    }
+
     // Setup directories
     let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let cmake_source_dir = cargo_manifest_dir.join("../cpp");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let cargo_target_dir = find_cargo_target_dir();
     let cmake_binary_dir = out_dir.join("build");
+    let cpp_include_files = read_dir(&cmake_source_dir.join("include"))
+        .expect("Failed to read cpp/include")
+        .filter_map(Result::ok)
+        .into_iter()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().map(|ext| ext == "hpp").unwrap_or(false))
+        .collect::<Vec<_>>();
+    let cpp_source_files = read_dir(&cmake_source_dir.join("src"))
+        .expect("Failed to read cpp/src")
+        .filter_map(Result::ok)
+        .into_iter()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().map(|ext| ext == "hpp").unwrap_or(false))
+        .collect::<Vec<_>>();
+    let cpp_files = cpp_include_files
+        .clone()
+        .into_iter()
+        .chain(cpp_source_files.clone().into_iter())
+        .collect::<Vec<_>>();
 
-    // Download TVM if not exists
+    // Download if not exists
     let tvm_dir = cmake_source_dir.join("3rdparty").join("tvm");
-    if !tvm_dir.exists() {
-        std::fs::create_dir_all(tvm_dir.parent().unwrap()).unwrap();
-        let status = Command::new("git")
-            .args([
-                "clone",
-                "--recursive",
-                "--depth",
-                "1",
-                "https://github.com/brekkylab/relax",
-                tvm_dir.to_str().unwrap(),
-            ])
-            .status()
-            .expect("Failed to run git clone for TVM");
-        if !status.success() {
-            panic!("Git clone of TVM failed");
-        }
-    } else {
-        println!("cargo:warning=TVM already exists. Skipping clone.");
-    }
+    clone("tvm", "https://github.com/brekkylab/relax", &tvm_dir);
+    let json_dir = cmake_source_dir.join("3rdparty").join("json");
+    clone("json", "https://github.com/nlohmann/json.git", &json_dir);
 
     // Run cxx bridge
-    cxx_build::bridge("src/ffi/cxx_bridge.rs")
-        .file(cmake_source_dir.join("src").join("rust_bridge.cpp"))
-        .file(cmake_source_dir.join("src").join("cache.cpp"))
-        .flag_if_supported("-std=c++20")
+    let mut cxx = cxx_build::bridge("src/ffi/cxx_bridge.rs");
+    for f in &cpp_source_files {
+        cxx.file(f);
+    }
+    cxx.flag_if_supported("-std=c++20")
         .include(&cmake_source_dir.join("include"))
-        .include(
-            &cmake_source_dir
-                .join("3rdparty")
-                .join("tvm")
-                .join("3rdparty")
-                .join("dlpack")
-                .join("include"),
-        )
+        .include(&tvm_dir.join("include"))
+        .include(&tvm_dir.join("ffi").join("include"))
+        .include(&tvm_dir.join("3rdparty").join("dlpack").join("include"))
+        .include(&tvm_dir.join("3rdparty").join("dmlc-core").join("include"))
+        .include(&json_dir.join("include"))
         .include(cargo_target_dir.join("cxxbridge"))
         .compile("rust_bridge");
 
@@ -121,21 +155,7 @@ fn build_native() {
     println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
 
     // Add rerun targets
-    let include_files = read_dir(&cmake_source_dir.join("include"))
-        .expect("Failed to read cpp/include")
-        .filter_map(Result::ok);
-    let cpp_files = read_dir(&cmake_source_dir.join("src"))
-        .expect("Failed to read cpp/src")
-        .filter_map(Result::ok);
-    let source_files = include_files
-        .chain(cpp_files)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .map(|ext| ext == "cpp" || ext == "hpp")
-                .unwrap_or(false)
-        });
-    for f in source_files {
+    for f in &cpp_files {
         println!("cargo:rerun-if-changed={}", f.display());
     }
     println!(

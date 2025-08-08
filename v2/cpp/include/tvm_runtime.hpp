@@ -2,17 +2,19 @@
 
 #include <cstddef>
 
+#include <dlpack/dlpack.h>
 #include <nlohmann/json.hpp>
 #include <tvm/runtime/module.h>
 #include <tvm/runtime/ndarray.h>
+
+#include "cache.hpp"
 
 namespace ailoy {
 
 class tvm_runtime_t {
 public:
-  tvm_runtime_t(const std::string &lib_path,
-                std::unordered_map<std::string, std::string> &file_contents,
-                DLDevice device);
+  tvm_runtime_t(const std::string &lib_path, cache_t cache_contents,
+                const DLDevice &device);
 
   tvm::runtime::Module get_vm() const {
     if (!vm_.defined())
@@ -43,21 +45,3 @@ private:
 };
 
 } // namespace ailoy
-
-extern "C" {
-struct ailoy_file_contents_t;
-
-int ailoy_file_contents_create(ailoy_file_contents_t **out);
-
-void ailoy_file_contents_destroy(ailoy_file_contents_t *contents);
-
-int ailoy_file_contents_insert(ailoy_file_contents_t *contents,
-                               char const *filename, size_t len,
-                               char const *content);
-
-int ailoy_tvm_runtime_create(const char *lib_path,
-                             ailoy_file_contents_t const *contents,
-                             ailoy::tvm_runtime_t **out);
-
-void ailoy_tvm_runtime_destroy(ailoy::tvm_runtime_t *model);
-}

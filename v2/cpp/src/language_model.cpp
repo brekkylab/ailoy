@@ -25,102 +25,67 @@ double random_float(double min, double max) {
 
 constexpr size_t page_size = 16;
 
-struct kv_cache_t {
-public:
-  kv_cache_t(tvm_runtime_t &rt) {
-    auto fn = rt.get_vm_function("create_tir_paged_kv_cache");
-    if (!fn.defined())
-      throw std::runtime_error("create_tir_paged_kv_cache not defined");
-    kv_cache_ =
-        fn(IntTuple{1}, // max_num_sequence
-           IntTuple{rt.get_metadata()["context_window_size"].operator int()},
-           IntTuple{rt.get_metadata()["prefill_chunk_size"].operator int()},
-           IntTuple{page_size}, // page size
-           IntTuple{rt.get_metadata()["sliding_window_size"].operator int() !=
-                    -1})
-            .cast<ObjectRef>();
-    fkv_state_clear_ = rt.get_function("vm.builtin.kv_state_clear");
-    fkv_state_add_sequence_ =
-        rt.get_function("vm.builtin.kv_state_add_sequence");
-    fkv_state_remove_sequence_ =
-        rt.get_function("vm.builtin.kv_state_remove_sequence");
-    fkv_state_fork_sequence_ =
-        rt.get_function("vm.builtin.kv_state_fork_sequence");
-    fkv_state_begin_forward_ =
-        rt.get_function("vm.builtin.kv_state_begin_forward");
-    fkv_state_end_forward_ = rt.get_function("vm.builtin.kv_state_end_forward");
-    fkv_state_popn_ = rt.get_function("vm.builtin.kv_state_popn");
-    fkv_cache_get_num_available_pages_ = rt.get_function(
-        "vm.builtin.attention_kv_cache_get_num_available_pages");
-    fkv_cache_get_total_sequence_length_ = rt.get_function(
-        "vm.builtin.attention_kv_cache_get_total_sequence_length");
+kv_cache_t::kv_cache_t(tvm_runtime_t &rt) {
+  auto fn = rt.get_vm_function("create_tir_paged_kv_cache");
+  if (!fn.defined())
+    throw std::runtime_error("create_tir_paged_kv_cache not defined");
+  kv_cache_ =
+      fn(IntTuple{1}, // max_num_sequence
+         IntTuple{rt.get_metadata()["context_window_size"].operator int()},
+         IntTuple{rt.get_metadata()["prefill_chunk_size"].operator int()},
+         IntTuple{page_size}, // page size
+         IntTuple{rt.get_metadata()["sliding_window_size"].operator int() !=
+                  -1})
+          .cast<ObjectRef>();
+  fkv_state_clear_ = rt.get_function("vm.builtin.kv_state_clear");
+  fkv_state_add_sequence_ = rt.get_function("vm.builtin.kv_state_add_sequence");
+  fkv_state_remove_sequence_ =
+      rt.get_function("vm.builtin.kv_state_remove_sequence");
+  fkv_state_fork_sequence_ =
+      rt.get_function("vm.builtin.kv_state_fork_sequence");
+  fkv_state_begin_forward_ =
+      rt.get_function("vm.builtin.kv_state_begin_forward");
+  fkv_state_end_forward_ = rt.get_function("vm.builtin.kv_state_end_forward");
+  fkv_state_popn_ = rt.get_function("vm.builtin.kv_state_popn");
+  fkv_cache_get_num_available_pages_ =
+      rt.get_function("vm.builtin.attention_kv_cache_get_num_available_pages");
+  fkv_cache_get_total_sequence_length_ = rt.get_function(
+      "vm.builtin.attention_kv_cache_get_total_sequence_length");
 
-    // Register sequence index
-    add_sequence();
-  }
+  // Register sequence index
+  add_sequence();
+}
 
-  ~kv_cache_t() { remove_sequence(); }
+void kv_cache_t::add_sequence() {
+  fkv_state_add_sequence_(kv_cache_, 0 /* Sequence ID */);
+}
 
-  ObjectRef get() { return kv_cache_; }
+void kv_cache_t::remove_sequence() {
+  fkv_state_remove_sequence_(kv_cache_, 0 /* Sequence ID */);
+}
 
-  void clear() {
-    fkv_state_clear_(kv_cache_);
-    add_sequence();
-  }
+void kv_cache_t::begin_forward(size_t sequence_length) {
+  fkv_state_begin_forward_(kv_cache_, IntTuple{0 /* Sequence ID */},
+                           IntTuple{static_cast<int32_t>(sequence_length)});
+}
 
-  void add_sequence() {
-    fkv_state_add_sequence_(kv_cache_, 0 /* Sequence ID */);
-  }
+void kv_cache_t::end_forward() { fkv_state_end_forward_(kv_cache_); }
 
-  void remove_sequence() {
-    fkv_state_remove_sequence_(kv_cache_, 0 /* Sequence ID */);
-  }
+void kv_cache_t::popn(size_t num_tokens) {
+  fkv_state_popn_(kv_cache_, 0 /* Sequence ID */, (int)(num_tokens));
+}
 
-  void begin_forward(size_t sequence_length) {
-    fkv_state_begin_forward_(kv_cache_, IntTuple{0 /* Sequence ID */},
-                             IntTuple{static_cast<int32_t>(sequence_length)});
-  }
+int kv_cache_t::get_num_available_pages() {
+  return fkv_cache_get_num_available_pages_(kv_cache_).cast<int>();
+}
 
-  void end_forward() { fkv_state_end_forward_(kv_cache_); }
+int kv_cache_t::get_total_sequence_length() {
+  return fkv_cache_get_total_sequence_length_(kv_cache_).cast<int>();
+}
 
-  void popn(size_t num_tokens) {
-    fkv_state_popn_(kv_cache_, 0 /* Sequence ID */, (int)(num_tokens));
-  }
-
-  int get_num_available_pages() {
-    return fkv_cache_get_num_available_pages_(kv_cache_).cast<int>();
-  }
-
-  int get_total_sequence_length() {
-    return fkv_cache_get_total_sequence_length_(kv_cache_).cast<int>();
-  }
-
-private:
-  ObjectRef kv_cache_;
-
-  tvm::ffi::Function fkv_state_clear_;
-
-  tvm::ffi::Function fkv_state_add_sequence_;
-
-  tvm::ffi::Function fkv_state_fork_sequence_;
-
-  tvm::ffi::Function fkv_state_remove_sequence_;
-
-  tvm::ffi::Function fkv_state_begin_forward_;
-
-  tvm::ffi::Function fkv_state_end_forward_;
-
-  tvm::ffi::Function fkv_state_popn_;
-
-  tvm::ffi::Function fkv_cache_get_num_available_pages_;
-
-  tvm::ffi::Function fkv_cache_get_total_sequence_length_;
-};
-
-tvm_language_model_t::tvm_language_model_t(
-    const std::string &lib_path,
-    std::unordered_map<std::string, std::string> &file_contents,
-    DLDevice device) {
+tvm_language_model_t::tvm_language_model_t(const std::string &lib_path,
+                                           cache_t file_contents,
+                                           DLDevice device) {
   rt_ = std::make_unique<tvm_runtime_t>(lib_path, file_contents, device);
   kv_cache_ = std::make_unique<kv_cache_t>(*rt_);
   config = config_t{.temperature = 0.6, .top_p = 0.9};
@@ -325,6 +290,21 @@ int32_t tvm_language_model_t::decode(int32_t last_token) {
 
   // return sampled_token;
   return 0;
+}
+
+std::unique_ptr<tvm_language_model_t>
+create_tvm_language_model(rust::String lib_filename,
+                          std::unique_ptr<cache_t> cache_content,
+                          std::unique_ptr<DLDevice> device) {
+  return std::make_unique<tvm_language_model_t>(
+      std::string(lib_filename), std::move(*cache_content), std::move(*device));
+}
+
+std::unique_ptr<DLDevice> create_dldevice(int device_type, int device_id) {
+  auto dev = std::make_unique<DLDevice>();
+  dev->device_type = static_cast<DLDeviceType>(device_type);
+  dev->device_id = device_id;
+  return dev;
 }
 
 } // namespace ailoy

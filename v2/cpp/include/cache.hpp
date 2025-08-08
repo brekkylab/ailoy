@@ -3,7 +3,7 @@
 #include <string>
 #include <unordered_map>
 
-#include "rust/cxx.h"
+#include <rust/cxx.h>
 
 namespace ailoy {
 
