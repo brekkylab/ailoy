@@ -5,5 +5,5 @@ description = "Ailoy examples using MCP tools"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "ailoy-py>=0.0.5",
+    "ailoy-py>=0.0.6",
 ]
