@@ -28,7 +28,7 @@ set(MINIJINJA_CARGO_BUILD_FLAGS "${CARGO_BUILD_FLAGS}")
 FetchContent_Declare(
     minijinja
     GIT_REPOSITORY https://github.com/brekkylab/minijinja.git
-    GIT_TAG eb1937382d02df4442a7dbcbe0cb6b2c3c281fd4
+    GIT_TAG 07f6910f88e007b90f24e6fd775c1b40dd87166c
     SOURCE_SUBDIR minijinja-cabi
 )
 FetchContent_MakeAvailable(minijinja)

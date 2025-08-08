@@ -1,4 +1,8 @@
 export const openAIModelIds = [
+  "gpt-5",
+  "gpt-5-mini",
+  "gpt-5-nano",
+  "gpt-5-chat-latest",
   "o4-mini",
   "o3",
   "o3-pro",
@@ -23,6 +27,7 @@ export const claudeModelIds = [
   "claude-3-7-sonnet-20250219",
   "claude-3-5-sonnet-20241022",
   "claude-3-5-sonnet-20240620",
+  "claude-opus-4-1-20250805",
   "claude-opus-4-20250514",
   "claude-3-opus-20240229",
   "claude-3-5-haiku-20241022",
