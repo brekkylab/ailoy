@@ -84,7 +84,17 @@ fn build_native() {
     Config::new(&cmake_source_dir)
         .env("CARGO_TARGET_DIR", &cargo_target_dir)
         .define("TVM_ROOT", &tvm_dir)
-        .define("CMAKE_INSTALL_PREFIX", &cargo_target_dir.join("deps"))
+        .define(
+            "CMAKE_INSTALL_PREFIX",
+            &out_dir
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("deps"),
+        )
         .build();
     Command::new("cmake")
         .arg("--install")
@@ -96,7 +106,15 @@ fn build_native() {
     println!("cargo:rustc-link-lib=c++");
     println!(
         "cargo:rustc-link-search=native={}",
-        cargo_target_dir.join("deps").display()
+        out_dir
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("deps")
+            .display()
     );
     println!("cargo:rustc-link-lib=static=ailoy_cpp");
     println!("cargo:rustc-link-lib=dylib=tvm_runtime");

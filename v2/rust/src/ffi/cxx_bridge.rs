@@ -15,41 +15,24 @@ mod ffi {
 
         #[namespace = "ailoy"]
         #[cxx_name = "write_from_rs"]
-        fn write(self: Pin<&mut Cache>, key: &CxxString, value: String) -> ();
+        fn write(self: Pin<&mut Cache>, key: String, value: String) -> ();
 
         #[namespace = "ailoy"]
         #[cxx_name = "write_binary_from_rs"]
-        fn write_binary(self: Pin<&mut Cache>, key: &CxxString, value: Vec<u8>) -> ();
-    }
-}
-
-pub struct Cache {
-    inner: UniquePtr<ffi::Cache>,
-}
-
-impl Cache {
-    pub fn new() -> Self {
-        Cache {
-            inner: ffi::create_cache(),
-        }
-    }
-
-    pub fn write(&mut self, key: &str, value: String) {
-        // let value = ffi::make_cxx_string(String::from_utf8(value).unwrap().as_str());
-        // self.inner.pin_mut().write(key, value);
-        todo!()
+        fn write_binary(self: Pin<&mut Cache>, key: String, value: Vec<u8>) -> ();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use cxx::let_cxx_string;
-
     use super::*;
 
     #[test]
     fn test1() {
-        let_cxx_string!(lib_filename = "lib.dylib");
+        let mut cache = ffi::create_cache();
+        cache.pin_mut().write("key".to_owned(), "value".to_owned());
+        cache.pin_mut().write_binary("key".to_owned(), Vec::new());
+        // let_cxx_string!(lib_filename = "lib.dylib");
         // let device = create_dldevice(15, 0);
         // let cpp_class = super::ffi::create_tvm_language_model(&lib_filename, device);
         // println!("{}", cpp_class.get_result());

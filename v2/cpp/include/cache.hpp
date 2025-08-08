@@ -16,11 +16,11 @@ struct cache_t {
 
   void write(const std::string &key, std::string value);
 
-  void write_from_rs(const std::string &key, rust::String value);
+  void write_from_rs(rust::String key, rust::String value);
 
-  void write_binary_from_rs(const std::string &key, rust::Vec<uint8_t> value);
+  void write_binary_from_rs(rust::String key, rust::Vec<uint8_t> value);
 
-  std::unordered_map<std::string, std::string> inner_;
+  std::unordered_map<std::string, std::string> inner;
 };
 
 std::unique_ptr<cache_t> create_cache();
