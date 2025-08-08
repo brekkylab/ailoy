@@ -16,9 +16,9 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { assert } from "./support";
 import { Pointer } from "./ctypes";
 import { Memory } from "./memory";
+import { assert } from "./support";
 import { Disposable } from "./types";
 
 /** A pointer to points to the raw address space. */

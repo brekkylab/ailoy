@@ -17,8 +17,8 @@
  * under the License.
  */
 /** NodeJS and Web compact layer */
-import { LibraryProvider } from "./types";
 import EmccWASI from "./tvmjs_runtime_wasi";
+import { LibraryProvider } from "./types";
 
 /**
  * Get performance measurement.

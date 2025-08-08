@@ -20,10 +20,9 @@
  * Classes to manipulate Wasm memories.
  */
 import { Pointer, PtrOffset, SizeOf } from "./ctypes";
-import { Disposable } from "./types";
-import { assert, StringToUint8Array } from "./support";
-
 import * as ctypes from "./ctypes";
+import { assert, StringToUint8Array } from "./support";
+import { Disposable } from "./types";
 
 /**
  * Wasm Memory wrapper to perform JS side raw memory access.
@@ -190,7 +189,7 @@ export class Memory {
    * Load bytearray as string from ptr.
    * @param byteArrayPtr The head address of the bytearray.
    */
- loadByteArrayAsString(byteArrayPtr: Pointer): string {
+  loadByteArrayAsString(byteArrayPtr: Pointer): string {
     if (this.buffer != this.memory.buffer) {
       this.updateViews();
     }
@@ -207,16 +206,16 @@ export class Memory {
    * Load bytearray as bytes from ptr.
    * @param byteArrayPtr The head address of the bytearray.
    */
- loadByteArrayAsBytes(byteArrayPtr: Pointer): Uint8Array {
-  if (this.buffer != this.memory.buffer) {
-    this.updateViews();
+  loadByteArrayAsBytes(byteArrayPtr: Pointer): Uint8Array {
+    if (this.buffer != this.memory.buffer) {
+      this.updateViews();
+    }
+    const ptr = this.loadPointer(byteArrayPtr);
+    const length = this.loadUSize(byteArrayPtr + this.sizeofPtr());
+    const result = new Uint8Array(length);
+    result.set(this.viewU8.slice(ptr, ptr + length));
+    return result;
   }
-  const ptr = this.loadPointer(byteArrayPtr);
-  const length = this.loadUSize(byteArrayPtr + this.sizeofPtr());
-  const result = new Uint8Array(length);
-  result.set(this.viewU8.slice(ptr, ptr + length));
-  return result;
-}
   // private functions
   /**
    * Update memory view after the memory growth.
@@ -306,10 +305,8 @@ export class CachedCallStack implements Disposable {
   commitToWasmMemory(nbytes: number = this.stackTop): void {
     // commit all pointer values.
     while (this.addressToSetTargetValue.length != 0) {
-      const [targetOffset, valueOffset] = this.addressToSetTargetValue.pop() as [
-        number,
-        number
-      ];
+      const [targetOffset, valueOffset] =
+        this.addressToSetTargetValue.pop() as [number, number];
       this.storePtr(targetOffset, this.ptrFromOffset(valueOffset));
     }
     this.memory.storeRawBytes(this.basePtr, this.viewU8.slice(0, nbytes));

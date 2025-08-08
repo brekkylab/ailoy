@@ -16,21 +16,10 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 /**
  * TVM JS Wasm Runtime library.
  */
-import { Pointer, PtrOffset, SizeOf, TypeIndex } from "./ctypes";
-import { Disposable } from "./types";
-import { Memory, CachedCallStack } from "./memory";
-import {
-  assert,
-  StringToUint8Array,
-  LinearCongruentialGenerator,
-} from "./support";
-import { Environment } from "./environment";
-import { AsyncifyHandler } from "./asyncify";
-import { FunctionInfo, WebGPUContext } from "./webgpu";
+import { joinPath } from "../utils/opfs";
 import {
   ArtifactCache,
   ArtifactCacheTemplate,
@@ -38,9 +27,19 @@ import {
   ArtifactOPFSCache,
   NDArrayShardEntry,
 } from "./artifact_cache";
+import { AsyncifyHandler } from "./asyncify";
 import * as compact from "./compact";
+import { Pointer, PtrOffset, SizeOf, TypeIndex } from "./ctypes";
 import * as ctypes from "./ctypes";
-import { joinPath } from "../utils/opfs";
+import { Environment } from "./environment";
+import { Memory, CachedCallStack } from "./memory";
+import {
+  assert,
+  StringToUint8Array,
+  LinearCongruentialGenerator,
+} from "./support";
+import { Disposable } from "./types";
+import { FunctionInfo, WebGPUContext } from "./webgpu";
 
 /**
  * Type for PackedFunc in the TVMRuntime.

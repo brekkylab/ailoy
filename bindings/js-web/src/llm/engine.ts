@@ -1,11 +1,6 @@
-// import init_minijinja, { Environment } from "minijinja-js/dist/web";
-// import { Tokenizer } from "@mlc-ai/web-tokenizers";
+import { Message, MessageOutput, ToolDescription } from "../agent";
 import { Tokenizer, ChatManager } from "../components";
 import * as tvmjs from "../tvmjs";
-import { Message, MessageOutput, ToolDescription } from "../agent";
-import { LLMChatPipeline } from "./llm_chat";
-import { EmbeddingPipeline } from "./embedding";
-import { CustomLock, findModelRecord } from "./support";
 import { joinPath, readOPFSFile } from "../utils/opfs";
 import {
   ChatConfig,
@@ -14,6 +9,7 @@ import {
   postInitAndCheckGenerationConfigValues,
   prebuiltAppConfig,
 } from "./config";
+import { EmbeddingPipeline } from "./embedding";
 import {
   DeviceLostError,
   FeatureSupportError,
@@ -22,6 +18,8 @@ import {
   ShaderF16SupportError,
   WebGPUNotAvailableError,
 } from "./error";
+import { LLMChatPipeline } from "./llm_chat";
+import { CustomLock, findModelRecord } from "./support";
 
 const appConfig = prebuiltAppConfig;
 
@@ -186,9 +184,8 @@ export class Engine {
     try {
       const pipeline = this.pipeline as EmbeddingPipeline;
       // 1. Call EmbeddingPipeline to get embeddings
-      const embedResult: Array<Array<number>> = await pipeline.embedStep(
-        prompt
-      );
+      const embedResult: Array<Array<number>> =
+        await pipeline.embedStep(prompt);
 
       // 2. Prepare response
       const batchSize = embedResult.length;

@@ -20,9 +20,9 @@
  * Runtime environment that provide js libaries calls.
  */
 import { Pointer } from "./ctypes";
-import { LibraryProvider } from "./types";
-import { assert } from "./support";
 import * as ctypes from "./ctypes";
+import { assert } from "./support";
+import { LibraryProvider } from "./types";
 
 /**
  * Detect library provider from the importObject.
@@ -47,15 +47,18 @@ function detectLibraryProvider(
     };
   } else if (importObject["imports"] && importObject["start"] !== undefined) {
     return importObject as LibraryProvider;
-  } else if (importObject["wasiImport"] && importObject["start"] !== undefined) {
+  } else if (
+    importObject["wasiImport"] &&
+    importObject["start"] !== undefined
+  ) {
     // WASI
     return {
       imports: {
-        "wasi_snapshot_preview1": importObject["wasiImport"],
+        wasi_snapshot_preview1: importObject["wasiImport"],
       },
       start: (inst: WebAssembly.Instance): void => {
         importObject["start"](inst);
-      }
+      },
     };
   } else {
     return undefined;
@@ -111,9 +114,9 @@ export class Environment implements LibraryProvider {
   private environment(initEnv: Record<string, any>): Record<string, any> {
     // default env can be overriden by libraries.
     const defaultEnv = {
-      "__cxa_thread_atexit": (): void => {},
+      __cxa_thread_atexit: (): void => {},
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      "emscripten_notify_memory_growth": (index: number): void => {}
+      emscripten_notify_memory_growth: (index: number): void => {},
     };
     const wasmSafeCall: ctypes.FTVMFFIWasmSafeCallType = (
       self: Pointer,
@@ -134,11 +137,11 @@ export class Environment implements LibraryProvider {
     };
 
     const newEnv = {
-      "TVMFFIWasmSafeCall": wasmSafeCall,
-      "TVMFFIWasmFunctionDeleter": wasmFunctionDeleter,
-      "__console_log": (msg: string): void => {
+      TVMFFIWasmSafeCall: wasmSafeCall,
+      TVMFFIWasmFunctionDeleter: wasmFunctionDeleter,
+      __console_log: (msg: string): void => {
         this.logger(msg);
-      }
+      },
     };
     return Object.assign(defaultEnv, initEnv, newEnv);
   }

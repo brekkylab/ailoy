@@ -1,11 +1,8 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 /* eslint-disable no-prototype-builtins */
-// import { Tokenizer } from "@mlc-ai/web-tokenizers";
-// import * as tvmjs from "@mlc-ai/web-runtime";
 import { Tokenizer } from "../components";
 import * as tvmjs from "../tvmjs";
 import { ChatConfig, GenerationConfig } from "./config";
-import { getChunkedPrefillInputData } from "./support";
 import {
   AttentionSinkSizeError,
   ContextWindowSizeExceededError,
@@ -14,6 +11,7 @@ import {
   WindowSizeConfigurationError,
   WindowSizeSpecificationError,
 } from "./error";
+import { getChunkedPrefillInputData } from "./support";
 
 export type FinishReason = "stop" | "length" | "tool_calls" | "abort";
 

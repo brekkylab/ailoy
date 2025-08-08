@@ -123,14 +123,19 @@ export type FTVMFFIWasmGetLastError = () => Pointer;
  *                            int32_t num_args, TVMFFIAny* result);
  */
 export type FTVMFFIWasmSafeCallType = (
-  self: Pointer, args: Pointer, num_args: number,
-  result: Pointer) => number;
+  self: Pointer,
+  args: Pointer,
+  num_args: number,
+  result: Pointer
+) => number;
 
 /**
  * int TVMFFIWasmFunctionCreate(void* resource_handle, TVMFunctionHandle* out);
  */
 export type FTVMFFIWasmFunctionCreate = (
-  resource_handle: Pointer, out: Pointer) => number;
+  resource_handle: Pointer,
+  out: Pointer
+) => number;
 
 /**
  * void TVMFFIWasmFunctionDeleter(void* self);
@@ -145,23 +150,36 @@ export type FTVMFFIObjectFree = (obj: Pointer) => number;
 /**
  * int TVMFFITypeKeyToIndex(const TVMFFIByteArray* type_key, int32_t* out_tindex);
  */
-export type FTVMFFITypeKeyToIndex = (type_key: Pointer, out_tindex: Pointer) => number;
+export type FTVMFFITypeKeyToIndex = (
+  type_key: Pointer,
+  out_tindex: Pointer
+) => number;
 
 /**
  * int TVMFFIAnyViewToOwnedAny(const TVMFFIAny* any_view, TVMFFIAny* out);
  */
-export type FTVMFFIAnyViewToOwnedAny = (any_view: Pointer, out: Pointer) => number;
+export type FTVMFFIAnyViewToOwnedAny = (
+  any_view: Pointer,
+  out: Pointer
+) => number;
 
 /**
  * void TVMFFIErrorSetRaisedFromCStr(const char* kind, const char* message);
  */
-export type FTVMFFIErrorSetRaisedFromCStr = (kind: Pointer, message: Pointer) => void;
+export type FTVMFFIErrorSetRaisedFromCStr = (
+  kind: Pointer,
+  message: Pointer
+) => void;
 
 /**
  * int TVMFFIFunctionSetGlobal(const TVMFFIByteArray* name, TVMFFIObjectHandle f,
  *                             int override);
  */
-export type FTVMFFIFunctionSetGlobal = (name: Pointer, f: Pointer, override: number) => number;
+export type FTVMFFIFunctionSetGlobal = (
+  name: Pointer,
+  f: Pointer,
+  override: number
+) => number;
 
 /**
  * int TVMFFIFunctionGetGlobal(const TVMFFIByteArray* name, TVMFFIObjectHandle* out);
@@ -172,8 +190,12 @@ export type FTVMFFIFunctionGetGlobal = (name: Pointer, out: Pointer) => number;
  * int TVMFFIFunctionCall(TVMFFIObjectHandle func, TVMFFIAny* args, int32_t num_args,
  *                        TVMFFIAny* result);
  */
-export type FTVMFFIFunctionCall = (func: Pointer, args: Pointer, num_args: number,
-                                   result: Pointer) => number;
+export type FTVMFFIFunctionCall = (
+  func: Pointer,
+  args: Pointer,
+  num_args: number,
+  result: Pointer
+) => number;
 
 /**
  * int TVMFFIDataTypeFromString(const TVMFFIByteArray* str, DLDataType* out);
