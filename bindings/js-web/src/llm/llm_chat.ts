@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 /* eslint-disable no-prototype-builtins */
-import { Tokenizer } from "../components";
 import * as tvmjs from "../tvmjs";
 import { ChatConfig, GenerationConfig } from "./config";
 import {
@@ -12,6 +11,7 @@ import {
   WindowSizeSpecificationError,
 } from "./error";
 import { getChunkedPrefillInputData } from "./support";
+import { Tokenizer } from "./tokenizer";
 
 export type FinishReason = "stop" | "length" | "tool_calls" | "abort";
 
@@ -94,8 +94,6 @@ export class LLMChatPipeline {
     // const metadataStr = this.tvm.detachFromCurrentScope(ret_value).toString();
     const metadataStr = ret_value.toString();
     const metadata = JSON.parse(metadataStr);
-
-    console.log("lib metadata: ", metadata);
 
     // 3. Load parameters by name
     const paramNames: string[] = [];
@@ -194,7 +192,6 @@ export class LLMChatPipeline {
     this.fclearKVCaches.dispose();
     this.logitsOnCPU?.dispose();
     this.tvm.dispose();
-    this.tokenizer.dispose();
   }
 
   /**

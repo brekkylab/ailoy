@@ -1,5 +1,4 @@
 import * as tvmjs from "../tvmjs";
-import { Tokenizer } from "../components";
 import { ChatConfig } from "./config";
 import {
   EmbeddingChunkingUnsupportedError,
@@ -8,6 +7,7 @@ import {
   EmbeddingSlidingWindowError,
   MinValueError,
 } from "./error";
+import { Tokenizer } from "./tokenizer";
 
 export class EmbeddingPipeline {
   private config: ChatConfig;
@@ -246,7 +246,6 @@ export class EmbeddingPipeline {
     this.prefill.dispose();
     this.vm.dispose();
     this.tvm.dispose();
-    this.tokenizer.dispose();
   }
 
   /**

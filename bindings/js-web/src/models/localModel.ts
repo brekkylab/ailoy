@@ -1,3 +1,10 @@
+import { Message, MessageOutput, Tool } from "../agent";
+import { ChatManager } from "../llm/chat_manager";
+import { GenerationConfig } from "../llm/config";
+import { Engine } from "../llm/engine";
+import { Tokenizer } from "../llm/tokenizer";
+import { Runtime } from "../runtime";
+
 export type LocalModelId =
   | "Qwen/Qwen3-0.6B"
   | "Qwen/Qwen3-1.7B"
@@ -20,14 +27,17 @@ export class _LocalModel {
   id: LocalModelId;
   backend: LocalModelBackend;
   quantization: Quantization;
-  device: number;
   readonly componentType: string;
+
+  // Internal states required for infer
+  #initialized: boolean = false;
+  private engine: Engine | undefined;
+  private genConfig: GenerationConfig | undefined;
 
   constructor(args: LocalModelArgs) {
     this.id = args.id;
     this.backend = args.backend ?? "tvm";
     this.quantization = args.quantization ?? "q4f16_1";
-    this.device = args.device ?? 0;
 
     if (this.backend === "tvm") {
       this.componentType = "tvm_language_model";
@@ -43,15 +53,60 @@ export class _LocalModel {
     return undefined;
   }
 
-  toAttrs() {
-    if (this.backend === "tvm") {
-      return {
-        model: this.id,
+  async init(args: { runtime: Runtime; genConfig?: GenerationConfig }) {
+    if (this.#initialized) return;
+
+    const { results }: { results: Array<{ model_id: string }> } =
+      await args.runtime.call("list_local_models");
+
+    if (!results.some(({ model_id }) => model_id === this.id)) {
+      await args.runtime.call("download_model", {
+        model_id: this.id,
         quantization: this.quantization,
-        device: this.device,
-      };
+        device: "webgpu",
+      });
     }
-    throw Error(`Unknown local model backend: ${this.backend}`);
+
+    const tokenizer = new Tokenizer(args.runtime, this.id, this.quantization);
+    await tokenizer.init();
+
+    const chatManager = new ChatManager(
+      args.runtime,
+      this.id,
+      this.quantization
+    );
+    await chatManager.init();
+
+    this.engine = new Engine(this.id, tokenizer, chatManager);
+    await this.engine.loadModel();
+
+    this.genConfig = args.genConfig;
+
+    this.#initialized = true;
+  }
+
+  async infer(args: {
+    messages: Message[];
+    tools: Tool[];
+    reasoning?: boolean;
+  }): Promise<AsyncIterable<MessageOutput>> {
+    if (!this.#initialized) {
+      throw Error(`The model is not initialized yet`);
+    }
+    return (await this.engine!.inferLM(
+      args.messages,
+      args.tools.map((tool) => ({ type: "function", function: tool.desc })),
+      args.reasoning,
+      this.genConfig ?? {}
+    ))!;
+  }
+
+  async dispose() {
+    if (this.#initialized) {
+      await this.engine!.dispose();
+      this.engine = undefined;
+      this.genConfig = undefined;
+    }
   }
 }
 

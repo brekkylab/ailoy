@@ -1,7 +1,7 @@
 import { Message, MessageOutput, ToolDescription } from "../agent";
-import { Tokenizer, ChatManager } from "../components";
 import * as tvmjs from "../tvmjs";
 import { joinPath, readOPFSFile } from "../utils/opfs";
+import { ChatManager } from "./chat_manager";
 import {
   ChatConfig,
   GenerationConfig,
@@ -20,6 +20,7 @@ import {
 } from "./error";
 import { LLMChatPipeline } from "./llm_chat";
 import { CustomLock, findModelRecord } from "./support";
+import { Tokenizer } from "./tokenizer";
 
 const appConfig = prebuiltAppConfig;
 
@@ -53,39 +54,13 @@ export class Engine {
   private tokenizer: Tokenizer;
   private chatManager: ChatManager;
 
-  constructor(
-    modelId: string = "Qwen/Qwen3-0.6B",
-    chatManager: ChatManager,
-    tokenizer: Tokenizer
-  ) {
+  constructor(modelId: string, tokenizer: Tokenizer, chatManager: ChatManager) {
     this.modelId = modelId;
-    this.chatManager = chatManager;
     this.tokenizer = tokenizer;
+    this.chatManager = chatManager;
   }
 
-  // async getTokenizer(config: ChatConfig) {
-  //   if (config.tokenizer_files.includes("tokenizer.json")) {
-  //     // const url = new URL("tokenizer.json", this.modelUrl).href;
-  //     // const tokenizer_json = await fetchFromUrl(url);
-  //     const tokenizer_file = await readFile(this.modelPath + "tokenizer.json");
-  //     const tokenizer_json = tokenizer_file?.arrayBuffer();
-  //     if (tokenizer_json === undefined) {
-  //       throw new Error(
-  //         `Cannot read file: ${this.modelPath + "tokenizer.json"}`
-  //       );
-  //       // throw new FetchFileFromURLError(url);
-  //     }
-  //     console.log(
-  //       `tokenizer.json(size: ${tokenizer_json.byteLength}) downloaded. `
-  //     );
-  //     return Tokenizer.fromJSON(tokenizer_json);
-  //   }
-  //   throw new UnsupportedTokenizerFilesError(config.tokenizer_files);
-  // }
-
   async loadModel() {
-    console.log("START: Model Load");
-
     const modelRecord = findModelRecord(this.modelId, appConfig);
     this.modelPath = modelRecord.model;
     // this.modelUrl = new URL(modelRecord.model, baseUrl).href;
@@ -149,14 +124,11 @@ export class Engine {
     });
     tvm.initWebGPU(gpuDetectOutput.device);
 
-    console.log("chatConfing:", this.chatConfig);
-
     await tvm.fetchNDArrayCache(
       this.modelPath,
       tvm.webgpu(),
       this.cacheScope,
       "opfs"
-      // "cache"
     );
 
     if (modelRecord.model_type === ModelType.embedding) {
@@ -176,8 +148,6 @@ export class Engine {
     await this.pipeline.asyncLoadWebGPUPipelines();
 
     this.lock = new CustomLock();
-
-    console.log("DONE: Model Load");
   }
 
   async inferEM(prompt: string) {
@@ -390,9 +360,11 @@ export class Engine {
     chatConfig: ChatConfig,
     genConfig: GenerationConfig
   ) {
-    const input_str = await this.applyChatTemplate(messages, tools, reasoning);
-    console.log(input_str);
-
+    const input_str = await this.chatManager.applyChatTemplate(
+      messages,
+      tools,
+      reasoning
+    );
     return await pipeline.prefillStep(input_str, genConfig);
   }
 
@@ -400,23 +372,9 @@ export class Engine {
     return await pipeline.decodeStep(genConfig);
   }
 
-  async applyChatTemplate(
-    messages: Message[],
-    tools: { type: "function"; function: ToolDescription }[],
-    reasoning: boolean = false
-  ): Promise<string> {
-    if (this.chatManager === undefined) return "";
-    const rendered = await this.chatManager.applyChatTemplate(
-      messages,
-      tools,
-      reasoning
-    );
-    // const rendered = this.templateEnv.renderTemplate(this.modelId, {
-    //   messages,
-    //   add_generation_prompt: true,
-    //   enable_thinking: reasoning,
-    //   tools: TOOLS,
-    // });
-    return rendered;
+  async dispose() {
+    this.pipeline?.dispose();
+    await this.tokenizer.dispose();
+    await this.chatManager.dispose();
   }
 }

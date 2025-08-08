@@ -18,8 +18,6 @@
         // const agent = await Ailoy.defineAgent(rt, Ailoy.APIModel({id: "gpt-4o", apiKey: "<OPENAI_API_KEY>"}));
         const agent = await Ailoy.defineAgent(rt, Ailoy.LocalModel({id: "Qwen/Qwen3-0.6B"}));
         // await agent.addToolsFromMcpClient("test", new Ailoy.MCPStreamableHTTPClientTransport("http://localhost:8123/mcp"));
-        const tokens = await agent.testTokenizer("You may call one or more functions to assist with the user query.");
-        console.log(tokens);
 
         const messages = [
                 {
@@ -51,61 +49,6 @@
                 },
             ]
 
-        const prompt = (await agent.testChatManager(
-            messages,
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "get_current_temperature",
-                        "description": "Get the current temperature at a location.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "location": {
-                                    "type": "string",
-                                    "description": "The location to get the temperature for, in the format \"City, Country\""
-                                },
-                                "unit": {
-                                    "type": "string",
-                                    "enum": ["celsius", "fahrenheit"],
-                                    "description": "The unit to return the temperature in."
-                                }
-                            },
-                            "required": ["location", "unit"]
-                        },
-                        "return": {
-                            "type": "number",
-                            "description": "The current temperature at the specified location in the specified units, as a float."
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "get_current_wind_speed",
-                        "description": "Get the current wind speed in km/h at a given location.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "location": {
-                                    "type": "string",
-                                    "description": "The location to get the temperature for, in the format \"City, Country\""
-                                }
-                            },
-                            "required": ["location"]
-                        },
-                        "return": {
-                            "type": "number",
-                            "description": "The current wind speed at the given location in km/h, as a float."
-                        }
-                    }
-                }
-                ],
-            false)
-        );
-        console.log(prompt);
-
         agent.addJSFunctionTool(
             ()=>{},
             {
@@ -127,7 +70,7 @@
                 },
             },
         );
-        for await (const resp of agent.query("Hello, who are you?")) {
+        for await (const resp of agent.query("Calculate 13492 * 95832.")) {
             if (resp.type === "output_text")
                 console.log(resp.content);
             else

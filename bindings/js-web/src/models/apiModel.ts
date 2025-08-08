@@ -1,3 +1,6 @@
+import { Message, MessageOutput, Tool } from "../agent";
+import { Runtime } from "../runtime";
+
 export const openAIModelIds = [
   "gpt-5",
   "gpt-5-mini",
@@ -68,6 +71,11 @@ export class _APIModel {
   apiKey: string;
   readonly componentType: string;
 
+  // Internal states required for infer
+  #initialized: boolean = false;
+  private componentName: string | undefined;
+  private runtime: Runtime | undefined;
+
   constructor(args: APIModelArgs) {
     this.id = args.id;
     this.apiKey = args.apiKey;
@@ -91,11 +99,55 @@ export class _APIModel {
     this.componentType = args.provider;
   }
 
-  toAttrs() {
-    return {
-      model: this.id,
-      api_key: this.apiKey,
-    };
+  defaultSystemMessage(): string | undefined {
+    return undefined;
+  }
+
+  async init(args: { runtime: Runtime }) {
+    if (this.#initialized) return;
+
+    this.runtime = args.runtime;
+    this.componentName = this.runtime.generateUUID();
+
+    const result = await this.runtime.define(
+      this.componentType,
+      this.componentName,
+      {
+        model: this.id,
+        api_key: this.apiKey,
+      }
+    );
+    if (!result) {
+      throw Error(`Failed to define API model component`);
+    }
+
+    this.#initialized = true;
+  }
+
+  async infer(args: {
+    messages: Message[];
+    tools: Tool[];
+    reasoning?: boolean;
+  }): Promise<AsyncIterable<MessageOutput>> {
+    if (!this.#initialized) {
+      throw Error(`The model is not initialized yet`);
+    }
+    return this.runtime?.callIterMethod(this.componentName!, "infer", {
+      messages: args.messages,
+      tools: args.tools.map((tool) => ({
+        type: "function",
+        function: tool.desc,
+      })),
+      reasoning: args.reasoning,
+    })!;
+  }
+
+  async dispose() {
+    if (this.#initialized) {
+      await this.runtime!.delete(this.componentName!);
+      this.runtime = undefined;
+      this.componentName = undefined;
+    }
   }
 }
 
