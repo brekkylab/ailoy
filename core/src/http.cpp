@@ -23,6 +23,25 @@ struct url_t {
   std::string path;
 };
 
+std::string method_to_string(method_t method) {
+  switch (method) {
+  case method_t::GET:
+    return "GET";
+  case method_t::POST:
+    return "POST";
+  case method_t::PUT:
+    return "PUT";
+  case method_t::PATCH:
+    return "PATCH";
+  case method_t::DELETE_:
+    return "DELETE";
+  case method_t::HEAD:
+    return "HEAD";
+  default:
+    return "Unknown";
+  }
+}
+
 std::variant<url_t, std::string> parse_url(const std::string &url) {
   url_t result;
 
@@ -138,7 +157,7 @@ result_t request(const request_t &req) {
   emscripten_fetch_attr_init(&attr);
 
   // Set method
-  std::string method_str = std::string(magic_enum::enum_name(req.method));
+  std::string method_str = method_to_string(req.method);
   strcpy(attr.requestMethod, method_str.c_str());
 
   // Set callbacks
@@ -225,10 +244,7 @@ result_t request(const request_t &req) {
   for (const auto &[key, value] : req.headers) {
     httplib_headers.emplace(key, value);
   }
-
-  httplib::Result result;
   std::string body_str = req.body.has_value() ? req.body->data() : "";
-
   std::string content_type;
   if (req.headers.contains("Content-Type")) {
     content_type = req.headers.find("Content-Type")->second;
@@ -236,95 +252,29 @@ result_t request(const request_t &req) {
     content_type = "text/plain";
   }
 
-  if (req.method == method_t::GET) {
-    if (req.data_callback.has_value()) {
-      // If data_callback is provided, the response body becomes empty.
-      // The data_callback is responsible for handling the arrived partial data.
-      std::visit(
-          [&](auto &&client_) {
-            result = client_->Get(
-                url_parsed.path, httplib_headers,
-                [&](const char *data, size_t data_length) {
-                  return req.data_callback.value()(data, data_length);
-                },
-                [&](uint64_t current, uint64_t total) {
-                  if (req.progress_callback.has_value()) {
-                    return req.progress_callback.value()(current, total);
-                  }
-                  return true;
-                });
-          },
-          client);
-    } else {
-      std::visit(
-          [&](auto &&client_) {
-            result = client_->Get(url_parsed.path, httplib_headers,
-                                  [&](uint64_t current, uint64_t total) {
-                                    if (req.progress_callback.has_value()) {
-                                      return req.progress_callback.value()(
-                                          current, total);
-                                    }
-                                    return true;
-                                  });
-          },
-          client);
-    }
-  } else if (req.method == method_t::POST) {
-    std::visit(
-        [&](auto &&client_) {
-          result = client_->Post(
-              url_parsed.path, httplib_headers, body_str, content_type,
-              [&](uint64_t current, uint64_t total) {
-                if (req.progress_callback.has_value()) {
-                  return req.progress_callback.value()(current, total);
-                }
-                return true;
-              });
-        },
-        client);
-  } else if (req.method == method_t::PUT) {
-    std::visit(
-        [&](auto &&client_) {
-          result = client_->Put(
-              url_parsed.path, httplib_headers, body_str, content_type,
-              [&](uint64_t current, uint64_t total) {
-                if (req.progress_callback.has_value()) {
-                  return req.progress_callback.value()(current, total);
-                }
-                return true;
-              });
-        },
-        client);
-  } else if (req.method == method_t::PATCH) {
-    std::visit(
-        [&](auto &&client_) {
-          result = client_->Patch(
-              url_parsed.path, httplib_headers, body_str, content_type,
-              [&](uint64_t current, uint64_t total) {
-                if (req.progress_callback.has_value()) {
-                  return req.progress_callback.value()(current, total);
-                }
-                return true;
-              });
-        },
-        client);
-  } else if (req.method == method_t::DELETE_) {
-    std::visit(
-        [&](auto &&client_) {
-          result = client_->Delete(
-              url_parsed.path, httplib_headers, body_str, content_type,
-              [&](uint64_t current, uint64_t total) {
-                if (req.progress_callback.has_value()) {
-                  return req.progress_callback.value()(current, total);
-                }
-                return true;
-              });
-        },
-        client);
-  } else {
-    return result_t(nullptr, std::format("Unsupported HTTP method: {}",
-                                         magic_enum::enum_name(req.method)));
+  httplib::Request http_req;
+  http_req.path = url_parsed.path;
+  http_req.method = method_to_string(req.method);
+  http_req.headers = httplib_headers;
+  http_req.body = body_str;
+  if (req.data_callback.has_value()) {
+    // If data_callback is provided, the response body becomes empty.
+    // The data_callback is responsible for handling the arrived partial data.
+    http_req.content_receiver = [&](const char *data, size_t data_length,
+                                    uint64_t offset,
+                                    uint64_t total_length) -> bool {
+      return req.data_callback.value()(data, data_length);
+    };
   }
+  if (req.progress_callback.has_value()) {
+    http_req.progress = [&](uint64_t current, uint64_t total) {
+      req.progress_callback.value()(current, total);
+      return true;
+    };
+  }
+
+  httplib::Result result;
+  std::visit([&](auto &&client_) { result = client_->send(http_req); }, client);
 
   if (!result) {
     return result_t(nullptr, httplib::to_string(result.error()));
