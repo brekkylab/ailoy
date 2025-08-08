@@ -22,7 +22,7 @@ target_link_libraries(ailoy_vm_obj PRIVATE indicators::indicators)
 # minijinja
 set(MINIJINJA_BUILD_SHARED OFF)
 set(MINIJINJA_INSTALL OFF)
-set(MINIJINJA_RUST_NIGHTLY ON)
+set(MINIJINJA_RUST_NIGHTLY ${RUST_NIGHTLY})
 set(MINIJINJA_RUST_FLAGS "${RUSTFLAGS}")
 set(MINIJINJA_CARGO_BUILD_FLAGS "${CARGO_BUILD_FLAGS}")
 FetchContent_Declare(
@@ -50,9 +50,9 @@ target_link_libraries(ailoy_vm_obj PUBLIC tinyexpr)
 target_link_libraries(ailoy_vm_obj PRIVATE magic_enum)
 
 # tokenizers-cpp
+set(TOKENIZERS_CPP_RUST_NIGHTLY ${RUST_NIGHTLY})
 set(TOKENIZERS_CPP_RUST_FLAGS "${RUSTFLAGS}")
 set(TOKENIZERS_CPP_CARGO_FLAGS "${CARGO_BUILD_FLAGS}")
-set(TOKENIZERS_CPP_RUST_NIGHTLY ON)
 if(NODE)
     set(TOKENIZERS_CPP_MSVC_RUNTIME_LIBRARY "MT" CACHE STRING "" FORCE)
 endif()
