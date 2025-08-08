@@ -2,7 +2,7 @@ import { search } from "jmespath";
 import { Image } from "wasm-vips";
 
 import { MCPClient, MCPClientTransport, MCPClientStartOptions } from "./mcp";
-import { _LocalModel, AiloyModel } from "./models";
+import { AiloyModel } from "./models";
 import { Runtime } from "./runtime";
 import { uint8ArrayToBase64 } from "./utils/base64";
 import { isVipsImage, vipsImageToBase64 } from "./utils/image";
