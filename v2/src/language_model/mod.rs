@@ -16,14 +16,14 @@ pub trait LanguageModel: Clone {
 
 #[derive(Clone, Debug)]
 pub enum AnyLanguageModel {
-    Api(APILanguageModel),
+    API(APILanguageModel),
     Local(LocalLanguageModel),
 }
 
 impl LanguageModel for AnyLanguageModel {
     fn run(self, msgs: Vec<Message>) -> Pin<Box<dyn Stream<Item = Result<MessageDelta, String>>>> {
         match self {
-            AnyLanguageModel::Api(m) => m.run(msgs),
+            AnyLanguageModel::API(m) => m.run(msgs),
             AnyLanguageModel::Local(m) => m.run(msgs),
         }
     }
