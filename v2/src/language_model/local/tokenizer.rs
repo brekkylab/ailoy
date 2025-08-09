@@ -16,13 +16,18 @@ impl Tokenizer {
         }
     }
 
-    pub fn encode(&self, text: &str, add_special_tokens: bool) -> Vec<u32> {
-        let encoded = self.inner.encode(text, add_special_tokens).unwrap();
-        return encoded.get_ids().to_vec();
+    pub fn encode(&self, text: &str, add_special_tokens: bool) -> Result<Vec<u32>, String> {
+        let encoded = self
+            .inner
+            .encode(text, add_special_tokens)
+            .map_err(|e| format!("Tokenizer::encode failed: {}", e.to_string()))?;
+        Ok(encoded.get_ids().to_vec())
     }
 
-    pub fn decode(&self, ids: &[u32], skip_special_tokens: bool) -> String {
-        self.inner.decode(ids, skip_special_tokens).unwrap()
+    pub fn decode(&self, ids: &[u32], skip_special_tokens: bool) -> Result<String, String> {
+        self.inner
+            .decode(ids, skip_special_tokens)
+            .map_err(|e| format!("Tokenizer::decode failed: {}", e.to_string()))
     }
 }
 
@@ -75,7 +80,7 @@ Who made you?<|im_end|>
             2610, 646, 1618, 752, 619, 21140, 13, 151645, 198, 151644, 872, 198, 15191, 1865, 498,
             30, 151645, 198, 151644, 77091, 198, 151667, 271, 151668, 271,
         ];
-        let result = tokenizer.encode(prompt, true);
+        let result = tokenizer.encode(prompt, true).unwrap();
         assert_eq!(expected, result);
     }
 }
