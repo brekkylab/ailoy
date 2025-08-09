@@ -115,7 +115,7 @@ void tvm_language_model_t::clear() {
   history_.clear();
 }
 
-int32_t tvm_language_model_t::prefill(const std::vector<int32_t> &tokens) {
+void tvm_language_model_t::prefill(const std::vector<uint32_t> &tokens) {
   if (tokens.empty())
     throw std::runtime_error("Token must not be empty");
 
@@ -139,7 +139,7 @@ int32_t tvm_language_model_t::prefill(const std::vector<int32_t> &tokens) {
   // Tokens to be added (wihout common prefixes)
   std::vector<int32_t> new_tokens(tokens.begin() + lcp_index, tokens.end());
   if (new_tokens.empty())
-    return *history_.rbegin();
+    return;
 
   // Calculate remaining space in KV cache
   if (new_tokens.size() >= kv_cache_->get_num_available_pages() * page_size)
@@ -160,8 +160,7 @@ int32_t tvm_language_model_t::prefill(const std::vector<int32_t> &tokens) {
     input.CopyFromBytes(&*(new_tokens.begin() + i), length * sizeof(int32_t));
 
     // Embedding of the input
-    NDArray embedding =
-        rt_->get_vm_function("embed")(input, rt_->get_params()).cast<NDArray>();
+    NDArray embedding = fembed_(input, rt_->get_params()).cast<NDArray>();
     NDArray embedding_reshaped = embedding.CreateView(
         tvm::ffi::Shape{1, embedding->shape[0], embedding->shape[1]},
         embedding.DataType());
@@ -174,12 +173,9 @@ int32_t tvm_language_model_t::prefill(const std::vector<int32_t> &tokens) {
 
   // Update history
   history_ = tokens;
-
-  // Returns the last token, so that the `decode` can start with it.
-  return *new_tokens.rbegin();
 }
 
-int32_t tvm_language_model_t::decode(int32_t last_token) {
+NDArray tvm_language_model_t::decode(uint32_t last_token) {
   DLDataType U32 = DLDataType{.code = kDLUInt, .bits = 32, .lanes = 1};
   DLDataType I32 = DLDataType{.code = kDLInt, .bits = 32, .lanes = 1};
   DLDataType F32 = DLDataType{.code = kDLFloat, .bits = 32, .lanes = 1};
@@ -208,88 +204,23 @@ int32_t tvm_language_model_t::decode(int32_t last_token) {
   kv_cache_->end_forward();
 
   // Extract logits (1 x seq_len x vocab_size)
+  // Note that the seq_len is the ID of the seqence, used for decoding multiple
+  // context in parallel. In our cases, it always set to 1.
   NDArray logits = Downcast<Array<NDArray>>(output)[0];
-  const int seq_len = logits.Shape()[1];
-  auto vocab_size = logits.Shape()[2];
+  return logits;
+}
 
-  // // Sampling
-  // if (get_current_grammar_matcher()) {
-  //   auto &matcher = get_current_grammar_matcher()->inner;
+uint32_t tvm_language_model_t::sample(NDArray logits) {
+  // Sample token from logits
+  uint32_t sampled_token =
+      fsample_top_p_from_logits_(logits, config.temperature, config.top_p,
+                                 random_float(0.0, 1.0))
+          .cast<int32_t>();
 
-  //   // Create bitmask
-  //   int bitmask_len = (vocab_size + 31) / 32;
-  //   NDArray bitmask_cpu = NDArray::Empty(
-  //       {bitmask_len}, I32, DLDevice{.device_type = kDLCPU, .device_id = 0});
+  // Register it to history
+  history_.push_back(sampled_token);
 
-  //   // Apply matcher
-  //   matcher.FillNextTokenBitmask(&bitmask_cpu.ToDLPack()->dl_tensor);
-
-  //   // Copy bitmask to GPU
-  //   NDArray bitmask = NDArray::Empty({bitmask_len}, I32, rt_->get_device());
-  //   bitmask.CopyFrom(bitmask_cpu);
-
-  //   // Create seq_id
-  //   NDArray seq_ids_cpu = NDArray::Empty(
-  //       {1}, I32, DLDevice{.device_type = kDLCPU, .device_id = 0});
-  //   auto seq_ids_cpu_data = static_cast<int32_t *>(seq_ids_cpu->data);
-  //   seq_ids_cpu_data[0] = 0;
-  //   NDArray seq_ids = NDArray::Empty({1}, I32, rt_->get_device());
-  //   seq_ids.CopyFrom(seq_ids_cpu);
-
-  //   // Apply bitmask to logits
-  //   fapply_bitmask_inplace_(logits.CreateView({1, vocab_size}, F32),  //
-  //   logits
-  //                           seq_ids,                                  //
-  //                           seq_ids bitmask.CreateView({1, bitmask_len}, I32)
-  //                           // bitmask
-  //   );
-  // }
-
-  // // Sample token from logits
-  // int32_t sampled_token =
-  //     fsample_top_p_from_logits_(logits, config.temperature, config.top_p,
-  //                                random_float(0.0, 1.0))
-  //         .cast<int32_t>();
-
-  // // Register it to history
-  // history_.push_back(sampled_token);
-
-  // // Update matcher
-  // if (get_current_grammar_matcher()) {
-  //   auto &matcher = get_current_grammar_matcher()->inner;
-  //   matcher.AcceptToken(sampled_token);
-  //   if (matcher.IsTerminated())
-  //     stream_modes_.at(current_stream_mode_).matcher = nullptr;
-  // }
-
-  // // Update streaming mode
-  // if (current_stream_mode_ == "output_text") {
-  //   for (auto [name, mode] : stream_modes_) {
-  //     if (name == "output_text")
-  //       continue;
-  //     if (!mode.check_indicator("open", history_))
-  //       continue;
-  //     if (mode.grammar) {
-  //       auto matcher =
-  //           xgrammar::GrammarMatcher(mode.grammar->inner,
-  //           mode.close_indicator);
-  //       mode.matcher = create<grammar_matcher_t>(std::move(matcher));
-  //     }
-  //     current_stream_mode_ = name;
-  //     break;
-  //   }
-  // } else {
-  //   const auto &current_mode = stream_modes_.at(current_stream_mode_);
-  //   if (current_mode.check_indicator("close", history_)) {
-  //     auto name = current_stream_mode_;
-  //     if (stream_modes_.at(name).grammar)
-  //       stream_modes_.at(name).matcher = nullptr;
-  //     current_stream_mode_ = "output_text";
-  //   }
-  // }
-
-  // return sampled_token;
-  return 0;
+  return sampled_token;
 }
 
 std::unique_ptr<tvm_language_model_t>

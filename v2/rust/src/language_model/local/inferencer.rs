@@ -39,22 +39,13 @@ mod tvm_runtime {
     }
 
     impl Inferencer {
-        pub fn embed(&self, input: impl AsRef<[u8]>) -> () {
-            todo!()
+        pub fn prefill(&mut self, tokens: &Vec<u32>) -> () {
+            self.inner.pin_mut().prefill(tokens)
         }
 
-        pub fn prefill(&self, input: impl AsRef<[u8]>) -> u64 {
-            todo!()
-        }
-
-        pub fn decode(&self, input: impl AsRef<[u8]>) -> u64 {
-            todo!()
-        }
-    }
-
-    impl Drop for Inferencer {
-        fn drop(&mut self) {
-            // unsafe { ffi::ailoy_tvm_runtime_destroy(self.inner) };
+        pub fn decode(&mut self, last_token: u32) -> u32 {
+            let logits = self.inner.pin_mut().decode(last_token);
+            self.inner.pin_mut().sample(logits)
         }
     }
 

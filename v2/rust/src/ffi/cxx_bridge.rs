@@ -1,8 +1,5 @@
-use cxx::{CxxString, UniquePtr};
-
 #[cxx::bridge]
 pub mod ffi {
-
     unsafe extern "C++" {
         include!("cache.hpp");
 
@@ -28,6 +25,8 @@ pub mod ffi {
         #[namespace = "ailoy"]
         pub fn create_dldevice(device_type: i32, device_id: i32) -> UniquePtr<DLDevice>;
 
+        type DLManagedTensorVersioned;
+
         #[namespace = "ailoy"]
         #[cxx_name = "tvm_language_model_t"]
         type TVMLanguageModel;
@@ -38,6 +37,24 @@ pub mod ffi {
             cache: UniquePtr<Cache>,
             device: UniquePtr<DLDevice>,
         ) -> UniquePtr<TVMLanguageModel>;
+
+        #[namespace = "ailoy"]
+        #[cxx_name = "prefill_from_rs"]
+        pub fn prefill(self: Pin<&mut TVMLanguageModel>, tokens: &Vec<u32>) -> ();
+
+        #[namespace = "ailoy"]
+        #[cxx_name = "decode_from_rs"]
+        pub fn decode(
+            self: Pin<&mut TVMLanguageModel>,
+            last_token: u32,
+        ) -> UniquePtr<DLManagedTensorVersioned>;
+
+        #[namespace = "ailoy"]
+        #[cxx_name = "sample_from_rs"]
+        pub fn sample(
+            self: Pin<&mut TVMLanguageModel>,
+            logits: UniquePtr<DLManagedTensorVersioned>,
+        ) -> u32;
     }
 }
 
@@ -46,28 +63,5 @@ pub use ffi::*;
 impl std::fmt::Debug for TVMLanguageModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TVMLanguageModel").finish()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test1() {
-        let mut cache = ffi::create_cache();
-        cache.pin_mut().write("key".to_owned(), "value".to_owned());
-        cache.pin_mut().write_binary("key".to_owned(), Vec::new());
-        let device = ffi::create_dldevice(8, 0);
-        let mut lang_model = ffi::create_tvm_language_model(
-            "/Users/ijaehwan/.cache/ailoy/Qwen--Qwen3-0.6B--aarch64-apple-darwin--metal/rt.dylib"
-                .to_owned(),
-            cache,
-            device,
-        );
-        // let_cxx_string!(lib_filename = "lib.dylib");
-        // let device = create_dldevice(15, 0);
-        // let cpp_class = super::ffi::create_tvm_language_model(&lib_filename, device);
-        // println!("{}", cpp_class.get_result());
     }
 }

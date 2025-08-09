@@ -73,6 +73,14 @@ fn build_native() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let cargo_target_dir = find_cargo_target_dir();
     let cmake_binary_dir = out_dir.join("build");
+    let cmake_install_dir = out_dir
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("deps");
     let cpp_include_files = read_dir(&cmake_source_dir.join("include"))
         .expect("Failed to read cpp/include")
         .filter_map(Result::ok)
@@ -118,17 +126,7 @@ fn build_native() {
     Config::new(&cmake_source_dir)
         .env("CARGO_TARGET_DIR", &cargo_target_dir)
         .define("TVM_ROOT", &tvm_dir)
-        .define(
-            "CMAKE_INSTALL_PREFIX",
-            &out_dir
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("deps"),
-        )
+        .define("CMAKE_INSTALL_PREFIX", &cmake_install_dir)
         .build();
     Command::new("cmake")
         .arg("--install")
@@ -140,15 +138,7 @@ fn build_native() {
     println!("cargo:rustc-link-lib=c++");
     println!(
         "cargo:rustc-link-search=native={}",
-        out_dir
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("deps")
-            .display()
+        cmake_install_dir.display()
     );
     println!("cargo:rustc-link-lib=static=ailoy_cpp");
     println!("cargo:rustc-link-lib=dylib=tvm_runtime");

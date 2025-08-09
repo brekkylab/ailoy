@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 async-stream = "0.3"
 cxx = "1.0"
-dlpackrs = { git = "https://github.com/brekkylab/dlpackrs.git" }
 futures = "0.3.31"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }

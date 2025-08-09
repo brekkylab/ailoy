@@ -81,10 +81,30 @@ public:
   void clear();
 
   /** Prefill */
-  int32_t prefill(const std::vector<int32_t> &tokens);
+  void prefill(const std::vector<uint32_t> &tokens);
+
+  void prefill_from_rs(const rust::Vec<uint32_t> &tokens) {
+    std::vector<uint32_t> converted(tokens.begin(), tokens.end());
+    return prefill(converted);
+  }
 
   /** Decode */
-  int32_t decode(int32_t last_token);
+  tvm::runtime::NDArray decode(uint32_t last_token);
+
+  std::unique_ptr<DLManagedTensorVersioned>
+  decode_from_rs(uint32_t last_token) {
+    return std::unique_ptr<DLManagedTensorVersioned>(
+        std::move(decode(last_token)).ToDLPackVersioned());
+  }
+
+  /** Sample */
+  uint32_t sample(tvm::runtime::NDArray);
+
+  uint32_t sample_from_rs(std::unique_ptr<DLManagedTensorVersioned> logits) {
+    auto v =
+        tvm::runtime::NDArray::FromDLPackVersioned(std::move(logits.release()));
+    return sample(v);
+  }
 
   config_t config;
 
@@ -97,9 +117,7 @@ private:
 
   config_t default_config_;
 
-  std::vector<int32_t> history_;
-
-  std::vector<int32_t> output_stream_;
+  std::vector<uint32_t> history_;
 
   tvm::ffi::Function fembed_;
 
