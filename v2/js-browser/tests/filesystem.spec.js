@@ -3,7 +3,7 @@ import { resolve as _resolve } from "path";
 
 test.describe("Filesystem integration", () => {
   test("should write and read file from OPFS", async ({ page }) => {
-    // 로그 핸들러 등록
+    // Register log handler
     page.on("console", (msg) => {
       console.log(`[browser:${msg.type()}] ${msg.text()}`);
     });

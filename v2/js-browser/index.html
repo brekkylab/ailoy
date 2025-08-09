@@ -5,7 +5,7 @@
     <h1>Ailoy web test</h1>
     <script type="module">
       window.__ailoyLoaded = (async () => {
-        const module = await import("/pkg/ailoy_core.js");
+        const module = await import("/pkg/ailoy.js");
         await module.default();
         window.ailoy = module;
       })();

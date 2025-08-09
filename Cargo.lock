@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ailoy_core"
+name = "ailoy"
 version = "0.1.0"
 dependencies = [
  "async-stream",

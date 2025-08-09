@@ -69,7 +69,7 @@ fn build_native() {
 
     // Setup directories
     let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let cmake_source_dir = cargo_manifest_dir.join("../cpp");
+    let cmake_source_dir = cargo_manifest_dir.join("shim");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let cargo_target_dir = find_cargo_target_dir();
     let cmake_binary_dir = out_dir.join("build");
@@ -140,7 +140,7 @@ fn build_native() {
         "cargo:rustc-link-search=native={}",
         cmake_install_dir.display()
     );
-    println!("cargo:rustc-link-lib=static=ailoy_cpp");
+    println!("cargo:rustc-link-lib=static=ailoy_cpp_shim");
     println!("cargo:rustc-link-lib=dylib=tvm_runtime");
     println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
 

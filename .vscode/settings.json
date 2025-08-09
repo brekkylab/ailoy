@@ -39,7 +39,7 @@
     ],
     "cmake.environment": {
     },
-    "cmake.sourceDirectory": "${workspaceFolder}/v2/cpp",
+    "cmake.sourceDirectory": "${workspaceFolder}/v2/shim",
     "cmake.useCMakePresets": "always",
     "files.associations": {
         ".prettierrc": "typescript",

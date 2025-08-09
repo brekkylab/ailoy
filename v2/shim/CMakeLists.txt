@@ -60,11 +60,11 @@ if(AILOY_WITH_TEST)
     enable_testing()
 endif()
 
-###########################
-# ailoy_core (cxx bridge) #
-###########################
+######################
+# ailoy (cxx bridge) #
+######################
 # @jhlee: Can we remove hard-coded paths?
-set(CARGO_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../rust)
+set(CARGO_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(AILOY_CXXBRIDGE_RS ${CARGO_SOURCE_DIR}/src/ffi/cxx_bridge.rs)
 set(AILOY_CXXBRIDGE_DIR ${CMAKE_CURRENT_BINARY_DIR}/cxx_bridge)
 set(AILOY_CXXBRIDGE_CC ${AILOY_CXXBRIDGE_DIR}/cxx_bridge.rs.cc)
@@ -107,13 +107,13 @@ if(NOT ret EQUAL 0)
     message(FATAL_ERROR "cxxbridge cpp generation failed")
 endif()
 
-#############
-# ailoy_cpp #
-#############
-file(GLOB_RECURSE AILOY_CORE_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp ${AILOY_CXXBRIDGE_CC})
-add_library(ailoy_cpp STATIC ${AILOY_CORE_SRCS})
-target_include_directories(ailoy_cpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories(ailoy_cpp PUBLIC ${AILOY_CXXBRIDGE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+##################
+# ailoy_cpp_shim #
+##################
+file(GLOB_RECURSE AILOY_CPP_SHIM_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp ${AILOY_CXXBRIDGE_CC})
+add_library(ailoy_cpp_shim STATIC ${AILOY_CPP_SHIM_SRCS})
+target_include_directories(ailoy_cpp_shim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(ailoy_cpp_shim PUBLIC ${AILOY_CXXBRIDGE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 ########
 # json #
@@ -125,7 +125,7 @@ FetchContent_Declare(
     EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(nlohmann_json)
-target_link_libraries(ailoy_cpp PRIVATE nlohmann_json)
+target_link_libraries(ailoy_cpp_shim PRIVATE nlohmann_json)
 
 #######
 # tvm #
@@ -133,15 +133,15 @@ target_link_libraries(ailoy_cpp PRIVATE nlohmann_json)
 if(APPLE)
     set(USE_METAL ON)
     set(USE_VULKAN OFF)
-    target_compile_definitions(ailoy_cpp PUBLIC USE_METAL=1)
+    target_compile_definitions(ailoy_cpp_shim PUBLIC USE_METAL=1)
 elseif(WIN32)
     set(USE_METAL OFF)
     set(USE_VULKAN ON)
-    target_compile_definitions(ailoy_cpp PUBLIC USE_VULKAN=1)
+    target_compile_definitions(ailoy_cpp_shim PUBLIC USE_VULKAN=1)
 elseif(LINUX)
     set(USE_METAL OFF)
     set(USE_VULKAN ON)
-    target_compile_definitions(ailoy_cpp PUBLIC USE_VULKAN=1)
+    target_compile_definitions(ailoy_cpp_shim PUBLIC USE_VULKAN=1)
 else()
     message(FATAL_ERROR "Not implemented")
 endif()
@@ -164,7 +164,7 @@ ExternalProject_Add(tvm_build
 ExternalProject_Get_Property(tvm_build BINARY_DIR)
 set(TVM_BINARY_DIR ${BINARY_DIR})
 
-target_include_directories(ailoy_cpp PUBLIC
+target_include_directories(ailoy_cpp_shim PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/include
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/ffi/include
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/3rdparty/dlpack/include
@@ -176,8 +176,8 @@ set_target_properties(tvm_runtime PROPERTIES
     IMPORTED_LOCATION ${TVM_BINARY_DIR}/libtvm_runtime.dylib
 )
 add_dependencies(tvm_runtime tvm_build)
-target_link_libraries(ailoy_cpp PUBLIC tvm_runtime)
-target_compile_definitions(ailoy_cpp PUBLIC
+target_link_libraries(ailoy_cpp_shim PUBLIC tvm_runtime)
+target_compile_definitions(ailoy_cpp_shim PUBLIC
     DMLC_USE_LOGGING_LIBRARY=<tvm/runtime/logging.h>
     AILOY_USE_TVM=1
 )
@@ -185,7 +185,7 @@ target_compile_definitions(ailoy_cpp PUBLIC
 
 if(AILOY_WITH_TEST)
     add_executable(test_tvm ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tvm.cpp)
-    target_link_libraries(test_tvm PRIVATE ailoy_cpp)
+    target_link_libraries(test_tvm PRIVATE ailoy_cpp_shim)
     set_target_properties(test_tvm PROPERTIES OUTPUT_NAME "test_tvm")
     target_link_libraries(test_tvm PRIVATE GTest::gtest)
     target_link_options(test_tvm PRIVATE -fsanitize=undefined -fsanitize=address)
@@ -195,5 +195,5 @@ endif()
 # Install #
 ###########
 
-install(TARGETS ailoy_cpp ARCHIVE DESTINATION .)
+install(TARGETS ailoy_cpp_shim ARCHIVE DESTINATION .)
 install(FILES ${TVM_BINARY_DIR}/libtvm_runtime.dylib DESTINATION .)

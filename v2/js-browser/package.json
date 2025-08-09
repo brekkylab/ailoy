@@ -1,7 +1,6 @@
 {
-    "name": "ailoy-web",
-    "version": "0.1.0",
-    "description": "WebAssembly OPFS test using wasm-bindgen and Playwright",
+    "name": "ailoy-js-browser",
+    "version": "0.2.0",
     "scripts": {
         "start": "serve .",
         "build": "wasm-pack build ../rust --target web --out-dir ../web/pkg",
