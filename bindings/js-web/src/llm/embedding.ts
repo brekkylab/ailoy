@@ -8,6 +8,7 @@ import {
   MinValueError,
 } from "./error";
 import { Tokenizer } from "./tokenizer";
+import {convertFloat16ArrayToFloat32Array} from "../utils/float";
 
 export class EmbeddingPipeline {
   private config: ChatConfig;
@@ -44,8 +45,8 @@ export class EmbeddingPipeline {
     // 2. Get json stored in the vm's metadata function
     const fgetMetadata = this.vm.getFunction("_metadata");
     const ret_value = fgetMetadata();
-    const metadataStr = this.tvm.detachFromCurrentScope(ret_value).toString();
-    const metadata = JSON.parse(metadataStr);
+    // const metadataStr = this.tvm.detachFromCurrentScope(ret_value).toString();
+    const metadata = JSON.parse(ret_value);
 
     // 3. Load parameters by name
     const paramNames: string[] = [];
@@ -72,12 +73,12 @@ export class EmbeddingPipeline {
     if (this.maxBatchSize <= 0) {
       throw new MinValueError("maxBatchSize", 0);
     }
-    if (this.contextWindowSize <= 0) {
-      throw new MinValueError("contextWindowSize", 0);
-    }
-    if (this.prefillChunkSize <= 0) {
-      throw new MinValueError("prefillChunkSize", 0);
-    }
+    // if (this.contextWindowSize <= 0) {
+    //   throw new MinValueError("contextWindowSize", 0);
+    // }
+    // if (this.prefillChunkSize <= 0) {
+    //   throw new MinValueError("prefillChunkSize", 0);
+    // }
     if (this.prefillChunkSize !== this.contextWindowSize) {
       throw new EmbeddingChunkingUnsupportedError(
         this.contextWindowSize,
@@ -131,12 +132,12 @@ export class EmbeddingPipeline {
     for (let i = 0; i < tokenizedInputs.length; i++) {
       const curInputSize = tokenizedInputs[i].length;
       totalNumTokens += curInputSize;
-      if (curInputSize > this.contextWindowSize) {
-        throw new EmbeddingExceedContextWindowSizeError(
-          this.contextWindowSize,
-          curInputSize
-        );
-      }
+      // if (curInputSize > this.contextWindowSize) {
+      //   throw new EmbeddingExceedContextWindowSizeError(
+      //     this.contextWindowSize,
+      //     curInputSize
+      //   );
+      // }
     }
     if (tokenizedInputs.length === 0) {
       throw new Error("InternalError: batch size is zero.");
@@ -218,9 +219,16 @@ export class EmbeddingPipeline {
         curBatchSize * maxInputSize * hidden_size,
       ]);
       await this.device.sync();
-      const logitsCurBatchOnCPUArray: Float32Array = <Float32Array>(
-        logitsCurBatchOnCPU.toArray()
-      );
+
+      let logitsCurBatchOnCPUArray: Float32Array;
+      if (logitsCurBatchOnCPU.dtype === "float16") {
+        const logitsCurBatchOnCPUArrayUint16: Uint16Array = <Uint16Array>(logitsCurBatchOnCPU.toArray());
+        logitsCurBatchOnCPUArray = convertFloat16ArrayToFloat32Array(logitsCurBatchOnCPUArrayUint16);
+      } else {
+        logitsCurBatchOnCPUArray = <Float32Array>(
+          logitsCurBatchOnCPU.toArray()
+        );
+      }
 
       // 3.7 Update final result. For each sentence, get [0,:], i.e. only the first token's output
       // That is, we are doing result.push(logits[:,0,:]) here.
