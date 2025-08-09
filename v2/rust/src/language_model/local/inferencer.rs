@@ -169,6 +169,16 @@ mod tvm_runtime {
 mod tvmjs_runtime {
     #[derive(Debug)]
     pub struct Inferencer {}
+
+    impl Inferencer {
+        pub fn prefill(&mut self, _: &Vec<u32>) -> () {
+            todo!()
+        }
+
+        pub fn decode(&mut self, _: u32) -> u32 {
+            todo!()
+        }
+    }
 }
 
 #[cfg(any(target_family = "unix", target_family = "windows"))]

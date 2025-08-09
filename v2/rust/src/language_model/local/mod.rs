@@ -43,11 +43,10 @@ impl LanguageModel for LocalLanguageModel {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn test1() {
+        use super::*;
         use crate::{Message, Part, Role};
 
         let cache = crate::cache::Cache::new();
