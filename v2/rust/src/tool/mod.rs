@@ -3,7 +3,7 @@ mod mcp;
 
 use std::pin::Pin;
 
-use crate::{MessageDelta, Part};
+use crate::message::{MessageDelta, Part};
 
 pub trait Tool: Clone {
     fn get_description(&self) -> Part;

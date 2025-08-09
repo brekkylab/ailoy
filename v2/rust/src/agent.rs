@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use futures::StreamExt;
 
 use crate::{
-    Message, MessageAggregator, Role,
     language_model::{AnyLanguageModel, LanguageModel as _},
+    message::{Message, MessageAggregator, Role},
     tool::AnyTool,
 };
 

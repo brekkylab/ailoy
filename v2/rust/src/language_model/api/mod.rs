@@ -1,4 +1,7 @@
-use crate::language_model::LanguageModel;
+use crate::{
+    language_model::LanguageModel,
+    message::{Message, MessageDelta},
+};
 
 #[derive(Debug, Clone)]
 pub struct APILanguageModel {}
@@ -6,8 +9,8 @@ pub struct APILanguageModel {}
 impl LanguageModel for APILanguageModel {
     fn run(
         self,
-        _msg: Vec<crate::Message>,
-    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<crate::MessageDelta, String>>>> {
+        _msg: Vec<Message>,
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<MessageDelta, String>>>> {
         todo!()
     }
 }

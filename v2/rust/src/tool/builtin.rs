@@ -1,4 +1,7 @@
-use crate::tool::Tool;
+use crate::{
+    message::{MessageDelta, Part},
+    tool::Tool,
+};
 
 #[derive(Clone, Debug)]
 pub struct BuiltinTool {}
@@ -6,14 +9,14 @@ pub struct BuiltinTool {}
 impl BuiltinTool {}
 
 impl Tool for BuiltinTool {
-    fn get_description(&self) -> crate::Part {
+    fn get_description(&self) -> Part {
         todo!()
     }
 
     fn run(
         self,
-        toll_call: crate::Part,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<crate::MessageDelta, String>>>> {
+        toll_call: Part,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<MessageDelta, String>>>> {
         todo!()
     }
 }

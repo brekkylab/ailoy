@@ -8,7 +8,10 @@ use async_stream::try_stream;
 use futures::Stream;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{Message, MessageDelta, Part, language_model::LanguageModel};
+use crate::{
+    language_model::LanguageModel,
+    message::{Message, MessageDelta, Part},
+};
 
 pub use chat_template::*;
 pub use inferencer::*;
@@ -47,7 +50,7 @@ mod tests {
     #[tokio::test]
     async fn test1() {
         use super::*;
-        use crate::{Message, Part, Role};
+        use crate::message::Role;
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";

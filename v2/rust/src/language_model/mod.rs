@@ -5,7 +5,7 @@ use std::pin::Pin;
 
 use futures::Stream;
 
-use crate::{Message, MessageDelta};
+use crate::message::{Message, MessageDelta};
 
 pub use api::APILanguageModel;
 pub use local::LocalLanguageModel;
