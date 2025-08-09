@@ -238,41 +238,18 @@ export function bearerAutenticator(
  * more powerful and context-aware interactions.
  */
 export class Agent {
-  private runtime: Runtime;
-
-  private componentState: {
-    name: string;
-    valid: boolean;
-  };
-
-  private tools: Tool[];
-
-  private mcpClients: Map<string, MCPClient>;
-
   private messages: Message[];
   private systemMessage?: string;
+  private tools: Tool[];
+  private mcpClients: Map<string, MCPClient>;
 
-  constructor(
-    /** The runtime environment associated with the agent */
-    runtime: Runtime,
-    args?: {
-      /** Optional system message to set the initial assistant context */
-      systemMessage?: string;
-    }
-  ) {
-    this.runtime = runtime;
+  #initialized: boolean = false;
+  private runtime?: Runtime;
+  private model?: AiloyModel;
 
-    // Initialize component state
-    this.componentState = {
-      name: this.runtime.generateUUID(),
-      valid: false,
-    };
-
+  constructor() {
     // Initialize messages
     this.messages = [];
-
-    // Initialize system message
-    this.systemMessage = args?.systemMessage;
 
     // Initialize tools
     this.tools = [];
@@ -286,48 +263,45 @@ export class Agent {
    * This must be called before using any other method in the class. If already defined, this is a no-op.
    */
   async define(
-    /** The name of the LLM model to use in this instance */
-    model: AiloyModel
+    /** The runtime environment associated with the agent */
+    runtime: Runtime,
+    /** The LLM model to use in this agent */
+    model: AiloyModel,
+    args?: {
+      /** Optional system message to set the initial assistant context */
+      systemMessage?: string;
+    }
   ): Promise<void> {
-    // Skip if the component already exists
-    if (this.componentState.valid) return;
+    if (this.#initialized) return;
 
-    if (!this.runtime.isAlive()) throw Error(`Runtime is currently stopped.`);
+    if (!runtime.isAlive()) throw Error(`Runtime is not alive.`);
+    this.runtime = runtime;
+
+    this.model = model;
+    await this.model.init({ runtime: this.runtime });
 
     // Set default system message if not given; still can be undefined
-    this.systemMessage =
-      this.systemMessage ??
-      ("defaultSystemMessage" in model
-        ? model.defaultSystemMessage()
-        : undefined);
+    this.systemMessage = args?.systemMessage ?? model.defaultSystemMessage();
     this.clearMessages();
 
-    // Call runtime to define componenets
-    const result = await this.runtime.define(
-      model.componentType,
-      this.componentState.name,
-      model.toAttrs()
-    );
-    if (!result) throw Error(`component define failed`);
-
-    // Mark component as defined
-    this.componentState.valid = true;
+    this.#initialized = true;
   }
 
   /**
-   * Delete resources from the runtime.
-   * This should be called when the VectorStore is no longer needed. If already deleted, this is a no-op.
+   * Delete resources in the agent.
+   * If the agent is not in an initialized state, this is a no-op.
    */
   async delete(): Promise<void> {
-    // Skip if the component not exists
-    if (!this.componentState.valid) return;
+    // Skip if the agent is not initialized
+    if (!this.#initialized) return;
 
-    if (!this.runtime.isAlive()) {
-      const result = await this.runtime.delete(this.componentState.name);
-      if (!result) throw Error(`component delete failed`);
-    }
+    this.runtime = undefined;
+
+    await this.model!.dispose();
+    this.model = undefined;
 
     // Clear messages
+    this.systemMessage = undefined;
     this.clearMessages();
 
     // Close MCP clients
@@ -336,8 +310,7 @@ export class Agent {
     }
     this.mcpClients.clear();
 
-    // Mark component as deleted
-    this.componentState.valid = false;
+    this.#initialized = false;
   }
 
   /** Adds a custom tool to the agent */
@@ -372,7 +345,7 @@ export class Agent {
         throw Error("some parameters are required but not exist: " + missing);
 
       // Call
-      let output = await this.runtime.call(tool.description.name, inputs);
+      let output = await this.runtime!.call(tool.description.name, inputs);
 
       // Parse output path
       if (tool.behavior.outputPath)
@@ -452,7 +425,7 @@ export class Agent {
 
       // Call
       let output: any;
-      const resp = await this.runtime.call("http_request", request);
+      const resp = await this.runtime!.call("http_request", request);
       output = resp.body;
 
       // parse as JSON if "accept" header is "application/json"
@@ -562,24 +535,15 @@ export class Agent {
     this.tools = this.tools.filter((t) => !t.desc.name.startsWith(`${name}-`));
   }
 
-  getAvailableTools(): Array<ToolDescription> {
-    return this.tools.map((tool) => tool.desc);
-  }
-
   async *query(
-    /** The user message to send to the model */
     message:
       | string
       | Array<string | Image | TextContent | ImageContent | AudioContent>,
     options?: {
-      /** If True, enables reasoning capabilities (default: False) */
       reasoning?: boolean;
     }
   ): AsyncGenerator<AgentResponse> {
-    if (!this.componentState.valid)
-      throw Error(`Agent is not valid. Create one or define newly.`);
-
-    if (!this.runtime.isAlive()) throw Error(`Runtime is currently stopped.`);
+    if (!this.#initialized) throw Error(`Agent is not initialized yet.`);
 
     if (typeof message === "string") {
       this.messages.push({
@@ -613,17 +577,11 @@ export class Agent {
       let assistantToolCalls: Array<FunctionData> | undefined = undefined;
       let finishReason = "";
 
-      for await (const result of this.runtime.callIterMethod(
-        this.componentState.name,
-        "infer",
-        {
-          messages: this.messages,
-          tools: this.tools.map((v) => {
-            return { type: "function", function: v.desc };
-          }),
-          reasoning: options?.reasoning,
-        }
-      ) as AsyncIterable<MessageOutput>) {
+      for await (const result of await this.model!.infer({
+        messages: this.messages,
+        tools: this.tools,
+        reasoning: options?.reasoning,
+      })) {
         if (result.message.reasoning) {
           for (const reasoningData of result.message.reasoning) {
             if (assistantReasoning === undefined)
@@ -774,18 +732,14 @@ export class Agent {
 export async function defineAgent(
   /** The runtime environment associated with the agent */
   runtime: Runtime,
-  /** The name of the LLM model to use in this instance */
+  /** The LLM model to use in this agent */
   model: AiloyModel,
   args?: {
     /** Optional system message to set the initial assistant context */
     systemMessage?: string;
   }
 ): Promise<Agent> {
-  // Call constructor
-  const agent = new Agent(runtime, args);
-
-  await agent.define(model);
-
-  // Return created agent
+  const agent = new Agent();
+  await agent.define(runtime, model, args);
   return agent;
 }

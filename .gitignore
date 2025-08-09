@@ -556,9 +556,3 @@ test_*
 
 # pyenv
 .python-version
-
-# wasm
-ailoy_js_browser.d.ts
-ailoy_js_browser.js
-ailoy_js_browser.wasm
-

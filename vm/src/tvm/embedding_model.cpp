@@ -188,8 +188,8 @@ create_tvm_embedding_model_component(std::shared_ptr<const value_t> inputs) {
       [](std::shared_ptr<component_t> component,
          std::shared_ptr<const value_t> inputs) -> value_or_error_t {
     if (!inputs->is_type_of<map_t>())
-      return error_output_t(type_error("TVM Embedding Model: infer", "inputs",
-                                       "map_t", inputs->get_type()));
+      return error_output_t(type_error("TVM Embedding Model: tokenize",
+                                       "inputs", "map_t", inputs->get_type()));
 
     auto input_map = inputs->as<map_t>();
 
@@ -197,8 +197,8 @@ create_tvm_embedding_model_component(std::shared_ptr<const value_t> inputs) {
     if (!input_map->contains("prompt"))
       return error_output_t("Input prompt not specified");
     if (!input_map->at("prompt")->is_type_of<string_t>())
-      return error_output_t(type_error("TVM Embedding Model: infer", "prompt",
-                                       "string_t",
+      return error_output_t(type_error("TVM Embedding Model: tokenize",
+                                       "prompt", "string_t",
                                        input_map->at("prmopt")->get_type()));
     auto prompt = input_map->at<string_t>("prompt");
 

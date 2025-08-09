@@ -25,6 +25,7 @@
     "outDir": "dist",
     "rootDir": "./src",
     "baseUrl": ".",
+    "types": ["node", "@webgpu/types"]
   },
   "include": [ "./src/**/*.ts" ],
   "exclude": [ "./tests/**/*.test.ts" ]

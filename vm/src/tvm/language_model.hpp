@@ -184,7 +184,7 @@ public:
 private:
   std::shared_ptr<tvm_model_t> model_;
 
-  std::shared_ptr<chat_manager_t> template_engine_;
+  std::shared_ptr<chat_manager_t> chat_manager_;
 
   std::shared_ptr<tokenizer_t> tokenizer_;
 

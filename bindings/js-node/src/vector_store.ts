@@ -93,7 +93,7 @@ export class VectorStore {
       this.componentState.embeddingName,
       embeddingModelAttrs
     );
-    if (!result1) throw Error("Embedding model define failed");
+    if (!result1) throw Error("Failed to define Embedding model");
 
     // Add dimension into attrs
     if (!vectorStoreAttrs.dimension && modelDesc.dimension)
@@ -109,7 +109,7 @@ export class VectorStore {
       this.componentState.vecstoreName,
       vectorStoreAttrs
     );
-    if (!result2) throw Error("Embedding model define failed");
+    if (!result2) throw Error("Failed to define VectorStore");
 
     this.componentState.valid = true;
   }

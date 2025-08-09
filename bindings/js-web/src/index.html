@@ -15,7 +15,67 @@
         await rt.start();
         window.runtime = rt;
 
-        const agent = await Ailoy.defineAgent(rt, Ailoy.APIModel({id: "gpt-4o", apiKey: "<OPENAI_API_KEY>"}));
+        // const agent = await Ailoy.defineAgent(rt, Ailoy.APIModel({id: "gpt-4o", apiKey: "<OPENAI_API_KEY>"}));
+        const agent = await Ailoy.defineAgent(rt, Ailoy.LocalModel({id: "Qwen/Qwen3-0.6B"}));
+        // await agent.addToolsFromMcpClient("test", new Ailoy.MCPStreamableHTTPClientTransport("http://localhost:8123/mcp"));
+
+        const messages = [
+                {
+                    role: "system",
+                    content: [{type: "text", text: "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."}],
+                    // content: "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+                },
+                {
+                    role: "user",
+                    content: [{type: "text", text: "How is the current weather in Seoul?"}],
+                    // content: "How is the current weather in Seoul?",
+                },
+                {
+                    role: "assistant",
+                    tool_calls: [
+                        {
+                            function: {
+                                arguments: { location: "Seoul, South Korea", unit: "celsius" },
+                                name: "get_current_temperature",
+                            },
+                            type: "function",
+                        },
+                    ],
+                },
+                {
+                    role: "tool",
+                    content: [{ type: "text", text: "20.5" }],
+                    // content: "20.5",
+                },
+            ]
+
+        agent.addJSFunctionTool(
+            ()=>{},
+            {
+                name: "multiply",
+                description: "A function that multiplies two numbers",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        a: {
+                            type: "number",
+                            description: "The first number to multiply",
+                        },
+                        b: {
+                            type: "number",
+                            description: "The second number to multiply",
+                        },
+                    },
+                    required: ["a", "b"],
+                },
+            },
+        );
+        for await (const resp of agent.query("Calculate 13492 * 95832.")) {
+            if (resp.type === "output_text")
+                console.log(resp.content);
+            else
+                console.log(resp.content);
+        }
         window.agent = agent;
 
     </script>

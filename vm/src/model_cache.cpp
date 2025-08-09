@@ -476,7 +476,7 @@ std::vector<model_cache_list_result_t> list_local_models() {
       // Iterate over files
       auto file_entries = fs::list_directory(quant_dir).unwrap();
       for (const auto &file_entry : file_entries) {
-        if (file_entry.is_regular_file())
+        if (!file_entry.is_regular_file())
           continue;
 
         // Find the manifest file

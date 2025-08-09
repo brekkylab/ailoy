@@ -322,15 +322,22 @@ create_chat_manager_component(std::shared_ptr<const value_t> inputs) {
     auto messages = inputs_map->at<array_t>("messages");
 
     // Get tools (optional)
-    std::shared_ptr<const array_t> tools = nullptr;
+    std::shared_ptr<const value_t> tools;
     if (inputs_map->contains("tools")) {
-      auto tools_val = inputs_map->at("tools");
-      if (!(tools_val->is_type_of<array_t>() ||
-            tools_val->is_type_of<string_t>()))
+      if (inputs_map->at("tools")->is_type_of<string_t>()) {
+        const std::string tools_str = *inputs_map->at<string_t>("tools");
+        if (!nlohmann::json::accept(tools_str))
+          return error_output_t(value_error("[ChatManager: apply] "
+                                            "Invalid JSON string in tools: " +
+                                            tools_str));
+        tools = decode(tools_str, encoding_method_t::json);
+      } else if (inputs_map->at("tools")->is_type_of<array_t>()) {
+        tools = inputs_map->at<array_t>("tools");
+      } else {
         return error_output_t(type_error("ChatManager: apply", "tools",
-                                         "array_t | string_t",
-                                         tools_val->get_type()));
-      tools = tools_val->as<array_t>();
+                                         "string_t | array_t",
+                                         inputs_map->at("tools")->get_type()));
+      }
     }
 
     // Get reasoning (optional)
