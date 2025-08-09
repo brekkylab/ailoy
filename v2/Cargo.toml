@@ -1,0 +1,49 @@
+[package]
+name = "ailoy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-stream = "0.3"
+futures = "0.3.31"
+minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
+minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
+reqwest = { version = "0.12", features = ["stream"] }
+rmcp = { version = "0.5.0", features = ["client"] }
+sha1 = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+url = "2.5.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
+cmake = "0.1"
+cxx-build = "1.0"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+js-sys = "0.3"
+tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex"] }
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt", "sync"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "FileSystemCreateWritableOptions",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemGetFileOptions",
+    "FileSystemRemoveOptions",
+    "FileSystemWritableFileStream",
+    "Navigator",
+    "Storage",
+    "StorageManager"
+] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cxx = "1.0"
+tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
