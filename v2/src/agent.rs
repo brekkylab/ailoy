@@ -5,7 +5,7 @@ use futures::StreamExt;
 use crate::{
     language_model::{AnyLanguageModel, LanguageModel as _},
     message::{Message, MessageAggregator, Role},
-    tool::AnyTool,
+    tool::{AnyTool, Tool},
 };
 
 pub struct Agent {
@@ -19,7 +19,12 @@ impl Agent {
         self.messages.push(user_message);
 
         loop {
-            let mut strm = self.lm.clone().run(self.messages.clone());
+            let tools = self
+                .tools
+                .iter()
+                .map(|(_, v)| v.get_description())
+                .collect::<Vec<_>>();
+            let mut strm = self.lm.clone().run(tools, self.messages.clone());
             let mut aggregator = MessageAggregator::new(Role::Assistant);
             while let Some(delta) = strm.next().await {
                 aggregator.update(delta?);

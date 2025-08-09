@@ -447,7 +447,7 @@ pub struct ToolDescriptionProperty {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolDescriptionParameters {
-    // r#type: String, Fixed to ["object"]
+    r#type: String, // Fixed to ["object"]
     properties: HashMap<String, ToolDescriptionProperty>,
 }
 
@@ -458,4 +458,10 @@ pub struct ToolDescription {
     parameters: ToolDescriptionParameters,
     required: Vec<String>,
     r#return: ToolDescriptionProperty,
+}
+
+impl ToolDescription {
+    pub fn new() -> Self {
+        todo!()
+    }
 }

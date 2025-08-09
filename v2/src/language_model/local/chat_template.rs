@@ -8,7 +8,7 @@ use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
 use crate::{
     cache::{Cache, CacheElement, TryFromCache},
-    message::Message,
+    message::{Message, ToolDescription},
 };
 
 /// Global Environment (initialized once)
@@ -41,13 +41,14 @@ impl ChatTemplate {
 
     pub fn apply_with_vec(
         &self,
+        tools: &Vec<ToolDescription>,
         messages: &Vec<Message>,
         add_generation_prompt: bool,
     ) -> Result<String, String> {
         get_env()
             .get_template(&self.key)
             .unwrap()
-            .render(context!(messages => messages, add_generation_prompt=>add_generation_prompt))
+            .render(context!(messages => messages, tools => tools, add_generation_prompt=>add_generation_prompt))
             .map_err(|e| format!("minijinja::render failed: {}", e.to_string()))
     }
 }

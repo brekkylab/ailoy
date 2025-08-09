@@ -11,7 +11,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     cache::{Cache, CacheElement, TryFromCache},
     language_model::LanguageModel,
-    message::{Message, MessageDelta, Part},
+    message::{Message, MessageDelta, Part, ToolDescription},
 };
 
 pub use chat_template::*;
@@ -26,9 +26,13 @@ pub struct LocalLanguageModel {
 }
 
 impl LanguageModel for LocalLanguageModel {
-    fn run(self, msgs: Vec<Message>) -> Pin<Box<dyn Stream<Item = Result<MessageDelta, String>>>> {
+    fn run(
+        self,
+        tools: Vec<ToolDescription>,
+        msgs: Vec<Message>,
+    ) -> Pin<Box<dyn Stream<Item = Result<MessageDelta, String>>>> {
         let strm = try_stream! {
-            let prompt = self.chat_template.read().await.apply_with_vec(&msgs, true)?;
+            let prompt = self.chat_template.read().await.apply_with_vec(&tools, &msgs, true)?;
             let input_tokens = self.tokenizer.read().await.encode(&prompt, true)?;
             self.inferencer.lock().await.prefill(&input_tokens);
             let mut last_token = *input_tokens.last().unwrap();
@@ -109,7 +113,7 @@ mod tests {
             Message::with_content(Role::User, Part::from_text("Hi what's your name?")),
         ];
         let mut agg = MessageAggregator::new(Role::Assistant);
-        let mut strm = model.run(msgs);
+        let mut strm = model.run(Vec::new(), msgs);
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
             agg.update(delta);
