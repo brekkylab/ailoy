@@ -36,6 +36,7 @@ const sidebars: SidebarsConfig = {
         "concepts/tools",
         "concepts/devices-environments",
         "concepts/command-line-interfaces",
+        "concepts/webassembly-supports",
       ],
     },
     {
