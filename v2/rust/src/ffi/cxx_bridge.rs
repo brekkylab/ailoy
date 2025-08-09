@@ -5,18 +5,18 @@ pub mod ffi {
 
         #[namespace = "ailoy"]
         #[cxx_name = "cache_t"]
-        type Cache;
+        type CacheContents;
 
         #[namespace = "ailoy"]
-        pub fn create_cache() -> UniquePtr<Cache>;
+        pub fn create_cache() -> UniquePtr<CacheContents>;
 
         #[namespace = "ailoy"]
         #[cxx_name = "write_from_rs"]
-        pub fn write(self: Pin<&mut Cache>, key: String, value: String) -> ();
+        pub fn write(self: Pin<&mut CacheContents>, key: String, value: String) -> ();
 
         #[namespace = "ailoy"]
         #[cxx_name = "write_binary_from_rs"]
-        pub fn write_binary(self: Pin<&mut Cache>, key: String, value: Vec<u8>) -> ();
+        pub fn write_binary(self: Pin<&mut CacheContents>, key: String, value: Vec<u8>) -> ();
 
         include!("language_model.hpp");
 
@@ -34,7 +34,7 @@ pub mod ffi {
         #[namespace = "ailoy"]
         pub fn create_tvm_language_model(
             lib_filename: String,
-            cache: UniquePtr<Cache>,
+            cache_contents: UniquePtr<CacheContents>,
             device: UniquePtr<DLDevice>,
         ) -> UniquePtr<TVMLanguageModel>;
 

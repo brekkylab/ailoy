@@ -1,10 +1,13 @@
 mod agent;
-pub mod cache;
+mod cache;
 mod ffi;
-pub mod filesystem;
-pub mod language_model;
+mod language_model;
 mod message;
-pub mod tool;
+mod tool;
 
 pub use agent::*;
+pub use cache::*;
+pub use ffi::*;
+pub use language_model::*;
 pub use message::*;
+pub use tool::*;

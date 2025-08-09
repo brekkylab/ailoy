@@ -1,4 +1,5 @@
 mod cache;
+mod filesystem;
 mod manifest;
 
 use std::{path::PathBuf, pin::Pin, str::FromStr};

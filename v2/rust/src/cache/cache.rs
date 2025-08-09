@@ -8,12 +8,12 @@ use std::{
 use tokio::sync::RwLock;
 use url::Url;
 
-use crate::{
-    cache::{CacheElement, TryFromCache},
-    filesystem::{read, write},
-};
+use crate::cache::{CacheElement, TryFromCache};
 
-use super::manifest::{Manifest, ManifestDirectory};
+use super::{
+    filesystem::{read, write},
+    manifest::{Manifest, ManifestDirectory},
+};
 
 async fn download(url: Url) -> Result<Vec<u8>, String> {
     let req = reqwest::get(url);
