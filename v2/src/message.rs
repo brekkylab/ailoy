@@ -8,38 +8,6 @@ use serde::{
 use serde_json::Value;
 use url::Url;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ToolDescriptionPropertyType {
-    String,
-    Number,
-    Boolean,
-    Object,
-    Array,
-    Null,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolDescriptionProperty {
-    r#type: ToolDescriptionPropertyType,
-    description: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolDescriptionParameters {
-    // r#type: String, Fixed to ["object"]
-    properties: HashMap<String, ToolDescriptionProperty>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolDescription {
-    name: String,
-    description: String,
-    parameters: ToolDescriptionParameters,
-    required: Vec<String>,
-    r#return: ToolDescriptionProperty,
-}
-
 /// Represents a unit of message content.
 ///
 /// A `Part` can be one of several types, such as plain text, JSON data, or an image.
@@ -458,4 +426,36 @@ impl MessageAggregator {
         self.finalize_last_delta();
         self.aggregated
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolDescriptionPropertyType {
+    String,
+    Number,
+    Boolean,
+    Object,
+    Array,
+    Null,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolDescriptionProperty {
+    r#type: ToolDescriptionPropertyType,
+    description: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolDescriptionParameters {
+    // r#type: String, Fixed to ["object"]
+    properties: HashMap<String, ToolDescriptionProperty>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolDescription {
+    name: String,
+    description: String,
+    parameters: ToolDescriptionParameters,
+    required: Vec<String>,
+    r#return: ToolDescriptionProperty,
 }
