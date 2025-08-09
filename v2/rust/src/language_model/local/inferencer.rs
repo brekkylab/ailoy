@@ -9,6 +9,25 @@ mod tvm_runtime {
         ffi::{TVMLanguageModel, create_dldevice, create_tvm_language_model},
     };
 
+    pub fn get_lib_extension() -> &'static str {
+        #[cfg(target_os = "macos")]
+        {
+            "dylib"
+        }
+        #[cfg(target_os = "linux")]
+        {
+            "so"
+        }
+        #[cfg(target_os = "windows")]
+        {
+            "dll"
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        {
+            panic!("Unknown OS")
+        }
+    }
+
     pub fn get_accelerator() -> &'static str {
         #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
         {
@@ -18,19 +37,28 @@ mod tvm_runtime {
         {
             "vulkan"
         }
-        #[cfg(target_family = "wasm")]
-        {
-            "webgpu"
-        }
         #[cfg(not(any(
             target_os = "linux",
             target_os = "windows",
             all(target_arch = "aarch64", target_os = "macos"),
-            target_family = "wasm"
         )))]
         {
-            "unknown"
+            panic!("accelerator not found")
         }
+    }
+
+    pub fn get_device_type(accelerator: &str) -> i32 {
+        if accelerator == "metal" {
+            8
+        } else if accelerator == "vulkan" {
+            7
+        } else {
+            0
+        }
+    }
+
+    pub fn get_device_id(_: &str) -> i32 {
+        0
     }
 
     #[derive(Debug)]
@@ -90,7 +118,7 @@ mod tvm_runtime {
                         env!("BUILD_TARGET_TRIPLE"),
                         get_accelerator()
                     ),
-                    "rt.dylib",
+                    format!("rt.{}", get_lib_extension()),
                 ));
                 Ok(rv)
             })
@@ -122,7 +150,10 @@ mod tvm_runtime {
                 }
                 None => return Err("No rt found".to_owned()),
             };
-            let device = create_dldevice(8, 0);
+            let device = create_dldevice(
+                get_device_type(get_accelerator()),
+                get_device_id(get_accelerator()),
+            );
             let inner = create_tvm_language_model(
                 lib_path.to_string_lossy().to_string(),
                 cache_contents,
