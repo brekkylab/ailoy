@@ -441,27 +441,94 @@ pub enum ToolDescriptionPropertyType {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolDescriptionProperty {
-    r#type: ToolDescriptionPropertyType,
-    description: Option<String>,
+    #[serde(rename = "type")]
+    pub ty: ToolDescriptionPropertyType,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolDescriptionParameters {
-    r#type: String, // Fixed to ["object"]
-    properties: HashMap<String, ToolDescriptionProperty>,
+impl ToolDescriptionProperty {
+    pub fn new(ty: ToolDescriptionPropertyType, description: Option<String>) -> Self {
+        Self { ty, description }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolDescription {
-    name: String,
-    description: String,
-    parameters: ToolDescriptionParameters,
-    required: Vec<String>,
-    r#return: ToolDescriptionProperty,
+    pub name: String,
+
+    pub description: String,
+
+    #[serde(with = "tool_description_parameters_schema")]
+    pub parameters: HashMap<String, ToolDescriptionProperty>,
+
+    pub required: Vec<String>,
+
+    #[serde(rename = "return")]
+    pub ret: ToolDescriptionProperty,
 }
 
 impl ToolDescription {
-    pub fn new() -> Self {
-        todo!()
+    pub fn new(
+        name: String,
+        description: String,
+        parameters: HashMap<String, ToolDescriptionProperty>,
+        required: Vec<String>,
+        ret: ToolDescriptionProperty,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            parameters,
+            required,
+            ret,
+        }
+    }
+}
+
+mod tool_description_parameters_schema {
+    use super::*;
+    use serde::ser::SerializeMap;
+
+    pub fn serialize<S>(
+        map: &HashMap<String, ToolDescriptionProperty>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_map(Some(2))?;
+        state.serialize_entry("type", "object")?;
+        state.serialize_entry("properties", map)?;
+        state.end()
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<HashMap<String, ToolDescriptionProperty>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw<T> {
+            #[serde(rename = "type")]
+            ty: Option<String>,
+
+            properties: Option<HashMap<String, T>>,
+
+            #[serde(flatten)]
+            _extra: HashMap<String, serde::de::IgnoredAny>,
+        }
+
+        let raw = Raw::<ToolDescriptionProperty>::deserialize(deserializer)?;
+        if let Some(t) = raw.ty.as_deref() {
+            if t != "object" {
+                return Err(<D::Error as de::Error>::custom(format!(
+                    "parameters.type must be \"object\" (got {t})"
+                )));
+            }
+        }
+        Ok(raw.properties.unwrap_or_default())
     }
 }

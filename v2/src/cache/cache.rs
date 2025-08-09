@@ -178,14 +178,9 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_files() {
-        let src_dir = PathBuf::from_str(
-            "/Users/ijaehwan/.cache/ailoy/Qwen--Qwen3-0.6B--aarch64-apple-darwin--metal",
-        )
-        .unwrap();
-        let dst_dir = PathBuf::from_str(
-            "/Users/ijaehwan/Workspace/ailoy/out/Qwen--Qwen3-0.6B--aarch64-apple-darwin--metal",
-        )
-        .unwrap();
+        let src_dir = PathBuf::from_str("/Users/ijaehwan/.cache/ailoy/Qwen--Qwen3-0.6B").unwrap();
+        let dst_dir =
+            PathBuf::from_str("/Users/ijaehwan/Workspace/ailoy/out/Qwen--Qwen3-0.6B").unwrap();
         if dst_dir.exists() {
             std::fs::remove_dir_all(&dst_dir).unwrap();
         }

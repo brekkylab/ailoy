@@ -38,6 +38,8 @@ impl LanguageModel for LocalLanguageModel {
             let mut last_token = *input_tokens.last().unwrap();
             let mut agg_tokens = Vec::<u32>::new();
             let mut count = 0;
+            let mut mode = "content".to_owned();
+            let mut agg_json = String::new();
             // @jhlee: TODO remove hard-coded token names
             loop {
                 count += 1;
@@ -46,15 +48,39 @@ impl LanguageModel for LocalLanguageModel {
                 }
                 let new_token = self.inferencer.lock().await.decode(last_token);
                 agg_tokens.push(new_token);
-                let s = self.tokenizer.read().await.decode(agg_tokens.as_slice(), false)?;
-                if s.ends_with("<|im_end|>") {
-                    break;
-                }
-                if !s.contains("�") {
-                    agg_tokens = Vec::new();
-                    yield MessageDelta::content(Part::Text(s));
-                }
                 last_token = new_token;
+                let s = self.tokenizer.read().await.decode(agg_tokens.as_slice(), false)?;
+                if s.ends_with("�") {
+                    continue;
+                }
+                agg_tokens.clear();
+
+                if s == "<|im_end|>" {
+                    break;
+                } else if s == "<tool_call>" {
+                    mode = "tool_call".to_owned();
+                    continue;
+                } else if s == "</tool_call>" {
+                    yield MessageDelta::tool_call(Part::Json(serde_json::from_str(&agg_json).unwrap()));
+                    agg_json = String::new();
+                    mode = "content".to_owned();
+                    continue;
+                } else if s == "<think>" {
+                    mode = "reasoning".to_owned();
+                    continue;
+                } else if s == "</think>" {
+                    mode = "content".to_owned();
+                    continue;
+                } else {
+                    // Normal mode
+                    if mode == "content" {
+                        yield MessageDelta::content(Part::Text(s));
+                    } else if mode == "reasoning" {
+                        yield MessageDelta::reasoning(Part::Text(s));
+                    } else if mode == "tool_call" {
+                        agg_json.push_str(&s);
+                    }
+                }
             }
             return;
         };
@@ -114,6 +140,53 @@ mod tests {
         ];
         let mut agg = MessageAggregator::new(Role::Assistant);
         let mut strm = model.run(Vec::new(), msgs);
+        while let Some(delta_opt) = strm.next().await {
+            let delta = delta_opt.unwrap();
+            agg.update(delta);
+        }
+        println!("{:?}", agg.finalize());
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn test2() {
+        use std::collections::HashMap;
+
+        use futures::StreamExt;
+
+        use super::*;
+        use crate::message::{
+            MessageAggregator, Role, ToolDescription, ToolDescriptionProperty,
+            ToolDescriptionPropertyType,
+        };
+
+        let cache = crate::cache::Cache::new();
+        let key = "Qwen/Qwen3-0.6B";
+        let model = cache.try_create::<LocalLanguageModel>(key).await.unwrap();
+        let mut params = HashMap::<String, ToolDescriptionProperty>::new();
+        params.insert(
+            "location".to_owned(),
+            ToolDescriptionProperty::new(
+                ToolDescriptionPropertyType::String,
+                Some("The city name".to_owned()),
+            ),
+        );
+        let tools = vec![ToolDescription::new(
+            "weather".to_owned(),
+            "get current temperature and wind speed".to_owned(),
+            params,
+            vec!["location".to_owned()],
+            ToolDescriptionProperty::new(
+                ToolDescriptionPropertyType::Object,
+                Some("temperature & wind_speed".to_owned()),
+            ),
+        )];
+        let msgs = vec![Message::with_content(
+            Role::User,
+            Part::from_text("How much hot currently in Dubai?"),
+        )];
+        let mut agg = MessageAggregator::new(Role::Assistant);
+        let mut strm = model.run(tools, msgs);
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
             agg.update(delta);
