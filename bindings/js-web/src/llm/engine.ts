@@ -1,7 +1,6 @@
-import { Message, MessageOutput, ToolDescription } from "../agent";
+import { MessageOutput } from "../agent";
 import * as tvmjs from "../tvmjs";
 import { joinPath, readOPFSFile } from "../utils/opfs";
-import { ChatManager } from "./chat_manager";
 import {
   ChatConfig,
   GenerationConfig,
@@ -52,12 +51,10 @@ export class Engine {
 
   // ailoy related
   private tokenizer: Tokenizer;
-  private chatManager: ChatManager;
 
-  constructor(modelId: string, tokenizer: Tokenizer, chatManager: ChatManager) {
+  constructor(modelId: string, tokenizer: Tokenizer) {
     this.modelId = modelId;
     this.tokenizer = tokenizer;
-    this.chatManager = chatManager;
   }
 
   async loadModel() {
@@ -153,6 +150,9 @@ export class Engine {
   async inferEM(prompt: string) {
     try {
       const pipeline = this.pipeline as EmbeddingPipeline;
+
+      await this.lock!.acquire();
+
       // 1. Call EmbeddingPipeline to get embeddings
       const embedResult: Array<Array<number>> =
         await pipeline.embedStep(prompt);
@@ -179,9 +179,7 @@ export class Engine {
   }
 
   private async *asyncGenerate(
-    messages: Message[],
-    tools: { type: "function"; function: ToolDescription }[],
-    reasoning: boolean = false,
+    input: string,
     // request: ChatCompletionRequestStreaming | CompletionCreateParamsStreaming,
     model: string,
     pipeline: LLMChatPipeline,
@@ -263,14 +261,7 @@ export class Engine {
     // 2. Auto-regressive loop
     let curChunk;
     try {
-      await this.prefill(
-        messages,
-        tools,
-        reasoning,
-        pipeline,
-        chatConfig,
-        genConfig
-      );
+      await this.prefill(input, pipeline, chatConfig, genConfig);
       curChunk = await _getChunk(pipeline); // prefill produces a chunk
     } catch (err) {
       await this.lock!.release();
@@ -322,12 +313,7 @@ export class Engine {
     await this.lock!.release();
   }
 
-  async inferLM(
-    messages: Message[],
-    tools: { type: "function"; function: ToolDescription }[],
-    reasoning: boolean = false,
-    genConfig: GenerationConfig
-  ) {
+  async inferLM(input: string, genConfig: GenerationConfig) {
     if (
       this.pipeline === undefined ||
       this.chatConfig === undefined ||
@@ -339,9 +325,7 @@ export class Engine {
     await this.lock.acquire();
 
     return this.asyncGenerate(
-      messages,
-      tools,
-      reasoning,
+      input,
       this.modelId,
       this.pipeline as LLMChatPipeline,
       this.chatConfig!,
@@ -353,19 +337,12 @@ export class Engine {
   }
 
   async prefill(
-    messages: Message[],
-    tools: { type: "function"; function: ToolDescription }[],
-    reasoning: boolean = false,
+    input: string,
     pipeline: LLMChatPipeline,
     chatConfig: ChatConfig,
     genConfig: GenerationConfig
   ) {
-    const input_str = await this.chatManager.applyChatTemplate(
-      messages,
-      tools,
-      reasoning
-    );
-    return await pipeline.prefillStep(input_str, genConfig);
+    return await pipeline.prefillStep(input, genConfig);
   }
 
   async decode(pipeline: LLMChatPipeline, genConfig?: GenerationConfig) {
@@ -375,6 +352,5 @@ export class Engine {
   async dispose() {
     this.pipeline?.dispose();
     await this.tokenizer.dispose();
-    await this.chatManager.dispose();
   }
 }
