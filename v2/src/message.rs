@@ -5,7 +5,6 @@ use serde::{
     de::{self, MapAccess, Visitor},
     ser::SerializeMap as _,
 };
-use serde_json::Value;
 use url::Url;
 
 /// Represents a unit of message content.
