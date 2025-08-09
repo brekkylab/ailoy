@@ -61,7 +61,7 @@ impl LanguageModel for LocalLanguageModel {
                     mode = "tool_call".to_owned();
                     continue;
                 } else if s == "</tool_call>" {
-                    yield MessageDelta::tool_call(Part::Json(serde_json::from_str(&agg_json).unwrap()));
+                    yield MessageDelta::tool_call(Part::Json(agg_json));
                     agg_json = String::new();
                     mode = "content".to_owned();
                     continue;

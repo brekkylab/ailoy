@@ -14,7 +14,7 @@ use url::Url;
 #[derive(Clone, Debug)]
 pub enum Part {
     Text(String),
-    Json(Value),
+    Json(String),
     ImageURL(Url),
     ImageBase64(String),
 }
@@ -40,7 +40,7 @@ impl Part {
     }
 
     /// Constructor for JSON part
-    pub fn from_json<T: Into<Value>>(json: T) -> Part {
+    pub fn from_json<T: Into<String>>(json: T) -> Part {
         Part::Json(json.into())
     }
 
@@ -51,7 +51,7 @@ impl Part {
         }
     }
 
-    pub fn get_json(&self) -> Option<&Value> {
+    pub fn get_json(&self) -> Option<&String> {
         match self {
             Part::Json(v) => Some(v),
             _ => None,
