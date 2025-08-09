@@ -116,9 +116,9 @@ export class Engine {
         }
       }
     }
-    gpuDetectOutput.device.lost.then((info: any) => {
-      throw new DeviceLostError();
-    });
+    // gpuDetectOutput.device.lost.then((info: any) => {
+    //   throw new DeviceLostError();
+    // });
     tvm.initWebGPU(gpuDetectOutput.device);
 
     await tvm.fetchNDArrayCache(

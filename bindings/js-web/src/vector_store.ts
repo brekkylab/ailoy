@@ -1,4 +1,3 @@
-import { NDArray } from "./ailoy_js_web";
 import { Engine } from "./llm/engine";
 import { Tokenizer } from "./llm/tokenizer";
 import { Runtime } from "./runtime";
@@ -58,7 +57,7 @@ export class VectorStore {
     args: {
       embedding?: {
         modelId: EmbeddingModelId;
-        quantization: EmbeddingModelQuantization;
+        quantization?: EmbeddingModelQuantization;
       };
       vectorstore?: {
         type: VectorStoreType;
@@ -139,15 +138,20 @@ export class VectorStore {
   }
 
   /** Inserts a new document into the vector store */
-  async insert(item: VectorStoreInsertItem): Promise<void> {
+  async insert(item: VectorStoreInsertItem) {
     if (!this.#initialized) throw Error("VectorStore not initialized yet");
 
     const embedding = await this.embedding(item.document);
-    await this.runtime!.callMethod(this.vectorstoreComponentName!, "insert", {
-      embedding: embedding,
-      document: item.document,
-      metadata: item.metadata,
-    });
+    const insertResult: { id: string } = await this.runtime!.callMethod(
+      this.vectorstoreComponentName!,
+      "insert",
+      {
+        embedding: embedding,
+        document: item.document,
+        metadata: item.metadata,
+      }
+    );
+    return insertResult;
   }
 
   /** Retrieves the top-K most similar documents to the given query */
@@ -197,7 +201,7 @@ export async function defineVectorStore(
   args: {
     embedding?: {
       modelId: EmbeddingModelId;
-      quantization: EmbeddingModelQuantization;
+      quantization?: EmbeddingModelQuantization;
     };
     vectorstore?: {
       type: VectorStoreType;
