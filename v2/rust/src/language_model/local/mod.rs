@@ -2,25 +2,42 @@ mod chat_template;
 mod inferencer;
 mod tokenizer;
 
+use std::{pin::Pin, sync::Arc};
+
+use async_stream::try_stream;
+use futures::Stream;
+use tokio::sync::{Mutex, RwLock};
+
+use crate::{Message, MessageDelta, Part, language_model::LanguageModel};
+
 pub use chat_template::*;
 pub use inferencer::*;
 pub use tokenizer::*;
 
-use crate::language_model::LanguageModel;
-
-#[derive(Debug)]
-pub struct LocalLanguageModel<'a> {
-    chat_template: ChatTemplate<'a>,
-    tokenizer: Tokenizer,
-    inferencer: Inferencer,
+#[derive(Debug, Clone)]
+pub struct LocalLanguageModel {
+    chat_template: Arc<RwLock<ChatTemplate>>,
+    tokenizer: Arc<RwLock<Tokenizer>>,
+    inferencer: Arc<Mutex<Inferencer>>,
 }
 
-impl<'a> LanguageModel for LocalLanguageModel<'a> {
-    fn run(
-        &self,
-        _msg: &Vec<crate::Message>,
-    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<crate::MessageDelta, String>>>> {
-        todo!()
+impl LanguageModel for LocalLanguageModel {
+    fn run(self, msgs: Vec<Message>) -> Pin<Box<dyn Stream<Item = Result<MessageDelta, String>>>> {
+        let strm = try_stream! {
+            let prompt = self.chat_template.read().await.apply_with_vec(&msgs, true)?;
+            let input_tokens = self.tokenizer.read().await.encode(&prompt, true);
+            self.inferencer.lock().await.prefill(&input_tokens);
+            let mut last_token = *input_tokens.last().unwrap();
+            // @jhlee: TODO complete decode logic
+            for _ in 0..10 {
+                let new_token = self.inferencer.lock().await.decode(last_token);
+                let v = vec![new_token];
+                let s = self.tokenizer.read().await.decode(v.as_slice(), false);
+                yield MessageDelta::content(Part::Text(s));
+                last_token = new_token;
+            }
+        };
+        Box::pin(strm)
     }
 }
 

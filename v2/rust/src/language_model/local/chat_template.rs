@@ -1,34 +1,42 @@
-use std::pin::Pin;
+use std::{
+    pin::Pin,
+    sync::{Mutex, MutexGuard, OnceLock},
+};
 
 use minijinja::{Environment, context};
-use minijinja_contrib::add_to_environment;
+use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
 use crate::{
     cache::{Cache, CacheElement, TryFromCache},
     message::Message,
 };
 
-#[derive(Debug)]
-pub struct ChatTemplate<'a> {
-    env: Environment<'a>,
+/// Global Environment (initialized once)
+static ENV: OnceLock<Mutex<Environment>> = OnceLock::new();
+
+fn get_env<'a>() -> MutexGuard<'a, Environment<'static>> {
+    ENV.get_or_init(|| {
+        let mut e = Environment::new();
+        add_to_environment(&mut e);
+        e.set_unknown_method_callback(unknown_method_callback);
+        Mutex::new(e)
+    })
+    .lock()
+    .unwrap()
 }
 
-impl<'a> ChatTemplate<'a> {
-    pub fn new(source: &str) -> Self {
-        let mut env = Environment::new();
-        add_to_environment(&mut env);
-        env.set_unknown_method_callback(minijinja_contrib::pycompat::unknown_method_callback);
-        env.add_template_owned("_default", source.to_owned())
-            .unwrap();
-        Self { env }
-    }
+#[derive(Debug)]
+pub struct ChatTemplate {
+    key: String,
+}
 
-    pub fn get(&self) -> String {
-        self.env
-            .get_template("_default")
-            .unwrap()
-            .source()
-            .to_owned()
+impl ChatTemplate {
+    pub fn new(key: String, source: String) -> Self {
+        let mut env = get_env();
+        if env.get_template(&key).is_err() {
+            env.add_template_owned(key.clone(), source).unwrap();
+        }
+        Self { key }
     }
 
     pub fn apply_with_vec(
@@ -36,32 +44,15 @@ impl<'a> ChatTemplate<'a> {
         messages: &Vec<Message>,
         add_generation_prompt: bool,
     ) -> Result<String, String> {
-        let template = self.env.get_template("_default").unwrap();
-        template
+        get_env()
+            .get_template(&self.key)
+            .unwrap()
             .render(context!(messages => messages, add_generation_prompt=>add_generation_prompt))
             .map_err(|e| format!("minijinja::render failed: {}", e.to_string()))
     }
-
-    pub fn apply_with_json(
-        &self,
-        messages: &str,
-        add_generation_prompt: bool,
-    ) -> Result<String, String> {
-        let messages: Vec<Message> = serde_json::from_str(messages).unwrap();
-        self.apply_with_vec(&messages, add_generation_prompt)
-    }
-
-    pub fn apply(
-        &self,
-        messages: impl IntoIterator<Item = Message>,
-        add_generation_prompt: bool,
-    ) -> Result<String, String> {
-        let messages: Vec<Message> = messages.into_iter().collect();
-        self.apply_with_vec(&messages, add_generation_prompt)
-    }
 }
 
-impl<'a> TryFromCache for ChatTemplate<'a> {
+impl TryFromCache for ChatTemplate {
     fn claim_files(
         _: Cache,
         key: impl AsRef<str>,
@@ -71,9 +62,9 @@ impl<'a> TryFromCache for ChatTemplate<'a> {
     }
 
     fn try_from_files(_: &Cache, files: Vec<(CacheElement, Vec<u8>)>) -> Result<Self, String> {
-        let v = files.get(0).unwrap();
-        let v = std::str::from_utf8(&v.1).map_err(|_| "Utf-8 conversion failed".to_owned())?;
-        Ok(ChatTemplate::new(v))
+        let (elem, bytes) = files.get(0).unwrap();
+        let s = std::str::from_utf8(&bytes).map_err(|_| "Utf-8 conversion failed".to_owned())?;
+        Ok(ChatTemplate::new(elem.path(), s.to_owned()))
     }
 }
 
@@ -86,7 +77,7 @@ mod tests {
 
     #[test]
     fn test_qwen3_no_reasoning() {
-        let ct = ChatTemplate::new(QWEN3_CHAT_TEMPLATE);
+        let ct = ChatTemplate::new("Qwen3".to_owned(), QWEN3_CHAT_TEMPLATE.to_owned());
         let msgs = vec![
             Message::with_content(Role::System, Part::from_text("You are an assistant.")),
             Message::with_content(Role::User, Part::from_text("Hi what's your name?")),
