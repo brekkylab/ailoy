@@ -155,31 +155,24 @@ mod tests {
         use futures::StreamExt;
 
         use super::*;
-        use crate::message::{
-            MessageAggregator, Role, ToolDescription, ToolDescriptionProperty,
-            ToolDescriptionPropertyType,
-        };
+        use crate::message::{JSONSchemaElement, MessageAggregator, Role, ToolDescription};
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
         let model = cache.try_create::<LocalLanguageModel>(key).await.unwrap();
-        let mut params = HashMap::<String, ToolDescriptionProperty>::new();
+        let mut params = HashMap::<String, JSONSchemaElement>::new();
         params.insert(
             "location".to_owned(),
-            ToolDescriptionProperty::new(
-                ToolDescriptionPropertyType::String,
-                Some("The city name".to_owned()),
-            ),
+            JSONSchemaElement::String {
+                description: Some("The city name".to_owned()),
+            },
         );
         let tools = vec![ToolDescription::new(
             "weather".to_owned(),
-            "get current temperature and wind speed".to_owned(),
+            "get current temperature".to_owned(),
             params,
             vec!["location".to_owned()],
-            ToolDescriptionProperty::new(
-                ToolDescriptionPropertyType::Object,
-                Some("temperature & wind_speed".to_owned()),
-            ),
+            JSONSchemaElement::Number { description: None },
         )];
         let msgs = vec![Message::with_content(
             Role::User,
