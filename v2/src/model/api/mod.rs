@@ -1,6 +1,6 @@
 use crate::{
-    language_model::LanguageModel,
-    message::{Message, MessageDelta, ToolDescription},
+    model::LanguageModel,
+    value::{Message, MessageDelta, ToolDescription},
 };
 
 #[derive(Debug, Clone)]

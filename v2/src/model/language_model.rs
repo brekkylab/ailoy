@@ -1,14 +1,11 @@
-mod api;
-mod local;
-
 use std::pin::Pin;
 
 use futures::Stream;
 
-use crate::message::{Message, MessageDelta, ToolDescription};
-
-pub use api::APILanguageModel;
-pub use local::LocalLanguageModel;
+use crate::{
+    model::{APILanguageModel, LocalLanguageModel},
+    value::{Message, MessageDelta, ToolDescription},
+};
 
 pub trait LanguageModel: Clone {
     fn run(

@@ -5,6 +5,7 @@ use serde::{
     de::{self, MapAccess, Visitor},
     ser::SerializeMap as _,
 };
+use serde_json::Value;
 use url::Url;
 
 /// Represents a unit of message content.
@@ -13,7 +14,7 @@ use url::Url;
 #[derive(Clone, Debug)]
 pub enum Part {
     Text(String),
-    Json(String),
+    Json(Value),
     ImageURL(Url),
     ImageBase64(String),
 }
@@ -39,7 +40,7 @@ impl Part {
     }
 
     /// Constructor for JSON part
-    pub fn from_json<T: Into<String>>(json: T) -> Part {
+    pub fn from_json<T: Into<Value>>(json: T) -> Part {
         Part::Json(json.into())
     }
 
@@ -50,7 +51,7 @@ impl Part {
         }
     }
 
-    pub fn get_json(&self) -> Option<&String> {
+    pub fn get_json(&self) -> Option<&Value> {
         match self {
             Part::Json(v) => Some(v),
             _ => None,

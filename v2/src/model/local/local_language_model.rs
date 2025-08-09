@@ -1,7 +1,3 @@
-mod chat_template;
-mod inferencer;
-mod tokenizer;
-
 use std::{pin::Pin, sync::Arc};
 
 use async_stream::try_stream;
@@ -10,13 +6,12 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::{
     cache::{Cache, CacheElement, TryFromCache},
-    language_model::LanguageModel,
-    message::{Message, MessageDelta, Part, ToolDescription},
+    model::{
+        LanguageModel,
+        local::{ChatTemplate, Inferencer, Tokenizer},
+    },
+    value::{Message, MessageDelta, Part, ToolDescription},
 };
-
-pub use chat_template::*;
-pub use inferencer::*;
-pub use tokenizer::*;
 
 #[derive(Debug, Clone)]
 pub struct LocalLanguageModel {
@@ -61,7 +56,8 @@ impl LanguageModel for LocalLanguageModel {
                     mode = "tool_call".to_owned();
                     continue;
                 } else if s == "</tool_call>" {
-                    yield MessageDelta::tool_call(Part::Json(agg_json));
+                    let json = serde_json::from_str(&agg_json).map_err(|_| "Invalid JSON generated".to_owned())?;
+                    yield MessageDelta::tool_call(Part::Json(json));
                     agg_json = String::new();
                     mode = "content".to_owned();
                     continue;
@@ -129,7 +125,7 @@ mod tests {
         use futures::StreamExt;
 
         use super::*;
-        use crate::message::{MessageAggregator, Role};
+        use crate::value::{MessageAggregator, Role};
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
@@ -155,7 +151,7 @@ mod tests {
         use futures::StreamExt;
 
         use super::*;
-        use crate::message::{JSONSchemaElement, MessageAggregator, Role, ToolDescription};
+        use crate::value::{JSONSchemaElement, MessageAggregator, Role, ToolDescription};
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";

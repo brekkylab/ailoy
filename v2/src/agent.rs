@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use futures::StreamExt;
 
 use crate::{
-    language_model::{AnyLanguageModel, LanguageModel as _},
-    message::{Message, MessageAggregator, Role},
+    model::{AnyLanguageModel, LanguageModel as _},
     tool::{AnyTool, Tool},
+    value::{Message, MessageAggregator, Role},
 };
 
 pub struct Agent {

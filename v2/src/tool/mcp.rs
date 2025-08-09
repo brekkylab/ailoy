@@ -1,6 +1,6 @@
 use crate::{
-    message::{MessageDelta, Part, ToolDescription},
     tool::Tool,
+    value::{MessageDelta, Part, ToolDescription},
 };
 
 #[derive(Clone, Debug)]

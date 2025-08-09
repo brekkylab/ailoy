@@ -8,7 +8,7 @@ use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
 use crate::{
     cache::{Cache, CacheElement, TryFromCache},
-    message::{Message, ToolDescription},
+    value::{Message, ToolDescription},
 };
 
 /// Global Environment (initialized once)
