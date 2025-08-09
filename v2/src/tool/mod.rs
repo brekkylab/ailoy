@@ -3,10 +3,10 @@ mod mcp;
 
 use std::pin::Pin;
 
-use crate::message::{MessageDelta, Part};
+use crate::message::{MessageDelta, Part, ToolDescription};
 
 pub trait Tool: Clone {
-    fn get_description(&self) -> Part;
+    fn get_description(&self) -> ToolDescription;
 
     fn run(self, toll_call: Part) -> Pin<Box<dyn Future<Output = Result<MessageDelta, String>>>>;
 }
@@ -18,7 +18,7 @@ pub enum AnyTool {
 }
 
 impl Tool for AnyTool {
-    fn get_description(&self) -> Part {
+    fn get_description(&self) -> ToolDescription {
         match self {
             AnyTool::Builtin(t) => t.get_description(),
             AnyTool::MCP(t) => t.get_description(),

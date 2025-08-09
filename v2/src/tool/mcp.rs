@@ -1,5 +1,5 @@
 use crate::{
-    message::{MessageDelta, Part},
+    message::{MessageDelta, Part, ToolDescription},
     tool::Tool,
 };
 
@@ -7,7 +7,7 @@ use crate::{
 pub struct MCPTool {}
 
 impl Tool for MCPTool {
-    fn get_description(&self) -> Part {
+    fn get_description(&self) -> ToolDescription {
         todo!()
     }
 

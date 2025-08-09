@@ -1,5 +1,5 @@
 use crate::{
-    message::{MessageDelta, Part},
+    message::{MessageDelta, Part, ToolDescription},
     tool::Tool,
 };
 
@@ -9,7 +9,7 @@ pub struct BuiltinTool {}
 impl BuiltinTool {}
 
 impl Tool for BuiltinTool {
-    fn get_description(&self) -> Part {
+    fn get_description(&self) -> ToolDescription {
         todo!()
     }
 
