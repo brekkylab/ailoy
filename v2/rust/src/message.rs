@@ -267,6 +267,22 @@ impl Message {
     pub fn push_tool_calls(&mut self, tool_calls: Part) -> () {
         self.tool_calls.push(tool_calls);
     }
+
+    pub fn role(&self) -> &Role {
+        &self.role
+    }
+
+    pub fn content(&self) -> &Vec<Part> {
+        &self.content
+    }
+
+    pub fn reasoning(&self) -> &Vec<Part> {
+        &self.reasoning
+    }
+
+    pub fn tool_calls(&self) -> &Vec<Part> {
+        &self.tool_calls
+    }
 }
 
 // Serialization logic for Message

@@ -1,0 +1,38 @@
+use std::collections::HashMap;
+
+use futures::StreamExt;
+
+use crate::{
+    Message, MessageAggregator, Role,
+    language_model::{AnyLanguageModel, LanguageModel as _},
+    tool::AnyTool,
+};
+
+pub struct Agent {
+    lm: AnyLanguageModel,
+    tools: HashMap<String, AnyTool>,
+    messages: Vec<Message>,
+}
+
+impl Agent {
+    pub async fn run(&mut self, user_message: Message) -> Result<(), String> {
+        self.messages.push(user_message);
+
+        loop {
+            let mut strm = self.lm.clone().run(self.messages.clone());
+            let mut aggregator = MessageAggregator::new(Role::Assistant);
+            while let Some(delta) = strm.next().await {
+                aggregator.update(delta?);
+            }
+            let assistant_message = aggregator.finalize();
+            if !assistant_message.tool_calls().is_empty() {
+                for tool_call in assistant_message.tool_calls() {
+                    todo!()
+                }
+            } else {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
