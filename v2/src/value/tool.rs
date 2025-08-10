@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use indexmap::IndexMap;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -51,6 +53,8 @@ use serde::{
 ///   "required": ["id"]
 /// }
 /// ```
+///
+/// See also: [`ToolDescription`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolDescriptionArgument {
     String {
@@ -362,6 +366,8 @@ impl<'de> Deserialize<'de> for ToolDescriptionArgument {
 ///
 /// For more background on the expected schema shape, see:
 /// https://huggingface.co/docs/transformers/v4.53.3/en/chat_extras#schema
+///
+/// See also: [`ToolDescriptionArgument`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolDescription {
     name: String,
@@ -459,12 +465,81 @@ impl<'de> Deserialize<'de> for ToolDescription {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolCallArgument {
+    String(String),
+    Number(f64),
+    Boolean(bool),
+    Object(HashMap<String, Box<ToolCallArgument>>),
+    Array(Vec<Box<ToolCallArgument>>),
+    Null,
+}
+
+/// Represents a single tool invocation requested by an LLM.
+///
+/// This struct models one entry in an assistant message’s `tool_calls` array
+/// (e.g., OpenAI-style tool/function calling). It pairs the canonical tool
+/// identifier with the raw JSON arguments intended for that tool.
+///
+/// # Fields
+/// - `name`: Canonical identifier of the tool to invoke (e.g., `"search"`,
+///   `"fetch_weather"`). The string should match a tool the client can resolve.
+/// - `arguments`: The arguments payload as a flexible JSON value modeled by
+///   [`ToolCallArgument`]. When [`ToolCallArgument`] is defined as an
+///   **untagged** enum (recommended), each variant serializes to its natural
+///   JSON form (string/number/bool/object/array/null).
+///
+/// # Notes
+/// - This type does not enforce that `name` exists or that `arguments`
+///   match the tool’s schema; enforce those invariants where you dispatch.
+/// - The type derives `Clone` and `PartialEq` to make testing and queueing
+///   across async boundaries straightforward.
+///
+/// See also: [`ToolCallArgument`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCall {
+    name: String,
+    arguments: ToolCallArgument,
+}
+
+impl ToolCall {
+    pub fn new(name: impl Into<String>, arguments: ToolCallArgument) -> Self {
+        Self {
+            name: name.into(),
+            arguments,
+        }
+    }
+
+    pub fn try_from_string(s: impl AsRef<str>) -> Result<Self, String> {
+        serde_json::from_str(s.as_ref())
+            .map_err(|e| format!("serde_json::from_str failed: {}", e.to_string()))
+    }
+}
+
+impl TryFrom<&str> for ToolCall {
+    type Error = String;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        Self::try_from_string(s)
+    }
+}
+
+impl TryFrom<serde_json::Value> for ToolCall {
+    type Error = String;
+
+    fn try_from(v: serde_json::Value) -> Result<Self, Self::Error> {
+        serde_json::from_value(v)
+            .map_err(|e| format!("serde_json::from_value failed: {}", e.to_string()))
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
     #[test]
-    fn test_simple_serde() {
+    fn simple_tool_description_serde() {
         let original = ToolDescription::new(
             "temperature",
             "Get current temperature",
@@ -493,5 +568,30 @@ mod test {
         };
         let recovered: ToolDescription = serde_json::from_str(&serialized).unwrap();
         assert_eq!(original, recovered);
+    }
+
+    #[test]
+    fn simple_tool_call_serde() {
+        let mut obj: HashMap<String, Box<ToolCallArgument>> = HashMap::new();
+        obj.insert(
+            "msg".into(),
+            Box::new(ToolCallArgument::String("Hi".into())),
+        );
+        obj.insert("count".into(), Box::new(ToolCallArgument::Number(3.0)));
+        obj.insert(
+            "flags".into(),
+            Box::new(ToolCallArgument::Array(vec![
+                Box::new(ToolCallArgument::Boolean(true)),
+                Box::new(ToolCallArgument::Null),
+            ])),
+        );
+        let tc = ToolCall {
+            name: "echo".into(),
+            arguments: ToolCallArgument::Object(obj),
+        };
+        let j = serde_json::to_string(&tc).unwrap();
+        // Example shape: {"name":"echo","arguments":{"msg":"Hi","count":3.0,"flags":[true,null]}}
+        let roundtrip: ToolCall = serde_json::from_str(&j).unwrap();
+        assert_eq!(roundtrip, tc);
     }
 }

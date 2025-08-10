@@ -34,7 +34,6 @@ impl LanguageModel for LocalLanguageModel {
             let mut agg_tokens = Vec::<u32>::new();
             let mut count = 0;
             let mut mode = "content".to_owned();
-            let mut agg_json = String::new();
             // @jhlee: TODO remove hard-coded token names
             loop {
                 count += 1;
@@ -56,9 +55,6 @@ impl LanguageModel for LocalLanguageModel {
                     mode = "tool_call".to_owned();
                     continue;
                 } else if s == "</tool_call>" {
-                    let json = serde_json::from_str(&agg_json).map_err(|_| "Invalid JSON generated".to_owned())?;
-                    yield MessageDelta::tool_call(Part::Json(json));
-                    agg_json = String::new();
                     mode = "content".to_owned();
                     continue;
                 } else if s == "<think>" {
@@ -68,13 +64,12 @@ impl LanguageModel for LocalLanguageModel {
                     mode = "content".to_owned();
                     continue;
                 } else {
-                    // Normal mode
                     if mode == "content" {
                         yield MessageDelta::content(Part::Text(s));
                     } else if mode == "reasoning" {
                         yield MessageDelta::reasoning(Part::Text(s));
                     } else if mode == "tool_call" {
-                        agg_json.push_str(&s);
+                        yield MessageDelta::tool_call(Part::Json(s));
                     }
                 }
             }
@@ -121,7 +116,7 @@ impl TryFromCache for LocalLanguageModel {
 mod tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
-    async fn test1() {
+    async fn infer_simple_chat() {
         use futures::StreamExt;
 
         use super::*;
@@ -131,8 +126,8 @@ mod tests {
         let key = "Qwen/Qwen3-0.6B";
         let model = cache.try_create::<LocalLanguageModel>(key).await.unwrap();
         let msgs = vec![
-            Message::with_content(Role::System, Part::from_text("You are an assistant.")),
-            Message::with_content(Role::User, Part::from_text("Hi what's your name?")),
+            Message::with_content(Role::System, Part::new_text("You are an assistant.")),
+            Message::with_content(Role::User, Part::new_text("Hi what's your name?")),
         ];
         let mut agg = MessageAggregator::new(Role::Assistant);
         let mut strm = model.run(Vec::new(), msgs);
@@ -145,11 +140,13 @@ mod tests {
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
-    async fn test2() {
+    async fn infer_tool_call() {
         use futures::StreamExt;
 
         use super::*;
-        use crate::value::{MessageAggregator, Role, ToolDescription, ToolDescriptionArgument};
+        use crate::value::{
+            MessageAggregator, Role, ToolCall, ToolDescription, ToolDescriptionArgument,
+        };
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
@@ -175,7 +172,7 @@ mod tests {
         )];
         let msgs = vec![Message::with_content(
             Role::User,
-            Part::from_text("How much hot currently in Dubai?"),
+            Part::new_text("How much hot currently in Dubai?"),
         )];
         let mut agg = MessageAggregator::new(Role::Assistant);
         let mut strm = model.run(tools, msgs);
@@ -183,6 +180,11 @@ mod tests {
             let delta = delta_opt.unwrap();
             agg.update(delta);
         }
-        println!("{:?}", agg.finalize());
+        let resp = agg.finalize();
+        println!("Resp: {:?}", resp);
+        let tc =
+            ToolCall::try_from_string(resp.tool_calls().get(0).unwrap().get_json_owned().unwrap())
+                .unwrap();
+        println!("Tool call: {:?}", tc);
     }
 }

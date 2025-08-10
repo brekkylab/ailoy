@@ -1,5 +1,5 @@
 mod message;
-mod tool_desc;
+mod tool;
 
 pub use message::*;
-pub use tool_desc::*;
+pub use tool::*;

@@ -1,6 +1,6 @@
 use crate::{
     tool::Tool,
-    value::{Part, ToolDescription},
+    value::{Part, ToolCall, ToolDescription},
 };
 
 #[derive(Clone, Debug)]
@@ -11,7 +11,7 @@ impl Tool for MCPTool {
         todo!()
     }
 
-    fn run(self, _: Part) -> std::pin::Pin<Box<dyn Future<Output = Result<Part, String>>>> {
+    fn run(self, _: ToolCall) -> std::pin::Pin<Box<dyn Future<Output = Result<Part, String>>>> {
         todo!()
     }
 }

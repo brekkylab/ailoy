@@ -5,7 +5,7 @@ use futures::StreamExt;
 use crate::{
     model::{AnyLanguageModel, LanguageModel as _},
     tool::{AnyTool, Tool},
-    value::{Message, MessageAggregator, Role},
+    value::{Message, MessageAggregator, Role, ToolCall},
 };
 
 pub struct Agent {
@@ -31,7 +31,8 @@ impl Agent {
             }
             let assistant_message = aggregator.finalize();
             if !assistant_message.tool_calls().is_empty() {
-                for tool_call in assistant_message.tool_calls() {
+                for part in assistant_message.tool_calls() {
+                    let _ = ToolCall::try_from_string(part.get_json_owned().unwrap()).unwrap();
                     todo!()
                 }
             } else {

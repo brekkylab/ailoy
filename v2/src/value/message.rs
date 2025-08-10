@@ -5,23 +5,118 @@ use serde::{
     de::{self, MapAccess, Visitor},
     ser::SerializeMap as _,
 };
-use serde_json::Value;
 use url::Url;
 
-/// Represents a unit of message content.
+/// Represents a single, typed unit of message content (multi-modal).
 ///
-/// A `Part` can be one of several types, such as plain text, JSON data, or an image.
+/// A `Part` models one element inside a message’s `content` (or related fields like
+/// `reasoning` / `tool_calls`). It is designed to be **OpenAI-compatible** when serialized,
+/// using the modern “array-of-parts” shape (e.g., `{ "type": "text", "text": "..." }`,
+/// `{ "type": "input_image", ... }`).
+///
+/// # Variants
+/// - [`Part::Text`]: Plain UTF-8 text.
+/// - [`Part::Json`]: Opaque JSON text **as-is** (see notes below).
+/// - [`Part::ImageURL`]: A web-accessible image (HTTP(S) URL).
+/// - [`Part::ImageBase64`]: An inline, base64-encoded image payload.
+///
+/// # OpenAI-compatible mapping (typical)
+/// These are the common wire shapes produced/consumed when targeting OpenAI-style APIs:
+///
+/// - `Text(s)`
+///   ```json
+///   { "type": "text", "text": "hello" }
+///   ```
+///
+/// - `ImageURL(url)`
+///   ```json
+///   {
+///     "type": "input_image",
+///     "image_url": { "url": "https://example.com/cat.png" }
+///   }
+///   ```
+///
+/// - `ImageBase64(data)`
+///   ```json
+///   {
+///     "type": "input_image",
+///     "image": { "data": "<base64-bytes>", "mime_type": "image/png" }
+///   }
+///   ```
+///   *Note:* This enum stores only the base64 string. The MIME type is provided by
+///   the serializer (often `"image/png"`) or by higher-level configuration.
+///
+/// - `Json(s)`
+///   This is intentionally **opaque**. It’s commonly used for intermediary content such as
+///   tool/function call arguments or other JSON blobs produced by an LLM stream. The raw string
+///   is preserved byte-for-byte. Downstream code may wrap or parse it depending on context
+///   (e.g., when placed under a message’s `tool_calls` field).
+///
+/// # Notes on `Json`
+/// - **As-is storage:** The string may be incomplete or invalid JSON while streaming; this is
+///   expected. Callers that need structured data should finalize aggregation first and then parse.
+/// - **No validation:** The type does not validate or alter the JSON string in any way.
+///
+/// # Invariants & behavior
+/// - Order is preserved by the container (e.g., `Message.content`).
+/// - Image parts do not fetch or validate URLs/bytes at construction time.
+/// - The enum itself is transport-agnostic; OpenAI-compatibility is achieved by the (de)serializer.
+///
+/// # Examples
+/// Building a multi-modal user message:
+/// ```rust
+/// # use url::Url;
+/// # use crate::value::{Message, Part, Role};
+/// let mut msg = Message::new(Role::User);
+/// msg.push_content(Part::Text("What does this sign say?".into()));
+/// msg.push_content(Part::ImageURL(Url::parse("https://example.com/sign.jpg").unwrap()));
+/// ```
+///
+/// Collecting raw tool call arguments as JSON during streaming:
+/// ```rust
+/// # use crate::value::Part;
+/// let mut args = String::new();
+/// // append chunks as they arrive:
+/// args.push_str("{\"location\":\"Dubai\"");
+/// args.push_str(",\"unit\":\"Celsius\"}");
+/// let json_part = Part::Json(args); // parse after the stream is complete
+/// ```
+///
+/// Embedding a base64 image:
+/// ```rust
+/// # use crate::value::Part;
+/// let b64 = base64::encode(&[/* bytes */]);
+/// let img = Part::ImageBase64(b64);
+/// // Serializer will include a suitable mime_type (e.g., image/png) if configured.
+/// ```
 #[derive(Clone, Debug)]
 pub enum Part {
+    /// Plain UTF-8 text.
     Text(String),
-    Json(Value),
+
+    /// Raw JSON text captured exactly as produced by the model.
+    ///
+    /// Note that it can contain **incomplete or invalid JSON** while streaming;
+    /// this type stores it verbatim. Parse only after finalization when needed.
+    Json(String),
+
+    /// Web-addressable image (HTTP(S) URL).
+    ///
+    /// Typically serialized as:
+    /// `{ "type":"input_image", "image_url": { "url": "<...>" } }`.
     ImageURL(Url),
+
+    /// Inline, base64-encoded image bytes.
+    ///
+    /// Typically serialized as:
+    /// `{ "type":"input_image", "image": { "data": "<base64>", "mime_type": "image/png" } }`.
+    /// The MIME type is provided by higher-level configuration/serialization.
     ImageBase64(String),
 }
 
 impl Part {
     /// Constructor for text part
-    pub fn from_text<T: Into<String>>(text: T) -> Part {
+    pub fn new_text<T: Into<String>>(text: T) -> Part {
         Part::Text(text.into())
     }
 
@@ -39,8 +134,15 @@ impl Part {
         }
     }
 
+    pub fn get_text_owned(&self) -> Option<String> {
+        match self {
+            Part::Text(v) => Some(v.to_owned()),
+            _ => None,
+        }
+    }
+
     /// Constructor for JSON part
-    pub fn from_json<T: Into<Value>>(json: T) -> Part {
+    pub fn new_json<T: Into<String>>(json: T) -> Part {
         Part::Json(json.into())
     }
 
@@ -51,20 +153,27 @@ impl Part {
         }
     }
 
-    pub fn get_json(&self) -> Option<&Value> {
+    pub fn get_json(&self) -> Option<&String> {
         match self {
             Part::Json(v) => Some(v),
             _ => None,
         }
     }
 
+    pub fn get_json_owned(&self) -> Option<String> {
+        match self {
+            Part::Json(v) => Some(v.to_owned()),
+            _ => None,
+        }
+    }
+
     /// Constructor for image URL part
-    pub fn from_image_url<T: Into<Url>>(url: T) -> Part {
+    pub fn new_image_url<T: Into<Url>>(url: T) -> Part {
         Part::ImageURL(url.into())
     }
 
     /// Constructor for image base64 part
-    pub fn from_image_base64<T: Into<String>>(encoded: T) -> Part {
+    pub fn new_image_base64<T: Into<String>>(encoded: T) -> Part {
         Part::ImageBase64(encoded.into())
     }
 }
@@ -220,10 +329,78 @@ pub enum Role {
     Tool,
 }
 
-/// Represents a full message with multiple parts.
+/// Represents a complete chat message composed of multiple parts (multi-modal).
 ///
-/// Its serialization and deserialization logic is compatible with HuggingFace-style messages (also known as OpenAI-compatible format).
-/// The only exception is that, since this structure supports multi-modal content, the `Part` logic may differ from text-only implementations.
+/// # OpenAI-compatible shape
+/// Serialization/deserialization follows the OpenAI chat/response message conventions:
+/// - `role` matches OpenAI roles (e.g., `"system"`, `"user"`, `"assistant"`, `"tool"`).
+/// - `content` is an array of typed parts (e.g., `{ "type": "text", "text": "..." }`,
+///   images, etc.), rather than a single string. This aligns with the modern “array-of-parts”
+///   format used by OpenAI’s Chat/Responses APIs.
+/// - `tool_calls` (when present) is compatible with OpenAI function/tool calling:
+///   each element mirrors OpenAI’s `tool_calls[]` item. In this implementation
+///   each `tool_calls` entry is stored as a `Part` (commonly `Part::Json`) containing the
+///   raw JSON payload (`{"type":"function","id":"...","function":{"name":"...","arguments":"..."}}`).
+/// - `reasoning` is optional and is used to carry model reasoning parts when available
+///   from reasoning-capable models. Treat it as **auxiliary** content; if your target API
+///   does not accept a `reasoning` field, omit/strip it before sending.
+///
+/// Because this type supports multi-modal content, exact `Part` variants (text, image, JSON, …)
+/// may differ from text-only implementations, while staying wire-compatible with OpenAI.
+///
+/// # Fields
+/// - `role`: Author of the message.
+/// - `content`: Primary, user-visible content as a list of parts (text, images, etc.).
+/// - `reasoning`: Optional reasoning parts (usually text). Not intended for end users.
+/// - `tool_calls`: Tool/function call requests emitted by the assistant, each stored as a part
+///   (typically a JSON part containing an OpenAI-shaped `tool_calls[]` item).
+///
+/// # Invariants & recommendations
+/// - Order is preserved: parts appear in the order they were appended.
+/// - `tool_calls` should be present only on assistant messages.
+/// - If you target strict OpenAI endpoints that don’t accept `reasoning`, drop that field
+///   during serialization.
+/// - Parsing/validation of `tool_calls` JSON is the caller’s responsibility.
+///
+/// # Examples
+///
+/// ## User message with text + image
+/// ```json
+/// {
+///   "role": "user",
+///   "content": [
+///     { "type": "text", "text": "What does this sign say?" },
+///     { "type": "input_image", "image_url": { "url": "https://example.com/sign.jpg" } }
+///   ]
+/// }
+/// ```
+///
+/// ## Assistant message requesting a tool call
+/// ```json
+/// {
+///   "role": "assistant",
+///   "content": [ { "type": "text", "text": "I'll look that up." } ],
+///   "tool_calls": [
+///     {
+///       "id": "call_abc123",
+///       "type": "function",
+///       "function": {
+///         "name": "foo",
+///         "arguments": "{\"location\":\"Dubai\",\"unit\":\"Celsius\"}"
+///       }
+///     }
+///   ]
+/// }
+/// ```
+///
+/// ## Assistant message with optional reasoning parts
+/// ```json
+/// {
+///   "role": "assistant",
+///   "content": [ { "type": "text", "text": "The current temperature is 42 °C." } ],
+///   "reasoning": [ { "type": "text", "text": "(model reasoning tokens, if exposed)" } ]
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct Message {
     role: Role,
@@ -364,6 +541,63 @@ impl<'de> Visitor<'de> for MessageVisitor {
     }
 }
 
+/// Incrementally builds a complete [`Message`] from a stream of [`MessageDelta`]s.
+///
+/// # Overview
+/// `MessageAggregator` is a small state machine that:
+/// - Buffers the most recent delta (`last_delta`) so adjacent chunks of the **same kind**
+///   can be coalesced to reduce fragmentation and allocations.
+/// - Flushes the buffered chunk into the target [`Message`] (`aggregated`) whenever the
+///   incoming delta can’t be merged (e.g., the variant changes) or when you call [`finalize`].
+///
+/// Today it merges only these contiguous cases:
+/// - `MessageDelta::Content(Part::Text)` + `MessageDelta::Content(Part::Text)` → string append
+/// - `MessageDelta::Reasoning(Part::Text)` + `MessageDelta::Reasoning(Part::Text)` → string append
+/// - `MessageDelta::ToolCall(Part::Json)` + `MessageDelta::ToolCall(Part::Json)` → string append
+///
+/// Any other incoming delta will cause the buffered delta to be **finalized** into the
+/// aggregated [`Message`] using the appropriate `push_*` method, and the new delta becomes
+/// the new buffer.
+///
+/// This is especially useful when consuming token-by-token or chunked outputs from
+/// streaming LLM APIs where many tiny deltas of the same field arrive back-to-back.
+///
+/// # Lifecycle
+/// 1. Create with [`new`], giving the role of the resulting aggregated message.
+/// 2. Feed deltas in arrival order via [`update`].
+/// 3. Call [`finalize`] **once** to flush the last buffered delta and obtain the
+///    completed [`Message`]. `finalize` consumes the aggregator.
+///
+/// # Guarantees & Notes
+/// - **Order-preserving**: deltas are incorporated in the exact order they are seen.
+/// - **Zero parsing**: for `ToolCall(Part::Json)`, content is treated as a raw JSON string
+///   and concatenated; parsing (if any) is your responsibility after finalization.
+/// - **Cheap steady-state**: contiguous text/json chunks append in-place with `String::push_str`.
+/// - **Thread safety**: this type is not synchronized; use it on one task/thread at a time.
+/// - **Panics**: none expected.
+///
+/// # Example: simple concatenation
+/// ```rust
+/// # use crate::value::{MessageAggregator, MessageDelta, Message, Part, Role};
+/// let mut agg = MessageAggregator::new(Role::Assistant);
+///
+/// agg.update(MessageDelta::Content(Part::Text("Hel".into())));
+/// agg.update(MessageDelta::Content(Part::Text("lo".into())));
+/// agg.update(MessageDelta::Reasoning(Part::Text(" chain-of-thought chunk".into())));
+///
+/// let msg: Message = agg.finalize();
+/// assert_eq!(msg.content_text(), Some("Hello")); // assuming a helper accessor
+/// // reasoning and other fields were also appended in arrival order.
+/// ```
+///
+/// # Methods
+/// - [`new`]: initialize with the target message role.
+/// - [`update`]: feed a single [`MessageDelta`]; may coalesce with the buffered delta or flush it.
+/// - [`finalize`]: flush the last buffered delta and return the completed [`Message`].
+///
+/// [`new`]: Self::new
+/// [`update`]: Self::update
+/// [`finalize`]: Self::finalize
 #[derive(Debug)]
 pub struct MessageAggregator {
     last_delta: Option<MessageDelta>,
@@ -400,14 +634,18 @@ impl MessageAggregator {
                 Some(MessageDelta::Content(Part::Text(last_text))),
                 MessageDelta::Content(Part::Text(text)),
             ) => {
-                // Text concat
                 last_text.push_str(&text);
             }
             (
                 Some(MessageDelta::Reasoning(Part::Text(last_text))),
                 MessageDelta::Reasoning(Part::Text(text)),
             ) => {
-                // Text concat
+                last_text.push_str(&text);
+            }
+            (
+                Some(MessageDelta::ToolCall(Part::Json(last_text))),
+                MessageDelta::ToolCall(Part::Json(text)),
+            ) => {
                 last_text.push_str(&text);
             }
             (None, delta) => {

@@ -6,13 +6,13 @@ use std::{
 
 use crate::{
     tool::Tool,
-    value::{Part, ToolDescription, ToolDescriptionArgument},
+    value::{Part, ToolCall, ToolDescription, ToolDescriptionArgument},
 };
 
 #[derive(Clone)]
 pub struct BuiltinTool {
     desc: ToolDescription,
-    f: Arc<dyn Fn(&serde_json::Value) -> Part>,
+    f: Arc<dyn Fn(ToolCall) -> Part>,
 }
 
 impl Debug for BuiltinTool {
@@ -31,8 +31,8 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    fn run(self, toll_call: Part) -> Pin<Box<dyn Future<Output = Result<Part, String>>>> {
-        Box::pin(async move { Ok((self.f)(toll_call.get_json().unwrap())) })
+    fn run(self, toll_call: ToolCall) -> Pin<Box<dyn Future<Output = Result<Part, String>>>> {
+        Box::pin(async move { Ok((self.f)(toll_call)) })
     }
 }
 
