@@ -167,8 +167,10 @@ mod tests {
                 ],
                 ["location", "unit"],
             ),
-            ToolDescriptionArgument::new_number()
-                .with_desc("Null if the given city name is unavailable."),
+            Some(
+                ToolDescriptionArgument::new_number()
+                    .with_desc("Null if the given city name is unavailable."),
+            ),
         )];
         let msgs = vec![Message::with_content(
             Role::User,

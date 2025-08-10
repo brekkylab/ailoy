@@ -19,12 +19,15 @@ impl Agent {
         self.messages.push(user_message);
 
         loop {
-            let tools = self
+            let tool_descriptions = self
                 .tools
                 .iter()
                 .map(|(_, v)| v.get_description())
                 .collect::<Vec<_>>();
-            let mut strm = self.lm.clone().run(tools, self.messages.clone());
+            let mut strm = self
+                .lm
+                .clone()
+                .run(tool_descriptions, self.messages.clone());
             let mut aggregator = MessageAggregator::new(Role::Assistant);
             while let Some(delta) = strm.next().await {
                 aggregator.update(delta?);
@@ -32,8 +35,11 @@ impl Agent {
             let assistant_message = aggregator.finalize();
             if !assistant_message.tool_calls().is_empty() {
                 for part in assistant_message.tool_calls() {
-                    let _ = ToolCall::try_from_string(part.get_json_owned().unwrap()).unwrap();
-                    todo!()
+                    let tc = ToolCall::try_from_string(part.get_json_owned().unwrap()).unwrap();
+                    let tool = self.tools.get(tc.get_name()).unwrap().clone();
+                    let resp = tool.run(tc).await?;
+                    let tool_msg = Message::with_content(Role::Tool, resp);
+                    self.messages.push(tool_msg);
                 }
             } else {
                 break;

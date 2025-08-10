@@ -376,7 +376,7 @@ pub struct ToolDescription {
 
     parameters: ToolDescriptionArgument, // In most cases, it's `ToolDescriptionArgument::Object`
 
-    r#return: ToolDescriptionArgument,
+    r#return: Option<ToolDescriptionArgument>,
 }
 
 impl ToolDescription {
@@ -384,13 +384,13 @@ impl ToolDescription {
         name: impl Into<String>,
         description: impl Into<String>,
         parameters: impl Into<ToolDescriptionArgument>,
-        r#return: impl Into<ToolDescriptionArgument>,
+        r#return: Option<impl Into<ToolDescriptionArgument>>,
     ) -> Self {
         Self {
             name: name.into(),
             description: description.into(),
             parameters: parameters.into(),
-            r#return: r#return.into(),
+            r#return: r#return.and_then(|v| Some(v.into())),
         }
     }
 }
@@ -407,7 +407,7 @@ impl Serialize for ToolDescription {
             description: &'a str,
             parameters: &'a ToolDescriptionArgument,
             #[serde(rename = "return")]
-            r#return: &'a ToolDescriptionArgument,
+            r#return: Option<&'a ToolDescriptionArgument>,
         }
 
         let mut st = serializer.serialize_struct("ToolDescription", 2)?;
@@ -418,7 +418,7 @@ impl Serialize for ToolDescription {
                 name: &self.name,
                 description: &self.description,
                 parameters: &self.parameters,
-                r#return: &self.r#return,
+                r#return: self.r#return.as_ref(),
             },
         )?;
         st.end()
@@ -436,7 +436,7 @@ impl<'de> Deserialize<'de> for ToolDescription {
             description: String,
             parameters: ToolDescriptionArgument,
             #[serde(rename = "return")]
-            r#return: ToolDescriptionArgument,
+            r#return: Option<ToolDescriptionArgument>,
         }
 
         #[derive(Deserialize)]
@@ -640,7 +640,7 @@ mod test {
                 ],
                 ["location"],
             ),
-            ToolDescriptionArgument::new_number(),
+            Some(ToolDescriptionArgument::new_number()),
         );
         let serialized = {
             let expected = r#"{"type":"function","function":{"name":"temperature","description":"Get current temperature","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city name"},"unit":{"type":"string","description":"Default: Celcius","enum":["Celcius","Fernheit"]}},"required":["location"]},"return":{"type":"number"}}}"#;
