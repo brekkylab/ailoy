@@ -393,6 +393,10 @@ impl ToolDescription {
             r#return: r#return.and_then(|v| Some(v.into())),
         }
     }
+
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl Serialize for ToolDescription {

@@ -21,6 +21,28 @@ pub enum AnyLanguageModel {
     Local(LocalLanguageModel),
 }
 
+impl AnyLanguageModel {
+    pub fn from_api_model(m: APILanguageModel) -> Self {
+        AnyLanguageModel::API(m)
+    }
+
+    pub fn from_local_model(m: LocalLanguageModel) -> Self {
+        AnyLanguageModel::Local(m)
+    }
+}
+
+impl From<APILanguageModel> for AnyLanguageModel {
+    fn from(m: APILanguageModel) -> Self {
+        AnyLanguageModel::from_api_model(m)
+    }
+}
+
+impl From<LocalLanguageModel> for AnyLanguageModel {
+    fn from(m: LocalLanguageModel) -> Self {
+        AnyLanguageModel::from_local_model(m)
+    }
+}
+
 impl LanguageModel for AnyLanguageModel {
     fn run(
         self,

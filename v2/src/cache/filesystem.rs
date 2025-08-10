@@ -6,7 +6,7 @@ mod native {
         write as tokio_write,
     };
 
-    pub async fn exists<P: AsRef<Path>>(path: P) -> bool {
+    pub async fn _exists<P: AsRef<Path>>(path: P) -> bool {
         path.as_ref().exists()
     }
 
@@ -22,7 +22,7 @@ mod native {
             .map_err(|e| format!("tokio::fs::write failed: {}", e.to_string()))
     }
 
-    pub async fn remove(path: impl AsRef<Path>) -> Result<(), String> {
+    pub async fn _remove(path: impl AsRef<Path>) -> Result<(), String> {
         if path.as_ref().is_dir() {
             tokio_remove_dir(path)
                 .await

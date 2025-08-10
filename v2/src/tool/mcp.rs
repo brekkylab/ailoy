@@ -1,3 +1,5 @@
+use std::pin::Pin;
+
 use crate::{
     tool::Tool,
     value::{Part, ToolCall, ToolDescription},
@@ -11,7 +13,7 @@ impl Tool for MCPTool {
         todo!()
     }
 
-    fn run(self, _: ToolCall) -> std::pin::Pin<Box<dyn Future<Output = Result<Part, String>>>> {
+    fn run(self, _: ToolCall) -> Pin<Box<dyn Future<Output = Result<Part, String>>>> {
         todo!()
     }
 }

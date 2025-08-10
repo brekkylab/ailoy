@@ -11,9 +11,9 @@ minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"]
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 reqwest = { version = "0.12", features = ["stream"] }
 rmcp = { version = "0.5.0", features = ["client"] }
-sha1 = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
+sha1 = "0.10"
 url = "2.5.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
