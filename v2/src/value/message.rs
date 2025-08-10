@@ -3,20 +3,21 @@ use std::fmt;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, MapAccess, Visitor},
-    ser::SerializeMap as _,
+    ser::SerializeMap,
 };
 use url::Url;
 
 /// Represents a single, typed unit of message content (multi-modal).
 ///
-/// A `Part` models one element inside a message’s `content` (or related fields like
+/// A `Part` models one element inside a message’s `content` (and related fields like
 /// `reasoning` / `tool_calls`). It is designed to be **OpenAI-compatible** when serialized,
-/// using the modern “array-of-parts” shape (e.g., `{ "type": "text", "text": "..." }`,
-/// `{ "type": "input_image", ... }`).
+/// using the modern “array-of-parts” shape such as:
+/// `{ "type": "text", "text": "..." }` or `{ "type": "image", "url": "..." }`.
 ///
 /// # Variants
 /// - [`Part::Text`]: Plain UTF-8 text.
-/// - [`Part::Json`]: Opaque JSON text **as-is** (see notes below).
+/// - [`Part::Function`]: Raw JSON string for a tool/function call payload, with an optional
+///   `tool_call_id` to correlate results.
 /// - [`Part::ImageURL`]: A web-accessible image (HTTP(S) URL).
 /// - [`Part::ImageBase64`]: An inline, base64-encoded image payload.
 ///
@@ -30,37 +31,35 @@ use url::Url;
 ///
 /// - `ImageURL(url)`
 ///   ```json
-///   {
-///     "type": "input_image",
-///     "image_url": { "url": "https://example.com/cat.png" }
-///   }
+///   { "type": "image", "url": "https://example.com/cat.png" }
 ///   ```
 ///
 /// - `ImageBase64(data)`
 ///   ```json
-///   {
-///     "type": "input_image",
-///     "image": { "data": "<base64-bytes>", "mime_type": "image/png" }
-///   }
+///   { "type": "image", "data": "<base64-bytes>" }
 ///   ```
-///   *Note:* This enum stores only the base64 string. The MIME type is provided by
-///   the serializer (often `"image/png"`) or by higher-level configuration.
 ///
-/// - `Json(s)`
-///   This is intentionally **opaque**. It’s commonly used for intermediary content such as
-///   tool/function call arguments or other JSON blobs produced by an LLM stream. The raw string
-///   is preserved byte-for-byte. Downstream code may wrap or parse it depending on context
-///   (e.g., when placed under a message’s `tool_calls` field).
+/// - `Function { id, function }`
+///   The `function` field holds the **raw JSON** for the tool/function call (often the
+///   `arguments` string in OpenAI tool calls). The `id` corresponds to `tool_call_id`
+///   and is used to link the tool’s eventual result back to this call. Serialization of
+///   this variant is handled by higher-level message (de)serializers that place it under
+///   `tool_calls` as appropriate.
 ///
-/// # Notes on `Json`
-/// - **As-is storage:** The string may be incomplete or invalid JSON while streaming; this is
-///   expected. Callers that need structured data should finalize aggregation first and then parse.
-/// - **No validation:** The type does not validate or alter the JSON string in any way.
+/// # Notes on `Function`
+/// - **As-is storage:** While streaming, `function` may be incomplete or invalid JSON.
+///   This is expected. Parse only after the stream has finalized/aggregated.
+/// - **No validation:** The variant does not validate or mutate the JSON string.
+///   Converting into a strongly-typed [`crate::value::ToolCall`] will fail if the JSON
+///   is malformed or incomplete.
+/// - **Correlation:** When present, `id` should be echoed back as `tool_call_id` when
+///   returning the tool’s output, matching OpenAI’s linking behavior.
 ///
 /// # Invariants & behavior
-/// - Order is preserved by the container (e.g., `Message.content`).
+/// - Insertion order is preserved by the container (e.g., `Message.content`).
 /// - Image parts do not fetch or validate URLs/bytes at construction time.
-/// - The enum itself is transport-agnostic; OpenAI-compatibility is achieved by the (de)serializer.
+/// - The enum is transport-agnostic; OpenAI compatibility is achieved by the
+///   surrounding (de)serializer layer.
 ///
 /// # Examples
 /// Building a multi-modal user message:
@@ -72,45 +71,41 @@ use url::Url;
 /// msg.push_content(Part::ImageURL(Url::parse("https://example.com/sign.jpg").unwrap()));
 /// ```
 ///
-/// Collecting raw tool call arguments as JSON during streaming:
+/// Collecting tool-call arguments during streaming:
 /// ```rust
 /// # use crate::value::Part;
-/// let mut args = String::new();
-/// // append chunks as they arrive:
-/// args.push_str("{\"location\":\"Dubai\"");
-/// args.push_str(",\"unit\":\"Celsius\"}");
-/// let json_part = Part::Json(args); // parse after the stream is complete
+/// let mut buf = String::new();
+/// // Append chunks as they arrive:
+/// buf.push_str("{\"location\":\"Dubai\"");
+/// buf.push_str(",\"unit\":\"Celsius\"}");
+/// let part = Part::Function { id: None, function: buf }; // parse after finalization
 /// ```
-///
-/// Embedding a base64 image:
-/// ```rust
-/// # use crate::value::Part;
-/// let b64 = base64::encode(&[/* bytes */]);
-/// let img = Part::ImageBase64(b64);
-/// // Serializer will include a suitable mime_type (e.g., image/png) if configured.
-/// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Part {
     /// Plain UTF-8 text.
     Text(String),
 
-    /// Raw JSON text captured exactly as produced by the model.
+    /// Tool/function call payload captured as a raw JSON string.
     ///
-    /// Note that it can contain **incomplete or invalid JSON** while streaming;
-    /// this type stores it verbatim. Parse only after finalization when needed.
-    Json(String),
+    /// `id` corresponds to `tool_call_id` (when available) for correlating tool results.
+    /// `function` holds the unmodified JSON; it may be incomplete while streaming.
+    Function {
+        /// Optional `tool_call_id` used to correlate tool results.
+        id: Option<String>,
+        /// Raw JSON for the function call payload (often the `arguments` string).
+        function: String,
+    },
 
     /// Web-addressable image (HTTP(S) URL).
     ///
     /// Typically serialized as:
-    /// `{ "type":"input_image", "image_url": { "url": "<...>" } }`.
+    /// `{ "type": "image", "url": "<...>" }`.
     ImageURL(Url),
 
-    /// Inline, base64-encoded image bytes.
+    /// Inline, base64-encoded image bitmap bytes.
     ///
     /// Typically serialized as:
-    /// `{ "type":"input_image", "image": { "data": "<base64>", "mime_type": "image/png" } }`.
-    /// The MIME type is provided by higher-level configuration/serialization.
+    /// `{ "type": "image", "data": "<base64>" }`.
     ImageBase64(String),
 }
 
@@ -141,28 +136,45 @@ impl Part {
         }
     }
 
-    /// Constructor for JSON part
-    pub fn new_json<T: Into<String>>(json: T) -> Part {
-        Part::Json(json.into())
+    /// Constructor for Function part
+    pub fn new_function<T: Into<String>>(json: T) -> Part {
+        Part::Function {
+            id: None,
+            function: json.into(),
+        }
     }
 
-    pub fn is_json(&self) -> bool {
+    pub fn new_function_with_id<T: Into<String>>(id: impl Into<String>, json: T) -> Part {
+        Part::Function {
+            id: Some(id.into()),
+            function: json.into(),
+        }
+    }
+
+    pub fn is_function(&self) -> bool {
         match self {
-            Part::Json(_) => true,
+            Part::Function { .. } => true,
             _ => false,
         }
     }
 
-    pub fn get_json(&self) -> Option<&String> {
+    pub fn get_function_id(&self) -> Option<String> {
         match self {
-            Part::Json(v) => Some(v),
+            Part::Function { id, .. } => id.to_owned(),
             _ => None,
         }
     }
 
-    pub fn get_json_owned(&self) -> Option<String> {
+    pub fn get_function(&self) -> Option<&String> {
         match self {
-            Part::Json(v) => Some(v.to_owned()),
+            Part::Function { function, .. } => Some(function),
+            _ => None,
+        }
+    }
+
+    pub fn get_function_owned(&self) -> Option<String> {
+        match self {
+            Part::Function { function, .. } => Some(function.to_owned()),
             _ => None,
         }
     }
@@ -175,6 +187,15 @@ impl Part {
     /// Constructor for image base64 part
     pub fn new_image_base64<T: Into<String>>(encoded: T) -> Part {
         Part::ImageBase64(encoded.into())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Part::Text(v) => v.is_empty(),
+            Part::Function { function: v, .. } => v.is_empty(),
+            Part::ImageURL(_) => false,
+            Part::ImageBase64(v) => v.is_empty(),
+        }
     }
 }
 
@@ -190,9 +211,18 @@ impl Serialize for Part {
                 map.serialize_entry("type", "text")?;
                 map.serialize_entry("text", text)?;
             }
-            Part::Json(value) => {
-                map.serialize_entry("type", "json")?;
-                map.serialize_entry("json", value)?;
+            Part::Function { id, function } => {
+                // Try to embed as real JSON if valid; otherwise fall back to raw text.
+                let function: serde_json::Value = serde_json::from_str(function).map_err(|e| {
+                    <S::Error as serde::ser::Error>::custom(format!(
+                        "invalid JSON in Part::Json: {e}"
+                    ))
+                })?;
+                map.serialize_entry("type", "function")?;
+                if id.is_some() {
+                    map.serialize_entry("id", &id.to_owned().unwrap())?;
+                }
+                map.serialize_entry("function", &function)?;
             }
             Part::ImageURL(url) => {
                 map.serialize_entry("type", "image")?;
@@ -233,6 +263,7 @@ impl<'de> Visitor<'de> for PartVisitor {
         let mut ty: Option<String> = None;
         let mut key: Option<String> = None;
         let mut value: Option<String> = None;
+        let mut id: Option<String> = None;
 
         while let Some(k) = map.next_key::<String>()? {
             if k == "type" {
@@ -240,6 +271,11 @@ impl<'de> Visitor<'de> for PartVisitor {
                     return Err(de::Error::duplicate_field("type"));
                 }
                 ty = Some(map.next_value()?);
+            } else if k == "id" {
+                if id.is_some() {
+                    return Err(de::Error::duplicate_field("id"));
+                }
+                id = Some(map.next_value()?);
             } else {
                 if key.is_some() {
                     return Err(de::Error::custom("multiple part fields found"));
@@ -255,9 +291,12 @@ impl<'de> Visitor<'de> for PartVisitor {
 
         if ty == "text" && key == "text" {
             Ok(Part::Text(value))
-        } else if ty == "json" && key == "json" {
+        } else if ty == "function" && key == "function" {
             match serde_json::from_str(&value) {
-                Ok(value) => Ok(Part::Json(value)),
+                Ok(value) => Ok(Part::Function {
+                    id,
+                    function: value,
+                }),
                 Err(err) => Err(de::Error::custom(format!(
                     "Invalid Json part: {} {}",
                     value,
@@ -281,51 +320,135 @@ impl<'de> Visitor<'de> for PartVisitor {
     }
 }
 
-/// A data structure to represent which part of the message is being updated.
-#[derive(Clone, Debug)]
+/// A single streaming update to a message.
+///
+/// `MessageDelta` represents one incremental piece emitted while a model is
+/// generating a response (or while a tool is streaming its output). Each delta
+/// identifies **which field** of the message is being extended and the **role**
+/// responsible for that piece, along with the concrete [`Part`] being added.
+///
+/// This mirrors how many chat APIs stream “chunks” of content. You typically
+/// feed these deltas into an aggregator (e.g., `MessageAggregator`) to build
+/// a complete [`Message`] incrementally.
+///
+/// # Variants
+/// - [`MessageDelta::Content`]: Appends a [`Part`] to the message’s `content`.
+/// - [`MessageDelta::Reasoning`]: Appends a [`Part`] to the (optional) `reasoning`
+///   field. This is usually **not** user-visible and is intended for internal
+///   traces when supported by the model / API.
+/// - [`MessageDelta::ToolCall`]: Appends a [`Part`] (often a `Function` part)
+///   into the message’s tool-calls area, used to accumulate tool call arguments
+///   during streaming.
+///
+/// # Invariants & behavior
+/// - Deltas do not reorder data; your aggregator should preserve arrival order.
+/// - The `role` carried by each delta indicates the author of the appended part
+///   (commonly [`Role::Assistant`] for model output, [`Role::Tool`] for tool output,
+///   and [`Role::User`] for user-streamed uploads).
+///
+/// # Examples
+/// Stream assistant text and a tool call:
+/// ```rust
+/// # use crate::value::{MessageDelta, Part, Role};
+/// let d1 = MessageDelta::new_assistant_content(Part::Text("Looking up weather…".into()));
+/// let d2 = MessageDelta::new_assistant_tool_call(Part::Function {
+///     id: Some("call_1".into()),
+///     function: r#"{"name":"get_weather","arguments":{"city":"Seoul"}}"#.into(),
+/// });
+/// // Feed `d1`, `d2`, ... into your aggregator.
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MessageDelta {
-    Content(Part),
-    Reasoning(Part),
-    ToolCall(Part),
+    /// Append a [`Part`] to the message's `content` array for the given `role`.
+    Content(Role, Part),
+
+    /// Append a [`Part`] to the message's `reasoning` array for the given `role`.
+    ///
+    /// This is typically internal/system-facing metadata (if supported by the API)
+    /// and not shown to end users.
+    Reasoning(Role, Part),
+
+    /// Append a [`Part`] to the message's `tool_calls` area for the given `role`.
+    ///
+    /// Commonly used while streaming tool/function call arguments from the assistant.
+    ToolCall(Role, Part),
 }
 
 impl MessageDelta {
-    pub fn content(part: Part) -> MessageDelta {
-        MessageDelta::Content(part)
+    /// Convenience constructor for a user-authored content delta.
+    pub fn new_user_content(part: Part) -> MessageDelta {
+        MessageDelta::Content(Role::User, part)
     }
 
-    pub fn reasoning(part: Part) -> MessageDelta {
-        MessageDelta::Reasoning(part)
+    /// Convenience constructor for an assistant-authored content delta.
+    pub fn new_assistant_content(part: Part) -> MessageDelta {
+        MessageDelta::Content(Role::Assistant, part)
     }
 
-    pub fn tool_call(part: Part) -> MessageDelta {
-        MessageDelta::ToolCall(part)
+    /// Convenience constructor for an assistant-authored reasoning delta.
+    pub fn new_assistant_reasoning(part: Part) -> MessageDelta {
+        MessageDelta::Reasoning(Role::Assistant, part)
     }
 
-    pub fn get_part(&self) -> &Part {
+    /// Convenience constructor for an assistant-authored tool-call delta.
+    pub fn new_assistant_tool_call(part: Part) -> MessageDelta {
+        MessageDelta::ToolCall(Role::Assistant, part)
+    }
+
+    /// Convenience constructor for a tool-authored content delta.
+    pub fn new_tool_content(part: Part) -> MessageDelta {
+        MessageDelta::Content(Role::Tool, part)
+    }
+
+    /// Returns the `role` that authored this delta.
+    pub fn get_role(&self) -> &Role {
         match self {
-            MessageDelta::Content(part) => part,
-            MessageDelta::Reasoning(part) => part,
-            MessageDelta::ToolCall(part) => part,
+            MessageDelta::Content(role, _) => role,
+            MessageDelta::Reasoning(role, _) => role,
+            MessageDelta::ToolCall(role, _) => role,
         }
     }
 
-    pub fn take_part(self) -> Part {
+    /// Returns the [`Part`] contained in this delta.
+    pub fn get_part(&self) -> &Part {
         match self {
-            MessageDelta::Content(part) => part,
-            MessageDelta::Reasoning(part) => part,
-            MessageDelta::ToolCall(part) => part,
+            MessageDelta::Content(_, part) => part,
+            MessageDelta::Reasoning(_, part) => part,
+            MessageDelta::ToolCall(_, part) => part,
+        }
+    }
+
+    /// Consumes the delta, yielding its `(Role, Part)` pair.
+    pub fn take(self) -> (Role, Part) {
+        match self {
+            MessageDelta::Content(role, part) => (role, part),
+            MessageDelta::Reasoning(role, part) => (role, part),
+            MessageDelta::ToolCall(role, part) => (role, part),
         }
     }
 }
 
-/// Role of the message sender
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// The author of a message (or streaming delta) in a chat.
+///
+/// This aligns with common chat schemas (e.g., OpenAI-style), and is serialized
+/// in lowercase (`"system"`, `"user"`, `"assistant"`, `"tool"`).
+///
+/// # Variants
+/// - [`Role::System`]: System or policy instructions that guide the assistant.
+/// - [`Role::User`]: End-user inputs and uploads.
+/// - [`Role::Assistant`]: Model-generated outputs, including tool-call requests.
+/// - [`Role::Tool`]: Outputs produced by external tools/functions, typically in
+///   response to an assistant tool call (and often correlated via `tool_call_id`).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
+    /// System instructions and constraints provided to the assistant.
     System,
+    /// Content authored by the end user.
     User,
+    /// Content authored by the assistant/model.
     Assistant,
+    /// Content authored by a tool/function, usually as a result of a tool call.
     Tool,
 }
 
@@ -357,7 +480,7 @@ pub enum Role {
 ///
 /// # Invariants & recommendations
 /// - Order is preserved: parts appear in the order they were appended.
-/// - `tool_calls` should be present only on assistant messages.
+/// - `reasoning` and `tool_calls` should be present only on assistant messages.
 /// - If you target strict OpenAI endpoints that don’t accept `reasoning`, drop that field
 ///   during serialization.
 /// - Parsing/validation of `tool_calls` JSON is the caller’s responsibility.
@@ -382,8 +505,8 @@ pub enum Role {
 ///   "content": [ { "type": "text", "text": "I'll look that up." } ],
 ///   "tool_calls": [
 ///     {
-///       "id": "call_abc123",
 ///       "type": "function",
+///       "id": "call_abc123",
 ///       "function": {
 ///         "name": "foo",
 ///         "arguments": "{\"location\":\"Dubai\",\"unit\":\"Celsius\"}"
@@ -541,127 +664,175 @@ impl<'de> Visitor<'de> for MessageVisitor {
     }
 }
 
-/// Incrementally builds a complete [`Message`] from a stream of [`MessageDelta`]s.
+/// Incrementally assembles one or more [`Message`]s from a stream of [`MessageDelta`]s.
 ///
-/// # Overview
-/// `MessageAggregator` is a small state machine that:
-/// - Buffers the most recent delta (`last_delta`) so adjacent chunks of the **same kind**
-///   can be coalesced to reduce fragmentation and allocations.
-/// - Flushes the buffered chunk into the target [`Message`] (`aggregated`) whenever the
-///   incoming delta can’t be merged (e.g., the variant changes) or when you call [`finalize`].
+/// # What this does
+/// `MessageAggregator` is a small state machine with a single-item buffer:
+/// - It **coalesces adjacent chunks of the same kind** to avoid fragmentation
+///   (e.g., text → text string-append; tool-call JSON → JSON string-append).
+/// - It **flushes** the buffered chunk into the current [`Message`] whenever a new,
+///   non-mergeable delta arrives.
+/// - When the **role changes** (e.g., `assistant` → `tool`), it closes the current
+///   message and returns it from [`update`], starting a new one for the new role.
 ///
-/// Today it merges only these contiguous cases:
-/// - `MessageDelta::Content(Part::Text)` + `MessageDelta::Content(Part::Text)` → string append
-/// - `MessageDelta::Reasoning(Part::Text)` + `MessageDelta::Reasoning(Part::Text)` → string append
-/// - `MessageDelta::ToolCall(Part::Json)` + `MessageDelta::ToolCall(Part::Json)` → string append
+/// This is handy for token-by-token or chunked streaming from LLM APIs, where many
+/// tiny deltas arrive back-to-back.
 ///
-/// Any other incoming delta will cause the buffered delta to be **finalized** into the
-/// aggregated [`Message`] using the appropriate `push_*` method, and the new delta becomes
-/// the new buffer.
+/// # Merge rules (contiguous-only)
+/// - `Content(Text) + Content(Text)` → append text
+/// - `Reasoning(Text) + Reasoning(Text)` → append text
+/// - `ToolCall(Function { id: _, function })`
+///   + `ToolCall(Function { id: None, function })` → append `function`
 ///
-/// This is especially useful when consuming token-by-token or chunked outputs from
-/// streaming LLM APIs where many tiny deltas of the same field arrive back-to-back.
+/// Any other case is not merged; instead, the buffer is flushed to the current message.
 ///
 /// # Lifecycle
-/// 1. Create with [`new`], giving the role of the resulting aggregated message.
-/// 2. Feed deltas in arrival order via [`update`].
-/// 3. Call [`finalize`] **once** to flush the last buffered delta and obtain the
-///    completed [`Message`]. `finalize` consumes the aggregator.
+/// 1. Construct with [`new`].
+/// 2. Feed deltas in order with [`update`].  
+///    - Returns `Some(Message)` **only** when a role boundary is crossed,
+///      finalizing and yielding the previous role’s message.
+///    - Returns `None` otherwise.
+/// 3. Call [`finalize`] to flush and retrieve the last in-progress message (if any).
 ///
 /// # Guarantees & Notes
-/// - **Order-preserving**: deltas are incorporated in the exact order they are seen.
-/// - **Zero parsing**: for `ToolCall(Part::Json)`, content is treated as a raw JSON string
-///   and concatenated; parsing (if any) is your responsibility after finalization.
-/// - **Cheap steady-state**: contiguous text/json chunks append in-place with `String::push_str`.
-/// - **Thread safety**: this type is not synchronized; use it on one task/thread at a time.
+/// - **Order-preserving**: incorporation order matches arrival order.
+/// - **Zero parsing**: tool-call JSON is treated as raw text; parse post-aggregation.
+/// - **Cheap steady-state**: merges use `String::push_str`.
+/// - **Single-threaded**: not synchronized; use on one task/thread at a time.
 /// - **Panics**: none expected.
 ///
-/// # Example: simple concatenation
+/// # Example
 /// ```rust
-/// # use crate::value::{MessageAggregator, MessageDelta, Message, Part, Role};
-/// let mut agg = MessageAggregator::new(Role::Assistant);
+/// # use crate::value::{MessageAggregator, MessageDelta, Part, Role, Message};
+/// let mut agg = MessageAggregator::new();
 ///
-/// agg.update(MessageDelta::Content(Part::Text("Hel".into())));
-/// agg.update(MessageDelta::Content(Part::Text("lo".into())));
-/// agg.update(MessageDelta::Reasoning(Part::Text(" chain-of-thought chunk".into())));
+/// // assistant streams content
+/// assert!(agg.update(MessageDelta::new_assistant_content(Part::Text("Hel".into()))).is_none());
+/// assert!(agg.update(MessageDelta::new_assistant_content(Part::Text("lo".into()))).is_none());
 ///
-/// let msg: Message = agg.finalize();
-/// assert_eq!(msg.content_text(), Some("Hello")); // assuming a helper accessor
-/// // reasoning and other fields were also appended in arrival order.
+/// // role switches to tool: prior assistant message is returned
+/// let m1 = agg.update(MessageDelta::new_tool_content(Part::Text("ok".into()))).unwrap();
+/// // ... use m1
+///
+/// // finalize remaining (tool) message
+/// let m2 = agg.finalize().unwrap();
+/// // ... use m2
 /// ```
-///
-/// # Methods
-/// - [`new`]: initialize with the target message role.
-/// - [`update`]: feed a single [`MessageDelta`]; may coalesce with the buffered delta or flush it.
-/// - [`finalize`]: flush the last buffered delta and return the completed [`Message`].
-///
-/// [`new`]: Self::new
-/// [`update`]: Self::update
-/// [`finalize`]: Self::finalize
 #[derive(Debug)]
 pub struct MessageAggregator {
+    /// Last unflushed delta; candidate for coalescing.
     last_delta: Option<MessageDelta>,
-    aggregated: Message,
+    /// The in-progress message for the current role.
+    last_message: Option<Message>,
 }
 
 impl MessageAggregator {
-    pub fn new(role: Role) -> Self {
+    /// Creates a fresh aggregator with no buffered state.
+    pub fn new() -> Self {
         MessageAggregator {
             last_delta: None,
-            aggregated: Message::new(role),
+            last_message: None,
         }
     }
 
-    fn finalize_last_delta(&mut self) {
+    /// Flushes the buffered delta (if any and non-empty) into `last_message`,
+    /// creating the message if it does not yet exist.
+    fn flush_buffer_into_message(&mut self) {
+        // Drop empty buffered delta, if present.
+        let should_drop = self
+            .last_delta
+            .as_ref()
+            .map(|d| d.get_part().is_empty())
+            .unwrap_or(false);
+        if should_drop {
+            self.last_delta.take();
+            return;
+        }
+
         if let Some(last_delta) = self.last_delta.take() {
+            // Ensure we have a target message for this role.
+            let mut msg = match self.last_message.take() {
+                Some(m) => m,
+                None => Message::new(last_delta.get_role().to_owned()),
+            };
+
             match last_delta {
-                MessageDelta::Content(part) => {
-                    self.aggregated.push_content(part);
-                }
-                MessageDelta::Reasoning(part) => {
-                    self.aggregated.push_reasoning(part);
-                }
-                MessageDelta::ToolCall(part) => {
-                    self.aggregated.push_tool_calls(part);
-                }
+                MessageDelta::Content(_, part) => msg.push_content(part),
+                MessageDelta::Reasoning(_, part) => msg.push_reasoning(part),
+                MessageDelta::ToolCall(_, part) => msg.push_tool_calls(part),
             }
-        };
+
+            self.last_message = Some(msg);
+        }
     }
 
-    pub fn update(&mut self, delta: MessageDelta) {
+    /// Feed one streaming delta.
+    ///
+    /// Returns `Some(Message)` only when the **role changes**, which closes and yields
+    /// the previously aggregated message. Otherwise returns `None`.
+    pub fn update(&mut self, delta: MessageDelta) -> Option<Message> {
+        // If the incoming role differs, close out the current message.
+        if self
+            .last_delta
+            .as_ref()
+            .map(|d| d.get_role() != delta.get_role())
+            .unwrap_or(false)
+        {
+            self.flush_buffer_into_message();
+            self.last_delta = Some(delta);
+            return self.last_message.take();
+        }
+
+        // Try in-place coalescing; otherwise flush and replace buffer.
         match (&mut self.last_delta, delta) {
+            // Content(Text) + Content(Text)
             (
-                Some(MessageDelta::Content(Part::Text(last_text))),
-                MessageDelta::Content(Part::Text(text)),
+                Some(MessageDelta::Content(_, Part::Text(acc))),
+                MessageDelta::Content(_, Part::Text(new)),
             ) => {
-                last_text.push_str(&text);
+                acc.push_str(&new);
             }
+
+            // Reasoning(Text) + Reasoning(Text)
             (
-                Some(MessageDelta::Reasoning(Part::Text(last_text))),
-                MessageDelta::Reasoning(Part::Text(text)),
+                Some(MessageDelta::Reasoning(_, Part::Text(acc))),
+                MessageDelta::Reasoning(_, Part::Text(new)),
             ) => {
-                last_text.push_str(&text);
+                acc.push_str(&new);
             }
+
+            // ToolCall(Function{..}) + ToolCall(Function{id: None, ..})
             (
-                Some(MessageDelta::ToolCall(Part::Json(last_text))),
-                MessageDelta::ToolCall(Part::Json(text)),
+                Some(MessageDelta::ToolCall(
+                    _,
+                    Part::Function {
+                        function: acc_fn, ..
+                    },
+                )),
+                MessageDelta::ToolCall(_, Part::Function { id: None, function }),
             ) => {
-                last_text.push_str(&text);
+                acc_fn.push_str(&function);
             }
+
+            // No prior buffer → start buffering.
             (None, delta) => {
                 self.last_delta = Some(delta);
             }
+
+            // Not mergeable → flush buffer into message, then buffer the new delta.
             (Some(_), delta) => {
-                // Current last_delta -> registred into `self.aggregated`
-                self.finalize_last_delta();
-                // Current delta -> last delta
+                self.flush_buffer_into_message();
                 self.last_delta = Some(delta);
             }
-        };
+        }
+
+        None
     }
 
-    pub fn finalize(mut self) -> Message {
-        self.finalize_last_delta();
-        self.aggregated
+    /// Finalizes the aggregator, flushing any buffered content and returning the
+    /// last in-progress message, if present.
+    pub fn finalize(mut self) -> Option<Message> {
+        self.flush_buffer_into_message();
+        self.last_message
     }
 }

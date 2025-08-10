@@ -56,6 +56,8 @@ impl LanguageModel for LocalLanguageModel {
                     continue;
                 } else if s == "</tool_call>" {
                     mode = "content".to_owned();
+                    // It's a separator when successive tool call occurs
+                     yield MessageDelta::new_assistant_content(Part::Text(String::new()));
                     continue;
                 } else if s == "<think>" {
                     mode = "reasoning".to_owned();
@@ -65,11 +67,11 @@ impl LanguageModel for LocalLanguageModel {
                     continue;
                 } else {
                     if mode == "content" {
-                        yield MessageDelta::content(Part::Text(s));
+                        yield MessageDelta::new_assistant_content(Part::Text(s));
                     } else if mode == "reasoning" {
-                        yield MessageDelta::reasoning(Part::Text(s));
+                        yield MessageDelta::new_assistant_reasoning(Part::Text(s));
                     } else if mode == "tool_call" {
-                        yield MessageDelta::tool_call(Part::Json(s));
+                        yield MessageDelta::new_assistant_tool_call(Part::Function{id: None, function: s});
                     }
                 }
             }
@@ -129,11 +131,13 @@ mod tests {
             Message::with_content(Role::System, Part::new_text("You are an assistant.")),
             Message::with_content(Role::User, Part::new_text("Hi what's your name?")),
         ];
-        let mut agg = MessageAggregator::new(Role::Assistant);
+        let mut agg = MessageAggregator::new();
         let mut strm = model.run(Vec::new(), msgs);
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
-            agg.update(delta);
+            if let Some(msg) = agg.update(delta) {
+                println!("{:?}", msg);
+            }
         }
         println!("{:?}", agg.finalize());
     }
@@ -176,17 +180,25 @@ mod tests {
             Role::User,
             Part::new_text("How much hot currently in Dubai?"),
         )];
-        let mut agg = MessageAggregator::new(Role::Assistant);
+        let mut agg = MessageAggregator::new();
         let mut strm = model.run(tools, msgs);
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
-            agg.update(delta);
+            if let Some(msg) = agg.update(delta) {
+                println!("{:?}", msg);
+            }
         }
         let resp = agg.finalize();
         println!("Resp: {:?}", resp);
-        let tc =
-            ToolCall::try_from_string(resp.tool_calls().get(0).unwrap().get_json_owned().unwrap())
-                .unwrap();
+        let tc = ToolCall::try_from_string(
+            resp.unwrap()
+                .tool_calls()
+                .get(0)
+                .unwrap()
+                .get_function_owned()
+                .unwrap(),
+        )
+        .unwrap();
         println!("Tool call: {:?}", tc);
     }
 }

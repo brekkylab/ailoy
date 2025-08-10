@@ -37,18 +37,20 @@ impl Agent {
             loop {
                 let td = self.tools.iter().map(|v| v.get_description()).collect::<Vec<_>>();
                 let mut strm = lm.clone().run(td, msgs.lock().await.clone());
-                let mut aggregator = MessageAggregator::new(Role::Assistant);
+                let mut aggregator = MessageAggregator::new();
                 while let Some(delta) = strm.next().await {
                     let delta = delta?;
                     yield delta.clone();
                     aggregator.update(delta);
                 }
-                let assistant_message = aggregator.finalize();
-                if !assistant_message.tool_calls().is_empty() {
-                    for part in assistant_message.tool_calls() {
-                        let tc = ToolCall::try_from_string(part.get_json_owned().unwrap()).unwrap();
+                let assistant_msg = aggregator.finalize().unwrap();
+                self.messages.lock().await.push(assistant_msg.clone());
+                if !assistant_msg.tool_calls().is_empty() {
+                    for part in assistant_msg.tool_calls() {
+                        let tc = ToolCall::try_from_string(part.get_function_owned().unwrap()).unwrap();
                         let tool = tools.iter().find(|v| v.get_description().get_name() == tc.get_name()).unwrap().clone();
                         let resp = tool.run(tc).await?;
+                        yield MessageDelta::Content(Role::Tool, resp.clone());
                         let tool_msg = Message::with_content(Role::Tool, resp);
                         self.messages.lock().await.push(tool_msg);
                     }
@@ -64,7 +66,7 @@ impl Agent {
 mod tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
-    async fn infer_simple_chat() {
+    async fn run_simple_chat() {
         use futures::StreamExt;
 
         use super::*;
@@ -75,18 +77,22 @@ mod tests {
         let model = cache.try_create::<LocalLanguageModel>(key).await.unwrap();
         let mut agent = Agent::new(model.into(), Vec::new());
 
-        let mut agg = MessageAggregator::new(Role::Assistant);
+        let mut agg = MessageAggregator::new();
         let mut strm = Box::pin(agent.run("Hi what's your name?"));
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
-            agg.update(delta);
+            if let Some(msg) = agg.update(delta) {
+                println!("{:?}", msg);
+            }
         }
-        println!("{:?}", agg.finalize());
+        if let Some(msg) = agg.finalize() {
+            println!("{:?}", msg);
+        }
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
-    async fn infer_tool_call() {
+    async fn run_tool_call() {
         use futures::StreamExt;
 
         use super::*;
@@ -122,14 +128,35 @@ mod tests {
                         .with_desc("Null if the given city name is unavailable."),
                 ),
             ),
-            Arc::new(|_| Part::new_text("0")),
+            Arc::new(|tc| {
+                if tc
+                    .get_argument()
+                    .as_object()
+                    .unwrap()
+                    .get("unit")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    == "Celcius"
+                {
+                    Part::new_text("40")
+                } else {
+                    Part::new_text("104")
+                }
+            }),
         ))];
         let mut agent = Agent::new(model.into(), tools);
 
+        let mut agg = MessageAggregator::new();
         let mut strm = Box::pin(agent.run("How much hot currently in Dubai?"));
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
-            println!("Resp: {:?}", delta);
+            if let Some(msg) = agg.update(delta) {
+                println!("{:?}", msg);
+            }
+        }
+        if let Some(msg) = agg.finalize() {
+            println!("{:?}", msg);
         }
     }
 }
