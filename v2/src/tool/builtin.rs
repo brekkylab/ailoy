@@ -1,21 +1,25 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    fmt::{self, Debug, Formatter},
+    pin::Pin,
+    sync::Arc,
+};
 
 use crate::{
     tool::Tool,
-    value::{MessageDelta, Part, ToolDescription},
+    value::{Part, ToolDescription, ToolDescriptionArgument},
 };
 
 #[derive(Clone)]
 pub struct BuiltinTool {
     desc: ToolDescription,
-    behavior: Arc<dyn Fn() -> ()>,
+    f: Arc<dyn Fn(&serde_json::Value) -> Part>,
 }
 
 impl Debug for BuiltinTool {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("BuiltinTool")
             .field("desc", &self.desc)
-            .field("behavior", &())
+            .field("f", &"(Function)")
             .finish()
     }
 }
@@ -27,11 +31,35 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    fn run(
-        self,
-        toll_call: Part,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<MessageDelta, String>>>> {
-        let tool_call = toll_call.get_json();
-        todo!()
+    fn run(self, toll_call: Part) -> Pin<Box<dyn Future<Output = Result<Part, String>>>> {
+        Box::pin(async move { Ok((self.f)(toll_call.get_json().unwrap())) })
     }
+}
+
+pub fn create_terminal_tool() {
+    let current_shell = {
+        #[cfg(target_family = "unix")]
+        {
+            "bash"
+        }
+        #[cfg(target_family = "windows")]
+        {
+            "powershell"
+        }
+    };
+    let desc = ToolDescription::new(
+        "execute_command",
+        format!(
+            "Executes a command on current system. The current shell is {}.",
+            current_shell
+        ),
+        ToolDescriptionArgument::new_object().with_properties(
+            [(
+                "command",
+                ToolDescriptionArgument::new_string().with_desc("The command to execute."),
+            )],
+            ["command"],
+        ),
+        ToolDescriptionArgument::new_string().with_desc("stdout results"),
+    );
 }

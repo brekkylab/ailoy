@@ -146,29 +146,32 @@ mod tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn test2() {
-        use std::collections::HashMap;
-
         use futures::StreamExt;
 
         use super::*;
-        use crate::value::{JSONSchemaElement, MessageAggregator, Role, ToolDescription};
+        use crate::value::{MessageAggregator, Role, ToolDescription, ToolDescriptionArgument};
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
         let model = cache.try_create::<LocalLanguageModel>(key).await.unwrap();
-        let mut params = HashMap::<String, JSONSchemaElement>::new();
-        params.insert(
-            "location".to_owned(),
-            JSONSchemaElement::String {
-                description: Some("The city name".to_owned()),
-            },
-        );
         let tools = vec![ToolDescription::new(
-            "weather".to_owned(),
-            "get current temperature".to_owned(),
-            params,
-            vec!["location".to_owned()],
-            JSONSchemaElement::Number { description: None },
+            "temperature",
+            "Get current temperature",
+            ToolDescriptionArgument::new_object().with_properties(
+                [
+                    (
+                        "location",
+                        ToolDescriptionArgument::new_string().with_desc("The city name"),
+                    ),
+                    (
+                        "unit",
+                        ToolDescriptionArgument::new_string().with_enum(["Celcius", "Fernheit"]),
+                    ),
+                ],
+                ["location", "unit"],
+            ),
+            ToolDescriptionArgument::new_number()
+                .with_desc("Null if the given city name is unavailable."),
         )];
         let msgs = vec![Message::with_content(
             Role::User,

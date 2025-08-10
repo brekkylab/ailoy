@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 async-stream = "0.3"
 futures = "0.3.31"
+indexmap = { version = "2", features = ["serde"] }
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 reqwest = { version = "0.12", features = ["stream"] }

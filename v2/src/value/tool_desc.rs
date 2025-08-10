@@ -1,15 +1,61 @@
-use std::{collections::HashMap, fmt};
-
+use indexmap::IndexMap;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
-    de::{self, Visitor},
+    de::{self},
     ser::SerializeStruct as _,
 };
 
-#[derive(Debug, Clone)]
-pub enum JSONSchemaElement {
+/// A recursive, reduced JSON-Schema–style node that defines the shape of a tool’s
+/// parameters and return types. This enum mirrors the subset of schema fields most
+/// LLM chat templates (e.g., Hugging Face `apply_chat_template`) expect for tool
+/// descriptions.
+///
+/// # Variants and JSON shape
+/// - `String { description, enum }`
+///   - Serializes as: `{"type":"string", "description"?: string, "enum"?: [string, ...]}`
+///   - `enum` constrains the allowed literal values.
+/// - `Number { description }`
+///   - Serializes as: `{"type":"number", "description"?: string}`
+/// - `Boolean { description }`
+///   - Serializes as: `{"type":"boolean", "description"?: string}`
+/// - `Object { properties, required }`
+///   - Serializes as: `{"type":"object", "properties": {key: <schema>, ...}, "required": [key, ...]}`
+///   - `properties` uses `IndexMap` to preserve field order when emitting JSON—useful for
+///     models that are sensitive to presentation.
+///   - By convention, every `required` key should exist in `properties`.
+/// - `Array { items }`
+///   - Serializes as: `{"type":"array", "items"?: <schema>}`
+///   - If `items` is `None`, any item shape is accepted.
+/// - `Null {}`
+///   - Serializes as: `{"type":"null"}`
+///
+/// # Notes
+/// - This is a *reduced* dialect, not a full JSON Schema implementation. Only the
+///   fields listed above are supported by the serializer/deserializer.
+/// - The type is recursive: `Object.properties` and `Array.items` hold nested
+///   `ToolDescriptionArgument` nodes.
+/// - Use builder helpers (`new_string`, `with_desc`, `with_enum`, `with_properties`,
+///   `with_items`, …) to construct nodes fluently while keeping the JSON output tidy.
+///
+/// # Examples
+/// ```json
+/// {"type":"string","description":"user id","enum":["guest","member","admin"]}
+/// {"type":"number"}
+/// {"type":"boolean","description":"whether to include archived" }
+/// {
+///   "type":"object",
+///   "properties": {
+///     "id":   {"type":"string"},
+///     "tags": {"type":"array","items":{"type":"string"}}
+///   },
+///   "required": ["id"]
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolDescriptionArgument {
     String {
         description: Option<String>,
+        r#enum: Option<Vec<String>>,
     },
     Number {
         description: Option<String>,
@@ -18,203 +64,434 @@ pub enum JSONSchemaElement {
         description: Option<String>,
     },
     Object {
-        properties: HashMap<String, Box<JSONSchemaElement>>,
-        description: Option<String>,
+        properties: IndexMap<String, Box<ToolDescriptionArgument>>,
+        required: Vec<String>,
     },
     Array {
-        items: Option<Box<JSONSchemaElement>>,
-        description: Option<String>,
+        items: Option<Box<ToolDescriptionArgument>>,
     },
-    Null,
+    Null {},
 }
 
-impl Serialize for JSONSchemaElement {
+impl ToolDescriptionArgument {
+    pub fn new_string() -> ToolDescriptionArgument {
+        ToolDescriptionArgument::String {
+            description: None,
+            r#enum: None,
+        }
+    }
+
+    pub fn new_number() -> Self {
+        Self::Number { description: None }
+    }
+
+    pub fn new_boolean() -> Self {
+        Self::Boolean { description: None }
+    }
+
+    pub fn new_object() -> Self {
+        Self::Object {
+            properties: IndexMap::new(),
+            required: Vec::new(),
+        }
+    }
+
+    pub fn new_array() -> Self {
+        Self::Array { items: None }
+    }
+
+    pub fn new_null() -> Self {
+        Self::Null {}
+    }
+
+    pub fn with_desc(self, description: impl Into<String>) -> Self {
+        match self {
+            Self::String {
+                description: _,
+                r#enum,
+            } => Self::String {
+                description: Some(description.into()),
+                r#enum,
+            },
+            Self::Number { description: _ } => Self::Number {
+                description: Some(description.into()),
+            },
+            Self::Boolean { description: _ } => Self::Boolean {
+                description: Some(description.into()),
+            },
+            _ => self,
+        }
+    }
+
+    pub fn with_enum(self, choices: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        match self {
+            Self::String {
+                description,
+                r#enum: _,
+            } => Self::String {
+                description,
+                r#enum: Some(choices.into_iter().map(|v| v.into()).collect()),
+            },
+            _ => self,
+        }
+    }
+
+    pub fn with_properties(
+        self,
+        properties: impl IntoIterator<Item = (impl Into<String>, impl Into<ToolDescriptionArgument>)>,
+        required: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        match self {
+            Self::Object {
+                properties: _,
+                required: _,
+            } => Self::Object {
+                properties: properties
+                    .into_iter()
+                    .map(|(k, v)| (k.into(), Box::new(v.into())))
+                    .collect(),
+                required: required.into_iter().map(|v| v.into()).collect(),
+            },
+            _ => self,
+        }
+    }
+
+    pub fn with_items(self, items: impl Into<ToolDescriptionArgument>) -> Self {
+        match self {
+            Self::Array { items: _ } => Self::Array {
+                items: Some(Box::new(items.into())),
+            },
+            _ => self,
+        }
+    }
+}
+
+impl Serialize for ToolDescriptionArgument {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("ToolDescriptionElement", 2)?;
-
+        let mut state = serializer.serialize_struct("ToolDescriptionArgument", 2)?;
         match self {
-            JSONSchemaElement::String { description } => {
+            ToolDescriptionArgument::String {
+                description,
+                r#enum,
+            } => {
                 state.serialize_field("type", "string")?;
                 if let Some(description) = description {
                     state.serialize_field("description", description)?;
                 }
+                if let Some(r#enum) = r#enum {
+                    state.serialize_field("enum", r#enum)?;
+                }
             }
-            JSONSchemaElement::Number { description } => {
+            ToolDescriptionArgument::Number { description } => {
                 state.serialize_field("type", "number")?;
                 if let Some(description) = description {
                     state.serialize_field("description", description)?;
                 }
             }
-            JSONSchemaElement::Boolean { description } => {
+            ToolDescriptionArgument::Boolean { description } => {
                 state.serialize_field("type", "boolean")?;
                 if let Some(description) = description {
                     state.serialize_field("description", description)?;
                 }
             }
-            JSONSchemaElement::Object {
-                description,
+            ToolDescriptionArgument::Object {
                 properties,
+                required,
             } => {
                 state.serialize_field("type", "object")?;
-                if let Some(description) = description {
-                    state.serialize_field("description", description)?;
-                }
                 state.serialize_field("properties", properties)?;
+                state.serialize_field("required", required)?;
             }
-            JSONSchemaElement::Array { description, items } => {
+            ToolDescriptionArgument::Array { items } => {
                 state.serialize_field("type", "array")?;
-                if let Some(description) = description {
-                    state.serialize_field("description", description)?;
+                if let Some(items) = items {
+                    state.serialize_field("items", items)?;
                 }
-                state.serialize_field("items", &items)?;
             }
-            JSONSchemaElement::Null => {
+            ToolDescriptionArgument::Null {} => {
                 state.serialize_field("type", "null")?;
             }
         }
-
         state.end()
     }
 }
 
-impl<'de> Deserialize<'de> for JSONSchemaElement {
+impl<'de> Deserialize<'de> for ToolDescriptionArgument {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct JSONSchemaElementVisitor;
-
-        impl<'de> Visitor<'de> for JSONSchemaElementVisitor {
-            type Value = JSONSchemaElement;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a valid JSONSchemaElement")
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::MapAccess<'de>,
-            {
-                let mut type_field = None;
-                let mut description = None;
-                let mut properties = None;
-                let mut items = None;
-
-                while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "type" => {
-                            type_field = Some(map.next_value::<String>()?);
-                        }
-                        "description" => {
-                            description = map.next_value()?;
-                        }
-                        "properties" => {
-                            properties = map.next_value()?;
-                        }
-                        "items" => {
-                            items = map.next_value()?;
-                        }
-                        _ => {}
-                    }
-                }
-
-                match type_field.as_deref() {
-                    Some("string") => Ok(JSONSchemaElement::String { description }),
-                    Some("number") => Ok(JSONSchemaElement::Number { description }),
-                    Some("boolean") => Ok(JSONSchemaElement::Boolean { description }),
-                    Some("object") => Ok(JSONSchemaElement::Object {
-                        description,
-                        properties: properties.unwrap_or_default(),
-                    }),
-                    Some("array") => Ok(JSONSchemaElement::Array { description, items }),
-                    Some("null") => Ok(JSONSchemaElement::Null),
-                    _ => Err(de::Error::custom("Invalid type")),
-                }
-            }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Raw {
+            #[serde(rename = "type")]
+            r#type: String,
+            description: Option<String>,
+            properties: Option<IndexMap<String, Box<ToolDescriptionArgument>>>,
+            required: Option<Vec<String>>,
+            r#enum: Option<Vec<String>>,
+            items: Option<Box<ToolDescriptionArgument>>,
         }
 
-        deserializer.deserialize_map(JSONSchemaElementVisitor)
+        let raw = Raw::deserialize(deserializer)?;
+
+        match raw.r#type.as_str() {
+            "string" => Ok(ToolDescriptionArgument::String {
+                description: raw.description,
+                r#enum: raw.r#enum,
+            }),
+            "number" => Ok(ToolDescriptionArgument::Number {
+                description: raw.description,
+            }),
+            "boolean" => Ok(ToolDescriptionArgument::Boolean {
+                description: raw.description,
+            }),
+            "object" => Ok(ToolDescriptionArgument::Object {
+                properties: raw.properties.unwrap_or_default(),
+                required: raw.required.unwrap_or_default(),
+            }),
+            "array" => Ok(ToolDescriptionArgument::Array { items: raw.items }),
+            "null" => Ok(ToolDescriptionArgument::Null {}),
+            other => Err(de::Error::custom(format!(r#"unsupported "type": {other}"#))),
+        }
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Describes a single callable tool for an LLM: its human-readable name/description,
+/// the JSON-shaped parameter schema, and the JSON-shaped return schema. Tool
+/// descriptions are typically embedded in a chat template’s system/header section
+/// so the model knows *what it can call* and *how to format arguments/returns*.
+///
+/// This struct pairs with `ToolDescriptionArgument`, a reduced, recursive
+/// JSON-Schema–style node used to express `parameters` and `return`.
+///
+/// # Fields
+/// - `name`
+///   Human-friendly identifier the model can reference when calling the tool.
+/// - `description`
+///   Short, imperative explanation of what the tool does and when to use it.
+/// - `parameters`
+///   Schema describing the request payload. In practice this is **usually**
+///   `ToolDescriptionArgument::Object` with `properties` (argument names) and
+///   `required` (argument names that must be present).
+/// - `return`
+///   Schema describing the tool’s JSON response. Can be any `ToolDescriptionArgument`,
+///   commonly an `Object`.
+///
+/// # Serialization format
+/// This type serializes/deserializes with a fixed outer wrapper so that the JSON
+/// matches common chat-template expectations (e.g., Hugging Face
+/// `apply_chat_template`):
+///
+/// ```json
+/// {
+///   "type": "function",
+///   "function": {
+///     "name": "tool_name",
+///     "description": "What the tool does",
+///     "parameters": { /* ToolDescriptionArgument */ },
+///     "return": { /* ToolDescriptionArgument */ }
+///   }
+/// }
+/// ```
+///
+/// Notes:
+/// - The Rust field `r#return` is emitted/parsed as the JSON key `"return"`.
+/// - Ordering of `Object.properties` is preserved via `IndexMap`, which can help
+///   readability and (for some models) prompt stability.
+///
+/// # Conventions & tips
+/// - Keep `name` concise and stable; avoid spaces that could be misparsed.
+/// - Write `description` as guidance for the model (“Use this to … when …”).
+/// - Prefer explicit, narrow schemas. For example, use `String { enum: [...] }`
+///   to constrain literals; mark truly required args in `required`.
+/// - For `parameters`, use `Object` with well-named properties; avoid deeply
+///   nested or overly generic shapes unless necessary.
+/// - For `return`, document the *machine-readable* JSON shape your tool produces.
+///   (LLMs tend to follow the declared schema more reliably than prose.)
+///
+/// # Example
+/// Building a tool that fetches weather by city and returns a number:
+///
+/// ```rust
+/// use indexmap::IndexMap;
+///
+/// let params = ToolDescriptionArgument::new_object().with_properties(
+///     [("location", ToolDescriptionArgument::new_string()
+///         .with_desc("The city name"))],
+///     ["location"],
+/// );
+///
+/// let ret = ToolDescriptionArgument::new_number()
+///     .with_desc("Current temperature in Celsius");
+///
+/// let tool = ToolDescription {
+///     name: "weather".into(),
+///     description: "Get the current temperature for a city".into(),
+///     parameters: params,
+///     r#return: ret,
+/// };
+///
+/// let json = serde_json::to_string_pretty(&tool).unwrap();
+/// // Yields:
+/// // {
+/// //   "type": "function",
+/// //   "function": {
+/// //     "name": "weather",
+/// //     "description": "Get the current temperature for a city",
+/// //     "parameters": {
+/// //       "type": "object",
+/// //       "properties": {
+/// //         "location": { "type": "string", "description": "The city name" }
+/// //       },
+/// //       "required": ["location"]
+/// //     },
+/// //     "return": { "type": "number", "description": "Current temperature in Celsius" }
+/// //   }
+/// // }
+/// ```
+///
+/// # Compatibility
+/// The emitted JSON shape matches the commonly used “function tool” format and
+/// is suitable for chat templates that accept a list of tools with schemas (e.g.,
+/// Hugging Face Transformers’ `apply_chat_template`). The schema nodes themselves
+/// intentionally support a reduced subset of JSON Schema for predictability.
+///
+/// For more background on the expected schema shape, see:
+/// https://huggingface.co/docs/transformers/v4.53.3/en/chat_extras#schema
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolDescription {
-    pub name: String,
+    name: String,
 
-    pub description: String,
+    description: String,
 
-    #[serde(with = "tool_description_parameters_schema")]
-    pub parameters: HashMap<String, JSONSchemaElement>,
+    parameters: ToolDescriptionArgument, // In most cases, it's `ToolDescriptionArgument::Object`
 
-    pub required: Vec<String>,
-
-    #[serde(rename = "return")]
-    pub ret: JSONSchemaElement,
+    r#return: ToolDescriptionArgument,
 }
 
 impl ToolDescription {
     pub fn new(
-        name: String,
-        description: String,
-        parameters: HashMap<String, JSONSchemaElement>,
-        required: Vec<String>,
-        ret: JSONSchemaElement,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: impl Into<ToolDescriptionArgument>,
+        r#return: impl Into<ToolDescriptionArgument>,
     ) -> Self {
         Self {
-            name,
-            description,
-            parameters,
-            required,
-            ret,
+            name: name.into(),
+            description: description.into(),
+            parameters: parameters.into(),
+            r#return: r#return.into(),
         }
     }
 }
 
-mod tool_description_parameters_schema {
-    use super::*;
-    use serde::ser::SerializeMap;
-
-    pub fn serialize<S>(
-        map: &HashMap<String, JSONSchemaElement>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
+impl Serialize for ToolDescription {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_map(Some(2))?;
-        state.serialize_entry("type", "object")?;
-        state.serialize_entry("properties", map)?;
-        state.end()
-    }
+        // Borrowing inner view to control field order inside "function"
+        #[derive(Serialize)]
+        struct Inner<'a> {
+            name: &'a str,
+            description: &'a str,
+            parameters: &'a ToolDescriptionArgument,
+            #[serde(rename = "return")]
+            r#return: &'a ToolDescriptionArgument,
+        }
 
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<HashMap<String, JSONSchemaElement>, D::Error>
+        let mut st = serializer.serialize_struct("ToolDescription", 2)?;
+        st.serialize_field("type", "function")?;
+        st.serialize_field(
+            "function",
+            &Inner {
+                name: &self.name,
+                description: &self.description,
+                parameters: &self.parameters,
+                r#return: &self.r#return,
+            },
+        )?;
+        st.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolDescription {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        struct Raw<T> {
+        struct InnerOwned {
+            name: String,
+            description: String,
+            parameters: ToolDescriptionArgument,
+            #[serde(rename = "return")]
+            r#return: ToolDescriptionArgument,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wrapper {
             #[serde(rename = "type")]
-            ty: Option<String>,
-
-            properties: Option<HashMap<String, T>>,
-
-            #[serde(flatten)]
-            _extra: HashMap<String, serde::de::IgnoredAny>,
+            r#type: String,
+            function: InnerOwned,
         }
 
-        let raw = Raw::<JSONSchemaElement>::deserialize(deserializer)?;
-        if let Some(t) = raw.ty.as_deref() {
-            if t != "object" {
-                return Err(<D::Error as de::Error>::custom(format!(
-                    "parameters.type must be \"object\" (got {t})"
-                )));
-            }
+        let w = Wrapper::deserialize(deserializer)?;
+
+        if w.r#type != "function" {
+            return Err(de::Error::custom(format!(
+                r#"expected `"type":"function"`, got "{}""#,
+                w.r#type
+            )));
         }
-        Ok(raw.properties.unwrap_or_default())
+
+        Ok(ToolDescription {
+            name: w.function.name,
+            description: w.function.description,
+            parameters: w.function.parameters,
+            r#return: w.function.r#return,
+        })
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_simple_serde() {
+        let original = ToolDescription::new(
+            "temperature",
+            "Get current temperature",
+            ToolDescriptionArgument::new_object().with_properties(
+                [
+                    (
+                        "location",
+                        ToolDescriptionArgument::new_string().with_desc("The city name"),
+                    ),
+                    (
+                        "unit",
+                        ToolDescriptionArgument::new_string()
+                            .with_desc("Default: Celcius")
+                            .with_enum(["Celcius", "Fernheit"]),
+                    ),
+                ],
+                ["location"],
+            ),
+            ToolDescriptionArgument::new_number(),
+        );
+        let serialized = {
+            let expected = r#"{"type":"function","function":{"name":"temperature","description":"Get current temperature","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city name"},"unit":{"type":"string","description":"Default: Celcius","enum":["Celcius","Fernheit"]}},"required":["location"]},"return":{"type":"number"}}}"#;
+            let actual = serde_json::to_string(&original).unwrap();
+            assert_eq!(expected, actual);
+            actual
+        };
+        let recovered: ToolDescription = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(original, recovered);
     }
 }
