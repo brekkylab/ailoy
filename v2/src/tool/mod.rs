@@ -5,6 +5,9 @@ use std::pin::Pin;
 
 use crate::value::{Part, ToolCall, ToolDescription};
 
+pub use builtin::*;
+pub use mcp::*;
+
 pub trait Tool: Clone {
     fn get_description(&self) -> ToolDescription;
 

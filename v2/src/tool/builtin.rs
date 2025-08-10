@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     tool::Tool,
-    value::{Part, ToolCall, ToolDescription, ToolDescriptionArgument},
+    value::{Part, ToolCall, ToolCallArgument, ToolDescription, ToolDescriptionArgument},
 };
 
 #[derive(Clone)]
@@ -36,7 +36,7 @@ impl Tool for BuiltinTool {
     }
 }
 
-pub fn create_terminal_tool() {
+pub fn create_terminal_tool() -> BuiltinTool {
     let current_shell = {
         #[cfg(target_family = "unix")]
         {
@@ -62,4 +62,10 @@ pub fn create_terminal_tool() {
         ),
         ToolDescriptionArgument::new_string().with_desc("stdout results"),
     );
+    let f = Arc::new(|tc: ToolCall| {
+        let args = tc.get_argument().as_object().unwrap();
+        let cmd = args.get("command").unwrap().as_str().unwrap();
+        Part::new_text(cmd.to_owned())
+    });
+    BuiltinTool { desc, f }
 }

@@ -476,6 +476,80 @@ pub enum ToolCallArgument {
     Null,
 }
 
+impl ToolCallArgument {
+    /// Returns the inner `&str` if this is `String`, otherwise `None`.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            ToolCallArgument::String(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Returns the inner as `i64` if this is `Number` and the value is a finite, in-range integer.
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            ToolCallArgument::Number(v)
+                if v.is_finite()
+                    && v.fract() == 0.0
+                    && *v >= (i64::MIN as f64)
+                    && *v <= (i64::MAX as f64) =>
+            {
+                Some(*v as i64)
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the inner as `u64` if this is `Number` and the value is a finite, in-range integer.
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            ToolCallArgument::Number(v)
+                if v.is_finite() && v.fract() == 0.0 && *v >= 0.0 && *v <= (u64::MAX as f64) =>
+            {
+                Some(*v as u64)
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the inner `f64` if this is `Number`, otherwise `None`.
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            ToolCallArgument::Number(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Returns the inner `bool` if this is `Boolean`, otherwise `None`.
+    pub fn as_boolean(&self) -> Option<bool> {
+        match self {
+            ToolCallArgument::Boolean(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Returns the inner object map if this is `Object`, otherwise `None`.
+    pub fn as_object(&self) -> Option<&std::collections::HashMap<String, Box<ToolCallArgument>>> {
+        match self {
+            ToolCallArgument::Object(map) => Some(map),
+            _ => None,
+        }
+    }
+
+    /// Returns the inner array as a slice if this is `Array`, otherwise `None`.
+    pub fn as_array(&self) -> Option<&[Box<ToolCallArgument>]> {
+        match self {
+            ToolCallArgument::Array(vec) => Some(vec.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if this is `Null`.
+    pub fn as_null(&self) -> bool {
+        matches!(self, ToolCallArgument::Null)
+    }
+}
+
 /// Represents a single tool invocation requested by an LLM.
 ///
 /// This struct models one entry in an assistant message’s `tool_calls` array
@@ -514,6 +588,14 @@ impl ToolCall {
     pub fn try_from_string(s: impl AsRef<str>) -> Result<Self, String> {
         serde_json::from_str(s.as_ref())
             .map_err(|e| format!("serde_json::from_str failed: {}", e.to_string()))
+    }
+
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn get_argument(&self) -> &ToolCallArgument {
+        &self.arguments
     }
 }
 
