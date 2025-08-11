@@ -28,6 +28,73 @@ async fn download(url: Url) -> Result<Vec<u8>, String> {
     Ok(bytes.to_vec())
 }
 
+/// A content-addressed, remote-backed cache for Ailoy assets.
+///
+/// # Overview
+/// `Cache` resolves a logical file (by `dirname`/`filename`) to bytes by consulting a
+/// per-directory manifest on a remote store and a local on-disk cache:
+///
+/// 1. Load the remote manifest `_<manifest>.json` for `dirname` (fetched once and
+///    memoized in-memory).
+/// 2. If a local file exists at `<root>/<dirname>/<filename>`, compute its
+///    SHA-1 and compare with the manifest entry.
+/// 3. If hashes match, return the local bytes.
+/// 4. Otherwise, download the **content-addressed** object named by the manifest’s
+///    SHA-1 from the remote (path `<dirname>/<sha1>`), write it back to the local
+///    filename, and return the bytes.
+///
+/// This design lets you keep stable logical filenames locally while fetching immutable
+/// blobs from the remote by their content hash.
+///
+/// # Environment variables
+/// - `AILOY_CACHE_ROOT` — overrides the local cache root.  
+///   Defaults to:
+///   - Unix: `${HOME}/.cache/ailoy`
+///   - Windows: `%LOCALAPPDATA%\\ailoy`
+///   - WASM: `/ailoy`
+/// - `AILOY_CACHE_REMOTE_URL` — overrides the remote base URL. Must be a valid absolute
+///   URL. If unset or invalid, a built-in default is used.
+///
+/// # Concurrency
+/// A cloned `Cache` is intended to to pass around and is safe to use from multiple async
+/// tasks. Manifests are cached per directory for the lifetime of the `Cache`
+/// instance; if the remote manifest changes, create a new `Cache` (or add a refresh
+/// path) to observe updates.
+///
+/// # Key types
+/// - [`CacheEntry`]: identifies a file by `dirname` and `filename`.
+/// - [`ManifestDirectory`]: JSON manifest for a directory mapping logical filenames
+///   to [`Manifest`] (which includes at least the SHA-1).
+/// - [`CacheContents`]: a collection of `(CacheEntry, bytes)` used by [`try_create`].
+///
+/// # Methods
+/// - [`get`]: Fetch a single file by `CacheEntry`, applying the cache logic above.
+/// - [`try_create`]: Build a typed value `T: TryFromCache` by asking `T` which files
+///   it needs (`claim_files`), fetching them in parallel, and letting `T` assemble
+///   itself from the resulting `CacheContents`.
+///
+/// # Errors
+/// Returns `Err(String)` for network failures, invalid manifests, missing manifest
+/// entries, or filesystem errors. Error messages are human-readable and include the
+/// originating subsystem where possible.
+///
+/// # Examples
+/// Fetch a tokenizer file:
+/// ```rust,ignore
+/// let cache = Cache::new();
+/// let bytes = cache
+///     .get(&CacheEntry::new("Qwen--Qwen3-0.6B", "tokenizer.json"))
+///     .await?;
+/// println!("Downloaded {}", bytes.len());
+/// ```
+///
+/// Construct a type from cache using [`TryFromCache`]:
+/// ```rust,ignore
+/// let model = cache.try_create::<MyType>("Qwen/Qwen3-0.6B").await?;
+/// ```
+///
+/// # See also
+/// [`TryFromCache`], [`CacheEntry`], [`CacheContents`], [`Manifest`], [`ManifestDirectory`]
 #[derive(Debug, Clone)]
 pub struct Cache {
     root: PathBuf,
