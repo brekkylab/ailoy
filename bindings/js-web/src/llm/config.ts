@@ -209,7 +209,7 @@ export const prebuiltAppConfig: AppConfig = {
       vram_required_MB: 1403.34,
       low_resource_required: true,
       overrides: {
-        context_window_size: 4096,
+        context_window_size: 40960,
       },
     },
     {
