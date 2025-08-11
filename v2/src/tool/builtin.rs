@@ -12,7 +12,7 @@ use crate::{
 #[derive(Clone)]
 pub struct BuiltinTool {
     desc: ToolDescription,
-    f: Arc<dyn Fn(ToolCall) -> Part>,
+    f: Arc<dyn Fn(ToolCall) -> Part + Send + Sync + 'static>,
 }
 
 impl Debug for BuiltinTool {
@@ -25,7 +25,10 @@ impl Debug for BuiltinTool {
 }
 
 impl BuiltinTool {
-    pub fn new(desc: ToolDescription, f: Arc<dyn Fn(ToolCall) -> Part>) -> Self {
+    pub fn new(
+        desc: ToolDescription,
+        f: Arc<dyn Fn(ToolCall) -> Part + Send + Sync + 'static>,
+    ) -> Self {
         BuiltinTool { desc, f }
     }
 }
@@ -35,7 +38,10 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    fn run(self, toll_call: ToolCall) -> Pin<Box<dyn Future<Output = Result<Part, String>>>> {
+    fn run(
+        self,
+        toll_call: ToolCall,
+    ) -> Pin<Box<dyn Future<Output = Result<Part, String>> + Send + Sync>> {
         Box::pin(async move { Ok((self.f)(toll_call)) })
     }
 }

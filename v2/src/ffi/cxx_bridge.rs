@@ -1,5 +1,7 @@
+pub use ffi::*;
+
 #[cxx::bridge]
-pub mod ffi {
+mod ffi {
     unsafe extern "C++" {
         include!("cache.hpp");
 
@@ -58,9 +60,15 @@ pub mod ffi {
     }
 }
 
-pub use ffi::*;
+unsafe impl Send for ffi::CacheContents {}
 
-impl std::fmt::Debug for TVMLanguageModel {
+unsafe impl Send for ffi::DLDevice {}
+
+unsafe impl Send for ffi::DLManagedTensorVersioned {}
+
+unsafe impl Send for ffi::TVMLanguageModel {}
+
+impl std::fmt::Debug for ffi::TVMLanguageModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TVMLanguageModel").finish()
     }

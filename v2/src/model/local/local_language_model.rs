@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::Arc};
 
 use async_stream::try_stream;
 use futures::Stream;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 
 use crate::{
     cache::{Cache, CacheElement, TryFromCache},
@@ -15,8 +15,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct LocalLanguageModel {
-    chat_template: Arc<RwLock<ChatTemplate>>,
-    tokenizer: Arc<RwLock<Tokenizer>>,
+    chat_template: ChatTemplate,
+    tokenizer: Tokenizer,
     inferencer: Arc<Mutex<Inferencer>>,
 }
 
@@ -27,8 +27,8 @@ impl LanguageModel for LocalLanguageModel {
         msgs: Vec<Message>,
     ) -> Pin<Box<dyn Stream<Item = Result<MessageDelta, String>>>> {
         let strm = try_stream! {
-            let prompt = self.chat_template.read().await.apply_with_vec(&tools, &msgs, true)?;
-            let input_tokens = self.tokenizer.read().await.encode(&prompt, true)?;
+            let prompt = self.chat_template.apply_with_vec(&tools, &msgs, true)?;
+            let input_tokens = self.tokenizer.encode(&prompt, true)?;
             self.inferencer.lock().await.prefill(&input_tokens);
             let mut last_token = *input_tokens.last().unwrap();
             let mut agg_tokens = Vec::<u32>::new();
@@ -43,7 +43,7 @@ impl LanguageModel for LocalLanguageModel {
                 let new_token = self.inferencer.lock().await.decode(last_token);
                 agg_tokens.push(new_token);
                 last_token = new_token;
-                let s = self.tokenizer.read().await.decode(agg_tokens.as_slice(), false)?;
+                let s = self.tokenizer.decode(agg_tokens.as_slice(), false)?;
                 if s.ends_with("�") {
                     continue;
                 }
@@ -107,8 +107,8 @@ impl TryFromCache for LocalLanguageModel {
         let inferencer_files = files[2..].to_vec();
         let inferencer = Inferencer::try_from_files(cache, inferencer_files)?;
         Ok(LocalLanguageModel {
-            chat_template: Arc::new(RwLock::new(chat_template)),
-            tokenizer: Arc::new(RwLock::new(tokenizer)),
+            chat_template,
+            tokenizer,
             inferencer: Arc::new(Mutex::new(inferencer)),
         })
     }

@@ -11,7 +11,10 @@ pub use mcp::*;
 pub trait Tool: Clone {
     fn get_description(&self) -> ToolDescription;
 
-    fn run(self, toll_call: ToolCall) -> Pin<Box<dyn Future<Output = Result<Part, String>>>>;
+    fn run(
+        self,
+        toll_call: ToolCall,
+    ) -> Pin<Box<dyn Future<Output = Result<Part, String>> + Send + Sync>>;
 }
 
 #[derive(Clone, Debug)]
@@ -28,7 +31,10 @@ impl Tool for AnyTool {
         }
     }
 
-    fn run(self, toll_call: ToolCall) -> Pin<Box<dyn Future<Output = Result<Part, String>>>> {
+    fn run(
+        self,
+        toll_call: ToolCall,
+    ) -> Pin<Box<dyn Future<Output = Result<Part, String>> + Send + Sync>> {
         match self {
             AnyTool::Builtin(t) => t.run(toll_call),
             AnyTool::MCP(t) => t.run(toll_call),

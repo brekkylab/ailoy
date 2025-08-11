@@ -4,7 +4,7 @@ use tokenizers::tokenizer::Tokenizer as HFTokenizer;
 
 use crate::cache::{Cache, CacheElement, TryFromCache};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Tokenizer {
     inner: HFTokenizer,
 }

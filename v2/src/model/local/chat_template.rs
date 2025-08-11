@@ -25,7 +25,7 @@ fn get_env<'a>() -> MutexGuard<'a, Environment<'static>> {
     .unwrap()
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChatTemplate {
     key: String,
 }
