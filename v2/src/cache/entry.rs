@@ -1,12 +1,12 @@
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Clone)]
-pub struct CacheElement {
-    pub(crate) dirname: String,
-    pub(crate) filename: String,
+pub struct CacheEntry {
+    dirname: String,
+    filename: String,
 }
 
-impl CacheElement {
+impl CacheEntry {
     pub fn new(dirname: impl AsRef<str>, filename: impl AsRef<str>) -> Self {
         Self {
             dirname: dirname.as_ref().to_owned(),
@@ -31,8 +31,8 @@ impl CacheElement {
     }
 }
 
-impl AsRef<CacheElement> for CacheElement {
-    fn as_ref(&self) -> &CacheElement {
+impl AsRef<CacheEntry> for CacheEntry {
+    fn as_ref(&self) -> &CacheEntry {
         self
     }
 }

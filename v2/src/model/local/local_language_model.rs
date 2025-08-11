@@ -5,7 +5,7 @@ use futures::Stream;
 use tokio::sync::Mutex;
 
 use crate::{
-    cache::{Cache, CacheElement, TryFromCache},
+    cache::{Cache, CacheEntry, TryFromCache},
     model::{
         LanguageModel,
         local::{ChatTemplate, Inferencer, Tokenizer},
@@ -85,7 +85,7 @@ impl TryFromCache for LocalLanguageModel {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheElement>, String>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheEntry>, String>>>> {
         let key = key.as_ref().to_owned();
         Box::pin(async move {
             let mut rv = Vec::new();
@@ -96,7 +96,7 @@ impl TryFromCache for LocalLanguageModel {
         })
     }
 
-    fn try_from_files(cache: &Cache, files: Vec<(CacheElement, Vec<u8>)>) -> Result<Self, String>
+    fn try_from_files(cache: &Cache, files: Vec<(CacheEntry, Vec<u8>)>) -> Result<Self, String>
     where
         Self: Sized,
     {

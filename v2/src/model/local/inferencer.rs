@@ -5,7 +5,7 @@ mod tvm_runtime {
     use cxx::UniquePtr;
 
     use crate::{
-        cache::{Cache, CacheElement, TryFromCache},
+        cache::{Cache, CacheEntry, TryFromCache},
         ffi::{TVMLanguageModel, create_dldevice, create_tvm_language_model},
     };
 
@@ -81,9 +81,9 @@ mod tvm_runtime {
         fn claim_files(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheElement>, String>>>> {
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheEntry>, String>>>> {
             let dirname = vec![key.as_ref().replace("/", "--")].join("--");
-            let elem = CacheElement::new(&dirname, "ndarray-cache.json");
+            let elem = CacheEntry::new(&dirname, "ndarray-cache.json");
             Box::pin(async move {
                 let ndarray_cache_bytes = cache.get(&elem).await?;
                 let ndarray_cache_str = std::str::from_utf8(&ndarray_cache_bytes)
@@ -99,7 +99,7 @@ mod tvm_runtime {
                     .unwrap()
                     .iter()
                     .map(|v| {
-                        CacheElement::new(
+                        CacheEntry::new(
                             &dirname,
                             v.as_object()
                                 .unwrap()
@@ -110,8 +110,8 @@ mod tvm_runtime {
                         )
                     })
                     .collect::<Vec<_>>();
-                rv.push(CacheElement::new(&dirname, "ndarray-cache.json"));
-                rv.push(CacheElement::new(
+                rv.push(CacheEntry::new(&dirname, "ndarray-cache.json"));
+                rv.push(CacheEntry::new(
                     format!(
                         "{}--{}--{}",
                         dirname,
@@ -126,7 +126,7 @@ mod tvm_runtime {
 
         fn try_from_files(
             cache: &Cache,
-            files: Vec<(CacheElement, Vec<u8>)>,
+            files: Vec<(CacheEntry, Vec<u8>)>,
         ) -> Result<Self, String> {
             let cache_root = cache.get_root();
             let mut cache_contents = crate::ffi::create_cache();

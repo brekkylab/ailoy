@@ -8,7 +8,7 @@ use std::{
 use tokio::sync::RwLock;
 use url::Url;
 
-use crate::cache::{CacheElement, TryFromCache};
+use crate::cache::{CacheEntry, TryFromCache};
 
 use super::{
     filesystem::{read, write},
@@ -84,25 +84,25 @@ impl Cache {
         return &self.remote_url;
     }
 
-    pub fn get_path(&self, elem: impl AsRef<CacheElement>) -> PathBuf {
+    pub fn get_path(&self, elem: impl AsRef<CacheEntry>) -> PathBuf {
         self.root
-            .join(&elem.as_ref().dirname)
-            .join(&elem.as_ref().filename)
+            .join(&elem.as_ref().dirname())
+            .join(&elem.as_ref().filename())
     }
 
-    pub fn get_url(&self, elem: impl AsRef<CacheElement>) -> Url {
+    pub fn get_url(&self, elem: impl AsRef<CacheEntry>) -> Url {
         self.remote_url
             .join(&format!(
                 "{}/{}",
-                elem.as_ref().dirname,
-                elem.as_ref().filename
+                elem.as_ref().dirname(),
+                elem.as_ref().filename()
             ))
             .unwrap()
     }
 
-    async fn get_manifest(&self, elem: &CacheElement) -> Result<Manifest, String> {
-        if !self.manifests.read().await.contains_key(&elem.dirname) {
-            let elem_manifest = CacheElement::new(&elem.dirname, "_manifest.json");
+    async fn get_manifest(&self, elem: &CacheEntry) -> Result<Manifest, String> {
+        if !self.manifests.read().await.contains_key(elem.dirname()) {
+            let elem_manifest = CacheEntry::new(elem.dirname(), "_manifest.json");
             let bytes = download(self.get_url(&elem_manifest)).await?;
             let text = std::str::from_utf8(&bytes)
                 .map_err(|e| format!("std::str::from_utf_8 failed: {}", e.to_string()))?;
@@ -111,21 +111,21 @@ impl Cache {
             self.manifests
                 .write()
                 .await
-                .insert(elem.dirname.clone(), value);
+                .insert(elem.dirname().to_string(), value);
         };
         let manifests_lock = self.manifests.read().await;
-        let files = &manifests_lock.get(&elem.dirname).unwrap().files;
-        if files.contains_key(&elem.filename) {
-            Ok(files.get(&elem.filename).unwrap().to_owned())
+        let files = &manifests_lock.get(elem.dirname()).unwrap().files;
+        if files.contains_key(elem.filename()) {
+            Ok(files.get(elem.filename()).unwrap().to_owned())
         } else {
             Err(format!(
                 "The file {} not exists in manifest",
-                &elem.filename
+                elem.filename()
             ))
         }
     }
 
-    pub async fn get(&self, elem: impl AsRef<CacheElement>) -> Result<Vec<u8>, String> {
+    pub async fn get(&self, elem: impl AsRef<CacheEntry>) -> Result<Vec<u8>, String> {
         let elem = elem.as_ref();
 
         // Get manifest
@@ -141,7 +141,7 @@ impl Cache {
         if local_manifest.is_some() && local_manifest.unwrap().sha1() == manifest.sha1() {
             Ok(local_bytes.unwrap())
         } else {
-            let remote_elem = CacheElement::new(&elem.dirname, manifest.sha1());
+            let remote_elem = CacheEntry::new(elem.dirname(), manifest.sha1());
             let url = self.get_url(&remote_elem);
             let bytes = download(url).await?;
             // Write back
@@ -162,7 +162,7 @@ impl Cache {
                 Ok::<_, String>(bytes)
             }
         });
-        let file_and_bytes: Vec<(CacheElement, Vec<u8>)> = join_all(futures)
+        let file_and_bytes: Vec<(CacheEntry, Vec<u8>)> = join_all(futures)
             .await
             .into_iter()
             .collect::<Result<_, _>>()?;
@@ -212,7 +212,7 @@ mod tests {
     async fn test1() {
         let cache = Cache::new();
         let bytes = cache
-            .get(&CacheElement::new("Qwen--Qwen3-0.6B", "tokenizer.json"))
+            .get(&CacheEntry::new("Qwen--Qwen3-0.6B", "tokenizer.json"))
             .await
             .unwrap();
         println!("Downloaded {}", bytes.len());

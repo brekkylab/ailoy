@@ -7,7 +7,7 @@ use minijinja::{Environment, context};
 use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
 use crate::{
-    cache::{Cache, CacheElement, TryFromCache},
+    cache::{Cache, CacheEntry, TryFromCache},
     value::{Message, ToolDescription},
 };
 
@@ -57,12 +57,12 @@ impl TryFromCache for ChatTemplate {
     fn claim_files(
         _: Cache,
         key: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheElement>, String>>>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheEntry>, String>>>> {
         let dirname = key.as_ref().replace("/", "--");
-        Box::pin(async move { Ok(vec![CacheElement::new(dirname, "chat_template.j2")]) })
+        Box::pin(async move { Ok(vec![CacheEntry::new(dirname, "chat_template.j2")]) })
     }
 
-    fn try_from_files(_: &Cache, files: Vec<(CacheElement, Vec<u8>)>) -> Result<Self, String> {
+    fn try_from_files(_: &Cache, files: Vec<(CacheEntry, Vec<u8>)>) -> Result<Self, String> {
         let (elem, bytes) = files.get(0).unwrap();
         let s = std::str::from_utf8(&bytes).map_err(|_| "Utf-8 conversion failed".to_owned())?;
         Ok(ChatTemplate::new(elem.path(), s.to_owned()))
