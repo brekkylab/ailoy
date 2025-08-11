@@ -8,7 +8,7 @@ use std::{
 use tokio::sync::RwLock;
 use url::Url;
 
-use crate::cache::{CacheEntry, TryFromCache};
+use crate::cache::{CacheContents, CacheEntry, TryFromCache};
 
 use super::{
     filesystem::{read, write},
@@ -162,11 +162,12 @@ impl Cache {
                 Ok::<_, String>(bytes)
             }
         });
-        let file_and_bytes: Vec<(CacheEntry, Vec<u8>)> = join_all(futures)
+        let mut contents = join_all(futures)
             .await
             .into_iter()
-            .collect::<Result<_, _>>()?;
-        T::try_from_files(self, file_and_bytes)
+            .collect::<Result<CacheContents, _>>()?
+            .with_root(self.root.clone());
+        T::try_from_contents(&mut contents)
     }
 }
 

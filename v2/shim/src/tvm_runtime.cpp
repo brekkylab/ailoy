@@ -10,26 +10,62 @@
 #include <tvm/runtime/memory/memory_manager.h>
 #include <tvm/runtime/vm/ndarray_cache_support.h>
 
-#include <iostream>
+#include "cxx_bridge.rs.h"
 
 namespace fs = std::filesystem;
 using namespace tvm;
 using namespace tvm::runtime;
 using namespace tvm::runtime::vm;
 
+inline const char *rt_lib_name() {
+#if defined(_WIN32)
+  return "rt.dll";
+#elif defined(__APPLE__)
+  return "rt.dylib";
+#else
+  return "rt.so";
+#endif
+}
+
 namespace ailoy {
 
-tvm_runtime_t::tvm_runtime_t(const std::string &lib_path,
-                             cache_t cache_contents, const DLDevice &device) {
+tvm_runtime_t::tvm_runtime_t(CacheContents &contents, const DLDevice &device) {
   // Device
   device_ = device;
+
+  auto get_path = [&contents](const std::string &filename) -> std::string {
+    std::string rv;
+    rust::String root;
+    rust::String dirname;
+    rust::String filename_;
+    rust::Vec<uint8_t> bytes;
+    cache_contents_remove_with_filename_out(contents, rt_lib_name(), dirname,
+                                            filename_, bytes);
+    rv =
+        (std::filesystem::path(std::string(cache_contents_get_root(contents))) /
+         std::string(dirname) / std::string(filename_))
+            .string();
+    return std::move(rv);
+  };
+
+  auto read_bytes = [&contents](const std::string &filename) -> std::string {
+    std::string rv;
+    rust::String root;
+    rust::String dirname;
+    rust::String filename_;
+    rust::Vec<uint8_t> bytes;
+    cache_contents_remove_with_filename_out(contents, filename, dirname,
+                                            filename_, bytes);
+    rv.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+    return std::move(rv);
+  };
 
   // Load module
   const auto floadfile_so =
       tvm::ffi::Function::GetGlobal("runtime.module.loadfile_so");
   if (!floadfile_so)
     throw std::runtime_error("Failed to get runtime.module.loadfile_so");
-  auto executable = tvm::runtime::Module::LoadFromFile(lib_path);
+  auto executable = tvm::runtime::Module::LoadFromFile(get_path("lib.dylib"));
   if (!executable.defined())
     throw std::runtime_error("Failed to load system");
 
@@ -52,13 +88,12 @@ tvm_runtime_t::tvm_runtime_t(const std::string &lib_path,
 
   // Load ndarray cache metadata
   auto ndarray_cache_metadata = NDArrayCacheMetadata::LoadFromStr(
-      *cache_contents.read_and_remove("ndarray-cache.json"),
-      "ndarray-cache.json");
+      read_bytes("ndarray-cache.json"), "ndarray-cache.json");
 
   // Load ndarray cache
   int shard_idx = 0;
   for (const auto &record : ndarray_cache_metadata.records) {
-    auto bytes = *cache_contents.read_and_remove(record.data_path);
+    auto bytes = read_bytes(record.data_path);
     {
       const NDArrayCacheMetadata::FileRecord &shard_rec =
           ndarray_cache_metadata.records[shard_idx];

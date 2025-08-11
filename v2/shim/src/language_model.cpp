@@ -7,6 +7,7 @@
 #include <tvm/ffi/container/shape.h>
 #include <tvm/runtime/int_tuple.h>
 
+#include "cxx_bridge.rs.h"
 #include "tvm_runtime.hpp"
 
 #include <iostream>
@@ -83,10 +84,9 @@ int kv_cache_t::get_total_sequence_length() {
   return fkv_cache_get_total_sequence_length_(kv_cache_).cast<int>();
 }
 
-tvm_language_model_t::tvm_language_model_t(const std::string &lib_path,
-                                           cache_t file_contents,
+tvm_language_model_t::tvm_language_model_t(CacheContents &contents,
                                            DLDevice device) {
-  rt_ = std::make_unique<tvm_runtime_t>(lib_path, file_contents, device);
+  rt_ = std::make_unique<tvm_runtime_t>(contents, device);
   kv_cache_ = std::make_unique<kv_cache_t>(*rt_);
   config = config_t{.temperature = 0.6, .top_p = 0.9};
   default_config_ = config;
@@ -224,11 +224,9 @@ uint32_t tvm_language_model_t::sample(NDArray logits) {
 }
 
 std::unique_ptr<tvm_language_model_t>
-create_tvm_language_model(rust::String lib_filename,
-                          std::unique_ptr<cache_t> cache_content,
+create_tvm_language_model(CacheContents &contents,
                           std::unique_ptr<DLDevice> device) {
-  return std::make_unique<tvm_language_model_t>(
-      std::string(lib_filename), std::move(*cache_content), std::move(*device));
+  return std::make_unique<tvm_language_model_t>(contents, std::move(*device));
 }
 
 std::unique_ptr<DLDevice> create_dldevice(int device_type, int device_id) {

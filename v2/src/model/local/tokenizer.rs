@@ -2,7 +2,7 @@ use std::{pin::Pin, str::FromStr};
 
 use tokenizers::tokenizer::Tokenizer as HFTokenizer;
 
-use crate::cache::{Cache, CacheEntry, TryFromCache};
+use crate::cache::{Cache, CacheContents, CacheEntry, TryFromCache};
 
 #[derive(Debug, Clone)]
 pub struct Tokenizer {
@@ -40,9 +40,11 @@ impl TryFromCache for Tokenizer {
         Box::pin(async move { Ok(vec![CacheEntry::new(dirname, "tokenizer.json")]) })
     }
 
-    fn try_from_files(_: &Cache, files: Vec<(CacheEntry, Vec<u8>)>) -> Result<Self, String> {
-        let v = files.get(0).unwrap();
-        let v = std::str::from_utf8(&v.1).map_err(|_| "Utf-8 conversion failed".to_owned())?;
-        Ok(Tokenizer::new(v))
+    fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String> {
+        let Some((_, bytes)) = contents.remove_with_filename("tokenizer.json") else {
+            return Err("tokenizer.json not exists".to_owned());
+        };
+        let s = std::str::from_utf8(&bytes).map_err(|_| "Utf-8 conversion failed".to_owned())?;
+        Ok(Tokenizer::new(s))
     }
 }

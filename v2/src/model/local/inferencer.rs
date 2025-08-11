@@ -5,7 +5,7 @@ mod tvm_runtime {
     use cxx::UniquePtr;
 
     use crate::{
-        cache::{Cache, CacheEntry, TryFromCache},
+        cache::{Cache, CacheContents, CacheEntry, TryFromCache},
         ffi::{TVMLanguageModel, create_dldevice, create_tvm_language_model},
     };
 
@@ -124,41 +124,12 @@ mod tvm_runtime {
             })
         }
 
-        fn try_from_files(
-            cache: &Cache,
-            files: Vec<(CacheEntry, Vec<u8>)>,
-        ) -> Result<Self, String> {
-            let cache_root = cache.get_root();
-            let mut cache_contents = crate::ffi::create_cache();
-            let mut lib_path: Option<PathBuf> = None;
-            for (elem, data) in files {
-                if elem.filename().starts_with("rt.") {
-                    lib_path = Some(cache_root.join(elem.dirname()).join(elem.filename()));
-                    continue;
-                }
-                cache_contents
-                    .pin_mut()
-                    .write_binary(elem.filename().to_owned(), data);
-            }
-
-            let lib_path = match lib_path {
-                Some(v) => {
-                    if !v.exists() {
-                        return Err("Runtime not exists".to_owned());
-                    };
-                    v
-                }
-                None => return Err("No rt found".to_owned()),
-            };
+        fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String> {
             let device = create_dldevice(
                 get_device_type(get_accelerator()),
                 get_device_id(get_accelerator()),
             );
-            let inner = create_tvm_language_model(
-                lib_path.to_string_lossy().to_string(),
-                cache_contents,
-                device,
-            );
+            let inner = create_tvm_language_model(contents, device);
 
             Ok(Inferencer { inner })
         }

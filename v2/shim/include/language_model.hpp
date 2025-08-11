@@ -11,10 +11,11 @@
 #include <tvm/ffi/function.h>
 #include <tvm/runtime/ndarray.h>
 
-#include "cache.hpp"
 #include "tvm_runtime.hpp"
 
 namespace ailoy {
+
+struct CacheContents;
 
 struct kv_cache_t {
 public:
@@ -75,8 +76,7 @@ public:
   /**
    * Constructor
    */
-  tvm_language_model_t(const std::string &lib_path, cache_t cache_contents,
-                       DLDevice device);
+  tvm_language_model_t(ailoy::CacheContents &contents, DLDevice device);
 
   void clear();
 
@@ -133,8 +133,7 @@ private:
 std::unique_ptr<DLDevice> create_dldevice(int device_type, int device_id);
 
 std::unique_ptr<tvm_language_model_t>
-create_tvm_language_model(rust::String lib_filename,
-                          std::unique_ptr<cache_t> cache_contents,
+create_tvm_language_model(ailoy::CacheContents &contents,
                           std::unique_ptr<DLDevice> device);
 
 } // namespace ailoy

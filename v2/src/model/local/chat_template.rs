@@ -7,7 +7,7 @@ use minijinja::{Environment, context};
 use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
 use crate::{
-    cache::{Cache, CacheEntry, TryFromCache},
+    cache::{Cache, CacheContents, CacheEntry, TryFromCache},
     value::{Message, ToolDescription},
 };
 
@@ -62,9 +62,11 @@ impl TryFromCache for ChatTemplate {
         Box::pin(async move { Ok(vec![CacheEntry::new(dirname, "chat_template.j2")]) })
     }
 
-    fn try_from_files(_: &Cache, files: Vec<(CacheEntry, Vec<u8>)>) -> Result<Self, String> {
-        let (elem, bytes) = files.get(0).unwrap();
+    fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String> {
+        let Some((entry, bytes)) = contents.remove_with_filename("chat_template.j2") else {
+            return Err("chat_template.j2 not exists".to_owned());
+        };
         let s = std::str::from_utf8(&bytes).map_err(|_| "Utf-8 conversion failed".to_owned())?;
-        Ok(ChatTemplate::new(elem.path(), s.to_owned()))
+        Ok(ChatTemplate::new(entry.path(), s.to_owned()))
     }
 }

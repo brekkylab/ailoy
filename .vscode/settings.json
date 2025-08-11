@@ -133,7 +133,8 @@
         "filesystem": "cpp",
         "ranges": "cpp",
         "cfenv": "cpp",
-        "source_location": "cpp"
+        "source_location": "cpp",
+        "*.rs": "rust"
     },
     "rust-analyzer.cargo.buildScripts.enable": true,
     // "rust-analyzer.cargo.target": "wasm32-unknown-unknown",

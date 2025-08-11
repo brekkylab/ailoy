@@ -1,25 +1,39 @@
 pub use ffi::*;
 
+use crate::cache::{CacheContents, CacheEntry};
+
+fn cache_entry_new(dirname: &str, filename: &str) -> Box<CacheEntry> {
+    Box::new(CacheEntry::new(dirname, filename))
+}
+
+fn cache_contents_get_root(self_: &CacheContents) -> String {
+    self_.get_root().to_string_lossy().to_string()
+}
+
+fn cache_contents_remove_with_filename_out(
+    self_: &mut CacheContents,
+    filename: &str,
+    out_dirname: &mut String,
+    out_filename: &mut String,
+    out_bytes: &mut Vec<u8>,
+) -> bool {
+    if let Some((entry, bytes)) = self_.remove_with_filename(filename) {
+        out_dirname.clear();
+        out_filename.clear();
+        out_bytes.clear();
+
+        out_dirname.push_str(entry.dirname());
+        out_filename.push_str(entry.filename());
+        out_bytes.extend_from_slice(&bytes);
+        true
+    } else {
+        false
+    }
+}
+
 #[cxx::bridge]
 mod ffi {
     unsafe extern "C++" {
-        include!("cache.hpp");
-
-        #[namespace = "ailoy"]
-        #[cxx_name = "cache_t"]
-        type CacheContents;
-
-        #[namespace = "ailoy"]
-        pub fn create_cache() -> UniquePtr<CacheContents>;
-
-        #[namespace = "ailoy"]
-        #[cxx_name = "write_from_rs"]
-        pub fn write(self: Pin<&mut CacheContents>, key: String, value: String) -> ();
-
-        #[namespace = "ailoy"]
-        #[cxx_name = "write_binary_from_rs"]
-        pub fn write_binary(self: Pin<&mut CacheContents>, key: String, value: Vec<u8>) -> ();
-
         include!("language_model.hpp");
 
         type DLDevice;
@@ -35,8 +49,7 @@ mod ffi {
 
         #[namespace = "ailoy"]
         pub fn create_tvm_language_model(
-            lib_filename: String,
-            cache_contents: UniquePtr<CacheContents>,
+            cache: &mut CacheContents,
             device: UniquePtr<DLDevice>,
         ) -> UniquePtr<TVMLanguageModel>;
 
@@ -58,9 +71,38 @@ mod ffi {
             logits: UniquePtr<DLManagedTensorVersioned>,
         ) -> u32;
     }
-}
 
-unsafe impl Send for ffi::CacheContents {}
+    #[namespace = "ailoy"]
+    extern "Rust" {
+        type CacheEntry;
+
+        fn cache_entry_new(dirname: &str, filename: &str) -> Box<CacheEntry>;
+
+        pub fn path(self: &CacheEntry) -> String;
+
+        pub fn dirname(self: &CacheEntry) -> &str;
+
+        pub fn filename(self: &CacheEntry) -> &str;
+
+        type CacheContents;
+
+        fn cache_contents_get_root(cache: &CacheContents) -> String;
+
+        /// Remove by filename and return results via out-parameters.
+        ///
+        /// Why out-params? cxx does not support returning `Option<(A, B)>` or tuple types directly.
+        /// Returns:
+        ///   - true  : entry found and removed; out_* are filled
+        ///   - false : not found; out_* remain unchanged
+        fn cache_contents_remove_with_filename_out(
+            cache: &mut CacheContents,
+            filename: &str,
+            out_dirname: &mut String,
+            out_filename: &mut String,
+            out_bytes: &mut Vec<u8>,
+        ) -> bool;
+    }
+}
 
 unsafe impl Send for ffi::DLDevice {}
 

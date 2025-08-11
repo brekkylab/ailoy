@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CacheEntry {
     dirname: String,
     filename: String,

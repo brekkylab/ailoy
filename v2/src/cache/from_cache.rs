@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use crate::cache::{Cache, CacheEntry};
+use crate::cache::{Cache, CacheContents, CacheEntry};
 
 pub trait TryFromCache {
     /// List of files to be downloaded
@@ -10,7 +10,7 @@ pub trait TryFromCache {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheEntry>, String>>>>;
 
     /// Create from cache
-    fn try_from_files(cache: &Cache, files: Vec<(CacheEntry, Vec<u8>)>) -> Result<Self, String>
+    fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String>
     where
         Self: Sized;
 }
@@ -23,7 +23,7 @@ pub trait FromCache {
     ) -> Pin<Box<dyn Future<Output = Vec<CacheEntry>>>>;
 
     /// Create from cache
-    fn from_files(cache: &Cache, files: Vec<(CacheEntry, Vec<u8>)>) -> Self
+    fn try_from_contents(contents: &mut CacheContents) -> Self
     where
         Self: Sized;
 }

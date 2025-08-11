@@ -7,14 +7,13 @@
 #include <tvm/runtime/module.h>
 #include <tvm/runtime/ndarray.h>
 
-#include "cache.hpp"
-
 namespace ailoy {
+
+struct CacheContents;
 
 class tvm_runtime_t {
 public:
-  tvm_runtime_t(const std::string &lib_path, cache_t cache_contents,
-                const DLDevice &device);
+  tvm_runtime_t(CacheContents &contents, const DLDevice &device);
 
   tvm::runtime::Module get_vm() const {
     if (!vm_.defined())

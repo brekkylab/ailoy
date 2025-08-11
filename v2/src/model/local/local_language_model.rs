@@ -5,7 +5,7 @@ use futures::Stream;
 use tokio::sync::Mutex;
 
 use crate::{
-    cache::{Cache, CacheEntry, TryFromCache},
+    cache::{Cache, CacheContents, CacheEntry, TryFromCache},
     model::{
         LanguageModel,
         local::{ChatTemplate, Inferencer, Tokenizer},
@@ -96,16 +96,13 @@ impl TryFromCache for LocalLanguageModel {
         })
     }
 
-    fn try_from_files(cache: &Cache, files: Vec<(CacheEntry, Vec<u8>)>) -> Result<Self, String>
+    fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String>
     where
         Self: Sized,
     {
-        let chat_template_files = vec![files.get(0).unwrap().clone()];
-        let chat_template = ChatTemplate::try_from_files(cache, chat_template_files)?;
-        let tokenizer_files = vec![files.get(1).unwrap().clone()];
-        let tokenizer = Tokenizer::try_from_files(cache, tokenizer_files)?;
-        let inferencer_files = files[2..].to_vec();
-        let inferencer = Inferencer::try_from_files(cache, inferencer_files)?;
+        let chat_template = ChatTemplate::try_from_contents(contents)?;
+        let tokenizer = Tokenizer::try_from_contents(contents)?;
+        let inferencer = Inferencer::try_from_contents(contents)?;
         Ok(LocalLanguageModel {
             chat_template,
             tokenizer,
