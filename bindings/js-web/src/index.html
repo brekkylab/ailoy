@@ -4,10 +4,35 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ailoy WASM Test</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f4f4; color: #333; }
+        #output { width: 95%; height: 500px; border: 1px solid #ccc; padding: 10px; font-family: monospace; white-space: pre-wrap; background-color: #fff; }
+    </style>
 </head>
 <body>
     <h1>Ailoy WASM Test</h1>
+    <p>The output from the WebAssembly module will appear below. Check the browser's developer console (F12) for any additional errors.</p>
+    <textarea id="output" readonly></textarea>
 
+    <script>
+        var textarea = document.getElementById('output');
+        
+        // The Emscripten 'Module' object allows us to hook into the execution.
+        var Module = {
+            // Redirect stdout and stderr from C++ to our textarea.
+            print: function(text) {
+                if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                textarea.value += text;
+                textarea.scrollTop = textarea.scrollHeight; // Auto-scroll
+            },
+            printErr: function(text) {
+                if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                textarea.value += "ERROR: " + text + "\n";
+                textarea.scrollTop = textarea.scrollHeight; // Auto-scroll
+            }
+        };
+    </script>
+    
     <script type="module">
         import * as Ailoy from "./index.js"
 
@@ -18,39 +43,8 @@
         // const agent = await Ailoy.defineAgent(rt, Ailoy.APIModel({id: "gpt-4o", apiKey: "<OPENAI_API_KEY>"}));
         const agent = await Ailoy.defineAgent(rt, Ailoy.LocalModel({id: "Qwen/Qwen3-0.6B"}));
         // await agent.addToolsFromMcpClient("test", new Ailoy.MCPStreamableHTTPClientTransport("http://localhost:8123/mcp"));
-
-        const messages = [
-                {
-                    role: "system",
-                    content: [{type: "text", text: "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."}],
-                    // content: "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-                },
-                {
-                    role: "user",
-                    content: [{type: "text", text: "How is the current weather in Seoul?"}],
-                    // content: "How is the current weather in Seoul?",
-                },
-                {
-                    role: "assistant",
-                    tool_calls: [
-                        {
-                            function: {
-                                arguments: { location: "Seoul, South Korea", unit: "celsius" },
-                                name: "get_current_temperature",
-                            },
-                            type: "function",
-                        },
-                    ],
-                },
-                {
-                    role: "tool",
-                    content: [{ type: "text", text: "20.5" }],
-                    // content: "20.5",
-                },
-            ]
-
         agent.addJSFunctionTool(
-            ()=>{},
+            ({a, b})=> a * b,
             {
                 name: "multiply",
                 description: "A function that multiplies two numbers",
@@ -70,11 +64,65 @@
                 },
             },
         );
-        for await (const resp of agent.query("Calculate 13492 * 95832.")) {
-            if (resp.type === "output_text")
-                console.log(resp.content);
-            else
-                console.log(resp.content);
+        agent.addJSFunctionTool(
+            ({a, b})=> a / b,
+            {
+                name: "divide",
+                description: "A function that divides a number with another number",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        a: {
+                            type: "number",
+                            description: "The dividend number",
+                        },
+                        b: {
+                            type: "number",
+                            description: "The divisor number",
+                        },
+                    },
+                    required: ["a", "b"],
+                },
+            },
+        );
+        // window.agent = agent;
+        // console.log("READY")
+        const REASONING = false;
+
+
+        for await (const resp of agent.query("Calculate 13492 * 95832.", {reasoning: REASONING})) {
+        // for await (const resp of agent.query("Hello, who are you?", {reasoning: REASONING})) {
+            if (resp.isTypeSwitched) {
+                Module.print(`\n<${resp.type}>\n`)
+            }
+            // Module.print(JSON.stringify(resp, null, 2));
+            if (resp.type === "output_text") {
+                Module.print(resp.content);
+            } else if (resp.type === "reasoning") {
+                Module.print(resp.content);
+            } else if (resp.type === "tool_call") {
+                Module.print(JSON.stringify(resp.content, null, 2)+"\n");
+            } else if (resp.type === "tool_call_result") {
+                Module.print(resp.content.content[0].text);
+            } else
+                Module.print(resp.content);
+        }
+
+        for await (const resp of agent.query("Verify '13492 * 95832 = 1292965344' with division, please", {reasoning: REASONING})) {
+            if (resp.isTypeSwitched) {
+                Module.print(`\n<${resp.type}>\n`)
+            }
+            // Module.print(JSON.stringify(resp, null, 2));
+            if (resp.type === "output_text") {
+                Module.print(resp.content);
+            } else if (resp.type === "reasoning") {
+                Module.print(resp.content);
+            } else if (resp.type === "tool_call") {
+                Module.print(JSON.stringify(resp.content, null, 2)+"\n");
+            } else if (resp.type === "tool_call_result") {
+                Module.print(resp.content.content[0].text);
+            } else
+                Module.print(resp.content);
         }
         window.agent = agent;
 
