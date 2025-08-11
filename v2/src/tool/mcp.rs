@@ -1,5 +1,6 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::sync::Arc;
 
+use futures::future::BoxFuture;
 use rmcp::{
     model::{CallToolRequestParam, Tool as McpTool},
     service::{Peer, RoleClient},
@@ -46,17 +47,14 @@ impl Tool for MCPTool {
         self.desc.clone()
     }
 
-    fn run(
-        self,
-        tc: ToolCall,
-    ) -> Pin<Box<dyn Future<Output = Result<Part, String>> + Send + Sync>> {
-        let peer = self.peer;
-        let name = self.name;
+    fn run(self: Arc<Self>, toll_call: ToolCall) -> BoxFuture<'static, Result<Part, String>> {
+        let peer = self.peer.clone();
+        let name = self.name.clone();
 
         Box::pin(async move {
             // Convert your ToolCall arguments → serde_json::Map (MCP expects JSON object)
             let arguments: Option<JsonMap<String, JsonValue>> =
-                serde_json::to_value(tc.get_argument())
+                serde_json::to_value(toll_call.get_argument())
                     .map_err(|e| format!("serialize ToolCall arguments failed: {e}"))?
                     .as_object()
                     .cloned();

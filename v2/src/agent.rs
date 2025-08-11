@@ -4,21 +4,21 @@ use futures::{Stream, StreamExt};
 use tokio::sync::Mutex;
 
 use crate::{
-    model::{AnyLanguageModel, LanguageModel as _},
-    tool::{AnyTool, Tool},
+    model::LanguageModel,
+    tool::Tool,
     value::{Message, MessageAggregator, MessageDelta, Part, Role, ToolCall},
 };
 
 pub struct Agent {
-    lm: AnyLanguageModel,
-    tools: Vec<AnyTool>,
+    lm: Arc<dyn LanguageModel>,
+    tools: Vec<Arc<dyn Tool>>,
     messages: Arc<Mutex<Vec<Message>>>,
 }
 
 impl Agent {
-    pub fn new(lm: AnyLanguageModel, tools: impl IntoIterator<Item = AnyTool>) -> Self {
+    pub fn new(lm: impl LanguageModel, tools: impl IntoIterator<Item = Arc<dyn Tool>>) -> Self {
         Self {
-            lm,
+            lm: Arc::new(lm),
             tools: tools.into_iter().collect(),
             messages: Arc::new(Mutex::new(Vec::new())),
         }
@@ -75,7 +75,7 @@ mod tests {
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
         let model = cache.try_create::<LocalLanguageModel>(key).await.unwrap();
-        let mut agent = Agent::new(model.into(), Vec::new());
+        let mut agent = Agent::new(model, Vec::new());
 
         let mut agg = MessageAggregator::new();
         let mut strm = Box::pin(agent.run("Hi what's your name?"));
@@ -105,7 +105,7 @@ mod tests {
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
         let model = cache.try_create::<LocalLanguageModel>(key).await.unwrap();
-        let tools = vec![AnyTool::Builtin(BuiltinTool::new(
+        let tools = vec![Arc::new(BuiltinTool::new(
             ToolDescription::new(
                 "temperature",
                 "Get current temperature",
@@ -144,8 +144,8 @@ mod tests {
                     Part::new_text("104")
                 }
             }),
-        ))];
-        let mut agent = Agent::new(model.into(), tools);
+        )) as Arc<dyn Tool>];
+        let mut agent = Agent::new(model, tools);
 
         let mut agg = MessageAggregator::new();
         let mut strm = Box::pin(agent.run("How much hot currently in Dubai?"));

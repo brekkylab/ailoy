@@ -1,6 +1,6 @@
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 mod tvm_runtime {
-    use std::{path::PathBuf, pin::Pin};
+    use std::pin::Pin;
 
     use cxx::UniquePtr;
 

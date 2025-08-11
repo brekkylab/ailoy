@@ -1,8 +1,9 @@
 use std::{
     fmt::{self, Debug, Formatter},
-    pin::Pin,
     sync::Arc,
 };
+
+use futures::future::BoxFuture;
 
 use crate::{
     tool::Tool,
@@ -38,10 +39,7 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    fn run(
-        self,
-        toll_call: ToolCall,
-    ) -> Pin<Box<dyn Future<Output = Result<Part, String>> + Send + Sync>> {
+    fn run(self: Arc<Self>, toll_call: ToolCall) -> BoxFuture<'static, Result<Part, String>> {
         Box::pin(async move { Ok((self.f)(toll_call)) })
     }
 }

@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use futures::stream::BoxStream;
+
 use crate::{
     model::LanguageModel,
     value::{Message, MessageDelta, ToolDescription},
@@ -8,10 +12,10 @@ pub struct APILanguageModel {}
 
 impl LanguageModel for APILanguageModel {
     fn run(
-        self,
+        self: Arc<Self>,
         _tools: Vec<ToolDescription>,
         _msg: Vec<Message>,
-    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<MessageDelta, String>>>> {
+    ) -> BoxStream<'static, Result<MessageDelta, String>> {
         todo!()
     }
 }

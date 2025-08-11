@@ -1,43 +1,17 @@
 mod builtin;
 mod mcp;
 
-use std::pin::Pin;
+use std::sync::Arc;
 
 use crate::value::{Part, ToolCall, ToolDescription};
 
 pub use builtin::*;
+use futures::future::BoxFuture;
 pub use mcp::*;
 
-pub trait Tool: Clone {
+pub trait Tool: Send + Sync + 'static {
     fn get_description(&self) -> ToolDescription;
 
-    fn run(
-        self,
-        toll_call: ToolCall,
-    ) -> Pin<Box<dyn Future<Output = Result<Part, String>> + Send + Sync>>;
-}
-
-#[derive(Clone, Debug)]
-pub enum AnyTool {
-    Builtin(builtin::BuiltinTool),
-    MCP(mcp::MCPTool),
-}
-
-impl Tool for AnyTool {
-    fn get_description(&self) -> ToolDescription {
-        match self {
-            AnyTool::Builtin(t) => t.get_description(),
-            AnyTool::MCP(t) => t.get_description(),
-        }
-    }
-
-    fn run(
-        self,
-        toll_call: ToolCall,
-    ) -> Pin<Box<dyn Future<Output = Result<Part, String>> + Send + Sync>> {
-        match self {
-            AnyTool::Builtin(t) => t.run(toll_call),
-            AnyTool::MCP(t) => t.run(toll_call),
-        }
-    }
+    // Arc<Self> 수신자 → object-safe + 'static future
+    fn run(self: Arc<Self>, tc: ToolCall) -> BoxFuture<'static, Result<Part, String>>;
 }

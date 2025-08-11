@@ -1,7 +1,7 @@
 use std::{pin::Pin, sync::Arc};
 
 use async_stream::try_stream;
-use futures::Stream;
+use futures::stream::BoxStream;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -22,10 +22,10 @@ pub struct LocalLanguageModel {
 
 impl LanguageModel for LocalLanguageModel {
     fn run(
-        self,
+        self: Arc<Self>,
         tools: Vec<ToolDescription>,
         msgs: Vec<Message>,
-    ) -> Pin<Box<dyn Stream<Item = Result<MessageDelta, String>>>> {
+    ) -> BoxStream<'static, Result<MessageDelta, String>> {
         let strm = try_stream! {
             let prompt = self.chat_template.apply_with_vec(&tools, &msgs, true)?;
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
@@ -123,7 +123,7 @@ mod tests {
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let model = cache.try_create::<LocalLanguageModel>(key).await.unwrap();
+        let model = Arc::new(cache.try_create::<LocalLanguageModel>(key).await.unwrap());
         let msgs = vec![
             Message::with_content(Role::System, Part::new_text("You are an assistant.")),
             Message::with_content(Role::User, Part::new_text("Hi what's your name?")),
@@ -151,7 +151,7 @@ mod tests {
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let model = cache.try_create::<LocalLanguageModel>(key).await.unwrap();
+        let model = Arc::new(cache.try_create::<LocalLanguageModel>(key).await.unwrap());
         let tools = vec![ToolDescription::new(
             "temperature",
             "Get current temperature",
