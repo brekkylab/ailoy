@@ -63,6 +63,7 @@ export class EmbeddingPipeline {
     this.maxBatchSize = metadata.max_batch_size;
     this.contextWindowSize = this.config.context_window_size;
     this.prefillChunkSize = metadata.prefill_chunk_size;
+    if (this.prefillChunkSize === 0) this.prefillChunkSize = this.contextWindowSize;
     // log.info("Using maxBatchSize: ", this.maxBatchSize);
     // log.info("Using contextWindowSize: ", this.contextWindowSize);
     // log.info("Using prefillChunkSize: ", this.prefillChunkSize);
@@ -73,12 +74,12 @@ export class EmbeddingPipeline {
     if (this.maxBatchSize <= 0) {
       throw new MinValueError("maxBatchSize", 0);
     }
-    // if (this.contextWindowSize <= 0) {
-    //   throw new MinValueError("contextWindowSize", 0);
-    // }
-    // if (this.prefillChunkSize <= 0) {
-    //   throw new MinValueError("prefillChunkSize", 0);
-    // }
+    if (this.contextWindowSize <= 0) {
+      throw new MinValueError("contextWindowSize", 0);
+    }
+    if (this.prefillChunkSize <= 0) {
+      throw new MinValueError("prefillChunkSize", 0);
+    }
     if (this.prefillChunkSize !== this.contextWindowSize) {
       throw new EmbeddingChunkingUnsupportedError(
         this.contextWindowSize,
@@ -132,12 +133,12 @@ export class EmbeddingPipeline {
     for (let i = 0; i < tokenizedInputs.length; i++) {
       const curInputSize = tokenizedInputs[i].length;
       totalNumTokens += curInputSize;
-      // if (curInputSize > this.contextWindowSize) {
-      //   throw new EmbeddingExceedContextWindowSizeError(
-      //     this.contextWindowSize,
-      //     curInputSize
-      //   );
-      // }
+      if (curInputSize > this.contextWindowSize) {
+        throw new EmbeddingExceedContextWindowSizeError(
+          this.contextWindowSize,
+          curInputSize
+        );
+      }
     }
     if (tokenizedInputs.length === 0) {
       throw new Error("InternalError: batch size is zero.");

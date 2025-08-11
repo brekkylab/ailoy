@@ -142,6 +142,9 @@ static std::shared_ptr<ailoy::value_t> from_em_val(const val &arg) {
     for (int i = 0; i < keys_length; i++) {
       std::string key = keys[i].as<std::string>();
       val value = arg[key];
+      // Do not include undefined fields in the map
+      if (value == val::undefined())
+        continue;
       (*map)[key] = from_em_val(value);
     }
 

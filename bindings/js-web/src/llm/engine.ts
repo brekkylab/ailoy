@@ -41,10 +41,8 @@ export interface ChatCompletionChunk {
 
 export class Engine {
   private modelId: string;
-  private modelUrl: string | undefined = undefined;
   private modelPath: string | undefined = undefined;
   private cacheScope: string = "ailoy";
-  private modelType: ModelType | undefined = undefined;
   private chatConfig: ChatConfig | undefined = undefined;
   private pipeline: LLMChatPipeline | EmbeddingPipeline | undefined = undefined;
   private lock: CustomLock | undefined = undefined;
@@ -60,11 +58,6 @@ export class Engine {
   async loadModel() {
     const modelRecord = findModelRecord(this.modelId, appConfig);
     this.modelPath = modelRecord.model;
-    // this.modelUrl = new URL(modelRecord.model, baseUrl).href;
-    this.modelType =
-      modelRecord.model_type === undefined || modelRecord.model_type === null
-        ? ModelType.LLM
-        : modelRecord.model_type;
 
     this.chatConfig = {
       ...((await readOPFSFile(
@@ -309,8 +302,8 @@ export class Engine {
       object: "chat.completion.chunk",
       created: created,
     } as ChatCompletionChunk;
+    await this.lock?.release();
     yield processChunk(lastChunk);
-    await this.lock!.release();
   }
 
   async inferLM(input: string, genConfig: GenerationConfig) {
