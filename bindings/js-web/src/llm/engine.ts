@@ -58,6 +58,31 @@ export class Engine {
     this.modelId = modelId;
     this.tokenizer = tokenizer;
     this.chatManager = chatManager;
+    this.chatManager.setCacheScope(this.cacheScope);
+  }
+
+  isBor(tok: string): boolean {
+    return tok === "<think>";
+  }
+
+  isEor(tok: string): boolean {
+    return tok === "</think>";
+  }
+
+  isBos(tok: string): boolean {
+    return this.chatManager.isBosToken(tok);
+  }
+
+  isEos(tok: string): boolean {
+    return this.chatManager.isEosToken(tok);
+  }
+
+  isBotc(tok: string): boolean {
+    return this.chatManager.isBotcToken(tok);
+  }
+
+  isEotc(tok: string): boolean {
+    return this.chatManager.isEotcToken(tok);
   }
 
   async loadModel() {
@@ -68,6 +93,9 @@ export class Engine {
       modelRecord.model_type === undefined || modelRecord.model_type === null
         ? ModelType.LLM
         : modelRecord.model_type;
+
+    await this.chatManager.init(this.modelPath);
+    await this.tokenizer.init();
 
     this.chatConfig = {
       ...((await readOPFSFile(

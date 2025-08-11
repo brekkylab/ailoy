@@ -68,14 +68,12 @@ export class _LocalModel {
     }
 
     const tokenizer = new Tokenizer(args.runtime, this.id, this.quantization);
-    await tokenizer.init();
 
     const chatManager = new ChatManager(
       args.runtime,
       this.id,
       this.quantization
     );
-    await chatManager.init();
 
     this.engine = new Engine(this.id, tokenizer, chatManager);
     await this.engine.loadModel();
@@ -93,12 +91,74 @@ export class _LocalModel {
     if (!this.#initialized) {
       throw Error(`The model is not initialized yet`);
     }
-    return (await this.engine!.inferLM(
+
+    const stream = (await this.engine!.inferLM(
       args.messages,
       args.tools.map((tool) => ({ type: "function", function: tool.desc })),
       args.reasoning,
       this.genConfig ?? {}
     ))!;
+
+    // create wrapper AsyncGenerator
+    async function* wrapped(
+      engine: Engine
+    ): AsyncGenerator<MessageOutput, void, unknown> {
+      let current_stream_mode: "reasoning" | "tool_call" | "output_text" =
+        "output_text";
+      let buffer: string[] = [];
+
+      for await (const msg of stream) {
+        const text = msg.message.content;
+
+        if (engine.isBor(text)) {
+          current_stream_mode = "reasoning";
+          continue;
+        }
+        if (current_stream_mode === "reasoning") {
+          if (engine.isEor(text)) {
+            current_stream_mode = "output_text";
+          } else {
+            yield {
+              ...msg,
+              message: {
+                role: "assistant",
+                reasoning: [{ type: "text", text: text }],
+              },
+            };
+          }
+          continue;
+        }
+
+        if (engine.isBotc(text)) {
+          current_stream_mode = "tool_call";
+          continue;
+        }
+        if (current_stream_mode === "tool_call") {
+          if (engine.isEotc(text)) {
+            yield {
+              finish_reason: "tool_calls",
+              message: {
+                role: msg.message.role,
+                tool_calls: [
+                  { type: "function", function: JSON.parse(buffer.join("")) },
+                ],
+              },
+            };
+            buffer = [];
+            current_stream_mode = "output_text";
+          } else {
+            buffer.push(text);
+          }
+          continue;
+        }
+
+        if (current_stream_mode === "output_text") {
+          yield msg;
+        }
+      }
+    }
+
+    return wrapped(this.engine!);
   }
 
   async dispose() {
