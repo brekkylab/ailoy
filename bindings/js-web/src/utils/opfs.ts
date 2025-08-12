@@ -87,7 +87,7 @@ export async function writeOPFSFile(
 export async function removeOPFSFile(path: string): Promise<void> {
   const root = await navigator.storage.getDirectory();
 
-  const parts = path.split("/").filter(Boolean); // 공백이나 루트 슬래시 제거
+  const parts = path.split("/").filter(Boolean);
   if (parts.length === 0) throw new Error("Invalid path");
 
   const fileName = parts.pop()!;

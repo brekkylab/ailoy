@@ -636,7 +636,6 @@ export class Agent {
 
         if (result.finish_reason) {
           finishReason = result.finish_reason;
-          break;
         }
       }
       // Append output
@@ -648,7 +647,12 @@ export class Agent {
       });
 
       // Call tools in parallel
-      if (finishReason == "tool_calls") {
+      const lastMessage = this.messages.at(this.messages.length - 1);
+      if (
+        lastMessage?.role === "assistant" &&
+        lastMessage.tool_calls &&
+        lastMessage.tool_calls.length !== 0
+      ) {
         let toolCallPromises: Array<Promise<ToolMessage>> = [];
         for (const toolCall of assistantToolCalls ?? []) {
           toolCallPromises.push(
