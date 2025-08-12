@@ -52,6 +52,8 @@ We recommend using **[Vite](https://vite.dev/)** for a fast development
 environment and optimized builds. This tutorial uses **React + TypeScript**
 configuration.
 
+1. Let's create a vite project by running `npm create vite@latest`.
+
 {/* prettier-ignore-start */}
 
 <TerminalBox>
@@ -83,8 +85,8 @@ $ npm create vite@latest
 
 {/* prettier-ignore-end */}
 
-Next, navigate to your new project and install `ailoy-web`. This will also
-install packages preconfigured in `package.json`.
+2. Next, navigate to your new project and install `ailoy-web`. This will also
+   install packages preconfigured in `package.json`.
 
 {/* prettier-ignore-start */}
 
@@ -104,13 +106,15 @@ found 0 vulnerabilities
 
 {/* prettier-ignore-end */}
 
-To ensure optimal performance and compatibility, update your `vite.config.ts`
-with the following settings:
+3. To ensure optimal performance and compatibility, update your `vite.config.ts`
+   with the following settings:
 
-- Exclude `ailoy-web` from dependency optimization (`optimizeDeps.exclude`)
-- Enable cross-origin isolation (required for `SharedArrayBuffer` in WASM
-  threading)
-- Optimize bundle size by grouping `ailoy-web` into its own build chunk
+   - Exclude `ailoy-web` from dependency optimization (`optimizeDeps.exclude`)
+   - Enable cross-origin isolation (required for `SharedArrayBuffer` in WASM
+     threading)
+   - Optimize bundle size by grouping `ailoy-web` into its own build chunk
+
+   Or just change `vite.config.ts` to look like the code below.
 
 ```typescript
 import react from "@vitejs/plugin-react";
@@ -144,11 +148,12 @@ export default defineConfig({
 For this quick demo, we'll use [**assistant-ui**](https://www.assistant-ui.com/)
 package to create a basic chat interface.
 
-assistant-ui uses [**shadcn**](https://ui.shadcn.com/docs/installation/vite), so
-you need to set it up before installing assistant-ui. Follow the guide from
+`assistant-ui` uses [**shadcn**](https://ui.shadcn.com/docs/installation/vite),
+so you need to set it up before installing assistant-ui.  
+Let's follow the guide from
 [shadcn's documentation](https://ui.shadcn.com/docs/installation/vite).
 
-Edit `tsconfig.json`.
+1. Edit `tsconfig.json`.
 
 ```json {11-16}
 {
@@ -170,7 +175,7 @@ Edit `tsconfig.json`.
 }
 ```
 
-Edit `tsconfig.app.json`
+2. Edit `tsconfig.app.json`
 
 ```json {4-7}
 {
@@ -185,11 +190,17 @@ Edit `tsconfig.app.json`
 }
 ```
 
-Install tailwind and update `vite.config.ts`.
+3. Install `tailwind` and update `vite.config.ts`.
 
 <TerminalBox>
 
-npm install --save-dev tailwindcss @tailwindcss/vite @types/node
+$ npm install --save-dev tailwindcss @tailwindcss/vite @types/node
+
+added 22 packages, and audited 215 packages in 3s
+
+51 packages are looking for funding run `npm fund` for details
+
+found 0 vulnerabilities
 
 </TerminalBox>
 
@@ -211,14 +222,14 @@ export default defineConfig({
 });
 ```
 
-Update `src/index.css` to use tailwindcss.
+4. Update `src/index.css` to use tailwindcss.
 
 ```css
 @import "tailwindcss";
 ```
 
-Install assistant-ui and add thread component. Also install `framer-motion`
-package which is required by assistant-ui's thread.
+5. Install `assistant-ui` and add thread component.  
+   `npx assistant-ui add thread`
 
 {/* prettier-ignore-start */}
 
@@ -238,14 +249,33 @@ $ npx assistant-ui add thread
   - src/components/ui/button.tsx
   - src/components/ui/tooltip.tsx
 
+</TerminalBox>
+
+{/* prettier-ignore-end */}
+
+6. Install `framer-motion` package which is required by `assistant-ui`'s
+   thread.  
+   `npm install framer-motion`
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
 $ npm install framer-motion
+
+up to date, audited 374 packages in 696ms
+
+141 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
 
 </TerminalBox>
 
 {/* prettier-ignore-end */}
 
-Due to `"verbatimModuleSyntax": true` configuration, you need to fix
-`src/components/assistant-ui/tool-fallback.tsx` to prevent compile error.
+7. Due to `"verbatimModuleSyntax": true` configuration, you need to fix
+   `src/components/assistant-ui/tool-fallback.tsx` to prevent compile error.
 
 ```typescript {1}
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
@@ -256,7 +286,7 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
 ### Implementation
 
-Add `src/AiloyRuntimeProvider.tsx` and write the code as follow:
+1. Add `src/AiloyRuntimeProvider.tsx` and write the code as follow:
 
 ```typescript
 "use client";
@@ -384,7 +414,7 @@ export function AiloyRuntimeProvider({
 }
 ```
 
-Update `src/App.tsx` to use this provider.
+2. Update `src/App.tsx` to use this provider.
 
 ```typescript
 import { Thread } from "@/components/assistant-ui/thread";
@@ -401,22 +431,24 @@ function App() {
 export default App;
 ```
 
-React’s `<StrictMode>` can cause components to mount twice during development.
-To avoid double state updates, remove `<StrictMode>` from `src/main.tsx`:
-
-<CodeTabs>
+3. React’s `<StrictMode>` can cause components to mount twice during
+   development.  
+   To avoid double state updates, remove `<StrictMode>` from `src/main.tsx`:
 
 ```typescript
-import { createRoot } from "react-dom/client";
-import "./index.css";
-import App from "./App.tsx";
+// import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
 
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById('root')!).render(
+  // <StrictMode>
+    <App />
+  // </StrictMode>,
+)
 ```
 
-</CodeTabs>
-
-Now run the development server and go to http://localhost:5173.
+4. Now run the development server by running `npm run dev`.
 
 {/* prettier-ignore-start */}
 
@@ -434,16 +466,25 @@ $ npm run dev
 
 {/* prettier-ignore-end */}
 
-You should see the page like below if there was no error.
+5. While `npm run dev` is running, go to http://localhost:5173.  
+   You will see the page like below if there was no error.
 
 ![](./img/webassembly-supports/chat-ui.png)
 
+{/* prettier-ignore-start */}
+
+:::info
 When the agent initializes for the first time, model parameters are downloaded
 from Ailoy’s file server. These files are stored in the browser’s
 [**Origin Private File System(OPFS)**](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system)
 which is isolated per origin and managed internally by the browser.
 
 Once initialization completes, you can start chatting with the agent.
+:::
+
+{/* prettier-ignore-end */}
+
+6. Try to start a conversation with the LLM running _on your web browser_.
 
 ![](./img/webassembly-supports/simple-chat.gif)
 
