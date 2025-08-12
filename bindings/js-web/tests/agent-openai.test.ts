@@ -9,8 +9,8 @@ import {
 import Vips from "wasm-vips";
 
 import { defineAgent, AudioContent } from "../src/agent";
-import { Runtime } from "../src/runtime";
 import { APIModel } from "../src/models";
+import { Runtime } from "../src/runtime";
 
 describe.skipIf(process.env.OPENAI_API_KEY === "undefined")(
   "OpenAI Agent",
@@ -34,14 +34,14 @@ describe.skipIf(process.env.OPENAI_API_KEY === "undefined")(
       const iter = agent.query("Hello World!");
       const resp = await iter.next();
       /**
-     * Example response
-      {
-        "content": "Hi there! How can I assist you today?",
-        "isTypeSwitched": true,
-        "role": "assistant",
-        "type": "output_text",
-      }
-    */
+       * Example response
+        {
+          "content": "Hi there! How can I assist you today?",
+          "isTypeSwitched": true,
+          "role": "assistant",
+          "type": "output_text",
+        }
+      */
       expect(resp.value).to.have.property("type", "output_text");
       expect(resp.value).to.have.property("role", "assistant");
       expect(resp.value).to.have.property("content");
@@ -59,24 +59,24 @@ describe.skipIf(process.env.OPENAI_API_KEY === "undefined")(
       );
       const toolCallResp = await iter.next();
       /**
-     * Example toolCallResp
-      {
-        "content": {
-          "function": {
-            "arguments": {
-              "base": "USD",
-              "symbols": "KRW",
+       * Example toolCallResp
+        {
+          "content": {
+            "function": {
+              "arguments": {
+                "base": "USD",
+                "symbols": "KRW",
+              },
+              "name": "frankfurter",
             },
-            "name": "frankfurter",
+            "id": "call_GHiqPOWq2KGMlntor4zkJtb6",
+            "type": "function",
           },
-          "id": "call_GHiqPOWq2KGMlntor4zkJtb6",
-          "type": "function",
-        },
-        "isTypeSwitched": true,
-        "role": "assistant",
-        "type": "tool_call",
-      }
-    */
+          "isTypeSwitched": true,
+          "role": "assistant",
+          "type": "tool_call",
+        }
+      */
       expect(toolCallResp.value).to.have.property("content");
       expect(toolCallResp.value.content).to.have.property("type", "function");
       expect(toolCallResp.value.content).to.have.property("function");
@@ -95,23 +95,23 @@ describe.skipIf(process.env.OPENAI_API_KEY === "undefined")(
 
       const toolCallResultResp = await iter.next();
       /**
-     * Example toolCallResultResp
-      {
-        "content": {
-          "content": [
-            {
-              "text": "{"KRW":1404.62}",
-              "type": "text",
-            },
-          ],
+       * Example toolCallResultResp
+        {
+          "content": {
+            "content": [
+              {
+                "text": "{"KRW":1404.62}",
+                "type": "text",
+              },
+            ],
+            "role": "tool",
+            "tool_call_id": "call_GHiqPOWq2KGMlntor4zkJtb6",
+          },
+          "isTypeSwitched": true,
           "role": "tool",
-          "tool_call_id": "call_GHiqPOWq2KGMlntor4zkJtb6",
-        },
-        "isTypeSwitched": true,
-        "role": "tool",
-        "type": "tool_call_result",
-      }
-    */
+          "type": "tool_call_result",
+        }
+      */
       expect(toolCallResultResp.value).to.have.property("content");
       expect(toolCallResultResp.value).to.have.property("role", "tool");
       expect(toolCallResultResp.value.content).to.have.property("content");
@@ -146,14 +146,14 @@ describe.skipIf(process.env.OPENAI_API_KEY === "undefined")(
       const iter = agent.query([image, "What is in this image?"]);
       const resp = await iter.next();
       /**
-     * Example response
-      {
-        "content": "The image shows a person wearing glasses and a leather jacket, smiling at the camera.",
-        "isTypeSwitched": true,
-        "role": "assistant",
-        "type": "output_text",
-      }
-    */
+       * Example response
+        {
+          "content": "The image shows a person wearing glasses and a leather jacket, smiling at the camera.",
+          "isTypeSwitched": true,
+          "role": "assistant",
+          "type": "output_text",
+        }
+      */
       expect(resp.value).to.have.property("type", "output_text");
       expect(resp.value).to.have.property("role", "assistant");
       expect(resp.value).to.have.property("content");
@@ -177,21 +177,19 @@ describe.skipIf(process.env.OPENAI_API_KEY === "undefined")(
       );
 
       const arrayBuffer = await audioResp.arrayBuffer();
-      const buffer = new Uint8Array(arrayBuffer);
-      const audioContent = await AudioContent.fromBytes(buffer, "wav");
+      const audioContent = AudioContent.fromArrayBuffer(arrayBuffer, "wav");
 
       const iter = agent.query(["What's in these recording?", audioContent]);
       const resp = await iter.next();
       /**
-   * Example response
-    {
-      "content": "The recording contains a statement about the fact that the sun rises in the east and sets in the west, and mentions that this observation has been made by humans for thousands of years.",
-      "isTypeSwitched": true,
-      "role": "assistant",
-      "type": "output_text",
-    }
-   */
-
+       * Example response
+       {
+         "content": "The recording contains a statement about the fact that the sun rises in the east and sets in the west, and mentions that this observation has been made by humans for thousands of years.",
+         "isTypeSwitched": true,
+         "role": "assistant",
+         "type": "output_text",
+       }
+      */
       expect(resp.value).to.have.property("type", "output_text");
       expect(resp.value).to.have.property("role", "assistant");
       expect(resp.value).to.have.property("content");

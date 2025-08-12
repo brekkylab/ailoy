@@ -9,8 +9,8 @@ import {
 import Vips from "wasm-vips";
 
 import { defineAgent } from "../src/agent";
-import { Runtime } from "../src/runtime";
 import { APIModel } from "../src/models";
+import { Runtime } from "../src/runtime";
 
 describe.skipIf(process.env.CLAUDE_API_KEY === "undefined")(
   "Claude Agent",
@@ -64,24 +64,24 @@ describe.skipIf(process.env.CLAUDE_API_KEY === "undefined")(
 
       const toolCallResp = await iter.next();
       /**
-         * Example toolCallResp
-          {
-            "content": {
-              "function": {
-                "arguments": {
-                  "base": "USD",
-                  "symbols": "KRW",
-                },
-                "name": "frankfurter",
+       * Example toolCallResp
+        {
+          "content": {
+            "function": {
+              "arguments": {
+                "base": "USD",
+                "symbols": "KRW",
               },
-              "id": "call_GHiqPOWq2KGMlntor4zkJtb6",
-              "type": "function",
+              "name": "frankfurter",
             },
-            "isTypeSwitched": true,
-            "role": "assistant",
-            "type": "tool_call",
-          }
-        */
+            "id": "call_GHiqPOWq2KGMlntor4zkJtb6",
+            "type": "function",
+          },
+          "isTypeSwitched": true,
+          "role": "assistant",
+          "type": "tool_call",
+        }
+      */
       expect(toolCallResp.value).to.have.property("content");
       expect(toolCallResp.value.content).to.have.property("type", "function");
       expect(toolCallResp.value.content).to.have.property("function");
@@ -100,23 +100,23 @@ describe.skipIf(process.env.CLAUDE_API_KEY === "undefined")(
 
       const toolCallResultResp = await iter.next();
       /**
-         * Example toolCallResultResp
-          {
-            "content": {
-              "content": [
-                {
-                  "text": "{"KRW":1404.62}",
-                  "type": "text",
-                },
-              ],
-              "role": "tool",
-              "tool_call_id": "call_GHiqPOWq2KGMlntor4zkJtb6",
-            },
-            "isTypeSwitched": true,
+       * Example toolCallResultResp
+        {
+          "content": {
+            "content": [
+              {
+                "text": "{"KRW":1404.62}",
+                "type": "text",
+              },
+            ],
             "role": "tool",
-            "type": "tool_call_result",
-          }
-        */
+            "tool_call_id": "call_GHiqPOWq2KGMlntor4zkJtb6",
+          },
+          "isTypeSwitched": true,
+          "role": "tool",
+          "type": "tool_call_result",
+        }
+      */
       expect(toolCallResultResp.value).to.have.property("content");
       expect(toolCallResultResp.value).to.have.property("role", "tool");
       expect(toolCallResultResp.value.content).to.have.property("content");

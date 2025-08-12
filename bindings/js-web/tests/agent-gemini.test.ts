@@ -9,8 +9,8 @@ import {
 import Vips from "wasm-vips";
 
 import { defineAgent, AudioContent } from "../src/agent";
-import { Runtime } from "../src/runtime";
 import { APIModel } from "../src/models";
+import { Runtime } from "../src/runtime";
 
 describe.skipIf(process.env.GEMINI_API_KEY === "undefined")(
   "Gemini Agent",
@@ -168,8 +168,7 @@ describe.skipIf(process.env.GEMINI_API_KEY === "undefined")(
       );
 
       const arrayBuffer = await audioResp.arrayBuffer();
-      const buffer = new Uint8Array(arrayBuffer);
-      const audioContent = await AudioContent.fromBytes(buffer, "wav");
+      const audioContent = AudioContent.fromArrayBuffer(arrayBuffer, "wav");
 
       const iter = agent.query(["What's in these recording?", audioContent]);
       const resp = await iter.next();
