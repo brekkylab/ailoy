@@ -1,5 +1,7 @@
 use std::pin::Pin;
 
+use futures::future::BoxFuture;
+
 use crate::cache::{Cache, CacheContents, CacheEntry};
 
 /// Build a value by fetching the files it needs from the Ailoy [`Cache`].
@@ -58,7 +60,7 @@ use crate::cache::{Cache, CacheContents, CacheEntry};
 /// ```
 ///
 /// See also: [`Cache::try_create`], [`CacheEntry`], [`CacheContents`].
-pub trait TryFromCache {
+pub trait TryFromCache: Sized + Send + 'static {
     /// Declare the set of files needed to construct `Self`.
     ///
     /// The returned future resolves to a list of logical entries (`dirname`/`filename`)
@@ -67,7 +69,7 @@ pub trait TryFromCache {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheEntry>, String>>>>;
+    ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>>;
 
     /// Build `Self` from the previously fetched files.
     ///

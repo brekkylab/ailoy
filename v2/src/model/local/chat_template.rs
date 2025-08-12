@@ -1,8 +1,6 @@
-use std::{
-    pin::Pin,
-    sync::{Mutex, MutexGuard, OnceLock},
-};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
+use futures::future::BoxFuture;
 use minijinja::{Environment, context};
 use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
@@ -57,7 +55,7 @@ impl TryFromCache for ChatTemplate {
     fn claim_files(
         _: Cache,
         key: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheEntry>, String>>>> {
+    ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
         let dirname = key.as_ref().replace("/", "--");
         Box::pin(async move { Ok(vec![CacheEntry::new(dirname, "chat_template.j2")]) })
     }

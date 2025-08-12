@@ -1,5 +1,6 @@
-use std::{pin::Pin, str::FromStr};
+use std::str::FromStr;
 
+use futures::future::BoxFuture;
 use tokenizers::tokenizer::Tokenizer as HFTokenizer;
 
 use crate::cache::{Cache, CacheContents, CacheEntry, TryFromCache};
@@ -35,7 +36,7 @@ impl TryFromCache for Tokenizer {
     fn claim_files(
         _: Cache,
         key: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheEntry>, String>>>> {
+    ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
         let dirname = key.as_ref().replace("/", "--");
         Box::pin(async move { Ok(vec![CacheEntry::new(dirname, "tokenizer.json")]) })
     }

@@ -271,8 +271,9 @@ impl Cache {
         }
     }
 
-    /// Builds a typed value from the cache while **streaming progress updates**.
+    /// Builds a typed value from the cache.
     ///
+    /// Note that it returns the value and it's **streaming progress updates**.
     /// Initialization can be slow because it may download files and initialize hardwares.
     /// Instead of returning the result immediately, this method yields a stream of
     /// [`FromCacheProgress`] events. These events provide real-time feedback so users
@@ -302,16 +303,15 @@ impl Cache {
     /// }
     /// # Ok::<(), String>(())
     /// ```
-    pub fn try_create_stream<T>(
-        &self,
+    pub fn try_create<T>(
+        self,
         key: impl Into<String>,
-    ) -> impl Stream<Item = Result<FromCacheProgress<T>, String>> + 'static
+    ) -> impl Stream<Item = Result<FromCacheProgress<T>, String>> + Send + 'static
     where
         T: TryFromCache + Send + 'static,
     {
         let key = key.into();
         let this = self.clone();
-        let root = self.root().to_owned();
 
         try_stream! {
             // Claim files to be processed
@@ -349,7 +349,7 @@ impl Cache {
             }
 
             // Assemble cache contents
-            let mut contents = pairs.into_iter().collect::<CacheContents>().with_root(root);
+            let mut contents = pairs.into_iter().collect::<CacheContents>().with_root(self.root());
 
             // Final creation
             let value = T::try_from_contents(&mut contents)?;

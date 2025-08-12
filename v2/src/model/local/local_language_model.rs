@@ -1,7 +1,7 @@
-use std::{pin::Pin, sync::Arc};
+use std::sync::Arc;
 
 use async_stream::try_stream;
-use futures::stream::BoxStream;
+use futures::{future::BoxFuture, stream::BoxStream};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -18,6 +18,16 @@ pub struct LocalLanguageModel {
     chat_template: ChatTemplate,
     tokenizer: Tokenizer,
     inferencer: Arc<Mutex<Inferencer>>,
+}
+
+impl LocalLanguageModel {
+    pub async fn try_new(
+        model_name: impl Into<String>,
+    ) -> impl futures::Stream<Item = Result<crate::cache::FromCacheProgress<Self>, String>> + 'static
+    {
+        let model_name = model_name.into();
+        Cache::new().try_create::<LocalLanguageModel>(model_name)
+    }
 }
 
 impl LanguageModel for LocalLanguageModel {
@@ -85,7 +95,7 @@ impl TryFromCache for LocalLanguageModel {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheEntry>, String>>>> {
+    ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
         let key = key.as_ref().to_owned();
         Box::pin(async move {
             let mut rv = Vec::new();
@@ -123,7 +133,22 @@ mod tests {
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let model = Arc::new(cache.try_create::<LocalLanguageModel>(key).await.unwrap());
+
+        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
+        let mut model: Option<LocalLanguageModel> = None;
+        while let Some(progress) = model_strm.next().await {
+            let progress = progress.unwrap();
+            println!(
+                "{} ({} / {})",
+                progress.comment(),
+                progress.current_task(),
+                progress.total_task()
+            );
+            if progress.current_task() == progress.total_task() {
+                model = progress.take();
+            }
+        }
+        let model = Arc::new(model.unwrap());
         let msgs = vec![
             Message::with_content(Role::System, Part::new_text("You are an assistant.")),
             Message::with_content(Role::User, Part::new_text("Hi what's your name?")),
@@ -151,7 +176,21 @@ mod tests {
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let model = Arc::new(cache.try_create::<LocalLanguageModel>(key).await.unwrap());
+        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
+        let mut model: Option<LocalLanguageModel> = None;
+        while let Some(progress) = model_strm.next().await {
+            let progress = progress.unwrap();
+            println!(
+                "{} ({} / {})",
+                progress.comment(),
+                progress.current_task(),
+                progress.total_task()
+            );
+            if progress.current_task() == progress.total_task() {
+                model = progress.take();
+            }
+        }
+        let model = Arc::new(model.unwrap());
         let tools = vec![ToolDescription::new(
             "temperature",
             "Get current temperature",

@@ -1,8 +1,7 @@
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 mod tvm_runtime {
-    use std::pin::Pin;
-
     use cxx::UniquePtr;
+    use futures::future::BoxFuture;
 
     use crate::{
         cache::{Cache, CacheContents, CacheEntry, TryFromCache},
@@ -81,7 +80,7 @@ mod tvm_runtime {
         fn claim_files(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheEntry>, String>>>> {
+        ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
             let dirname = vec![key.as_ref().replace("/", "--")].join("--");
             let elem = CacheEntry::new(&dirname, "ndarray-cache.json");
             Box::pin(async move {

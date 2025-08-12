@@ -74,7 +74,7 @@ mod tests {
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let mut model_strm = Box::pin(cache.try_create_stream::<LocalLanguageModel>(key));
+        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
         let mut model: Option<LocalLanguageModel> = None;
         while let Some(progress) = model_strm.next().await {
             let progress = progress.unwrap();
@@ -113,7 +113,7 @@ mod tests {
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let mut model_strm = Box::pin(cache.try_create_stream::<LocalLanguageModel>(key));
+        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
         let mut model: Option<LocalLanguageModel> = None;
         while let Some(progress) = model_strm.next().await {
             let progress = progress.unwrap();
