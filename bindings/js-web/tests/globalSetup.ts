@@ -1,7 +1,7 @@
 import { Server } from "http";
 
-import mcpCreateStreamableHttpServer from "./mcp/streamableHttpServer";
 import mcpSSEServer from "./mcp/sseServer";
+import mcpCreateStreamableHttpServer from "./mcp/streamableHttpServer";
 import mcpCreateWebsocketServer from "./mcp/websocketServer";
 
 let mcpServers: {

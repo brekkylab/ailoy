@@ -32,6 +32,7 @@ export class _LocalModel {
   // Internal states required for infer
   #initialized: boolean = false;
   private engine: Engine | undefined;
+  private chatManager: ChatManager | undefined;
   private genConfig: GenerationConfig | undefined;
 
   constructor(args: LocalModelArgs) {
@@ -70,15 +71,15 @@ export class _LocalModel {
     const tokenizer = new Tokenizer(args.runtime, this.id, this.quantization);
     await tokenizer.init();
 
-    const chatManager = new ChatManager(
+    this.engine = new Engine(this.id, tokenizer);
+    await this.engine.loadModel();
+
+    this.chatManager = new ChatManager(
       args.runtime,
       this.id,
       this.quantization
     );
-    await chatManager.init();
-
-    this.engine = new Engine(this.id, tokenizer, chatManager);
-    await this.engine.loadModel();
+    await this.chatManager.init(this.engine.modelPath!);
 
     this.genConfig = args.genConfig;
 
@@ -93,20 +94,110 @@ export class _LocalModel {
     if (!this.#initialized) {
       throw Error(`The model is not initialized yet`);
     }
-    return (await this.engine!.inferLM(
+
+    const input = await this.chatManager!.applyChatTemplate(
       args.messages,
       args.tools.map((tool) => ({ type: "function", function: tool.desc })),
-      args.reasoning,
-      this.genConfig ?? {}
-    ))!;
+      args.reasoning
+    );
+    const stream = (await this.engine!.inferLM(input, this.genConfig ?? {}))!;
+
+    // create wrapper AsyncGenerator
+    async function* wrapped(
+      self: _LocalModel
+    ): AsyncGenerator<MessageOutput, void, unknown> {
+      let current_stream_mode: "reasoning" | "tool_call" | "output_text" =
+        "output_text";
+      let buffer: string[] = [];
+
+      for await (const msg of stream) {
+        const text = msg.message.content;
+
+        if (self.isBor(text)) {
+          current_stream_mode = "reasoning";
+          continue;
+        }
+        if (current_stream_mode === "reasoning") {
+          if (self.isEor(text)) {
+            current_stream_mode = "output_text";
+          } else {
+            yield {
+              ...msg,
+              message: {
+                role: "assistant",
+                reasoning: [{ type: "text", text: text }],
+              },
+            };
+          }
+          continue;
+        }
+
+        if (self.isBotc(text)) {
+          current_stream_mode = "tool_call";
+          continue;
+        }
+        if (current_stream_mode === "tool_call") {
+          if (self.isEotc(text)) {
+            yield {
+              finish_reason: "tool_calls",
+              message: {
+                role: msg.message.role,
+                tool_calls: [
+                  { type: "function", function: JSON.parse(buffer.join("")) },
+                ],
+              },
+            };
+            buffer = [];
+            current_stream_mode = "output_text";
+          } else {
+            buffer.push(text);
+          }
+          continue;
+        }
+
+        if (current_stream_mode === "output_text") {
+          yield msg;
+        }
+      }
+    }
+
+    return wrapped(this);
   }
 
   async dispose() {
     if (this.#initialized) {
       await this.engine!.dispose();
       this.engine = undefined;
+
+      await this.chatManager!.dispose();
+      this.chatManager = undefined;
+
       this.genConfig = undefined;
     }
+  }
+
+  isBor(tok: string): boolean {
+    return tok === "<think>";
+  }
+
+  isEor(tok: string): boolean {
+    return tok === "</think>";
+  }
+
+  isBos(tok: string): boolean {
+    return this.chatManager!.isBosToken(tok);
+  }
+
+  isEos(tok: string): boolean {
+    return this.chatManager!.isEosToken(tok);
+  }
+
+  isBotc(tok: string): boolean {
+    return this.chatManager!.isBotcToken(tok);
+  }
+
+  isEotc(tok: string): boolean {
+    return this.chatManager!.isEotcToken(tok);
   }
 }
 
