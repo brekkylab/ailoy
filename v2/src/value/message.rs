@@ -769,7 +769,7 @@ impl MessageAggregator {
 
     /// Flushes the buffered delta (if any and non-empty) into `last_message`,
     /// creating the message if it does not yet exist.
-    fn flush_buffer_into_message(&mut self) {
+    fn flush_delta_into_message(&mut self) {
         // Drop empty buffered delta, if present.
         let should_drop = self
             .last_delta
@@ -810,7 +810,7 @@ impl MessageAggregator {
             .map(|d| d.get_role() != delta.get_role())
             .unwrap_or(false)
         {
-            self.flush_buffer_into_message();
+            self.flush_delta_into_message();
             self.last_delta = Some(delta);
             return self.last_message.take();
         }
@@ -853,7 +853,7 @@ impl MessageAggregator {
 
             // Not mergeable → flush buffer into message, then buffer the new delta.
             (Some(_), delta) => {
-                self.flush_buffer_into_message();
+                self.flush_delta_into_message();
                 self.last_delta = Some(delta);
             }
         }
@@ -864,7 +864,7 @@ impl MessageAggregator {
     /// Finalizes the aggregator, flushing any buffered content and returning the
     /// last in-progress message, if present.
     pub fn finalize(mut self) -> Option<Message> {
-        self.flush_buffer_into_message();
+        self.flush_delta_into_message();
         self.last_message
     }
 }
