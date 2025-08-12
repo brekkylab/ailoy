@@ -209,7 +209,7 @@ export const prebuiltAppConfig: AppConfig = {
       vram_required_MB: 1403.34,
       low_resource_required: true,
       overrides: {
-        context_window_size: 40960,
+        context_window_size: 10240,
       },
     },
     {
@@ -219,7 +219,7 @@ export const prebuiltAppConfig: AppConfig = {
       vram_required_MB: 2036.66,
       low_resource_required: true,
       overrides: {
-        context_window_size: 4096,
+        context_window_size: 10240,
       },
     },
     {
@@ -227,9 +227,9 @@ export const prebuiltAppConfig: AppConfig = {
       model_id: "Qwen/Qwen3-4B",
       model_lib: "lib-wasm32-Emscripten-webgpu.wasm",
       vram_required_MB: 3431.59,
-      low_resource_required: true,
+      low_resource_required: false,
       overrides: {
-        context_window_size: 4096,
+        context_window_size: 40960,
       },
     },
     {
@@ -239,7 +239,7 @@ export const prebuiltAppConfig: AppConfig = {
       vram_required_MB: 5695.78,
       low_resource_required: false,
       overrides: {
-        context_window_size: 4096,
+        context_window_size: 40960,
       },
     },
     // Embedding models
