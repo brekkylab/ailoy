@@ -32,11 +32,9 @@ impl PyLocalLanguageModel {
         py: Python<'_>,
         model_name: &str,
     ) -> PyResult<Py<PyLocalLanguageModelCreateAsyncIterator>> {
-        // 1) 진행 스트림 -> 채널로 브리지
         let name = model_name.to_string();
         let (tx, rx) = ach::unbounded::<Result<FromCacheProgress<LocalLanguageModel>, String>>();
 
-        // pyo3_async_runtimes가 관리하는 Tokio 런타임에서 생산 태스크 실행
         pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
             let mut strm = Box::pin(Cache::new().try_create::<LocalLanguageModel>(name));
             while let Some(item) = strm.next().await {
@@ -67,31 +65,6 @@ impl PyLocalLanguageModel {
             .map_err(map_err)?;
 
         Py::new(py, PyLocalLanguageModelCreateIterator { rt, stream })
-    }
-
-    /// 블로킹 로드 (기존 방식)
-    #[staticmethod]
-    pub fn load_blocking(model_name: &str) -> PyResult<Self> {
-        let rt = Runtime::new().map_err(map_err)?;
-        let model = rt
-            .block_on(async {
-                use futures::StreamExt;
-                let cache = Cache::new();
-                let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(model_name));
-                let mut model: Option<LocalLanguageModel> = None;
-                while let Some(progress) = model_strm.next().await {
-                    let progress = progress.map_err(|e| e)?;
-                    if progress.current_task() == progress.total_task() {
-                        model = progress.take();
-                    }
-                }
-                model.ok_or_else(|| "failed to build LocalLanguageModel".to_string())
-            })
-            .map_err(map_err)?;
-
-        Ok(Self {
-            inner: Arc::new(model),
-        })
     }
 }
 

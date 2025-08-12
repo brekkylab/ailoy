@@ -1,8 +1,109 @@
 use std::str::FromStr;
 
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    prelude::*,
+};
 
-use crate::value::{Message, Role};
+use crate::value::{Message, Part, Role};
+
+#[pyclass(name = "Part")]
+#[derive(Clone)]
+pub struct PyPart {
+    inner: Part,
+}
+
+#[pymethods]
+impl PyPart {
+    /// Part(type, *, id=None, text=None, url=None, data=None, base64=None, function=None)
+    ///
+    /// Examples:
+    /// - Part(type="text", text="hello")
+    /// - Part(type="image", url="https://example.com/cat.png")
+    /// - Part(type="image", data="<base64>")  # 'base64=' alias also accepted
+    /// - Part(type="function", function=r#"{"name":"foo","arguments":"{}"}"#, id="call_1")
+    #[new]
+    #[pyo3(signature = (r#type, *, id=None, text=None, url=None, data=None, base64=None, function=None))]
+    fn new(
+        r#type: &str,
+        id: Option<String>,
+        text: Option<String>,
+        url: Option<String>,
+        data: Option<String>,
+        base64: Option<String>,
+        function: Option<String>,
+    ) -> PyResult<Self> {
+        let inner = match r#type {
+            "text" => Part::Text(text.ok_or_else(|| PyTypeError::new_err("text= required"))?),
+            "function" => Part::Function {
+                id,
+                function: function.ok_or_else(|| PyTypeError::new_err("function= required"))?,
+            },
+            "image" => {
+                if let Some(u) = url {
+                    Part::ImageURL(
+                        url::Url::parse(&u).map_err(|e| PyValueError::new_err(e.to_string()))?,
+                    )
+                } else if let Some(b) = data.or(base64) {
+                    Part::ImageBase64(b)
+                } else {
+                    return Err(PyTypeError::new_err("image needs url= or data=/base64="));
+                }
+            }
+            other => return Err(PyValueError::new_err(format!("unknown type: {other}"))),
+        };
+        Ok(Self { inner })
+    }
+
+    #[getter]
+    fn r#type(&self) -> &'static str {
+        match &self.inner {
+            Part::Text(_) => "text",
+            Part::Function { .. } => "function",
+            Part::ImageURL(_) | Part::ImageBase64(_) => "image",
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    // Accessors return Option[str] (None if wrong variant)
+    fn text(&self) -> Option<&str> {
+        self.inner.get_text()
+    }
+
+    fn function_id(&self) -> Option<String> {
+        self.inner.get_function_id()
+    }
+
+    fn function_raw(&self) -> Option<&String> {
+        self.inner.get_function()
+    }
+
+    fn url(&self) -> Option<String> {
+        match &self.inner {
+            Part::ImageURL(u) => Some(u.as_str().to_string()),
+            _ => None,
+        }
+    }
+
+    fn base64(&self) -> Option<&str> {
+        match &self.inner {
+            Part::ImageBase64(b) => Some(b.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Serialize using your Rust `Serialize` (OpenAI-shaped dict).
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string(&self.inner).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("Part(type={})", self.r#type()))
+    }
+}
 
 #[pyclass(name = "Message")]
 pub struct PyMessage {
@@ -56,50 +157,26 @@ impl PyMessage {
             newm.push_reasoning(p);
         }
         for p in m.tool_calls().iter().cloned() {
-            newm.push_tool_calls(p);
+            newm.push_tool_call(p);
         }
         self.inner = newm;
         Ok(())
     }
 
-    // fn push_text(&self, text: &str) {
-    //     self.inner.borrow_mut().push_content(Part::new_text(text));
-    // }
+    fn push_content(&mut self, part: PyPart) {
+        self.inner.push_content(part.inner);
+    }
 
-    // /// `function_json` is stored **as-is** (raw JSON string). You may pass incomplete JSON while streaming.
-    // fn push_function(&self, function_json: &str) {
-    //     self.inner
-    //         .borrow_mut()
-    //         .push_tool_calls(Part::new_function(function_json));
-    // }
+    fn push_reasoning(&mut self, part: PyPart) {
+        self.inner.push_reasoning(part.inner);
+    }
 
-    // fn push_function_with_id(&self, id: &str, function_json: &str) {
-    //     self.inner
-    //         .borrow_mut()
-    //         .push_tool_calls(Part::new_function_with_id(id, function_json));
-    // }
-
-    // fn push_image_url(&self, url: &str) -> PyResult<()> {
-    //     let url =
-    //         Url::parse(url).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    //     self.inner.borrow_mut().push_content(Part::ImageURL(url));
-    //     Ok(())
-    // }
-
-    // fn push_image_base64(&self, data: &str) {
-    //     self.inner
-    //         .borrow_mut()
-    //         .push_content(Part::ImageBase64(data.to_string()));
-    // }
+    fn push_tool_call(&mut self, part: PyPart) {
+        self.inner.push_tool_call(part.inner);
+    }
 
     fn __repr__(&self) -> PyResult<String> {
-        Ok(format!(
-            "Message(role={}, content_len={}, reasoning_len={}, tool_calls_len={})",
-            self.inner.role().to_string(),
-            self.inner.content().len(),
-            self.inner.reasoning().len(),
-            self.inner.tool_calls().len(),
-        ))
+        Ok(format!("{}", serde_json::to_string(&self.inner).unwrap(),))
     }
 }
 

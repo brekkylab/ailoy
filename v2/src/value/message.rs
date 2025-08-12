@@ -566,7 +566,7 @@ impl Message {
     }
 
     /// Append tool call part
-    pub fn push_tool_calls(&mut self, tool_calls: Part) -> () {
+    pub fn push_tool_call(&mut self, tool_calls: Part) -> () {
         self.tool_calls.push(tool_calls);
     }
 
@@ -761,7 +761,7 @@ impl MessageAggregator {
             match last_delta {
                 MessageDelta::Content(_, part) => msg.push_content(part),
                 MessageDelta::Reasoning(_, part) => msg.push_reasoning(part),
-                MessageDelta::ToolCall(_, part) => msg.push_tool_calls(part),
+                MessageDelta::ToolCall(_, part) => msg.push_tool_call(part),
             }
 
             self.last_message = Some(msg);
