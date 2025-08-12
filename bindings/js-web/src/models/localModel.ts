@@ -32,6 +32,7 @@ export class _LocalModel {
   // Internal states required for infer
   #initialized: boolean = false;
   private engine: Engine | undefined;
+  private chatManager: ChatManager | undefined;
   private genConfig: GenerationConfig | undefined;
 
   constructor(args: LocalModelArgs) {
@@ -70,14 +71,14 @@ export class _LocalModel {
     const tokenizer = new Tokenizer(args.runtime, this.id, this.quantization);
     await tokenizer.init();
 
-    const chatManager = new ChatManager(
+    this.chatManager = new ChatManager(
       args.runtime,
       this.id,
       this.quantization
     );
-    await chatManager.init();
+    await this.chatManager.init();
 
-    this.engine = new Engine(this.id, tokenizer, chatManager);
+    this.engine = new Engine(this.id, tokenizer);
     await this.engine.loadModel();
 
     this.genConfig = args.genConfig;
@@ -93,18 +94,22 @@ export class _LocalModel {
     if (!this.#initialized) {
       throw Error(`The model is not initialized yet`);
     }
-    return (await this.engine!.inferLM(
+    const input = await this.chatManager!.applyChatTemplate(
       args.messages,
       args.tools.map((tool) => ({ type: "function", function: tool.desc })),
-      args.reasoning,
-      this.genConfig ?? {}
-    ))!;
+      args.reasoning
+    );
+    return (await this.engine!.inferLM(input, this.genConfig ?? {}))!;
   }
 
   async dispose() {
     if (this.#initialized) {
       await this.engine!.dispose();
       this.engine = undefined;
+
+      await this.chatManager!.dispose();
+      this.chatManager = undefined;
+
       this.genConfig = undefined;
     }
   }

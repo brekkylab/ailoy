@@ -719,7 +719,13 @@ export class NDArray extends TVMObject {
    * the dtype of the NDArray.
    * @returns The result array.
    */
-  toArray(): Float32Array | Float64Array | Int32Array | Int8Array | Uint8Array {
+  toArray():
+    | Float32Array
+    | Float64Array
+    | Int32Array
+    | Uint16Array
+    | Int8Array
+    | Uint8Array {
     const stype = this.dtype;
     if (stype === "float32") {
       return new Float32Array(this.toRawBytes().buffer);
@@ -727,6 +733,8 @@ export class NDArray extends TVMObject {
       return new Float64Array(this.toRawBytes().buffer);
     } else if (stype === "int32") {
       return new Int32Array(this.toRawBytes().buffer);
+    } else if (stype === "float16") {
+      return new Uint16Array(this.toRawBytes().buffer);
     } else if (stype === "int8") {
       return new Int8Array(this.toRawBytes().buffer);
     } else if (stype === "uint8") {
