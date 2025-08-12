@@ -5,6 +5,7 @@ use serde::{
     de::{self, MapAccess, Visitor},
     ser::SerializeMap,
 };
+use strum::{Display, EnumString};
 use url::Url;
 
 /// Represents a single, typed unit of message content (multi-modal).
@@ -439,8 +440,9 @@ impl MessageDelta {
 /// - [`Role::Assistant`]: Model-generated outputs, including tool-call requests.
 /// - [`Role::Tool`]: Outputs produced by external tools/functions, typically in
 ///   response to an assistant tool call (and often correlated via `tool_call_id`).
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Display, Serialize, Deserialize, PartialEq, Eq, EnumString)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "snake_case")]
 pub enum Role {
     /// System instructions and constraints provided to the assistant.
     System,

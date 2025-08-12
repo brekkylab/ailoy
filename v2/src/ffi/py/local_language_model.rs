@@ -95,7 +95,7 @@ impl PyLocalLanguageModel {
     }
 }
 
-#[pyclass(unsendable, name = "LocalLanguageModelLoadIterator")]
+#[pyclass(unsendable, name = "LocalLanguageModelCreateIterator")]
 pub struct PyLocalLanguageModelCreateIterator {
     rt: Runtime,
     stream: BoxStream<'static, Result<FromCacheProgress<LocalLanguageModel>, String>>,
@@ -171,7 +171,7 @@ impl<'py> IntoPyObject<'py> for ProgressInner {
     }
 }
 
-#[pyclass(unsendable, name = "LocalLanguageModelLoadAiter")]
+#[pyclass(unsendable, name = "LocalLanguageModelCreateAsyncIterator")]
 pub struct PyLocalLanguageModelCreateAsyncIterator {
     rx: ach::Receiver<Result<FromCacheProgress<LocalLanguageModel>, String>>,
 }
@@ -213,12 +213,4 @@ impl PyLocalLanguageModelCreateAsyncIterator {
         let awaitable = pyo3_async_runtimes::tokio::future_into_py(py, fut)?;
         Ok(awaitable.unbind())
     }
-}
-
-#[pymodule(name = "_core")]
-fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
-    m.add_class::<PyLocalLanguageModel>()?;
-    m.add_class::<PyLocalLanguageModelCreateIterator>()?;
-    m.add_class::<PyLocalLanguageModelCreateAsyncIterator>()?;
-    Ok(())
 }
