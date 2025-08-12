@@ -41,7 +41,7 @@ export interface ChatCompletionChunk {
 
 export class Engine {
   private modelId: string;
-  private modelPath: string | undefined = undefined;
+  private _modelPath: string | undefined = undefined;
   private cacheScope: string = "ailoy";
 
   private chatConfig: ChatConfig | undefined = undefined;
@@ -56,13 +56,17 @@ export class Engine {
     this.tokenizer = tokenizer;
   }
 
+  public get modelPath(): string | undefined {
+    return this._modelPath;
+  }
+
   async loadModel() {
     const modelRecord = findModelRecord(this.modelId, appConfig);
-    this.modelPath = modelRecord.model;
+    this._modelPath = modelRecord.model;
 
     this.chatConfig = {
       ...((await readOPFSFile(
-        joinPath(this.cacheScope, this.modelPath, "mlc-chat-config.json"),
+        joinPath(this.cacheScope, this._modelPath, "mlc-chat-config.json"),
         "json"
       )) as any),
       ...modelRecord.overrides,
@@ -73,7 +77,7 @@ export class Engine {
       throw new MissingModelWasmError(modelRecord.model_id);
     }
     const wasmSource = (await readOPFSFile(
-      joinPath(this.cacheScope, this.modelPath, wasmUrl),
+      joinPath(this.cacheScope, this._modelPath, wasmUrl),
       "arraybuffer"
     )) as ArrayBuffer;
     if (wasmSource === undefined) {
@@ -116,7 +120,7 @@ export class Engine {
     tvm.initWebGPU(gpuDetectOutput.device);
 
     await tvm.fetchNDArrayCache(
-      this.modelPath,
+      this._modelPath,
       tvm.webgpu(),
       this.cacheScope,
       "opfs"
