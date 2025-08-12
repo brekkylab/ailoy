@@ -28,6 +28,26 @@ export interface VectorStoreRetrieveItem extends VectorStoreInsertItem {
   similarity: number;
 }
 
+export interface BaseVectorStoreArgs {
+  type: VectorStoreType;
+  embedding?: {
+    modelId: EmbeddingModelId;
+    quantization?: EmbeddingModelQuantization;
+  };
+}
+
+export interface FaissVectorStoreArgs extends BaseVectorStoreArgs {
+  type: "faiss";
+}
+
+export interface ChromadbVectorStoreArgs extends BaseVectorStoreArgs {
+  type: "chromadb";
+  url: string;
+  collection?: string;
+}
+
+export type VectorStoreArgs = FaissVectorStoreArgs | ChromadbVectorStoreArgs;
+
 /**
  * The `VectorStore` class provides a high-level abstraction for storing and retrieving documents.
  * It mainly consists of two modules - embedding model and vector store.
@@ -54,16 +74,7 @@ export class VectorStore {
    */
   async define(
     runtime: Runtime,
-    args: {
-      embedding?: {
-        modelId: EmbeddingModelId;
-        quantization?: EmbeddingModelQuantization;
-      };
-      vectorstore?: {
-        type: VectorStoreType;
-        attrs?: Record<string, any>;
-      };
-    }
+    { type, embedding, ...attrs }: VectorStoreArgs
   ): Promise<void> {
     // Skip if the vector store is already initialized
     if (this.#initialized) return;
@@ -73,9 +84,8 @@ export class VectorStore {
     /**
      * Preparing Embedding Model
      */
-    const embeddingModelId = args.embedding?.modelId ?? "BAAI/bge-m3";
-    const embeddingModelQuantization =
-      args.embedding?.quantization ?? "q4f16_1";
+    const embeddingModelId = embedding?.modelId ?? "BAAI/bge-m3";
+    const embeddingModelQuantization = embedding?.quantization ?? "q4f16_1";
     const modelDesc = modelDescriptions[embeddingModelId];
 
     const { results }: { results: Array<{ model_id: string }> } =
@@ -102,8 +112,8 @@ export class VectorStore {
     /**
      * Preparing VectorStore
      */
-    const vsType = args.vectorstore?.type ?? "faiss";
-    const vsAttrs = args.vectorstore?.attrs ?? {};
+    const vsType = type ?? "faiss";
+    const vsAttrs: { [key: string]: any } = attrs ?? {};
     if (vsType === "faiss") {
       vsAttrs.dimension = modelDesc.dimension;
     }
@@ -198,16 +208,7 @@ export class VectorStore {
 
 export async function defineVectorStore(
   runtime: Runtime,
-  args: {
-    embedding?: {
-      modelId: EmbeddingModelId;
-      quantization?: EmbeddingModelQuantization;
-    };
-    vectorstore?: {
-      type: VectorStoreType;
-      attrs?: Record<string, any>;
-    };
-  }
+  args: VectorStoreArgs
 ): Promise<VectorStore> {
   const vs = new VectorStore();
   await vs.define(runtime, args);

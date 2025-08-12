@@ -37,11 +37,9 @@ describe("Vectorstore", async () => {
 
   it.sequential("FAISS Vectorstore", async () => {
     const vs = await defineVectorStore(rt, {
+      type: "faiss",
       embedding: {
         modelId: "BAAI/bge-m3",
-      },
-      vectorstore: {
-        type: "faiss",
       },
     });
     await testVectorStore(vs);
@@ -61,14 +59,10 @@ describe("Vectorstore", async () => {
     }
 
     const vs = await defineVectorStore(rt, {
+      type: "chromadb",
+      url: chromadbUrl,
       embedding: {
         modelId: "BAAI/bge-m3",
-      },
-      vectorstore: {
-        type: "chromadb",
-        attrs: {
-          url: chromadbUrl,
-        },
       },
     });
     await testVectorStore(vs);
