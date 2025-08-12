@@ -250,6 +250,9 @@ export const prebuiltAppConfig: AppConfig = {
       model_lib: "lib-wasm32-Emscripten-webgpu.wasm",
       vram_required_MB: 1407.51,
       model_type: ModelType.embedding,
+      overrides: {
+        context_window_size: 8192,
+      },
     },
   ],
 };

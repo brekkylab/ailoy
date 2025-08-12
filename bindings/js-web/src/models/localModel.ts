@@ -32,6 +32,7 @@ export class _LocalModel {
   // Internal states required for infer
   #initialized: boolean = false;
   private engine: Engine | undefined;
+  private chatManager: ChatManager | undefined;
   private genConfig: GenerationConfig | undefined;
 
   constructor(args: LocalModelArgs) {
@@ -69,13 +70,14 @@ export class _LocalModel {
 
     const tokenizer = new Tokenizer(args.runtime, this.id, this.quantization);
 
-    const chatManager = new ChatManager(
+    this.chatManager = new ChatManager(
       args.runtime,
       this.id,
       this.quantization
     );
+    await this.chatManager.init();
 
-    this.engine = new Engine(this.id, tokenizer, chatManager);
+    this.engine = new Engine(this.id, tokenizer);
     await this.engine.loadModel();
 
     this.genConfig = args.genConfig;
@@ -165,6 +167,10 @@ export class _LocalModel {
     if (this.#initialized) {
       await this.engine!.dispose();
       this.engine = undefined;
+
+      await this.chatManager!.dispose();
+      this.chatManager = undefined;
+
       this.genConfig = undefined;
     }
   }
