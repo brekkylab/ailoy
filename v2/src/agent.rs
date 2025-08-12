@@ -74,7 +74,16 @@ mod tests {
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let model = cache.try_create::<LocalLanguageModel>(key).await.unwrap();
+        let mut model_strm = Box::pin(cache.try_create_stream::<LocalLanguageModel>(key));
+        let mut model: Option<LocalLanguageModel> = None;
+        while let Some(progress) = model_strm.next().await {
+            let progress = progress.unwrap();
+            println!("{} / {}", progress.current_task(), progress.total_task());
+            if progress.current_task() == progress.total_task() {
+                model = progress.take();
+            }
+        }
+        let model = model.unwrap();
         let mut agent = Agent::new(model, Vec::new());
 
         let mut agg = MessageAggregator::new();
@@ -104,7 +113,16 @@ mod tests {
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let model = cache.try_create::<LocalLanguageModel>(key).await.unwrap();
+        let mut model_strm = Box::pin(cache.try_create_stream::<LocalLanguageModel>(key));
+        let mut model: Option<LocalLanguageModel> = None;
+        while let Some(progress) = model_strm.next().await {
+            let progress = progress.unwrap();
+            println!("{} / {}", progress.current_task(), progress.total_task());
+            if progress.current_task() == progress.total_task() {
+                model = progress.take();
+            }
+        }
+        let model = model.unwrap();
         let tools = vec![Arc::new(BuiltinTool::new(
             ToolDescription::new(
                 "temperature",

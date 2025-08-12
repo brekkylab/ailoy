@@ -5,6 +5,8 @@ use std::{
     sync::Arc,
 };
 
+use async_stream::try_stream;
+use futures::{Stream, StreamExt as _, stream::FuturesUnordered};
 use tokio::sync::RwLock;
 use url::Url;
 
@@ -28,73 +30,100 @@ async fn download(url: Url) -> Result<Vec<u8>, String> {
     Ok(bytes.to_vec())
 }
 
+/// [`super::FromCache`] or [`super::TryFromCache`] results with it's progress.
+///
+/// This method works similarly to [`Cache::try_create`], but instead of waiting
+/// until all required files are fetched and the object is initialized, it yields
+/// incremental progress events as an asynchronous stream.
+///
+/// # Fields
+/// - `comment`: Human-readable description of the current step (e.g., a file name
+///   that finished downloading, or `"Initialized"` at the end).
+/// - `current_task`: Number of completed steps so far.
+/// - `total_task`: Total number of steps (all downloads + final initialization).
+/// - `result`: `Some(T)` **only** on the final event; `None` otherwise.
+///
+/// # Guarantees
+/// - The result will be provided(`result.is_some() == true`) if and only if on the final event(`current_task == total_task`).
+#[derive(Debug)]
+pub struct FromCacheProgress<T> {
+    comment: String,
+    current_task: usize,
+    total_task: usize,
+    result: Option<T>,
+}
+
+impl<T> FromCacheProgress<T> {
+    /// The human-readable message for this step.
+    pub fn comment(&self) -> &str {
+        &self.comment
+    }
+
+    /// How many steps have been completed so far.
+    pub fn current_task(&self) -> usize {
+        self.current_task
+    }
+
+    /// Total number of steps for the whole operation.
+    pub fn total_task(&self) -> usize {
+        self.total_task
+    }
+
+    /// Consume this progress value and return the result, if present.
+    ///
+    /// This is `Some(T)` only for the final event.
+    pub fn take(mut self) -> Option<T> {
+        self.result.take()
+    }
+}
+
 /// A content-addressed, remote-backed cache for Ailoy assets.
 ///
-/// # Overview
-/// `Cache` resolves a logical file (by `dirname`/`filename`) to bytes by consulting a
-/// per-directory manifest on a remote store and a local on-disk cache:
+/// # Terminology
 ///
-/// 1. Load the remote manifest `_<manifest>.json` for `dirname` (fetched once and
-///    memoized in-memory).
-/// 2. If a local file exists at `<root>/<dirname>/<filename>`, compute its
-///    SHA-1 and compare with the manifest entry.
-/// 3. If hashes match, return the local bytes.
-/// 4. Otherwise, download the **content-addressed** object named by the manifest’s
-///    SHA-1 from the remote (path `<dirname>/<sha1>`), write it back to the local
-///    filename, and return the bytes.
+/// ## Cache Root
 ///
-/// This design lets you keep stable logical filenames locally while fetching immutable
-/// blobs from the remote by their content hash.
+/// The **cache root** is the local directory used by Ailoy to store cached files.
+/// By default, it is located at:
+/// - **Linux / macOS**: `${HOME}/.cache/ailoy`
+/// - **Windows**: `%LOCALAPPDATA%\ailoy`
 ///
-/// # Environment variables
-/// - `AILOY_CACHE_ROOT` — overrides the local cache root.  
-///   Defaults to:
-///   - Unix: `${HOME}/.cache/ailoy`
-///   - Windows: `%LOCALAPPDATA%\\ailoy`
-///   - WASM: `/ailoy`
-/// - `AILOY_CACHE_REMOTE_URL` — overrides the remote base URL. Must be a valid absolute
-///   URL. If unset or invalid, a built-in default is used.
+/// You can override this location via the `AILOY_CACHE_ROOT` environment variable.
+/// The active root directory can be retrieved with [`Cache::get_root`].
 ///
-/// # Concurrency
-/// A cloned `Cache` is intended to to pass around and is safe to use from multiple async
-/// tasks. Manifests are cached per directory for the lifetime of the `Cache`
-/// instance; if the remote manifest changes, create a new `Cache` (or add a refresh
-/// path) to observe updates.
+/// ## Remote URL
 ///
-/// # Key types
-/// - [`CacheEntry`]: identifies a file by `dirname` and `filename`.
-/// - [`ManifestDirectory`]: JSON manifest for a directory mapping logical filenames
-///   to [`Manifest`] (which includes at least the SHA-1).
-/// - [`CacheContents`]: a collection of `(CacheEntry, bytes)` used by [`try_create`].
+/// On first run, the local cache is empty, and files must be downloaded from a remote server
+/// following the Ailoy cache protocol.
 ///
-/// # Methods
-/// - [`get`]: Fetch a single file by `CacheEntry`, applying the cache logic above.
-/// - [`try_create`]: Build a typed value `T: TryFromCache` by asking `T` which files
-///   it needs (`claim_files`), fetching them in parallel, and letting `T` assemble
-///   itself from the resulting `CacheContents`.
+/// You can override the default remote URL via the `AILOY_CACHE_REMOTE_URL` environment variable.
+/// The active remote URL can be retrieved with [`Cache::get_remote_url`].
 ///
-/// # Errors
-/// Returns `Err(String)` for network failures, invalid manifests, missing manifest
-/// entries, or filesystem errors. Error messages are human-readable and include the
-/// originating subsystem where possible.
+/// ## Entry
 ///
-/// # Examples
-/// Fetch a tokenizer file:
-/// ```rust,ignore
-/// let cache = Cache::new();
-/// let bytes = cache
-///     .get(&CacheEntry::new("Qwen--Qwen3-0.6B", "tokenizer.json"))
-///     .await?;
-/// println!("Downloaded {}", bytes.len());
-/// ```
+/// A **cache entry** is represented by a [`CacheEntry`], which consists of two parts:
+/// - **dirname** — the directory containing the file
+/// - **filename** — the name of the file
 ///
-/// Construct a type from cache using [`TryFromCache`]:
-/// ```rust,ignore
-/// let model = cache.try_create::<MyType>("Qwen/Qwen3-0.6B").await?;
-/// ```
+/// Each `dirname` must have a corresponding manifest file (`_manifest.json`).
+/// This manifest maps logical filenames to their current content hash (SHA-1)
+/// and determines whether the cache can use an existing local file or must
+/// fetch a new copy from the remote.
 ///
-/// # See also
-/// [`TryFromCache`], [`CacheEntry`], [`CacheContents`], [`Manifest`], [`ManifestDirectory`]
+/// # Workflow
+///
+/// To resolve a file, the cache follows these steps:
+///
+/// 1. Load the per-directory `_manifest.json` from the remote.
+/// 2. Check for the local file at `<root>/<dirname>/<filename>`.
+/// 3. If the local file’s SHA-1 matches the manifest entry, return the local bytes.
+/// 4. Otherwise, download the file by its content hash from the remote,
+///    save it locally, and return the new bytes.
+///
+///
+/// See the module docs and the method docs for end-to-end behavior. This type
+/// is `Clone` and intended to be shared across async tasks. Manifests are
+/// memoized per directory for the lifetime of a `Cache` instance.
 #[derive(Debug, Clone)]
 pub struct Cache {
     root: PathBuf,
@@ -103,6 +132,11 @@ pub struct Cache {
 }
 
 impl Cache {
+    /// Create a new cache instance using environment defaults.
+    /// You can control the root or remote url with environment variable:
+    /// - root: AILOY_CACHE_ROOT
+    /// - remote url: AILOY_CACHE_REMOTE_URL
+    /// Falls back to a built-in default if unset or invalid.
     pub fn new() -> Self {
         let root = match var("AILOY_CACHE_ROOT") {
             Ok(env_path) => PathBuf::from(env_path),
@@ -143,20 +177,30 @@ impl Cache {
         }
     }
 
-    pub fn get_root(&self) -> &Path {
+    /// Return the local cache root directory.
+    pub fn root(&self) -> &Path {
         return &self.root;
     }
 
-    pub fn get_remote_url(&self) -> &Url {
+    /// Return the configured remote base URL.
+    pub fn remote_url(&self) -> &Url {
         return &self.remote_url;
     }
 
-    pub fn get_path(&self, elem: impl AsRef<CacheEntry>) -> PathBuf {
+    /// Compute the local on-disk path for a logical entry.
+    ///
+    /// This is `<root>/<dirname>/<filename>`.
+    pub fn path(&self, elem: impl AsRef<CacheEntry>) -> PathBuf {
         self.root
             .join(&elem.as_ref().dirname())
             .join(&elem.as_ref().filename())
     }
 
+    /// Compute the remote URL for a logical entry.
+    ///
+    /// This is `<remote>/<dirname>/<filename>`. Note that for actual downloads
+    /// of file content the filename is usually a content hash taken from the
+    /// manifest; see [`Cache::get`].
     pub fn get_url(&self, elem: impl AsRef<CacheEntry>) -> Url {
         self.remote_url
             .join(&format!(
@@ -167,10 +211,10 @@ impl Cache {
             .unwrap()
     }
 
-    async fn get_manifest(&self, elem: &CacheEntry) -> Result<Manifest, String> {
-        if !self.manifests.read().await.contains_key(elem.dirname()) {
-            let elem_manifest = CacheEntry::new(elem.dirname(), "_manifest.json");
-            let bytes = download(self.get_url(&elem_manifest)).await?;
+    async fn get_manifest(&self, entry: &CacheEntry) -> Result<Manifest, String> {
+        if !self.manifests.read().await.contains_key(entry.dirname()) {
+            let entry_manifest = CacheEntry::new(entry.dirname(), "_manifest.json");
+            let bytes = download(self.get_url(&entry_manifest)).await?;
             let text = std::str::from_utf8(&bytes)
                 .map_err(|e| format!("std::str::from_utf_8 failed: {}", e.to_string()))?;
             let value = serde_json::from_str::<ManifestDirectory>(text)
@@ -178,28 +222,38 @@ impl Cache {
             self.manifests
                 .write()
                 .await
-                .insert(elem.dirname().to_string(), value);
+                .insert(entry.dirname().to_string(), value);
         };
         let manifests_lock = self.manifests.read().await;
-        let files = &manifests_lock.get(elem.dirname()).unwrap().files;
-        if files.contains_key(elem.filename()) {
-            Ok(files.get(elem.filename()).unwrap().to_owned())
+        let files = &manifests_lock.get(entry.dirname()).unwrap().files;
+        if files.contains_key(entry.filename()) {
+            Ok(files.get(entry.filename()).unwrap().to_owned())
         } else {
             Err(format!(
                 "The file {} not exists in manifest",
-                elem.filename()
+                entry.filename()
             ))
         }
     }
 
-    pub async fn get(&self, elem: impl AsRef<CacheEntry>) -> Result<Vec<u8>, String> {
-        let elem = elem.as_ref();
+    /// Fetch bytes for a logical file using the cache entry acquirement process.
+    ///
+    /// Steps:
+    /// 1. Read the directory manifest to find the content hash for `entry`.
+    /// 2. If a local file exists, compute its content hash (via [`Manifest::from_u8`])
+    ///    and compare; if it matches, return the local bytes.
+    /// 3. Otherwise, download the blob named by the content hash and write it back
+    ///    to the logical filename, then return the bytes.
+    ///
+    /// Errors bubble up from manifest lookup, IO, and network.
+    pub async fn get(&self, entry: impl AsRef<CacheEntry>) -> Result<Vec<u8>, String> {
+        let entry = entry.as_ref();
 
         // Get manifest
-        let manifest = self.get_manifest(elem).await?;
+        let manifest = self.get_manifest(entry).await?;
 
         // Get local
-        let (local_manifest, local_bytes) = match read(&self.get_path(elem)).await {
+        let (local_manifest, local_bytes) = match read(&self.path(entry)).await {
             Ok(v) => (Some(Manifest::from_u8(&v)), Some(v)),
             Err(_) => (None, None),
         };
@@ -208,33 +262,105 @@ impl Cache {
         if local_manifest.is_some() && local_manifest.unwrap().sha1() == manifest.sha1() {
             Ok(local_bytes.unwrap())
         } else {
-            let remote_elem = CacheEntry::new(elem.dirname(), manifest.sha1());
-            let url = self.get_url(&remote_elem);
+            let remote_entry = CacheEntry::new(entry.dirname(), manifest.sha1());
+            let url = self.get_url(&remote_entry);
             let bytes = download(url).await?;
             // Write back
-            write(&self.get_path(elem), &bytes).await?;
+            write(&self.path(entry), &bytes).await?;
             Ok(bytes)
         }
     }
 
-    pub async fn try_create<T: TryFromCache>(&self, key: impl AsRef<str>) -> Result<T, String> {
-        use futures::future::join_all;
+    /// Builds a typed value from the cache while **streaming progress updates**.
+    ///
+    /// Initialization can be slow because it may download files and initialize hardwares.
+    /// Instead of returning the result immediately, this method yields a stream of
+    /// [`FromCacheProgress`] events. These events provide real-time feedback so users
+    /// don’t assume the process has stalled.
+    ///
+    /// See [`FromCacheProgress`] for details.
+    ///
+    /// # Type bounds
+    /// `T: TryFromCache + Send + 'static`
+    ///
+    /// # Progress semantics
+    /// - The final event satisfies `current_task == total_task` and `result.is_some()`.
+    /// - All preceding events have `result == None`.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// use futures::StreamExt;
+    ///
+    /// let cache = Cache::new();
+    /// let mut s = cache.try_create_stream::<MyType>("Qwen/Qwen3-0.6B");
+    /// while let Some(evt) = s.next().await {
+    ///     let evt = evt?;
+    ///     println!("[{}/{}] {}", evt.current_task(), evt.total_task(), evt.comment());
+    ///     if let Some(obj) = evt.take() {
+    ///         println!("Done: {:?}", obj);
+    ///     }
+    /// }
+    /// # Ok::<(), String>(())
+    /// ```
+    pub fn try_create_stream<T>(
+        &self,
+        key: impl Into<String>,
+    ) -> impl Stream<Item = Result<FromCacheProgress<T>, String>> + 'static
+    where
+        T: TryFromCache + Send + 'static,
+    {
+        let key = key.into();
+        let this = self.clone();
+        let root = self.root().to_owned();
 
-        let key = key.as_ref();
-        let files = T::claim_files(self.clone(), key.to_owned()).await?;
-        let futures = files.into_iter().map(|elem| {
-            let this = self.clone();
-            async move {
-                let bytes = this.get(&elem).await.map(|v| (elem, v))?;
-                Ok::<_, String>(bytes)
+        try_stream! {
+            // Claim files to be processed
+            let files = T::claim_files(this.clone(), key.clone()).await?;
+
+            // Number of tasks => downloading all files + initializing T
+            let total_task: usize = files.len() + 1;
+
+            // Current processed task
+            let mut current_task = 0;
+
+            // Main tasks
+            let mut tasks: FuturesUnordered<_> = files
+                .into_iter()
+                .map(|entry| {
+                    let this = this.clone();
+                    async move {
+                        let res = this.get(&entry).await;
+                        (entry, res)
+                    }
+                })
+                .collect();
+
+            let mut pairs: Vec<(CacheEntry, Vec<u8>)> = Vec::with_capacity(total_task);
+            while let Some((entry, res)) = tasks.next().await {
+                let bytes = res?;
+                current_task += 1;
+                pairs.push((entry.clone(), bytes));
+                yield FromCacheProgress::<T> {
+                    comment: format!("Downloaded {}", entry.filename()),
+                    current_task,
+                    total_task,
+                    result: None,
+                };
             }
-        });
-        let mut contents = join_all(futures)
-            .await
-            .into_iter()
-            .collect::<Result<CacheContents, _>>()?
-            .with_root(self.root.clone());
-        T::try_from_contents(&mut contents)
+
+            // Assemble cache contents
+            let mut contents = pairs.into_iter().collect::<CacheContents>().with_root(root);
+
+            // Final creation
+            let value = T::try_from_contents(&mut contents)?;
+            current_task += 1;
+            yield FromCacheProgress::<T> {
+                comment: "Intialized".to_owned(),
+                current_task,
+                total_task,
+                result: Some(value),
+            };
+        }
     }
 }
 
