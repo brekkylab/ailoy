@@ -9,30 +9,32 @@ If you do, please report them via our **GitHub Issues** or **Discord** channels 
 
 {/* prettier-ignore-end */}
 
-Ailoy provides **WebAssembly (WASM)** support for running in modern web
-browsers, with the following key capabilities:
+Ailoy supports running entirely in modern web browsers using **WebAssembly
+(WASM)**. This enables AI workloads directly in the browser with no backend
+required.
 
-- Run local models accelerated by **WebGPU** (both for Agents and VectorStores)
-- Use API models exactly as in non-browser environments
-- Access built-in tools or register your own custom tools
-- Integrate **MCP tools** over Streamable HTTP, Server-Sent Events (SSE), or
-  WebSocket transports
+**Key capabilities**
 
-This guide will walk you through setting up and using `ailoy-web` in your web
-applications.
+- Run local models accelerated by **WebGPU**—supports both **Agents** and
+  **VectorStores**.
+- Use API models just like you would in native environments.
+- Access built-in tools, or register your own custom tools
+- Connect **MCP tools** via Streamable HTTP, Server-Sent Events (SSE), or
+  WebSocket transports.
+
+This guide walks you through setting up and using `ailoy-web` in your
+browser-based applications.
 
 ## Hardware Requirements
 
-If you plan to run local models in the browser using WebGPU, make sure your
-system has the necessary hardware acceleration and drivers installed.
+If you plan to run local models with WebGPU, make sure your system has the
+necessary hardware accelerators and drivers installed.
 
-- **MacOS with Apple Silicon**: Fully supported, should work out-of-the-box.
-  running this example.
-- **Windows or Linux with NVIDIA/AMD GPUs**: Ensure that the latest GPU drivers
-  are installed.
+- **MacOS with Apple Silicon**: Fully supported, typically works out of the box.
+- **Windows / Linux with NVIDIA or AMD GPUs**: Ensure that the latest GPU
+  drivers are installed.
 
-You can quickly check for WebGPU support in your browser by opening the
-developer console and running:
+To check WebGPU support in your browser, open the developer console and run:
 
 ```javascript
 if (navigator.gpu) {
@@ -49,10 +51,10 @@ if (navigator.gpu) {
 ### Setup Vite and install `ailoy-web`
 
 We recommend using **[Vite](https://vite.dev/)** for a fast development
-environment and optimized builds. This tutorial uses **React + TypeScript**
+environment and optimized builds. This example uses **React + TypeScript**
 configuration.
 
-1. Let's create a vite project by running `npm create vite@latest`.
+1. Let's create a Vite project by running `npm create vite@latest`.
 
 {/* prettier-ignore-start */}
 
@@ -114,8 +116,6 @@ found 0 vulnerabilities
      threading)
    - Optimize bundle size by grouping `ailoy-web` into its own build chunk
 
-   Or just change `vite.config.ts` to look like the code below.
-
 ```typescript
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
@@ -143,14 +143,13 @@ export default defineConfig({
 });
 ```
 
-### Install `assistant-ui`
+### Install and configure `assistant-ui`
 
 For this quick demo, we'll use [**assistant-ui**](https://www.assistant-ui.com/)
 package to create a basic chat interface.
 
-`assistant-ui` uses [**shadcn**](https://ui.shadcn.com/docs/installation/vite),
-so you need to set it up before installing assistant-ui.  
-Let's follow the guide from
+It relies on [**shadcn**](https://ui.shadcn.com/docs/installation/vite), so
+we'll set that up first. Follow the guide from
 [shadcn's documentation](https://ui.shadcn.com/docs/installation/vite).
 
 1. Edit `tsconfig.json`.
@@ -286,7 +285,7 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
 ### Implementation
 
-1. Add `src/AiloyRuntimeProvider.tsx` and write the code as follow:
+1. Create `src/AiloyRuntimeProvider.tsx` and write the code as follow:
 
 ```typescript
 "use client";
@@ -414,7 +413,7 @@ export function AiloyRuntimeProvider({
 }
 ```
 
-2. Update `src/App.tsx` to use this provider.
+2. Update `src/App.tsx` to wrap `<Thread />` inside `<AiloyRuntimeProvider>`.
 
 ```typescript
 import { Thread } from "@/components/assistant-ui/thread";
@@ -448,7 +447,7 @@ createRoot(document.getElementById('root')!).render(
 )
 ```
 
-4. Now run the development server by running `npm run dev`.
+4. Start the development server with `npm run dev`.
 
 {/* prettier-ignore-start */}
 
@@ -466,8 +465,7 @@ $ npm run dev
 
 {/* prettier-ignore-end */}
 
-5. While `npm run dev` is running, go to http://localhost:5173.  
-   You will see the page like below if there was no error.
+5. Visit http://localhost:5173 — your chat UI should be live.
 
 ![](./img/webassembly-supports/chat-ui.png)
 
@@ -484,13 +482,12 @@ Once initialization completes, you can start chatting with the agent.
 
 {/* prettier-ignore-end */}
 
-6. Try to start a conversation with the LLM running _on your web browser_.
+6. Try to start a conversation with the agent running _on your web browser_.
 
 ![](./img/webassembly-supports/simple-chat.gif)
 
-🎉 **Congratulation!** Now you have an agent running on your browser, without
-any backend servers required and can be exported statically and deployed
-anywhere!
+🎉 **Congratulations!** You now have a fully local AI agent running **entirely
+in your browser** with zero backend servers!
 
 ## Additional Features
 
@@ -718,40 +715,40 @@ Update the code in `<MessageList>` as below to show the corresponding message
 content for each message type.
 
 ```typescript
-          <MessageList>
-            {messages.map((message, idx) => {
-              let content = "";
-              if (message.role === "user") {
-                content = (message as ai.UserMessage).content as string;
-              } else if (
-                message.type === "output_text" ||
-                message.type === "reasoning"
-              ) {
-                content = (message as ai.AgentResponse).content as string;
-              } else if (message.type === "tool_call") {
-                content = `Tool Call: ${message.content.function.name} (${message.content.id})`;
-                content += `\nArguments: ${JSON.stringify(
-                  message.content.function.arguments
-                )}`;
-              } else if (message.type === "tool_call_result") {
-                content = `Tool Result (${message.content.tool_call_id})`;
-                content += `\nContent: ${message.content.content[0].text}`;
-              }
+<MessageList>
+  {messages.map((message, idx) => {
+    let content = "";
+    if (message.role === "user") {
+      content = (message as ai.UserMessage).content as string;
+    } else if (
+      message.type === "output_text" ||
+      message.type === "reasoning"
+    ) {
+      content = (message as ai.AgentResponse).content as string;
+    } else if (message.type === "tool_call") {
+      content = `Tool Call: ${message.content.function.name} (${message.content.id})`;
+      content += `\nArguments: ${JSON.stringify(
+        message.content.function.arguments
+      )}`;
+    } else if (message.type === "tool_call_result") {
+      content = `Tool Result (${message.content.tool_call_id})`;
+      content += `\nContent: ${message.content.content[0].text}`;
+    }
 
-              return (
-                <Message
-                  key={`message-${idx}`}
-                  model={{
-                    direction:
-                      message.role === "user" ? "outgoing" : "incoming",
-                    position: "normal",
-                    sender: message.role,
-                    message: content,
-                  }}
-                />
-              );
-            })}
-          </MessageList>
+    return (
+      <Message
+        key={`message-${idx}`}
+        model={{
+          direction:
+            message.role === "user" ? "outgoing" : "incoming",
+          position: "normal",
+          sender: message.role,
+          message: content,
+        }}
+      />
+    );
+  })}
+</MessageList>
 ```
 
 Test the tool calling with the prompt that might invoke the calculator tool.
@@ -927,4 +924,93 @@ Check if MCP tools work as expected.
 
 ## Using Vector Stores
 
-TBD
+You can interact with Vector Stores in Ailoy Web using the same API described in
+[**RAG with Vector Store**](../tutorial/rag-with-vector-store.mdx).
+
+When combined with **local embedding models** and **in-memory vector stores**
+such as **Faiss**, you can build a fully client-side RAG application that runs
+entirely inside the user's browser—no backend servers required. This approach is
+ideal for privacy-preserving, offline-capable AI assistants.
+
+### Defining a Vector Store
+
+```typescript
+import * as ai from "ailoy-web";
+
+const runtime = await ai.startRuntime();
+
+// Using an in-memory Faiss vector store
+const vectorstore = await ai.defineVectorStore(runtime, {
+  type: "faiss",
+  embedding: {
+    modelId: "BAAI/bge-m3",
+  },
+});
+
+// Using an external ChromaDB server
+const vectorstore = await ai.defineVectorStore(runtime, {
+  type: "chromadb",
+  url: "http://localhost:8000", // Replace with your ChromaDB endpoint
+  collection: "my-collection",  // Your target collection name
+  embedding: {
+    modelId: "BAAI/bge-m3",
+  },
+})
+```
+
+{/* prettier-ignore-start */}
+
+:::warning
+When using external vector stores such as ChromaDB, make sure they're configured to use **CORS middleware** to allow your origin.
+For ChromaDB, refer the [**CORS configuration**](https://cookbook.chromadb.dev/strategies/cors/).
+:::
+
+{/* prettier-ignore-end */}
+
+### Inserting Documents
+
+Before you can retrieve documents, you must insert them into the vector store
+along with optional metadata.
+
+Typically, you'll chunk your text into smaller pieces before insertion for
+better retrieval accuracy.
+
+```typescript
+const items = [
+  {
+    document:
+      "BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.",
+    metadata: { topic: "bge-m3" },
+  },
+  {
+    document:
+      "BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document",
+    metadata: { topic: "bm25" },
+  },
+];
+
+for (const item of items) {
+  const result = await vectorstore.insert(item);
+  console.log(result); // Example: {id: "1"}
+}
+```
+
+### Retrieving Documents
+
+You can retrieve the most relevant documents by similarity score, which is
+computed using vector embeddings.
+
+```typescript
+// Retrieve the top 1 item most similar to the query
+const retrievedItems = await vectorstore.retrieve("What is BGE-M3?", 1);
+console.log(retrievedItems);
+// Expected: returns the document related to "bge-m3"
+```
+
+### Clearing the Vector Store
+
+If you need to reset or remove all entries from the vector store:
+
+```typescript
+await vectorstore.clear();
+```
