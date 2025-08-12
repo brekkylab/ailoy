@@ -45,8 +45,8 @@ impl Agent {
                 }
                 let assistant_msg = aggregator.finalize().unwrap();
                 self.messages.lock().await.push(assistant_msg.clone());
-                if !assistant_msg.tool_calls().is_empty() {
-                    for part in assistant_msg.tool_calls() {
+                if !assistant_msg.tool_calls.is_empty() {
+                    for part in assistant_msg.tool_calls {
                         let tc = ToolCall::try_from_string(part.get_function_owned().unwrap()).unwrap();
                         let tool = tools.iter().find(|v| v.get_description().get_name() == tc.get_name()).unwrap().clone();
                         let resp = tool.run(tc).await?;

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self, Display};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -107,7 +107,7 @@ pub enum Part {
     ///
     /// Typically serialized as:
     /// `{ "type": "image", "data": "<base64>" }`.
-    ImageBase64(String),
+    ImageData(String),
 }
 
 impl Part {
@@ -186,8 +186,8 @@ impl Part {
     }
 
     /// Constructor for image base64 part
-    pub fn new_image_base64<T: Into<String>>(encoded: T) -> Part {
-        Part::ImageBase64(encoded.into())
+    pub fn new_image_data<T: Into<String>>(encoded: T) -> Part {
+        Part::ImageData(encoded.into())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -195,7 +195,7 @@ impl Part {
             Part::Text(v) => v.is_empty(),
             Part::Function { function: v, .. } => v.is_empty(),
             Part::ImageURL(_) => false,
-            Part::ImageBase64(v) => v.is_empty(),
+            Part::ImageData(v) => v.is_empty(),
         }
     }
 }
@@ -229,9 +229,9 @@ impl Serialize for Part {
                 map.serialize_entry("type", "image")?;
                 map.serialize_entry("url", url.as_str())?;
             }
-            Part::ImageBase64(encoded) => {
+            Part::ImageData(encoded) => {
                 map.serialize_entry("type", "image")?;
-                map.serialize_entry("base64", encoded)?;
+                map.serialize_entry("data", encoded)?;
             }
         };
         map.end()
@@ -313,10 +313,36 @@ impl<'de> Visitor<'de> for PartVisitor {
                     err.to_string()
                 ))),
             }
-        } else if ty == "image" && key == "base64" {
-            Ok(Part::ImageBase64(value))
+        } else if ty == "image" && key == "data" {
+            Ok(Part::ImageData(value))
         } else {
             Err(de::Error::custom("Invalid type"))
+        }
+    }
+}
+
+impl Display for Part {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Part::Text(text) => f.write_str(&format!("Part(type=\"text\", text=\"{}\")", text)),
+            Part::Function { id, function } => match id {
+                Some(id) => f.write_str(&format!(
+                    "Part(type=\"function\", id=\"{}\", function=\"{}\")",
+                    id, function
+                )),
+                None => f.write_str(&format!(
+                    "Part(type=\"function\", function=\"{}\")",
+                    function
+                )),
+            },
+            Part::ImageURL(url) => f.write_str(&format!(
+                "Part(type=\"image\", url=\"{}\")",
+                url.to_string()
+            )),
+            Part::ImageData(data) => f.write_str(&format!(
+                "Part(type=\"image\", data=({} bytes))",
+                data.len()
+            )),
         }
     }
 }
@@ -528,10 +554,10 @@ pub enum Role {
 /// ```
 #[derive(Clone, Debug)]
 pub struct Message {
-    role: Role,
-    content: Vec<Part>,
-    reasoning: Vec<Part>,
-    tool_calls: Vec<Part>,
+    pub role: Role,
+    pub content: Vec<Part>,
+    pub reasoning: Vec<Part>,
+    pub tool_calls: Vec<Part>,
 }
 
 impl Message {
@@ -553,37 +579,6 @@ impl Message {
             reasoning: Vec::new(),
             tool_calls: Vec::new(),
         }
-    }
-
-    /// Append content to the content vector
-    pub fn push_content(&mut self, content: Part) -> () {
-        self.content.push(content);
-    }
-
-    /// Append reasoning part
-    pub fn push_reasoning(&mut self, reasoning: Part) -> () {
-        self.reasoning.push(reasoning);
-    }
-
-    /// Append tool call part
-    pub fn push_tool_call(&mut self, tool_calls: Part) -> () {
-        self.tool_calls.push(tool_calls);
-    }
-
-    pub fn role(&self) -> &Role {
-        &self.role
-    }
-
-    pub fn content(&self) -> &Vec<Part> {
-        &self.content
-    }
-
-    pub fn reasoning(&self) -> &Vec<Part> {
-        &self.reasoning
-    }
-
-    pub fn tool_calls(&self) -> &Vec<Part> {
-        &self.tool_calls
     }
 }
 
@@ -663,6 +658,41 @@ impl<'de> Visitor<'de> for MessageVisitor {
             reasoning,
             tool_calls,
         })
+    }
+}
+
+impl Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Message(role={}")?;
+        if self.content.len() > 0 {
+            let contents_str = self
+                .content
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            f.write_str(&format!(",content=[{}]", &contents_str))?;
+        }
+        if self.reasoning.len() > 0 {
+            let reasoning_str = self
+                .reasoning
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            f.write_str(&format!(",reasoning=[{}]", &reasoning_str))?;
+        }
+        if self.tool_calls.len() > 0 {
+            let tool_calls_str = self
+                .tool_calls
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            f.write_str(&format!(",tool_calls=[{}]", &tool_calls_str))?;
+        }
+        f.write_str(")")?;
+        Ok(())
     }
 }
 
@@ -759,9 +789,9 @@ impl MessageAggregator {
             };
 
             match last_delta {
-                MessageDelta::Content(_, part) => msg.push_content(part),
-                MessageDelta::Reasoning(_, part) => msg.push_reasoning(part),
-                MessageDelta::ToolCall(_, part) => msg.push_tool_call(part),
+                MessageDelta::Content(_, part) => msg.content.push(part),
+                MessageDelta::Reasoning(_, part) => msg.reasoning.push(part),
+                MessageDelta::ToolCall(_, part) => msg.tool_calls.push(part),
             }
 
             self.last_message = Some(msg);

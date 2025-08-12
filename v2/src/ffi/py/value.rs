@@ -3,6 +3,7 @@ use std::str::FromStr;
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
+    types::PyList,
 };
 
 use crate::value::{Message, Part, Role};
@@ -15,7 +16,7 @@ pub struct PyPart {
 
 #[pymethods]
 impl PyPart {
-    /// Part(type, *, id=None, text=None, url=None, data=None, base64=None, function=None)
+    /// Part(type, *, id=None, text=None, url=None, data=None, function=None)
     ///
     /// Examples:
     /// - Part(type="text", text="hello")
@@ -23,14 +24,13 @@ impl PyPart {
     /// - Part(type="image", data="<base64>")  # 'base64=' alias also accepted
     /// - Part(type="function", function=r#"{"name":"foo","arguments":"{}"}"#, id="call_1")
     #[new]
-    #[pyo3(signature = (r#type, *, id=None, text=None, url=None, data=None, base64=None, function=None))]
+    #[pyo3(signature = (r#type, *, id=None, text=None, url=None, data=None, function=None))]
     fn new(
         r#type: &str,
         id: Option<String>,
         text: Option<String>,
         url: Option<String>,
         data: Option<String>,
-        base64: Option<String>,
         function: Option<String>,
     ) -> PyResult<Self> {
         let inner = match r#type {
@@ -44,8 +44,8 @@ impl PyPart {
                     Part::ImageURL(
                         url::Url::parse(&u).map_err(|e| PyValueError::new_err(e.to_string()))?,
                     )
-                } else if let Some(b) = data.or(base64) {
-                    Part::ImageBase64(b)
+                } else if let Some(b) = data {
+                    Part::ImageData(b)
                 } else {
                     return Err(PyTypeError::new_err("image needs url= or data=/base64="));
                 }
@@ -60,27 +60,26 @@ impl PyPart {
         match &self.inner {
             Part::Text(_) => "text",
             Part::Function { .. } => "function",
-            Part::ImageURL(_) | Part::ImageBase64(_) => "image",
+            Part::ImageURL(_) | Part::ImageData(_) => "image",
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-
-    // Accessors return Option[str] (None if wrong variant)
+    #[getter]
     fn text(&self) -> Option<&str> {
         self.inner.get_text()
     }
 
-    fn function_id(&self) -> Option<String> {
+    #[getter]
+    fn id(&self) -> Option<String> {
         self.inner.get_function_id()
     }
 
-    fn function_raw(&self) -> Option<&String> {
+    #[getter]
+    fn function(&self) -> Option<&String> {
         self.inner.get_function()
     }
 
+    #[getter]
     fn url(&self) -> Option<String> {
         match &self.inner {
             Part::ImageURL(u) => Some(u.as_str().to_string()),
@@ -88,9 +87,10 @@ impl PyPart {
         }
     }
 
-    fn base64(&self) -> Option<&str> {
+    #[getter]
+    fn data(&self) -> Option<&str> {
         match &self.inner {
-            Part::ImageBase64(b) => Some(b.as_str()),
+            Part::ImageData(b) => Some(b.as_str()),
             _ => None,
         }
     }
@@ -101,7 +101,7 @@ impl PyPart {
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("Part(type={})", self.r#type()))
+        Ok(self.inner.to_string())
     }
 }
 
@@ -138,50 +138,92 @@ impl PyMessage {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
-    // --- role ---
-
     #[getter]
     fn role(&self) -> PyResult<String> {
-        Ok(self.inner.role().to_string())
+        Ok(self.inner.role.to_string())
     }
 
-    fn set_role(&mut self, role: &str) -> PyResult<()> {
-        let role = Role::from_str(role).map_err(|_| PyValueError::new_err(role.to_owned()))?;
-        let m = &self.inner;
-        // rebuild to preserve existing vectors
-        let mut newm = Message::new(role);
-        for p in m.content().iter().cloned() {
-            newm.push_content(p);
-        }
-        for p in m.reasoning().iter().cloned() {
-            newm.push_reasoning(p);
-        }
-        for p in m.tool_calls().iter().cloned() {
-            newm.push_tool_call(p);
-        }
-        self.inner = newm;
-        Ok(())
+    // #[setter]
+    // fn set_role(&mut self, role: &str) -> PyResult<()> {
+    //     let role = Role::from_str(role).map_err(|_| PyValueError::new_err(role.to_owned()))?;
+    //     let mut inner_new = Message::new(role);
+    //     for p in self.inner.drain_content() {
+    //         inner_new.push_content(p);
+    //     }
+    //     for p in self.inner.drain_reasoning() {
+    //         inner_new.push_reasoning(p);
+    //     }
+    //     for p in self.inner.drain_tool_calls() {
+    //         inner_new.push_tool_call(p);
+    //     }
+    //     self.inner = inner_new;
+    //     Ok(())
+    // }
+
+    #[getter]
+    fn content<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        PyList::new(
+            py,
+            self.inner
+                .content
+                .clone()
+                .into_iter()
+                .map(|inner| PyPart { inner }),
+        )
     }
 
-    fn push_content(&mut self, part: PyPart) {
-        self.inner.push_content(part.inner);
+    #[setter]
+    fn set_content(&mut self, content: Vec<PyPart>) {
+        self.inner.content = content.into_iter().map(|v| v.inner).collect();
     }
 
-    fn push_reasoning(&mut self, part: PyPart) {
-        self.inner.push_reasoning(part.inner);
+    fn append_content(&mut self, part: PyPart) {
+        self.inner.content.push(part.inner);
     }
 
-    fn push_tool_call(&mut self, part: PyPart) {
-        self.inner.push_tool_call(part.inner);
+    #[getter]
+    fn reasoning<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        PyList::new(
+            py,
+            self.inner
+                .reasoning
+                .clone()
+                .into_iter()
+                .map(|inner| PyPart { inner }),
+        )
+    }
+
+    #[setter]
+    fn set_reasoning(&mut self, reasoning: Vec<PyPart>) {
+        self.inner.reasoning = reasoning.into_iter().map(|v| v.inner).collect();
+    }
+
+    fn append_reasoning(&mut self, part: PyPart) {
+        self.inner.reasoning.push(part.inner);
+    }
+
+    #[getter]
+    fn tool_calls<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        PyList::new(
+            py,
+            self.inner
+                .tool_calls
+                .clone()
+                .into_iter()
+                .map(|inner| PyPart { inner }),
+        )
+    }
+
+    #[setter]
+    fn set_tool_calls(&mut self, tool_calls: Vec<PyPart>) {
+        self.inner.tool_calls = tool_calls.into_iter().map(|v| v.inner).collect();
+    }
+
+    fn append_tool_call(&mut self, part: PyPart) {
+        self.inner.tool_calls.push(part.inner);
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("{}", serde_json::to_string(&self.inner).unwrap(),))
+        Ok(self.inner.to_string())
     }
-}
-
-#[pymodule(name = "_value")]
-fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
-    m.add_class::<PyMessage>()?;
-    Ok(())
 }

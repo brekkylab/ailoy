@@ -1,7 +1,7 @@
-mod local_language_model;
+mod model;
 mod value;
 
-use local_language_model::*;
+use model::*;
 use value::*;
 
 use pyo3::prelude::*;

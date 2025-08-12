@@ -19,7 +19,7 @@ fn map_err<E: ToString>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
 
-#[pyclass(name = "LanguageModel")]
+#[pyclass(name = "LocalLanguageModel")]
 pub struct PyLocalLanguageModel {
     inner: Arc<LocalLanguageModel>,
 }
@@ -68,54 +68,6 @@ impl PyLocalLanguageModel {
     }
 }
 
-#[pyclass(unsendable, name = "LocalLanguageModelCreateIterator")]
-pub struct PyLocalLanguageModelCreateIterator {
-    rt: Runtime,
-    stream: BoxStream<'static, Result<FromCacheProgress<LocalLanguageModel>, String>>,
-}
-
-#[pymethods]
-impl PyLocalLanguageModelCreateIterator {
-    fn __iter__(self_: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        self_
-    }
-
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<PyObject>> {
-        // Pull one step
-        let item = py.allow_threads(|| {
-            self.rt
-                .block_on(async { self.stream.as_mut().next().await })
-        });
-
-        match item {
-            Some(Ok(progress)) => {
-                let comment = progress.comment().to_string();
-                let current = progress.current_task();
-                let total = progress.total_task();
-                let maybe_result = if current == total {
-                    Some(Py::new(
-                        py,
-                        PyLocalLanguageModel {
-                            inner: Arc::new(progress.take().unwrap()),
-                        },
-                    )?)
-                } else {
-                    None
-                };
-
-                let d = PyDict::new(py);
-                d.set_item("comment", comment)?;
-                d.set_item("current", current)?;
-                d.set_item("total", total)?;
-                d.set_item("result", maybe_result)?;
-                Ok(Some(d.into()))
-            }
-            Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
-            None => Ok(None), // StopIteration
-        }
-    }
-}
-
 struct ProgressInner {
     comment: String,
     current: usize,
@@ -141,6 +93,49 @@ impl<'py> IntoPyObject<'py> for ProgressInner {
             d.set_item("result", py.None())?;
         }
         Ok(d)
+    }
+}
+
+#[pyclass(unsendable, name = "LocalLanguageModelCreateIterator")]
+pub struct PyLocalLanguageModelCreateIterator {
+    rt: Runtime,
+    stream: BoxStream<'static, Result<FromCacheProgress<LocalLanguageModel>, String>>,
+}
+
+#[pymethods]
+impl PyLocalLanguageModelCreateIterator {
+    fn __iter__(self_: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        self_
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<ProgressInner>> {
+        // Pull one step
+        let item = py.allow_threads(|| {
+            self.rt
+                .block_on(async { self.stream.as_mut().next().await })
+        });
+
+        match item {
+            Some(Ok(progress)) => {
+                let comment = progress.comment().to_string();
+                let current = progress.current_task();
+                let total = progress.total_task();
+                let result = if current == total {
+                    Some(Arc::new(progress.take().unwrap()))
+                } else {
+                    None
+                };
+
+                Ok::<Option<ProgressInner>, PyErr>(Some(ProgressInner {
+                    comment,
+                    current,
+                    total,
+                    result,
+                }))
+            }
+            Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
+            None => Ok(None), // StopIteration
+        }
     }
 }
 

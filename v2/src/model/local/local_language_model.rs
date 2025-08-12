@@ -228,7 +228,7 @@ mod tests {
         println!("Resp: {:?}", resp);
         let tc = ToolCall::try_from_string(
             resp.unwrap()
-                .tool_calls()
+                .tool_calls
                 .get(0)
                 .unwrap()
                 .get_function_owned()
