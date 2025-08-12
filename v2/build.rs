@@ -67,6 +67,16 @@ fn build_native() {
         }
     }
 
+    fn copy_into_python_package(
+        lib_name: &str,
+        cmake_install_dir: &Path,
+        cargo_manifest_dir: &Path,
+    ) {
+        let src = cmake_install_dir.join(lib_name);
+        let dst_dir = cargo_manifest_dir.join("bindings/python/ailoy");
+        std::fs::copy(&src, dst_dir.join(lib_name)).expect("copy tvm_runtime");
+    }
+
     // Setup directories
     let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let cmake_source_dir = cargo_manifest_dir.join("shim");
@@ -133,6 +143,18 @@ fn build_native() {
         .arg(&cmake_binary_dir)
         .status()
         .expect("failed to run cmake install");
+
+    // Copy to python package
+    if env::var("CARGO_FEATURE_PYTHON").is_ok() {
+        #[cfg(target_os = "macos")]
+        let tvm_lib_name = "libtvm_runtime.dylib";
+        #[cfg(target_os = "linux")]
+        let tvm_lib_name = "libtvm_runtime.so";
+        #[cfg(target_os = "windows")]
+        let tvm_lib_name = "tvm_runtime.dll";
+
+        copy_into_python_package(tvm_lib_name, &cmake_install_dir, &cargo_manifest_dir);
+    }
 
     // Link to this project
     println!("cargo:rustc-link-lib=c++");

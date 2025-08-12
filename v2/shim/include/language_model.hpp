@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -84,6 +85,7 @@ public:
   void prefill(const std::vector<uint32_t> &tokens);
 
   void prefill_from_rs(const rust::Vec<uint32_t> &tokens) {
+    std::lock_guard<std::mutex> lk(m_);
     std::vector<uint32_t> converted(tokens.begin(), tokens.end());
     return prefill(converted);
   }
@@ -93,6 +95,7 @@ public:
 
   std::unique_ptr<DLManagedTensorVersioned>
   decode_from_rs(uint32_t last_token) {
+    std::lock_guard<std::mutex> lk(m_);
     return std::unique_ptr<DLManagedTensorVersioned>(
         std::move(decode(last_token)).ToDLPackVersioned());
   }
@@ -101,6 +104,7 @@ public:
   uint32_t sample(tvm::runtime::NDArray);
 
   uint32_t sample_from_rs(std::unique_ptr<DLManagedTensorVersioned> logits) {
+    std::lock_guard<std::mutex> lk(m_);
     auto v =
         tvm::runtime::NDArray::FromDLPackVersioned(std::move(logits.release()));
     return sample(v);
@@ -128,6 +132,8 @@ private:
   tvm::ffi::Function fapply_bitmask_inplace_;
 
   tvm::ffi::Function fsample_top_p_from_logits_;
+
+  mutable std::mutex m_;
 };
 
 std::unique_ptr<DLDevice> create_dldevice(int device_type, int device_id);

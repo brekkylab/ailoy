@@ -110,6 +110,8 @@ unsafe impl Send for ffi::DLManagedTensorVersioned {}
 
 unsafe impl Send for ffi::TVMLanguageModel {}
 
+unsafe impl Sync for ffi::TVMLanguageModel {}
+
 impl std::fmt::Debug for ffi::TVMLanguageModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TVMLanguageModel").finish()
