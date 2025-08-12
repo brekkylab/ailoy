@@ -436,7 +436,7 @@ $ npm run dev
 
 You should see the page like below if there was no error.
 
-![](./img/webassembly-supports/img0.png)
+![](./img/webassembly-supports/chat-ui.png)
 
 When the agent initializes for the first time, model parameters are downloaded
 from Ailoy’s file server. These files are stored in the browser’s
@@ -445,7 +445,7 @@ which is isolated per origin and managed internally by the browser.
 
 Once initialization completes, you can start chatting with the agent.
 
-![](./img/webassembly-supports/img1.gif)
+![](./img/webassembly-supports/simple-chat.gif)
 
 🎉 **Congratulation!** Now you have an agent running on your browser, without
 any backend servers required and can be exported statically and deployed
@@ -480,7 +480,188 @@ For example, consider making an input box to get API key from users and initiali
 
 {/* prettier-ignore-end */}
 
-### Using Tools
+### Multi-Modal Inputs
+
+{/* prettier-ignore-start */}
+
+:::warning
+Multi-Modal inputs are currently supported only on API models as
+described in
+[**Agent > Multi-Modal Inputs**](http://localhost:3000/ailoy/docs/concepts/agent#multi-modal-inputs).
+:::
+
+{/* prettier-ignore-end */}
+
+Follow the guide in assistant-ui's
+[**Attachments documentation**](https://www.assistant-ui.com/docs/guides/Attachments)
+to enable file attachment functionality.
+
+Install attachment UI component.
+
+<TerminalBox>
+
+$ npx shadcn@latest add "https://r.assistant-ui.com/attachment"
+
+</TerminalBox>
+
+Similar to what we did for Thread component, edit
+`src/components/assistant-ui/attachment.tsx` as below to fix compile error.
+
+{/* prettier-ignore-start */}
+
+```typescript {1}
+import { type PropsWithChildren, useEffect, useState, type FC } from "react";
+import { CircleXIcon, FileIcon, PaperclipIcon } from "lucide-react";
+```
+
+{/* prettier-ignore-end */}
+
+Edit `src/components/assistant-ui/thread.tsx` to add attachment components.
+
+```typescript {1-5,15-17,29-31,44}
+import {
+  ComposerAttachments,
+  ComposerAddAttachment,
+  UserMessageAttachments,
+} from "./attachment";
+
+// Update Composer
+const Composer: FC = () => {
+  return (
+    <div ...>
+      <ThreadScrollToBottom />
+      <ThreadPrimitive.Empty>
+        <ThreadWelcomeSuggestions />
+      </ThreadPrimitive.Empty>
+      <ThreadPrimitive.Empty>
+        <ComposerAttachments />
+      </ThreadPrimitive.Empty>
+      <ComposerPrimitive.Root ...>
+        // ...
+      </ComposerPrimitive.Root>
+    </div>
+  )
+}
+
+// Update ComposerAction
+const ComposerAction: FC = () => {
+  return (
+    <div ...>
+      <ThreadPrimitive.If running={false}>
+        <ComposerAddAttachment />
+      </ThreadPrimitive.If>
+      // ...
+    </div>
+  )
+}
+
+// Update UserMessage
+const UserMessage: FC = () => {
+  return (
+    <MessagePrivitive.Root asChild>
+      <motion.div
+        // ...
+      >
+        <UserMessageAttachments />
+        <UserActionBar />
+        // ...
+      </motion.div>
+    </MessagePrivitive.Root>
+  )
+}
+```
+
+In `src/AiloyRuntimeProvider.tsx`, update `onNew` to handle image contents.
+
+```typescript {4-27}
+const onNew = async (message: AppendMessage) => {
+  // ...
+
+  let userContent: ai.UserMessage["content"] = [];
+
+  // Add attachments
+  if (message.attachments !== undefined) {
+    for (const attach of message.attachments) {
+      if (attach.type === "image") {
+        const imageContent = await ai.ImageContent.fromFile(attach.file!);
+        userContent.push(imageContent);
+      }
+      // other types are skipped
+    }
+  }
+
+  // Add text prompt
+  if (message.content[0]?.type !== "text")
+    throw new Error("Only text messages are supported");
+  const textContent: ai.TextContent = {
+    type: "text",
+    text: message.content[0].text,
+  };
+  userContent.push(textContent);
+
+  // set messages
+  setMessages((prev) => [...prev, { role: "user", content: userContent }]);
+
+  // ...
+```
+
+Update the message conversion callback in `useExternalMessageConverter` to
+handle multimodal contents.
+
+```typescript {4-23}
+const convertedMessages = useExternalMessageConverter({
+  messages,
+  callback: (message: ai.UserMessage | ai.AgentResponse) => {
+    if (message.role === "user") {
+      if (typeof message.content === "string") {
+        return {
+          role: message.role,
+          content: [{ type: "text", text: message.content }],
+        };
+      } else {
+        return {
+          role: message.role,
+          content: message.content.map((c) => {
+            if (c.type === "text") return c;
+            else if (c.type === "image_url")
+              return { type: "image", image: c.image_url.url };
+            else if (c.type === "input_audio")
+              return { type: "audio", audio: c.input_audio };
+            else throw Error("Unknown content type");
+          }),
+        };
+      }
+    }
+    // ...
+  },
+});
+```
+
+Add `adapters` on `useExternalStoreRuntime` to handle image file attachments.
+
+```typescript {1-5,9-14}
+import {
+  CompositeAttachmentAdapter,
+  SimpleImageAttachmentAdapter,
+  SimpleTextAttachmentAdapter,
+} from "@assistant-ui/react";
+
+const runtime = useExternalStoreRuntime({
+  // ...
+  adapters: {
+    attachments: new CompositeAttachmentAdapter([
+      new SimpleImageAttachmentAdapter(),
+      new SimpleTextAttachmentAdapter(),
+    ]),
+  },
+});
+```
+
+Now you can attach images and ask about them.
+
+![](./img/webassembly-supports/image-input.gif)
+
+### Using Builtin Tools
 
 You can use any tool presets as described in
 [**Out-of-the-box tools**](./tools#out-of-the-box-tools). Let's add handling
@@ -534,9 +715,9 @@ content for each message type.
 
 Test the tool calling with the prompt that might invoke the calculator tool.
 
-![tool calling](./img/webassembly-supports/img2.gif)
+![tool calling](./img/webassembly-supports/builtin-tool.gif)
 
-### Using MCP tools
+### Using MCP Tools
 
 You can register MCP clients and use their tools in agents via
 [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http),
@@ -561,12 +742,16 @@ Let's create a simple MCP server for testing MCP tools availability.
 
 Install the following packages.
 
+{/* prettier-ignore-start */}
+
 <TerminalBox>
 
-$ npm install express cors zod @modelcontextprotocol/sdk $ npm install
---save-dev @types/express @types/cors
+$ npm install express cors zod @modelcontextprotocol/sdk 
+$ npm install --save-dev @types/express @types/cors
 
 </TerminalBox>
+
+{/* prettier-ignore-end */}
 
 Create `src/mcpServer.ts` and write the code as below:
 
@@ -575,7 +760,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import cors from "cors";
 import express, { type Request, type Response } from "express";
-import { z } from "zod";
+import * as z from "zod/v3";
 
 // Create an MCP server
 const server = new McpServer({
@@ -636,6 +821,14 @@ app.listen(PORT, () => {
 });
 ```
 
+{/* prettier-ignore-start */}
+
+:::warning
+Note that we used `zod/v3` since the current latest version of MCP sdk does not work with zod v4.
+:::
+
+{/* prettier-ignore-end */}
+
 This MCP server runs on streamable HTTP transport and has a single tool `add`
 which takes two numbers and return the addition. The server runs on
 `localhost:3000` and uses CORS middleware to allow any origins.
@@ -689,7 +882,7 @@ await agent.addToolsFromMcpClient(
 
 Check if MCP tools work as expected.
 
-TODO: add MCP result image
+![](./img/webassembly-supports/mcp-tool.gif)
 
 ## Using Vector Stores
 
