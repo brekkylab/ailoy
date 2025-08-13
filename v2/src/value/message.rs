@@ -939,17 +939,23 @@ impl MessageAggregator {
                 acc.push_str(&new);
             }
 
-            // ToolCall(Function{..}) + ToolCall(Function{id: None, ..})
+            // ToolCall(Function{..}) + ToolCall(Function{..})
+            // with same ID
             (
                 Some(MessageDelta::ToolCall(
                     _,
                     Part::Function {
-                        function: acc_fn, ..
+                        id: last_id,
+                        function: last_function,
+                        ..
                     },
                 )),
-                MessageDelta::ToolCall(_, Part::Function { id: None, function }),
-            ) => {
-                acc_fn.push_str(&function);
+                MessageDelta::ToolCall(_, Part::Function { id, function }),
+            ) if !(last_id.is_some()
+                && id.is_some()
+                && last_id.clone().unwrap() != id.clone().unwrap()) =>
+            {
+                last_function.push_str(&function);
             }
 
             // No prior buffer → start buffering.
@@ -963,8 +969,7 @@ impl MessageAggregator {
                 self.last_delta = Some(delta);
             }
         }
-
-        None
+        self.last_message.take()
     }
 
     /// Finalizes the aggregator, flushing any buffered content and returning the
