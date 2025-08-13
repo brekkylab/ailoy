@@ -30,12 +30,16 @@
             "source.fixAll.ruff": "explicit"
         },
     },
+    "[rust]": {
+        "editor.formatOnSave": true,
+    },
     "cmake.configureOnOpen": true,
     "cmake.configureArgs": [
         "-DOpenMP_ROOT=/opt/homebrew/opt/libomp",
     ],
     "cmake.environment": {
     },
+    "cmake.sourceDirectory": "${workspaceFolder}/v2/shim",
     "cmake.useCMakePresets": "always",
     "files.associations": {
         ".prettierrc": "typescript",
@@ -127,6 +131,13 @@
         "numeric": "cpp",
         "cinttypes": "cpp",
         "filesystem": "cpp",
-        "ranges": "cpp"
+        "ranges": "cpp",
+        "cfenv": "cpp",
+        "source_location": "cpp",
+        "*.rs": "rust"
     },
+    "rust-analyzer.cargo.buildScripts.enable": true,
+    "rust-analyzer.cargo.features": ["python", "node"],
+    // "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
+    "rust-analyzer.procMacro.enable": true
 }
