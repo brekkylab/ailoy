@@ -1,0 +1,20 @@
+[build-system]
+requires = ["maturin>=1.9"]
+build-backend = "maturin"
+
+[project]
+name = "ailoy-py"
+version = "0.2.0"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+
+[tool.maturin]
+features = ["python"]
+manifest-path = "../../Cargo.toml"
+module-name = "ailoy._core"
+python-source = "."
+python-packages = ["ailoy"]
