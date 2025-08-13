@@ -10,8 +10,9 @@ use pyo3::{
 use tokio::runtime::Runtime;
 
 use crate::{
-    cache::{Cache, FromCacheProgress},
-    model::LocalLanguageModel,
+    cache::{Cache, CacheProgress},
+    ffi::py::value::PyMessage,
+    model::{LanguageModel, LocalLanguageModel},
 };
 
 /// Rust -> Python 오류 변환
@@ -33,7 +34,7 @@ impl PyLocalLanguageModel {
         model_name: &str,
     ) -> PyResult<Py<PyLocalLanguageModelCreateAsyncIterator>> {
         let name = model_name.to_string();
-        let (tx, rx) = ach::unbounded::<Result<FromCacheProgress<LocalLanguageModel>, String>>();
+        let (tx, rx) = ach::unbounded::<Result<CacheProgress<LocalLanguageModel>, String>>();
 
         pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
             let mut strm = Box::pin(Cache::new().try_create::<LocalLanguageModel>(name));
@@ -55,7 +56,7 @@ impl PyLocalLanguageModel {
         model_name: &str,
     ) -> PyResult<Py<PyLocalLanguageModelCreateIterator>> {
         // Rust stream
-        let stream: BoxStream<'static, Result<FromCacheProgress<LocalLanguageModel>, String>> =
+        let stream: BoxStream<'static, Result<CacheProgress<LocalLanguageModel>, String>> =
             Box::pin(Cache::new().try_create::<LocalLanguageModel>(model_name));
 
         // attach current-thread runtime
@@ -65,6 +66,12 @@ impl PyLocalLanguageModel {
             .map_err(map_err)?;
 
         Py::new(py, PyLocalLanguageModelCreateIterator { rt, stream })
+    }
+
+    pub fn run(&mut self, messages: Vec<PyMessage>) -> PyResult<()> {
+        let messages = messages.into_iter().map(|v| v.inner).collect::<Vec<_>>();
+        let strm = self.inner.clone().run(Vec::new(), messages);
+        Ok(())
     }
 }
 
@@ -99,7 +106,7 @@ impl<'py> IntoPyObject<'py> for ProgressInner {
 #[pyclass(unsendable, name = "LocalLanguageModelCreateIterator")]
 pub struct PyLocalLanguageModelCreateIterator {
     rt: Runtime,
-    stream: BoxStream<'static, Result<FromCacheProgress<LocalLanguageModel>, String>>,
+    stream: BoxStream<'static, Result<CacheProgress<LocalLanguageModel>, String>>,
 }
 
 #[pymethods]
@@ -141,7 +148,7 @@ impl PyLocalLanguageModelCreateIterator {
 
 #[pyclass(unsendable, name = "LocalLanguageModelCreateAsyncIterator")]
 pub struct PyLocalLanguageModelCreateAsyncIterator {
-    rx: ach::Receiver<Result<FromCacheProgress<LocalLanguageModel>, String>>,
+    rx: ach::Receiver<Result<CacheProgress<LocalLanguageModel>, String>>,
 }
 
 #[pymethods]

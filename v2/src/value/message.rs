@@ -455,6 +455,118 @@ impl MessageDelta {
     }
 }
 
+impl Serialize for MessageDelta {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(2))?;
+        match self {
+            MessageDelta::Content(role, part) => {
+                map.serialize_entry("role", role)?;
+                map.serialize_entry("content", part)?;
+            }
+            MessageDelta::Reasoning(role, part) => {
+                map.serialize_entry("role", role)?;
+                map.serialize_entry("reasoning", part)?;
+            }
+            MessageDelta::ToolCall(role, part) => {
+                map.serialize_entry("role", role)?;
+                map.serialize_entry("tool_calls", part)?;
+            }
+        };
+        map.end()
+    }
+}
+
+// Deserialization logic for Part
+impl<'de> Deserialize<'de> for MessageDelta {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(MessageDeltaVisitor)
+    }
+}
+
+struct MessageDeltaVisitor;
+
+impl<'de> Visitor<'de> for MessageDeltaVisitor {
+    type Value = MessageDelta;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str(r#"a map with "type" field and one other content key"#)
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let mut role: Option<Role> = None;
+        let mut content: Option<Part> = None;
+        let mut reasoning: Option<Part> = None;
+        let mut tool_call: Option<Part> = None;
+
+        while let Some(k) = map.next_key::<String>()? {
+            if k == "role" {
+                if role.is_some() {
+                    return Err(de::Error::duplicate_field("role"));
+                }
+                role = Some(map.next_value()?);
+            } else if k == "content" {
+                if content.is_some() {
+                    return Err(de::Error::duplicate_field("content"));
+                }
+                content = Some(map.next_value()?);
+            } else if k == "reasoning" {
+                if reasoning.is_some() {
+                    return Err(de::Error::duplicate_field("reasoning"));
+                }
+                reasoning = Some(map.next_value()?);
+            } else if k == "tool_call" {
+                if tool_call.is_some() {
+                    return Err(de::Error::duplicate_field("tool_call"));
+                }
+                tool_call = Some(map.next_value()?);
+            } else {
+                return Err(de::Error::unknown_field(
+                    &k,
+                    &["content", "reasoning", "tool_call"],
+                ));
+            }
+        }
+
+        let role = role.ok_or_else(|| de::Error::missing_field("role"))?;
+        if content.is_some() {
+            Ok(MessageDelta::Content(role, content.unwrap()))
+        } else if reasoning.is_some() {
+            Ok(MessageDelta::Reasoning(role, reasoning.unwrap()))
+        } else if tool_call.is_some() {
+            Ok(MessageDelta::ToolCall(role, tool_call.unwrap()))
+        } else {
+            Err(de::Error::missing_field("content"))
+        }
+    }
+}
+
+impl Display for MessageDelta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("MessageDelta(role={}")?;
+        match self {
+            MessageDelta::Content(role, part) => {
+                f.write_str(&format!("MessageDelta(role={}, content={}", role, part))?;
+            }
+            MessageDelta::Reasoning(role, part) => {
+                f.write_str(&format!("MessageDelta(role={}, reasoning={}", role, part))?;
+            }
+            MessageDelta::ToolCall(role, part) => {
+                f.write_str(&format!("MessageDelta(role={}, tool_call={}", role, part))?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The author of a message (or streaming delta) in a chat.
 ///
 /// This aligns with common chat schemas (e.g., OpenAI-style), and is serialized

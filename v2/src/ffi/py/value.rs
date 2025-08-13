@@ -1,15 +1,15 @@
 use std::str::FromStr;
 
 use pyo3::{
-    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::PyList,
 };
 
-use crate::value::{Message, Part, Role};
+use crate::value::{Message, MessageAggregator, MessageDelta, Part, Role};
 
-#[pyclass(name = "Part")]
 #[derive(Clone)]
+#[pyclass(name = "Part")]
 pub struct PyPart {
     inner: Part,
 }
@@ -95,9 +95,16 @@ impl PyPart {
         }
     }
 
-    /// Serialize using your Rust `Serialize` (OpenAI-shaped dict).
+    #[staticmethod]
+    fn from_json(s: &str) -> PyResult<Self> {
+        Ok(PyPart {
+            inner: serde_json::from_str::<Part>(s)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?,
+        })
+    }
+
     fn to_json(&self) -> PyResult<String> {
-        serde_json::to_string(&self.inner).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     fn __repr__(&self) -> PyResult<String> {
@@ -105,10 +112,43 @@ impl PyPart {
     }
 }
 
+#[derive(Clone)]
+#[pyclass(name = "MessageDelta")]
+pub struct PyMessageDelta {
+    inner: MessageDelta,
+}
+
+#[pymethods]
+impl PyMessageDelta {
+    #[staticmethod]
+    fn from_json(s: &str) -> PyResult<Self> {
+        Ok(PyMessageDelta {
+            inner: serde_json::from_str::<MessageDelta>(s)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?,
+        })
+    }
+
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(self.inner.to_string())
+    }
+}
+
+#[derive(Clone)]
 #[pyclass(name = "Message")]
 pub struct PyMessage {
-    inner: Message,
+    pub inner: Message,
 }
+
+// impl<'py> FromPyObject<'py> for PyMessage {
+//     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+//         let py_msg: PyRef<'py, PyMessage> = ob.extract()?;
+//         Ok(py_msg.clone())
+//     }
+// }
 
 #[pymethods]
 impl PyMessage {
@@ -122,43 +162,10 @@ impl PyMessage {
         })
     }
 
-    /// Create from a JSON string that matches your Rust `Message` serde format.
-    #[staticmethod]
-    fn from_json(js: &str) -> PyResult<Self> {
-        let msg: Message = serde_json::from_str(js).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("invalid Message JSON: {e}"))
-        })?;
-        Ok(Self { inner: msg })
-    }
-
-    /// Convert the message to a JSON string using Rust serde.
-    fn to_json(&self) -> PyResult<String> {
-        let msg = &self.inner;
-        serde_json::to_string(msg)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
-    }
-
     #[getter]
     fn role(&self) -> PyResult<String> {
         Ok(self.inner.role.to_string())
     }
-
-    // #[setter]
-    // fn set_role(&mut self, role: &str) -> PyResult<()> {
-    //     let role = Role::from_str(role).map_err(|_| PyValueError::new_err(role.to_owned()))?;
-    //     let mut inner_new = Message::new(role);
-    //     for p in self.inner.drain_content() {
-    //         inner_new.push_content(p);
-    //     }
-    //     for p in self.inner.drain_reasoning() {
-    //         inner_new.push_reasoning(p);
-    //     }
-    //     for p in self.inner.drain_tool_calls() {
-    //         inner_new.push_tool_call(p);
-    //     }
-    //     self.inner = inner_new;
-    //     Ok(())
-    // }
 
     #[getter]
     fn content<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
@@ -223,7 +230,27 @@ impl PyMessage {
         self.inner.tool_calls.push(part.inner);
     }
 
+    #[staticmethod]
+    fn from_json(s: &str) -> PyResult<Self> {
+        Ok(PyMessage {
+            inner: serde_json::from_str::<Message>(s)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?,
+        })
+    }
+
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
     fn __repr__(&self) -> PyResult<String> {
         Ok(self.inner.to_string())
     }
 }
+
+#[pyclass(name = "MessageAggregator")]
+pub struct PyMessageAggregator {
+    inner: MessageAggregator,
+}
+
+#[pymethods]
+impl PyMessageAggregator {}

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use async_stream::try_stream;
-use futures::{future::BoxFuture, stream::BoxStream};
+use futures::{Stream, future::BoxFuture, stream::BoxStream};
 use tokio::sync::Mutex;
 
 use crate::{
-    cache::{Cache, CacheContents, CacheEntry, TryFromCache},
+    cache::{Cache, CacheContents, CacheEntry, CacheProgress, TryFromCache},
     model::{
         LanguageModel,
         local::{ChatTemplate, Inferencer, Tokenizer},
@@ -23,8 +23,7 @@ pub struct LocalLanguageModel {
 impl LocalLanguageModel {
     pub async fn try_new(
         model_name: impl Into<String>,
-    ) -> impl futures::Stream<Item = Result<crate::cache::FromCacheProgress<Self>, String>> + 'static
-    {
+    ) -> impl Stream<Item = Result<CacheProgress<Self>, String>> + 'static {
         let model_name = model_name.into();
         Cache::new().try_create::<LocalLanguageModel>(model_name)
     }

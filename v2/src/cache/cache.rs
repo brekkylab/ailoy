@@ -46,14 +46,14 @@ async fn download(url: Url) -> Result<Vec<u8>, String> {
 /// # Guarantees
 /// - The result will be provided(`result.is_some() == true`) if and only if on the final event(`current_task == total_task`).
 #[derive(Debug)]
-pub struct FromCacheProgress<T> {
+pub struct CacheProgress<T> {
     comment: String,
     current_task: usize,
     total_task: usize,
     result: Option<T>,
 }
 
-impl<T> FromCacheProgress<T> {
+impl<T> CacheProgress<T> {
     /// The human-readable message for this step.
     pub fn comment(&self) -> &str {
         &self.comment
@@ -276,10 +276,10 @@ impl Cache {
     /// Note that it returns the value and it's **streaming progress updates**.
     /// Initialization can be slow because it may download files and initialize hardwares.
     /// Instead of returning the result immediately, this method yields a stream of
-    /// [`FromCacheProgress`] events. These events provide real-time feedback so users
+    /// [`CacheProgress`] events. These events provide real-time feedback so users
     /// don’t assume the process has stalled.
     ///
-    /// See [`FromCacheProgress`] for details.
+    /// See [`CacheProgress`] for details.
     ///
     /// # Type bounds
     /// `T: TryFromCache + Send + 'static`
@@ -306,7 +306,7 @@ impl Cache {
     pub fn try_create<T>(
         self,
         key: impl Into<String>,
-    ) -> impl Stream<Item = Result<FromCacheProgress<T>, String>> + Send + 'static
+    ) -> impl Stream<Item = Result<CacheProgress<T>, String>> + Send + 'static
     where
         T: TryFromCache + Send + 'static,
     {
@@ -340,7 +340,7 @@ impl Cache {
                 let bytes = res?;
                 current_task += 1;
                 pairs.push((entry.clone(), bytes));
-                yield FromCacheProgress::<T> {
+                yield CacheProgress::<T> {
                     comment: format!("Downloaded {}", entry.filename()),
                     current_task,
                     total_task,
@@ -354,7 +354,7 @@ impl Cache {
             // Final creation
             let value = T::try_from_contents(&mut contents)?;
             current_task += 1;
-            yield FromCacheProgress::<T> {
+            yield CacheProgress::<T> {
                 comment: "Intialized".to_owned(),
                 current_task,
                 total_task,
