@@ -6,12 +6,23 @@ use pyo3::{
     types::PyList,
 };
 
-use crate::value::{Message, MessageAggregator, MessageDelta, Part, Role};
+use crate::{
+    ffi::py::base::PyWrapper,
+    value::{Message, MessageAggregator, MessageDelta, Part, Role},
+};
 
 #[derive(Clone)]
 #[pyclass(name = "Part")]
 pub struct PyPart {
     inner: Part,
+}
+
+impl PyWrapper for PyPart {
+    type Inner = Part;
+
+    fn from_inner(inner: Self::Inner) -> Self {
+        Self { inner }
+    }
 }
 
 #[pymethods]
@@ -118,6 +129,14 @@ pub struct PyMessageDelta {
     inner: MessageDelta,
 }
 
+impl PyWrapper for PyMessageDelta {
+    type Inner = MessageDelta;
+
+    fn from_inner(inner: Self::Inner) -> Self {
+        Self { inner }
+    }
+}
+
 #[pymethods]
 impl PyMessageDelta {
     #[staticmethod]
@@ -141,6 +160,14 @@ impl PyMessageDelta {
 #[pyclass(name = "Message")]
 pub struct PyMessage {
     pub inner: Message,
+}
+
+impl PyWrapper for PyMessage {
+    type Inner = Message;
+
+    fn from_inner(inner: Self::Inner) -> Self {
+        Self { inner }
+    }
 }
 
 #[pymethods]
@@ -243,6 +270,14 @@ impl PyMessage {
 #[pyclass(name = "MessageAggregator")]
 pub struct PyMessageAggregator {
     inner: MessageAggregator,
+}
+
+impl PyWrapper for PyMessageAggregator {
+    type Inner = MessageAggregator;
+
+    fn from_inner(inner: Self::Inner) -> Self {
+        Self { inner }
+    }
 }
 
 #[pymethods]

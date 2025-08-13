@@ -139,15 +139,13 @@ mod tests {
         let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
         let mut model: Option<LocalLanguageModel> = None;
         while let Some(progress) = model_strm.next().await {
-            let progress = progress.unwrap();
+            let mut progress = progress.unwrap();
             println!(
                 "{} ({} / {})",
-                progress.comment(),
-                progress.current_task(),
-                progress.total_task()
+                progress.comment, progress.current_task, progress.total_task
             );
-            if progress.current_task() == progress.total_task() {
-                model = progress.take();
+            if progress.current_task == progress.total_task {
+                model = progress.result.take();
             }
         }
         let model = Arc::new(model.unwrap());
@@ -181,15 +179,13 @@ mod tests {
         let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
         let mut model: Option<LocalLanguageModel> = None;
         while let Some(progress) = model_strm.next().await {
-            let progress = progress.unwrap();
+            let mut progress = progress.unwrap();
             println!(
                 "{} ({} / {})",
-                progress.comment(),
-                progress.current_task(),
-                progress.total_task()
+                progress.comment, progress.current_task, progress.total_task
             );
-            if progress.current_task() == progress.total_task() {
-                model = progress.take();
+            if progress.current_task == progress.total_task {
+                model = progress.result.take();
             }
         }
         let model = Arc::new(model.unwrap());

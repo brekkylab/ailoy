@@ -47,34 +47,10 @@ async fn download(url: Url) -> Result<Vec<u8>, String> {
 /// - The result will be provided(`result.is_some() == true`) if and only if on the final event(`current_task == total_task`).
 #[derive(Debug)]
 pub struct CacheProgress<T> {
-    comment: String,
-    current_task: usize,
-    total_task: usize,
-    result: Option<T>,
-}
-
-impl<T> CacheProgress<T> {
-    /// The human-readable message for this step.
-    pub fn comment(&self) -> &str {
-        &self.comment
-    }
-
-    /// How many steps have been completed so far.
-    pub fn current_task(&self) -> usize {
-        self.current_task
-    }
-
-    /// Total number of steps for the whole operation.
-    pub fn total_task(&self) -> usize {
-        self.total_task
-    }
-
-    /// Consume this progress value and return the result, if present.
-    ///
-    /// This is `Some(T)` only for the final event.
-    pub fn take(mut self) -> Option<T> {
-        self.result.take()
-    }
+    pub comment: String,
+    pub current_task: usize,
+    pub total_task: usize,
+    pub result: Option<T>,
 }
 
 /// A content-addressed, remote-backed cache for Ailoy assets.

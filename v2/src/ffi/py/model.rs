@@ -1,191 +1,51 @@
 use std::sync::Arc;
 
-use async_channel as ach;
-use futures::{StreamExt, stream::BoxStream};
-use pyo3::{
-    exceptions::{PyRuntimeError, PyStopAsyncIteration},
-    prelude::*,
-    types::PyDict,
-};
-use tokio::runtime::Runtime;
+use pyo3::prelude::*;
 
 use crate::{
-    cache::{Cache, CacheProgress},
-    ffi::py::value::PyMessage,
+    ffi::py::{
+        base::PyWrapper,
+        cache_progress::{
+            PyCacheProgressIterator, PyCacheProgressSyncIterator, create_cache_progress_iterator,
+            create_cache_progress_sync_iterator,
+        },
+        value::PyMessage,
+    },
     model::{LanguageModel, LocalLanguageModel},
 };
-
-/// Rust -> Python 오류 변환
-fn map_err<E: ToString>(e: E) -> PyErr {
-    PyRuntimeError::new_err(e.to_string())
-}
 
 #[pyclass(name = "LocalLanguageModel")]
 pub struct PyLocalLanguageModel {
     inner: Arc<LocalLanguageModel>,
 }
 
+impl PyWrapper for PyLocalLanguageModel {
+    type Inner = LocalLanguageModel;
+
+    fn from_inner(inner: Self::Inner) -> Self {
+        Self {
+            inner: Arc::new(inner),
+        }
+    }
+}
+
 #[pymethods]
 impl PyLocalLanguageModel {
     // Async version of creation
     #[staticmethod]
-    pub fn create(
-        py: Python<'_>,
-        model_name: &str,
-    ) -> PyResult<Py<PyLocalLanguageModelCreateAsyncIterator>> {
-        let name = model_name.to_string();
-        let (tx, rx) = ach::unbounded::<Result<CacheProgress<LocalLanguageModel>, String>>();
-
-        pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
-            let mut strm = Box::pin(Cache::new().try_create::<LocalLanguageModel>(name));
-            while let Some(item) = strm.next().await {
-                // 채널 닫혔으면 그냥 종료
-                if tx.send(item).await.is_err() {
-                    break;
-                }
-            }
-        });
-
-        Py::new(py, PyLocalLanguageModelCreateAsyncIterator { rx })
+    pub fn create(model_name: &str) -> PyCacheProgressIterator {
+        create_cache_progress_iterator::<PyLocalLanguageModel>(model_name.to_string())
     }
 
     // Sync version of creation
     #[staticmethod]
-    pub fn create_sync(
-        py: Python<'_>,
-        model_name: &str,
-    ) -> PyResult<Py<PyLocalLanguageModelCreateIterator>> {
-        // Rust stream
-        let stream: BoxStream<'static, Result<CacheProgress<LocalLanguageModel>, String>> =
-            Box::pin(Cache::new().try_create::<LocalLanguageModel>(model_name));
-
-        // attach current-thread runtime
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(map_err)?;
-
-        Py::new(py, PyLocalLanguageModelCreateIterator { rt, stream })
+    pub fn create_sync(model_name: &str) -> PyResult<PyCacheProgressSyncIterator> {
+        create_cache_progress_sync_iterator::<PyLocalLanguageModel>(model_name)
     }
 
     pub fn run(&mut self, messages: Vec<PyMessage>) -> PyResult<()> {
-        let messages = messages.into_iter().map(|v| v.inner).collect::<Vec<_>>();
+        let messages = messages.into_iter().map(|m| m.inner).collect::<Vec<_>>();
         let strm = self.inner.clone().run(Vec::new(), messages);
         Ok(())
-    }
-}
-
-struct ProgressInner {
-    comment: String,
-    current: usize,
-    total: usize,
-    result: Option<Arc<LocalLanguageModel>>,
-}
-
-impl<'py> IntoPyObject<'py> for ProgressInner {
-    type Target = PyDict; // Python type
-    type Output = Bound<'py, PyDict>; // Return pointer shape
-    type Error = PyErr; // Error type
-
-    fn into_pyobject(self, py: Python<'py>) -> PyResult<Bound<'py, Self::Target>> {
-        let d = PyDict::new(py);
-        d.set_item("comment", self.comment)?;
-        d.set_item("current", self.current)?;
-        d.set_item("total", self.total)?;
-        if let Some(model_inner) = self.result {
-            let py_model: Py<PyLocalLanguageModel> =
-                Py::new(py, PyLocalLanguageModel { inner: model_inner })?;
-            d.set_item("result", py_model)?;
-        } else {
-            d.set_item("result", py.None())?;
-        }
-        Ok(d)
-    }
-}
-
-#[pyclass(unsendable, name = "LocalLanguageModelCreateIterator")]
-pub struct PyLocalLanguageModelCreateIterator {
-    rt: Runtime,
-    stream: BoxStream<'static, Result<CacheProgress<LocalLanguageModel>, String>>,
-}
-
-#[pymethods]
-impl PyLocalLanguageModelCreateIterator {
-    fn __iter__(self_: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        self_
-    }
-
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<ProgressInner>> {
-        // Pull one step
-        let item = py.allow_threads(|| {
-            self.rt
-                .block_on(async { self.stream.as_mut().next().await })
-        });
-
-        match item {
-            Some(Ok(progress)) => {
-                let comment = progress.comment().to_string();
-                let current = progress.current_task();
-                let total = progress.total_task();
-                let result = if current == total {
-                    Some(Arc::new(progress.take().unwrap()))
-                } else {
-                    None
-                };
-
-                Ok::<Option<ProgressInner>, PyErr>(Some(ProgressInner {
-                    comment,
-                    current,
-                    total,
-                    result,
-                }))
-            }
-            Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
-            None => Ok(None), // StopIteration
-        }
-    }
-}
-
-#[pyclass(unsendable, name = "LocalLanguageModelCreateAsyncIterator")]
-pub struct PyLocalLanguageModelCreateAsyncIterator {
-    rx: ach::Receiver<Result<CacheProgress<LocalLanguageModel>, String>>,
-}
-
-#[pymethods]
-impl PyLocalLanguageModelCreateAsyncIterator {
-    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    /// async iterator: returns awaitable
-    fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let rx = self.rx.clone();
-
-        let fut = async move {
-            let progress = rx
-                .recv()
-                .await
-                .map_err(|_| PyStopAsyncIteration::new_err(()))?
-                .map_err(PyRuntimeError::new_err)?;
-
-            let comment = progress.comment().to_string();
-            let current = progress.current_task();
-            let total = progress.total_task();
-            let result = if current == total {
-                Some(Arc::new(progress.take().unwrap()))
-            } else {
-                None
-            };
-
-            Ok::<ProgressInner, PyErr>(ProgressInner {
-                comment,
-                current,
-                total,
-                result,
-            })
-        };
-
-        let awaitable = pyo3_async_runtimes::tokio::future_into_py(py, fut)?;
-        Ok(awaitable.unbind())
     }
 }
