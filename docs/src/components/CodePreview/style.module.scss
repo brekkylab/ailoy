@@ -19,6 +19,9 @@
 }
 
 .sandpack--file-explorer--nodejs {
+    button[title="index.html"] {
+        display: none;
+    }
     button[title="styles.css"] {
         display: none;
     }

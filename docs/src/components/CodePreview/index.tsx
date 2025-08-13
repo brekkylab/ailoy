@@ -12,7 +12,7 @@ import clsx from "clsx";
 import { useState } from "react";
 import styles from "./style.module.scss";
 
-type SupportedLanguage = "python" | "nodejs" | "wasm";
+type SupportedLanguage = "python" | "nodejs" | "web";
 
 const pythonFiles = {
   "main.py": {
@@ -89,7 +89,7 @@ const nodejsFiles = {
   },
 };
 
-const wasmFiles = {
+const webFiles = {
   "index.js": {
     active: true,
     code: `import * as ai from "ailoy-web";
@@ -131,7 +131,7 @@ document.getElementById("submit").addEventListener("click", async () => {
   },
   "package.json": {
     code: `{
-  "name": "ailoy-wasm-example",
+  "name": "ailoy-web-example",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -179,15 +179,15 @@ const sandpackProviderProps = {
   nodejs: {
     files: nodejsFiles,
   },
-  wasm: {
-    files: wasmFiles,
+  web: {
+    files: webFiles,
   },
 };
 
 const installCommands = {
   python: `pip install ailoy-py`,
   nodejs: `npm install ailoy-node`,
-  wasm: `npm install ailoy-web`,
+  web: `npm install ailoy-web`,
 };
 
 export default function CodePreview() {
@@ -220,18 +220,18 @@ export default function CodePreview() {
               )}
               onClick={() => setActiveLang("nodejs")}
             >
-              Node.js
+              Javascript(Node.js)
             </li>
             <li
               role="tab"
               tabIndex={0}
               className={clsx(
                 "tabs__item",
-                activeLang === "wasm" && "tabs__item--active"
+                activeLang === "web" && "tabs__item--active"
               )}
-              onClick={() => setActiveLang("wasm")}
+              onClick={() => setActiveLang("web")}
             >
-              WebAssembly
+              Javascript(Web)
             </li>
           </ul>
         </div>
