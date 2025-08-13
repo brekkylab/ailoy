@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use pyo3::prelude::*;
+use futures::{StreamExt as _, stream::BoxStream};
+use pyo3::{exceptions::PyRuntimeError, prelude::*};
+use tokio::runtime::Runtime;
 
 use crate::{
     ffi::py::{
@@ -9,7 +11,7 @@ use crate::{
             PyCacheProgressIterator, PyCacheProgressSyncIterator, create_cache_progress_iterator,
             create_cache_progress_sync_iterator,
         },
-        value::PyMessage,
+        value::{PyMessage, PyMessageDelta},
     },
     model::{LanguageModel, LocalLanguageModel},
 };
@@ -43,9 +45,44 @@ impl PyLocalLanguageModel {
         create_cache_progress_sync_iterator::<PyLocalLanguageModel>(model_name)
     }
 
-    pub fn run(&mut self, messages: Vec<PyMessage>) -> PyResult<()> {
+    pub fn run(&mut self, messages: Vec<PyMessage>) -> PyResult<PyAgentRunSyncIterator> {
         let messages = messages.into_iter().map(|m| m.inner).collect::<Vec<_>>();
-        let strm = self.inner.clone().run(Vec::new(), messages);
-        Ok(())
+
+        let lm = self.inner.clone();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        let strm = lm
+            .run(Vec::new(), messages)
+            .then(|item| async move { item.map(|v| PyMessageDelta::from_inner(v)) })
+            .boxed();
+
+        Ok(PyAgentRunSyncIterator { rt, strm })
+    }
+}
+
+#[pyclass(unsendable, name = "AgentRunSyncIterator")]
+pub struct PyAgentRunSyncIterator {
+    rt: Runtime,
+
+    strm: BoxStream<'static, Result<PyMessageDelta, String>>,
+}
+
+#[pymethods]
+impl PyAgentRunSyncIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<PyMessageDelta>> {
+        let item = py.allow_threads(|| self.rt.block_on(async { self.strm.next().await }));
+        match item {
+            Some(Ok(evt)) => Ok(Some(evt)),
+            Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
+            None => Ok(None), // StopIteration
+        }
     }
 }

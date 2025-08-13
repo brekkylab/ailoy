@@ -29,7 +29,7 @@ pub struct PyCacheProgress {
 pub struct PyCacheProgressSyncIterator {
     rt: Runtime,
 
-    stream: BoxStream<'static, Result<PyCacheProgress, String>>,
+    strm: BoxStream<'static, Result<PyCacheProgress, String>>,
 }
 
 #[pymethods]
@@ -39,7 +39,7 @@ impl PyCacheProgressSyncIterator {
     }
 
     fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<PyCacheProgress>> {
-        let item = py.allow_threads(|| self.rt.block_on(async { self.stream.next().await }));
+        let item = py.allow_threads(|| self.rt.block_on(async { self.strm.next().await }));
         match item {
             Some(Ok(evt)) => Ok(Some(evt)),
             Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
@@ -55,18 +55,18 @@ where
     T: PyWrapper,
     T::Inner: TryFromCache,
 {
-    // Rust stream
-    let stream: BoxStream<'static, Result<CacheProgress<T::Inner>, String>> =
-        Box::pin(Cache::new().try_create::<T::Inner>(model_key));
-
     // attach current-thread runtime
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
+    // Rust stream
+    let strm: BoxStream<'static, Result<CacheProgress<T::Inner>, String>> =
+        Box::pin(Cache::new().try_create::<T::Inner>(model_key));
+
     // Map CacheProgress<T> -> PyCacheProgressIterator
-    let stream_mapped = stream
+    let strm = strm
         .then(|item| async move {
             match item {
                 Ok(progress) => {
@@ -95,10 +95,7 @@ where
         })
         .boxed();
 
-    Ok(PyCacheProgressSyncIterator {
-        rt,
-        stream: stream_mapped,
-    })
+    Ok(PyCacheProgressSyncIterator { rt, strm })
 }
 
 #[pyclass(unsendable, name = "CacheProgressIterator")]

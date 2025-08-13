@@ -2,13 +2,17 @@ import asyncio
 from ailoy import Part, Message, LocalLanguageModel
 
 async def main():
-    msg = Message("user")
-    msg.append_content(Part(type="text", text="Hello world"))
-    msg.reasoning = [Part(type="text", text="Thinking")]
-    print(msg.content)
-    print(msg)
+    user_message = Message("user")
+    user_message.append_content(Part(type="text", text="Show me the money."))
+
+    model = None
     async for v in LocalLanguageModel.create("Qwen/Qwen3-0.6B"):
-        print(v)
+        print(v.comment, v.current, v.total)
+        if v.result:
+            model = v.result
+    
+    for resp in model.run([user_message]):
+        print(resp)
 
 if __name__ == "__main__":
     asyncio.run(main())

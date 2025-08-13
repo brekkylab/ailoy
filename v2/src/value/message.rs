@@ -324,25 +324,20 @@ impl<'de> Visitor<'de> for PartVisitor {
 impl Display for Part {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Part::Text(text) => f.write_str(&format!("Part(type=\"text\", text=\"{}\")", text)),
+            Part::Text(text) => f.write_str(&format!("Part(type=text, text=\"{}\")", text)),
             Part::Function { id, function } => match id {
                 Some(id) => f.write_str(&format!(
-                    "Part(type=\"function\", id=\"{}\", function=\"{}\")",
+                    "Part(type=function, id=\"{}\", function=\"{}\")",
                     id, function
                 )),
-                None => f.write_str(&format!(
-                    "Part(type=\"function\", function=\"{}\")",
-                    function
-                )),
+                None => f.write_str(&format!("Part(type=function, function=\"{}\")", function)),
             },
-            Part::ImageURL(url) => f.write_str(&format!(
-                "Part(type=\"image\", url=\"{}\")",
-                url.to_string()
-            )),
-            Part::ImageData(data) => f.write_str(&format!(
-                "Part(type=\"image\", data=({} bytes))",
-                data.len()
-            )),
+            Part::ImageURL(url) => {
+                f.write_str(&format!("Part(type=image, url=\"{}\")", url.to_string()))
+            }
+            Part::ImageData(data) => {
+                f.write_str(&format!("Part(type=image, data=({} bytes))", data.len()))
+            }
         }
     }
 }
@@ -551,16 +546,15 @@ impl<'de> Visitor<'de> for MessageDeltaVisitor {
 
 impl Display for MessageDelta {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("MessageDelta(role={}")?;
         match self {
             MessageDelta::Content(role, part) => {
-                f.write_str(&format!("MessageDelta(role={}, content={}", role, part))?;
+                f.write_str(&format!("MessageDelta(role={}, content={})", role, part))?;
             }
             MessageDelta::Reasoning(role, part) => {
-                f.write_str(&format!("MessageDelta(role={}, reasoning={}", role, part))?;
+                f.write_str(&format!("MessageDelta(role={}, reasoning={})", role, part))?;
             }
             MessageDelta::ToolCall(role, part) => {
-                f.write_str(&format!("MessageDelta(role={}, tool_call={}", role, part))?;
+                f.write_str(&format!("MessageDelta(role={}, tool_call={})", role, part))?;
             }
         }
         Ok(())
@@ -775,7 +769,7 @@ impl<'de> Visitor<'de> for MessageVisitor {
 
 impl Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Message(role={}")?;
+        f.write_str(&format!("Message(role={}", self.role))?;
         if self.content.len() > 0 {
             let contents_str = self
                 .content
@@ -783,7 +777,7 @@ impl Display for Message {
                 .map(|v| v.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            f.write_str(&format!(",content=[{}]", &contents_str))?;
+            f.write_str(&format!(", content=[{}]", &contents_str))?;
         }
         if self.reasoning.len() > 0 {
             let reasoning_str = self
@@ -792,7 +786,7 @@ impl Display for Message {
                 .map(|v| v.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            f.write_str(&format!(",reasoning=[{}]", &reasoning_str))?;
+            f.write_str(&format!(", reasoning=[{}]", &reasoning_str))?;
         }
         if self.tool_calls.len() > 0 {
             let tool_calls_str = self
