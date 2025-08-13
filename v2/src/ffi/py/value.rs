@@ -143,13 +143,6 @@ pub struct PyMessage {
     pub inner: Message,
 }
 
-// impl<'py> FromPyObject<'py> for PyMessage {
-//     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-//         let py_msg: PyRef<'py, PyMessage> = ob.extract()?;
-//         Ok(py_msg.clone())
-//     }
-// }
-
 #[pymethods]
 impl PyMessage {
     /// Message(role: str)

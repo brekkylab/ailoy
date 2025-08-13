@@ -13,11 +13,14 @@ use crate::{
     value::{Message, MessageDelta, Part, ToolDescription},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LocalLanguageModel {
     chat_template: ChatTemplate,
+
     tokenizer: Tokenizer,
-    inferencer: Arc<Mutex<Inferencer>>,
+
+    // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
+    inferencer: Mutex<Inferencer>,
 }
 
 impl LocalLanguageModel {
@@ -115,7 +118,7 @@ impl TryFromCache for LocalLanguageModel {
         Ok(LocalLanguageModel {
             chat_template,
             tokenizer,
-            inferencer: Arc::new(Mutex::new(inferencer)),
+            inferencer: Mutex::new(inferencer),
         })
     }
 }

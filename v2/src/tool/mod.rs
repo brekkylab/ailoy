@@ -12,6 +12,5 @@ pub use mcp::*;
 pub trait Tool: Send + Sync + 'static {
     fn get_description(&self) -> ToolDescription;
 
-    // Arc<Self> 수신자 → object-safe + 'static future
     fn run(self: Arc<Self>, tc: ToolCall) -> BoxFuture<'static, Result<Part, String>>;
 }
