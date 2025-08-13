@@ -6,5 +6,6 @@ from ailoy._core import (
     CacheProgressIterator,
     CacheProgressSyncIterator,
     LocalLanguageModel,
+    AgentRunIterator,
     AgentRunSyncIterator,
 )
