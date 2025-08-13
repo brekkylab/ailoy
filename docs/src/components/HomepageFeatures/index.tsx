@@ -1,7 +1,6 @@
 import Heading from "@theme/Heading";
 import clsx from "clsx";
 import type { ReactNode } from "react";
-
 import styles from "./styles.module.css";
 
 type FeatureItem = {
@@ -11,21 +10,20 @@ type FeatureItem = {
 
 const FeatureList: FeatureItem[] = [
   {
-    title: "🚀 Simple by Design",
+    title: "🚀 Simple AI Agent Framework",
     description: (
       <>
-        Run your first LLM with just a few lines of code — no boilerplate, no
-        complex setup.
+        Build your first agent with just a few lines of code — no boilerplate,
+        no complex setup.
       </>
     ),
   },
   {
-    title: "☁️ Cloud or On-Device",
+    title: "☁️ Cloud or Local",
     description: (
       <>
-        Use the same API to run large models in the cloud or optimized ones
-        directly on-device. That flexibility keeps you in full control of your
-        stack.
+        Use a single API to work with both local and remote (API) models. That
+        flexibility keeps you in full control of your stack.
       </>
     ),
   },
@@ -33,8 +31,17 @@ const FeatureList: FeatureItem[] = [
     title: "💻 Cross-Platform & Multi-Language",
     description: (
       <>
-        Supports Windows, Linux, and macOS — with clean APIs for Python and
-        JavaScript.
+        Supports Windows, Linux, and macOS — with developer-friendly APIs in
+        Python and JavaScript.
+      </>
+    ),
+  },
+  {
+    title: "🌎 WebAssembly Supports",
+    description: (
+      <>
+        Run agents entirely in your web browsers — without any backend
+        infrastructures
       </>
     ),
   },
@@ -42,9 +49,9 @@ const FeatureList: FeatureItem[] = [
 
 function Feature({ title, description }: FeatureItem) {
   return (
-    <div className={clsx("col col--4")}>
-      <div className="text--center padding-horiz--md">
-        <Heading as="h3">{title}</Heading>
+    <div className={clsx("col col--6")}>
+      <div className="padding-horiz--md">
+        <Heading as="h2">{title}</Heading>
         <p>{description}</p>
       </div>
     </div>

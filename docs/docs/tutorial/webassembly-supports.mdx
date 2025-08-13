@@ -1,0 +1,1021 @@
+# WebAssembly Supports
+
+{/* prettier-ignore-start */}
+
+:::warning
+WebAssembly support is currently **experimental**, and you may encounter unexpected errors.
+If you do, please report them via our **GitHub Issues** or **Discord** channels so we can address them promptly.
+:::
+
+{/* prettier-ignore-end */}
+
+Ailoy supports running agents entirely in modern web browsers using
+**WebAssembly (WASM)**. This enables AI workloads directly in the browser with
+no backend required.
+
+**Key capabilities**
+
+- Run local models accelerated by **WebGPU**—supports both **Agents** and
+  **VectorStores**.
+- Use API models just like you would in native environments.
+- Access built-in tools, or register your own custom tools
+- Connect **MCP tools** via Streamable HTTP, Server-Sent Events (SSE), or
+  WebSocket transports.
+
+This guide walks you through setting up and using `ailoy-web` in your
+browser-based applications.
+
+## Hardware Requirements
+
+If you plan to run local models with WebGPU, make sure your system has the
+necessary hardware accelerators and drivers installed. See
+[**Device & Environments**](../concepts/devices-environments.mdx) for more
+details.
+
+- **MacOS with Apple Silicon**: Fully supported, typically works out of the box.
+- **Windows / Linux with NVIDIA or AMD GPUs**: Ensure that the latest GPU
+  drivers are installed.
+
+To check WebGPU support in your browser, open the developer console and run:
+
+```javascript
+if (navigator.gpu) {
+  // WebGPU is supported
+  console.log("WebGPU is available!");
+} else {
+  // WebGPU is not supported
+  console.log("WebGPU is not available.");
+}
+```
+
+## Building a Simple Chat UI
+
+### Setup Vite and install `ailoy-web`
+
+We recommend using **[Vite](https://vite.dev/)** for a fast development
+environment and optimized builds. Still you can use another build tools you
+prefer, such as Webpack, Rollup, or Parcel.
+
+In this example, we use Vite to create a project with **React + TypeScript**
+configuration.
+
+1. Let's create a Vite project by running `npm create vite@latest`.
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
+$ npm create vite@latest
+
+\> npx
+\> create-vite
+
+│
+◇  Project name:
+│  my-project
+│
+◇  Select a framework:
+│  React
+│
+◇  Select a variant:
+│  TypeScript
+│
+◇  Scaffolding project in /path/of/my-project...
+│
+└  Done. Now run:
+
+  cd my-project
+  npm install
+  npm run dev
+
+</TerminalBox>
+
+{/* prettier-ignore-end */}
+
+2. Next, navigate to your new project and install `ailoy-web`. This will also
+   install packages preconfigured in `package.json`.
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
+$ cd my-project
+$ npm install ailoy-web
+
+added 265 packages, and audited 266 packages in 4s
+
+64 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+</TerminalBox>
+
+{/* prettier-ignore-end */}
+
+3. To ensure optimal performance and compatibility, update your `vite.config.ts`
+   with the following settings:
+
+   - Exclude `ailoy-web` from dependency optimization (`optimizeDeps.exclude`)
+   - Enable cross-origin isolation (required for `SharedArrayBuffer` in WASM
+     threading)
+   - Optimize bundle size by grouping `ailoy-web` into its own build chunk
+
+```typescript
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [react()],
+  optimizeDeps: {
+    exclude: ["ailoy-web"],
+  },
+  server: {
+    headers: {
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Opener-Policy": "same-origin",
+    },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          ailoy: ["ailoy-web"],
+        },
+      },
+    },
+  },
+});
+```
+
+### Install and configure `assistant-ui`
+
+For this quick demo, we'll use [**assistant-ui**](https://www.assistant-ui.com/)
+package to create a basic chat interface.
+
+It relies on [**shadcn**](https://ui.shadcn.com/docs/installation/vite), so
+we'll set that up first. Follow the guide from
+[shadcn's documentation](https://ui.shadcn.com/docs/installation/vite).
+
+1. Edit `tsconfig.json`.
+
+```json {11-16}
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig.app.json"
+    },
+    {
+      "path": "./tsconfig.node.json"
+    }
+  ],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}
+```
+
+2. Edit `tsconfig.app.json`
+
+```json {4-7}
+{
+  "compilerOptions": {
+    // ...
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+    // ...
+  }
+}
+```
+
+3. Install `tailwind` and update `vite.config.ts`.
+
+<TerminalBox>
+
+$ npm install --save-dev tailwindcss @tailwindcss/vite @types/node
+
+added 22 packages, and audited 215 packages in 3s
+
+51 packages are looking for funding run `npm fund` for details
+
+found 0 vulnerabilities
+
+</TerminalBox>
+
+```typescript {1-2,8-13}
+import path from "node:path";
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  // other configs
+});
+```
+
+4. Update `src/index.css` to use tailwindcss.
+
+```css
+@import "tailwindcss";
+```
+
+5. Install `assistant-ui` and add thread component.  
+   `npx assistant-ui add thread`
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
+$ npx assistant-ui add thread
+✔ You need to create a components.json file to add components. Proceed? … yes
+✔ Which color would you like to use as the base color? › Neutral
+✔ Writing components.json.
+✔ Checking registry.
+✔ Installing dependencies.
+✔ Created 6 files:
+  - src/components/assistant-ui/thread.tsx
+  - src/components/assistant-ui/markdown-text.tsx
+  - src/components/assistant-ui/tooltip-icon-button.tsx
+  - src/components/assistant-ui/tool-fallback.tsx
+  - src/components/ui/button.tsx
+  - src/components/ui/tooltip.tsx
+
+</TerminalBox>
+
+{/* prettier-ignore-end */}
+
+6. Install `framer-motion` package which is required by `assistant-ui`'s
+   thread.  
+   `npm install framer-motion`
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
+$ npm install framer-motion
+
+up to date, audited 374 packages in 696ms
+
+141 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+</TerminalBox>
+
+{/* prettier-ignore-end */}
+
+7. Due to `"verbatimModuleSyntax": true` configuration, you need to fix
+   `src/components/assistant-ui/tool-fallback.tsx` to prevent compile error.
+
+```typescript {1}
+import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+
+// ...
+```
+
+### Implementation
+
+1. Create `src/AiloyRuntimeProvider.tsx` and write the code as follow:
+
+```typescript
+"use client";
+
+import { useState, useEffect, type ReactNode } from "react";
+import {
+  AssistantRuntimeProvider,
+  useExternalStoreRuntime,
+  useExternalMessageConverter,
+  type AppendMessage,
+} from "@assistant-ui/react";
+import * as ai from "ailoy-web";
+
+export function AiloyRuntimeProvider({
+  children,
+}: Readonly<{ children: ReactNode }>) {
+  const [agent, setAgent] = useState<ai.Agent | undefined>(undefined);
+  const [agentInitialized, setAgentInitialized] = useState<boolean>(false);
+  const [messages, setMessages] = useState<
+    (ai.UserMessage | ai.AgentResponse)[]
+  >([]);
+  const [isAnswering, setIsAnswering] = useState<boolean>(false);
+
+  useEffect(() => {
+    (async () => {
+      const runtime = await ai.startRuntime();
+      const agent = await ai.defineAgent(
+        runtime,
+        ai.LocalModel({ id: "Qwen/Qwen3-0.6B" })
+      );
+      setAgent(agent);
+      setAgentInitialized(true);
+    })();
+  }, []);
+
+  const onNew = async (message: AppendMessage) => {
+    if (agent === undefined || !agentInitialized)
+      throw new Error("Agent is not initialized yet");
+
+    if (message.content[0]?.type !== "text")
+      throw new Error("Only text messages are supported");
+
+    const input = message.content[0].text;
+    const userMessage: ai.UserMessage = {
+      role: "user",
+      content: input,
+    };
+    setMessages((prev) => [...prev, userMessage]);
+    setIsAnswering(true);
+
+    for await (const resp of agent.query(input)) {
+      if (resp.type === "output_text" || resp.type === "reasoning") {
+        if (resp.isTypeSwitched) {
+          setMessages((prev) => [...prev, resp]);
+        } else {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            last.content += resp.content;
+            return [...prev.slice(0, -1), last];
+          });
+        }
+      } else {
+        setMessages((prev) => [...prev, resp]);
+      }
+    }
+    setIsAnswering(false);
+  };
+
+  const convertedMessages = useExternalMessageConverter({
+    messages,
+    callback: (message: ai.UserMessage | ai.AgentResponse) => {
+      if (message.role === "user") {
+        return {
+          role: message.role,
+          content: [{ type: "text", text: message.content as string }],
+        };
+      } else if (message.type === "output_text") {
+        return {
+          role: "assistant",
+          content: [{ type: "text", text: message.content }],
+        };
+      } else if (message.type === "reasoning") {
+        return {
+          role: "assistant",
+          content: [{ type: "reasoning", text: message.content }],
+        };
+      } else if (message.type === "tool_call") {
+        return {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: message.content.id!,
+              toolName: message.content.function.name,
+              args: message.content.function.arguments,
+            },
+          ],
+        };
+      } else if (message.type === "tool_call_result") {
+        return {
+          role: "tool",
+          toolCallId: message.content.tool_call_id!,
+          result: message.content.content[0].text,
+        };
+      } else {
+        throw new Error(`Unknown message type: ${message.type}`);
+      }
+    },
+    isRunning: isAnswering,
+    joinStrategy: "concat-content",
+  });
+
+  const runtime = useExternalStoreRuntime({
+    isLoading: !agentInitialized,
+    isRunning: isAnswering,
+    messages: convertedMessages,
+    onNew,
+  });
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      {children}
+    </AssistantRuntimeProvider>
+  );
+}
+```
+
+2. Update `src/App.tsx` to wrap `<Thread />` inside `<AiloyRuntimeProvider>`.
+
+```typescript
+import { Thread } from "@/components/assistant-ui/thread";
+import { AiloyRuntimeProvider } from "./AiloyRuntimeProvider";
+
+function App() {
+  return (
+    <AiloyRuntimeProvider>
+      <Thread />
+    </AiloyRuntimeProvider>
+  );
+}
+
+export default App;
+```
+
+3. React’s `<StrictMode>` can cause components to mount twice during
+   development.  
+   To avoid double state updates, remove `<StrictMode>` from `src/main.tsx`:
+
+```typescript
+// import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  // <StrictMode>
+    <App />
+  // </StrictMode>,
+)
+```
+
+4. Start the development server with `npm run dev`.
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
+$ npm run dev
+
+  VITE v7.1.1  ready in 318 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+  ➜  press h + enter to show help
+
+</TerminalBox>
+
+{/* prettier-ignore-end */}
+
+5. Visit http://localhost:5173 — your chat UI should be live.
+
+![](./img/webassembly-supports/chat-ui.png)
+
+{/* prettier-ignore-start */}
+
+:::info
+When the agent initializes for the first time, model parameters are downloaded
+from Ailoy’s file server. These files are stored in the browser’s
+[**Origin Private File System(OPFS)**](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system)
+which is isolated per origin and managed internally by the browser.
+
+Once initialization completes, you can start chatting with the agent.
+:::
+
+{/* prettier-ignore-end */}
+
+6. Try to start a conversation with the agent running _on your web browser_.
+
+![](./img/webassembly-supports/simple-chat.gif)
+
+🎉 **Congratulations!** You now have a fully local AI agent running **entirely
+in your browser** with zero backend servers!
+
+## Additional Features
+
+### Using API models
+
+You can easily switch to API models by changing the model configuration as
+below.
+
+```typescript
+const agent = await ai.defineAgent(
+  runtime,
+  // ai.LocalModel({ id: "Qwen/Qwen3-0.6B" })
+  ai.APIModel({
+    id: "gpt-5-mini",
+    apiKey: "<YOUR_OPENAI_API_KEY>",
+  })
+);
+```
+
+{/* prettier-ignore-start */}
+
+You can use any API models listed in [**supported API models**](http://localhost:3000/ailoy/docs/concepts/agent#api-models).
+
+:::warning
+The above code is for test purpose. **You should never hardcode your API keys in your frontend codes!**
+For example, consider making an input box to get API key from users and initialize agents using the key.
+:::
+
+{/* prettier-ignore-end */}
+
+### Multi-Modal Inputs
+
+{/* prettier-ignore-start */}
+
+:::warning
+Multi-Modal inputs are currently supported only on API models as
+described in
+[**Agent > Multi-Modal Inputs**](http://localhost:3000/ailoy/docs/concepts/agent#multi-modal-inputs).
+:::
+
+{/* prettier-ignore-end */}
+
+Follow the guide in assistant-ui's
+[**Attachments documentation**](https://www.assistant-ui.com/docs/guides/Attachments)
+to enable file attachment functionality.
+
+Install attachment UI component.
+
+<TerminalBox>
+
+$ npx shadcn@latest add "https://r.assistant-ui.com/attachment"
+
+</TerminalBox>
+
+Similar to what we did for Thread component, edit
+`src/components/assistant-ui/attachment.tsx` as below to fix compile error.
+
+{/* prettier-ignore-start */}
+
+```typescript {1}
+import { type PropsWithChildren, useEffect, useState, type FC } from "react";
+import { CircleXIcon, FileIcon, PaperclipIcon } from "lucide-react";
+```
+
+{/* prettier-ignore-end */}
+
+Edit `src/components/assistant-ui/thread.tsx` to add attachment components.
+
+```typescript {1-5,15-17,29-31,44}
+import {
+  ComposerAttachments,
+  ComposerAddAttachment,
+  UserMessageAttachments,
+} from "./attachment";
+
+// Update Composer
+const Composer: FC = () => {
+  return (
+    <div ...>
+      <ThreadScrollToBottom />
+      <ThreadPrimitive.Empty>
+        <ThreadWelcomeSuggestions />
+      </ThreadPrimitive.Empty>
+      <ThreadPrimitive.Empty>
+        <ComposerAttachments />
+      </ThreadPrimitive.Empty>
+      <ComposerPrimitive.Root ...>
+        // ...
+      </ComposerPrimitive.Root>
+    </div>
+  )
+}
+
+// Update ComposerAction
+const ComposerAction: FC = () => {
+  return (
+    <div ...>
+      <ThreadPrimitive.If running={false}>
+        <ComposerAddAttachment />
+      </ThreadPrimitive.If>
+      // ...
+    </div>
+  )
+}
+
+// Update UserMessage
+const UserMessage: FC = () => {
+  return (
+    <MessagePrivitive.Root asChild>
+      <motion.div
+        // ...
+      >
+        <UserMessageAttachments />
+        <UserActionBar />
+        // ...
+      </motion.div>
+    </MessagePrivitive.Root>
+  )
+}
+```
+
+In `src/AiloyRuntimeProvider.tsx`, update `onNew` to handle image contents.
+
+```typescript {4-27}
+const onNew = async (message: AppendMessage) => {
+  // ...
+
+  let userContent: ai.UserMessage["content"] = [];
+
+  // Add attachments
+  if (message.attachments !== undefined) {
+    for (const attach of message.attachments) {
+      if (attach.type === "image") {
+        const imageContent = await ai.ImageContent.fromFile(attach.file!);
+        userContent.push(imageContent);
+      }
+      // other types are skipped
+    }
+  }
+
+  // Add text prompt
+  if (message.content[0]?.type !== "text")
+    throw new Error("Only text messages are supported");
+  const textContent: ai.TextContent = {
+    type: "text",
+    text: message.content[0].text,
+  };
+  userContent.push(textContent);
+
+  // set messages
+  setMessages((prev) => [...prev, { role: "user", content: userContent }]);
+
+  // ...
+```
+
+Update the message conversion callback in `useExternalMessageConverter` to
+handle multimodal contents.
+
+```typescript {4-23}
+const convertedMessages = useExternalMessageConverter({
+  messages,
+  callback: (message: ai.UserMessage | ai.AgentResponse) => {
+    if (message.role === "user") {
+      if (typeof message.content === "string") {
+        return {
+          role: message.role,
+          content: [{ type: "text", text: message.content }],
+        };
+      } else {
+        return {
+          role: message.role,
+          content: message.content.map((c) => {
+            if (c.type === "text") return c;
+            else if (c.type === "image_url")
+              return { type: "image", image: c.image_url.url };
+            else if (c.type === "input_audio")
+              return { type: "audio", audio: c.input_audio };
+            else throw Error("Unknown content type");
+          }),
+        };
+      }
+    }
+    // ...
+  },
+});
+```
+
+Add `adapters` on `useExternalStoreRuntime` to handle image file attachments.
+
+```typescript {1-5,9-14}
+import {
+  CompositeAttachmentAdapter,
+  SimpleImageAttachmentAdapter,
+  SimpleTextAttachmentAdapter,
+} from "@assistant-ui/react";
+
+const runtime = useExternalStoreRuntime({
+  // ...
+  adapters: {
+    attachments: new CompositeAttachmentAdapter([
+      new SimpleImageAttachmentAdapter(),
+      new SimpleTextAttachmentAdapter(),
+    ]),
+  },
+});
+```
+
+Now you can attach images and ask about them.
+
+![](./img/webassembly-supports/image-input.gif)
+
+### Using Builtin Tools
+
+You can use any tool presets as described in
+[**Out-of-the-box tools**](../concepts/tools#out-of-the-box-tools). Let's add
+handling tool call and tool result messages and see how it works.
+
+After `agent` is defined, add `calculator` tool preset as below.
+
+```typescript
+await agent.addToolsFromPreset("calculator");
+```
+
+Update the code in `<MessageList>` as below to show the corresponding message
+content for each message type.
+
+```typescript
+<MessageList>
+  {messages.map((message, idx) => {
+    let content = "";
+    if (message.role === "user") {
+      content = (message as ai.UserMessage).content as string;
+    } else if (
+      message.type === "output_text" ||
+      message.type === "reasoning"
+    ) {
+      content = (message as ai.AgentResponse).content as string;
+    } else if (message.type === "tool_call") {
+      content = `Tool Call: ${message.content.function.name} (${message.content.id})`;
+      content += `\nArguments: ${JSON.stringify(
+        message.content.function.arguments
+      )}`;
+    } else if (message.type === "tool_call_result") {
+      content = `Tool Result (${message.content.tool_call_id})`;
+      content += `\nContent: ${message.content.content[0].text}`;
+    }
+
+    return (
+      <Message
+        key={`message-${idx}`}
+        model={{
+          direction:
+            message.role === "user" ? "outgoing" : "incoming",
+          position: "normal",
+          sender: message.role,
+          message: content,
+        }}
+      />
+    );
+  })}
+</MessageList>
+```
+
+Test the tool calling with the prompt that might invoke the calculator tool.
+
+![tool calling](./img/webassembly-supports/builtin-tool.gif)
+
+### Using MCP Tools
+
+You can register MCP clients and use their tools in agents via
+[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http),
+[Server-Sent Event](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports#http-with-sse),
+and WebSocket transports. Note that
+[stdio](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#stdio)
+transport is not supported in browsers because they cannot run a stdio process.
+
+{/* prettier-ignore-start */}
+
+:::warning
+When connecting to MCP servers from browsers, make sure the server is configured
+to use **CORS middleware** with allowing your origins and exposing required
+headers such as `Mcp-Session-Id`. See
+[the official documentation](https://github.com/modelcontextprotocol/typescript-sdk?tab=readme-ov-file#cors-configuration-for-browser-based-clients)
+for more details.
+:::
+
+{/* prettier-ignore-end */}
+
+Let's create a simple MCP server for testing MCP tools availability.
+
+Install the following packages.
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
+$ npm install express cors zod @modelcontextprotocol/sdk 
+$ npm install --save-dev @types/express @types/cors
+
+</TerminalBox>
+
+{/* prettier-ignore-end */}
+
+Create `src/mcpServer.ts` and write the code as below:
+
+```typescript
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import cors from "cors";
+import express, { type Request, type Response } from "express";
+import * as z from "zod/v3";
+
+// Create an MCP server
+const server = new McpServer({
+  name: "demo-server",
+  version: "1.0.0",
+});
+
+// Add an addition tool
+server.registerTool(
+  "add",
+  {
+    title: "Addition Tool",
+    description: "Add two numbers",
+    inputSchema: { a: z.number(), b: z.number() },
+  },
+  async ({ a, b }) => ({
+    content: [{ type: "text", text: String(a + b) }],
+  })
+);
+
+const app = express();
+app.use(express.json());
+app.use(
+  cors({
+    origin: "*",
+    exposedHeaders: "*",
+  })
+);
+
+app.post("/mcp", async (req: Request, res: Response) => {
+  try {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    res.on("close", () => {
+      transport.close();
+      server.close();
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (error) {
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32603,
+          message: "Internal server error",
+        },
+        id: null,
+      });
+    }
+  }
+});
+
+const PORT = 3000;
+app.listen(PORT, () => {
+  console.log(`MCP server listening on ${PORT}`);
+});
+```
+
+{/* prettier-ignore-start */}
+
+:::warning
+Note that we used `zod/v3` since the current latest version of MCP sdk does not work with zod v4.
+:::
+
+{/* prettier-ignore-end */}
+
+This MCP server runs on streamable HTTP transport and has a single tool `add`
+which takes two numbers and return the addition. The server runs on
+`localhost:3000` and uses CORS middleware to allow any origins.
+
+Install `vite-node` and add a script in `package.json` to run this server using
+`vite-node`.
+
+<TerminalBox>
+
+$ npm install --save-dev vite-node
+
+</TerminalBox>
+
+```json {3}
+  "scripts": {
+    // ...
+    "dev:mcp": "vite-node src/mcpServer.ts"
+  }
+```
+
+Run the MCP server.
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
+$ npm run dev:mcp
+
+\> my-project@0.0.0 dev:mcp
+\> vite-node src/mcpServer.ts
+
+MCP server listening on 3000
+
+</TerminalBox>
+
+{/* prettier-ignore-end */}
+
+In `src/AiloyRuntimeProvider.tsx`, add MCP tools after the agent has been
+initialized.
+
+```typescript {3-8}
+const agent = ...;
+
+await agent.addToolsFromMcpClient(
+  "calculator",
+  new ai.MCPStreamableHTTPClientTransport(
+    new URL("http://localhost:3000/mcp")
+  )
+);
+```
+
+Check if MCP tools work as expected.
+
+![](./img/webassembly-supports/mcp-tool.gif)
+
+## Using Vector Stores
+
+You can interact with Vector Stores in Ailoy Web using the same API described in
+[**RAG with Vector Store**](./rag-with-vector-store.mdx).
+
+When combined with **local embedding models** and **in-memory vector stores**
+such as **Faiss**, you can build a fully client-side RAG application that runs
+entirely inside the user's browser—no backend servers required. This approach is
+ideal for privacy-preserving, offline-capable AI assistants.
+
+### Defining a Vector Store
+
+```typescript
+import * as ai from "ailoy-web";
+
+const runtime = await ai.startRuntime();
+
+// Using an in-memory Faiss vector store
+const vectorstore = await ai.defineVectorStore(runtime, {
+  type: "faiss",
+  embedding: {
+    modelId: "BAAI/bge-m3",
+  },
+});
+
+// Using an external ChromaDB server
+const vectorstore = await ai.defineVectorStore(runtime, {
+  type: "chromadb",
+  url: "http://localhost:8000", // Replace with your ChromaDB endpoint
+  collection: "my-collection",  // Your target collection name
+  embedding: {
+    modelId: "BAAI/bge-m3",
+  },
+})
+```
+
+{/* prettier-ignore-start */}
+
+:::warning
+When using external vector stores such as ChromaDB, make sure they're configured to use **CORS middleware** to allow your origin.
+For ChromaDB, refer the [**CORS configuration**](https://cookbook.chromadb.dev/strategies/cors/).
+:::
+
+{/* prettier-ignore-end */}
+
+### Inserting Documents
+
+Before you can retrieve documents, you must insert them into the vector store
+along with optional metadata.
+
+Typically, you'll chunk your text into smaller pieces before insertion for
+better retrieval accuracy.
+
+```typescript
+const items = [
+  {
+    document:
+      "BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.",
+    metadata: { topic: "bge-m3" },
+  },
+  {
+    document:
+      "BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document",
+    metadata: { topic: "bm25" },
+  },
+];
+
+for (const item of items) {
+  const result = await vectorstore.insert(item);
+  console.log(result); // Example: {id: "1"}
+}
+```
+
+### Retrieving Documents
+
+You can retrieve the most relevant documents by similarity score, which is
+computed using vector embeddings.
+
+```typescript
+// Retrieve the top 1 item most similar to the query
+const retrievedItems = await vectorstore.retrieve("What is BGE-M3?", 1);
+console.log(retrievedItems);
+// Expected: returns the document related to "bge-m3"
+```
+
+### Clearing the Vector Store
+
+If you need to reset or remove all entries from the vector store:
+
+```typescript
+await vectorstore.clear();
+```

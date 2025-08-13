@@ -1,0 +1,34 @@
+.codeblock--install-command {
+    margin-bottom: 0px;
+    border-radius: 6px 6px 0px 0px;
+}
+
+.sandpack--file-explorer--python {
+    button[title="package.json"] {
+        display: none;
+    }
+    button[title="index.js"] {
+        display: none;
+    }
+    button[title="index.html"] {
+        display: none;
+    }
+    button[title="styles.css"] {
+        display: none;
+    }
+}
+
+.sandpack--file-explorer--nodejs {
+    button[title="index.html"] {
+        display: none;
+    }
+    button[title="styles.css"] {
+        display: none;
+    }
+}
+
+.sandpack--file-explorer--wasm {
+    button[title="styles.css"] {
+        display: none;
+    }
+}
