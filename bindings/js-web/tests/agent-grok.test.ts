@@ -9,8 +9,8 @@ import {
 import Vips from "wasm-vips";
 
 import { defineAgent, AudioContent } from "../src/agent";
-import { Runtime } from "../src/runtime";
 import { APIModel } from "../src/models";
+import { Runtime } from "../src/runtime";
 
 describe.skipIf(process.env.XAI_API_KEY === "undefined")(
   "Grok Agent",
@@ -34,14 +34,14 @@ describe.skipIf(process.env.XAI_API_KEY === "undefined")(
       const iter = agent.query("Hello World!");
       const resp = await iter.next();
       /**
-     * Example response
-      {
-        "content": "Hi there! How can I assist you today?",
-        "isTypeSwitched": true,
-        "role": "assistant",
-        "type": "output_text",
-      }
-    */
+       * Example response
+        {
+          "content": "Hi there! How can I assist you today?",
+          "isTypeSwitched": true,
+          "role": "assistant",
+          "type": "output_text",
+        }
+      */
       expect(resp.value).to.have.property("type", "output_text");
       expect(resp.value).to.have.property("role", "assistant");
       expect(resp.value).to.have.property("content");
@@ -146,14 +146,14 @@ describe.skipIf(process.env.XAI_API_KEY === "undefined")(
       const iter = agent.query([image, "What is in this image?"]);
       const resp = await iter.next();
       /**
-     * Example response
-      {
-        "content": "The image shows a person wearing glasses and a leather jacket, smiling at the camera.",
-        "isTypeSwitched": true,
-        "role": "assistant",
-        "type": "output_text",
-      }
-    */
+       * Example response
+        {
+          "content": "The image shows a person wearing glasses and a leather jacket, smiling at the camera.",
+          "isTypeSwitched": true,
+          "role": "assistant",
+          "type": "output_text",
+        }
+      */
       expect(resp.value).to.have.property("type", "output_text");
       expect(resp.value).to.have.property("role", "assistant");
       expect(resp.value).to.have.property("content");
