@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use futures::{StreamExt as _, stream::BoxStream};
-use pyo3::{exceptions::PyRuntimeError, prelude::*};
+use pyo3::{
+    exceptions::{PyRuntimeError, PyStopAsyncIteration},
+    prelude::*,
+};
 use tokio::runtime::Runtime;
 
 use crate::{
@@ -14,6 +17,7 @@ use crate::{
         value::{PyMessage, PyMessageDelta},
     },
     model::{LanguageModel, LocalLanguageModel},
+    value::MessageDelta,
 };
 
 #[pyclass(name = "LocalLanguageModel")]
@@ -45,7 +49,24 @@ impl PyLocalLanguageModel {
         create_cache_progress_sync_iterator::<PyLocalLanguageModel>(model_name)
     }
 
-    pub fn run(&mut self, messages: Vec<PyMessage>) -> PyResult<PyAgentRunSyncIterator> {
+    pub fn run(&mut self, messages: Vec<PyMessage>) -> PyResult<PyAgentRunIterator> {
+        let (tx, rx) = async_channel::unbounded::<Result<PyMessageDelta, String>>();
+        let messages = messages.into_iter().map(|m| m.inner).collect::<Vec<_>>();
+        let mut strm: BoxStream<'static, Result<MessageDelta, String>> =
+            Box::pin(self.inner.clone().run(Vec::new(), messages));
+
+        pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
+            while let Some(item) = strm.next().await {
+                let out = item.and_then(|v| Ok(PyMessageDelta::from_inner(v)));
+                if tx.send(out).await.is_err() {
+                    break; // Exit if consumer vanished
+                }
+            }
+        });
+        Ok(PyAgentRunIterator { rx })
+    }
+
+    pub fn run_sync(&mut self, messages: Vec<PyMessage>) -> PyResult<PyAgentRunSyncIterator> {
         let messages = messages.into_iter().map(|m| m.inner).collect::<Vec<_>>();
 
         let lm = self.inner.clone();
@@ -61,6 +82,30 @@ impl PyLocalLanguageModel {
             .boxed();
 
         Ok(PyAgentRunSyncIterator { rt, strm })
+    }
+}
+
+#[pyclass(unsendable, name = "AgentRunIterator")]
+pub struct PyAgentRunIterator {
+    rx: async_channel::Receiver<Result<PyMessageDelta, String>>,
+}
+
+#[pymethods]
+impl PyAgentRunIterator {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let rx = self.rx.clone();
+        let fut = async move {
+            match rx.recv().await {
+                Ok(Ok(evt)) => Ok(evt),
+                Ok(Err(e)) => Err(PyRuntimeError::new_err(e)),
+                Err(_) => Err(PyStopAsyncIteration::new_err(())),
+            }
+        };
+        pyo3_async_runtimes::tokio::future_into_py(py, fut).map(|a| a.unbind())
     }
 }
 

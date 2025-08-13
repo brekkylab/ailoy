@@ -11,7 +11,7 @@ async def main():
         if v.result:
             model = v.result
     
-    for resp in model.run([user_message]):
+    async for resp in model.run([user_message]):
         print(resp)
 
 if __name__ == "__main__":
