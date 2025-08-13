@@ -65,6 +65,7 @@ export class _LocalModel {
         model_id: this.id,
         quantization: this.quantization,
         device: "webgpu",
+        skip_integrity_check: true, // Skip integrity check due to poor performance on browser
       });
     }
 

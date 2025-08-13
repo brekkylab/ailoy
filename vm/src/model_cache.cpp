@@ -544,7 +544,7 @@ model_cache_download_result_t
 download_model(const std::string &model_id, const std::string &quantization,
                const std::string &target_device,
                std::optional<model_cache_callback_t> callback,
-               bool print_progress_bar) {
+               bool print_progress_bar, bool skip_integrity_check) {
   model_cache_download_result_t result{.success = false};
 
   // Create local cache directory
@@ -595,11 +595,16 @@ download_model(const std::string &model_id, const std::string &quantization,
   for (auto &[file, sha1] :
        manifest["files"]
            .get<std::vector<std::pair<std::string, std::string>>>()) {
-    // Add to files_to_download if neither file exists nor sha1 checksum is same
-    if (!(fs::file_exists(model_cache_path / file).unwrap() &&
-          sha1 == sha1_checksum(model_cache_path / file))) {
-      files_to_download.emplace_back(file);
-    }
+    // Skip downloading this file if
+    // 1. The file exists and
+    // 2. skip_integrity_check is enabled or
+    // 3. sha1 checksum is same as expected
+    if (fs::file_exists(model_cache_path / file).unwrap() &&
+        (skip_integrity_check ||
+         sha1 == sha1_checksum(model_cache_path / file)))
+      continue;
+
+    files_to_download.emplace_back(file);
   }
 
   size_t num_total_files = manifest["files"].size();
@@ -779,9 +784,17 @@ value_or_error_t download_model(std::shared_ptr<const value_t> inputs) {
                                        device_val->get_type()));
     std::string device = *device_val->as<string_t>();
 
+    // Check skip_integrity_check
+    bool skip_integrity_check = false;
+    if (inputs_map->contains("skip_integrity_check") &&
+        inputs_map->at("skip_integrity_check")->is_type_of<bool_t>()) {
+      skip_integrity_check = *inputs_map->at<bool_t>("skip_integrity_check");
+    }
+
     // Download the model
-    auto result = ailoy::download_model(model_id, quantization, device,
-                                        std::nullopt, true);
+    auto result =
+        ailoy::download_model(model_id, quantization, device, std::nullopt,
+                              true, skip_integrity_check);
     if (!result.success)
       return error_output_t(result.error_message.value());
 
