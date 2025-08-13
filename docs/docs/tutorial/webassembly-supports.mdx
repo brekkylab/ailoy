@@ -9,9 +9,9 @@ If you do, please report them via our **GitHub Issues** or **Discord** channels 
 
 {/* prettier-ignore-end */}
 
-Ailoy supports running entirely in modern web browsers using **WebAssembly
-(WASM)**. This enables AI workloads directly in the browser with no backend
-required.
+Ailoy supports running agents entirely in modern web browsers using
+**WebAssembly (WASM)**. This enables AI workloads directly in the browser with
+no backend required.
 
 **Key capabilities**
 
@@ -28,7 +28,9 @@ browser-based applications.
 ## Hardware Requirements
 
 If you plan to run local models with WebGPU, make sure your system has the
-necessary hardware accelerators and drivers installed.
+necessary hardware accelerators and drivers installed. See
+[**Device & Environments**](../concepts/devices-environments.mdx) for more
+details.
 
 - **MacOS with Apple Silicon**: Fully supported, typically works out of the box.
 - **Windows / Linux with NVIDIA or AMD GPUs**: Ensure that the latest GPU
@@ -51,7 +53,10 @@ if (navigator.gpu) {
 ### Setup Vite and install `ailoy-web`
 
 We recommend using **[Vite](https://vite.dev/)** for a fast development
-environment and optimized builds. This example uses **React + TypeScript**
+environment and optimized builds. Still you can use another build tools you
+prefer, such as Webpack, Rollup, or Parcel.
+
+In this example, we use Vite to create a project with **React + TypeScript**
 configuration.
 
 1. Let's create a Vite project by running `npm create vite@latest`.
@@ -702,8 +707,8 @@ Now you can attach images and ask about them.
 ### Using Builtin Tools
 
 You can use any tool presets as described in
-[**Out-of-the-box tools**](./tools#out-of-the-box-tools). Let's add handling
-tool call and tool result messages and see how it works.
+[**Out-of-the-box tools**](../concepts/tools#out-of-the-box-tools). Let's add
+handling tool call and tool result messages and see how it works.
 
 After `agent` is defined, add `calculator` tool preset as below.
 
@@ -925,7 +930,7 @@ Check if MCP tools work as expected.
 ## Using Vector Stores
 
 You can interact with Vector Stores in Ailoy Web using the same API described in
-[**RAG with Vector Store**](../tutorial/rag-with-vector-store.mdx).
+[**RAG with Vector Store**](./rag-with-vector-store.mdx).
 
 When combined with **local embedding models** and **in-memory vector stores**
 such as **Faiss**, you can build a fully client-side RAG application that runs

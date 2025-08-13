@@ -25,6 +25,7 @@ const sidebars: SidebarsConfig = {
         "tutorial/integrate-with-mcp",
         "tutorial/calling-low-level-apis",
         "tutorial/rag-with-vector-store",
+        "tutorial/webassembly-supports",
       ],
     },
     {
@@ -36,7 +37,6 @@ const sidebars: SidebarsConfig = {
         "concepts/tools",
         "concepts/devices-environments",
         "concepts/command-line-interfaces",
-        "concepts/webassembly-supports",
       ],
     },
     {
