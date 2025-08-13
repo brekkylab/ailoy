@@ -56,6 +56,7 @@ dependencies = [
  "minijinja",
  "minijinja-contrib",
  "napi",
+ "napi-build",
  "napi-derive",
  "pyo3",
  "pyo3-async-runtimes",

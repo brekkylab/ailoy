@@ -166,6 +166,10 @@ fn build_native() {
     println!("cargo:rustc-link-lib=dylib=tvm_runtime");
     println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
 
+    if std::env::var_os("CARGO_FEATURE_NODE").is_some() {
+        napi_build::setup();
+    }
+
     // Add rerun targets
     for f in &cpp_files {
         println!("cargo:rerun-if-changed={}", f.display());
