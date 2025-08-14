@@ -20,7 +20,7 @@
     "build:wasm": "cd ../.. && cmake --build ./build/emscripten-release -t ailoy_js_web --parallel 10",
     "build:tvm": "make -C ../../build/emscripten-release/_deps/tvm-src/web && cp ../../build/emscripten-release/_deps/tvm-src/web/src/*.js ./src/tvmjs",
     "build:ts": "NODE_ENV=production vite build",
-    "build": "npm run build:configure && npm run build:wasm && npm run build:ts",
+    "build": "npm run build:configure && npm run build:wasm && npm run build:tvm && npm run build:ts",
     "dev": "NODE_ENV=development vite dev",
     "test": "vitest",
     "prepack": "clean-package",
