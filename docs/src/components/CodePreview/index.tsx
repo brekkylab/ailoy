@@ -19,14 +19,21 @@ const pythonFiles = {
     active: true,
     code: `from ailoy import Runtime, Agent, LocalModel
 
+# Start Ailoy runtime
 rt = Runtime()
 
+# Create an agent
+# During this step, the model parameters are downloaded and the LLM is set up for execution
 agent = Agent(rt, LocalModel("Qwen/Qwen3-0.6B"))
 
+# Agent answers within the agentic loop
 for resp in agent.query("Please give me a short poem about AI"):
     agent.print(resp)
 
+# Once the agent is no longer needed, it can be released
 agent.delete()
+
+# Stop the runtime
 rt.stop()`,
   },
   "pyproject.toml": {
@@ -47,17 +54,17 @@ const nodejsFiles = {
     code: `import * as ai from "ailoy-node";
 
 (async () => {
-  // The runtime must be started to use Ailoy
+  // Start Ailoy runtime
   const rt = await ai.startRuntime();
 
-  // Defines an agent
+  // Create an agent
   // During this step, the model parameters are downloaded and the LLM is set up for execution
   const agent = await ai.defineAgent(
     rt,
     ai.LocalModel({ id: "Qwen/Qwen3-0.6B" })
   );
 
-  // This is where the actual LLM call happens
+  // Agent answers within the agentic loop
   for await (const resp of agent.query(
     "Please give me a short poem about AI"
   )) {
@@ -94,7 +101,11 @@ const webFiles = {
     active: true,
     code: `import * as ai from "ailoy-web";
 
+// Start Ailoy runtime
 const rt = await ai.startRuntime();
+
+// Create an agent
+// During this step, the model parameters are downloaded and the LLM is set up for execution
 const agent = await ai.defineAgent(
   rt,
   ai.LocalModel({ id: "Qwen/Qwen3-0.6B" })
@@ -105,6 +116,7 @@ document.getElementById("submit").addEventListener("click", async () => {
   const textarea = document.getElementById("answer");
   textarea.innerHTML = "";
 
+  // Agent answers within the agentic loop
   for await (const resp of agent.query(query)) {
     textarea.innerHTML += resp.content;
   }

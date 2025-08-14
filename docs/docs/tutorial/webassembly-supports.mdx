@@ -66,6 +66,10 @@ why—using the `reason` value returned by the function.
 
 ## Building a Simple Chat UI
 
+In this tutorial, we're going to build a simple chat UI application using Ailoy.
+You can see the full example codes in
+[our repository](https://github.com/brekkylab/ailoy/tree/main/examples/web-assistant-ui).
+
 ### Setup Vite and install `ailoy-web`
 
 We recommend using **[Vite](https://vite.dev/)** for a fast development
@@ -324,7 +328,7 @@ export function AiloyRuntimeProvider({
   children,
 }: Readonly<{ children: ReactNode }>) {
   const [agent, setAgent] = useState<ai.Agent | undefined>(undefined);
-  const [agentInitialized, setAgentInitialized] = useState<boolean>(false);
+  const [agentLoading, setAgentLoading] = useState<boolean>(false);
   const [messages, setMessages] = useState<
     (ai.UserMessage | ai.AgentResponse)[]
   >([]);
@@ -332,19 +336,25 @@ export function AiloyRuntimeProvider({
 
   useEffect(() => {
     (async () => {
+      const { supported, reason } = await ai.isWebGPUSupported();
+      if (!supported) {
+        alert(`WebGPU is not supported: ${reason!}`);
+        return;
+      }
+
+      setAgentLoading(true);
       const runtime = await ai.startRuntime();
       const agent = await ai.defineAgent(
         runtime,
         ai.LocalModel({ id: "Qwen/Qwen3-0.6B" })
       );
       setAgent(agent);
-      setAgentInitialized(true);
+      setAgentLoading(false);
     })();
   }, []);
 
   const onNew = async (message: AppendMessage) => {
-    if (agent === undefined || !agentInitialized)
-      throw new Error("Agent is not initialized yet");
+    if (agent === undefined) throw new Error("Agent is not initialized yet");
 
     if (message.content[0]?.type !== "text")
       throw new Error("Only text messages are supported");
@@ -420,7 +430,8 @@ export function AiloyRuntimeProvider({
   });
 
   const runtime = useExternalStoreRuntime({
-    isLoading: !agentInitialized,
+    isLoading: agentLoading,
+    isDisabled: agent === undefined,
     isRunning: isAnswering,
     messages: convertedMessages,
     onNew,
@@ -658,7 +669,7 @@ const onNew = async (message: AppendMessage) => {
   };
   userContent.push(textContent);
 
-  // set messages
+  // Set messages
   setMessages((prev) => [...prev, { role: "user", content: userContent }]);
 
   // ...
@@ -884,6 +895,7 @@ app.listen(PORT, () => {
 
 :::warning
 Note that we used `zod/v3` since the current latest version of MCP sdk does not work with zod v4.
+([related issue](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1072))
 :::
 
 {/* prettier-ignore-end */}
