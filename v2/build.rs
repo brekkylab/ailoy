@@ -55,7 +55,7 @@ fn build_native() {
                 "clone",
                 "--depth",
                 "1",
-                if name == "tvm" { "--recursive" } else { "" },
+                "--recursive",
                 url,
                 dir.to_str().unwrap(),
             ])
