@@ -36,7 +36,7 @@ pub trait LanguageModel: Send + Sync + 'static {
     /// See [`LanguageModel`] trait document for the details.
     fn run(
         self: Arc<Self>,
-        tools: Vec<ToolDescription>,
         msg: Vec<Message>,
+        tools: Vec<ToolDescription>,
     ) -> BoxStream<'static, Result<MessageDelta, String>>;
 }

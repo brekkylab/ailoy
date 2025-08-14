@@ -53,7 +53,7 @@ impl PyLocalLanguageModel {
         let (tx, rx) = async_channel::unbounded::<Result<PyMessageDelta, String>>();
         let messages = messages.into_iter().map(|m| m.inner).collect::<Vec<_>>();
         let mut strm: BoxStream<'static, Result<MessageDelta, String>> =
-            Box::pin(self.inner.clone().run(Vec::new(), messages));
+            Box::pin(self.inner.clone().run(messages, Vec::new()));
 
         pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
             while let Some(item) = strm.next().await {
@@ -77,7 +77,7 @@ impl PyLocalLanguageModel {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
         let strm = lm
-            .run(Vec::new(), messages)
+            .run(messages, Vec::new())
             .then(|item| async move { item.map(|v| PyMessageDelta::from_inner(v)) })
             .boxed();
 

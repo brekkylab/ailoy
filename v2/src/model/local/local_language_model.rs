@@ -35,8 +35,8 @@ impl LocalLanguageModel {
 impl LanguageModel for LocalLanguageModel {
     fn run(
         self: Arc<Self>,
-        tools: Vec<ToolDescription>,
         msgs: Vec<Message>,
+        tools: Vec<ToolDescription>,
     ) -> BoxStream<'static, Result<MessageDelta, String>> {
         let strm = try_stream! {
             let prompt = self.chat_template.apply_with_vec(&tools, &msgs, true)?;
@@ -154,7 +154,7 @@ mod tests {
             Message::with_content(Role::User, Part::new_text("Hi what's your name?")),
         ];
         let mut agg = MessageAggregator::new();
-        let mut strm = model.run(Vec::new(), msgs);
+        let mut strm = model.run(msgs, Vec::new());
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
             if let Some(msg) = agg.update(delta) {
@@ -215,7 +215,7 @@ mod tests {
             Part::new_text("How much hot currently in Dubai?"),
         )];
         let mut agg = MessageAggregator::new();
-        let mut strm = model.run(tools, msgs);
+        let mut strm = model.run(msgs, tools);
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
             if let Some(msg) = agg.update(delta) {
