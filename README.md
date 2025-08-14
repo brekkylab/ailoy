@@ -56,7 +56,7 @@ Currently, the following AI models are supported:
     - <img src="https://github.com/user-attachments/assets/ffc93fe4-a345-4525-bf19-0f1419af08f8" width="20" height="20"> OpenAI
     - <img src="https://github.com/user-attachments/assets/6fc0015d-090d-4642-a056-3fbc1f66b599" width="25" height="25"> Gemini
     - <img src="https://github.com/user-attachments/assets/94855f00-a640-40e2-b3b6-9481d6bfd910" width="20" height="20"> Claude
-    - <img src="https://github.com/user-attachments/assets/261061d7-a2e5-4a54-9a46-522329b87df9" width="20" height="20"> Grok
+    - <img src="https://github.com/user-attachments/assets/aaf28fe3-9b1e-479d-9631-986afc8b5b66" width="20" height="20"> Grok
 - Embedding Models
   - Local Models
     - <img src="https://bge-model.com/_static/bge_logo.jpeg" width="20" height="20"> BAAI/bge-m3
