@@ -33,9 +33,7 @@ jobs:
       - name: Create package
         run: |
           npm install
-          npm run build:configure
-          npm run build:wasm
-          npm run build:ts
+          npm run build
           npm pack
           PACKAGE_NAME=$(ls -1t ailoy-web-*.tgz | head -n 1)
           echo "PACKAGE_NAME=$PACKAGE_NAME"
