@@ -27,6 +27,7 @@ jobs:
       - name: Create package
         run: |
           npm install
+          npm run build:configure
           npm run build:wasm
           npm run build:ts
           npm pack
