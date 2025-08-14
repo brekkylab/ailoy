@@ -1,4 +1,4 @@
-# Ailoy + assistant-ui Example
+# Ailoy Web + assistant-ui Example
 
 This example shows a basic implementation of chat UI application using **ailoy-web** and [**assistant-ui**](https://www.assistant-ui.com/).
 
