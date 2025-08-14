@@ -127,7 +127,7 @@ export async function isWebGPUSupported(
 }
 
 export async function getGPUDevice(
-  requiredFeatures: string[] = ["shader-f16"]
+  requiredFeatures: GPUFeatureName[] = ["shader-f16"]
 ) {
   const gpuDetectOutput = await detectGPUDevice();
   if (gpuDetectOutput == undefined) {
