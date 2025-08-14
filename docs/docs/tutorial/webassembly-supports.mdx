@@ -36,17 +36,33 @@ details.
 - **Windows / Linux with NVIDIA or AMD GPUs**: Ensure that the latest GPU
   drivers are installed.
 
-To check WebGPU support in your browser, open the developer console and run:
+In addition, WebGPU must support certain features—such as `shader-f16`. You can
+quickly verify your setup using the `isWebGPUSupported` utility:
 
 ```javascript
-if (navigator.gpu) {
+import { isWebGPUSupported } from "ailoy-web";
+
+const { supported, reason } = await isWebGPUSupported();
+if (supported) {
   // WebGPU is supported
-  console.log("WebGPU is available!");
+  console.log("✅ WebGPU is available!");
 } else {
   // WebGPU is not supported
-  console.log("WebGPU is not available.");
+  console.log(
+    "❌ WebGPU is not available due to the following reason: ",
+    reason
+  );
 }
 ```
+
+{/* prettier-ignore-start */}
+
+:::info
+If WebGPU is not supported, consider showing users a clear message in your UI that explains
+why—using the `reason` value returned by the function.
+:::
+
+{/* prettier-ignore-end */}
 
 ## Building a Simple Chat UI
 
