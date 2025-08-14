@@ -1,8 +1,7 @@
 name: Build ailoy-web
 
 on:
-  # workflow_dispatch:
-  push:
+  workflow_dispatch:
 
 env:
   NODE_VERSION: "20.19.4"
