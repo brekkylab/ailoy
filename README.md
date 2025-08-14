@@ -1,10 +1,13 @@
 # Ailoy
 
 [![document](https://img.shields.io/badge/document-latest-2ea44f?color=5a9cae)](https://brekkylab.github.io/ailoy/)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ailoy-py)](https://pypi.org/project/ailoy-py/)
-[![PyPI - Python Version](https://img.shields.io/pypi/v/ailoy-py?color=blue)](https://pypi.org/project/ailoy-py/)
-[![NPM Version](<https://img.shields.io/npm/v/ailoy-node?label=npm(node)&color=339933>)](https://www.npmjs.com/package/ailoy-node)
-[![NPM Version](<https://img.shields.io/npm/v/ailoy-node?label=npm(web)&color=654ff0>)](https://www.npmjs.com/package/ailoy-node)
+[![Python version](https://img.shields.io/pypi/pyversions/ailoy-py)](https://pypi.org/project/ailoy-py/)
+[![Node version](https://img.shields.io/node/v/ailoy-node?color=339933)](https://www.npmjs.com/package/ailoy-node)
+
+
+[![ailoy-py version](https://img.shields.io/pypi/v/ailoy-py?color=blue)](https://pypi.org/project/ailoy-py/)
+[![ailoy-node version](<https://img.shields.io/npm/v/ailoy-node?label=npm(node)&color=339933>)](https://www.npmjs.com/package/ailoy-node)
+[![ailoy-web version](<https://img.shields.io/npm/v/ailoy-node?label=npm(web)&color=654ff0>)](https://www.npmjs.com/package/ailoy-node)
 
 [![Discord](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white)](https://discord.gg/27rx3EJy3P)
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Fx.com%2Failoy_co)](https://x.com/ailoy_co)
