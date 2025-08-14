@@ -15,11 +15,11 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ailoy-py", specifier = ">=0.0.6" }]
+requires-dist = [{ name = "ailoy-py", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "ailoy-py"
-version = "0.0.6"
+version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -33,18 +33,18 @@ dependencies = [
     { name = "typer" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1f/e7/7a1ab1253b88ef0efd492b2334b67ad62af23e869165c38443e17759cdbf/ailoy_py-0.0.6-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:b9faef171241c7ac33d863db5ffd47b58cc01c1b77001f9640ecda11d5e5dd58", size = 8644341, upload-time = "2025-08-08T05:36:46.086Z" },
-    { url = "https://files.pythonhosted.org/packages/24/23/805c6f3a9e78f20452455f31b524748ff0474b82a5a66f79c7af05ecc91d/ailoy_py-0.0.6-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:105c053f3cf0e9e62b9e4d9785badb81e8431a836a10da6833555edc7a2a8de8", size = 9843039, upload-time = "2025-08-08T05:36:48.607Z" },
-    { url = "https://files.pythonhosted.org/packages/3e/2b/1ab9210a8d5affb9ea3ccad49110884842b70f665838a94c14613d2ccf5a/ailoy_py-0.0.6-cp310-cp310-win_amd64.whl", hash = "sha256:505f64316ae1c84b3d878fd7567a03a19f3df52fbaadaadef6f4e997c03196e2", size = 6204845, upload-time = "2025-08-08T05:36:51.662Z" },
-    { url = "https://files.pythonhosted.org/packages/63/2f/efe7622844746ee515b028dd704566624f22a6e773019d1e0b29d5202a07/ailoy_py-0.0.6-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:364279c62b215d9271d32af6c1d9157a0a285e32308627dfa8ea4bed2ec24b39", size = 8645535, upload-time = "2025-08-08T05:36:54.208Z" },
-    { url = "https://files.pythonhosted.org/packages/47/3d/438e7c474fea8bd339aa72af6da66d26aa2e9350ab31198ab195eb37be8d/ailoy_py-0.0.6-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:0864cdf10d79dc12c7d47516018b5040352a4637a002b17988be3d027cae5d09", size = 9844339, upload-time = "2025-08-08T05:36:56.8Z" },
-    { url = "https://files.pythonhosted.org/packages/db/d1/9297e2c297a2635741b89903d90d2038af2f77a647d2d38265305b5c85cc/ailoy_py-0.0.6-cp311-cp311-win_amd64.whl", hash = "sha256:5fcef70cc44d95ba9dfcd2bdad4864cd26e3616fabeb6ee167e42927e669ef8c", size = 6206286, upload-time = "2025-08-08T05:36:58.866Z" },
-    { url = "https://files.pythonhosted.org/packages/b0/10/b87e2a229cf023ce8ba76601332ed076bebe8a97709904a000e68e4436bf/ailoy_py-0.0.6-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:627f49e178169b60db489d4da09171bf8f287800a8b8725a93c6f2e0db978560", size = 8644141, upload-time = "2025-08-08T05:37:00.75Z" },
-    { url = "https://files.pythonhosted.org/packages/04/ec/2ff7eff23834d047417461bbf878ef1eb102aa2a7de68eac883c79fa0fa7/ailoy_py-0.0.6-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:6fd602a2206026f7858ff4c2e52883ebec475c0fb7398012d85c1cba081e82cc", size = 9844774, upload-time = "2025-08-08T05:37:03.916Z" },
-    { url = "https://files.pythonhosted.org/packages/8c/1a/b844d676ce2db4a81d56dfa89a65b9d321a6d3e7585237382a81131d1807/ailoy_py-0.0.6-cp312-cp312-win_amd64.whl", hash = "sha256:d97faa2ded651ac6a1a8655fc88d15d72d37fd0c019d04e4db5ebb9a9949f606", size = 6206753, upload-time = "2025-08-08T05:37:06.671Z" },
-    { url = "https://files.pythonhosted.org/packages/66/4f/fb106aee931742d0def43609fcf81b9545994767a3862363270a2a634a8c/ailoy_py-0.0.6-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:b28de585ebedd26bae08f01b3bf68a30dd6848342d5004692ce0bc7c20fc7bc1", size = 8644282, upload-time = "2025-08-08T05:37:09.172Z" },
-    { url = "https://files.pythonhosted.org/packages/c4/32/4bb3e53e4a83a44712184a86f0031ab457d83d05fe4f2b90d76b00c4c649/ailoy_py-0.0.6-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:ae5f72c30d859b20626c224c17307eed2e70b9b12287ffcd31b9fe35d3808b86", size = 9844691, upload-time = "2025-08-08T05:37:11.745Z" },
-    { url = "https://files.pythonhosted.org/packages/36/b9/c7e4cdba60a0be85660ffb146ddb44613bf4a0e471c294dae32e35b6e86f/ailoy_py-0.0.6-cp313-cp313-win_amd64.whl", hash = "sha256:30c540dfb5982c71256de5d09520a7847c2e41ca56e50634d0f5abb1366a1f87", size = 6206493, upload-time = "2025-08-08T05:37:14.064Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/4c/41604c5af59eb82a478e016a4822978e5d6a85f05c9ed381c3f2fc5f7161/ailoy_py-0.1.0-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:ab2d1b15bfd17cc3c1d1e07569cb27d475ca1323b7f23e8e7706b42f961793fc", size = 8645285, upload-time = "2025-08-14T13:11:57.515Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/28/d1b76f634fbdd59fd84ad001396a28fd6297f7b98ea8b5440c8a7a3bcda7/ailoy_py-0.1.0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:a24bc28ba55389d42f2371a1d42a7d49a7fc1f38dc5569bacc790e907b1a68a6", size = 9845168, upload-time = "2025-08-14T13:12:00.007Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/10/3716ac90c825bf7e4c5f7a417cf8af9f127684288816195133b4906e1b65/ailoy_py-0.1.0-cp310-cp310-win_amd64.whl", hash = "sha256:df34aabe645202dd7a349a9dd58f7fb6e9c1fc655b775212140ef5f473c67dcc", size = 6196782, upload-time = "2025-08-14T13:12:02.364Z" },
+    { url = "https://files.pythonhosted.org/packages/93/b6/8374ddbbfb3599a131d2e1601675791f8c51fb6cd9cac0ad23fedeeaeba3/ailoy_py-0.1.0-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:5c4438af566e73cdf3342d78b44994ec1edb1c94498f38c121618af495b017af", size = 8650923, upload-time = "2025-08-14T13:12:04.495Z" },
+    { url = "https://files.pythonhosted.org/packages/22/87/50c6aa7d2d750e9093605c679f153ec0ffc695d9657569a3ee6a5fe5de7f/ailoy_py-0.1.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:ee5fe20e9c32e03808ba140931639c8ad4d7439986cfe6577225e2eab36d642b", size = 9845627, upload-time = "2025-08-14T13:12:06.665Z" },
+    { url = "https://files.pythonhosted.org/packages/75/09/feba84c25bc1298dc359a89d351d32fdbe6f714beb454015d57642b74b94/ailoy_py-0.1.0-cp311-cp311-win_amd64.whl", hash = "sha256:304810b6339d03f1887be4eced2d5bd6a685e472a99fd8727ca992b883c2024b", size = 6198992, upload-time = "2025-08-14T13:12:08.598Z" },
+    { url = "https://files.pythonhosted.org/packages/85/9a/d612fac976401bea795bc739e739dede675bd215f11041408d7fd18468ae/ailoy_py-0.1.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:ecc29e4119e117cf58311ca9bd1a3a4077c0a8245f3956d25a97ce21753418eb", size = 8646983, upload-time = "2025-08-14T13:12:10.67Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/77/c170ba72bb2db41a63530544c2ea3ad0a083ede88a72427f7a890f26feb6/ailoy_py-0.1.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:f4c6458108a914556a117446d7167ae4a252864bb1bfb423b231aa0956086a8d", size = 9845793, upload-time = "2025-08-14T13:12:13.04Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/46/d47fa226b52ad3822c0584175345382cfa0fce9119642da2a7419d0d4201/ailoy_py-0.1.0-cp312-cp312-win_amd64.whl", hash = "sha256:3b5fc8f0c62f306c65ed634c10e18cf18edac7aeffc5eec9f851b2a9690a80c8", size = 6199693, upload-time = "2025-08-14T13:12:14.965Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/3d/8ff1af9d28c57a4cb3059d541d985f0031ddf02c4c0aec2f304eb10e4d6a/ailoy_py-0.1.0-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:19a6d11e621420d5731f00d8580d8e7d9da164821eeaf8e4f28a183721328aa4", size = 8650542, upload-time = "2025-08-14T13:12:16.75Z" },
+    { url = "https://files.pythonhosted.org/packages/11/5e/8c7399b527b17461cf4cceaac0f4a7552f3c744c7428df31f994dbed6914/ailoy_py-0.1.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:fac1a5e208ca0615ed27346aa6cfb0fda7483fa6b2849d15f4316bcf294ffc73", size = 9845724, upload-time = "2025-08-14T13:12:18.762Z" },
+    { url = "https://files.pythonhosted.org/packages/50/21/e432d50e5bcb20640eec53f6a52b148817ebd1f84f15b872f26f7dd13e90/ailoy_py-0.1.0-cp313-cp313-win_amd64.whl", hash = "sha256:6c12cfe4c16f2d8315dac8325de416358538fbb14a38cffb0809099eeebdb47b", size = 6199745, upload-time = "2025-08-14T13:12:22.861Z" },
 ]
 
 [[package]]
