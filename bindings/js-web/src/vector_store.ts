@@ -1,6 +1,7 @@
 import { Engine } from "./llm/engine";
 import { Tokenizer } from "./llm/tokenizer";
 import { Runtime } from "./runtime";
+import { getGPUDevice } from "./webgpu";
 
 export type EmbeddingModelId = "BAAI/bge-m3";
 export type EmbeddingModelQuantization = "q4f16_1";
@@ -81,6 +82,8 @@ export class VectorStore {
 
     this.runtime = runtime;
 
+    let gpuDevice = await getGPUDevice();
+
     /**
      * Preparing Embedding Model
      */
@@ -107,7 +110,7 @@ export class VectorStore {
     await tokenizer.init();
 
     this.embeddingModel = new Engine(embeddingModelId, tokenizer);
-    await this.embeddingModel.loadModel();
+    await this.embeddingModel.loadModel(gpuDevice);
 
     /**
      * Preparing VectorStore

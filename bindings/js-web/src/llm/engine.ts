@@ -9,14 +9,7 @@ import {
   prebuiltAppConfig,
 } from "./config";
 import { EmbeddingPipeline } from "./embedding";
-import {
-  DeviceLostError,
-  FeatureSupportError,
-  FetchFileFromURLError,
-  MissingModelWasmError,
-  ShaderF16SupportError,
-  WebGPUNotAvailableError,
-} from "./error";
+import { FetchFileFromURLError, MissingModelWasmError } from "./error";
 import { LLMChatPipeline } from "./llm_chat";
 import { CustomLock, findModelRecord } from "./support";
 import { Tokenizer } from "./tokenizer";
@@ -60,17 +53,9 @@ export class Engine {
     return this._modelPath;
   }
 
-  async loadModel() {
+  async loadModel(device: GPUDevice) {
     const modelRecord = findModelRecord(this.modelId, appConfig);
     this._modelPath = modelRecord.model;
-
-    this.chatConfig = {
-      ...((await readOPFSFile(
-        joinPath(this.cacheScope, this._modelPath, "mlc-chat-config.json"),
-        "json"
-      )) as any),
-      ...modelRecord.overrides,
-    } as ChatConfig;
 
     const wasmUrl = modelRecord.model_lib;
     if (wasmUrl === undefined) {
@@ -90,41 +75,23 @@ export class Engine {
       // logger
       console.log
     );
+    tvm.initWebGPU(device);
 
     // setting progress callback?
-
-    // detect GPU
-    const gpuDetectOutput = await tvmjs.detectGPUDevice();
-    if (gpuDetectOutput == undefined) {
-      throw new WebGPUNotAvailableError();
-    }
-    let gpuLabel = "WebGPU";
-    if (gpuDetectOutput.adapterInfo.description.length != 0) {
-      gpuLabel += " - " + gpuDetectOutput.adapterInfo.description;
-    } else {
-      gpuLabel += " - " + gpuDetectOutput.adapterInfo.vendor;
-    }
-    if (modelRecord.required_features !== undefined) {
-      for (const feature of modelRecord.required_features) {
-        if (!gpuDetectOutput.device.features.has(feature)) {
-          if (feature == "shader-f16") {
-            throw new ShaderF16SupportError();
-          }
-          throw new FeatureSupportError(feature);
-        }
-      }
-    }
-    // gpuDetectOutput.device.lost.then((info: any) => {
-    //   throw new DeviceLostError();
-    // });
-    tvm.initWebGPU(gpuDetectOutput.device);
-
     await tvm.fetchNDArrayCache(
       this._modelPath,
       tvm.webgpu(),
       this.cacheScope,
       "opfs"
     );
+
+    this.chatConfig = {
+      ...((await readOPFSFile(
+        joinPath(this.cacheScope, this._modelPath, "mlc-chat-config.json"),
+        "json"
+      )) as any),
+      ...modelRecord.overrides,
+    } as ChatConfig;
 
     if (modelRecord.model_type === ModelType.embedding) {
       this.pipeline = new EmbeddingPipeline(
