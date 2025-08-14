@@ -208,6 +208,7 @@ export const prebuiltAppConfig: AppConfig = {
       model_lib: "lib-wasm32-Emscripten-webgpu.wasm",
       vram_required_MB: 1403.34,
       low_resource_required: true,
+      required_features: ["shader-f16"],
       overrides: {
         context_window_size: 10240,
       },
@@ -218,6 +219,7 @@ export const prebuiltAppConfig: AppConfig = {
       model_lib: "lib-wasm32-Emscripten-webgpu.wasm",
       vram_required_MB: 2036.66,
       low_resource_required: true,
+      required_features: ["shader-f16"],
       overrides: {
         context_window_size: 10240,
       },
@@ -228,6 +230,7 @@ export const prebuiltAppConfig: AppConfig = {
       model_lib: "lib-wasm32-Emscripten-webgpu.wasm",
       vram_required_MB: 3431.59,
       low_resource_required: false,
+      required_features: ["shader-f16"],
       overrides: {
         context_window_size: 40960,
       },
@@ -238,6 +241,7 @@ export const prebuiltAppConfig: AppConfig = {
       model_lib: "lib-wasm32-Emscripten-webgpu.wasm",
       vram_required_MB: 5695.78,
       low_resource_required: false,
+      required_features: ["shader-f16"],
       overrides: {
         context_window_size: 40960,
       },
@@ -250,6 +254,7 @@ export const prebuiltAppConfig: AppConfig = {
       model_lib: "lib-wasm32-Emscripten-webgpu.wasm",
       vram_required_MB: 1407.51,
       model_type: ModelType.embedding,
+      required_features: ["shader-f16"],
       overrides: {
         context_window_size: 8192,
       },

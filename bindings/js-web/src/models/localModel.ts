@@ -4,6 +4,7 @@ import { GenerationConfig } from "../llm/config";
 import { Engine } from "../llm/engine";
 import { Tokenizer } from "../llm/tokenizer";
 import { Runtime } from "../runtime";
+import { getGPUDevice } from "../webgpu";
 
 export type LocalModelId =
   | "Qwen/Qwen3-0.6B"
@@ -57,6 +58,8 @@ export class _LocalModel {
   async init(args: { runtime: Runtime; genConfig?: GenerationConfig }) {
     if (this.#initialized) return;
 
+    let gpuDevice = await getGPUDevice();
+
     const { results }: { results: Array<{ model_id: string }> } =
       await args.runtime.call("list_local_models");
 
@@ -73,7 +76,7 @@ export class _LocalModel {
     await tokenizer.init();
 
     this.engine = new Engine(this.id, tokenizer);
-    await this.engine.loadModel();
+    await this.engine.loadModel(gpuDevice);
 
     this.chatManager = new ChatManager(
       args.runtime,
