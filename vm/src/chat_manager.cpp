@@ -174,7 +174,8 @@ std::shared_ptr<value_t> melt_reasoning(std::shared_ptr<const value_t> in,
 
     // Parse reasoning field
     std::string reasoning_str;
-    if (message->contains("reasoning")) {
+    if (message->contains("reasoning") &&
+        message->at("reasoning")->is_type_of<array_t>()) {
       reasoning_str = *message->at<array_t>("reasoning")
                            ->at<map_t>(0)
                            ->at<string_t>("text");

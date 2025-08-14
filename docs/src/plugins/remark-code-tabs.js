@@ -8,26 +8,32 @@ module.exports = function remarkCodeTabs() {
       const codeNodes = node.children.filter((c) => c.type === "code");
 
       const tabItems = codeNodes.map((codeNode) => {
-        const lang = codeNode.lang;
-
-        // Determine TabItem value and label
-        let tabValue;
-        let tabLabel;
-        if (lang === "typescript" || lang === "javascript") {
-          // TODO: Distinguish with Javascript(Web) after Emscripten is supported
-          tabValue = "node";
-          tabLabel = "JavaScript(Node)";
-        } else {
-          tabValue = lang;
-          tabLabel = lang.charAt(0).toUpperCase() + lang.slice(1);
-        }
-
         // Add "showLineNumbers" in code meta
         let meta = codeNode.meta;
         if (meta === null) {
           meta = "showLineNumbers";
         } else if (!meta.includes("showLineNumbers")) {
           meta += " showLineNumbers";
+        }
+
+        // Determine TabItem value and label
+        const lang = codeNode.lang;
+        let tabValue;
+        let tabLabel;
+        if (lang === "typescript" || lang === "javascript") {
+          if (meta.includes("web")) {
+            tabValue = "web";
+            tabLabel = "JavaScript(Web)";
+          } else if (meta.includes("node")) {
+            tabValue = "node";
+            tabLabel = "JavaScript(Node)";
+          } else {
+            tabValue = "javascript";
+            tabLabel = "JavaScript";
+          }
+        } else {
+          tabValue = lang;
+          tabLabel = lang.charAt(0).toUpperCase() + lang.slice(1);
         }
 
         return {

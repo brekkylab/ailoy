@@ -1,14 +1,13 @@
 import type * as Preset from "@docusaurus/preset-classic";
 import type { Config } from "@docusaurus/types";
 import { themes as prismThemes } from "prism-react-renderer";
-
 import remarkCodeTabs from "./src/plugins/remark-code-tabs";
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
 const config: Config = {
-  title: "Ailoy",
-  tagline: "Drop it in. Embed an LLM in your code instantly.",
+  title: "Build your AI Agents instantly",
+  tagline: "in any environments, in any languages, without any complex setup.",
   favicon: "img/favicon.ico",
 
   // Set the production url of your site here
@@ -41,33 +40,26 @@ const config: Config = {
           sidebarPath: "./src/sidebars.ts",
           remarkPlugins: [remarkCodeTabs],
         },
-        // blog: {
-        //   showReadingTime: true,
-        //   feedOptions: {
-        //     type: ["rss", "atom"],
-        //     xslt: true,
-        //   },
-        //   // Please change this to your repo.
-        //   // Remove this to remove the "edit this page" links.
-        //   editUrl:
-        //     "https://github.com/facebook/docusaurus/tree/main/packages/create-docusaurus/templates/shared/",
-        //   // Useful options to enforce blogging best practices
-        //   onInlineTags: "warn",
-        //   onInlineAuthors: "warn",
-        //   onUntruncatedBlogPosts: "warn",
-        // },
         theme: {
-          customCss: "./src/css/custom.css",
+          customCss: ["./src/css/custom.css", "./src/css/navbar.css"],
         },
       } satisfies Preset.Options,
     ],
   ],
 
+  plugins: ["docusaurus-plugin-sass"],
+
   themeConfig: {
     // Replace with your project's social card
     // image: "img/docusaurus-social-card.jpg",
+    colorMode: {
+      disableSwitch: true,
+      defaultMode: "dark",
+      respectPrefersColorScheme: false,
+    },
     navbar: {
       title: "Ailoy",
+      style: "dark",
       logo: {
         alt: "Ailoy Logo",
         src: "img/logo.png",
@@ -86,8 +78,13 @@ const config: Config = {
         },
         {
           href: "https://github.com/brekkylab/ailoy",
-          label: "GitHub",
           position: "right",
+          className: "navbar--github-link",
+        },
+        {
+          href: "https://discord.gg/27rx3EJy3P",
+          position: "right",
+          className: "navbar--discord-link",
         },
       ],
     },
@@ -95,23 +92,43 @@ const config: Config = {
       style: "dark",
       links: [
         {
-          title: "Docs",
           items: [
             {
-              label: "Tutorial",
+              html: `<img src="/ailoy/img/ailoy-logo-letter.png" width="200px">`,
+            },
+            {
+              html: `<a class="footer__link-item" href="mailto:contact@brekkylab.com">contact@brekkylab.com</a>`,
+            },
+            {
+              html: `<p>Copyright © ${new Date().getFullYear()} Brekkylab, Inc.</p>`,
+            },
+          ],
+        },
+        {
+          title: "Resources",
+          items: [
+            {
+              label: "Getting Started",
               to: "/docs/tutorial/getting-started",
             },
             {
-              html: `<a href="/ailoy/pydocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Python API References</a>`,
+              html: `<a class="footer__link-item" href="/ailoy/api-references/python/index.html" target="_blank" rel="noopener noreferrer">Python API References</a>`,
             },
             {
-              html: `<a href="/ailoy/tsdocs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Node) API References</a>`,
+              html: `<a class="footer__link-item" href="/ailoy/api-references/js-node/index.html" target="_blank" rel="noopener noreferrer">Javascript(Node.js) API References</a>`,
+            },
+            {
+              html: `<a class="footer__link-item" href="/ailoy/api-references/js-web/index.html" target="_blank" rel="noopener noreferrer">Javascript(Web) API References</a>`,
             },
           ],
         },
         {
           title: "Community",
           items: [
+            {
+              label: "GitHub",
+              href: "https://github.com/brekkylab/ailoy",
+            },
             {
               label: "Discord",
               href: "https://discord.gg/27rx3EJy3P",
@@ -120,27 +137,102 @@ const config: Config = {
               label: "X",
               href: "https://x.com/ailoy_co",
             },
-          ],
-        },
-        {
-          title: "More",
-          items: [
+            {
+              label: "Linkedin",
+              href: "https://www.linkedin.com/company/107147231",
+            },
             {
               label: "Blog",
               href: "https://medium.com/ailoy",
             },
-            {
-              label: "GitHub",
-              href: "https://github.com/brekkylab/ailoy",
-            },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Brekkylab, Inc. Built with Docusaurus.`,
+      // copyright: `Copyright © ${new Date().getFullYear()} Brekkylab, Inc.`,
     },
     prism: {
       theme: prismThemes.github,
-      darkTheme: prismThemes.dracula,
+      darkTheme: {
+        plain: {
+          color: "#e2e8f0",
+          backgroundColor: "#282c34",
+        },
+        styles: [
+          {
+            types: ["comment", "prolog", "doctype", "cdata"],
+            style: {
+              color: "#8b949e", // Light gray - comments
+              fontStyle: "italic",
+            },
+          },
+          {
+            types: ["namespace"],
+            style: {
+              opacity: 0.7,
+            },
+          },
+          {
+            types: ["string", "attr-value", "char", "regex"],
+            style: {
+              color: "#a5d6ff", // Light blue (Strings)
+            },
+          },
+          {
+            types: ["punctuation", "operator"],
+            style: {
+              color: "#c9d1d9", // Light gray (Punctuation marks, operators)
+            },
+          },
+          {
+            types: [
+              "entity",
+              "url",
+              "symbol",
+              "number",
+              "boolean",
+              "variable",
+              "constant",
+              "property",
+              "inserted",
+            ],
+            style: {
+              color: "#79c0ff", // Light blue (Variables, numbers, booleans)
+            },
+          },
+          {
+            types: ["keyword", "selector"],
+            style: {
+              color: "#ff7b72", // Reddish (Keywords, like `import`, `const`, `async`)
+            },
+          },
+          {
+            types: ["atrule", "attr-name"],
+            style: {
+              color: "#d2a8ff", // Light purple (CSS @rules and HTML attribute names)
+            },
+          },
+          {
+            types: ["function", "deleted", "tag"],
+            style: {
+              color: "#d2a8ff", // Light purple (Functions, JSX/HTML tags)
+            },
+          },
+          {
+            types: ["function-variable"],
+            style: {
+              color: "#f778ba", // Pink (Function variables)
+            },
+          },
+          {
+            types: ["class-name", "builtin"],
+            style: {
+              color: "#ffa657", // Orange (Class names, like `React.FC`)
+            },
+          },
+        ],
+      },
+
+      additionalLanguages: ["bash"],
     },
   } satisfies Preset.ThemeConfig,
 };

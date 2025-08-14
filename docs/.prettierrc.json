@@ -21,8 +21,8 @@
         "@trivago/prettier-plugin-sort-imports"
     ],
     "importOrder": [
+        "^node:*",
         "<THIRD_PARTY_MODULES>",
         "^[./]"
-    ],
-    "importOrderSeparation": true
+    ]
 }

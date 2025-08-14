@@ -54,7 +54,8 @@ model_cache_download_result_t
 download_model(const std::string &model_id, const std::string &quantization,
                const std::string &target_device,
                std::optional<model_cache_callback_t> callback = std::nullopt,
-               bool print_progress_bar = true);
+               bool print_progress_bar = true,
+               bool skip_integrity_check = false);
 
 model_cache_remove_result_t remove_model(const std::string &model_name,
                                          bool ask_prompt = false);

@@ -28,10 +28,30 @@ export class ImageContent {
     return new ImageContent("image_url", { url });
   }
 
+  static fromBytes(
+    data: Uint8Array<ArrayBufferLike>,
+    format: "png" | "jpg" | "jpeg" | "gif" | (string & {})
+  ) {
+    if (format === "jpg") format = "jpeg";
+    const base64 = uint8ArrayToBase64(data);
+    return this.fromUrl(`data:image/${format};base64,${base64}`);
+  }
+
+  static fromArrayBuffer(
+    buffer: ArrayBuffer,
+    format: Parameters<typeof this.fromBytes>[1]
+  ) {
+    return this.fromBytes(new Uint8Array(buffer), format);
+  }
+
+  static async fromFile(file: File) {
+    const arr = await file.arrayBuffer();
+    const format = file.type.replace(/^image\//, "");
+    return this.fromArrayBuffer(arr, format);
+  }
+
   static fromVips(image: Image) {
-    return new ImageContent("image_url", {
-      url: vipsImageToBase64(image),
-    });
+    return this.fromUrl(vipsImageToBase64(image));
   }
 }
 
@@ -44,14 +64,29 @@ export class AudioContent {
     }
   ) {}
 
-  static async fromBytes(
+  static fromBytes(
     data: Uint8Array<ArrayBufferLike>,
-    format: "mp3" | "wav"
+    format: AudioContent["input_audio"]["format"]
   ) {
     return new AudioContent("input_audio", {
       data: uint8ArrayToBase64(data),
       format,
     });
+  }
+
+  static fromArrayBuffer(
+    buffer: ArrayBuffer,
+    format: AudioContent["input_audio"]["format"]
+  ) {
+    return this.fromBytes(new Uint8Array(buffer), format);
+  }
+
+  static async fromFile(file: File) {
+    const arr = await file.arrayBuffer();
+    const format = file.type.replace(/^audio\//, "");
+    if (format !== "mp3" && format !== "wav")
+      throw new Error(`Unsupported audio format: ${format}`);
+    return this.fromBytes(new Uint8Array(arr), format);
   }
 }
 
@@ -636,7 +671,6 @@ export class Agent {
 
         if (result.finish_reason) {
           finishReason = result.finish_reason;
-          break;
         }
       }
       // Append output
@@ -648,7 +682,12 @@ export class Agent {
       });
 
       // Call tools in parallel
-      if (finishReason == "tool_calls") {
+      const lastMessage = this.messages.at(this.messages.length - 1);
+      if (
+        lastMessage?.role === "assistant" &&
+        lastMessage.tool_calls &&
+        lastMessage.tool_calls.length !== 0
+      ) {
         let toolCallPromises: Array<Promise<ToolMessage>> = [];
         for (const toolCall of assistantToolCalls ?? []) {
           toolCallPromises.push(
