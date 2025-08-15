@@ -8,7 +8,7 @@ use pyo3::{
 
 use crate::{
     ffi::py::base::PyWrapper,
-    value::{Message, MessageAggregator, MessageDelta, Part, Role},
+    value::{Message, MessageAggregator, MessageDelta, MessageOutput, Part, Role},
 };
 
 #[derive(Clone)]
@@ -143,6 +143,39 @@ impl PyMessageDelta {
     fn from_json(s: &str) -> PyResult<Self> {
         Ok(PyMessageDelta {
             inner: serde_json::from_str::<MessageDelta>(s)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?,
+        })
+    }
+
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(self.inner.to_string())
+    }
+}
+
+#[derive(Clone)]
+#[pyclass(name = "MessageOutput")]
+pub struct PyMessageOutput {
+    inner: MessageOutput,
+}
+
+impl PyWrapper for PyMessageOutput {
+    type Inner = MessageOutput;
+
+    fn from_inner(inner: Self::Inner) -> Self {
+        Self { inner }
+    }
+}
+
+#[pymethods]
+impl PyMessageOutput {
+    #[staticmethod]
+    fn from_json(s: &str) -> PyResult<Self> {
+        Ok(PyMessageOutput {
+            inner: serde_json::from_str::<MessageOutput>(s)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?,
         })
     }

@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use futures::stream::BoxStream;
 
-use crate::value::{Message, MessageDelta, ToolDescription};
+use crate::value::{Message, MessageOutput, ToolDescription};
 
-/// Runs the language model with the given tools and messages, returning a stream of `MessageDelta`s.
+/// Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
 ///
 /// Note that a user of this trait should store it using `Arc<dyn LanguageModel>`, like:
 ///
@@ -32,11 +32,11 @@ use crate::value::{Message, MessageDelta, ToolDescription};
 /// `Arc` provides cheap, thread-safe cloning of the underlying object,
 /// making it well-suited for asynchronous and concurrent use.
 pub trait LanguageModel: Send + Sync + 'static {
-    // Runs the language model with the given tools and messages, returning a stream of `MessageDelta`s.
+    // Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
     /// See [`LanguageModel`] trait document for the details.
     fn run(
         self: Arc<Self>,
         msg: Vec<Message>,
         tools: Vec<ToolDescription>,
-    ) -> BoxStream<'static, Result<MessageDelta, String>>;
+    ) -> BoxStream<'static, Result<MessageOutput, String>>;
 }
