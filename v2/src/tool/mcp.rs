@@ -95,9 +95,10 @@ impl Tool for MCPTool {
 
             // Prefer structured_content; else fall back to unstructured content.
             if let Some(v) = result.structured_content {
-                println!("structured_content: {:?}", v);
                 return Ok(vec![Part::Text(v.to_string())]);
             }
+            // Convert raw contents into corresponding Part types.
+            // TODO: Handling resources
             if let Some(content) = result.content {
                 let parts = content
                     .iter()
