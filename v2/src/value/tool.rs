@@ -370,13 +370,13 @@ impl<'de> Deserialize<'de> for ToolDescriptionArgument {
 /// See also: [`ToolDescriptionArgument`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolDescription {
-    name: String,
+    pub name: String,
 
-    description: String,
+    pub description: String,
 
-    parameters: ToolDescriptionArgument, // In most cases, it's `ToolDescriptionArgument::Object`
+    pub parameters: ToolDescriptionArgument, // In most cases, it's `ToolDescriptionArgument::Object`
 
-    r#return: Option<ToolDescriptionArgument>,
+    pub r#return: Option<ToolDescriptionArgument>,
 }
 
 impl ToolDescription {

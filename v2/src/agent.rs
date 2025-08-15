@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use futures::{Stream, StreamExt};
 use tokio::sync::Mutex;
 
 use crate::{
     model::LanguageModel,
-    tool::Tool,
+    tool::{MCPClient, Tool},
     value::{Message, MessageAggregator, MessageDelta, Part, Role, ToolCall},
 };
 
@@ -13,6 +15,7 @@ pub struct Agent {
     lm: Arc<dyn LanguageModel>,
     tools: Vec<Arc<dyn Tool>>,
     messages: Arc<Mutex<Vec<Message>>>,
+    mcp_clients: HashMap<String, Arc<MCPClient>>,
 }
 
 impl Agent {
@@ -21,7 +24,70 @@ impl Agent {
             lm: Arc::new(lm),
             tools: tools.into_iter().collect(),
             messages: Arc::new(Mutex::new(Vec::new())),
+            mcp_clients: HashMap::new(),
         }
+    }
+
+    pub fn get_tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.tools.clone()
+    }
+
+    pub async fn add_mcp_client(
+        &mut self,
+        name: &str,
+        client: MCPClient,
+        tools_to_add: Vec<String>,
+    ) -> anyhow::Result<()> {
+        if self.mcp_clients.contains_key(name) {
+            return Err(anyhow!(
+                "MCP client with \"{}\" is already registered",
+                name
+            ));
+        }
+
+        // Add client to self.mcp_clients
+        let client = Arc::new(client);
+        self.mcp_clients.insert(name.into(), client.clone());
+
+        // Add tools in the client
+        let tools = client.list_tools().await?;
+        for mut tool in tools.into_iter() {
+            // If tools_to_add is not empty, check if this tool is in the whitelist
+            if tools_to_add.len() > 0 && !tools_to_add.contains(&tool.desc.name) {
+                continue;
+            }
+            tool.desc.name = format!("{}--{}", name, tool.desc.name);
+            self.tools.push(Arc::new(tool) as Arc<dyn Tool>);
+        }
+
+        Ok(())
+    }
+
+    pub async fn remove_mcp_client(&mut self, name: &str) -> anyhow::Result<()> {
+        if !self.mcp_clients.contains_key(name) {
+            return Err(anyhow!(
+                "MCP client with \"{}\" is not registered in this agent",
+                name
+            ));
+        }
+
+        // Remove tools in the client
+        let client = self.mcp_clients.get(name).unwrap();
+        let mcp_tool_names = client
+            .list_tools()
+            .await?
+            .iter()
+            .map(|t| format!("{}--{}", name, t.desc.name))
+            .collect::<Vec<String>>();
+        self.tools.retain(|t| {
+            let desc = t.get_description();
+            !mcp_tool_names.contains(&desc.name)
+        });
+
+        // Remove MCP client
+        self.mcp_clients.remove(name);
+
+        Ok(())
     }
 
     pub fn run(
@@ -214,14 +280,16 @@ mod tests {
         }))
         .await?;
 
-        let mut agent = Agent::new(
-            model,
-            client
-                .list_tools()
-                .await?
-                .iter()
-                .map(|t| t.clone() as Arc<dyn Tool>),
+        let mut agent = Agent::new(model, vec![]);
+        agent.add_mcp_client("time", client, vec![]).await?;
+
+        let agent_tools = agent.get_tools();
+        assert_eq!(agent_tools.len(), 2);
+        assert_eq!(
+            agent_tools[0].get_description().name,
+            "time--get_current_time"
         );
+        assert_eq!(agent_tools[1].get_description().name, "time--convert_time");
 
         let mut agg = MessageAggregator::new();
         let mut strm = Box::pin(agent.run("What time is it now in Asia/Seoul?"));

@@ -48,17 +48,14 @@ impl MCPClient {
         })
     }
 
-    pub async fn list_tools(&self) -> anyhow::Result<Vec<Arc<MCPTool>>> {
+    pub async fn list_tools(&self) -> anyhow::Result<Vec<MCPTool>> {
         let peer = self.service.peer();
         let tools = peer.list_all_tools().await?;
         Ok(tools
             .iter()
-            .map(|t| {
-                Arc::new(MCPTool {
-                    service: self.service.clone(),
-                    name: t.name.to_string(),
-                    desc: map_mcp_tool_to_tool_description(&t),
-                })
+            .map(|t| MCPTool {
+                service: self.service.clone(),
+                desc: map_mcp_tool_to_tool_description(&t),
             })
             .collect())
     }
@@ -67,8 +64,7 @@ impl MCPClient {
 #[derive(Clone, Debug)]
 pub struct MCPTool {
     service: Arc<RunningService<RoleClient, ()>>,
-    name: String,
-    desc: ToolDescription,
+    pub desc: ToolDescription,
 }
 
 impl Tool for MCPTool {
@@ -78,7 +74,7 @@ impl Tool for MCPTool {
 
     fn run(self: Arc<Self>, toll_call: ToolCall) -> BoxFuture<'static, Result<Vec<Part>, String>> {
         let peer = self.service.peer().clone();
-        let name = self.name.clone();
+        let name = self.get_description().name;
 
         Box::pin(async move {
             // Convert your ToolCall arguments → serde_json::Map (MCP expects JSON object)
@@ -249,7 +245,7 @@ mod tests {
         assert_eq!(tools.len(), 2);
 
         let tool = tools[0].clone();
-        let tool_name = tool.name.clone();
+        let tool_name = tool.desc.name.clone();
         assert_eq!(tool_name, "get_current_time");
 
         let mut tool_call_args: HashMap<String, Box<ToolCallArgument>> = HashMap::new();
@@ -258,7 +254,7 @@ mod tests {
             Box::new(ToolCallArgument::String("Asia/Seoul".into())),
         );
 
-        let parts = tool
+        let parts = Arc::new(tool)
             .run(ToolCall::new(
                 tool_name,
                 ToolCallArgument::Object(tool_call_args),
