@@ -130,6 +130,13 @@ impl Part {
         }
     }
 
+    pub fn get_text_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Part::Text(v) => Some(v),
+            _ => None,
+        }
+    }
+
     pub fn get_text_owned(&self) -> Option<String> {
         match self {
             Part::Text(v) => Some(v.to_owned()),
@@ -167,6 +174,13 @@ impl Part {
     }
 
     pub fn get_function(&self) -> Option<&String> {
+        match self {
+            Part::Function { function, .. } => Some(function),
+            _ => None,
+        }
+    }
+
+    pub fn get_function_mut(&mut self) -> Option<&mut String> {
         match self {
             Part::Function { function, .. } => Some(function),
             _ => None,
@@ -324,243 +338,26 @@ impl<'de> Visitor<'de> for PartVisitor {
 impl Display for Part {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Part::Text(text) => f.write_str(&format!("Part(type=text, text=\"{}\")", text)),
-            Part::Function { id, function } => match id {
-                Some(id) => f.write_str(&format!(
-                    "Part(type=function, id=\"{}\", function=\"{}\")",
-                    id, function
-                )),
-                None => f.write_str(&format!("Part(type=function, function=\"{}\")", function)),
-            },
-            Part::ImageURL(url) => {
-                f.write_str(&format!("Part(type=image, url=\"{}\")", url.to_string()))
+            Part::Text(text) => {
+                f.write_fmt(format_args!("Part(type=\"text\", text=\"{}\")", text))?
             }
-            Part::ImageData(data) => {
-                f.write_str(&format!("Part(type=image, data=({} bytes))", data.len()))
-            }
-        }
-    }
-}
-
-/// A single streaming update to a message.
-///
-/// `MessageDelta` represents one incremental piece emitted while a model is
-/// generating a response (or while a tool is streaming its output). Each delta
-/// identifies **which field** of the message is being extended and the **role**
-/// responsible for that piece, along with the concrete [`Part`] being added.
-///
-/// This mirrors how many chat APIs stream “chunks” of content. You typically
-/// feed these deltas into an aggregator (e.g., `MessageAggregator`) to build
-/// a complete [`Message`] incrementally.
-///
-/// # Variants
-/// - [`MessageDelta::Content`]: Appends a [`Part`] to the message’s `content`.
-/// - [`MessageDelta::Reasoning`]: Appends a [`Part`] to the (optional) `reasoning`
-///   field. This is usually **not** user-visible and is intended for internal
-///   traces when supported by the model / API.
-/// - [`MessageDelta::ToolCall`]: Appends a [`Part`] (often a `Function` part)
-///   into the message’s tool-calls area, used to accumulate tool call arguments
-///   during streaming.
-///
-/// # Invariants & behavior
-/// - Deltas do not reorder data; your aggregator should preserve arrival order.
-/// - The `role` carried by each delta indicates the author of the appended part
-///   (commonly [`Role::Assistant`] for model output, [`Role::Tool`] for tool output,
-///   and [`Role::User`] for user-streamed uploads).
-///
-/// # Examples
-/// Stream assistant text and a tool call:
-/// ```rust
-/// # use crate::value::{MessageDelta, Part, Role};
-/// let d1 = MessageDelta::new_assistant_content(Part::Text("Looking up weather…".into()));
-/// let d2 = MessageDelta::new_assistant_tool_call(Part::Function {
-///     id: Some("call_1".into()),
-///     function: r#"{"name":"get_weather","arguments":{"city":"Seoul"}}"#.into(),
-/// });
-/// // Feed `d1`, `d2`, ... into your aggregator.
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MessageDelta {
-    /// Append a [`Part`] to the message's `content` array for the given `role`.
-    Content(Role, Part),
-
-    /// Append a [`Part`] to the message's `reasoning` array for the given `role`.
-    ///
-    /// This is typically internal/system-facing metadata (if supported by the API)
-    /// and not shown to end users.
-    Reasoning(Role, Part),
-
-    /// Append a [`Part`] to the message's `tool_calls` area for the given `role`.
-    ///
-    /// Commonly used while streaming tool/function call arguments from the assistant.
-    ToolCall(Role, Part),
-}
-
-impl MessageDelta {
-    /// Convenience constructor for a user-authored content delta.
-    pub fn new_user_content(part: Part) -> MessageDelta {
-        MessageDelta::Content(Role::User, part)
-    }
-
-    /// Convenience constructor for an assistant-authored content delta.
-    pub fn new_assistant_content(part: Part) -> MessageDelta {
-        MessageDelta::Content(Role::Assistant, part)
-    }
-
-    /// Convenience constructor for an assistant-authored reasoning delta.
-    pub fn new_assistant_reasoning(part: Part) -> MessageDelta {
-        MessageDelta::Reasoning(Role::Assistant, part)
-    }
-
-    /// Convenience constructor for an assistant-authored tool-call delta.
-    pub fn new_assistant_tool_call(part: Part) -> MessageDelta {
-        MessageDelta::ToolCall(Role::Assistant, part)
-    }
-
-    /// Convenience constructor for a tool-authored content delta.
-    pub fn new_tool_content(part: Part) -> MessageDelta {
-        MessageDelta::Content(Role::Tool, part)
-    }
-
-    /// Returns the `role` that authored this delta.
-    pub fn get_role(&self) -> &Role {
-        match self {
-            MessageDelta::Content(role, _) => role,
-            MessageDelta::Reasoning(role, _) => role,
-            MessageDelta::ToolCall(role, _) => role,
-        }
-    }
-
-    /// Returns the [`Part`] contained in this delta.
-    pub fn get_part(&self) -> &Part {
-        match self {
-            MessageDelta::Content(_, part) => part,
-            MessageDelta::Reasoning(_, part) => part,
-            MessageDelta::ToolCall(_, part) => part,
-        }
-    }
-
-    /// Consumes the delta, yielding its `(Role, Part)` pair.
-    pub fn take(self) -> (Role, Part) {
-        match self {
-            MessageDelta::Content(role, part) => (role, part),
-            MessageDelta::Reasoning(role, part) => (role, part),
-            MessageDelta::ToolCall(role, part) => (role, part),
-        }
-    }
-}
-
-impl Serialize for MessageDelta {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(Some(2))?;
-        match self {
-            MessageDelta::Content(role, part) => {
-                map.serialize_entry("role", role)?;
-                map.serialize_entry("content", part)?;
-            }
-            MessageDelta::Reasoning(role, part) => {
-                map.serialize_entry("role", role)?;
-                map.serialize_entry("reasoning", part)?;
-            }
-            MessageDelta::ToolCall(role, part) => {
-                map.serialize_entry("role", role)?;
-                map.serialize_entry("tool_calls", part)?;
-            }
+            Part::Function { id, function } => f.write_fmt(format_args!(
+                "Part(type=\"function\", id=\"{}\", function=\"{}\")",
+                if let Some(id) = id { id } else { "None" },
+                function
+            ))?,
+            Part::ImageURL(url) => f.write_fmt(format_args!(
+                "Part(type=\"image\", url=\"{}\")",
+                url.to_string()
+            ))?,
+            Part::ImageData(data) => f.write_fmt(format_args!(
+                "Part(type=\"image\", data=({} bytes))",
+                data.len()
+            ))?,
         };
-        map.end()
-    }
-}
-
-// Deserialization logic for Part
-impl<'de> Deserialize<'de> for MessageDelta {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_map(MessageDeltaVisitor)
-    }
-}
-
-struct MessageDeltaVisitor;
-
-impl<'de> Visitor<'de> for MessageDeltaVisitor {
-    type Value = MessageDelta;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str(r#"a map with "type" field and one other content key"#)
-    }
-
-    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
-    where
-        M: MapAccess<'de>,
-    {
-        let mut role: Option<Role> = None;
-        let mut content: Option<Part> = None;
-        let mut reasoning: Option<Part> = None;
-        let mut tool_call: Option<Part> = None;
-
-        while let Some(k) = map.next_key::<String>()? {
-            if k == "role" {
-                if role.is_some() {
-                    return Err(de::Error::duplicate_field("role"));
-                }
-                role = Some(map.next_value()?);
-            } else if k == "content" {
-                if content.is_some() {
-                    return Err(de::Error::duplicate_field("content"));
-                }
-                content = Some(map.next_value()?);
-            } else if k == "reasoning" {
-                if reasoning.is_some() {
-                    return Err(de::Error::duplicate_field("reasoning"));
-                }
-                reasoning = Some(map.next_value()?);
-            } else if k == "tool_call" {
-                if tool_call.is_some() {
-                    return Err(de::Error::duplicate_field("tool_call"));
-                }
-                tool_call = Some(map.next_value()?);
-            } else {
-                return Err(de::Error::unknown_field(
-                    &k,
-                    &["content", "reasoning", "tool_call"],
-                ));
-            }
-        }
-
-        let role = role.ok_or_else(|| de::Error::missing_field("role"))?;
-        if content.is_some() {
-            Ok(MessageDelta::Content(role, content.unwrap()))
-        } else if reasoning.is_some() {
-            Ok(MessageDelta::Reasoning(role, reasoning.unwrap()))
-        } else if tool_call.is_some() {
-            Ok(MessageDelta::ToolCall(role, tool_call.unwrap()))
-        } else {
-            Err(de::Error::missing_field("content"))
-        }
-    }
-}
-
-impl Display for MessageDelta {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MessageDelta::Content(role, part) => {
-                f.write_str(&format!("MessageDelta(role={}, content={})", role, part))?;
-            }
-            MessageDelta::Reasoning(role, part) => {
-                f.write_str(&format!("MessageDelta(role={}, reasoning={})", role, part))?;
-            }
-            MessageDelta::ToolCall(role, part) => {
-                f.write_str(&format!("MessageDelta(role={}, tool_call={})", role, part))?;
-            }
-        }
         Ok(())
     }
 }
-
 /// The author of a message (or streaming delta) in a chat.
 ///
 /// This aligns with common chat schemas (e.g., OpenAI-style), and is serialized
@@ -584,6 +381,29 @@ pub enum Role {
     Assistant,
     /// Content authored by a tool/function, usually as a result of a tool call.
     Tool,
+}
+
+fn text_or_part_vector<'de, D>(de: D) -> Result<Vec<Part>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Either {
+        Str(String),
+        Parts(Vec<Part>),
+    }
+
+    match Either::deserialize(de)? {
+        Either::Str(s) => {
+            if s.is_empty() {
+                Ok(vec![])
+            } else {
+                Ok(vec![Part::new_text(s)])
+            }
+        }
+        Either::Parts(v) => Ok(v),
+    }
 }
 
 /// Represents a complete chat message composed of multiple parts (multi-modal).
@@ -658,11 +478,14 @@ pub enum Role {
 ///   "reasoning": [ { "type": "text", "text": "(model reasoning tokens, if exposed)" } ]
 /// }
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
+    #[serde(default, deserialize_with = "text_or_part_vector")]
     pub content: Vec<Part>,
+    #[serde(default, deserialize_with = "text_or_part_vector")]
     pub reasoning: Vec<Part>,
+    #[serde(default)]
     pub tool_calls: Vec<Part>,
 }
 
@@ -671,8 +494,8 @@ impl Message {
     pub fn new(role: Role) -> Message {
         Message {
             role,
-            content: Vec::new(),
             reasoning: Vec::new(),
+            content: Vec::new(),
             tool_calls: Vec::new(),
         }
     }
@@ -681,123 +504,206 @@ impl Message {
     pub fn with_content(role: Role, content: Part) -> Message {
         Message {
             role,
-            content: vec![content],
             reasoning: Vec::new(),
+            content: vec![content],
             tool_calls: Vec::new(),
         }
     }
 }
 
-// Serialization logic for Message
-impl Serialize for Message {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(Some(2))?;
-        map.serialize_entry("role", &self.role)?;
-        if !self.reasoning.is_empty() {
-            map.serialize_entry("reasoning", &self.reasoning)?;
-        }
-        if !self.content.is_empty() {
-            map.serialize_entry("content", &self.content)?;
-        }
-        if !self.tool_calls.is_empty() {
-            map.serialize_entry("tool_calls", &self.tool_calls)?;
-        }
-        map.end()
-    }
-}
-
-/// Deserialization logic for Message
-impl<'de> Deserialize<'de> for Message {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_map(MessageVisitor)
-    }
-}
-
-struct MessageVisitor;
-
-impl<'de> Visitor<'de> for MessageVisitor {
-    type Value = Message;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str(r#"a map with "type" field and one other content key"#)
-    }
-
-    fn visit_map<M>(self, mut map: M) -> Result<Message, M::Error>
-    where
-        M: MapAccess<'de>,
-    {
-        let mut role: Option<Role> = None;
-        let mut content: Vec<Part> = Vec::new();
-        let mut reasoning: Vec<Part> = Vec::new();
-        let mut tool_calls: Vec<Part> = Vec::new();
-
-        while let Some(k) = map.next_key::<String>()? {
-            if k == "role" {
-                if role.is_some() {
-                    return Err(de::Error::duplicate_field("role"));
-                }
-                role = Some(map.next_value()?);
-            } else if k == "content" {
-                content = map.next_value()?;
-            } else if k == "reasoning" {
-                reasoning = map.next_value()?;
-            } else if k == "tool_calls" {
-                tool_calls = map.next_value()?;
-            } else {
-                return Err(de::Error::unknown_field(
-                    &k,
-                    &["content", "reasoning", "tool_calls"],
-                ));
-            }
-        }
-        let role = role.ok_or_else(|| de::Error::missing_field("role"))?;
-
-        Ok(Message {
-            role,
-            content,
-            reasoning,
-            tool_calls,
-        })
-    }
-}
-
 impl Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&format!("Message(role={}", self.role))?;
-        if self.content.len() > 0 {
-            let contents_str = self
-                .content
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            f.write_str(&format!(", content=[{}]", &contents_str))?;
-        }
+        let mut to_write = vec![format!("role={}", &self.role)];
         if self.reasoning.len() > 0 {
-            let reasoning_str = self
-                .reasoning
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            f.write_str(&format!(", reasoning=[{}]", &reasoning_str))?;
+            to_write.push(format!(
+                "reasoning=[{}]",
+                &self
+                    .reasoning
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
+        }
+        if self.content.len() > 0 {
+            to_write.push(format!(
+                "content=[{}]",
+                &self
+                    .content
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
         }
         if self.tool_calls.len() > 0 {
-            let tool_calls_str = self
-                .tool_calls
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            f.write_str(&format!(",tool_calls=[{}]", &tool_calls_str))?;
+            to_write.push(format!(
+                "tool_calls=[{}]",
+                &self
+                    .tool_calls
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
         }
-        f.write_str(")")?;
+        f.write_str(&format!("Message({})", to_write.join(", ")))?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MessageDelta {
+    pub role: Option<Role>,
+    #[serde(default, deserialize_with = "text_or_part_vector")]
+    pub reasoning: Vec<Part>,
+    #[serde(default, deserialize_with = "text_or_part_vector")]
+    pub content: Vec<Part>,
+    #[serde(default)]
+    pub tool_calls: Vec<Part>,
+}
+
+impl MessageDelta {
+    pub fn new() -> MessageDelta {
+        MessageDelta {
+            role: None,
+            reasoning: Vec::new(),
+            content: Vec::new(),
+            tool_calls: Vec::new(),
+        }
+    }
+
+    pub fn with_role(self, role: Role) -> MessageDelta {
+        MessageDelta {
+            role: Some(role),
+            reasoning: self.reasoning,
+            content: self.content,
+            tool_calls: self.tool_calls,
+        }
+    }
+
+    pub fn with_reasoning(self, reasoning: Vec<Part>) -> MessageDelta {
+        MessageDelta {
+            role: self.role,
+            reasoning,
+            content: self.content,
+            tool_calls: self.tool_calls,
+        }
+    }
+
+    pub fn with_content(self, content: Vec<Part>) -> MessageDelta {
+        MessageDelta {
+            role: self.role,
+            reasoning: self.reasoning,
+            content,
+            tool_calls: self.tool_calls,
+        }
+    }
+
+    pub fn with_tool_calls(self, tool_calls: Vec<Part>) -> MessageDelta {
+        MessageDelta {
+            role: self.role,
+            reasoning: self.reasoning,
+            content: self.content,
+            tool_calls,
+        }
+    }
+}
+
+impl Display for MessageDelta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut to_write = Vec::<String>::new();
+        if let Some(role) = &self.role {
+            to_write.push(format!("role={}", role));
+        };
+
+        if self.reasoning.len() > 0 {
+            to_write.push(format!(
+                "reasoning=[{}]",
+                &self
+                    .reasoning
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
+        }
+        if self.content.len() > 0 {
+            to_write.push(format!(
+                "content=[{}]",
+                &self
+                    .content
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
+        }
+        if self.tool_calls.len() > 0 {
+            to_write.push(format!(
+                "tool_calls=[{}]",
+                &self
+                    .tool_calls
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
+        }
+        f.write_fmt(format_args!("MessageDelta({})", to_write.join(", ")))?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, EnumString, Display)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "snake_case")]
+pub enum FinishReason {
+    Stop,
+    Length,
+    ContentFilter,
+    ToolCall,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct MessageOutput {
+    pub delta: MessageDelta,
+    pub finish_reason: Option<FinishReason>,
+}
+
+impl MessageOutput {
+    pub fn new() -> MessageOutput {
+        MessageOutput {
+            delta: MessageDelta::new(),
+            finish_reason: None,
+        }
+    }
+
+    pub fn with_delta(self, delta: MessageDelta) -> Self {
+        MessageOutput {
+            delta,
+            finish_reason: self.finish_reason,
+        }
+    }
+
+    pub fn with_finish_reason(self, finish_reason: FinishReason) -> Self {
+        MessageOutput {
+            delta: self.delta,
+            finish_reason: Some(finish_reason),
+        }
+    }
+}
+
+impl Display for MessageOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&format!("MessageOutput(delta="))?;
+        self.delta.fmt(f)?;
+        if let Some(finish_reason) = &self.finish_reason {
+            f.write_str(&format!(", finish_reason="))?;
+            finish_reason.fmt(f)?;
+        };
+        f.write_str(&format!(")"))?;
         Ok(())
     }
 }
@@ -826,7 +732,7 @@ impl Display for Message {
 ///
 /// # Lifecycle
 /// 1. Construct with [`new`].
-/// 2. Feed deltas in order with [`update`].  
+/// 2. Feed deltas in order with [`update`].
 ///    - Returns `Some(Message)` **only** when a role boundary is crossed,
 ///      finalizing and yielding the previous role’s message.
 ///    - Returns `None` otherwise.
@@ -845,7 +751,7 @@ impl Display for Message {
 /// let mut agg = MessageAggregator::new();
 ///
 /// // assistant streams content
-/// assert!(agg.update(MessageDelta::new_assistant_content(Part::Text("Hel".into()))).is_none());
+/// assert!(agg.update(MessageDelta::new_assistant_tool_call(Part::Text("Hel".into()))).is_none());
 /// assert!(agg.update(MessageDelta::new_assistant_content(Part::Text("lo".into()))).is_none());
 ///
 /// // role switches to tool: prior assistant message is returned
@@ -859,123 +765,79 @@ impl Display for Message {
 #[derive(Debug)]
 pub struct MessageAggregator {
     /// Last unflushed delta; candidate for coalescing.
-    last_delta: Option<MessageDelta>,
-    /// The in-progress message for the current role.
-    last_message: Option<Message>,
+    buffer: Option<Message>,
 }
 
 impl MessageAggregator {
     /// Creates a fresh aggregator with no buffered state.
     pub fn new() -> Self {
-        MessageAggregator {
-            last_delta: None,
-            last_message: None,
-        }
-    }
-
-    /// Flushes the buffered delta (if any and non-empty) into `last_message`,
-    /// creating the message if it does not yet exist.
-    fn flush_delta_into_message(&mut self) {
-        // Drop empty buffered delta, if present.
-        let should_drop = self
-            .last_delta
-            .as_ref()
-            .map(|d| d.get_part().is_empty())
-            .unwrap_or(false);
-        if should_drop {
-            self.last_delta.take();
-            return;
-        }
-
-        if let Some(last_delta) = self.last_delta.take() {
-            // Ensure we have a target message for this role.
-            let mut msg = match self.last_message.take() {
-                Some(m) => m,
-                None => Message::new(last_delta.get_role().to_owned()),
-            };
-
-            match last_delta {
-                MessageDelta::Content(_, part) => msg.content.push(part),
-                MessageDelta::Reasoning(_, part) => msg.reasoning.push(part),
-                MessageDelta::ToolCall(_, part) => msg.tool_calls.push(part),
-            }
-
-            self.last_message = Some(msg);
-        }
+        MessageAggregator { buffer: None }
     }
 
     /// Feed one streaming delta.
     ///
-    /// Returns `Some(Message)` only when the **role changes**, which closes and yields
-    /// the previously aggregated message. Otherwise returns `None`.
-    pub fn update(&mut self, delta: MessageDelta) -> Option<Message> {
-        // If the incoming role differs, close out the current message.
-        if self
-            .last_delta
-            .as_ref()
-            .map(|d| d.get_role() != delta.get_role())
-            .unwrap_or(false)
-        {
-            self.flush_delta_into_message();
-            self.last_delta = Some(delta);
-            return self.last_message.take();
-        }
-
-        // Try in-place coalescing; otherwise flush and replace buffer.
-        match (&mut self.last_delta, delta) {
-            // Content(Text) + Content(Text)
-            (
-                Some(MessageDelta::Content(_, Part::Text(acc))),
-                MessageDelta::Content(_, Part::Text(new)),
-            ) => {
-                acc.push_str(&new);
+    /// Returns `Some(Message)`, which closes and yields if message is completed, otherwise `None`.
+    pub fn update(&mut self, msg_out: MessageOutput) -> Option<Message> {
+        let delta = msg_out.delta;
+        if let Some(role) = delta.role {
+            if self.buffer.is_some() {
+                todo!()
+            } else {
+                self.buffer = Some(Message::new(role));
             }
+        };
 
-            // Reasoning(Text) + Reasoning(Text)
-            (
-                Some(MessageDelta::Reasoning(_, Part::Text(acc))),
-                MessageDelta::Reasoning(_, Part::Text(new)),
-            ) => {
-                acc.push_str(&new);
-            }
-
-            // ToolCall(Function{..}) + ToolCall(Function{..})
-            // with same ID
-            (
-                Some(MessageDelta::ToolCall(
-                    _,
-                    Part::Function {
-                        id: last_id,
-                        function: last_function,
-                        ..
-                    },
-                )),
-                MessageDelta::ToolCall(_, Part::Function { id, function }),
-            ) if !(last_id.is_some()
-                && id.is_some()
-                && last_id.clone().unwrap() != id.clone().unwrap()) =>
-            {
-                last_function.push_str(&function);
-            }
-
-            // No prior buffer → start buffering.
-            (None, delta) => {
-                self.last_delta = Some(delta);
-            }
-
-            // Not mergeable → flush buffer into message, then buffer the new delta.
-            (Some(_), delta) => {
-                self.flush_delta_into_message();
-                self.last_delta = Some(delta);
+        let buffer = self.buffer.as_mut().expect("Role not specified");
+        for part in delta.reasoning {
+            if buffer.reasoning.is_empty() {
+                buffer.reasoning.push(part);
+            } else {
+                let last_part = buffer.reasoning.last_mut().unwrap();
+                if last_part.is_text() && part.is_text() {
+                    last_part
+                        .get_text_mut()
+                        .unwrap()
+                        .push_str(part.get_text().unwrap());
+                } else {
+                    buffer.reasoning.push(part);
+                }
             }
         }
-        self.last_message.take()
-    }
+        for part in delta.content {
+            if buffer.content.is_empty() {
+                buffer.content.push(part);
+            } else {
+                let last_part = buffer.content.last_mut().unwrap();
+                if last_part.is_text() && part.is_text() {
+                    last_part
+                        .get_text_mut()
+                        .unwrap()
+                        .push_str(part.get_text().unwrap());
+                } else {
+                    buffer.content.push(part);
+                }
+            }
+        }
+        for part in delta.tool_calls {
+            if buffer.tool_calls.is_empty() {
+                buffer.tool_calls.push(part);
+            } else {
+                let last_part = buffer.tool_calls.last_mut().unwrap();
+                if last_part.is_function() && part.is_function() {
+                    last_part
+                        .get_function_mut()
+                        .unwrap()
+                        .push_str(part.get_function().unwrap());
+                } else {
+                    buffer.tool_calls.push(part);
+                }
+            }
+        }
 
-    /// Finalizes the aggregator, flushing any buffered content and returning the
-    /// last in-progress message, if present.
-    pub fn finalize(mut self) -> Option<Message> {
-        self.flush_delta_into_message();
-        self.last_message
+        if msg_out.finish_reason.is_some() {
+            return self.buffer.take();
+        } else {
+            None
+        }
     }
 }
