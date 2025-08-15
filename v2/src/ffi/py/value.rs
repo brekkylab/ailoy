@@ -72,6 +72,7 @@ impl PyPart {
             Part::Text(_) => "text",
             Part::Function { .. } => "function",
             Part::ImageURL(_) | Part::ImageData(_) => "image",
+            Part::Audio { .. } => "audio",
         }
     }
 

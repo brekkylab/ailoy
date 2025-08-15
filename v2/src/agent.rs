@@ -38,21 +38,29 @@ impl Agent {
                 let td = self.tools.iter().map(|v| v.get_description()).collect::<Vec<_>>();
                 let mut strm = lm.clone().run(td, msgs.lock().await.clone());
                 let mut aggregator = MessageAggregator::new();
+                let mut assistant_msg: Option<Message> = None;
                 while let Some(delta) = strm.next().await {
                     let delta = delta?;
                     yield delta.clone();
-                    aggregator.update(delta);
+                    if let Some(msg) = aggregator.update(delta) {
+                        assistant_msg = Some(msg);
+                    }
                 }
-                let assistant_msg = aggregator.finalize().unwrap();
+                if let Some(msg) = aggregator.finalize() {
+                        assistant_msg = Some(msg);
+                    }
+                let assistant_msg = assistant_msg.unwrap();
                 self.messages.lock().await.push(assistant_msg.clone());
                 if !assistant_msg.tool_calls.is_empty() {
                     for part in assistant_msg.tool_calls {
                         let tc = ToolCall::try_from_string(part.get_function_owned().unwrap()).unwrap();
                         let tool = tools.iter().find(|v| v.get_description().get_name() == tc.get_name()).unwrap().clone();
-                        let resp = tool.run(tc).await?;
-                        yield MessageDelta::Content(Role::Tool, resp.clone());
-                        let tool_msg = Message::with_content(Role::Tool, resp);
-                        self.messages.lock().await.push(tool_msg);
+                        let parts = tool.run(tc).await?;
+                        for part in parts.into_iter() {
+                            yield MessageDelta::Content(Role::Tool, part.clone());
+                            let tool_msg = Message::with_content(Role::Tool, part);
+                            self.messages.lock().await.push(tool_msg);
+                        }
                     }
                 } else {
                     break;
@@ -176,5 +184,57 @@ mod tests {
         if let Some(msg) = agg.finalize() {
             println!("{:?}", msg);
         }
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn run_mcp_stdio_tool_call() -> anyhow::Result<()> {
+        use futures::StreamExt;
+
+        use super::*;
+        use crate::model::LocalLanguageModel;
+        use crate::tool::MCPClient;
+        use rmcp::transport::ConfigureCommandExt;
+
+        let cache = crate::cache::Cache::new();
+        let key = "Qwen/Qwen3-0.6B";
+        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
+        let mut model: Option<LocalLanguageModel> = None;
+        while let Some(progress) = model_strm.next().await {
+            let mut progress = progress.unwrap();
+            println!("{} / {}", progress.current_task, progress.total_task);
+            if progress.current_task == progress.total_task {
+                model = progress.result.take();
+            }
+        }
+        let model = model.unwrap();
+
+        let client = MCPClient::from_stdio(tokio::process::Command::new("uvx").configure(|cmd| {
+            cmd.arg("mcp-server-time");
+        }))
+        .await?;
+
+        let mut agent = Agent::new(
+            model,
+            client
+                .list_tools()
+                .await?
+                .iter()
+                .map(|t| t.clone() as Arc<dyn Tool>),
+        );
+
+        let mut agg = MessageAggregator::new();
+        let mut strm = Box::pin(agent.run("What time is it now in Asia/Seoul?"));
+        while let Some(delta_opt) = strm.next().await {
+            let delta = delta_opt.unwrap();
+            if let Some(msg) = agg.update(delta) {
+                println!("{:?}", msg);
+            }
+        }
+        if let Some(msg) = agg.finalize() {
+            println!("{:?}", msg);
+        }
+
+        Ok(())
     }
 }

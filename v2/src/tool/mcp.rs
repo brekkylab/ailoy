@@ -2,44 +2,73 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use rmcp::{
-    model::{CallToolRequestParam, Tool as McpTool},
-    service::{Peer, RoleClient},
+    model::{CallToolRequestParam, RawContent, Tool as McpTool},
+    service::{RoleClient, RunningService, ServiceExt},
+    transport::{
+        child_process::TokioChildProcess, sse_client::SseClientTransport,
+        streamable_http_client::StreamableHttpClientTransport,
+    },
 };
 use serde_json::{Map as JsonMap, Value as JsonValue};
+use tokio::process::Command;
 
 use crate::{
     tool::Tool,
     value::{Part, ToolCall, ToolDescription, ToolDescriptionArgument},
 };
 
-/// Bridge a single MCP tool (on a connected MCP server) into your `Tool` trait.
 #[derive(Clone, Debug)]
-pub struct MCPTool {
-    peer: Arc<Peer<RoleClient>>,
-    name: String,
-    desc: ToolDescription,
+pub struct MCPClient {
+    service: Arc<RunningService<RoleClient, ()>>,
 }
 
-impl MCPTool {
-    /// Build from a discovered MCP `Tool` object.
-    pub fn from_known(peer: Arc<Peer<RoleClient>>, tool: McpTool) -> Self {
-        let name = tool.name.to_string();
-        let desc = map_mcp_tool_to_tool_description(&tool);
-        Self { peer, name, desc }
+impl MCPClient {
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    pub async fn from_stdio(command: Command) -> anyhow::Result<Self> {
+        let transport = TokioChildProcess::new(command)?;
+        let service = ().serve(transport).await?;
+        Ok(Self {
+            service: Arc::new(service),
+        })
     }
 
-    /// Look up a tool by name from the server and build an `MCPTool`.
-    pub async fn discover(peer: Arc<Peer<RoleClient>>, tool_name: &str) -> Result<Self, String> {
-        let tools = peer
-            .list_all_tools()
-            .await
-            .map_err(|e| format!("list_all_tools failed: {e}"))?; // rmcp Peer API
-        let tool = tools
-            .into_iter()
-            .find(|t| t.name == tool_name)
-            .ok_or_else(|| format!("MCP tool '{tool_name}' not found"))?;
-        Ok(Self::from_known(peer, tool))
+    pub async fn from_streamable_http(uri: impl Into<Arc<str>>) -> anyhow::Result<Self> {
+        let transport = StreamableHttpClientTransport::from_uri(uri);
+        let service = ().serve(transport).await?;
+        Ok(Self {
+            service: Arc::new(service),
+        })
     }
+
+    pub async fn from_sse(uri: impl Into<Arc<str>>) -> anyhow::Result<Self> {
+        let transport = SseClientTransport::start(uri).await?;
+        let service = ().serve(transport).await?;
+        Ok(Self {
+            service: Arc::new(service),
+        })
+    }
+
+    pub async fn list_tools(&self) -> anyhow::Result<Vec<Arc<MCPTool>>> {
+        let peer = self.service.peer();
+        let tools = peer.list_all_tools().await?;
+        Ok(tools
+            .iter()
+            .map(|t| {
+                Arc::new(MCPTool {
+                    service: self.service.clone(),
+                    name: t.name.to_string(),
+                    desc: map_mcp_tool_to_tool_description(&t),
+                })
+            })
+            .collect())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MCPTool {
+    service: Arc<RunningService<RoleClient, ()>>,
+    name: String,
+    desc: ToolDescription,
 }
 
 impl Tool for MCPTool {
@@ -47,8 +76,8 @@ impl Tool for MCPTool {
         self.desc.clone()
     }
 
-    fn run(self: Arc<Self>, toll_call: ToolCall) -> BoxFuture<'static, Result<Part, String>> {
-        let peer = self.peer.clone();
+    fn run(self: Arc<Self>, toll_call: ToolCall) -> BoxFuture<'static, Result<Vec<Part>, String>> {
+        let peer = self.service.peer().clone();
         let name = self.name.clone();
 
         Box::pin(async move {
@@ -70,23 +99,36 @@ impl Tool for MCPTool {
 
             // Prefer structured_content; else fall back to unstructured content.
             if let Some(v) = result.structured_content {
-                return Ok(Part::Text(v.to_string()));
+                println!("structured_content: {:?}", v);
+                return Ok(vec![Part::Text(v.to_string())]);
             }
             if let Some(content) = result.content {
-                // Content is an MCP vector of parts; serialize to JSON for consistency
-                let s = serde_json::to_string(&content).unwrap_or_else(|_| "[]".to_string());
-                return Ok(Part::Text(s));
+                let parts = content
+                    .iter()
+                    .map(|c| match c.raw.clone() {
+                        RawContent::Text(text) => Part::Text(text.text),
+                        RawContent::Image(image) => Part::ImageData(image.data),
+                        RawContent::Audio(audio) => Part::Audio {
+                            data: audio.data.clone(),
+                            format: audio.mime_type.replace(r"^audio\/", ""),
+                        },
+                        RawContent::Resource(_) => {
+                            panic!("Not Implemented")
+                        }
+                    })
+                    .collect();
+                return Ok(parts);
             }
 
             // Nothing returned (valid per spec); return JSON null to keep contract stable.
-            Ok(Part::Text("null".to_string()))
+            Ok(vec![Part::Text("null".to_string())])
         })
     }
 }
 
 /* ---------- helpers: map MCP Tool schema → [`ToolDescription`] ---------- */
 
-// map MCP tool → your ToolDescription without moving out of Arc
+// map McpTool → ToolDescription without moving out of Arc
 fn map_mcp_tool_to_tool_description(tool: &McpTool) -> ToolDescription {
     let name = tool.name.clone();
     let desc = tool.description.clone().unwrap_or_default();
@@ -183,4 +225,61 @@ fn json_to_tool_desc_arg(v: &JsonValue) -> ToolDescriptionArgument {
     }
     // If a server hands back a non-object where an object is expected, be defensive:
     ToolDescriptionArgument::new_object()
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn run_stdio() -> anyhow::Result<()> {
+        use std::collections::HashMap;
+
+        use super::*;
+        use crate::tool::Tool;
+        use crate::value::{ToolCall, ToolCallArgument};
+        use regex::Regex;
+        use rmcp::transport::ConfigureCommandExt;
+
+        let command = tokio::process::Command::new("uvx").configure(|cmd| {
+            cmd.arg("mcp-server-time");
+        });
+        let client = MCPClient::from_stdio(command).await?;
+
+        let tools = client.list_tools().await?;
+        assert_eq!(tools.len(), 2);
+
+        let tool = tools[0].clone();
+        let tool_name = tool.name.clone();
+        assert_eq!(tool_name, "get_current_time");
+
+        let mut tool_call_args: HashMap<String, Box<ToolCallArgument>> = HashMap::new();
+        tool_call_args.insert(
+            "timezone".into(),
+            Box::new(ToolCallArgument::String("Asia/Seoul".into())),
+        );
+
+        let parts = tool
+            .run(ToolCall::new(
+                tool_name,
+                ToolCallArgument::Object(tool_call_args),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(parts.len(), 1);
+
+        let part = parts[0].clone();
+        assert_eq!(part.is_text(), true);
+
+        let parsed_part: serde_json::Value =
+            serde_json::from_str(part.get_text().unwrap()).unwrap();
+        assert_eq!(parsed_part["timezone"].as_str(), Some("Asia/Seoul"));
+        assert_eq!(parsed_part["is_dst"].as_bool(), Some(false));
+        assert_eq!(
+            Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$")?
+                .is_match(parsed_part["datetime"].as_str().unwrap()),
+            true
+        );
+
+        Ok(())
+    }
 }

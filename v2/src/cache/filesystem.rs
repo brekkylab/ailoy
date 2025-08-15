@@ -2,8 +2,8 @@
 mod native {
     use std::path::Path;
     use tokio::fs::{
-        read as tokio_read, remove_dir_all as tokio_remove_dir, remove_file as tokio_remove_file,
-        write as tokio_write,
+        create_dir_all as tokio_create_dir_all, read as tokio_read,
+        remove_dir_all as tokio_remove_dir, remove_file as tokio_remove_file, write as tokio_write,
     };
 
     pub async fn _exists<P: AsRef<Path>>(path: P) -> bool {
@@ -16,7 +16,15 @@ mod native {
             .map_err(|e| format!("tokio::fs::read failed: {}", e.to_string()))
     }
 
-    pub async fn write(path: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), String> {
+    pub async fn write(
+        path: impl AsRef<Path>,
+        data: impl AsRef<[u8]>,
+        create_parent: bool,
+    ) -> Result<(), String> {
+        let parent_dir = path.as_ref().parent().unwrap();
+        if !parent_dir.exists() && create_parent {
+            tokio_create_dir_all(parent_dir).await.unwrap();
+        }
         tokio_write(path, data)
             .await
             .map_err(|e| format!("tokio::fs::write failed: {}", e.to_string()))

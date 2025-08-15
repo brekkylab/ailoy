@@ -108,6 +108,17 @@ pub enum Part {
     /// Typically serialized as:
     /// `{ "type": "image", "data": "<base64>" }`.
     ImageData(String),
+
+    /// Base64-encoded audio bytes.
+    ///
+    /// Typically serialized as:
+    /// `{ "type": "audio", "data": "<base64>", "format": "<format>" }`.
+    Audio {
+        /// Base64-encoded string
+        data: String,
+        /// "mp3" or "wav"
+        format: String,
+    },
 }
 
 impl Part {
@@ -190,12 +201,21 @@ impl Part {
         Part::ImageData(encoded.into())
     }
 
+    /// Constructor for audio base64 part
+    pub fn new_audio_data<T: Into<String>>(encoded: T, format: String) -> Part {
+        Part::Audio {
+            data: encoded.into(),
+            format,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         match self {
             Part::Text(v) => v.is_empty(),
             Part::Function { function: v, .. } => v.is_empty(),
             Part::ImageURL(_) => false,
             Part::ImageData(v) => v.is_empty(),
+            Part::Audio { data: v, .. } => v.is_empty(),
         }
     }
 }
@@ -232,6 +252,10 @@ impl Serialize for Part {
             Part::ImageData(encoded) => {
                 map.serialize_entry("type", "image")?;
                 map.serialize_entry("data", encoded)?;
+            }
+            Part::Audio { data, format } => {
+                map.serialize_entry("data", data)?;
+                map.serialize_entry("format", format)?;
             }
         };
         map.end()
@@ -338,6 +362,11 @@ impl Display for Part {
             Part::ImageData(data) => {
                 f.write_str(&format!("Part(type=image, data=({} bytes))", data.len()))
             }
+            Part::Audio { data, format } => f.write_str(&format!(
+                "Part(type=audio, foramt={}, data=({} bytes))",
+                format,
+                data.len()
+            )),
         }
     }
 }
