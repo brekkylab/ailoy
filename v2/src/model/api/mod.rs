@@ -1,57 +1,55 @@
 mod openai;
 
-use async_stream::try_stream;
-use futures::{StreamExt as _, stream::BoxStream};
-use reqwest::RequestBuilder;
+use futures::{StreamExt as _, future::BoxFuture, stream::BoxStream};
 use std::{fmt::Debug, sync::Arc};
 
 use crate::{
     model::LanguageModel,
-    value::{Message, MessageDelta, MessageOutput, Part, ToolDescription},
+    value::{Message, MessageOutput, ToolDescription},
 };
 
 #[derive(Clone)]
 pub struct APILanguageModel {
-    model_name: String,
-    build_request: Arc<dyn Fn() -> RequestBuilder + Send + Sync + 'static>,
+    model: String,
+    make_request: Arc<
+        dyn Fn(
+                Vec<Message>,
+                Vec<ToolDescription>,
+            ) -> BoxFuture<'static, Result<reqwest::Response, reqwest::Error>>
+            + Send
+            + Sync,
+    >,
+    handle_response: Arc<dyn Fn(&mut Vec<u8>) -> Result<Vec<MessageOutput>, String> + Send + Sync>,
 }
 
 impl APILanguageModel {
-    pub fn new(model_name: impl Into<String>, api_key: impl Into<String>) -> APILanguageModel {
-        let model_name = model_name.into();
-        let api_key: String = api_key.into();
-        let build_request: Arc<dyn Fn() -> reqwest::RequestBuilder + Send + Sync + 'static> =
-            if model_name.starts_with("gpt") || model_name.starts_with("o") {
-                Arc::new(move || {
-                    reqwest::Client::new()
-                        .request(
-                            reqwest::Method::POST,
-                            "https://api.openai.com/v1/chat/completions",
-                        )
-                        .bearer_auth(api_key.clone())
-                        .header("Content-Type", "application/json")
-                })
-            } else if model_name.starts_with("claude") {
-                Arc::new(move || {
-                    reqwest::Client::new()
-                        .request(
-                            reqwest::Method::POST,
-                            "https://api.anthropic.com/v1/messages",
-                        )
-                        .header("x-api-key", api_key.clone())
-                        .header("Content-Type", "application/json")
-                })
-            } else if model_name.starts_with("gemini") {
-                todo!()
-            } else if model_name.starts_with("grok") {
-                todo!()
-            } else {
-                panic!()
-            };
+    pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> APILanguageModel {
+        let model = model.into();
+        let api_key = api_key.into();
+        let (make_request, handle_response) = if model.starts_with("gpt") || model.starts_with("o")
+        {
+            let model = model.clone();
+            let api_key = api_key.clone();
+            (
+                Arc::new(move |msgs: Vec<Message>, tools: Vec<ToolDescription>| {
+                    openai::make_request(&model, &api_key, msgs, tools)
+                }),
+                Arc::new(&openai::handle_next_response),
+            )
+        } else if model.starts_with("claude") {
+            todo!()
+        } else if model.starts_with("gemini") {
+            todo!()
+        } else if model.starts_with("grok") {
+            todo!()
+        } else {
+            panic!()
+        };
 
         APILanguageModel {
-            model_name,
-            build_request,
+            model,
+            make_request,
+            handle_response,
         }
     }
 }
@@ -62,31 +60,63 @@ impl LanguageModel for APILanguageModel {
         msgs: Vec<Message>,
         tools: Vec<ToolDescription>,
     ) -> BoxStream<'static, Result<MessageOutput, String>> {
-        let model_name = self.model_name.clone();
-        let mut body = serde_json::json!({"model": model_name, "messages": msgs});
-        if !tools.is_empty() {
-            body["tool_choice"] = serde_json::json!("auto");
-            body["tools"] = serde_json::to_value(tools).unwrap();
-        }
-
-        let is_openai_like = model_name.starts_with("gpt") || model_name.starts_with("o");
-        if is_openai_like {
-            body["stream"] = serde_json::json!(true);
-        }
-
-        let req = (self.build_request)()
-            .header(reqwest::header::ACCEPT, "text/event-stream")
-            .body(body.to_string())
-            .send();
-
-        todo!()
+        let req = (self.make_request)(msgs, tools);
+        let strm = async_stream::try_stream! {
+            let mut buf: Vec<u8> = Vec::with_capacity(8192);
+            let resp = req.await.map_err(|e| e.to_string())?;
+            if resp.status().is_success() {
+                let mut strm = resp.bytes_stream();
+                while let Some(chunk_res) = strm.next().await {
+                    let chunk = chunk_res.map_err(|e| e.to_string())?;
+                    buf.extend_from_slice(&chunk);
+                    let outs = (self.handle_response)(&mut buf)?;
+                    for v in outs {
+                        yield v;
+                    }
+                }
+            } else {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                Err(format!("Request failed: {} - {}", status, text))?;
+            }
+        };
+        Box::pin(strm)
     }
 }
 
 impl Debug for APILanguageModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("APILanguageModel")
-            .field("model_name", &self.model_name)
+            .field("model", &self.model)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    const OPENAI_API_KEY: &str = "";
+
+    #[tokio::test]
+    async fn infer_simple_chat() {
+        use futures::StreamExt;
+
+        use super::*;
+        use crate::value::{MessageAggregator, Part, Role};
+
+        let model = Arc::new(APILanguageModel::new("gpt-4.1", OPENAI_API_KEY));
+
+        let msgs = vec![
+            Message::with_content(Role::System, Part::new_text("You are an assistant.")),
+            Message::with_content(Role::User, Part::new_text("Hi what's your name?")),
+        ];
+        let mut agg = MessageAggregator::new();
+        let mut strm = model.run(msgs, Vec::new());
+        while let Some(delta_opt) = strm.next().await {
+            let delta = delta_opt.unwrap();
+            println!("{:?}", delta);
+            if let Some(msg) = agg.update(delta) {
+                println!("{:?}", msg);
+            }
+        }
     }
 }
