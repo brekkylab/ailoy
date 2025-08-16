@@ -55,6 +55,7 @@ impl MCPClient {
             .iter()
             .map(|t| MCPTool {
                 service: self.service.clone(),
+                name: t.name.to_string(),
                 desc: map_mcp_tool_to_tool_description(&t),
             })
             .collect())
@@ -64,6 +65,7 @@ impl MCPClient {
 #[derive(Clone, Debug)]
 pub struct MCPTool {
     service: Arc<RunningService<RoleClient, ()>>,
+    name: String,
     pub desc: ToolDescription,
 }
 
@@ -74,7 +76,6 @@ impl Tool for MCPTool {
 
     fn run(self: Arc<Self>, toll_call: ToolCall) -> BoxFuture<'static, Result<Vec<Part>, String>> {
         let peer = self.service.peer().clone();
-        let name = self.get_description().name;
 
         Box::pin(async move {
             // Convert your ToolCall arguments → serde_json::Map (MCP expects JSON object)
@@ -87,7 +88,7 @@ impl Tool for MCPTool {
             // Invoke the MCP tool
             let result = peer
                 .call_tool(CallToolRequestParam {
-                    name: name.into(),
+                    name: self.name.clone().into(),
                     arguments,
                 })
                 .await

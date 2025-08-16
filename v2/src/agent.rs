@@ -1,7 +1,5 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::anyhow;
 use futures::{Stream, StreamExt};
 use tokio::sync::Mutex;
 
@@ -15,7 +13,6 @@ pub struct Agent {
     lm: Arc<dyn LanguageModel>,
     tools: Vec<Arc<dyn Tool>>,
     messages: Arc<Mutex<Vec<Message>>>,
-    mcp_clients: HashMap<String, Arc<MCPClient>>,
 }
 
 impl Agent {
@@ -24,7 +21,6 @@ impl Agent {
             lm: Arc::new(lm),
             tools: tools.into_iter().collect(),
             messages: Arc::new(Mutex::new(Vec::new())),
-            mcp_clients: HashMap::new(),
         }
     }
 
@@ -32,60 +28,51 @@ impl Agent {
         self.tools.clone()
     }
 
-    pub async fn add_mcp_client(
+    pub async fn add_mcp_tools(
         &mut self,
-        name: &str,
+        client_name: &str,
         client: MCPClient,
         tools_to_add: Vec<String>,
     ) -> anyhow::Result<()> {
-        if self.mcp_clients.contains_key(name) {
-            return Err(anyhow!(
-                "MCP client with \"{}\" is already registered",
-                name
-            ));
+        let mut tools = client.list_tools().await?;
+
+        // If tools_to_add is not empty, filter out the tools not in the whitelist.
+        if !tools_to_add.is_empty() {
+            tools.retain(|t| tools_to_add.contains(&t.get_description().name))
         }
 
-        // Add client to self.mcp_clients
-        let client = Arc::new(client);
-        self.mcp_clients.insert(name.into(), client.clone());
-
-        // Add tools in the client
-        let tools = client.list_tools().await?;
         for mut tool in tools.into_iter() {
-            // If tools_to_add is not empty, check if this tool is in the whitelist
-            if tools_to_add.len() > 0 && !tools_to_add.contains(&tool.desc.name) {
+            // The name of MCP tool description is prefixed with the provided client name.
+            let tool_desc_name = format!("{}--{}", client_name, tool.desc.name);
+
+            // If the tool with same name already exists, skip adding the tool.
+            if self
+                .tools
+                .iter()
+                .find(|t| t.get_description().name == tool_desc_name)
+                .is_some()
+            {
+                println!(
+                    "MCP tool \"{}\" is already registered. Skip adding the tool.",
+                    tool_desc_name
+                );
                 continue;
             }
-            tool.desc.name = format!("{}--{}", name, tool.desc.name);
+
+            tool.desc.name = tool_desc_name;
             self.tools.push(Arc::new(tool) as Arc<dyn Tool>);
         }
 
         Ok(())
     }
 
-    pub async fn remove_mcp_client(&mut self, name: &str) -> anyhow::Result<()> {
-        if !self.mcp_clients.contains_key(name) {
-            return Err(anyhow!(
-                "MCP client with \"{}\" is not registered in this agent",
-                name
-            ));
-        }
-
-        // Remove tools in the client
-        let client = self.mcp_clients.get(name).unwrap();
-        let mcp_tool_names = client
-            .list_tools()
-            .await?
-            .iter()
-            .map(|t| format!("{}--{}", name, t.desc.name))
-            .collect::<Vec<String>>();
+    pub async fn remove_mcp_tools(&mut self, client_name: &str) -> anyhow::Result<()> {
+        // Remove MCP tools
         self.tools.retain(|t| {
-            let desc = t.get_description();
-            !mcp_tool_names.contains(&desc.name)
+            let tool_desc_name = t.get_description().name;
+            // Remove the MCP tool if its description name is prefixed with the provided client name.
+            !tool_desc_name.starts_with(format!("{}--", client_name).as_str())
         });
-
-        // Remove MCP client
-        self.mcp_clients.remove(name);
 
         Ok(())
     }
@@ -281,7 +268,7 @@ mod tests {
         .await?;
 
         let mut agent = Agent::new(model, vec![]);
-        agent.add_mcp_client("time", client, vec![]).await?;
+        agent.add_mcp_tools("time", client, vec![]).await?;
 
         let agent_tools = agent.get_tools();
         assert_eq!(agent_tools.len(), 2);
