@@ -3,6 +3,7 @@ use pyo3::{
     exceptions::{PyRuntimeError, PyStopAsyncIteration},
     prelude::*,
 };
+use pyo3_stub_gen::derive::*;
 use tokio::runtime::Runtime;
 
 use crate::{
@@ -10,6 +11,7 @@ use crate::{
     ffi::py::base::PyWrapper,
 };
 
+#[gen_stub_pyclass]
 #[pyclass(name = "CacheProgress")]
 pub struct PyCacheProgress {
     #[pyo3(get)]
@@ -25,6 +27,7 @@ pub struct PyCacheProgress {
     pub result: Option<Py<PyAny>>,
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable, name = "CacheProgressSyncIterator")]
 pub struct PyCacheProgressSyncIterator {
     rt: Runtime,
@@ -32,6 +35,7 @@ pub struct PyCacheProgressSyncIterator {
     strm: BoxStream<'static, Result<PyCacheProgress, String>>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyCacheProgressSyncIterator {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -98,11 +102,13 @@ where
     Ok(PyCacheProgressSyncIterator { rt, strm })
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable, name = "CacheProgressIterator")]
 pub struct PyCacheProgressIterator {
     rx: async_channel::Receiver<Result<PyCacheProgress, String>>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyCacheProgressIterator {
     fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

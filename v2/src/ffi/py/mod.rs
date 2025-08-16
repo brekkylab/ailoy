@@ -8,6 +8,7 @@ use model::*;
 use value::*;
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::{Result, generate::StubInfo};
 
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
@@ -19,5 +20,11 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<PyCacheProgressSyncIterator>()?;
     m.add_class::<PyLocalLanguageModel>()?;
     m.add_class::<PyAgentRunSyncIterator>()?;
+    m.add_class::<PyAgentRunIterator>()?;
     Ok(())
+}
+
+pub fn stub_info() -> Result<StubInfo> {
+    let manifest_dir: &::std::path::Path = env!("CARGO_MANIFEST_DIR").as_ref();
+    StubInfo::from_pyproject_toml(manifest_dir.join("bindings/python/pyproject.toml"))
 }

@@ -13,7 +13,7 @@ classifiers = [
 ]
 
 [tool.maturin]
-features = ["python"]
+features = ["python", "pyo3/extension-module"]
 manifest-path = "../../Cargo.toml"
 module-name = "ailoy._core"
 python-source = "."
