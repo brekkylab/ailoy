@@ -5,6 +5,7 @@ use serde::{
     de::{self, MapAccess, Visitor},
     ser::SerializeMap,
 };
+use serde_json::json;
 use strum::{Display, EnumString};
 use url::Url;
 
@@ -254,8 +255,14 @@ impl Serialize for Part {
                 map.serialize_entry("data", encoded)?;
             }
             Part::Audio { data, format } => {
-                map.serialize_entry("data", data)?;
-                map.serialize_entry("format", format)?;
+                map.serialize_entry("type", "audio")?;
+                map.serialize_entry(
+                    "audio",
+                    &json!({
+                        "data": data,
+                        "format": format,
+                    }),
+                )?;
             }
         };
         map.end()
@@ -287,7 +294,7 @@ impl<'de> Visitor<'de> for PartVisitor {
     {
         let mut ty: Option<String> = None;
         let mut key: Option<String> = None;
-        let mut value: Option<String> = None;
+        let mut value: Option<serde_json::Value> = None;
         let mut id: Option<String> = None;
 
         while let Some(k) = map.next_key::<String>()? {
@@ -315,9 +322,9 @@ impl<'de> Visitor<'de> for PartVisitor {
         let value = value.ok_or_else(|| de::Error::custom("missing part value"))?;
 
         if ty == "text" && key == "text" {
-            Ok(Part::Text(value))
+            Ok(Part::Text(value.to_string()))
         } else if ty == "function" && key == "function" {
-            match serde_json::from_str(&value) {
+            match serde_json::from_str(&value.to_string()) {
                 Ok(value) => Ok(Part::Function {
                     id,
                     function: value,
@@ -329,7 +336,7 @@ impl<'de> Visitor<'de> for PartVisitor {
                 ))),
             }
         } else if ty == "image" && key == "url" {
-            match url::Url::parse(&value) {
+            match url::Url::parse(&value.to_string()) {
                 Ok(value) => Ok(Part::ImageURL(value)),
                 Err(err) => Err(de::Error::custom(format!(
                     "Invalid URL: {} {}",
@@ -338,7 +345,12 @@ impl<'de> Visitor<'de> for PartVisitor {
                 ))),
             }
         } else if ty == "image" && key == "data" {
-            Ok(Part::ImageData(value))
+            Ok(Part::ImageData(value.to_string()))
+        } else if ty == "audio" && key == "audio" {
+            Ok(Part::Audio {
+                data: value["data"].to_string(),
+                format: value["format"].to_string(),
+            })
         } else {
             Err(de::Error::custom("Invalid type"))
         }

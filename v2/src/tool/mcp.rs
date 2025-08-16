@@ -234,7 +234,7 @@ mod tests {
         use super::*;
         use crate::tool::Tool;
         use crate::value::{ToolCall, ToolCallArgument};
-        use regex::Regex;
+        use onig::Regex;
         use rmcp::transport::ConfigureCommandExt;
 
         let command = tokio::process::Command::new("uvx").configure(|cmd| {

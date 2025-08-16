@@ -23,7 +23,9 @@ mod native {
     ) -> Result<(), String> {
         let parent_dir = path.as_ref().parent().unwrap();
         if !parent_dir.exists() && create_parent {
-            tokio_create_dir_all(parent_dir).await.unwrap();
+            tokio_create_dir_all(parent_dir)
+                .await
+                .map_err(|e| format!("tokio::fs::create_dir_all failed: {}", e.to_string()))?;
         }
         tokio_write(path, data)
             .await
