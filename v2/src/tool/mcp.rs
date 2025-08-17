@@ -9,7 +9,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::{
     tool::Tool,
-    value::{Part, ToolCall, ToolDescription, ToolDescriptionArgument},
+    value::{Part, ToolCall, ToolDesc, ToolDescArg},
 };
 
 /// Bridge a single MCP tool (on a connected MCP server) into your `Tool` trait.
@@ -17,7 +17,7 @@ use crate::{
 pub struct MCPTool {
     peer: Arc<Peer<RoleClient>>,
     name: String,
-    desc: ToolDescription,
+    desc: ToolDesc,
 }
 
 impl MCPTool {
@@ -43,7 +43,7 @@ impl MCPTool {
 }
 
 impl Tool for MCPTool {
-    fn get_description(&self) -> ToolDescription {
+    fn get_description(&self) -> ToolDesc {
         self.desc.clone()
     }
 
@@ -54,7 +54,7 @@ impl Tool for MCPTool {
         Box::pin(async move {
             // Convert your ToolCall arguments → serde_json::Map (MCP expects JSON object)
             let arguments: Option<JsonMap<String, JsonValue>> =
-                serde_json::to_value(toll_call.get_argument())
+                serde_json::to_value(toll_call.arguments)
                     .map_err(|e| format!("serialize ToolCall arguments failed: {e}"))?
                     .as_object()
                     .cloned();
@@ -84,10 +84,10 @@ impl Tool for MCPTool {
     }
 }
 
-/* ---------- helpers: map MCP Tool schema → [`ToolDescription`] ---------- */
+/* ---------- helpers: map MCP Tool schema → [`ToolDesc`] ---------- */
 
-// map MCP tool → your ToolDescription without moving out of Arc
-fn map_mcp_tool_to_tool_description(tool: &McpTool) -> ToolDescription {
+// map MCP tool → your ToolDesc without moving out of Arc
+fn map_mcp_tool_to_tool_description(tool: &McpTool) -> ToolDesc {
     let name = tool.name.clone();
     let desc = tool.description.clone().unwrap_or_default();
 
@@ -98,17 +98,17 @@ fn map_mcp_tool_to_tool_description(tool: &McpTool) -> ToolDescription {
         .as_ref()
         .map(|o| json_obj_to_tool_desc_arg(o.as_ref()));
 
-    ToolDescription::new(name, desc, params_schema, ret_schema)
+    ToolDesc::new(name, desc, params_schema, ret_schema)
 }
 
 // Parse an object-shaped JSON schema by reference
-fn json_obj_to_tool_desc_arg(obj: &JsonMap<String, JsonValue>) -> ToolDescriptionArgument {
+fn json_obj_to_tool_desc_arg(obj: &JsonMap<String, JsonValue>) -> ToolDescArg {
     let ty = obj.get("type").and_then(|t| t.as_str()).unwrap_or("object");
     let desc = obj.get("description").and_then(|d| d.as_str());
 
     match ty {
         "string" => {
-            let mut a = ToolDescriptionArgument::new_string();
+            let mut a = ToolDescArg::new_string();
             if let Some(e) = obj.get("enum").and_then(|e| e.as_array()) {
                 let items = e
                     .iter()
@@ -124,21 +124,21 @@ fn json_obj_to_tool_desc_arg(obj: &JsonMap<String, JsonValue>) -> ToolDescriptio
             a
         }
         "number" | "integer" => {
-            let mut a = ToolDescriptionArgument::new_number();
+            let mut a = ToolDescArg::new_number();
             if let Some(d) = desc {
                 a = a.with_desc(d);
             }
             a
         }
         "boolean" => {
-            let mut a = ToolDescriptionArgument::new_boolean();
+            let mut a = ToolDescArg::new_boolean();
             if let Some(d) = desc {
                 a = a.with_desc(d);
             }
             a
         }
         "array" => {
-            let mut a = ToolDescriptionArgument::new_array();
+            let mut a = ToolDescArg::new_array();
             if let Some(items) = obj.get("items") {
                 a = a.with_items(json_to_tool_desc_arg(items));
             }
@@ -147,10 +147,10 @@ fn json_obj_to_tool_desc_arg(obj: &JsonMap<String, JsonValue>) -> ToolDescriptio
             }
             a
         }
-        "null" => ToolDescriptionArgument::new_null(),
+        "null" => ToolDescArg::new_null(),
         _ => {
             // object (or unknown) case
-            let mut props = Vec::<(String, ToolDescriptionArgument)>::new();
+            let mut props = Vec::<(String, ToolDescArg)>::new();
             if let Some(p) = obj.get("properties").and_then(|p| p.as_object()) {
                 for (k, v) in p.iter() {
                     props.push((k.clone(), json_to_tool_desc_arg(v)));
@@ -166,8 +166,7 @@ fn json_obj_to_tool_desc_arg(obj: &JsonMap<String, JsonValue>) -> ToolDescriptio
                 })
                 .unwrap_or_default();
 
-            let mut o =
-                ToolDescriptionArgument::new_object().with_properties(props.into_iter(), required);
+            let mut o = ToolDescArg::new_object().with_properties(props.into_iter(), required);
             if let Some(d) = desc {
                 o = o.with_desc(d);
             }
@@ -177,10 +176,10 @@ fn json_obj_to_tool_desc_arg(obj: &JsonMap<String, JsonValue>) -> ToolDescriptio
 }
 
 // Fallback: handle either object or leaf JSON values by reference
-fn json_to_tool_desc_arg(v: &JsonValue) -> ToolDescriptionArgument {
+fn json_to_tool_desc_arg(v: &JsonValue) -> ToolDescArg {
     if let Some(obj) = v.as_object() {
         return json_obj_to_tool_desc_arg(obj);
     }
     // If a server hands back a non-object where an object is expected, be defensive:
-    ToolDescriptionArgument::new_object()
+    ToolDescArg::new_object()
 }

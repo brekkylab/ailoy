@@ -10,7 +10,7 @@ use crate::{
         LanguageModel,
         local::{ChatTemplate, Inferencer, Tokenizer},
     },
-    value::{FinishReason, Message, MessageDelta, MessageOutput, Part, Role, ToolDescription},
+    value::{FinishReason, Message, MessageDelta, MessageOutput, Part, Role, ToolDesc},
 };
 
 #[derive(Debug)]
@@ -36,7 +36,7 @@ impl LanguageModel for LocalLanguageModel {
     fn run(
         self: Arc<Self>,
         msgs: Vec<Message>,
-        tools: Vec<ToolDescription>,
+        tools: Vec<ToolDesc>,
     ) -> BoxStream<'static, Result<MessageOutput, String>> {
         let strm = try_stream! {
             let prompt = self.chat_template.apply_with_vec(&tools, &msgs, true)?;
@@ -83,11 +83,11 @@ impl LanguageModel for LocalLanguageModel {
                     continue;
                 } else {
                     let delta = if mode == "content" {
-                        MessageDelta::new().with_content(vec![Part::Text(s)])
+                        MessageDelta::new().with_contents(vec![Part::Text(s)])
                     } else if mode == "reasoning" {
-                        MessageDelta::new().with_reasoning(vec![Part::Text(s)])
+                        MessageDelta::new().with_reasoning(s)
                     } else if mode == "tool_call" {
-                        MessageDelta::new().with_tool_calls(vec![Part::Function{id: None, function: s}])
+                        MessageDelta::new().with_tool_calls(vec![Part::Text(s)])
                     } else {
                         unreachable!();
                     };
@@ -157,8 +157,10 @@ mod tests {
         }
         let model = Arc::new(model.unwrap());
         let msgs = vec![
-            Message::with_content(Role::System, Part::new_text("You are an assistant.")),
-            Message::with_content(Role::User, Part::new_text("Hi what's your name?")),
+            Message::new(Role::System)
+                .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
+            Message::new(Role::User)
+                .with_contents(vec![Part::Text("Hi what's your name?".to_owned())]),
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, Vec::new());
@@ -171,73 +173,72 @@ mod tests {
         }
     }
 
-    // #[cfg(any(target_family = "unix", target_family = "windows"))]
-    // #[tokio::test]
-    // async fn infer_tool_call() {
-    //     use futures::StreamExt;
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_call() {
+        use futures::StreamExt;
 
-    //     use super::*;
-    //     use crate::value::{
-    //         MessageAggregator, Role, ToolCall, ToolDescription, ToolDescriptionArgument,
-    //     };
+        use super::*;
+        use crate::value::{MessageAggregator, Role, ToolCall, ToolDesc, ToolDescArg};
 
-    //     let cache = crate::cache::Cache::new();
-    //     let key = "Qwen/Qwen3-0.6B";
-    //     let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
-    //     let mut model: Option<LocalLanguageModel> = None;
-    //     while let Some(progress) = model_strm.next().await {
-    //         let mut progress = progress.unwrap();
-    //         println!(
-    //             "{} ({} / {})",
-    //             progress.comment, progress.current_task, progress.total_task
-    //         );
-    //         if progress.current_task == progress.total_task {
-    //             model = progress.result.take();
-    //         }
-    //     }
-    //     let model = Arc::new(model.unwrap());
-    //     let tools = vec![ToolDescription::new(
-    //         "temperature",
-    //         "Get current temperature",
-    //         ToolDescriptionArgument::new_object().with_properties(
-    //             [
-    //                 (
-    //                     "location",
-    //                     ToolDescriptionArgument::new_string().with_desc("The city name"),
-    //                 ),
-    //                 (
-    //                     "unit",
-    //                     ToolDescriptionArgument::new_string().with_enum(["Celcius", "Fernheit"]),
-    //                 ),
-    //             ],
-    //             ["location", "unit"],
-    //         ),
-    //         Some(
-    //             ToolDescriptionArgument::new_number()
-    //                 .with_desc("Null if the given city name is unavailable."),
-    //         ),
-    //     )];
-    //     let msgs = vec![Message::with_content(
-    //         Role::User,
-    //         Part::new_text("How much hot currently in Dubai?"),
-    //     )];
-    //     let mut agg = MessageAggregator::new();
-    //     let mut strm = model.run(msgs, tools);
-    //     while let Some(delta_opt) = strm.next().await {
-    //         let delta = delta_opt.unwrap();
-    //         if let Some(msg) = agg.update(delta) {
-    //             println!("{:?}", msg);
-    //         }
-    //     }
-    //     let tc = ToolCall::try_from_string(
-    //         resp.unwrap()
-    //             .tool_calls
-    //             .get(0)
-    //             .unwrap()
-    //             .get_function_owned()
-    //             .unwrap(),
-    //     )
-    //     .unwrap();
-    //     println!("Tool call: {:?}", tc);
-    // }
+        let cache = crate::cache::Cache::new();
+        let key = "Qwen/Qwen3-0.6B";
+        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
+        let mut model: Option<LocalLanguageModel> = None;
+        while let Some(progress) = model_strm.next().await {
+            let mut progress = progress.unwrap();
+            println!(
+                "{} ({} / {})",
+                progress.comment, progress.current_task, progress.total_task
+            );
+            if progress.current_task == progress.total_task {
+                model = progress.result.take();
+            }
+        }
+        let model = Arc::new(model.unwrap());
+        let tools = vec![ToolDesc::new(
+            "temperature",
+            "Get current temperature",
+            ToolDescArg::new_object().with_properties(
+                [
+                    (
+                        "location",
+                        ToolDescArg::new_string().with_desc("The city name"),
+                    ),
+                    (
+                        "unit",
+                        ToolDescArg::new_string().with_enum(["Celcius", "Fernheit"]),
+                    ),
+                ],
+                ["location", "unit"],
+            ),
+            Some(
+                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
+            ),
+        )];
+        let msgs = vec![Message::new(Role::User).with_contents(vec![Part::Text(
+            "How much hot currently in Dubai?".to_owned(),
+        )])];
+        let mut agg = MessageAggregator::new();
+        let mut strm = model.run(msgs, tools);
+        let mut assistant_msg: Option<Message> = None;
+        while let Some(delta_opt) = strm.next().await {
+            let delta = delta_opt.unwrap();
+            if let Some(msg) = agg.update(delta) {
+                assistant_msg = Some(msg);
+            }
+        }
+        todo!()
+        // let tc = ToolCall::try_from_string(
+        //     assistant_msg
+        //         .unwrap()
+        //         .tool_calls
+        //         .get(0)
+        //         .unwrap()
+        //         .get_function_owned()
+        //         .unwrap(),
+        // )
+        // .unwrap();
+        // println!("Tool call: {:?}", tc);
+    }
 }

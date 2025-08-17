@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use indexmap::IndexMap;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -35,7 +33,7 @@ use serde::{
 /// - This is a *reduced* dialect, not a full JSON Schema implementation. Only the
 ///   fields listed above are supported by the serializer/deserializer.
 /// - The type is recursive: `Object.properties` and `Array.items` hold nested
-///   `ToolDescriptionArgument` nodes.
+///   `ToolDescArg` nodes.
 /// - Use builder helpers (`new_string`, `with_desc`, `with_enum`, `with_properties`,
 ///   `with_items`, …) to construct nodes fluently while keeping the JSON output tidy.
 ///
@@ -54,9 +52,9 @@ use serde::{
 /// }
 /// ```
 ///
-/// See also: [`ToolDescription`].
+/// See also: [`ToolDesc`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ToolDescriptionArgument {
+pub enum ToolDescArg {
     String {
         description: Option<String>,
         r#enum: Option<Vec<String>>,
@@ -68,18 +66,18 @@ pub enum ToolDescriptionArgument {
         description: Option<String>,
     },
     Object {
-        properties: IndexMap<String, Box<ToolDescriptionArgument>>,
+        properties: IndexMap<String, Box<ToolDescArg>>,
         required: Vec<String>,
     },
     Array {
-        items: Option<Box<ToolDescriptionArgument>>,
+        items: Option<Box<ToolDescArg>>,
     },
     Null {},
 }
 
-impl ToolDescriptionArgument {
-    pub fn new_string() -> ToolDescriptionArgument {
-        ToolDescriptionArgument::String {
+impl ToolDescArg {
+    pub fn new_string() -> ToolDescArg {
+        ToolDescArg::String {
             description: None,
             r#enum: None,
         }
@@ -142,7 +140,7 @@ impl ToolDescriptionArgument {
 
     pub fn with_properties(
         self,
-        properties: impl IntoIterator<Item = (impl Into<String>, impl Into<ToolDescriptionArgument>)>,
+        properties: impl IntoIterator<Item = (impl Into<String>, impl Into<ToolDescArg>)>,
         required: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         match self {
@@ -160,7 +158,7 @@ impl ToolDescriptionArgument {
         }
     }
 
-    pub fn with_items(self, items: impl Into<ToolDescriptionArgument>) -> Self {
+    pub fn with_items(self, items: impl Into<ToolDescArg>) -> Self {
         match self {
             Self::Array { items: _ } => Self::Array {
                 items: Some(Box::new(items.into())),
@@ -170,14 +168,14 @@ impl ToolDescriptionArgument {
     }
 }
 
-impl Serialize for ToolDescriptionArgument {
+impl Serialize for ToolDescArg {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("ToolDescriptionArgument", 2)?;
+        let mut state = serializer.serialize_struct("ToolDescArg", 2)?;
         match self {
-            ToolDescriptionArgument::String {
+            ToolDescArg::String {
                 description,
                 r#enum,
             } => {
@@ -189,19 +187,19 @@ impl Serialize for ToolDescriptionArgument {
                     state.serialize_field("enum", r#enum)?;
                 }
             }
-            ToolDescriptionArgument::Number { description } => {
+            ToolDescArg::Number { description } => {
                 state.serialize_field("type", "number")?;
                 if let Some(description) = description {
                     state.serialize_field("description", description)?;
                 }
             }
-            ToolDescriptionArgument::Boolean { description } => {
+            ToolDescArg::Boolean { description } => {
                 state.serialize_field("type", "boolean")?;
                 if let Some(description) = description {
                     state.serialize_field("description", description)?;
                 }
             }
-            ToolDescriptionArgument::Object {
+            ToolDescArg::Object {
                 properties,
                 required,
             } => {
@@ -209,13 +207,13 @@ impl Serialize for ToolDescriptionArgument {
                 state.serialize_field("properties", properties)?;
                 state.serialize_field("required", required)?;
             }
-            ToolDescriptionArgument::Array { items } => {
+            ToolDescArg::Array { items } => {
                 state.serialize_field("type", "array")?;
                 if let Some(items) = items {
                     state.serialize_field("items", items)?;
                 }
             }
-            ToolDescriptionArgument::Null {} => {
+            ToolDescArg::Null {} => {
                 state.serialize_field("type", "null")?;
             }
         }
@@ -223,7 +221,7 @@ impl Serialize for ToolDescriptionArgument {
     }
 }
 
-impl<'de> Deserialize<'de> for ToolDescriptionArgument {
+impl<'de> Deserialize<'de> for ToolDescArg {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -234,31 +232,31 @@ impl<'de> Deserialize<'de> for ToolDescriptionArgument {
             #[serde(rename = "type")]
             r#type: String,
             description: Option<String>,
-            properties: Option<IndexMap<String, Box<ToolDescriptionArgument>>>,
+            properties: Option<IndexMap<String, Box<ToolDescArg>>>,
             required: Option<Vec<String>>,
             r#enum: Option<Vec<String>>,
-            items: Option<Box<ToolDescriptionArgument>>,
+            items: Option<Box<ToolDescArg>>,
         }
 
         let raw = Raw::deserialize(deserializer)?;
 
         match raw.r#type.as_str() {
-            "string" => Ok(ToolDescriptionArgument::String {
+            "string" => Ok(ToolDescArg::String {
                 description: raw.description,
                 r#enum: raw.r#enum,
             }),
-            "number" => Ok(ToolDescriptionArgument::Number {
+            "number" => Ok(ToolDescArg::Number {
                 description: raw.description,
             }),
-            "boolean" => Ok(ToolDescriptionArgument::Boolean {
+            "boolean" => Ok(ToolDescArg::Boolean {
                 description: raw.description,
             }),
-            "object" => Ok(ToolDescriptionArgument::Object {
+            "object" => Ok(ToolDescArg::Object {
                 properties: raw.properties.unwrap_or_default(),
                 required: raw.required.unwrap_or_default(),
             }),
-            "array" => Ok(ToolDescriptionArgument::Array { items: raw.items }),
-            "null" => Ok(ToolDescriptionArgument::Null {}),
+            "array" => Ok(ToolDescArg::Array { items: raw.items }),
+            "null" => Ok(ToolDescArg::Null {}),
             other => Err(de::Error::custom(format!(r#"unsupported "type": {other}"#))),
         }
     }
@@ -269,7 +267,7 @@ impl<'de> Deserialize<'de> for ToolDescriptionArgument {
 /// descriptions are typically embedded in a chat template’s system/header section
 /// so the model knows *what it can call* and *how to format arguments/returns*.
 ///
-/// This struct pairs with `ToolDescriptionArgument`, a reduced, recursive
+/// This struct pairs with `ToolDescArg`, a reduced, recursive
 /// JSON-Schema–style node used to express `parameters` and `return`.
 ///
 /// # Fields
@@ -279,10 +277,10 @@ impl<'de> Deserialize<'de> for ToolDescriptionArgument {
 ///   Short, imperative explanation of what the tool does and when to use it.
 /// - `parameters`
 ///   Schema describing the request payload. In practice this is **usually**
-///   `ToolDescriptionArgument::Object` with `properties` (argument names) and
+///   `ToolDescArg::Object` with `properties` (argument names) and
 ///   `required` (argument names that must be present).
 /// - `return`
-///   Schema describing the tool’s JSON response. Can be any `ToolDescriptionArgument`,
+///   Schema describing the tool’s JSON response. Can be any `ToolDescArg`,
 ///   commonly an `Object`.
 ///
 /// # Serialization format
@@ -296,8 +294,8 @@ impl<'de> Deserialize<'de> for ToolDescriptionArgument {
 ///   "function": {
 ///     "name": "tool_name",
 ///     "description": "What the tool does",
-///     "parameters": { /* ToolDescriptionArgument */ },
-///     "return": { /* ToolDescriptionArgument */ }
+///     "parameters": { /* ToolDescArg */ },
+///     "return": { /* ToolDescArg */ }
 ///   }
 /// }
 /// ```
@@ -323,16 +321,16 @@ impl<'de> Deserialize<'de> for ToolDescriptionArgument {
 /// ```rust
 /// use indexmap::IndexMap;
 ///
-/// let params = ToolDescriptionArgument::new_object().with_properties(
-///     [("location", ToolDescriptionArgument::new_string()
+/// let params = ToolDescArg::new_object().with_properties(
+///     [("location", ToolDescArg::new_string()
 ///         .with_desc("The city name"))],
 ///     ["location"],
 /// );
 ///
-/// let ret = ToolDescriptionArgument::new_number()
+/// let ret = ToolDescArg::new_number()
 ///     .with_desc("Current temperature in Celsius");
 ///
-/// let tool = ToolDescription {
+/// let tool = ToolDesc {
 ///     name: "weather".into(),
 ///     description: "Get the current temperature for a city".into(),
 ///     parameters: params,
@@ -367,24 +365,24 @@ impl<'de> Deserialize<'de> for ToolDescriptionArgument {
 /// For more background on the expected schema shape, see:
 /// https://huggingface.co/docs/transformers/v4.53.3/en/chat_extras#schema
 ///
-/// See also: [`ToolDescriptionArgument`].
+/// See also: [`ToolDescArg`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolDescription {
+pub struct ToolDesc {
     name: String,
 
     description: String,
 
-    parameters: ToolDescriptionArgument, // In most cases, it's `ToolDescriptionArgument::Object`
+    parameters: ToolDescArg, // In most cases, it's `ToolDescArg::Object`
 
-    r#return: Option<ToolDescriptionArgument>,
+    r#return: Option<ToolDescArg>,
 }
 
-impl ToolDescription {
+impl ToolDesc {
     pub fn new(
         name: impl Into<String>,
         description: impl Into<String>,
-        parameters: impl Into<ToolDescriptionArgument>,
-        r#return: Option<impl Into<ToolDescriptionArgument>>,
+        parameters: impl Into<ToolDescArg>,
+        r#return: Option<impl Into<ToolDescArg>>,
     ) -> Self {
         Self {
             name: name.into(),
@@ -399,7 +397,7 @@ impl ToolDescription {
     }
 }
 
-impl Serialize for ToolDescription {
+impl Serialize for ToolDesc {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -409,12 +407,12 @@ impl Serialize for ToolDescription {
         struct Inner<'a> {
             name: &'a str,
             description: &'a str,
-            parameters: &'a ToolDescriptionArgument,
+            parameters: &'a ToolDescArg,
             #[serde(rename = "return")]
-            r#return: Option<&'a ToolDescriptionArgument>,
+            r#return: Option<&'a ToolDescArg>,
         }
 
-        let mut st = serializer.serialize_struct("ToolDescription", 2)?;
+        let mut st = serializer.serialize_struct("ToolDesc", 2)?;
         st.serialize_field("type", "function")?;
         st.serialize_field(
             "function",
@@ -429,7 +427,7 @@ impl Serialize for ToolDescription {
     }
 }
 
-impl<'de> Deserialize<'de> for ToolDescription {
+impl<'de> Deserialize<'de> for ToolDesc {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -438,9 +436,9 @@ impl<'de> Deserialize<'de> for ToolDescription {
         struct InnerOwned {
             name: String,
             description: String,
-            parameters: ToolDescriptionArgument,
+            parameters: ToolDescArg,
             #[serde(rename = "return")]
-            r#return: Option<ToolDescriptionArgument>,
+            r#return: Option<ToolDescArg>,
         }
 
         #[derive(Deserialize)]
@@ -460,163 +458,12 @@ impl<'de> Deserialize<'de> for ToolDescription {
             )));
         }
 
-        Ok(ToolDescription {
+        Ok(ToolDesc {
             name: w.function.name,
             description: w.function.description,
             parameters: w.function.parameters,
             r#return: w.function.r#return,
         })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ToolCallArgument {
-    String(String),
-    Number(f64),
-    Boolean(bool),
-    Object(HashMap<String, Box<ToolCallArgument>>),
-    Array(Vec<Box<ToolCallArgument>>),
-    Null,
-}
-
-impl ToolCallArgument {
-    /// Returns the inner `&str` if this is `String`, otherwise `None`.
-    pub fn as_str(&self) -> Option<&str> {
-        match self {
-            ToolCallArgument::String(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    /// Returns the inner as `i64` if this is `Number` and the value is a finite, in-range integer.
-    pub fn as_i64(&self) -> Option<i64> {
-        match self {
-            ToolCallArgument::Number(v)
-                if v.is_finite()
-                    && v.fract() == 0.0
-                    && *v >= (i64::MIN as f64)
-                    && *v <= (i64::MAX as f64) =>
-            {
-                Some(*v as i64)
-            }
-            _ => None,
-        }
-    }
-
-    /// Returns the inner as `u64` if this is `Number` and the value is a finite, in-range integer.
-    pub fn as_u64(&self) -> Option<u64> {
-        match self {
-            ToolCallArgument::Number(v)
-                if v.is_finite() && v.fract() == 0.0 && *v >= 0.0 && *v <= (u64::MAX as f64) =>
-            {
-                Some(*v as u64)
-            }
-            _ => None,
-        }
-    }
-
-    /// Returns the inner `f64` if this is `Number`, otherwise `None`.
-    pub fn as_f64(&self) -> Option<f64> {
-        match self {
-            ToolCallArgument::Number(v) => Some(*v),
-            _ => None,
-        }
-    }
-
-    /// Returns the inner `bool` if this is `Boolean`, otherwise `None`.
-    pub fn as_boolean(&self) -> Option<bool> {
-        match self {
-            ToolCallArgument::Boolean(v) => Some(*v),
-            _ => None,
-        }
-    }
-
-    /// Returns the inner object map if this is `Object`, otherwise `None`.
-    pub fn as_object(&self) -> Option<&std::collections::HashMap<String, Box<ToolCallArgument>>> {
-        match self {
-            ToolCallArgument::Object(map) => Some(map),
-            _ => None,
-        }
-    }
-
-    /// Returns the inner array as a slice if this is `Array`, otherwise `None`.
-    pub fn as_array(&self) -> Option<&[Box<ToolCallArgument>]> {
-        match self {
-            ToolCallArgument::Array(vec) => Some(vec.as_slice()),
-            _ => None,
-        }
-    }
-
-    /// Returns `true` if this is `Null`.
-    pub fn as_null(&self) -> bool {
-        matches!(self, ToolCallArgument::Null)
-    }
-}
-
-/// Represents a single tool invocation requested by an LLM.
-///
-/// This struct models one entry in an assistant message’s `tool_calls` array
-/// (e.g., OpenAI-style tool/function calling). It pairs the canonical tool
-/// identifier with the raw JSON arguments intended for that tool.
-///
-/// # Fields
-/// - `name`: Canonical identifier of the tool to invoke (e.g., `"search"`,
-///   `"fetch_weather"`). The string should match a tool the client can resolve.
-/// - `arguments`: The arguments payload as a flexible JSON value modeled by
-///   [`ToolCallArgument`]. When [`ToolCallArgument`] is defined as an
-///   **untagged** enum (recommended), each variant serializes to its natural
-///   JSON form (string/number/bool/object/array/null).
-///
-/// # Notes
-/// - This type does not enforce that `name` exists or that `arguments`
-///   match the tool’s schema; enforce those invariants where you dispatch.
-/// - The type derives `Clone` and `PartialEq` to make testing and queueing
-///   across async boundaries straightforward.
-///
-/// See also: [`ToolCallArgument`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ToolCall {
-    name: String,
-    arguments: ToolCallArgument,
-}
-
-impl ToolCall {
-    pub fn new(name: impl Into<String>, arguments: ToolCallArgument) -> Self {
-        Self {
-            name: name.into(),
-            arguments,
-        }
-    }
-
-    pub fn try_from_string(s: impl AsRef<str>) -> Result<Self, String> {
-        serde_json::from_str(s.as_ref())
-            .map_err(|e| format!("serde_json::from_str failed: {}", e.to_string()))
-    }
-
-    pub fn get_name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn get_argument(&self) -> &ToolCallArgument {
-        &self.arguments
-    }
-}
-
-impl TryFrom<&str> for ToolCall {
-    type Error = String;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Self::try_from_string(s)
-    }
-}
-
-impl TryFrom<serde_json::Value> for ToolCall {
-    type Error = String;
-
-    fn try_from(v: serde_json::Value) -> Result<Self, Self::Error> {
-        serde_json::from_value(v)
-            .map_err(|e| format!("serde_json::from_value failed: {}", e.to_string()))
     }
 }
 
@@ -626,25 +473,25 @@ mod test {
 
     #[test]
     fn simple_tool_description_serde() {
-        let original = ToolDescription::new(
+        let original = ToolDesc::new(
             "temperature",
             "Get current temperature",
-            ToolDescriptionArgument::new_object().with_properties(
+            ToolDescArg::new_object().with_properties(
                 [
                     (
                         "location",
-                        ToolDescriptionArgument::new_string().with_desc("The city name"),
+                        ToolDescArg::new_string().with_desc("The city name"),
                     ),
                     (
                         "unit",
-                        ToolDescriptionArgument::new_string()
+                        ToolDescArg::new_string()
                             .with_desc("Default: Celcius")
                             .with_enum(["Celcius", "Fernheit"]),
                     ),
                 ],
                 ["location"],
             ),
-            Some(ToolDescriptionArgument::new_number()),
+            Some(ToolDescArg::new_number()),
         );
         let serialized = {
             let expected = r#"{"type":"function","function":{"name":"temperature","description":"Get current temperature","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city name"},"unit":{"type":"string","description":"Default: Celcius","enum":["Celcius","Fernheit"]}},"required":["location"]},"return":{"type":"number"}}}"#;
@@ -652,32 +499,7 @@ mod test {
             assert_eq!(expected, actual);
             actual
         };
-        let recovered: ToolDescription = serde_json::from_str(&serialized).unwrap();
+        let recovered: ToolDesc = serde_json::from_str(&serialized).unwrap();
         assert_eq!(original, recovered);
-    }
-
-    #[test]
-    fn simple_tool_call_serde() {
-        let mut obj: HashMap<String, Box<ToolCallArgument>> = HashMap::new();
-        obj.insert(
-            "msg".into(),
-            Box::new(ToolCallArgument::String("Hi".into())),
-        );
-        obj.insert("count".into(), Box::new(ToolCallArgument::Number(3.0)));
-        obj.insert(
-            "flags".into(),
-            Box::new(ToolCallArgument::Array(vec![
-                Box::new(ToolCallArgument::Boolean(true)),
-                Box::new(ToolCallArgument::Null),
-            ])),
-        );
-        let tc = ToolCall {
-            name: "echo".into(),
-            arguments: ToolCallArgument::Object(obj),
-        };
-        let j = serde_json::to_string(&tc).unwrap();
-        // Example shape: {"name":"echo","arguments":{"msg":"Hi","count":3.0,"flags":[true,null]}}
-        let roundtrip: ToolCall = serde_json::from_str(&j).unwrap();
-        assert_eq!(roundtrip, tc);
     }
 }

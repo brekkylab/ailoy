@@ -7,12 +7,12 @@ use futures::future::BoxFuture;
 
 use crate::{
     tool::Tool,
-    value::{Part, ToolCall, ToolDescription, ToolDescriptionArgument},
+    value::{Part, ToolCall, ToolDesc, ToolDescArg},
 };
 
 #[derive(Clone)]
 pub struct BuiltinTool {
-    desc: ToolDescription,
+    desc: ToolDesc,
     f: Arc<dyn Fn(ToolCall) -> Part + Send + Sync + 'static>,
 }
 
@@ -26,16 +26,13 @@ impl Debug for BuiltinTool {
 }
 
 impl BuiltinTool {
-    pub fn new(
-        desc: ToolDescription,
-        f: Arc<dyn Fn(ToolCall) -> Part + Send + Sync + 'static>,
-    ) -> Self {
+    pub fn new(desc: ToolDesc, f: Arc<dyn Fn(ToolCall) -> Part + Send + Sync + 'static>) -> Self {
         BuiltinTool { desc, f }
     }
 }
 
 impl Tool for BuiltinTool {
-    fn get_description(&self) -> ToolDescription {
+    fn get_description(&self) -> ToolDesc {
         self.desc.clone()
     }
 
@@ -62,49 +59,48 @@ pub fn create_terminal_tool() -> BuiltinTool {
         }
     };
 
-    let desc = ToolDescription::new(
+    let desc = ToolDesc::new(
         "execute_command",
         format!(
             "Executes a command on the current system using the default shell. Current shell: {}. \
             Optional fields: cwd (string), env (object), stdin (string)",
             current_shell
         ),
-        ToolDescriptionArgument::new_object().with_properties(
+        ToolDescArg::new_object().with_properties(
             [
                 (
                     "command",
-                    ToolDescriptionArgument::new_string().with_desc("The command to execute."),
+                    ToolDescArg::new_string().with_desc("The command to execute."),
                 ),
                 (
                     "cwd",
-                    ToolDescriptionArgument::new_string().with_desc("Optional working directory."),
+                    ToolDescArg::new_string().with_desc("Optional working directory."),
                 ),
                 (
                     "env",
-                    ToolDescriptionArgument::new_object()
+                    ToolDescArg::new_object()
                         .with_desc("Optional environment variables as key-value pairs."),
                 ),
                 (
                     "stdin",
-                    ToolDescriptionArgument::new_string()
-                        .with_desc("Optional string to send to STDIN."),
+                    ToolDescArg::new_string().with_desc("Optional string to send to STDIN."),
                 ),
             ],
             ["command"],
         ),
-        Some(ToolDescriptionArgument::new_object().with_properties(
+        Some(ToolDescArg::new_object().with_properties(
             [
                 (
                     "stdout",
-                    ToolDescriptionArgument::new_string().with_desc("Captured STDOUT"),
+                    ToolDescArg::new_string().with_desc("Captured STDOUT"),
                 ),
                 (
                     "stderr",
-                    ToolDescriptionArgument::new_string().with_desc("Captured STDERR"),
+                    ToolDescArg::new_string().with_desc("Captured STDERR"),
                 ),
                 (
                     "exit_code",
-                    ToolDescriptionArgument::new_number().with_desc("Process exit code"),
+                    ToolDescArg::new_number().with_desc("Process exit code"),
                 ),
             ],
             ["stdout", "stderr", "exit_code"],
@@ -112,7 +108,7 @@ pub fn create_terminal_tool() -> BuiltinTool {
     );
 
     let f = Arc::new(|tc: ToolCall| {
-        let args = match tc.get_argument().as_object() {
+        let args = match tc.arguments.as_object() {
             Some(a) => a,
             None => {
                 return Part::Text(

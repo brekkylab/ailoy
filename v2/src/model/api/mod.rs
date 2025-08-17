@@ -5,7 +5,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use crate::{
     model::LanguageModel,
-    value::{Message, MessageOutput, ToolDescription},
+    value::{Message, MessageOutput, ToolDesc},
 };
 
 #[derive(Clone)]
@@ -14,7 +14,7 @@ pub struct APILanguageModel {
     make_request: Arc<
         dyn Fn(
                 Vec<Message>,
-                Vec<ToolDescription>,
+                Vec<ToolDesc>,
             ) -> BoxFuture<'static, Result<reqwest::Response, reqwest::Error>>
             + Send
             + Sync,
@@ -31,7 +31,7 @@ impl APILanguageModel {
             let model = model.clone();
             let api_key = api_key.clone();
             (
-                Arc::new(move |msgs: Vec<Message>, tools: Vec<ToolDescription>| {
+                Arc::new(move |msgs: Vec<Message>, tools: Vec<ToolDesc>| {
                     openai::make_request(&model, &api_key, msgs, tools)
                 }),
                 Arc::new(&openai::handle_next_response),
@@ -58,7 +58,7 @@ impl LanguageModel for APILanguageModel {
     fn run(
         self: Arc<Self>,
         msgs: Vec<Message>,
-        tools: Vec<ToolDescription>,
+        tools: Vec<ToolDesc>,
     ) -> BoxStream<'static, Result<MessageOutput, String>> {
         let req = (self.make_request)(msgs, tools);
         let strm = async_stream::try_stream! {
@@ -106,8 +106,10 @@ mod tests {
         let model = Arc::new(APILanguageModel::new("gpt-4.1", OPENAI_API_KEY));
 
         let msgs = vec![
-            Message::with_content(Role::System, Part::new_text("You are an assistant.")),
-            Message::with_content(Role::User, Part::new_text("Hi what's your name?")),
+            Message::new(Role::System)
+                .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
+            Message::new(Role::User)
+                .with_contents(vec![Part::Text("Hi what's your name?".to_owned())]),
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, Vec::new());
@@ -118,5 +120,60 @@ mod tests {
                 println!("{:?}", msg);
             }
         }
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_call() {
+        use futures::StreamExt;
+
+        use super::*;
+        use crate::value::{MessageAggregator, Part, Role, ToolDesc, ToolDescArg};
+
+        let model = Arc::new(APILanguageModel::new("gpt-4.1", OPENAI_API_KEY));
+        let tools = vec![ToolDesc::new(
+            "temperature",
+            "Get current temperature",
+            ToolDescArg::new_object().with_properties(
+                [
+                    (
+                        "location",
+                        ToolDescArg::new_string().with_desc("The city name"),
+                    ),
+                    (
+                        "unit",
+                        ToolDescArg::new_string().with_enum(["Celcius", "Fernheit"]),
+                    ),
+                ],
+                ["location", "unit"],
+            ),
+            Some(
+                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
+            ),
+        )];
+        let msgs = vec![Message::new(Role::User).with_contents(vec![Part::Text(
+            "How much hot currently in Dubai?".to_owned(),
+        )])];
+        let mut agg = MessageAggregator::new();
+        let mut strm = model.run(msgs, tools);
+        let mut assistant_msg: Option<Message> = None;
+        while let Some(delta_opt) = strm.next().await {
+            let delta = delta_opt.unwrap();
+            if let Some(msg) = agg.update(delta) {
+                assistant_msg = Some(msg);
+            }
+        }
+        todo!()
+        // let tc = ToolCall::try_from_string(
+        //     assistant_msg
+        //         .unwrap()
+        //         .tool_calls
+        //         .get(0)
+        //         .unwrap()
+        //         .get_function_owned()
+        //         .unwrap(),
+        // )
+        // .unwrap();
+        // println!("Tool call: {:?}", tc);
     }
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use futures::stream::BoxStream;
 
-use crate::value::{Message, MessageOutput, ToolDescription};
+use crate::value::{Message, MessageOutput, ToolDesc};
 
 /// Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
 ///
@@ -37,6 +37,6 @@ pub trait LanguageModel: Send + Sync + 'static {
     fn run(
         self: Arc<Self>,
         msg: Vec<Message>,
-        tools: Vec<ToolDescription>,
+        tools: Vec<ToolDesc>,
     ) -> BoxStream<'static, Result<MessageOutput, String>>;
 }

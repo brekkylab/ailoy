@@ -3,7 +3,7 @@ use std::str::FromStr;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::PyList,
+    types::{PyList, PyString},
 };
 
 use crate::{
@@ -72,6 +72,7 @@ impl PyPart {
             Part::Text(_) => "text",
             Part::Function { .. } => "function",
             Part::ImageURL(_) | Part::ImageData(_) => "image",
+            Part::AudioURL(_) | Part::AudioData(_) => "audio",
         }
     }
 
@@ -225,7 +226,7 @@ impl PyMessage {
         PyList::new(
             py,
             self.inner
-                .content
+                .contents
                 .clone()
                 .into_iter()
                 .map(|inner| PyPart { inner }),
@@ -233,33 +234,22 @@ impl PyMessage {
     }
 
     #[setter]
-    fn set_content(&mut self, content: Vec<PyPart>) {
-        self.inner.content = content.into_iter().map(|v| v.inner).collect();
+    fn set_content(&mut self, contents: Vec<PyPart>) {
+        self.inner.contents = contents.into_iter().map(|v| v.inner).collect();
     }
 
     fn append_content(&mut self, part: PyPart) {
-        self.inner.content.push(part.inner);
+        self.inner.contents.push(part.inner);
     }
 
     #[getter]
-    fn reasoning<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
-        PyList::new(
-            py,
-            self.inner
-                .reasoning
-                .clone()
-                .into_iter()
-                .map(|inner| PyPart { inner }),
-        )
+    fn reasoning<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
+        Ok(PyString::new(py, &self.inner.reasoning))
     }
 
     #[setter]
-    fn set_reasoning(&mut self, reasoning: Vec<PyPart>) {
-        self.inner.reasoning = reasoning.into_iter().map(|v| v.inner).collect();
-    }
-
-    fn append_reasoning(&mut self, part: PyPart) {
-        self.inner.reasoning.push(part.inner);
+    fn set_reasoning(&mut self, reasoning: String) {
+        self.inner.reasoning = reasoning;
     }
 
     #[getter]

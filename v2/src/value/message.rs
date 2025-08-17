@@ -2,362 +2,13 @@ use std::fmt::{self, Display};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
-    de::{self, MapAccess, Visitor},
-    ser::SerializeMap,
+    de::{self, MapAccess},
+    ser::SerializeMap as _,
 };
 use strum::{Display, EnumString};
-use url::Url;
 
-/// Represents a single, typed unit of message content (multi-modal).
-///
-/// A `Part` models one element inside a message’s `content` (and related fields like
-/// `reasoning` / `tool_calls`). It is designed to be **OpenAI-compatible** when serialized,
-/// using the modern “array-of-parts” shape such as:
-/// `{ "type": "text", "text": "..." }` or `{ "type": "image", "url": "..." }`.
-///
-/// # Variants
-/// - [`Part::Text`]: Plain UTF-8 text.
-/// - [`Part::Function`]: Raw JSON string for a tool/function call payload, with an optional
-///   `tool_call_id` to correlate results.
-/// - [`Part::ImageURL`]: A web-accessible image (HTTP(S) URL).
-/// - [`Part::ImageBase64`]: An inline, base64-encoded image payload.
-///
-/// # OpenAI-compatible mapping (typical)
-/// These are the common wire shapes produced/consumed when targeting OpenAI-style APIs:
-///
-/// - `Text(s)`
-///   ```json
-///   { "type": "text", "text": "hello" }
-///   ```
-///
-/// - `ImageURL(url)`
-///   ```json
-///   { "type": "image", "url": "https://example.com/cat.png" }
-///   ```
-///
-/// - `ImageBase64(data)`
-///   ```json
-///   { "type": "image", "data": "<base64-bytes>" }
-///   ```
-///
-/// - `Function { id, function }`
-///   The `function` field holds the **raw JSON** for the tool/function call (often the
-///   `arguments` string in OpenAI tool calls). The `id` corresponds to `tool_call_id`
-///   and is used to link the tool’s eventual result back to this call. Serialization of
-///   this variant is handled by higher-level message (de)serializers that place it under
-///   `tool_calls` as appropriate.
-///
-/// # Notes on `Function`
-/// - **As-is storage:** While streaming, `function` may be incomplete or invalid JSON.
-///   This is expected. Parse only after the stream has finalized/aggregated.
-/// - **No validation:** The variant does not validate or mutate the JSON string.
-///   Converting into a strongly-typed [`crate::value::ToolCall`] will fail if the JSON
-///   is malformed or incomplete.
-/// - **Correlation:** When present, `id` should be echoed back as `tool_call_id` when
-///   returning the tool’s output, matching OpenAI’s linking behavior.
-///
-/// # Invariants & behavior
-/// - Insertion order is preserved by the container (e.g., `Message.content`).
-/// - Image parts do not fetch or validate URLs/bytes at construction time.
-/// - The enum is transport-agnostic; OpenAI compatibility is achieved by the
-///   surrounding (de)serializer layer.
-///
-/// # Examples
-/// Building a multi-modal user message:
-/// ```rust
-/// # use url::Url;
-/// # use crate::value::{Message, Part, Role};
-/// let mut msg = Message::new(Role::User);
-/// msg.push_content(Part::Text("What does this sign say?".into()));
-/// msg.push_content(Part::ImageURL(Url::parse("https://example.com/sign.jpg").unwrap()));
-/// ```
-///
-/// Collecting tool-call arguments during streaming:
-/// ```rust
-/// # use crate::value::Part;
-/// let mut buf = String::new();
-/// // Append chunks as they arrive:
-/// buf.push_str("{\"location\":\"Dubai\"");
-/// buf.push_str(",\"unit\":\"Celsius\"}");
-/// let part = Part::Function { id: None, function: buf }; // parse after finalization
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Part {
-    /// Plain UTF-8 text.
-    Text(String),
+use crate::value::{Part, PartFmt, PartWithFmt, ToolCall};
 
-    /// Tool/function call payload captured as a raw JSON string.
-    ///
-    /// `id` corresponds to `tool_call_id` (when available) for correlating tool results.
-    /// `function` holds the unmodified JSON; it may be incomplete while streaming.
-    Function {
-        /// Optional `tool_call_id` used to correlate tool results.
-        id: Option<String>,
-        /// Raw JSON for the function call payload (often the `arguments` string).
-        function: String,
-    },
-
-    /// Web-addressable image (HTTP(S) URL).
-    ///
-    /// Typically serialized as:
-    /// `{ "type": "image", "url": "<...>" }`.
-    ImageURL(Url),
-
-    /// Inline, base64-encoded image bitmap bytes.
-    ///
-    /// Typically serialized as:
-    /// `{ "type": "image", "data": "<base64>" }`.
-    ImageData(String),
-}
-
-impl Part {
-    /// Constructor for text part
-    pub fn new_text<T: Into<String>>(text: T) -> Part {
-        Part::Text(text.into())
-    }
-
-    pub fn is_text(&self) -> bool {
-        match self {
-            Part::Text(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn get_text(&self) -> Option<&str> {
-        match self {
-            Part::Text(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub fn get_text_mut(&mut self) -> Option<&mut String> {
-        match self {
-            Part::Text(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub fn get_text_owned(&self) -> Option<String> {
-        match self {
-            Part::Text(v) => Some(v.to_owned()),
-            _ => None,
-        }
-    }
-
-    /// Constructor for Function part
-    pub fn new_function<T: Into<String>>(json: T) -> Part {
-        Part::Function {
-            id: None,
-            function: json.into(),
-        }
-    }
-
-    pub fn new_function_with_id<T: Into<String>>(id: impl Into<String>, json: T) -> Part {
-        Part::Function {
-            id: Some(id.into()),
-            function: json.into(),
-        }
-    }
-
-    pub fn is_function(&self) -> bool {
-        match self {
-            Part::Function { .. } => true,
-            _ => false,
-        }
-    }
-
-    pub fn get_function_id(&self) -> Option<String> {
-        match self {
-            Part::Function { id, .. } => id.to_owned(),
-            _ => None,
-        }
-    }
-
-    pub fn get_function(&self) -> Option<&String> {
-        match self {
-            Part::Function { function, .. } => Some(function),
-            _ => None,
-        }
-    }
-
-    pub fn get_function_mut(&mut self) -> Option<&mut String> {
-        match self {
-            Part::Function { function, .. } => Some(function),
-            _ => None,
-        }
-    }
-
-    pub fn get_function_owned(&self) -> Option<String> {
-        match self {
-            Part::Function { function, .. } => Some(function.to_owned()),
-            _ => None,
-        }
-    }
-
-    /// Constructor for image URL part
-    pub fn new_image_url<T: Into<Url>>(url: T) -> Part {
-        Part::ImageURL(url.into())
-    }
-
-    /// Constructor for image base64 part
-    pub fn new_image_data<T: Into<String>>(encoded: T) -> Part {
-        Part::ImageData(encoded.into())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        match self {
-            Part::Text(v) => v.is_empty(),
-            Part::Function { function: v, .. } => v.is_empty(),
-            Part::ImageURL(_) => false,
-            Part::ImageData(v) => v.is_empty(),
-        }
-    }
-}
-
-// Serialization logic for Part
-impl Serialize for Part {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(Some(2))?;
-        match self {
-            Part::Text(text) => {
-                map.serialize_entry("type", "text")?;
-                map.serialize_entry("text", text)?;
-            }
-            Part::Function { id, function } => {
-                // Try to embed as real JSON if valid; otherwise fall back to raw text.
-                let function: serde_json::Value = serde_json::from_str(function).map_err(|e| {
-                    <S::Error as serde::ser::Error>::custom(format!(
-                        "invalid JSON in Part::Json: {e}"
-                    ))
-                })?;
-                map.serialize_entry("type", "function")?;
-                if id.is_some() {
-                    map.serialize_entry("id", &id.to_owned().unwrap())?;
-                }
-                map.serialize_entry("function", &function)?;
-            }
-            Part::ImageURL(url) => {
-                map.serialize_entry("type", "image")?;
-                map.serialize_entry("url", url.as_str())?;
-            }
-            Part::ImageData(encoded) => {
-                map.serialize_entry("type", "image")?;
-                map.serialize_entry("data", encoded)?;
-            }
-        };
-        map.end()
-    }
-}
-
-// Deserialization logic for Part
-impl<'de> Deserialize<'de> for Part {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_map(PartVisitor)
-    }
-}
-
-struct PartVisitor;
-
-impl<'de> Visitor<'de> for PartVisitor {
-    type Value = Part;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str(r#"a map with "type" field and one other content key"#)
-    }
-
-    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
-    where
-        M: MapAccess<'de>,
-    {
-        let mut ty: Option<String> = None;
-        let mut key: Option<String> = None;
-        let mut value: Option<String> = None;
-        let mut id: Option<String> = None;
-
-        while let Some(k) = map.next_key::<String>()? {
-            if k == "type" {
-                if ty.is_some() {
-                    return Err(de::Error::duplicate_field("type"));
-                }
-                ty = Some(map.next_value()?);
-            } else if k == "id" {
-                if id.is_some() {
-                    return Err(de::Error::duplicate_field("id"));
-                }
-                id = Some(map.next_value()?);
-            } else {
-                if key.is_some() {
-                    return Err(de::Error::custom("multiple part fields found"));
-                }
-                key = Some(k);
-                value = Some(map.next_value()?);
-            }
-        }
-
-        let ty = ty.ok_or_else(|| de::Error::missing_field("type"))?;
-        let key = key.ok_or_else(|| de::Error::custom("missing part key"))?;
-        let value = value.ok_or_else(|| de::Error::custom("missing part value"))?;
-
-        if ty == "text" && key == "text" {
-            Ok(Part::Text(value))
-        } else if ty == "function" && key == "function" {
-            match serde_json::from_str(&value) {
-                Ok(value) => Ok(Part::Function {
-                    id,
-                    function: value,
-                }),
-                Err(err) => Err(de::Error::custom(format!(
-                    "Invalid Json part: {} {}",
-                    value,
-                    err.to_string(),
-                ))),
-            }
-        } else if ty == "image" && key == "url" {
-            match url::Url::parse(&value) {
-                Ok(value) => Ok(Part::ImageURL(value)),
-                Err(err) => Err(de::Error::custom(format!(
-                    "Invalid URL: {} {}",
-                    value,
-                    err.to_string()
-                ))),
-            }
-        } else if ty == "image" && key == "data" {
-            Ok(Part::ImageData(value))
-        } else {
-            Err(de::Error::custom("Invalid type"))
-        }
-    }
-}
-
-impl Display for Part {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Part::Text(text) => {
-                f.write_fmt(format_args!("Part(type=\"text\", text=\"{}\")", text))?
-            }
-            Part::Function { id, function } => f.write_fmt(format_args!(
-                "Part(type=\"function\", id=\"{}\", function=\"{}\")",
-                if let Some(id) = id { id } else { "None" },
-                function
-            ))?,
-            Part::ImageURL(url) => f.write_fmt(format_args!(
-                "Part(type=\"image\", url=\"{}\")",
-                url.to_string()
-            ))?,
-            Part::ImageData(data) => f.write_fmt(format_args!(
-                "Part(type=\"image\", data=({} bytes))",
-                data.len()
-            ))?,
-        };
-        Ok(())
-    }
-}
 /// The author of a message (or streaming delta) in a chat.
 ///
 /// This aligns with common chat schemas (e.g., OpenAI-style), and is serialized
@@ -383,28 +34,30 @@ pub enum Role {
     Tool,
 }
 
-fn text_or_part_vector<'de, D>(de: D) -> Result<Vec<Part>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(serde::Deserialize)]
-    #[serde(untagged)]
-    enum Either {
-        Str(String),
-        Parts(Vec<Part>),
-    }
+// fn text_or_part_vector<'de, D>(de: D) -> Result<Vec<Part>, D::Error>
+// where
+//     D: serde::Deserializer<'de>,
+// {
+//     #[derive(serde::Deserialize)]
+//     #[serde(untagged)]
+//     enum Either {
+//         Null(()),
+//         Str(String),
+//         Parts(Vec<Part>),
+//     }
 
-    match Either::deserialize(de)? {
-        Either::Str(s) => {
-            if s.is_empty() {
-                Ok(vec![])
-            } else {
-                Ok(vec![Part::new_text(s)])
-            }
-        }
-        Either::Parts(v) => Ok(v),
-    }
-}
+//     match Either::deserialize(de)? {
+//         Either::Null(()) => Ok(vec![]),
+//         Either::Str(s) => {
+//             if s.is_empty() {
+//                 Ok(vec![])
+//             } else {
+//                 Ok(vec![Part::new_text(s)])
+//             }
+//         }
+//         Either::Parts(v) => Ok(v),
+//     }
+// }
 
 /// Represents a complete chat message composed of multiple parts (multi-modal).
 ///
@@ -427,7 +80,7 @@ where
 ///
 /// # Fields
 /// - `role`: Author of the message.
-/// - `content`: Primary, user-visible content as a list of parts (text, images, etc.).
+/// - `contents`: Primary, user-visible content as a list of parts (text, images, etc.).
 /// - `reasoning`: Optional reasoning parts (usually text). Not intended for end users.
 /// - `tool_calls`: Tool/function call requests emitted by the assistant, each stored as a part
 ///   (typically a JSON part containing an OpenAI-shaped `tool_calls[]` item).
@@ -445,7 +98,7 @@ where
 /// ```json
 /// {
 ///   "role": "user",
-///   "content": [
+///   "contents": [
 ///     { "type": "text", "text": "What does this sign say?" },
 ///     { "type": "input_image", "image_url": { "url": "https://example.com/sign.jpg" } }
 ///   ]
@@ -456,7 +109,7 @@ where
 /// ```json
 /// {
 ///   "role": "assistant",
-///   "content": [ { "type": "text", "text": "I'll look that up." } ],
+///   "contents": [ { "type": "text", "text": "I'll look that up." } ],
 ///   "tool_calls": [
 ///     {
 ///       "type": "function",
@@ -474,18 +127,15 @@ where
 /// ```json
 /// {
 ///   "role": "assistant",
-///   "content": [ { "type": "text", "text": "The current temperature is 42 °C." } ],
+///   "contents": [ { "type": "text", "text": "The current temperature is 42 °C." } ],
 ///   "reasoning": [ { "type": "text", "text": "(model reasoning tokens, if exposed)" } ]
 /// }
 /// ```
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Message {
     pub role: Role,
-    #[serde(default, deserialize_with = "text_or_part_vector")]
-    pub content: Vec<Part>,
-    #[serde(default, deserialize_with = "text_or_part_vector")]
-    pub reasoning: Vec<Part>,
-    #[serde(default)]
+    pub reasoning: String,
+    pub contents: Vec<Part>,
     pub tool_calls: Vec<Part>,
 }
 
@@ -494,19 +144,36 @@ impl Message {
     pub fn new(role: Role) -> Message {
         Message {
             role,
-            reasoning: Vec::new(),
-            content: Vec::new(),
+            reasoning: String::new(),
+            contents: Vec::new(),
             tool_calls: Vec::new(),
         }
     }
 
-    /// Create a message with initial content
-    pub fn with_content(role: Role, content: Part) -> Message {
+    pub fn with_reasoning(self, reasoning: String) -> Message {
         Message {
-            role,
-            reasoning: Vec::new(),
-            content: vec![content],
-            tool_calls: Vec::new(),
+            role: self.role,
+            reasoning,
+            contents: self.contents,
+            tool_calls: self.tool_calls,
+        }
+    }
+
+    pub fn with_contents(self, contents: Vec<Part>) -> Message {
+        Message {
+            role: self.role,
+            reasoning: self.reasoning,
+            contents,
+            tool_calls: self.tool_calls,
+        }
+    }
+
+    pub fn with_tool_calls(self, tool_calls: Vec<Part>) -> Message {
+        Message {
+            role: self.role,
+            reasoning: self.reasoning,
+            contents: self.contents,
+            tool_calls,
         }
     }
 }
@@ -514,22 +181,14 @@ impl Message {
 impl Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut to_write = vec![format!("role={}", &self.role)];
-        if self.reasoning.len() > 0 {
-            to_write.push(format!(
-                "reasoning=[{}]",
-                &self
-                    .reasoning
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ));
+        if !self.reasoning.is_empty() {
+            to_write.push(format!("reasoning={}", &self.reasoning));
         }
-        if self.content.len() > 0 {
+        if self.contents.len() > 0 {
             to_write.push(format!(
-                "content=[{}]",
+                "contents=[{}]",
                 &self
-                    .content
+                    .contents
                     .iter()
                     .map(|v| v.to_string())
                     .collect::<Vec<_>>()
@@ -547,19 +206,203 @@ impl Display for Message {
                     .join(",")
             ));
         }
-        f.write_str(&format!("Message({})", to_write.join(", ")))?;
+        f.write_str(&format!("Message {{ {} }}", to_write.join(", ")))?;
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone)]
+pub struct MessageFmt {
+    part_fmt: PartFmt,
+
+    /// {"|HERE|": "...", "content": [...], "tool_calls": [...]}
+    /// default: "reasoning"
+    reasoning_field: String,
+
+    /// it the value is true, put `"reasoning": null` markers
+    /// if the value is false, no field.
+    /// default: false
+    reasoning_null_marker: bool,
+
+    /// {"reasoning": "...", "|HERE|": [...], "tool_calls": [...]}
+    /// default: "content"
+    contents_field: String,
+
+    /// {"reasoning": "...", "contents": |HERE|, "tool_calls": [...]}
+    /// true: ser/de as a string (vector must be a length 1 with text part)
+    /// false: ser/de as a vector of parts (usually multimodal)
+    /// default: "false"
+    contents_textonly: bool,
+
+    /// it the value is true, put `"contents": null` markers
+    /// if the value is false, no field.
+    /// default: false
+    contents_null_marker: bool,
+
+    /// {"reasoning": "...", "contents": [...], "|HERE|": [...]}
+    /// default: "tool_calls"
+    tool_calls_field: String,
+
+    /// it the value is true, put `"tool_calls": null` markers
+    /// if the value is false, no field.
+    /// default: false
+    tool_calls_null_marker: bool,
+}
+
+impl MessageFmt {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for MessageFmt {
+    fn default() -> Self {
+        Self {
+            part_fmt: PartFmt::default(),
+            reasoning_field: String::from("reasoning_content"),
+            reasoning_null_marker: false,
+            contents_field: String::from("content"),
+            contents_textonly: false,
+            contents_null_marker: false,
+            tool_calls_field: String::from("tool_calls"),
+            tool_calls_null_marker: false,
+        }
+    }
+}
+
+impl Serialize for Message {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let formatted = MessageWithFmt::new(self, MessageFmt::new());
+        formatted.serialize(serializer)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MessageWithFmt<'a>(&'a Message, MessageFmt);
+
+impl<'a> MessageWithFmt<'a> {
+    pub fn new(msg: &'a Message, fmt: MessageFmt) -> Self {
+        Self(msg, fmt)
+    }
+}
+
+impl<'a> Serialize for MessageWithFmt<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("role", &self.0.role)?;
+
+        if !self.0.reasoning.is_empty() {
+            map.serialize_entry(&self.1.reasoning_field, &self.0.reasoning)?;
+        } else if self.1.reasoning_null_marker {
+            map.serialize_entry(&self.1.reasoning_field, &())?;
+        }
+
+        if self.1.contents_textonly {
+            map.serialize_entry(
+                &self.1.contents_field,
+                self.0.contents.get(0).unwrap().get_text().unwrap(),
+            )?;
+        } else {
+            if !self.0.contents.is_empty() {
+                map.serialize_entry(
+                    &self.1.contents_field,
+                    &self
+                        .0
+                        .contents
+                        .iter()
+                        .map(|v| PartWithFmt::new(v, self.1.part_fmt.clone()))
+                        .collect::<Vec<_>>(),
+                )?;
+            } else if self.1.contents_null_marker {
+                map.serialize_entry(&self.1.contents_field, &())?;
+            }
+        }
+
+        if !self.0.tool_calls.is_empty() {
+            map.serialize_entry(
+                &self.1.tool_calls_field,
+                &self
+                    .0
+                    .tool_calls
+                    .iter()
+                    .map(|v| PartWithFmt::new(v, self.1.part_fmt.clone()))
+                    .collect::<Vec<_>>(),
+            )?;
+        } else if self.1.tool_calls_null_marker {
+            map.serialize_entry(&self.1.tool_calls_field, &())?;
+        }
+
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Message {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(MessageVisitor)
+    }
+}
+
+struct MessageVisitor;
+
+impl<'de> de::Visitor<'de> for MessageVisitor {
+    type Value = Message;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str(r#"a map with "type" field and one other content key"#)
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let mut role: Option<Role> = None;
+        let mut contents: Vec<Part> = Vec::new();
+        let mut reasoning: String = String::new();
+        let mut tool_calls: Vec<Part> = Vec::new();
+
+        while let Some(k) = map.next_key::<String>()? {
+            if k == "role" {
+                if role.is_some() {
+                    return Err(de::Error::duplicate_field("role"));
+                }
+                role = Some(map.next_value()?);
+            } else if k == "content" {
+                contents = map.next_value()?;
+            } else if k == "reasoning" || k == "reasoning_content" {
+                reasoning = map.next_value()?;
+            } else if k == "tool_calls" {
+                tool_calls = map.next_value()?;
+            } else {
+                return Err(de::Error::unknown_field(
+                    &k,
+                    &["content", "reasoning", "tool_calls"],
+                ));
+            }
+        }
+        let role = role.ok_or_else(|| de::Error::missing_field("role"))?;
+        Ok(Message {
+            role,
+            contents,
+            reasoning,
+            tool_calls,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct MessageDelta {
     pub role: Option<Role>,
-    #[serde(default, deserialize_with = "text_or_part_vector")]
-    pub reasoning: Vec<Part>,
-    #[serde(default, deserialize_with = "text_or_part_vector")]
-    pub content: Vec<Part>,
-    #[serde(default)]
+    pub reasoning: String,
+    pub contents: Vec<Part>,
     pub tool_calls: Vec<Part>,
 }
 
@@ -567,8 +410,8 @@ impl MessageDelta {
     pub fn new() -> MessageDelta {
         MessageDelta {
             role: None,
-            reasoning: Vec::new(),
-            content: Vec::new(),
+            reasoning: String::new(),
+            contents: Vec::new(),
             tool_calls: Vec::new(),
         }
     }
@@ -577,25 +420,25 @@ impl MessageDelta {
         MessageDelta {
             role: Some(role),
             reasoning: self.reasoning,
-            content: self.content,
+            contents: self.contents,
             tool_calls: self.tool_calls,
         }
     }
 
-    pub fn with_reasoning(self, reasoning: Vec<Part>) -> MessageDelta {
+    pub fn with_reasoning(self, reasoning: String) -> MessageDelta {
         MessageDelta {
             role: self.role,
             reasoning,
-            content: self.content,
+            contents: self.contents,
             tool_calls: self.tool_calls,
         }
     }
 
-    pub fn with_content(self, content: Vec<Part>) -> MessageDelta {
+    pub fn with_contents(self, contents: Vec<Part>) -> MessageDelta {
         MessageDelta {
             role: self.role,
             reasoning: self.reasoning,
-            content,
+            contents,
             tool_calls: self.tool_calls,
         }
     }
@@ -604,7 +447,7 @@ impl MessageDelta {
         MessageDelta {
             role: self.role,
             reasoning: self.reasoning,
-            content: self.content,
+            contents: self.contents,
             tool_calls,
         }
     }
@@ -618,21 +461,13 @@ impl Display for MessageDelta {
         };
 
         if self.reasoning.len() > 0 {
-            to_write.push(format!(
-                "reasoning=[{}]",
-                &self
-                    .reasoning
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ));
+            to_write.push(format!("reasoning=\"{}\"", &self));
         }
-        if self.content.len() > 0 {
+        if self.contents.len() > 0 {
             to_write.push(format!(
-                "content=[{}]",
+                "contents=[{}]",
                 &self
-                    .content
+                    .contents
                     .iter()
                     .map(|v| v.to_string())
                     .collect::<Vec<_>>()
@@ -650,8 +485,130 @@ impl Display for MessageDelta {
                     .join(",")
             ));
         }
-        f.write_fmt(format_args!("MessageDelta({})", to_write.join(", ")))?;
+        f.write_fmt(format_args!("MessageDelta {{ {} }}", to_write.join(", ")))?;
         Ok(())
+    }
+}
+
+impl Serialize for MessageDelta {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let formatted = MessageDeltaWithFmt::new(self, MessageFmt::default());
+        formatted.serialize(serializer)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MessageDeltaWithFmt<'a>(&'a MessageDelta, MessageFmt);
+
+impl<'a> MessageDeltaWithFmt<'a> {
+    pub fn new(inner: &'a MessageDelta, fmt: MessageFmt) -> Self {
+        Self(inner, fmt)
+    }
+}
+
+impl<'a> Serialize for MessageDeltaWithFmt<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+        if self.0.role.is_some() {
+            map.serialize_entry("role", &self.0.role)?;
+        }
+
+        if !self.0.reasoning.is_empty() {
+            map.serialize_entry(&self.1.reasoning_field, &self.0.reasoning)?;
+        } else if self.1.reasoning_null_marker {
+            map.serialize_entry(&self.1.reasoning_field, &())?;
+        }
+
+        if self.1.contents_textonly {
+            todo!()
+        } else {
+            if !self.0.contents.is_empty() {
+                let v = self
+                    .0
+                    .contents
+                    .iter()
+                    .map(|v| PartWithFmt::new(v, self.1.part_fmt.clone()))
+                    .collect::<Vec<_>>();
+                map.serialize_entry(&self.1.contents_field, &v)?;
+            } else if self.1.contents_null_marker {
+                map.serialize_entry(&self.1.contents_field, &())?;
+            }
+        }
+
+        if !self.0.tool_calls.is_empty() {
+            let v = self
+                .0
+                .tool_calls
+                .iter()
+                .map(|v| PartWithFmt::new(v, self.1.part_fmt.clone()))
+                .collect::<Vec<_>>();
+            map.serialize_entry(&self.1.tool_calls_field, &v)?;
+        } else if self.1.tool_calls_null_marker {
+            map.serialize_entry(&self.1.tool_calls_field, &())?;
+        }
+
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for MessageDelta {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(MessagDeltaVisitor)
+    }
+}
+
+struct MessagDeltaVisitor;
+
+impl<'de> de::Visitor<'de> for MessagDeltaVisitor {
+    type Value = MessageDelta;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str(r#"a map with "type" field and one other content key"#)
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let mut role: Option<Role> = None;
+        let mut contents: Vec<Part> = Vec::new();
+        let mut reasoning: String = String::new();
+        let mut tool_calls: Vec<Part> = Vec::new();
+
+        while let Some(k) = map.next_key::<String>()? {
+            if k == "role" {
+                if role.is_some() {
+                    return Err(de::Error::duplicate_field("role"));
+                }
+                role = Some(map.next_value()?);
+            } else if k == "content" {
+                contents = map.next_value()?;
+            } else if k == "reasoning" || k == "reasoning_content" {
+                reasoning = map.next_value()?;
+            } else if k == "tool_calls" {
+                tool_calls = map.next_value()?;
+            } else {
+                return Err(de::Error::unknown_field(
+                    &k,
+                    &["content", "reasoning", "tool_calls"],
+                ));
+            }
+        }
+        Ok(MessageDelta {
+            role,
+            contents,
+            reasoning,
+            tool_calls,
+        })
     }
 }
 
@@ -665,8 +622,7 @@ pub enum FinishReason {
     ToolCall,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(Debug, Clone, Default)]
 pub struct MessageOutput {
     pub delta: MessageDelta,
     pub finish_reason: Option<FinishReason>,
@@ -705,6 +661,86 @@ impl Display for MessageOutput {
         };
         f.write_str(&format!(")"))?;
         Ok(())
+    }
+}
+
+struct MessageOutputWithFmt<'a>(&'a MessageOutput, MessageFmt);
+
+impl<'a> MessageOutputWithFmt<'a> {
+    pub fn new(inner: &'a MessageOutput, fmt: MessageFmt) -> Self {
+        Self(inner, fmt)
+    }
+}
+
+impl<'a> Serialize for MessageOutputWithFmt<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry(
+            "delta",
+            &MessageDeltaWithFmt::new(&self.0.delta, self.1.clone()),
+        )?;
+        if self.0.finish_reason.is_some() {
+            map.serialize_entry("finish_reason", &self.0.finish_reason)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for MessageOutput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(MessageOutputVisitor)
+    }
+}
+
+struct MessageOutputVisitor;
+
+impl<'de> de::Visitor<'de> for MessageOutputVisitor {
+    type Value = MessageOutput;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str(r#"a map with "type" field and one other content key"#)
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let mut delta: Option<MessageDelta> = None;
+        let mut finish_reason: Option<FinishReason> = None;
+
+        while let Some(k) = map.next_key::<String>()? {
+            if k == "delta" {
+                if delta.is_some() {
+                    return Err(de::Error::duplicate_field("delta"));
+                }
+                delta = Some(map.next_value()?);
+            } else if k == "finish_reason" {
+                finish_reason = map.next_value()?;
+            } else {
+                return Err(de::Error::unknown_field(&k, &["delta", "finish_reason"]));
+            }
+        }
+        let delta = delta.ok_or_else(|| de::Error::missing_field("delta"))?;
+        Ok(MessageOutput {
+            delta,
+            finish_reason,
+        })
+    }
+}
+
+impl Serialize for MessageOutput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let formatted = MessageOutputWithFmt::new(self, MessageFmt::default());
+        formatted.serialize(serializer)
     }
 }
 
@@ -788,33 +824,25 @@ impl MessageAggregator {
         };
 
         let buffer = self.buffer.as_mut().expect("Role not specified");
-        for part in delta.reasoning {
+        if !delta.reasoning.is_empty() {
             if buffer.reasoning.is_empty() {
-                buffer.reasoning.push(part);
+                buffer.reasoning = delta.reasoning;
             } else {
-                let last_part = buffer.reasoning.last_mut().unwrap();
-                if last_part.is_text() && part.is_text() {
-                    last_part
-                        .get_text_mut()
-                        .unwrap()
-                        .push_str(part.get_text().unwrap());
-                } else {
-                    buffer.reasoning.push(part);
-                }
+                buffer.reasoning.push_str(&delta.reasoning);
             }
         }
-        for part in delta.content {
-            if buffer.content.is_empty() {
-                buffer.content.push(part);
+        for part in delta.contents {
+            if buffer.contents.is_empty() {
+                buffer.contents.push(part);
             } else {
-                let last_part = buffer.content.last_mut().unwrap();
+                let last_part = buffer.contents.last_mut().unwrap();
                 if last_part.is_text() && part.is_text() {
                     last_part
                         .get_text_mut()
                         .unwrap()
                         .push_str(part.get_text().unwrap());
                 } else {
-                    buffer.content.push(part);
+                    buffer.contents.push(part);
                 }
             }
         }
@@ -823,11 +851,11 @@ impl MessageAggregator {
                 buffer.tool_calls.push(part);
             } else {
                 let last_part = buffer.tool_calls.last_mut().unwrap();
-                if last_part.is_function() && part.is_function() {
+                if last_part.is_text() && part.is_text() {
                     last_part
-                        .get_function_mut()
+                        .get_text_mut()
                         .unwrap()
-                        .push_str(part.get_function().unwrap());
+                        .push_str(part.get_text().unwrap());
                 } else {
                     buffer.tool_calls.push(part);
                 }
@@ -835,7 +863,29 @@ impl MessageAggregator {
         }
 
         if msg_out.finish_reason.is_some() {
-            return self.buffer.take();
+            let mut rv = self.buffer.take().unwrap();
+            rv.tool_calls = rv
+                .tool_calls
+                .into_iter()
+                .map(|v| {
+                    match v {
+                        Part::Text(text) => match serde_json::from_str::<ToolCall>(&text) {
+                            Ok(res) => Part::Function {
+                                id: None,
+                                function: res,
+                            },
+                            Err(_) => Part::Text(text),
+                        },
+                        Part::Function { id, function } => Part::Function { id, function },
+                        Part::ImageURL(url) => Part::ImageURL(url),
+                        Part::ImageData(data) => Part::ImageData(data),
+                        Part::AudioURL(url) => Part::AudioURL(url),
+                        Part::AudioData(data) => Part::AudioData(data),
+                    };
+                    Part::Text("()".to_owned())
+                })
+                .collect();
+            return Some(rv);
         } else {
             None
         }

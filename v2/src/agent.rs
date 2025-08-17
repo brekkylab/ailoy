@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use crate::{
     model::LanguageModel,
     tool::Tool,
-    value::{Message, MessageAggregator, MessageDelta, MessageOutput, Part, Role, ToolCall},
+    value::{Message, MessageAggregator, MessageOutput, Part, Role},
 };
 
 pub struct Agent {
@@ -31,7 +31,8 @@ impl Agent {
         let lm = self.lm.clone();
         let tools = self.tools.clone();
         let msgs = self.messages.clone();
-        let user_message = Message::with_content(Role::User, Part::Text(user_message.into()));
+        let user_message =
+            Message::new(Role::User).with_contents(vec![Part::Text(user_message.into())]);
         async_stream::try_stream! {
             msgs.lock().await.push(user_message);
             loop {
@@ -49,13 +50,14 @@ impl Agent {
                 self.messages.lock().await.push(assistant_msg.clone());
                 if !assistant_msg.tool_calls.is_empty() {
                     for part in assistant_msg.tool_calls {
-                        let tc = ToolCall::try_from_string(part.get_function_owned().unwrap()).unwrap();
-                        let tool = tools.iter().find(|v| v.get_description().get_name() == tc.get_name()).unwrap().clone();
-                        let resp = tool.run(tc).await?;
-                        let delta = MessageDelta::new().with_role(Role::Tool).with_content(vec![resp.clone()]);
-                        yield MessageOutput::new().with_delta(delta);
-                        let tool_msg = Message::with_content(Role::Tool, resp);
-                        self.messages.lock().await.push(tool_msg);
+                        todo!()
+                        // let tc = ToolCall::try_from_string(part.get_function_owned().unwrap()).unwrap();
+                        // let tool = tools.iter().find(|v| v.get_description().get_name() == tc.get_name()).unwrap().clone();
+                        // let resp = tool.run(tc).await?;
+                        // let delta = MessageDelta::new().with_role(Role::Tool).with_content(vec![resp.clone()]);
+                        // yield MessageOutput::new().with_delta(delta);
+                        // let tool_msg = Message::new(Role::Tool).with_content(vec![resp]);
+                        // self.messages.lock().await.push(tool_msg);
                     }
                 } else {
                     break;
@@ -108,7 +110,7 @@ mod tests {
         use crate::{
             model::LocalLanguageModel,
             tool::BuiltinTool,
-            value::{ToolDescription, ToolDescriptionArgument},
+            value::{ToolDesc, ToolDescArg},
         };
 
         let cache = crate::cache::Cache::new();
@@ -124,31 +126,30 @@ mod tests {
         }
         let model = model.unwrap();
         let tools = vec![Arc::new(BuiltinTool::new(
-            ToolDescription::new(
+            ToolDesc::new(
                 "temperature",
                 "Get current temperature",
-                ToolDescriptionArgument::new_object().with_properties(
+                ToolDescArg::new_object().with_properties(
                     [
                         (
                             "location",
-                            ToolDescriptionArgument::new_string().with_desc("The city name"),
+                            ToolDescArg::new_string().with_desc("The city name"),
                         ),
                         (
                             "unit",
-                            ToolDescriptionArgument::new_string()
-                                .with_enum(["Celcius", "Fernheit"]),
+                            ToolDescArg::new_string().with_enum(["Celcius", "Fernheit"]),
                         ),
                     ],
                     ["location", "unit"],
                 ),
                 Some(
-                    ToolDescriptionArgument::new_number()
+                    ToolDescArg::new_number()
                         .with_desc("Null if the given city name is unavailable."),
                 ),
             ),
             Arc::new(|tc| {
                 if tc
-                    .get_argument()
+                    .arguments
                     .as_object()
                     .unwrap()
                     .get("unit")
@@ -157,9 +158,9 @@ mod tests {
                     .unwrap()
                     == "Celcius"
                 {
-                    Part::new_text("40")
+                    Part::Text("40".to_owned())
                 } else {
-                    Part::new_text("104")
+                    Part::Text("104".to_owned())
                 }
             }),
         )) as Arc<dyn Tool>];
