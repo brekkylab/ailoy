@@ -124,6 +124,10 @@ pub enum Part {
 }
 
 impl Part {
+    pub fn new_text(text: impl Into<String>) -> Self {
+        Self::Text(text.into())
+    }
+
     pub fn is_text(&self) -> bool {
         match self {
             Part::Text(_) => true,
@@ -142,6 +146,13 @@ impl Part {
         match self {
             Part::Text(str) => Some(str),
             _ => None,
+        }
+    }
+
+    pub fn new_function(id: Option<String>, function: impl Into<ToolCall>) -> Self {
+        Self::Function {
+            id,
+            function: function.into(),
         }
     }
 
@@ -191,65 +202,65 @@ impl fmt::Display for Part {
 
 #[derive(Debug, Clone)]
 pub struct PartFmt {
-    tool_call_fmt: ToolCallFmt,
+    pub tool_call_fmt: ToolCallFmt,
 
     /// {"type": "<HERE>", "text": "It's a text..."}
     /// default: "text"
-    text_type: String,
+    pub text_type: String,
 
     /// {"type": "text", "<HERE>": "It's a text..."}
     /// default: "text"
-    text_field: String,
+    pub text_field: String,
 
     /// {"type": "<HERE>", "id": "1234asdf", "function": {"name": "function name", "arguments": "function args"}}
     /// default: "function"
-    function_type: String,
+    pub function_type: String,
 
     /// {"type": "function", "id": "1234asdf", "<HERE>": {"name": "function name", "arguments": "function args"}}
     /// default: "function"
-    function_field: String,
+    pub function_field: String,
 
     /// {"type": "function", "<HERE>": "1234asdf", "function": {"name": "function name", "arguments": "function args"}}
     /// default: "function"
-    function_id_field: String,
+    pub function_id_field: String,
 
     /// {"type": "function", "id": null, "function": (tool call)}
     /// it the value is true, put `"id": null` markers
     /// if the value is false, no field.
     /// default: false
-    function_id_null_marker: bool,
+    pub function_id_null_marker: bool,
 
     /// {"type": "<HERE>", "url": "http://..."}
     /// default: "image"
-    image_url_type: String,
+    pub image_url_type: String,
 
     /// {"type": "image", "<HERE>": "http://..."}
     /// default: "url"
-    image_url_field: String,
+    pub image_url_field: String,
 
     /// {"type": "<HERE>", "data": "base64 encoded bytes..."}
     /// default: "image"
-    image_data_type: String,
+    pub image_data_type: String,
 
     /// {"type": "image", "<HERE>": "base64 encoded bytes..."}
     /// default: "data"
-    image_data_field: String,
+    pub image_data_field: String,
 
     /// {"type": "<HERE>", "url": "http://..."}
     /// default: "audio"
-    audio_url_type: String,
+    pub audio_url_type: String,
 
     /// {"type": "audio", "<HERE>": "http://..."}
     /// default: "url"
-    audio_url_field: String,
+    pub audio_url_field: String,
 
     /// {"type": "<HERE>", "data": "base64 encoded bytes..."}
     /// default: "audio"
-    audio_data_type: String,
+    pub audio_data_type: String,
 
     /// {"type": "audio", "<HERE>": "base64 encoded bytes..."}
     /// default: "data"
-    audio_data_field: String,
+    pub audio_data_field: String,
 }
 
 impl PartFmt {

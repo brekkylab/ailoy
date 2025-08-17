@@ -150,30 +150,30 @@ impl Message {
         }
     }
 
-    pub fn with_reasoning(self, reasoning: String) -> Message {
+    pub fn with_reasoning(self, reasoning: impl Into<String>) -> Message {
         Message {
             role: self.role,
-            reasoning,
+            reasoning: reasoning.into(),
             contents: self.contents,
             tool_calls: self.tool_calls,
         }
     }
 
-    pub fn with_contents(self, contents: Vec<Part>) -> Message {
+    pub fn with_contents(self, contents: impl IntoIterator<Item = Part>) -> Message {
         Message {
             role: self.role,
             reasoning: self.reasoning,
-            contents,
+            contents: contents.into_iter().collect(),
             tool_calls: self.tool_calls,
         }
     }
 
-    pub fn with_tool_calls(self, tool_calls: Vec<Part>) -> Message {
+    pub fn with_tool_calls(self, tool_calls: impl IntoIterator<Item = Part>) -> Message {
         Message {
             role: self.role,
             reasoning: self.reasoning,
             contents: self.contents,
-            tool_calls,
+            tool_calls: tool_calls.into_iter().collect(),
         }
     }
 }
@@ -213,40 +213,40 @@ impl Display for Message {
 
 #[derive(Debug, Clone)]
 pub struct MessageFmt {
-    part_fmt: PartFmt,
+    pub part_fmt: PartFmt,
 
     /// {"|HERE|": "...", "content": [...], "tool_calls": [...]}
     /// default: "reasoning"
-    reasoning_field: String,
+    pub reasoning_field: String,
 
     /// it the value is true, put `"reasoning": null` markers
     /// if the value is false, no field.
     /// default: false
-    reasoning_null_marker: bool,
+    pub reasoning_null_marker: bool,
 
     /// {"reasoning": "...", "|HERE|": [...], "tool_calls": [...]}
     /// default: "content"
-    contents_field: String,
+    pub contents_field: String,
 
     /// {"reasoning": "...", "contents": |HERE|, "tool_calls": [...]}
     /// true: ser/de as a string (vector must be a length 1 with text part)
     /// false: ser/de as a vector of parts (usually multimodal)
     /// default: "false"
-    contents_textonly: bool,
+    pub contents_textonly: bool,
 
     /// it the value is true, put `"contents": null` markers
     /// if the value is false, no field.
     /// default: false
-    contents_null_marker: bool,
+    pub contents_null_marker: bool,
 
     /// {"reasoning": "...", "contents": [...], "|HERE|": [...]}
     /// default: "tool_calls"
-    tool_calls_field: String,
+    pub tool_calls_field: String,
 
     /// it the value is true, put `"tool_calls": null` markers
     /// if the value is false, no field.
     /// default: false
-    tool_calls_null_marker: bool,
+    pub tool_calls_null_marker: bool,
 }
 
 impl MessageFmt {
@@ -259,7 +259,7 @@ impl Default for MessageFmt {
     fn default() -> Self {
         Self {
             part_fmt: PartFmt::default(),
-            reasoning_field: String::from("reasoning_content"),
+            reasoning_field: String::from("reasoning"),
             reasoning_null_marker: false,
             contents_field: String::from("content"),
             contents_textonly: false,
@@ -304,10 +304,12 @@ impl<'a> Serialize for MessageWithFmt<'a> {
         }
 
         if self.1.contents_textonly {
-            map.serialize_entry(
-                &self.1.contents_field,
-                self.0.contents.get(0).unwrap().get_text().unwrap(),
-            )?;
+            if !self.0.contents.is_empty() {
+                map.serialize_entry(
+                    &self.1.contents_field,
+                    self.0.contents.get(0).unwrap().get_text().unwrap(),
+                )?;
+            }
         } else {
             if !self.0.contents.is_empty() {
                 map.serialize_entry(

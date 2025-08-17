@@ -16,6 +16,32 @@ pub enum ToolCallArg {
 }
 
 impl ToolCallArg {
+    pub fn new_string(s: impl Into<String>) -> Self {
+        Self::String(s.into())
+    }
+
+    pub fn new_number(n: impl Into<f64>) -> Self {
+        Self::Number(NotNan::new(n.into()).unwrap())
+    }
+
+    pub fn new_boolean(b: impl Into<bool>) -> Self {
+        Self::Boolean(b.into())
+    }
+
+    pub fn new_object(o: impl IntoIterator<Item = (impl Into<String>, ToolCallArg)>) -> Self {
+        let o = o.into_iter().map(|(k, v)| (k.into(), Box::new(v)));
+        Self::Object(o.collect())
+    }
+
+    pub fn new_array(a: impl IntoIterator<Item = ToolCallArg>) -> Self {
+        let a = a.into_iter().map(|v| Box::new(v));
+        Self::Array(a.collect())
+    }
+
+    pub fn new_null() -> Self {
+        Self::Null
+    }
+
     /// Returns the inner `&str` if this is `String`, otherwise `None`.
     pub fn as_str(&self) -> Option<&str> {
         match self {
