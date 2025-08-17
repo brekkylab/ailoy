@@ -378,7 +378,24 @@ impl<'de> de::Visitor<'de> for MessageVisitor {
                 }
                 role = Some(map.next_value()?);
             } else if k == "content" {
-                contents = map.next_value()?;
+                #[derive(Deserialize)]
+                #[serde(untagged)]
+                enum ContentEither {
+                    Null,             // content: null
+                    Str(String),      // content: "..."
+                    Parts(Vec<Part>), // content: [ {...}, {...} ]
+                }
+                match map.next_value::<ContentEither>()? {
+                    ContentEither::Null => {}
+                    ContentEither::Str(s) => {
+                        if !s.is_empty() {
+                            contents = vec![Part::new_text(s)];
+                        }
+                    }
+                    ContentEither::Parts(v) => {
+                        contents = v;
+                    }
+                }
             } else if k == "reasoning" || k == "reasoning_content" {
                 reasoning = map.next_value()?;
             } else if k == "tool_calls" {
