@@ -84,7 +84,15 @@ tvm_runtime_t::tvm_runtime_t(CacheContents &contents, const DLDevice &device) {
   // Load model metadata
   tvm::ffi::TypedFunction<tvm::String()> fmetadata =
       vm.GetFunction("_metadata");
-  metadata_ = nlohmann::json::parse(static_cast<std::string>(fmetadata()));
+  picojson::value parsed;
+  std::string err =
+      picojson::parse(parsed, static_cast<std::string>(fmetadata()));
+  metadata_ = parsed.get<picojson::object>();
+
+  if (!err.empty()) {
+    std::cerr << "JSON parsing error: " << err << std::endl;
+    return;
+  }
 
   // Load ndarray cache metadata
   auto ndarray_cache_metadata = NDArrayCacheMetadata::LoadFromStr(
@@ -121,11 +129,13 @@ tvm_runtime_t::tvm_runtime_t(CacheContents &contents, const DLDevice &device) {
   const tvm::ffi::Function fload_params =
       tvm::ffi::Function::GetGlobal(name_loader).value();
 
+  const picojson::array &params_array =
+      metadata_.at("params").get<picojson::array>();
   Array<String> param_names;
-  param_names.reserve(metadata_["params"].size());
-  for (const auto &param : metadata_["params"]) {
-    std::string param_name = param["name"];
-    param_names.push_back(param_name);
+  param_names.reserve(params_array.size());
+  for (const picojson::value &param : params_array) {
+    const picojson::object &param_object = param.get<picojson::object>();
+    param_names.push_back(param_object.at("name").get<std::string>());
   }
   params_ = fload_params(param_names).cast<Array<NDArray>>();
 }

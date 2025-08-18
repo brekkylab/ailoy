@@ -7,7 +7,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include <nlohmann/json.hpp>
 #include <rust/cxx.h>
 #include <tvm/ffi/function.h>
 #include <tvm/runtime/ndarray.h>
