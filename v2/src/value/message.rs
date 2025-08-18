@@ -7,7 +7,7 @@ use serde::{
 };
 use strum::{Display, EnumString};
 
-use crate::value::{Part, PartFmt, PartWithFmt, ToolCall};
+use crate::value::{Part, PartFmt, PartWithFmt};
 
 /// The author of a message (or streaming delta) in a chat.
 ///
@@ -421,11 +421,6 @@ impl<'de> de::Visitor<'de> for MessageVisitor {
                 reasoning = map.next_value()?;
             } else if k == "tool_calls" {
                 tool_calls = map.next_value()?;
-            } else {
-                return Err(de::Error::unknown_field(
-                    &k,
-                    &["content", "reasoning", "tool_calls"],
-                ));
             }
         }
         Ok(Message {
@@ -549,11 +544,9 @@ impl<'de> de::Visitor<'de> for MessageOutputVisitor {
                 delta = Some(map.next_value()?);
             } else if k == "finish_reason" {
                 finish_reason = map.next_value()?;
-            } else {
-                return Err(de::Error::unknown_field(&k, &["delta", "finish_reason"]));
             }
         }
-        let delta = delta.ok_or_else(|| de::Error::missing_field("delta"))?;
+        let delta = delta.unwrap_or_default();
         Ok(MessageOutput {
             delta,
             finish_reason,

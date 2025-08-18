@@ -5,15 +5,16 @@ use std::{fmt::Debug, sync::Arc};
 
 use crate::{
     model::LanguageModel,
-    value::{Message, MessageOutput, ToolDesc},
+    value::{Message, MessageFmt, MessageOutput, MessageWithFmt, OPENAI_FMT, ToolDesc},
 };
 
 #[derive(Clone)]
 pub struct APILanguageModel {
     model: String,
+    formatter: MessageFmt,
     make_request: Arc<
         dyn Fn(
-                Vec<Message>,
+                Vec<MessageWithFmt>,
                 Vec<ToolDesc>,
             ) -> BoxFuture<'static, Result<reqwest::Response, reqwest::Error>>
             + Send
@@ -26,28 +27,31 @@ impl APILanguageModel {
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> APILanguageModel {
         let model = model.into();
         let api_key = api_key.into();
-        let (make_request, handle_response) = if model.starts_with("gpt") || model.starts_with("o")
-        {
-            let model = model.clone();
-            let api_key = api_key.clone();
-            (
-                Arc::new(move |msgs: Vec<Message>, tools: Vec<ToolDesc>| {
-                    openai::make_request(&model, &api_key, msgs, tools)
-                }),
-                Arc::new(&openai::handle_next_response),
-            )
-        } else if model.starts_with("claude") {
-            todo!()
-        } else if model.starts_with("gemini") {
-            todo!()
-        } else if model.starts_with("grok") {
-            todo!()
-        } else {
-            panic!()
-        };
+        let (formatter, make_request, handle_response) =
+            if model.starts_with("gpt") || model.starts_with("o") {
+                let formatter = OPENAI_FMT.clone();
+                let model = model.clone();
+                let api_key = api_key.clone();
+                (
+                    formatter,
+                    Arc::new(move |msgs: Vec<MessageWithFmt>, tools: Vec<ToolDesc>| {
+                        openai::make_request(&model, &api_key, msgs, tools)
+                    }),
+                    Arc::new(&openai::handle_next_response),
+                )
+            } else if model.starts_with("claude") {
+                todo!()
+            } else if model.starts_with("gemini") {
+                todo!()
+            } else if model.starts_with("grok") {
+                todo!()
+            } else {
+                panic!()
+            };
 
         APILanguageModel {
             model,
+            formatter,
             make_request,
             handle_response,
         }
@@ -60,6 +64,10 @@ impl LanguageModel for APILanguageModel {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
     ) -> BoxStream<'static, Result<MessageOutput, String>> {
+        let msgs = msgs
+            .iter()
+            .map(|v| crate::value::MessageWithFmt::new(v, self.formatter.clone()))
+            .collect::<Vec<_>>();
         let req = (self.make_request)(msgs, tools);
         let strm = async_stream::try_stream! {
             let mut buf: Vec<u8> = Vec::with_capacity(8192);
@@ -115,9 +123,9 @@ mod tests {
         let mut strm = model.run(msgs, Vec::new());
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
-            println!("{:?}", delta);
+            println!("{}", delta);
             if let Some(msg) = agg.update(delta) {
-                println!("{:?}", msg);
+                println!("{}", msg);
             }
         }
     }
@@ -152,14 +160,14 @@ mod tests {
             ),
         )];
         let msgs = vec![
-            Message::with_role(Role::User).with_contents(vec![Part::Text(
-                "How much hot currently in Dubai?".to_owned(),
-            )]),
+            Message::with_role(Role::User)
+                .with_contents([Part::Text("How much hot currently in Dubai?".to_owned())]),
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, tools);
         let mut assistant_msg: Option<Message> = None;
         while let Some(delta_opt) = strm.next().await {
+            println!("{:?}", delta_opt);
             let delta = delta_opt.unwrap();
             if let Some(msg) = agg.update(delta) {
                 assistant_msg = Some(msg);

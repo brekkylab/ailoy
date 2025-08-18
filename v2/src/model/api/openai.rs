@@ -1,11 +1,11 @@
 use futures::future::BoxFuture;
 
-use crate::value::{Message, MessageOutput, ToolDesc};
+use crate::value::{MessageOutput, MessageWithFmt, ToolDesc};
 
 pub fn make_request(
     model_name: &str,
     api_key: &str,
-    msgs: Vec<Message>,
+    msgs: Vec<MessageWithFmt>,
     tools: Vec<ToolDesc>,
 ) -> BoxFuture<'static, Result<reqwest::Response, reqwest::Error>> {
     let mut body = serde_json::json!({
@@ -87,7 +87,7 @@ pub fn handle_next_response(buf: &mut Vec<u8>) -> Result<Vec<MessageOutput>, Str
                 .pointer("/choices/0")
                 .cloned()
                 .ok_or_else(|| "missing JSON pointer: /choices/0".to_string())?;
-            println!("{}", choice);
+            println!("{:?}", choice);
             let out: MessageOutput = serde_json::from_value(choice)
                 .map_err(|e| format!("MessageOutput deserialization failed: {}", e.to_string()))?;
             rv.push(out);

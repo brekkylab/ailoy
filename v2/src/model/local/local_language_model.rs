@@ -48,7 +48,6 @@ impl LanguageModel for LocalLanguageModel {
     ) -> BoxStream<'static, Result<MessageOutput, String>> {
         let strm = try_stream! {
             let prompt = self.chat_template.apply_with_vec(&tools, &msgs, true)?;
-            println!("{}", prompt);
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
             self.inferencer.lock().await.prefill(&input_tokens);
             let mut last_token = *input_tokens.last().unwrap();
@@ -171,13 +170,13 @@ mod tests {
                 .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
             Message::with_role(Role::User)
                 .with_contents(vec![Part::Text("Hi what's your name?".to_owned())]),
-                            Message::with_role(Role::Assistant)
-                .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
-                .with_contents(vec![Part::Text(
-                    "Hi! I'm an AI assistant. How can I assist you today? 😊".to_owned(),
-                )]),
-            Message::with_role(Role::User)
-                .with_contents(vec![Part::Text("Who made you?".to_owned())]),
+            // Message::with_role(Role::Assistant)
+            //     .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
+            //     .with_contents(vec![Part::Text(
+            //         "Hi! I'm an AI assistant. How can I assist you today? 😊".to_owned(),
+            //     )]),
+            // Message::with_role(Role::User)
+            //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, Vec::new());

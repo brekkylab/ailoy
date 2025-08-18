@@ -6,7 +6,7 @@ use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
 use crate::{
     cache::{Cache, CacheContents, CacheEntry, TryFromCache},
-    value::{Message, QWEN3_FMT, ToolDesc},
+    value::{Message, MessageFmt, QWEN3_FMT, ToolDesc},
 };
 
 /// Global Environment (initialized once)
@@ -26,6 +26,7 @@ fn get_env<'a>() -> MutexGuard<'a, Environment<'static>> {
 #[derive(Debug, Clone)]
 pub struct ChatTemplate {
     key: String,
+    formatter: MessageFmt,
     do_reasoning: Arc<Mutex<bool>>,
 }
 
@@ -35,8 +36,17 @@ impl ChatTemplate {
         if env.get_template(&key).is_err() {
             env.add_template_owned(key.clone(), source).unwrap();
         }
+
+        // @jhlee: TODO How to remove hard-coded format determination?
+        let formatter = if key.to_lowercase().starts_with("qwen--qwen3") {
+            QWEN3_FMT.clone()
+        } else {
+            MessageFmt::default()
+        };
+
         Self {
             key,
+            formatter,
             do_reasoning: Arc::new(Mutex::new(true)),
         }
     }
@@ -61,7 +71,7 @@ impl ChatTemplate {
     ) -> Result<String, String> {
         let messages = messages
             .iter()
-            .map(|v| crate::value::MessageWithFmt::new(v, QWEN3_FMT.clone()))
+            .map(|v| crate::value::MessageWithFmt::new(v, self.formatter.clone()))
             .collect::<Vec<_>>();
         let do_reasoning = *self.do_reasoning.lock().unwrap();
         let ctx = if tools.is_empty() {
