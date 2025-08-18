@@ -39,8 +39,8 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    fn run(self: Arc<Self>, toll_call: ToolCall) -> BoxFuture<'static, Result<Part, String>> {
-        Box::pin(async move { Ok((self.f)(toll_call)) })
+    fn run(self: Arc<Self>, toll_call: ToolCall) -> BoxFuture<'static, Result<Vec<Part>, String>> {
+        Box::pin(async move { Ok(vec![(self.f)(toll_call)]) })
     }
 }
 
