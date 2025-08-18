@@ -154,6 +154,11 @@ impl ToolCall {
             arguments,
         }
     }
+
+    pub fn try_from_string(s: impl AsRef<str>) -> Result<Self, String> {
+        serde_json::from_str::<ToolCall>(s.as_ref())
+            .map_err(|e| format!("Invalid JSON: {}", e.to_string()))
+    }
 }
 
 impl fmt::Display for ToolCall {

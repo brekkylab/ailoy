@@ -106,9 +106,9 @@ mod tests {
         let model = Arc::new(APILanguageModel::new("gpt-4.1", OPENAI_API_KEY));
 
         let msgs = vec![
-            Message::new(Role::System)
+            Message::with_role(Role::System)
                 .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
-            Message::new(Role::User)
+            Message::with_role(Role::User)
                 .with_contents(vec![Part::Text("Hi what's your name?".to_owned())]),
         ];
         let mut agg = MessageAggregator::new();
@@ -151,9 +151,11 @@ mod tests {
                 ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
             ),
         )];
-        let msgs = vec![Message::new(Role::User).with_contents(vec![Part::Text(
-            "How much hot currently in Dubai?".to_owned(),
-        )])];
+        let msgs = vec![
+            Message::with_role(Role::User).with_contents(vec![Part::Text(
+                "How much hot currently in Dubai?".to_owned(),
+            )]),
+        ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, tools);
         let mut assistant_msg: Option<Message> = None;

@@ -87,10 +87,12 @@ pub enum Part {
     /// Plain UTF-8 text.
     Text(String),
 
+    /// Raw function, holding JSON call as a string. holds the unmodified JSON; it may be incomplete while streaming.
+    FunctionString(String),
+
     /// Tool/function call payload captured as a raw JSON string.
     ///
     /// `id` corresponds to `tool_call_id` (when available) for correlating tool results.
-    /// `function` holds the unmodified JSON; it may be incomplete while streaming.
     Function {
         /// Optional `tool_call_id` used to correlate tool results.
         id: Option<String>,
@@ -149,6 +151,31 @@ impl Part {
         }
     }
 
+    pub fn new_function_string(function_string: impl Into<String>) -> Self {
+        Self::FunctionString(function_string.into())
+    }
+
+    pub fn is_function_string(&self) -> bool {
+        match self {
+            Part::FunctionString(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn get_function_string(&self) -> Option<&str> {
+        match self {
+            Part::FunctionString(str) => Some(str.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn get_function_string_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Part::FunctionString(str) => Some(str),
+            _ => None,
+        }
+    }
+
     pub fn new_function(id: Option<String>, function: impl Into<ToolCall>) -> Self {
         Self::Function {
             id,
@@ -156,9 +183,28 @@ impl Part {
         }
     }
 
+    pub fn is_function(&self) -> bool {
+        match self {
+            Part::Function { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn get_tool_call(&self) -> Option<ToolCall> {
+        match self {
+            Part::FunctionString(s) => match ToolCall::try_from_string(s) {
+                Ok(v) => Some(v),
+                Err(_) => None,
+            },
+            Part::Function { function, .. } => Some(function.to_owned()),
+            _ => None,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         match self {
             Part::Text(v) => v.is_empty(),
+            Part::FunctionString(v) => v.is_empty(),
             Part::Function { .. } => false,
             Part::ImageURL(_) => false,
             Part::ImageData(v) => v.is_empty(),
@@ -174,6 +220,10 @@ impl fmt::Display for Part {
             Part::Text(text) => {
                 f.write_fmt(format_args!("Part {{ type=\"text\", text=\"{}\" }}", text))?
             }
+            Part::FunctionString(text) => f.write_fmt(format_args!(
+                "Part {{ type=\"function\", function=\"{}\" }}",
+                text
+            ))?,
             Part::Function { id, function } => f.write_fmt(format_args!(
                 "Part {{ type=\"function\", id=\"{}\", function=\"{}\" }}",
                 if let Some(id) = id { id } else { "null" },
@@ -325,6 +375,10 @@ impl<'a> Serialize for PartWithFmt<'a> {
             Part::Text(text) => {
                 map.serialize_entry("type", &self.1.text_type)?;
                 map.serialize_entry(&self.1.text_field, text)?;
+            }
+            Part::FunctionString(function_string) => {
+                map.serialize_entry("type", &self.1.function_type)?;
+                map.serialize_entry(&self.1.function_field, function_string)?;
             }
             Part::Function { id, function } => {
                 map.serialize_entry("type", &self.1.function_type)?;

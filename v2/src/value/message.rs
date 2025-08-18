@@ -133,7 +133,7 @@ pub enum Role {
 /// ```
 #[derive(Clone, Debug)]
 pub struct Message {
-    pub role: Role,
+    pub role: Option<Role>,
     pub reasoning: String,
     pub contents: Vec<Part>,
     pub tool_calls: Vec<Part>,
@@ -141,17 +141,21 @@ pub struct Message {
 
 impl Message {
     /// Create an empty message
-    pub fn new(role: Role) -> Message {
-        Message {
-            role,
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_role(role: Role) -> Self {
+        Self {
+            role: Some(role),
             reasoning: String::new(),
             contents: Vec::new(),
             tool_calls: Vec::new(),
         }
     }
 
-    pub fn with_reasoning(self, reasoning: impl Into<String>) -> Message {
-        Message {
+    pub fn with_reasoning(self, reasoning: impl Into<String>) -> Self {
+        Self {
             role: self.role,
             reasoning: reasoning.into(),
             contents: self.contents,
@@ -159,8 +163,8 @@ impl Message {
         }
     }
 
-    pub fn with_contents(self, contents: impl IntoIterator<Item = Part>) -> Message {
-        Message {
+    pub fn with_contents(self, contents: impl IntoIterator<Item = Part>) -> Self {
+        Self {
             role: self.role,
             reasoning: self.reasoning,
             contents: contents.into_iter().collect(),
@@ -168,8 +172,8 @@ impl Message {
         }
     }
 
-    pub fn with_tool_calls(self, tool_calls: impl IntoIterator<Item = Part>) -> Message {
-        Message {
+    pub fn with_tool_calls(self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
+        Self {
             role: self.role,
             reasoning: self.reasoning,
             contents: self.contents,
@@ -178,35 +182,52 @@ impl Message {
     }
 }
 
+impl Default for Message {
+    fn default() -> Self {
+        Self {
+            role: None,
+            reasoning: String::new(),
+            contents: Vec::new(),
+            tool_calls: Vec::new(),
+        }
+    }
+}
+
 impl Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut to_write = vec![format!("role={}", &self.role)];
+        let mut to_write: Vec<String> = Vec::new();
+        if self.role.is_some() {
+            to_write.push(format!("role: {}", self.role.as_ref().unwrap()));
+        }
         if !self.reasoning.is_empty() {
-            to_write.push(format!("reasoning={}", &self.reasoning));
+            to_write.push(format!(
+                "reasoning: \"{}\"",
+                &self.reasoning.replace("\n", "\\n")
+            ));
         }
         if self.contents.len() > 0 {
             to_write.push(format!(
-                "contents=[{}]",
+                "contents: [ {} ]",
                 &self
                     .contents
                     .iter()
-                    .map(|v| v.to_string())
+                    .map(|v| v.to_string().replace("\n", "\\n"))
                     .collect::<Vec<_>>()
                     .join(",")
             ));
         }
         if self.tool_calls.len() > 0 {
             to_write.push(format!(
-                "tool_calls=[{}]",
+                "tool_calls: [ {} ]",
                 &self
                     .tool_calls
                     .iter()
-                    .map(|v| v.to_string())
+                    .map(|v| v.to_string().replace("\n", "\\n"))
                     .collect::<Vec<_>>()
                     .join(",")
             ));
         }
-        f.write_str(&format!("Message {{ {} }}", to_write.join(", ")))?;
+        f.write_str(&format!("Message{{ {} }}", to_write.join(", ")))?;
         Ok(())
     }
 }
@@ -407,222 +428,7 @@ impl<'de> de::Visitor<'de> for MessageVisitor {
                 ));
             }
         }
-        let role = role.ok_or_else(|| de::Error::missing_field("role"))?;
         Ok(Message {
-            role,
-            contents,
-            reasoning,
-            tool_calls,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct MessageDelta {
-    pub role: Option<Role>,
-    pub reasoning: String,
-    pub contents: Vec<Part>,
-    pub tool_calls: Vec<Part>,
-}
-
-impl MessageDelta {
-    pub fn new() -> MessageDelta {
-        MessageDelta {
-            role: None,
-            reasoning: String::new(),
-            contents: Vec::new(),
-            tool_calls: Vec::new(),
-        }
-    }
-
-    pub fn with_role(self, role: Role) -> MessageDelta {
-        MessageDelta {
-            role: Some(role),
-            reasoning: self.reasoning,
-            contents: self.contents,
-            tool_calls: self.tool_calls,
-        }
-    }
-
-    pub fn with_reasoning(self, reasoning: String) -> MessageDelta {
-        MessageDelta {
-            role: self.role,
-            reasoning,
-            contents: self.contents,
-            tool_calls: self.tool_calls,
-        }
-    }
-
-    pub fn with_contents(self, contents: Vec<Part>) -> MessageDelta {
-        MessageDelta {
-            role: self.role,
-            reasoning: self.reasoning,
-            contents,
-            tool_calls: self.tool_calls,
-        }
-    }
-
-    pub fn with_tool_calls(self, tool_calls: Vec<Part>) -> MessageDelta {
-        MessageDelta {
-            role: self.role,
-            reasoning: self.reasoning,
-            contents: self.contents,
-            tool_calls,
-        }
-    }
-}
-
-impl Display for MessageDelta {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut to_write = Vec::<String>::new();
-        if let Some(role) = &self.role {
-            to_write.push(format!("role={}", role));
-        };
-
-        if self.reasoning.len() > 0 {
-            to_write.push(format!("reasoning=\"{}\"", &self));
-        }
-        if self.contents.len() > 0 {
-            to_write.push(format!(
-                "contents=[{}]",
-                &self
-                    .contents
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ));
-        }
-        if self.tool_calls.len() > 0 {
-            to_write.push(format!(
-                "tool_calls=[{}]",
-                &self
-                    .tool_calls
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ));
-        }
-        f.write_fmt(format_args!("MessageDelta {{ {} }}", to_write.join(", ")))?;
-        Ok(())
-    }
-}
-
-impl Serialize for MessageDelta {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let formatted = MessageDeltaWithFmt::new(self, MessageFmt::default());
-        formatted.serialize(serializer)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct MessageDeltaWithFmt<'a>(&'a MessageDelta, MessageFmt);
-
-impl<'a> MessageDeltaWithFmt<'a> {
-    pub fn new(inner: &'a MessageDelta, fmt: MessageFmt) -> Self {
-        Self(inner, fmt)
-    }
-}
-
-impl<'a> Serialize for MessageDeltaWithFmt<'a> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(None)?;
-        if self.0.role.is_some() {
-            map.serialize_entry("role", &self.0.role)?;
-        }
-
-        if !self.0.reasoning.is_empty() {
-            map.serialize_entry(&self.1.reasoning_field, &self.0.reasoning)?;
-        } else if self.1.reasoning_null_marker {
-            map.serialize_entry(&self.1.reasoning_field, &())?;
-        }
-
-        if self.1.contents_textonly {
-            todo!()
-        } else {
-            if !self.0.contents.is_empty() {
-                let v = self
-                    .0
-                    .contents
-                    .iter()
-                    .map(|v| PartWithFmt::new(v, self.1.part_fmt.clone()))
-                    .collect::<Vec<_>>();
-                map.serialize_entry(&self.1.contents_field, &v)?;
-            } else if self.1.contents_null_marker {
-                map.serialize_entry(&self.1.contents_field, &())?;
-            }
-        }
-
-        if !self.0.tool_calls.is_empty() {
-            let v = self
-                .0
-                .tool_calls
-                .iter()
-                .map(|v| PartWithFmt::new(v, self.1.part_fmt.clone()))
-                .collect::<Vec<_>>();
-            map.serialize_entry(&self.1.tool_calls_field, &v)?;
-        } else if self.1.tool_calls_null_marker {
-            map.serialize_entry(&self.1.tool_calls_field, &())?;
-        }
-
-        map.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for MessageDelta {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_map(MessagDeltaVisitor)
-    }
-}
-
-struct MessagDeltaVisitor;
-
-impl<'de> de::Visitor<'de> for MessagDeltaVisitor {
-    type Value = MessageDelta;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str(r#"a map with "type" field and one other content key"#)
-    }
-
-    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
-    where
-        M: MapAccess<'de>,
-    {
-        let mut role: Option<Role> = None;
-        let mut contents: Vec<Part> = Vec::new();
-        let mut reasoning: String = String::new();
-        let mut tool_calls: Vec<Part> = Vec::new();
-
-        while let Some(k) = map.next_key::<String>()? {
-            if k == "role" {
-                if role.is_some() {
-                    return Err(de::Error::duplicate_field("role"));
-                }
-                role = Some(map.next_value()?);
-            } else if k == "content" {
-                contents = map.next_value()?;
-            } else if k == "reasoning" || k == "reasoning_content" {
-                reasoning = map.next_value()?;
-            } else if k == "tool_calls" {
-                tool_calls = map.next_value()?;
-            } else {
-                return Err(de::Error::unknown_field(
-                    &k,
-                    &["content", "reasoning", "tool_calls"],
-                ));
-            }
-        }
-        Ok(MessageDelta {
             role,
             contents,
             reasoning,
@@ -643,19 +449,19 @@ pub enum FinishReason {
 
 #[derive(Debug, Clone, Default)]
 pub struct MessageOutput {
-    pub delta: MessageDelta,
+    pub delta: Message,
     pub finish_reason: Option<FinishReason>,
 }
 
 impl MessageOutput {
     pub fn new() -> MessageOutput {
         MessageOutput {
-            delta: MessageDelta::new(),
+            delta: Message::new(),
             finish_reason: None,
         }
     }
 
-    pub fn with_delta(self, delta: MessageDelta) -> Self {
+    pub fn with_delta(self, delta: Message) -> Self {
         MessageOutput {
             delta,
             finish_reason: self.finish_reason,
@@ -672,13 +478,18 @@ impl MessageOutput {
 
 impl Display for MessageOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&format!("MessageOutput(delta="))?;
-        self.delta.fmt(f)?;
+        let mut to_write: Vec<String> = Vec::new();
+        if self.delta.role.is_some()
+            || !self.delta.reasoning.is_empty()
+            || !self.delta.contents.is_empty()
+            || !self.delta.tool_calls.is_empty()
+        {
+            to_write.push(format!("delta: {}", self.delta));
+        }
         if let Some(finish_reason) = &self.finish_reason {
-            f.write_str(&format!(", finish_reason="))?;
-            finish_reason.fmt(f)?;
+            to_write.push(format!("finish_reason: {}", finish_reason));
         };
-        f.write_str(&format!(")"))?;
+        f.write_str(&format!("MessageOutput{{ {} }}", to_write.join(", ")))?;
         Ok(())
     }
 }
@@ -697,10 +508,7 @@ impl<'a> Serialize for MessageOutputWithFmt<'a> {
         S: Serializer,
     {
         let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry(
-            "delta",
-            &MessageDeltaWithFmt::new(&self.0.delta, self.1.clone()),
-        )?;
+        map.serialize_entry("delta", &MessageWithFmt::new(&self.0.delta, self.1.clone()))?;
         if self.0.finish_reason.is_some() {
             map.serialize_entry("finish_reason", &self.0.finish_reason)?;
         }
@@ -730,7 +538,7 @@ impl<'de> de::Visitor<'de> for MessageOutputVisitor {
     where
         M: MapAccess<'de>,
     {
-        let mut delta: Option<MessageDelta> = None;
+        let mut delta: Option<Message> = None;
         let mut finish_reason: Option<FinishReason> = None;
 
         while let Some(k) = map.next_key::<String>()? {
@@ -838,7 +646,7 @@ impl MessageAggregator {
             if self.buffer.is_some() {
                 todo!()
             } else {
-                self.buffer = Some(Message::new(role));
+                self.buffer = Some(Message::with_role(role));
             }
         };
 
@@ -870,11 +678,11 @@ impl MessageAggregator {
                 buffer.tool_calls.push(part);
             } else {
                 let last_part = buffer.tool_calls.last_mut().unwrap();
-                if last_part.is_text() && part.is_text() {
+                if last_part.is_function_string() && part.is_function_string() {
                     last_part
-                        .get_text_mut()
+                        .get_function_string_mut()
                         .unwrap()
-                        .push_str(part.get_text().unwrap());
+                        .push_str(part.get_function_string().unwrap());
                 } else {
                     buffer.tool_calls.push(part);
                 }
@@ -882,29 +690,7 @@ impl MessageAggregator {
         }
 
         if msg_out.finish_reason.is_some() {
-            let mut rv = self.buffer.take().unwrap();
-            rv.tool_calls = rv
-                .tool_calls
-                .into_iter()
-                .map(|v| {
-                    match v {
-                        Part::Text(text) => match serde_json::from_str::<ToolCall>(&text) {
-                            Ok(res) => Part::Function {
-                                id: None,
-                                function: res,
-                            },
-                            Err(_) => Part::Text(text),
-                        },
-                        Part::Function { id, function } => Part::Function { id, function },
-                        Part::ImageURL(url) => Part::ImageURL(url),
-                        Part::ImageData(data) => Part::ImageData(data),
-                        Part::AudioURL(url) => Part::AudioURL(url),
-                        Part::AudioData(data) => Part::AudioData(data),
-                    };
-                    Part::Text("()".to_owned())
-                })
-                .collect();
-            return Some(rv);
+            return Some(self.buffer.take().unwrap());
         } else {
             None
         }

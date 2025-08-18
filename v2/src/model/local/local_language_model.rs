@@ -10,7 +10,7 @@ use crate::{
         LanguageModel,
         local::{ChatTemplate, Inferencer, Tokenizer},
     },
-    value::{FinishReason, Message, MessageDelta, MessageOutput, Part, Role, ToolDesc},
+    value::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
 };
 
 #[derive(Debug)]
@@ -30,6 +30,14 @@ impl LocalLanguageModel {
         let model_name = model_name.into();
         Cache::new().try_create::<LocalLanguageModel>(model_name)
     }
+
+    pub fn enable_reasoning(&self) {
+        self.chat_template.enable_reasoning();
+    }
+
+    pub fn disable_reasoning(&self) {
+        self.chat_template.disable_reasoning();
+    }
 }
 
 impl LanguageModel for LocalLanguageModel {
@@ -40,6 +48,7 @@ impl LanguageModel for LocalLanguageModel {
     ) -> BoxStream<'static, Result<MessageOutput, String>> {
         let strm = try_stream! {
             let prompt = self.chat_template.apply_with_vec(&tools, &msgs, true)?;
+            println!("{}", prompt);
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
             self.inferencer.lock().await.prefill(&input_tokens);
             let mut last_token = *input_tokens.last().unwrap();
@@ -48,7 +57,7 @@ impl LanguageModel for LocalLanguageModel {
             let mut mode = "content".to_owned();
             let mut finish_reason = FinishReason::Stop;
 
-            yield MessageOutput::new().with_delta(MessageDelta::new().with_role(Role::Assistant));
+            yield MessageOutput::new().with_delta(Message::with_role(Role::Assistant));
 
             // @jhlee: TODO remove hard-coded token names
             loop {
@@ -83,11 +92,11 @@ impl LanguageModel for LocalLanguageModel {
                     continue;
                 } else {
                     let delta = if mode == "content" {
-                        MessageDelta::new().with_contents(vec![Part::Text(s)])
+                        Message::new().with_contents(vec![Part::Text(s)])
                     } else if mode == "reasoning" {
-                        MessageDelta::new().with_reasoning(s)
+                        Message::new().with_reasoning(s)
                     } else if mode == "tool_call" {
-                        MessageDelta::new().with_tool_calls(vec![Part::Text(s)])
+                        Message::new().with_tool_calls(vec![Part::FunctionString(s)])
                     } else {
                         unreachable!();
                     };
@@ -156,11 +165,19 @@ mod tests {
             }
         }
         let model = Arc::new(model.unwrap());
+        model.as_ref().enable_reasoning();
         let msgs = vec![
-            Message::new(Role::System)
+            Message::with_role(Role::System)
                 .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
-            Message::new(Role::User)
+            Message::with_role(Role::User)
                 .with_contents(vec![Part::Text("Hi what's your name?".to_owned())]),
+                            Message::with_role(Role::Assistant)
+                .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
+                .with_contents(vec![Part::Text(
+                    "Hi! I'm an AI assistant. How can I assist you today? 😊".to_owned(),
+                )]),
+            Message::with_role(Role::User)
+                .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, Vec::new());
@@ -179,7 +196,7 @@ mod tests {
         use futures::StreamExt;
 
         use super::*;
-        use crate::value::{MessageAggregator, Role, ToolCall, ToolDesc, ToolDescArg};
+        use crate::value::{MessageAggregator, Role, ToolDesc, ToolDescArg};
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
@@ -196,6 +213,7 @@ mod tests {
             }
         }
         let model = Arc::new(model.unwrap());
+        model.as_ref().disable_reasoning();
         let tools = vec![ToolDesc::new(
             "temperature",
             "Get current temperature",
@@ -216,9 +234,84 @@ mod tests {
                 ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
             ),
         )];
-        let msgs = vec![Message::new(Role::User).with_contents(vec![Part::Text(
-            "How much hot currently in Dubai?".to_owned(),
-        )])];
+        let msgs = vec![
+            Message::with_role(Role::User).with_contents(vec![Part::Text(
+                "How much hot currently in Dubai?".to_owned(),
+            )]),
+        ];
+        let mut agg = MessageAggregator::new();
+        let mut strm = model.run(msgs, tools);
+        let mut assistant_msg: Option<Message> = None;
+        while let Some(delta_opt) = strm.next().await {
+            let delta = delta_opt.unwrap();
+            println!("{}", delta);
+            if let Some(msg) = agg.update(delta) {
+                assistant_msg = Some(msg);
+            }
+        }
+        let assistant_msg = assistant_msg.unwrap();
+        println!("Assistant message: {}", assistant_msg);
+        let tc = assistant_msg
+            .tool_calls
+            .get(0)
+            .unwrap()
+            .get_tool_call()
+            .unwrap();
+        println!("Tool call: {:?}", tc);
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_result_from_tool_call() {
+        use futures::StreamExt;
+
+        use super::*;
+        use crate::value::{MessageAggregator, Role, ToolDesc, ToolDescArg};
+
+        let cache = crate::cache::Cache::new();
+        let key = "Qwen/Qwen3-0.6B";
+        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
+        let mut model: Option<LocalLanguageModel> = None;
+        while let Some(progress) = model_strm.next().await {
+            let mut progress = progress.unwrap();
+            println!(
+                "{} ({} / {})",
+                progress.comment, progress.current_task, progress.total_task
+            );
+            if progress.current_task == progress.total_task {
+                model = progress.result.take();
+            }
+        }
+        let model = Arc::new(model.unwrap());
+        model.as_ref().disable_reasoning();
+        let tools = vec![ToolDesc::new(
+            "temperature",
+            "Get current temperature",
+            ToolDescArg::new_object().with_properties(
+                [
+                    (
+                        "location",
+                        ToolDescArg::new_string().with_desc("The city name"),
+                    ),
+                    (
+                        "unit",
+                        ToolDescArg::new_string().with_enum(["Celcius", "Fernheit"]),
+                    ),
+                ],
+                ["location", "unit"],
+            ),
+            Some(
+                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
+            ),
+        )];
+        let msgs = vec![
+            Message::with_role(Role::User)
+                .with_contents([Part::new_text("How much hot currently in Dubai?".to_owned())]),
+            Message::with_role(Role::Assistant)
+                .with_contents([Part::new_text("\n\n")])
+                .with_tool_calls([Part::new_function_string("\n{\"name\": \"temperature\", \"arguments\": {\"location\": \"Dubai\", \"unit\": \"Celcius\"}}\n")]),
+            Message::with_role(Role::Tool).with_contents([Part::new_text("40")])
+        ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, tools);
         let mut assistant_msg: Option<Message> = None;
@@ -228,17 +321,7 @@ mod tests {
                 assistant_msg = Some(msg);
             }
         }
-        todo!()
-        // let tc = ToolCall::try_from_string(
-        //     assistant_msg
-        //         .unwrap()
-        //         .tool_calls
-        //         .get(0)
-        //         .unwrap()
-        //         .get_function_owned()
-        //         .unwrap(),
-        // )
-        // .unwrap();
-        // println!("Tool call: {:?}", tc);
+        let assistant_msg = assistant_msg.unwrap();
+        println!("Assistant message: {}", assistant_msg);
     }
 }

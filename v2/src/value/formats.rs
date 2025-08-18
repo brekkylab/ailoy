@@ -37,9 +37,10 @@ mod tests {
 
     fn get_example_msg() -> Vec<Message> {
         vec![
-            Message::new(Role::System).with_contents([Part::new_text("You are an assistant.")]),
-            Message::new(Role::User).with_contents([Part::new_text("Hi what's your name?")]),
-            Message::new(Role::Assistant)
+            Message::with_role(Role::System)
+                .with_contents([Part::new_text("You are an assistant.")]),
+            Message::with_role(Role::User).with_contents([Part::new_text("Hi what's your name?")]),
+            Message::with_role(Role::Assistant)
                 .with_reasoning("Think something...")
                 .with_tool_calls([Part::new_function(
                     None,
@@ -48,8 +49,8 @@ mod tests {
                         ToolCallArg::new_object([("WhatToGet", ToolCallArg::new_string("name"))]),
                     ),
                 )]),
-            Message::new(Role::Tool).with_contents([Part::Text(String::from("Jaden"))]),
-            Message::new(Role::Assistant)
+            Message::with_role(Role::Tool).with_contents([Part::Text(String::from("Jaden"))]),
+            Message::with_role(Role::Assistant)
                 .with_contents([Part::Text(String::from("You can call me Jaden."))]),
         ]
     }

@@ -32,14 +32,14 @@ impl Agent {
         let tools = self.tools.clone();
         let msgs = self.messages.clone();
         let user_message =
-            Message::new(Role::User).with_contents(vec![Part::Text(user_message.into())]);
+            Message::with_role(Role::User).with_contents(vec![Part::Text(user_message.into())]);
         async_stream::try_stream! {
             msgs.lock().await.push(user_message);
             loop {
                 let td = self.tools.iter().map(|v| v.get_description()).collect::<Vec<_>>();
                 let mut strm = lm.clone().run(msgs.lock().await.clone(), td);
                 let mut aggregator = MessageAggregator::new();
-                let mut assistant_msg = Message::new(Role::Assistant);
+                let mut assistant_msg = Message::with_role(Role::Assistant);
                 while let Some(delta) = strm.next().await {
                     let delta = delta?;
                     yield delta.clone();
@@ -50,14 +50,16 @@ impl Agent {
                 self.messages.lock().await.push(assistant_msg.clone());
                 if !assistant_msg.tool_calls.is_empty() {
                     for part in assistant_msg.tool_calls {
-                        todo!()
-                        // let tc = ToolCall::try_from_string(part.get_function_owned().unwrap()).unwrap();
-                        // let tool = tools.iter().find(|v| v.get_description().get_name() == tc.get_name()).unwrap().clone();
-                        // let resp = tool.run(tc).await?;
-                        // let delta = MessageDelta::new().with_role(Role::Tool).with_content(vec![resp.clone()]);
-                        // yield MessageOutput::new().with_delta(delta);
-                        // let tool_msg = Message::new(Role::Tool).with_content(vec![resp]);
-                        // self.messages.lock().await.push(tool_msg);
+                        let tc = match part.get_tool_call() {
+                            Some(tc) => tc,
+                            None => todo!(),
+                        };
+                        let tool = tools.iter().find(|v| v.get_description().get_name() == tc.name).unwrap().clone();
+                        let resp = tool.run(tc).await?;
+                        let delta = Message::with_role(Role::Tool).with_contents([resp.clone()]);
+                        yield MessageOutput::new().with_delta(delta);
+                        let tool_msg = Message::with_role(Role::Tool).with_contents([resp]);
+                        self.messages.lock().await.push(tool_msg);
                     }
                 } else {
                     break;

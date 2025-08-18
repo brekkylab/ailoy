@@ -1,4 +1,4 @@
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use futures::future::BoxFuture;
 use minijinja::{Environment, context};
@@ -6,7 +6,7 @@ use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
 use crate::{
     cache::{Cache, CacheContents, CacheEntry, TryFromCache},
-    value::{Message, ToolDesc},
+    value::{Message, QWEN3_FMT, ToolDesc},
 };
 
 /// Global Environment (initialized once)
@@ -26,6 +26,7 @@ fn get_env<'a>() -> MutexGuard<'a, Environment<'static>> {
 #[derive(Debug, Clone)]
 pub struct ChatTemplate {
     key: String,
+    do_reasoning: Arc<Mutex<bool>>,
 }
 
 impl ChatTemplate {
@@ -34,7 +35,22 @@ impl ChatTemplate {
         if env.get_template(&key).is_err() {
             env.add_template_owned(key.clone(), source).unwrap();
         }
-        Self { key }
+        Self {
+            key,
+            do_reasoning: Arc::new(Mutex::new(true)),
+        }
+    }
+
+    /// Only affects to hybrid reasoning models
+    pub fn enable_reasoning(&self) {
+        let mut v = self.do_reasoning.lock().unwrap();
+        *v = true;
+    }
+
+    /// Only affects to hybrid reasoning models
+    pub fn disable_reasoning(&self) {
+        let mut v = self.do_reasoning.lock().unwrap();
+        *v = false;
     }
 
     pub fn apply_with_vec(
@@ -43,10 +59,20 @@ impl ChatTemplate {
         messages: &Vec<Message>,
         add_generation_prompt: bool,
     ) -> Result<String, String> {
+        let messages = messages
+            .iter()
+            .map(|v| crate::value::MessageWithFmt::new(v, QWEN3_FMT.clone()))
+            .collect::<Vec<_>>();
+        let do_reasoning = *self.do_reasoning.lock().unwrap();
+        let ctx = if tools.is_empty() {
+            context!(messages => messages, add_generation_prompt=>add_generation_prompt, enable_thinking=>do_reasoning)
+        } else {
+            context!(messages => messages, tools => tools, add_generation_prompt=>add_generation_prompt, enable_thinking=>do_reasoning)
+        };
         get_env()
             .get_template(&self.key)
             .unwrap()
-            .render(context!(messages => messages, tools => tools, add_generation_prompt=>add_generation_prompt))
+            .render(ctx)
             .map_err(|e| format!("minijinja::render failed: {}", e.to_string()))
     }
 }

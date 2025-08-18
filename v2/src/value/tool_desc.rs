@@ -408,7 +408,7 @@ impl Serialize for ToolDesc {
             name: &'a str,
             description: &'a str,
             parameters: &'a ToolDescArg,
-            #[serde(rename = "return")]
+            #[serde(rename = "return", skip_serializing_if = "Option::is_none")]
             r#return: Option<&'a ToolDescArg>,
         }
 
