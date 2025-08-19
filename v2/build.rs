@@ -114,8 +114,6 @@ fn build_native() {
     // Download if not exists
     let tvm_dir = cmake_source_dir.join("3rdparty").join("tvm");
     clone("tvm", "https://github.com/brekkylab/relax", &tvm_dir);
-    let json_dir = cmake_source_dir.join("3rdparty").join("json");
-    clone("json", "https://github.com/nlohmann/json.git", &json_dir);
 
     // Run cxx bridge
     let mut cxx = cxx_build::bridge("src/ffi/cxx_bridge.rs");
@@ -126,9 +124,9 @@ fn build_native() {
         .include(&cmake_source_dir.join("include"))
         .include(&tvm_dir.join("include"))
         .include(&tvm_dir.join("ffi").join("include"))
+        .include(&tvm_dir.join("3rdparty").join("picojson"))
         .include(&tvm_dir.join("3rdparty").join("dlpack").join("include"))
         .include(&tvm_dir.join("3rdparty").join("dmlc-core").join("include"))
-        .include(&json_dir.join("include"))
         .include(cargo_target_dir.join("cxxbridge"))
         .compile("rust_bridge");
 
