@@ -81,7 +81,7 @@ impl LanguageModel for LocalLanguageModel {
                     continue;
                 } else if s == "</tool_call>" {
                     mode = "content".to_owned();
-                    finish_reason = FinishReason::ToolCall;
+                    finish_reason = FinishReason::ToolCalls;
                     continue;
                 } else if s == "<think>" {
                     mode = "reasoning".to_owned();

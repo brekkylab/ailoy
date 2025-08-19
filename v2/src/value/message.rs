@@ -540,13 +540,13 @@ impl<'de> de::Visitor<'de> for MessageVisitor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, EnumString, Display)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum FinishReason {
     Stop,
     Length,
     ContentFilter,
-    ToolCall,
+    ToolCalls,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -756,15 +756,23 @@ impl MessageAggregator {
             buffer.reasoning.push_str(&delta.reasoning);
         }
         for part in delta.contents {
-            let last_part = buffer.contents.last_mut().unwrap();
-            if let Some(part_to_push) = last_part.concatenate(part) {
-                buffer.contents.push(part_to_push);
+            if buffer.contents.is_empty() {
+                buffer.contents.push(part);
+            } else {
+                let last_part = buffer.contents.last_mut().unwrap();
+                if let Some(part_to_push) = last_part.concatenate(part) {
+                    buffer.contents.push(part_to_push);
+                }
             }
         }
         for part in delta.tool_calls {
-            let last_part = buffer.tool_calls.last_mut().unwrap();
-            if let Some(part_to_push) = last_part.concatenate(part) {
-                buffer.tool_calls.push(part_to_push);
+            if buffer.tool_calls.is_empty() {
+                buffer.tool_calls.push(part);
+            } else {
+                let last_part = buffer.tool_calls.last_mut().unwrap();
+                if let Some(part_to_push) = last_part.concatenate(part) {
+                    buffer.tool_calls.push(part_to_push);
+                }
             }
         }
 

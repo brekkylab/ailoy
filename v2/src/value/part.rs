@@ -538,22 +538,20 @@ impl<'de> de::Visitor<'de> for PartFunctionVisitor {
                 arguments = Some((String::from("parameters"), map.next_value()?));
             }
         }
+        let mut rv = PartFunctionOwned {
+            name: String::new(),
+            arguments: String::new(),
+            style: PartStyle::new(),
+        };
         if let Some((name_key, name)) = name {
-            if let Some((arguments_key, arguments)) = arguments {
-                let mut style = PartStyle::default();
-                style.function_name_field = name_key;
-                style.function_arguments_field = arguments_key;
-                Ok(PartFunctionOwned {
-                    name,
-                    arguments,
-                    style,
-                })
-            } else {
-                Err(de::Error::missing_field("arguments"))
-            }
-        } else {
-            Err(de::Error::missing_field("name"))
+            rv.style.function_name_field = name_key;
+            rv.name = name;
         }
+        if let Some((arguments_key, arguments)) = arguments {
+            rv.style.function_arguments_field = arguments_key;
+            rv.arguments = arguments;
+        }
+        Ok(rv)
     }
 }
 
@@ -655,6 +653,12 @@ impl<'de> de::Visitor<'de> for PartVisitor {
                 }
                 id = Some((String::from("function_id"), map.next_value()?));
             } else if k == "function" {
+                #[derive(Deserialize)]
+                #[serde(untagged)]
+                enum FunctionEither {
+                    String(String),
+                    Object(PartFunctionOwned),
+                }
                 if function_field.is_some() {
                     return Err(de::Error::custom(format!(
                         "multiple part fields found ({} & {})",
@@ -669,7 +673,14 @@ impl<'de> de::Visitor<'de> for PartVisitor {
                         k
                     )));
                 }
-                function_field = Some((k, map.next_value::<PartFunctionOwned>()?));
+                match map.next_value::<FunctionEither>()? {
+                    FunctionEither::String(v) => {
+                        field = Some((k, v));
+                    }
+                    FunctionEither::Object(v) => {
+                        function_field = Some((k, v));
+                    }
+                };
             } else if k == "text"
                 || k == "url"
                 || k == "data"
@@ -691,27 +702,37 @@ impl<'de> de::Visitor<'de> for PartVisitor {
 
         let mut style = PartStyle::new();
         match (ty, field, id, function_field) {
-            (None, _, _, _) => Err(de::Error::missing_field("type")),
             (_, None, _, None) => Err(de::Error::custom("Missing part field")),
-            (Some(ty), Some((k, v)), _, _) if ty == "text" && k == "text" => {
-                style.text_type = ty;
+            (ty, Some((k, v)), _, _) if k == "text" => {
+                if let Some(ty) = ty {
+                    style.text_type = ty;
+                }
                 style.text_field = k;
                 Ok(StyledPart::new_text(v).with_style(style))
             }
-            (Some(ty), Some((k, v)), _, _) if ty == "function" && k == "function" => {
-                style.function_type = ty;
+            (ty, Some((k, v)), _, _) if k == "function" => {
+                if let Some(ty) = ty {
+                    style.text_type = ty;
+                }
                 style.function_field = k;
                 Ok(StyledPart::new_function_string(v).with_style(style))
             }
-            (Some(ty), _, Some((idk, idv)), Some((k, v)))
-                if ty == "function" && k == "function" =>
-            {
-                style.function_type = ty;
+            (ty, _, id, Some((k, v))) if k == "function" => {
+                if let Some(ty) = ty {
+                    style.text_type = ty;
+                }
                 style.function_field = k;
-                style.function_id_field = idk;
-                style.function_name_field = v.style.function_name_field;
-                style.function_arguments_field = v.style.function_arguments_field;
-                Ok(StyledPart::new_function(idv, v.name, v.arguments).with_style(style))
+                if let Some((idk, idv)) = id {
+                    style.function_id_field = idk;
+                    style.function_name_field = v.style.function_name_field;
+                    style.function_arguments_field = v.style.function_arguments_field;
+                    Ok(StyledPart::new_function(idv, v.name, v.arguments).with_style(style))
+                } else {
+                    style.function_name_field = v.style.function_name_field;
+                    style.function_arguments_field = v.style.function_arguments_field;
+                    Ok(StyledPart::new_function(String::new(), v.name, v.arguments)
+                        .with_style(style))
+                }
             }
             (Some(ty), Some((k, v)), _, _)
                 if (ty == "image" || ty == "image_url") && (k == "url" || k == "image_url") =>
