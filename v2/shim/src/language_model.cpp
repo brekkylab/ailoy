@@ -3,7 +3,6 @@
 #include <random>
 
 #include <dlpack/dlpack.h>
-#include <nlohmann/json.hpp>
 #include <tvm/ffi/container/shape.h>
 #include <tvm/runtime/int_tuple.h>
 
@@ -24,20 +23,27 @@ double random_float(double min, double max) {
   return dis(gen);
 }
 
+int get_int_from_picojson(picojson::object obj, std::string key) {
+  // picojson gets numbers as double, so need to cast
+  if (obj.count(key) > 0)
+    return static_cast<int>(obj.at(key).get<double>());
+}
+
 constexpr size_t page_size = 16;
 
 kv_cache_t::kv_cache_t(tvm_runtime_t &rt) {
   auto fn = rt.get_vm_function("create_tir_paged_kv_cache");
   if (!fn.defined())
     throw std::runtime_error("create_tir_paged_kv_cache not defined");
-  kv_cache_ =
-      fn(IntTuple{1}, // max_num_sequence
-         IntTuple{rt.get_metadata()["context_window_size"].operator int()},
-         IntTuple{rt.get_metadata()["prefill_chunk_size"].operator int()},
-         IntTuple{page_size}, // page size
-         IntTuple{rt.get_metadata()["sliding_window_size"].operator int() !=
-                  -1})
-          .cast<ObjectRef>();
+  kv_cache_ = fn(IntTuple{1}, // max_num_sequence
+                 IntTuple{get_int_from_picojson(rt.get_metadata(),
+                                                "context_window_size")},
+                 IntTuple{get_int_from_picojson(rt.get_metadata(),
+                                                "prefill_chunk_size")},
+                 IntTuple{page_size}, // page size
+                 IntTuple{get_int_from_picojson(rt.get_metadata(),
+                                                "sliding_window_size") != -1})
+                  .cast<ObjectRef>();
   fkv_state_clear_ = rt.get_function("vm.builtin.kv_state_clear");
   fkv_state_add_sequence_ = rt.get_function("vm.builtin.kv_state_add_sequence");
   fkv_state_remove_sequence_ =
@@ -146,7 +152,8 @@ void tvm_language_model_t::prefill(const std::vector<uint32_t> &tokens) {
     throw std::runtime_error("Context length limit exceed");
 
   // Chunk size to be split
-  size_t prefill_chunk_size = rt_->get_metadata()["prefill_chunk_size"];
+  size_t prefill_chunk_size =
+      get_int_from_picojson(rt_->get_metadata(), "prefill_chunk_size");
   for (size_t i = 0; i < new_tokens.size(); i += prefill_chunk_size) {
     // Prefill i to j
     size_t j = (i + prefill_chunk_size < new_tokens.size())
