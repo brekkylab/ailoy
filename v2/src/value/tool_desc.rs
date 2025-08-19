@@ -368,13 +368,13 @@ impl<'de> Deserialize<'de> for ToolDescArg {
 /// See also: [`ToolDescArg`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolDesc {
-    name: String,
+    pub name: String,
 
-    description: String,
+    pub description: String,
 
-    parameters: ToolDescArg, // In most cases, it's `ToolDescArg::Object`
+    pub parameters: ToolDescArg, // In most cases, it's `ToolDescArg::Object`
 
-    r#return: Option<ToolDescArg>,
+    pub r#return: Option<ToolDescArg>,
 }
 
 impl ToolDesc {

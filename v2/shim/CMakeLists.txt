@@ -115,18 +115,6 @@ add_library(ailoy_cpp_shim STATIC ${AILOY_CPP_SHIM_SRCS})
 target_include_directories(ailoy_cpp_shim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(ailoy_cpp_shim PUBLIC ${AILOY_CXXBRIDGE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-########
-# json #
-########
-FetchContent_Declare(
-    nlohmann_json
-    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/json
-    EXCLUDE_FROM_ALL
-)
-FetchContent_MakeAvailable(nlohmann_json)
-target_link_libraries(ailoy_cpp_shim PRIVATE nlohmann_json)
-
 #######
 # tvm #
 #######
@@ -167,6 +155,7 @@ set(TVM_BINARY_DIR ${BINARY_DIR})
 target_include_directories(ailoy_cpp_shim PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/include
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/ffi/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/3rdparty/picojson
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/3rdparty/dlpack/include
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/3rdparty/dmlc-core/include
 )

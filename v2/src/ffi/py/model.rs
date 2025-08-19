@@ -5,6 +5,7 @@ use pyo3::{
     exceptions::{PyRuntimeError, PyStopAsyncIteration},
     prelude::*,
 };
+use pyo3_stub_gen::derive::*;
 use tokio::runtime::Runtime;
 
 use crate::{
@@ -20,6 +21,7 @@ use crate::{
     value::MessageOutput,
 };
 
+#[gen_stub_pyclass]
 #[pyclass(name = "LocalLanguageModel")]
 pub struct PyLocalLanguageModel {
     inner: Arc<LocalLanguageModel>,
@@ -35,6 +37,7 @@ impl PyWrapper for PyLocalLanguageModel {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyLocalLanguageModel {
     // Async version of creation
@@ -85,11 +88,13 @@ impl PyLocalLanguageModel {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable, name = "AgentRunIterator")]
 pub struct PyAgentRunIterator {
     rx: async_channel::Receiver<Result<PyMessageOutput, String>>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyAgentRunIterator {
     fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -109,6 +114,7 @@ impl PyAgentRunIterator {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable, name = "AgentRunSyncIterator")]
 pub struct PyAgentRunSyncIterator {
     rt: Runtime,
@@ -116,6 +122,7 @@ pub struct PyAgentRunSyncIterator {
     strm: BoxStream<'static, Result<PyMessageOutput, String>>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyAgentRunSyncIterator {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

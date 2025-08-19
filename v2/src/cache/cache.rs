@@ -242,7 +242,7 @@ impl Cache {
             let url = self.get_url(&remote_entry);
             let bytes = download(url).await?;
             // Write back
-            write(&self.path(entry), &bytes).await?;
+            write(&self.path(entry), &bytes, true).await?;
             Ok(bytes)
         }
     }

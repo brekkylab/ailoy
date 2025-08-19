@@ -5,6 +5,7 @@ use pyo3::{
     prelude::*,
     types::{PyList, PyString},
 };
+use pyo3_stub_gen::derive::*;
 
 use crate::{
     ffi::py::base::PyWrapper,
@@ -12,6 +13,7 @@ use crate::{
 };
 
 #[derive(Clone)]
+#[gen_stub_pyclass]
 #[pyclass(name = "Part")]
 pub struct PyPart {
     inner: Part,
@@ -25,26 +27,27 @@ impl PyWrapper for PyPart {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPart {
-    /// Part(type, *, id=None, text=None, url=None, data=None, function=None)
+    /// Part(part_type, *, id=None, text=None, url=None, data=None, function=None)
     ///
     /// Examples:
-    /// - Part(type="text", text="hello")
-    /// - Part(type="image", url="https://example.com/cat.png")
-    /// - Part(type="image", data="<base64>")  # 'base64=' alias also accepted
-    /// - Part(type="function", function=r#"{"name":"foo","arguments":"{}"}"#, id="call_1")
+    /// - Part(part_type="text", text="hello")
+    /// - Part(part_type="image", url="https://example.com/cat.png")
+    /// - Part(part_type="image", data="<base64>")  # 'base64=' alias also accepted
+    /// - Part(part_type="function", function='{"name":"foo","arguments":"{}"}', id="call_1")
     #[new]
-    #[pyo3(signature = (r#type, *, id=None, text=None, url=None, data=None, function=None))]
+    #[pyo3(signature = (part_type, *, id=None, text=None, url=None, data=None, function=None))]
     fn new(
-        r#type: &str,
+        part_type: &str,
         id: Option<String>,
         text: Option<String>,
         url: Option<String>,
         data: Option<String>,
         function: Option<String>,
     ) -> PyResult<Self> {
-        let inner = match r#type {
+        let inner = match part_type {
             "text" => Part::Text(text.ok_or_else(|| PyTypeError::new_err("text= required"))?),
             "function" => Part::Function {
                 id,
@@ -67,12 +70,13 @@ impl PyPart {
     }
 
     #[getter]
-    fn r#type(&self) -> &'static str {
+    fn part_type(&self) -> &'static str {
         match &self.inner {
             Part::Text(_) => "text",
             Part::Function { .. } => "function",
             Part::ImageURL(_) | Part::ImageData(_) => "image",
-            Part::AudioURL(_) | Part::AudioData(_) => "audio",
+            // Part::AudioURL(_) | Part::AudioData(_) => "audio",
+            // Part::Audio { .. } => "audio",
         }
     }
 
@@ -125,6 +129,7 @@ impl PyPart {
 }
 
 #[derive(Clone)]
+#[gen_stub_pyclass]
 #[pyclass(name = "MessageDelta")]
 pub struct PyMessageDelta {
     inner: MessageDelta,
@@ -138,6 +143,7 @@ impl PyWrapper for PyMessageDelta {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyMessageDelta {
     #[staticmethod]
@@ -191,6 +197,7 @@ impl PyMessageOutput {
 }
 
 #[derive(Clone)]
+#[gen_stub_pyclass]
 #[pyclass(name = "Message")]
 pub struct PyMessage {
     pub inner: Message,
@@ -204,6 +211,7 @@ impl PyWrapper for PyMessage {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyMessage {
     /// Message(role: str)
@@ -290,6 +298,7 @@ impl PyMessage {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(name = "MessageAggregator")]
 pub struct PyMessageAggregator {
     inner: MessageAggregator,
@@ -303,5 +312,6 @@ impl PyWrapper for PyMessageAggregator {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyMessageAggregator {}

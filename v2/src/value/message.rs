@@ -5,6 +5,7 @@ use serde::{
     de::{self, MapAccess},
     ser::{self, SerializeMap as _},
 };
+use serde_json::json;
 use strum::{Display, EnumString};
 
 use crate::value::{Part, PartStyle, StyledPart};

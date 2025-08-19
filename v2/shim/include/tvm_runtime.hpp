@@ -3,7 +3,7 @@
 #include <cstddef>
 
 #include <dlpack/dlpack.h>
-#include <nlohmann/json.hpp>
+#include <picojson.h>
 #include <tvm/runtime/module.h>
 #include <tvm/runtime/ndarray.h>
 
@@ -21,7 +21,7 @@ public:
     return vm_;
   }
 
-  const nlohmann::json &get_metadata() const { return metadata_; }
+  const picojson::object &get_metadata() const { return metadata_; }
 
   tvm::ffi::Function get_function(const std::string_view fname) {
     return *tvm::ffi::Function::GetGlobal(std::string(fname));
@@ -39,7 +39,7 @@ public:
 private:
   DLDevice device_;
   tvm::runtime::Module vm_;
-  nlohmann::json metadata_;
+  picojson::object metadata_;
   tvm::Array<tvm::runtime::NDArray> params_;
 };
 

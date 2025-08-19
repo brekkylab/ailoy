@@ -5,11 +5,12 @@ edition = "2024"
 
 [features]
 node = ["dep:napi", "dep:napi-derive"]
-python = ["dep:pyo3", "dep:pyo3-async-runtimes"]
+python = ["dep:pyo3", "dep:pyo3-async-runtimes", "dep:pyo3-stub-gen", "dep:pyo3-stub-gen-derive"]
 default = []
 
 
 [dependencies]
+anyhow = "1"
 async-channel = "2.5"
 async-stream = "0.3"
 futures = "0.3.31"
@@ -19,10 +20,12 @@ minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { version = "3", features = ["tokio_rt"], optional = true }
 napi-derive = { version = "3", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
-pyo3 = { version = "0.25", features = ["extension-module"], optional = true }
+pyo3 = { version = "0.25", optional = true }
 pyo3-async-runtimes = { version = "0.25", features = ["attributes", "tokio-runtime"], optional = true }
+pyo3-stub-gen = { version = "0.12.2", optional = true }
+pyo3-stub-gen-derive = { version = "0.12.2", optional = true }
 reqwest = { version = "0.12", features = ["stream"] }
-rmcp = { version = "0.5.0", features = ["client"] }
+rmcp = { version = "0.5.0", features = ["client", "reqwest", "transport-streamable-http-client", "transport-sse-client"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 sha1 = "0.10"
@@ -58,9 +61,15 @@ cxx-build = "1.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cxx = "1.0"
+onig = "6"
+rmcp = { version = "0.5.0", features = ["transport-child-process"] }
 tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
+
+[[bin]]
+name = "py_stub_gen"
+doc = false
