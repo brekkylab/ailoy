@@ -6,111 +6,63 @@ use serde::{
     ser::SerializeMap as _,
 };
 
-/// Represents a single, typed unit of message content (multi-modal).
+/// Represents one typed unit of message content.
 ///
-/// A `Part` models one element inside a message’s `content` (and related fields like
-/// `reasoning` / `tool_calls`). It is designed to be **OpenAI-compatible** when serialized,
-/// using the modern “array-of-parts” shape such as:
-/// `{ "type": "text", "text": "..." }` or `{ "type": "image", "url": "..." }`.
+/// A `Part` is a single element inside a message’s `content` (and, for tools, sometimes
+/// under `tool_calls`). The enum itself is **transport-agnostic**; any OpenAI-style JSON
+/// shape is produced/consumed by higher-level (de)serializers.
 ///
-/// # Variants
-/// - [`Part::Text`]: Plain UTF-8 text.
-/// - [`Part::Function`]: Raw JSON string for a tool/function call payload, with an optional
-///   `tool_call_id` to correlate results.
-/// - [`Part::ImageURL`]: A web-accessible image (HTTP(S) URL).
-/// - [`Part::ImageData`]: An inline, base64-encoded image payload.
-///
-/// # OpenAI-compatible mapping (typical)
-/// These are the common wire shapes produced/consumed when targeting OpenAI-style APIs:
-///
-/// - `Text(s)`
-///   ```json
-///   { "type": "text", "text": "hello" }
-///   ```
-///
-/// - `ImageURL(url)`
-///   ```json
-///   { "type": "image", "url": "https://example.com/cat.png" }
-///   ```
-///
-/// - `ImageBase64(data)`
-///   ```json
-///   { "type": "image", "data": "<base64-bytes>" }
-///   ```
-///
-/// - `Function { id, function }`
-///   The `function` field holds the **raw JSON** for the tool/function call (often the
-///   `arguments` string in OpenAI tool calls). The `id` corresponds to `tool_call_id`
-///   and is used to link the tool’s eventual result back to this call. Serialization of
-///   this variant is handled by higher-level message (de)serializers that place it under
-///   `tool_calls` as appropriate.
-///
-/// # Notes on `Function`
-/// - **As-is storage:** While streaming, `function` may be incomplete or invalid JSON.
-///   This is expected. Parse only after the stream has finalized/aggregated.
-/// - **No validation:** The variant does not validate or mutate the JSON string.
-///   Converting into a strongly-typed [`crate::value::ToolCall`] will fail if the JSON
-///   is malformed or incomplete.
-/// - **Correlation:** When present, `id` should be echoed back as `tool_call_id` when
-///   returning the tool’s output, matching OpenAI’s linking behavior.
-///
-/// # Invariants & behavior
-/// - Insertion order is preserved by the container (e.g., `Message.content`).
-/// - Image parts do not fetch or validate URLs/bytes at construction time.
-/// - The enum is transport-agnostic; OpenAI compatibility is achieved by the
-///   surrounding (de)serializer layer.
-///
-/// # Examples
-/// Building a multi-modal user message:
-/// ```rust
-/// # use url::Url;
-/// # use crate::value::{Message, Part, Role};
-/// let mut msg = Message::new(Role::User);
-/// msg.push_content(Part::Text("What does this sign say?".into()));
-/// msg.push_content(Part::ImageURL(Url::parse("https://example.com/sign.jpg").unwrap()));
-/// ```
-///
-/// Collecting tool-call arguments during streaming:
-/// ```rust
-/// # use crate::value::Part;
-/// let mut buf = String::new();
-/// // Append chunks as they arrive:
-/// buf.push_str("{\"location\":\"Paris\"");
-/// buf.push_str(",\"unit\":\"Celsius\"}");
-/// let part = Part::Function { id: None, function: buf }; // parse after finalization
-/// ```
+/// # Notes
+/// - No validation is performed. It just store the value as-is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Part {
     /// Plain UTF-8 text.
+    ///
+    /// Without style, it can be serialized as:
+    /// ```json
+    /// { "type": "text", "text": "hello" }
+    /// ```
     Text(String),
 
-    /// Raw function, holding JSON call as a string. holds the unmodified JSON; it may be incomplete while streaming.
-    /// serialized as a string: `"\{\"name\": \"function_name\", \"arguments\": \"...\""}`
+    /// The **verbatim string** of a tool/function payload as it was streamed/received
+    /// (often a JSON string). This may be incomplete or invalid while streaming. It is
+    /// intended for *as-is accumulation* and later parsing by the caller.
+    ///
+    /// ```json
+    /// "{\"type\": \"function\", \"function\": \"...\""}
+    /// ```
     FunctionString(String),
 
-    /// Tool/function call payload captured.
+    ///  A **partially parsed** function.
+    ///  - `id`: the `tool_call_id` to correlate results. Use an empty string if undefined.
+    ///  - `name`: function/tool name. May be assembled from streaming chunks.
+    ///  - `arguments`: raw arguments **string** (typically JSON), preserved verbatim.
     ///
-    /// `id` corresponds to `tool_call_id` (when available) for correlating tool results.
-    /// Empty string if it has no value
-    /// Note that argument is raw string, (it is actually JSON)
-    /// serialized as an object: `{\"name\": \"function_name\", \"arguments\": \"...\""}``
+    ///  Can be mapped to wire formats (e.g., OpenAI `tool_calls[].function`).
+    ///
+    /// ```json
+    /// {
+    ///   "id": "call_abc",
+    ///   "type": "function",
+    ///   "function": { "name": "weather", "arguments": "{ \"city\": \"Paris\" }" }
+    /// }
+    /// ```
     Function {
-        /// Optional `tool_call_id` used to correlate tool results.
         id: String,
         name: String,
         arguments: String,
     },
 
-    /// Web-addressable image (HTTP(S) URL).
-    ///
-    /// Typically serialized as:
-    /// `{ "type": "image", "url": "<...>" }`.
+    /// A web-addressable image URL (no fetching/validation is performed).
+    /// ```json
+    /// { "type": "image", "url": "https://example.com/cat.png" }
+    /// ```
     ImageURL(String),
 
-    /// Inline, base64-encoded image bitmap bytes.
-    ///
-    /// Typically serialized as:
-    /// `{ "type": "image", "data": "<base64>" }`.
+    /// Inline base64-encoded image bytes (no decoding/validation is performed).
+    /// ```json
+    /// { "type": "image", "data": "<base64>" }
+    /// ```
     ImageData(String),
 }
 
@@ -143,8 +95,20 @@ impl Part {
         Self::ImageData(data.into())
     }
 
-    /// Returns none if successfully merged
-    /// Some(Value) if it cannot be merged (the portion of cannot be merged)
+    /// Merges adjacent parts of the **same variant** in place:
+    ///
+    /// # Returns
+    /// `None`` if successfully merged
+    /// `Some(Value)` if something cannot be merged
+    ///
+    /// # Concatenation semantics
+    /// - `Text` + `Text`: appends right to left.
+    /// - `FunctionString` + `FunctionString`: appends right to left (for streaming).
+    /// - `Function` + `Function`:  
+    ///   - If both IDs are non-empty and **different**, denies merging (returns `Some(rhs)`).
+    ///   - Otherwise, empty `id` on the left is filled from the right; `name` and `arguments`
+    ///     are appended, then merge **succeeds** (`None`).
+    /// - Any other pair: not mergeable; returns `Some(rhs)`.
     pub fn concatenate(&mut self, other: Self) -> Option<Self> {
         match (self, other) {
             (Part::Text(lhs), Part::Text(rhs)) => {
@@ -183,14 +147,6 @@ impl Part {
                     None
                 }
             }
-            (Part::ImageURL(lhs), Part::ImageURL(rhs)) => {
-                lhs.push_str(&rhs);
-                None
-            }
-            (Part::ImageData(lhs), Part::ImageData(rhs)) => {
-                lhs.push_str(&rhs);
-                None
-            }
             (_, other) => Some(other),
         }
     }
@@ -216,50 +172,80 @@ impl Part {
     }
 }
 
+/// Describes how a [`Part`] should be mapped to a wire-format (key names & type tags).
+///
+/// `PartStyle` is a **pure naming schema**: it tells the serializer/deserializer which
+/// field names to use for each logical piece of a [`Part`]. This allows you to stay
+/// transport-agnostic while targeting different provider shapes (OpenAI, “parameters”
+/// instead of “arguments”, custom `type` tags, etc.).
+///
+/// The defaults correspond to a common OpenAI-style mapping:
+/// - Text      → `{ "type": "text",  "text":  "..." }`
+/// - Function  → `{ "type": "function", "id": "...", "function": { "name": "...", "arguments": "..." } }`
+/// - Image URL → `{ "type": "image", "url":   "..." }`
+/// - Image B64 → `{ "type": "image", "data":  "..." }`
+///
+/// You can override individual fields to adapt to other APIs. For example, if an API uses
+/// `"parameters"` instead of `"arguments"`, set `function_arguments_field = "parameters"`.
+///
+/// # Examples
+/// Switching function arguments key:
+/// ```rust
+/// # use crate::value::PartStyle;
+/// let mut style = PartStyle::default();
+/// style.function_arguments_field = "parameters".into();
+/// ```
+///
+/// Custom image mapping:
+/// ```rust
+/// # use crate::value::PartStyle;
+/// let mut style = PartStyle::default();
+/// style.image_url_type = "image_url".into(); // { "type": "image_url", "url": "..." }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartStyle {
-    /// {"type": "||HERE||", "text": "It's a text..."}
-    /// default: "text"
+    /// `{"type": "||HERE||", "text": "..."}`
+    /// Default: `"text"`
     pub text_type: String,
 
-    /// {"type": "text", "||HERE||": "It's a text..."}
-    /// default: "text"
+    /// `{"type": "text", "||HERE||": "..."}`
+    /// Default: `"text"`
     pub text_field: String,
 
-    /// {"type": "||HERE||", "id": "1234asdf", "function": {"name": "function name", "arguments": "function args"}}
-    /// default: "function"
+    /// `{"type": "||HERE||", "id": "...", "function": { "name": "...", "arguments": "..." }}`
+    /// Default: `"function"`
     pub function_type: String,
 
-    /// {"type": "function", "id": "1234asdf", "||HERE||": {"name": "function name", "arguments": "function args"}}
-    /// default: "function"
+    /// `{"type": "function", "id": "...", "||HERE||": { "name": "...", "arguments": "..." }}`
+    /// Default: `"function"`
     pub function_field: String,
 
-    /// {"type": "function", "||HERE||": "1234asdf", "function": {"name": "function name", "arguments": "function args"}}
-    /// default: "id"
+    /// `{"type": "function", "||HERE||": "...", "function": { ... }}`
+    /// Default: `"id"`
     pub function_id_field: String,
 
-    /// {"type": "function", "id": "1234asdf", "function": {"||HERE||": "function name", "arguments": "function args"}}
-    /// default: "name"
+    /// Inside the `function` object: `{"||HERE||": "...", "arguments": "..." }`
+    /// Default: `"name"`
     pub function_name_field: String,
 
-    /// {"type": "function", "id": "1234asdf", "function": {"name": "function name", "||HERE||": "function args"}}
-    /// default: "arguments"
+    /// Inside the `function` object: `{"name": "...", "||HERE||": "..." }`
+    /// Default: `"arguments"`
     pub function_arguments_field: String,
 
-    /// {"type": "||HERE||", "url": "http://..."}
-    /// default: "image"
+    /// `{"type": "||HERE||", "url": "http://..."}`
+    /// Default: `"image"`
     pub image_url_type: String,
 
-    /// {"type": "image", "||HERE||": "http://..."}
-    /// default: "url"
+    /// `{"type": "image", "||HERE||": "http://..."}`
+    /// Default: `"url"`
     pub image_url_field: String,
 
-    /// {"type": "||HERE||", "data": "base64 encoded bytes..."}
-    /// default: "image"
+    /// `{"type": "||HERE||", "data": "<base64>" }`
+    /// Default: `"image"`
     pub image_data_type: String,
 
-    /// {"type": "image", "||HERE||": "base64 encoded bytes..."}
-    /// default: "data"
+    /// `{"type": "image", "||HERE||": "<base64>" }`
+    /// Default: `"data"`
     pub image_data_field: String,
 }
 
@@ -268,6 +254,11 @@ impl PartStyle {
         Self::default()
     }
 
+    /// Merge `other` into `self`, respecting defaults and rejecting conflicting overrides.
+    ///
+    /// A field from `other` is applied only if it differs from the default. If `self`
+    /// already holds a non-default value for that field and it disagrees with `other`,
+    /// this returns `Err("Conflicting style ...")`.
     pub fn update(&mut self, other: Self) -> Result<(), String> {
         let default = Self::default();
         let update_string_field = |key: &str,
@@ -374,6 +365,34 @@ impl Default for PartStyle {
     }
 }
 
+/// A [`Part`] bundled with a concrete [`PartStyle`] to drive (de)serialization.
+///
+/// `StyledPart` keeps the **data** (`Part`) separate from the **mapping** (`PartStyle`).
+/// All `new_*` constructors attach the default style; call [`StyledPart::with_style`]
+/// to swap in a custom mapping before serialization.
+///
+/// # Serialization
+/// - Emits a `type` tag and the style-specific keys for the chosen variant.
+/// - `Function` emits an object under `style.function_field`, with per-key names taken
+///   from `function_name_field` / `function_arguments_field`.
+/// - `FunctionString` emits the raw payload under `style.function_field`.
+///
+/// # Deserialization
+/// The visitor reads `"type"` and dispatches according to `PartStyle`. It accepts both
+/// `"arguments"` and `"parameters"` (when present) and captures which was used so it can
+/// round-trip the original key names through `PartStyle`.
+///
+/// # Example
+/// Serialize a function call using `"parameters"` instead of `"arguments"`:
+/// ```rust
+/// # use ailoy::value::{Part, PartStyle, StyledPart};
+/// let part = Part::new_function("", "foo", r#"{ "x": 1 }"#);
+/// let mut style = PartStyle::default();
+/// style.function_arguments_field = "parameters".into();
+/// let styled = StyledPart { data: part, style };
+/// let json = serde_json::to_string(&styled).unwrap();
+/// assert!(json.contains("\"parameters\""));
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StyledPart {
     pub data: Part,

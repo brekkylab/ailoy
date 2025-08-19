@@ -3,23 +3,13 @@ use std::fmt::{self, Display};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, MapAccess},
-    ser::SerializeMap as _,
+    ser::{self, SerializeMap as _},
 };
 use strum::{Display, EnumString};
 
 use crate::value::{Part, PartStyle, StyledPart};
 
 /// The author of a message (or streaming delta) in a chat.
-///
-/// This aligns with common chat schemas (e.g., OpenAI-style), and is serialized
-/// in lowercase (`"system"`, `"user"`, `"assistant"`, `"tool"`).
-///
-/// # Variants
-/// - [`Role::System`]: System or policy instructions that guide the assistant.
-/// - [`Role::User`]: End-user inputs and uploads.
-/// - [`Role::Assistant`]: Model-generated outputs, including tool-call requests.
-/// - [`Role::Tool`]: Outputs produced by external tools/functions, typically in
-///   response to an assistant tool call (and often correlated via `tool_call_id`).
 #[derive(Clone, Debug, Display, Serialize, Deserialize, PartialEq, Eq, EnumString)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "snake_case")]
@@ -30,34 +20,10 @@ pub enum Role {
     User,
     /// Content authored by the assistant/model.
     Assistant,
-    /// Content authored by a tool/function, usually as a result of a tool call.
+    /// Outputs produced by external tools/functions, typically in
+    /// response to an assistant tool call (and often correlated via `tool_call_id`).
     Tool,
 }
-
-// fn text_or_part_vector<'de, D>(de: D) -> Result<Vec<Part>, D::Error>
-// where
-//     D: serde::Deserializer<'de>,
-// {
-//     #[derive(serde::Deserialize)]
-//     #[serde(untagged)]
-//     enum Either {
-//         Null(()),
-//         Str(String),
-//         Parts(Vec<Part>),
-//     }
-
-//     match Either::deserialize(de)? {
-//         Either::Null(()) => Ok(vec![]),
-//         Either::Str(s) => {
-//             if s.is_empty() {
-//                 Ok(vec![])
-//             } else {
-//                 Ok(vec![Part::new_text(s)])
-//             }
-//         }
-//         Either::Parts(v) => Ok(v),
-//     }
-// }
 
 /// Represents a complete chat message composed of multiple parts (multi-modal).
 ///
@@ -233,6 +199,13 @@ impl Default for MessageStyle {
     }
 }
 
+/// A [`Message`] bundled with a concrete [`MessageStyle`].
+///
+/// - Serialization uses `style` to pick top-level field names (`reasoning`, `content`,
+///   `tool_calls`) and to format parts via `style.part_style`.
+/// - Deserialization **auto-detects** which top-level keys were used in the input and
+///   records them back into `style`. If `content` is a string, it sets
+///   `style.contents_textonly = true` and converts it to a single `Text` part.
 #[derive(Debug, Clone)]
 pub struct StyledMessage {
     pub data: Message,
@@ -398,49 +371,55 @@ impl Serialize for StyledMessage {
         S: Serializer,
     {
         let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("role", &self.data.role)?;
 
+        // role (optional)
+        if let Some(role) = &self.data.role {
+            map.serialize_entry("role", role)?;
+        }
+
+        // reasoning (string, omit if empty)
         if !self.data.reasoning.is_empty() {
             map.serialize_entry(&self.style.reasoning_field, &self.data.reasoning)?;
         }
 
+        // content: string vs array
         if self.style.contents_textonly {
-            if !self.data.contents.is_empty() {
-                map.serialize_entry(
-                    &self.style.contents_field,
-                    self.data.contents.get(0).unwrap().as_str().unwrap(),
-                )?;
+            match self.data.contents.as_slice() {
+                [] => map.serialize_entry(&self.style.contents_field, "")?,
+                [Part::Text(s)] => map.serialize_entry(&self.style.contents_field, s)?,
+                _ => {
+                    return Err(ser::Error::custom(
+                        "contents_textonly=true requires exactly one Text part",
+                    ));
+                }
             }
         } else {
-            if !self.data.contents.is_empty() {
-                map.serialize_entry(
-                    &self.style.contents_field,
-                    &self
-                        .data
-                        .contents
-                        .iter()
-                        .map(|v| StyledPart {
-                            data: v.clone(),
-                            style: self.style.part_style.clone(),
-                        })
-                        .collect::<Vec<_>>(),
-                )?;
-            }
+            let parts: Vec<StyledPart> = self
+                .data
+                .contents
+                .iter()
+                .cloned()
+                .map(|p| StyledPart {
+                    data: p,
+                    style: self.style.part_style.clone(),
+                })
+                .collect();
+            map.serialize_entry(&self.style.contents_field, &parts)?;
         }
 
+        // tool_calls (omit if empty)
         if !self.data.tool_calls.is_empty() {
-            map.serialize_entry(
-                &self.style.tool_calls_field,
-                &self
-                    .data
-                    .tool_calls
-                    .iter()
-                    .map(|v| StyledPart {
-                        data: v.clone(),
-                        style: self.style.part_style.clone(),
-                    })
-                    .collect::<Vec<_>>(),
-            )?;
+            let calls: Vec<StyledPart> = self
+                .data
+                .tool_calls
+                .iter()
+                .cloned()
+                .map(|p| StyledPart {
+                    data: p,
+                    style: self.style.part_style.clone(),
+                })
+                .collect();
+            map.serialize_entry(&self.style.tool_calls_field, &calls)?;
         }
 
         map.end()
@@ -452,90 +431,107 @@ impl<'de> Deserialize<'de> for StyledMessage {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_map(MessageVisitor)
-    }
-}
+        struct MsgVisitor;
 
-struct MessageVisitor;
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ContentEither {
+            Str(String),
+            Arr(Vec<StyledPart>),
+        }
 
-impl<'de> de::Visitor<'de> for MessageVisitor {
-    type Value = StyledMessage;
+        impl<'de> de::Visitor<'de> for MsgVisitor {
+            type Value = StyledMessage;
 
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str(r#"a map with "type" field and one other content key"#)
-    }
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a chat message object")
+            }
 
-    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
-    where
-        M: MapAccess<'de>,
-    {
-        let mut role: Option<Role> = None;
-        let mut contents: Vec<Part> = Vec::new();
-        let mut reasoning: String = String::new();
-        let mut tool_calls: Vec<Part> = Vec::new();
-        let mut style = MessageStyle::new();
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut role: Option<Option<Role>> = None;
+                let mut reasoning: Option<String> = None;
+                let mut contents: Option<Vec<Part>> = None;
+                let mut tool_calls: Option<Vec<Part>> = None;
 
-        while let Some(k) = map.next_key::<String>()? {
-            if k == "role" {
-                if role.is_some() {
-                    return Err(de::Error::duplicate_field("role"));
-                }
-                role = Some(map.next_value()?);
-            } else if k == "content" {
-                #[derive(Deserialize)]
-                #[serde(untagged)]
-                enum ContentEither {
-                    Null,                   // content: null
-                    String(String),         // content: "..."
-                    Parts(Vec<StyledPart>), // content: [ {...}, {...} ]
-                }
-                match map.next_value::<ContentEither>()? {
-                    ContentEither::Null => {}
-                    ContentEither::String(s) => {
-                        if !s.is_empty() {
-                            contents = vec![Part::new_text(s)];
+                let mut style = MessageStyle::default();
+
+                while let Some(k) = map.next_key::<String>()? {
+                    match k.as_str() {
+                        // Always fixed name for role
+                        "role" => {
+                            role = Some(map.next_value()?);
                         }
-                        style.contents_textonly = true;
-                    }
-                    ContentEither::Parts(mut v) => {
-                        contents.reserve(v.len());
-                        for part in v.drain(..) {
-                            contents.push(part.data);
-                            style
-                                .part_style
-                                .update(part.style)
-                                .map_err(|e| de::Error::custom(e))?;
+
+                        // Reasoning: accept the current style key (default "reasoning")
+                        // If a different key is encountered, record it into style.
+                        key if key == style.reasoning_field => {
+                            style.reasoning_field = key.to_string();
+                            reasoning = Some(map.next_value()?);
                         }
-                        style.contents_textonly = false;
+
+                        // Content: accept "content" or "contents" (records which was used),
+                        // or whatever key equals current style.contents_field.
+                        key if key == style.contents_field || key == "contents" => {
+                            style.contents_field = key.to_string();
+                            let v: ContentEither = map.next_value()?;
+                            match v {
+                                ContentEither::Str(s) => {
+                                    style.contents_textonly = true;
+                                    contents = Some(vec![Part::Text(s)]);
+                                }
+                                ContentEither::Arr(v) => {
+                                    style.contents_textonly = false;
+                                    let mut out = Vec::with_capacity(v.len());
+                                    for sp in v {
+                                        // Unify per-part style into message.part_style
+                                        style
+                                            .part_style
+                                            .update(sp.style)
+                                            .map_err(de::Error::custom)?;
+                                        out.push(sp.data);
+                                    }
+                                    contents = Some(out);
+                                }
+                            }
+                        }
+
+                        // Tool calls: accept the current style key (default "tool_calls")
+                        key if key == style.tool_calls_field => {
+                            style.tool_calls_field = key.to_string();
+                            let v: Vec<StyledPart> = map.next_value()?;
+                            let mut out = Vec::with_capacity(v.len());
+                            for sp in v {
+                                style
+                                    .part_style
+                                    .update(sp.style)
+                                    .map_err(de::Error::custom)?;
+                                out.push(sp.data);
+                            }
+                            tool_calls = Some(out);
+                        }
+
+                        // Unknown: skip
+                        _ => {
+                            let _ = map.next_value::<de::IgnoredAny>()?;
+                        }
                     }
                 }
-                style.contents_field = k;
-            } else if k == "reasoning" || k == "reasoning_content" {
-                reasoning = map.next_value()?;
-                style.contents_field = k;
-            } else if k == "tool_calls" {
-                let mut v: Vec<StyledPart> = map.next_value()?;
-                tool_calls.reserve(v.len());
-                for part in v.drain(..) {
-                    tool_calls.push(part.data);
-                    style
-                        .part_style
-                        .update(part.style)
-                        .map_err(|e| de::Error::custom(e))?;
-                }
-                style.contents_textonly = false;
-                style.contents_field = k;
+
+                let data = Message {
+                    role: role.unwrap_or(None),
+                    reasoning: reasoning.unwrap_or_default(),
+                    contents: contents.unwrap_or_default(),
+                    tool_calls: tool_calls.unwrap_or_default(),
+                };
+
+                Ok(StyledMessage { data, style })
             }
         }
-        Ok(StyledMessage {
-            data: Message {
-                role,
-                contents,
-                reasoning,
-                tool_calls,
-            },
-            style,
-        })
+
+        deserializer.deserialize_map(MsgVisitor)
     }
 }
 
