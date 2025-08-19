@@ -6,7 +6,9 @@ use tokio::sync::Mutex;
 use crate::{
     model::LanguageModel,
     tool::{MCPClient, Tool},
-    value::{Message, MessageAggregator, MessageOutput, Part, Role, ToolCall, ToolCallArg},
+    value::{
+        FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolCall, ToolCallArg,
+    },
 };
 
 pub struct Agent {
@@ -100,9 +102,9 @@ impl Agent {
                         assistant_msg = msg;
                     }
                 }
-                self.messages.lock().await.push(assistant_msg.clone());
+                msgs.lock().await.push(assistant_msg.clone());
                 if !assistant_msg.tool_calls.is_empty() {
-                    for part in assistant_msg.tool_calls {
+                    for part in &assistant_msg.tool_calls {
                         let tc = match part {
                             Part::FunctionString(s) => match ToolCall::try_from_string(s.clone()){
                                 Ok(tc) => tc,
@@ -112,32 +114,27 @@ impl Agent {
                                 let Ok(arguments) = ToolCallArg::try_from_string(arguments) else {
                                     continue;
                                 };
-                                ToolCall{name, arguments}
+                                ToolCall{name: name.to_owned(), arguments}
                             },
                             _ => {continue;},
                         };
                         let tool = tools.iter().find(|v| v.get_description().get_name() == tc.name).unwrap().clone();
                         let resp = tool.run(tc).await?;
-                        let delta = Message::with_role(Role::Tool).with_contents([resp.clone()]);
+                        let delta = Message::with_role(Role::Tool).with_contents(resp.clone());
                         yield MessageOutput::new().with_delta(delta);
-                        let tool_msg = Message::with_role(Role::Tool).with_contents([resp]);
-                        self.messages.lock().await.push(tool_msg);
-                        assistant_msg = Some(msg);
+                        let tool_msg = Message::with_role(Role::Tool).with_contents(resp);
+                        msgs.lock().await.push(tool_msg);
                     }
                 }
-                if let Some(msg) = aggregator.finalize() {
-                        assistant_msg = Some(msg);
-                    }
-                let assistant_msg = assistant_msg.unwrap();
-                self.messages.lock().await.push(assistant_msg.clone());
+                msgs.lock().await.push(assistant_msg.clone());
                 if !assistant_msg.tool_calls.is_empty() {
                     for part in assistant_msg.tool_calls {
-                        let tc = ToolCall::try_from_string(part.get_function_owned().unwrap()).unwrap();
-                        let tool = tools.iter().find(|v| v.get_description().get_name() == tc.get_name()).unwrap().clone();
+                        let tc = ToolCall::try_from_string(part.as_str().unwrap()).unwrap();
+                        let tool = tools.iter().find(|v| v.get_description().get_name() == tc.name).unwrap().clone();
                         let parts = tool.run(tc).await?;
                         for part in parts.into_iter() {
-                            yield MessageDelta::Content(Role::Tool, part.clone());
-                            let tool_msg = Message::with_content(Role::Tool, part);
+                            let tool_msg = Message::with_role(Role::Tool).with_contents([part.clone()]);
+                            yield MessageOutput{ delta: tool_msg.clone(), finish_reason: Some(FinishReason::Stop)};
                             self.messages.lock().await.push(tool_msg);
                         }
                     }
@@ -304,9 +301,6 @@ mod tests {
             if let Some(msg) = agg.update(delta) {
                 println!("{:?}", msg);
             }
-        }
-        if let Some(msg) = agg.finalize() {
-            println!("{:?}", msg);
         }
 
         Ok(())
