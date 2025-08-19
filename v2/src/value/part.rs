@@ -5,9 +5,6 @@ use serde::{
     de::{self, MapAccess},
     ser::SerializeMap as _,
 };
-use url::Url;
-
-use crate::value::{ToolCall, ToolCallFmt, ToolCallWithFmt};
 
 /// Represents a single, typed unit of message content (multi-modal).
 ///
@@ -78,7 +75,7 @@ use crate::value::{ToolCall, ToolCallFmt, ToolCallWithFmt};
 /// # use crate::value::Part;
 /// let mut buf = String::new();
 /// // Append chunks as they arrive:
-/// buf.push_str("{\"location\":\"Dubai\"");
+/// buf.push_str("{\"location\":\"Paris\"");
 /// buf.push_str(",\"unit\":\"Celsius\"}");
 /// let part = Part::Function { id: None, function: buf }; // parse after finalization
 /// ```
@@ -88,41 +85,33 @@ pub enum Part {
     Text(String),
 
     /// Raw function, holding JSON call as a string. holds the unmodified JSON; it may be incomplete while streaming.
+    /// serialized as a string: `"\{\"name\": \"function_name\", \"arguments\": \"...\""}`
     FunctionString(String),
 
-    /// Tool/function call payload captured as a raw JSON string.
+    /// Tool/function call payload captured.
     ///
     /// `id` corresponds to `tool_call_id` (when available) for correlating tool results.
+    /// Empty string if it has no value
+    /// Note that argument is raw string, (it is actually JSON)
+    /// serialized as an object: `{\"name\": \"function_name\", \"arguments\": \"...\""}``
     Function {
         /// Optional `tool_call_id` used to correlate tool results.
-        id: Option<String>,
-        /// Raw JSON for the function call payload (often the `arguments` string).
-        function: ToolCall,
+        id: String,
+        name: String,
+        arguments: String,
     },
 
     /// Web-addressable image (HTTP(S) URL).
     ///
     /// Typically serialized as:
     /// `{ "type": "image", "url": "<...>" }`.
-    ImageURL(Url),
+    ImageURL(String),
 
     /// Inline, base64-encoded image bitmap bytes.
     ///
     /// Typically serialized as:
     /// `{ "type": "image", "data": "<base64>" }`.
     ImageData(String),
-
-    /// Web-addressable audio (HTTP(S) URL).
-    ///
-    /// Typically serialized as:
-    /// `{ "type": "audio", "url": "<...>" }`.
-    AudioURL(Url),
-
-    /// Inline, base64-encoded audio.
-    ///
-    /// Typically serialized as:
-    /// `{ "type": "audio", "data": "<base64>" }`.
-    AudioData(String),
 }
 
 impl Part {
@@ -130,119 +119,357 @@ impl Part {
         Self::Text(text.into())
     }
 
-    pub fn is_text(&self) -> bool {
-        match self {
-            Part::Text(_) => true,
-            _ => false,
+    pub fn new_function_string(fnstr: impl Into<String>) -> Self {
+        Self::FunctionString(fnstr.into())
+    }
+
+    pub fn new_function(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: impl Into<String>,
+    ) -> Self {
+        Self::Function {
+            id: id.into(),
+            name: name.into(),
+            arguments: arguments.into(),
         }
     }
 
-    pub fn get_text(&self) -> Option<&str> {
+    pub fn new_image_url(url: impl Into<String>) -> Self {
+        Self::ImageURL(url.into())
+    }
+
+    pub fn new_image_data(data: impl Into<String>) -> Self {
+        Self::ImageData(data.into())
+    }
+
+    /// Returns none if successfully merged
+    /// Some(Value) if it cannot be merged (the portion of cannot be merged)
+    pub fn concatenate(&mut self, other: Self) -> Option<Self> {
+        match (self, other) {
+            (Part::Text(lhs), Part::Text(rhs)) => {
+                lhs.push_str(&rhs);
+                None
+            }
+            (Part::FunctionString(lhs), Part::FunctionString(rhs)) => {
+                lhs.push_str(&rhs);
+                None
+            }
+            (
+                Part::Function {
+                    id: id1,
+                    name: name1,
+                    arguments: arguments1,
+                },
+                Part::Function {
+                    id: id2,
+                    name: name2,
+                    arguments: arguments2,
+                },
+            ) => {
+                // Function ID changed: Treat as a different function call
+                if !id1.is_empty() && !id2.is_empty() && id1 != &id2 {
+                    Some(Part::Function {
+                        id: id2,
+                        name: name2,
+                        arguments: arguments2,
+                    })
+                } else {
+                    if id1.is_empty() {
+                        *id1 = id2;
+                    }
+                    name1.push_str(&name2);
+                    arguments1.push_str(&arguments2);
+                    None
+                }
+            }
+            (Part::ImageURL(lhs), Part::ImageURL(rhs)) => {
+                lhs.push_str(&rhs);
+                None
+            }
+            (Part::ImageData(lhs), Part::ImageData(rhs)) => {
+                lhs.push_str(&rhs);
+                None
+            }
+            (_, other) => Some(other),
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
         match self {
             Part::Text(str) => Some(str.as_str()),
+            Part::FunctionString(str) => Some(str.as_str()),
+            Part::ImageURL(str) => Some(str.as_str()),
+            Part::ImageData(str) => Some(str.as_str()),
             _ => None,
         }
     }
 
-    pub fn get_text_mut(&mut self) -> Option<&mut String> {
+    pub fn as_mut_string(&mut self) -> Option<&mut String> {
         match self {
             Part::Text(str) => Some(str),
-            _ => None,
-        }
-    }
-
-    pub fn new_function_string(function_string: impl Into<String>) -> Self {
-        Self::FunctionString(function_string.into())
-    }
-
-    pub fn is_function_string(&self) -> bool {
-        match self {
-            Part::FunctionString(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn get_function_string(&self) -> Option<&str> {
-        match self {
-            Part::FunctionString(str) => Some(str.as_str()),
-            _ => None,
-        }
-    }
-
-    pub fn get_function_string_mut(&mut self) -> Option<&mut String> {
-        match self {
             Part::FunctionString(str) => Some(str),
+            Part::ImageURL(str) => Some(str),
+            Part::ImageData(str) => Some(str),
             _ => None,
-        }
-    }
-
-    pub fn new_function(id: Option<String>, function: impl Into<ToolCall>) -> Self {
-        Self::Function {
-            id,
-            function: function.into(),
-        }
-    }
-
-    pub fn is_function(&self) -> bool {
-        match self {
-            Part::Function { .. } => true,
-            _ => false,
-        }
-    }
-
-    pub fn get_tool_call(&self) -> Option<ToolCall> {
-        match self {
-            Part::FunctionString(s) => match ToolCall::try_from_string(s) {
-                Ok(v) => Some(v),
-                Err(_) => None,
-            },
-            Part::Function { function, .. } => Some(function.to_owned()),
-            _ => None,
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        match self {
-            Part::Text(v) => v.is_empty(),
-            Part::FunctionString(v) => v.is_empty(),
-            Part::Function { .. } => false,
-            Part::ImageURL(_) => false,
-            Part::ImageData(v) => v.is_empty(),
-            Part::AudioURL(_) => false,
-            Part::AudioData(v) => v.is_empty(),
         }
     }
 }
 
-impl fmt::Display for Part {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartStyle {
+    /// {"type": "||HERE||", "text": "It's a text..."}
+    /// default: "text"
+    pub text_type: String,
+
+    /// {"type": "text", "||HERE||": "It's a text..."}
+    /// default: "text"
+    pub text_field: String,
+
+    /// {"type": "||HERE||", "id": "1234asdf", "function": {"name": "function name", "arguments": "function args"}}
+    /// default: "function"
+    pub function_type: String,
+
+    /// {"type": "function", "id": "1234asdf", "||HERE||": {"name": "function name", "arguments": "function args"}}
+    /// default: "function"
+    pub function_field: String,
+
+    /// {"type": "function", "||HERE||": "1234asdf", "function": {"name": "function name", "arguments": "function args"}}
+    /// default: "id"
+    pub function_id_field: String,
+
+    /// {"type": "function", "id": "1234asdf", "function": {"||HERE||": "function name", "arguments": "function args"}}
+    /// default: "name"
+    pub function_name_field: String,
+
+    /// {"type": "function", "id": "1234asdf", "function": {"name": "function name", "||HERE||": "function args"}}
+    /// default: "arguments"
+    pub function_arguments_field: String,
+
+    /// {"type": "||HERE||", "url": "http://..."}
+    /// default: "image"
+    pub image_url_type: String,
+
+    /// {"type": "image", "||HERE||": "http://..."}
+    /// default: "url"
+    pub image_url_field: String,
+
+    /// {"type": "||HERE||", "data": "base64 encoded bytes..."}
+    /// default: "image"
+    pub image_data_type: String,
+
+    /// {"type": "image", "||HERE||": "base64 encoded bytes..."}
+    /// default: "data"
+    pub image_data_field: String,
+}
+
+impl PartStyle {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn update(&mut self, other: Self) -> Result<(), String> {
+        let default = Self::default();
+        let update_string_field = |key: &str,
+                                   val_self: &mut String,
+                                   val_other: String,
+                                   val_default: &str|
+         -> Result<(), String> {
+            if val_other != val_default {
+                if val_self != val_default && val_self != &val_other {
+                    return Err(format!(
+                        "Conflicting style in {} ({} vs. {})",
+                        key, val_self, val_other
+                    ));
+                }
+                *val_self = val_other;
+            }
+            Ok(())
+        };
+        update_string_field(
+            "text_type",
+            &mut self.text_type,
+            other.text_type,
+            &default.text_type,
+        )?;
+        update_string_field(
+            "text_field",
+            &mut self.text_field,
+            other.text_field,
+            &default.text_field,
+        )?;
+        update_string_field(
+            "function_type",
+            &mut self.function_type,
+            other.function_type,
+            &default.function_type,
+        )?;
+        update_string_field(
+            "function_field",
+            &mut self.function_field,
+            other.function_field,
+            &default.function_field,
+        )?;
+        update_string_field(
+            "function_id_field",
+            &mut self.function_id_field,
+            other.function_id_field,
+            &default.function_id_field,
+        )?;
+        update_string_field(
+            "function_name_field",
+            &mut self.function_name_field,
+            other.function_name_field,
+            &default.function_name_field,
+        )?;
+        update_string_field(
+            "function_arguments_field",
+            &mut self.function_arguments_field,
+            other.function_arguments_field,
+            &default.function_arguments_field,
+        )?;
+        update_string_field(
+            "image_url_type",
+            &mut self.image_url_type,
+            other.image_url_type,
+            &default.image_url_type,
+        )?;
+        update_string_field(
+            "image_url_field",
+            &mut self.image_url_field,
+            other.image_url_field,
+            &default.image_url_field,
+        )?;
+        update_string_field(
+            "image_data_type",
+            &mut self.image_data_type,
+            other.image_data_type,
+            &default.image_data_type,
+        )?;
+        update_string_field(
+            "image_data_field",
+            &mut self.image_data_field,
+            other.image_data_field,
+            &default.image_data_field,
+        )?;
+        Ok(())
+    }
+}
+
+impl Default for PartStyle {
+    fn default() -> Self {
+        Self {
+            text_type: String::from("text"),
+            text_field: String::from("text"),
+            function_type: String::from("function"),
+            function_field: String::from("function"),
+            function_id_field: String::from("id"),
+            function_name_field: String::from("name"),
+            function_arguments_field: String::from("arguments"),
+            image_url_type: String::from("image"),
+            image_url_field: String::from("url"),
+            image_data_type: String::from("image"),
+            image_data_field: String::from("data"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StyledPart {
+    pub data: Part,
+    pub style: PartStyle,
+}
+
+impl StyledPart {
+    pub fn new_text(text: impl Into<String>) -> Self {
+        Self {
+            data: Part::new_text(text),
+            style: PartStyle::default(),
+        }
+    }
+
+    pub fn new_function_string(fnstr: impl Into<String>) -> Self {
+        Self {
+            data: Part::new_function_string(fnstr),
+            style: PartStyle::default(),
+        }
+    }
+
+    pub fn new_function(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: impl Into<String>,
+    ) -> Self {
+        Self {
+            data: Part::new_function(id, name, arguments),
+            style: PartStyle::default(),
+        }
+    }
+
+    pub fn new_image_url(url: impl Into<String>) -> Self {
+        Self {
+            data: Part::new_image_url(url),
+            style: PartStyle::default(),
+        }
+    }
+
+    pub fn new_image_data(data: impl Into<String>) -> Self {
+        Self {
+            data: Part::new_image_data(data),
+            style: PartStyle::default(),
+        }
+    }
+
+    pub fn with_style(self, style: PartStyle) -> Self {
+        Self {
+            data: self.data,
+            style,
+        }
+    }
+
+    pub fn is_text(&self) -> bool {
+        match self.data {
+            Part::Text(_) => true,
+            _ => false,
+        }
+    }
+}
+
+impl fmt::Display for StyledPart {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
+        match &self.data {
             Part::Text(text) => {
-                f.write_fmt(format_args!("Part {{ type=\"text\", text=\"{}\" }}", text))?
+                f.write_fmt(format_args!("Part {{\"type\": \"{}\", \"{}\"=\"{}\"}}", self.style.text_type, self.style.text_field, text))?
             }
             Part::FunctionString(text) => f.write_fmt(format_args!(
-                "Part {{ type=\"function\", function=\"{}\" }}",
-                text
+                "Part {{\"type\": \"{}\", {}: \"{}\"}}",
+                self.style.function_type, self.style.function_field, text
             ))?,
-            Part::Function { id, function } => f.write_fmt(format_args!(
-                "Part {{ type=\"function\", id=\"{}\", function=\"{}\" }}",
-                if let Some(id) = id { id } else { "null" },
-                function
+            Part::Function {
+                id,
+                name,
+                arguments,
+            } => f.write_fmt(format_args!(
+                "Part {{\"type\": \"{}\", \"{}\"=\"{}\", \"{}\": {{\"{}\": \"{}\", \"{}\": \"{}\"}}}}",
+                self.style.function_type,
+                self.style.function_id_field,
+                id,
+                self.style.function_field,
+                self.style.function_name_field,
+                name,
+                self.style.function_arguments_field,
+                arguments
             ))?,
             Part::ImageURL(url) => f.write_fmt(format_args!(
-                "Part {{ type=\"image\", url=\"{}\" }}",
-                url.to_string()
+                "Part {{\"type\": \"{}\", \"{}\"=\"{}\"}}",
+                self.style.image_url_type,
+                self.style.image_url_field,
+                url
             ))?,
             Part::ImageData(data) => f.write_fmt(format_args!(
-                "Part {{ type=\"image\", data=({} bytes) }}",
-                data.len()
-            ))?,
-            Part::AudioURL(url) => f.write_fmt(format_args!(
-                "Part {{ type=\"audio\", url=\"{}\" }}",
-                url.to_string()
-            ))?,
-            Part::AudioData(data) => f.write_fmt(format_args!(
-                "Part {{ type=\"audio\", data=({} bytes) }}",
+                "Part {{\"type\": \"{}\", \"{}\"=({} bytes)}}",
+                self.style.image_data_type,
+                self.style.image_data_field,
                 data.len()
             ))?,
         };
@@ -250,170 +477,133 @@ impl fmt::Display for Part {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct PartFmt {
-    pub tool_call_fmt: ToolCallFmt,
-
-    /// {"type": "<HERE>", "text": "It's a text..."}
-    /// default: "text"
-    pub text_type: String,
-
-    /// {"type": "text", "<HERE>": "It's a text..."}
-    /// default: "text"
-    pub text_field: String,
-
-    /// {"type": "<HERE>", "id": "1234asdf", "function": {"name": "function name", "arguments": "function args"}}
-    /// default: "function"
-    pub function_type: String,
-
-    /// {"type": "function", "id": "1234asdf", "<HERE>": {"name": "function name", "arguments": "function args"}}
-    /// default: "function"
-    pub function_field: String,
-
-    /// {"type": "function", "<HERE>": "1234asdf", "function": {"name": "function name", "arguments": "function args"}}
-    /// default: "function"
-    pub function_id_field: String,
-
-    /// {"type": "function", "id": null, "function": (tool call)}
-    /// it the value is true, put `"id": null` markers
-    /// if the value is false, no field.
-    /// default: false
-    pub function_id_null_marker: bool,
-
-    /// {"type": "<HERE>", "url": "http://..."}
-    /// default: "image"
-    pub image_url_type: String,
-
-    /// {"type": "image", "<HERE>": "http://..."}
-    /// default: "url"
-    pub image_url_field: String,
-
-    /// {"type": "<HERE>", "data": "base64 encoded bytes..."}
-    /// default: "image"
-    pub image_data_type: String,
-
-    /// {"type": "image", "<HERE>": "base64 encoded bytes..."}
-    /// default: "data"
-    pub image_data_field: String,
-
-    /// {"type": "<HERE>", "url": "http://..."}
-    /// default: "audio"
-    pub audio_url_type: String,
-
-    /// {"type": "audio", "<HERE>": "http://..."}
-    /// default: "url"
-    pub audio_url_field: String,
-
-    /// {"type": "<HERE>", "data": "base64 encoded bytes..."}
-    /// default: "audio"
-    pub audio_data_type: String,
-
-    /// {"type": "audio", "<HERE>": "base64 encoded bytes..."}
-    /// default: "data"
-    pub audio_data_field: String,
+struct PartFunctionRef<'a> {
+    name: &'a str,
+    arguments: &'a str,
+    style: &'a PartStyle,
 }
 
-impl PartFmt {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_tool_call_fmt(mut self, tc_fmt: ToolCallFmt) -> Self {
-        self.tool_call_fmt = tc_fmt;
-        self
-    }
-}
-
-impl Default for PartFmt {
-    fn default() -> Self {
-        Self {
-            tool_call_fmt: ToolCallFmt::default(),
-            text_type: String::from("text"),
-            text_field: String::from("text"),
-            function_type: String::from("function"),
-            function_field: String::from("function"),
-            function_id_field: String::from("id"),
-            function_id_null_marker: false,
-            image_url_type: String::from("image"),
-            image_url_field: String::from("url"),
-            image_data_type: String::from("image"),
-            image_data_field: String::from("data"),
-            audio_url_type: String::from("audio"),
-            audio_url_field: String::from("url"),
-            audio_data_type: String::from("audio"),
-            audio_data_field: String::from("data"),
-        }
-    }
-}
-
-impl Serialize for Part {
+impl<'a> Serialize for PartFunctionRef<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let formatted = PartWithFmt::new(self, PartFmt::new());
-        formatted.serialize(serializer)
+        let mut map = serializer.serialize_map(None)?;
+        if !self.name.is_empty() {
+            map.serialize_entry(&self.style.function_name_field, self.name)?;
+        }
+        if !self.arguments.is_empty() {
+            map.serialize_entry(&self.style.function_arguments_field, self.arguments)?;
+        }
+        map.end()
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct PartWithFmt<'a>(&'a Part, PartFmt);
+struct PartFunctionOwned {
+    name: String,
+    arguments: String,
+    style: PartStyle,
+}
 
-impl<'a> PartWithFmt<'a> {
-    pub fn new(inner: &'a Part, fmt: PartFmt) -> Self {
-        Self(inner, fmt)
+impl<'de> Deserialize<'de> for PartFunctionOwned {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(PartFunctionVisitor)
     }
 }
 
-impl<'a> Serialize for PartWithFmt<'a> {
+struct PartFunctionVisitor;
+
+impl<'de> de::Visitor<'de> for PartFunctionVisitor {
+    type Value = PartFunctionOwned;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str(r#"a map with "type" field and one other content key"#)
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let mut name: Option<(String, String)> = None;
+        let mut arguments: Option<(String, String)> = None;
+        while let Some(k) = map.next_key::<String>()? {
+            if k == "name" {
+                name = Some((String::from("name"), map.next_value()?));
+            } else if k == "arguments" {
+                arguments = Some((String::from("arguments"), map.next_value()?));
+            } else if k == "parameters" {
+                arguments = Some((String::from("parameters"), map.next_value()?));
+            }
+        }
+        if let Some((name_key, name)) = name {
+            if let Some((arguments_key, arguments)) = arguments {
+                let mut style = PartStyle::default();
+                style.function_name_field = name_key;
+                style.function_arguments_field = arguments_key;
+                Ok(PartFunctionOwned {
+                    name,
+                    arguments,
+                    style,
+                })
+            } else {
+                Err(de::Error::missing_field("arguments"))
+            }
+        } else {
+            Err(de::Error::missing_field("name"))
+        }
+    }
+}
+
+impl Serialize for StyledPart {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let mut map = serializer.serialize_map(Some(2))?;
-        match &self.0 {
+        match &self.data {
             Part::Text(text) => {
-                map.serialize_entry("type", &self.1.text_type)?;
-                map.serialize_entry(&self.1.text_field, text)?;
+                map.serialize_entry("type", &self.style.text_type)?;
+                map.serialize_entry(&self.style.text_field, text)?;
             }
             Part::FunctionString(function_string) => {
-                map.serialize_entry("type", &self.1.function_type)?;
-                map.serialize_entry(&self.1.function_field, function_string)?;
+                map.serialize_entry("type", &self.style.function_type)?;
+                map.serialize_entry(&self.style.function_field, function_string)?;
             }
-            Part::Function { id, function } => {
-                map.serialize_entry("type", &self.1.function_type)?;
-                if id.is_some() {
-                    map.serialize_entry(&self.1.function_id_field, id.as_ref().unwrap())?;
-                } else if self.1.function_id_null_marker {
-                    map.serialize_entry(&self.1.function_id_field, &())?;
+            Part::Function {
+                id,
+                name,
+                arguments,
+            } => {
+                map.serialize_entry("type", &self.style.function_type)?;
+                if !id.is_empty() {
+                    map.serialize_entry(&self.style.function_id_field, &id)?;
                 }
                 map.serialize_entry(
-                    &self.1.function_field,
-                    &ToolCallWithFmt::new(function, self.1.tool_call_fmt.clone()),
+                    &self.style.function_field,
+                    &PartFunctionRef {
+                        name,
+                        arguments,
+                        style: &self.style,
+                    },
                 )?;
             }
             Part::ImageURL(url) => {
-                map.serialize_entry("type", &self.1.image_url_type)?;
-                map.serialize_entry(&self.1.image_url_field, url.as_str())?;
+                map.serialize_entry("type", &self.style.image_url_type)?;
+                map.serialize_entry(&self.style.image_url_field, url.as_str())?;
             }
             Part::ImageData(encoded) => {
-                map.serialize_entry("type", &self.1.image_data_type)?;
-                map.serialize_entry(&self.1.image_data_field, encoded.as_str())?;
-            }
-            Part::AudioURL(url) => {
-                map.serialize_entry("type", &self.1.audio_url_type)?;
-                map.serialize_entry(&self.1.audio_url_field, url.as_str())?;
-            }
-            Part::AudioData(encoded) => {
-                map.serialize_entry("type", &self.1.audio_data_type)?;
-                map.serialize_entry(&self.1.audio_data_field, encoded.as_str())?;
+                map.serialize_entry("type", &self.style.image_data_type)?;
+                map.serialize_entry(&self.style.image_data_field, encoded.as_str())?;
             }
         };
         map.end()
     }
 }
 
-impl<'de> Deserialize<'de> for Part {
+impl<'de> Deserialize<'de> for StyledPart {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -425,7 +615,7 @@ impl<'de> Deserialize<'de> for Part {
 struct PartVisitor;
 
 impl<'de> de::Visitor<'de> for PartVisitor {
-    type Value = Part;
+    type Value = StyledPart;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(r#"a map with "type" field and one other content key"#)
@@ -436,9 +626,9 @@ impl<'de> de::Visitor<'de> for PartVisitor {
         M: MapAccess<'de>,
     {
         let mut ty: Option<String> = None;
+        let mut id: Option<(String, String)> = None;
+        let mut function_field: Option<(String, PartFunctionOwned)> = None;
         let mut field: Option<(String, String)> = None;
-        let mut func_field: Option<(String, ToolCall)> = None;
-        let mut id: Option<String> = None;
 
         while let Some(k) = map.next_key::<String>()? {
             if k == "type" {
@@ -446,16 +636,40 @@ impl<'de> de::Visitor<'de> for PartVisitor {
                     return Err(de::Error::duplicate_field("type"));
                 }
                 ty = Some(map.next_value()?);
-            } else if k == "id" || k == "function_id" {
+            } else if k == "id" {
                 if id.is_some() {
-                    return Err(de::Error::duplicate_field("id"));
+                    return Err(de::Error::custom(format!(
+                        "multiple id fields found ({} & {})",
+                        id.unwrap().0,
+                        k
+                    )));
                 }
-                id = Some(map.next_value()?);
+                id = Some((String::from("id"), map.next_value()?));
+            } else if k == "function_id" {
+                if id.is_some() {
+                    return Err(de::Error::custom(format!(
+                        "multiple id fields found ({} & {})",
+                        id.unwrap().0,
+                        k
+                    )));
+                }
+                id = Some((String::from("function_id"), map.next_value()?));
             } else if k == "function" {
-                if field.is_some() {
-                    return Err(de::Error::custom("multiple part fields found"));
+                if function_field.is_some() {
+                    return Err(de::Error::custom(format!(
+                        "multiple part fields found ({} & {})",
+                        function_field.unwrap().0,
+                        k
+                    )));
                 }
-                func_field = Some((k, map.next_value::<ToolCall>()?));
+                if field.is_some() {
+                    return Err(de::Error::custom(format!(
+                        "multiple part fields found ({} & {})",
+                        field.unwrap().0,
+                        k
+                    )));
+                }
+                function_field = Some((k, map.next_value::<PartFunctionOwned>()?));
             } else if k == "text"
                 || k == "url"
                 || k == "data"
@@ -465,91 +679,102 @@ impl<'de> de::Visitor<'de> for PartVisitor {
                 || k == "audio_data"
             {
                 if field.is_some() {
-                    return Err(de::Error::custom("multiple part fields found"));
+                    return Err(de::Error::custom(format!(
+                        "multiple part fields found ({} & {})",
+                        field.unwrap().0,
+                        k
+                    )));
                 }
                 field = Some((k, map.next_value()?));
             }
         }
 
-        match (ty, field, func_field) {
-            (None, _, _) => Err(de::Error::missing_field("type")),
-            (_, None, None) => Err(de::Error::custom("Missing part field")),
-            (Some(ty), Some((k, v)), _) if ty == "text" && k == "text" => Ok(Part::Text(v)),
-            (Some(ty), _, Some((k, v))) if ty == "function" && k == "function" => {
-                Ok(Part::Function { id, function: v })
+        let mut style = PartStyle::new();
+        match (ty, field, id, function_field) {
+            (None, _, _, _) => Err(de::Error::missing_field("type")),
+            (_, None, _, None) => Err(de::Error::custom("Missing part field")),
+            (Some(ty), Some((k, v)), _, _) if ty == "text" && k == "text" => {
+                style.text_type = ty;
+                style.text_field = k;
+                Ok(StyledPart::new_text(v).with_style(style))
             }
-            (Some(ty), Some((k, v)), _)
+            (Some(ty), Some((k, v)), _, _) if ty == "function" && k == "function" => {
+                style.function_type = ty;
+                style.function_field = k;
+                Ok(StyledPart::new_function_string(v).with_style(style))
+            }
+            (Some(ty), _, Some((idk, idv)), Some((k, v)))
+                if ty == "function" && k == "function" =>
+            {
+                style.function_type = ty;
+                style.function_field = k;
+                style.function_id_field = idk;
+                style.function_name_field = v.style.function_name_field;
+                style.function_arguments_field = v.style.function_arguments_field;
+                Ok(StyledPart::new_function(idv, v.name, v.arguments).with_style(style))
+            }
+            (Some(ty), Some((k, v)), _, _)
                 if (ty == "image" || ty == "image_url") && (k == "url" || k == "image_url") =>
             {
-                let url = url::Url::parse(&v)
-                    .map_err(|_| de::Error::invalid_value(de::Unexpected::Str(&v), &"Valid URL"))?;
-                Ok(Part::ImageURL(url))
+                style.image_url_type = ty;
+                style.image_url_field = k;
+                Ok(StyledPart::new_image_url(v).with_style(style))
             }
-            (Some(ty), Some((k, v)), _)
-                if (ty == "image" || ty == "image_data") && (k == "data" || k == "image_data") =>
+            (Some(ty), Some((k, v)), _, _)
+                if (ty == "image" || ty == "image_data")
+                    && (k == "data"
+                        || k == "image_data"
+                        || k == "base64"
+                        || k == "image_base64") =>
             {
-                Ok(Part::ImageData(v))
+                style.image_url_type = ty;
+                style.image_url_field = k;
+                Ok(StyledPart::new_image_data(v).with_style(style))
             }
-            (Some(ty), Some((k, v)), _)
-                if (ty == "audio" || ty == "audio_url") && (k == "url" || k == "audio_url") =>
-            {
-                let url = url::Url::parse(&v)
-                    .map_err(|_| de::Error::invalid_value(de::Unexpected::Str(&v), &"Valid URL"))?;
-                Ok(Part::AudioURL(url))
-            }
-            (Some(ty), Some((k, v)), _)
-                if (ty == "audio" || ty == "audio_data") && (k == "data" || k == "audio_data") =>
-            {
-                Ok(Part::AudioData(v))
-            }
-            (Some(_), _, _) => Err(de::Error::custom("Invalid Part format")),
+            (Some(ty), Some((k, v)), _, _) => Err(de::Error::custom(format!(
+                "Invalid Part format(type: {}, {}: {})",
+                ty, k, v
+            ))),
+            _ => Err(de::Error::custom("Invalid Part format")),
         }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::value::ToolCallArg;
-
     use super::*;
 
     #[test]
     fn part_serde_default() {
         {
-            let part = Part::Text("This is a text".to_owned());
+            let part = StyledPart::new_text("This is a text");
             let s = serde_json::to_string(&part).unwrap();
             assert_eq!(s, r#"{"type":"text","text":"This is a text"}"#);
-            let roundtrip = serde_json::from_str::<Part>(&s).unwrap();
+            let roundtrip = serde_json::from_str::<StyledPart>(&s).unwrap();
             assert_eq!(roundtrip, part);
         }
         {
-            let part = Part::Function {
-                id: Some(String::from("asdf1234")),
-                function: ToolCall {
-                    name: String::from("fn"),
-                    arguments: ToolCallArg::Boolean(false),
-                },
-            };
+            let part = StyledPart::new_function("asdf1234", "fn", "false");
             let s = serde_json::to_string(&part).unwrap();
             assert_eq!(
                 s,
                 r#"{"type":"function","id":"asdf1234","function":{"name":"fn","arguments":false}}"#
             );
-            let roundtrip = serde_json::from_str::<Part>(&s).unwrap();
+            let roundtrip = serde_json::from_str::<StyledPart>(&s).unwrap();
             assert_eq!(roundtrip, part);
         }
     }
 
     #[test]
     fn part_serde_with_format() {
-        let mut fmt2 = PartFmt::new();
-        fmt2.text_type = String::from("text1");
-        fmt2.text_field = String::from("text2");
+        let mut style = PartStyle::new();
+        style.text_type = String::from("text1");
+        style.text_field = String::from("text2");
         {
-            let part = Part::Text("This is a text".to_owned());
-            let s = serde_json::to_string(&PartWithFmt::new(&part, fmt2.clone())).unwrap();
+            let part = StyledPart::new_text("This is a text").with_style(style);
+            let s = serde_json::to_string(&part).unwrap();
             assert_eq!(s, r#"{"type":"text1","text2":"This is a text"}"#);
-            let roundtrip = serde_json::from_str::<Part>(&s).unwrap();
+            let roundtrip = serde_json::from_str::<StyledPart>(&s).unwrap();
             assert_eq!(roundtrip, part);
         }
     }

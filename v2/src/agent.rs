@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use crate::{
     model::LanguageModel,
     tool::Tool,
-    value::{Message, MessageAggregator, MessageOutput, Part, Role},
+    value::{Message, MessageAggregator, MessageOutput, Part, Role, ToolCall, ToolCallArg},
 };
 
 pub struct Agent {
@@ -50,9 +50,18 @@ impl Agent {
                 self.messages.lock().await.push(assistant_msg.clone());
                 if !assistant_msg.tool_calls.is_empty() {
                     for part in assistant_msg.tool_calls {
-                        let tc = match part.get_tool_call() {
-                            Some(tc) => tc,
-                            None => todo!(),
+                        let tc = match part {
+                            Part::FunctionString(s) => match ToolCall::try_from_string(s.clone()){
+                                Ok(tc) => tc,
+                                Err(_) => { continue; },
+                            },
+                            Part::Function{id: _, name, arguments} => {
+                                let Ok(arguments) = ToolCallArg::try_from_string(arguments) else {
+                                    continue;
+                                };
+                                ToolCall{name, arguments}
+                            },
+                            _ => {continue;},
                         };
                         let tool = tools.iter().find(|v| v.get_description().get_name() == tc.name).unwrap().clone();
                         let resp = tool.run(tc).await?;

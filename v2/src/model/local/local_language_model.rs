@@ -47,7 +47,7 @@ impl LanguageModel for LocalLanguageModel {
         tools: Vec<ToolDesc>,
     ) -> BoxStream<'static, Result<MessageOutput, String>> {
         let strm = try_stream! {
-            let prompt = self.chat_template.apply_with_vec(&tools, &msgs, true)?;
+            let prompt = self.chat_template.apply(msgs, tools, true)?;
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
             self.inferencer.lock().await.prefill(&input_tokens);
             let mut last_token = *input_tokens.last().unwrap();
@@ -182,9 +182,9 @@ mod tests {
         let mut strm = model.run(msgs, Vec::new());
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
-            println!("{}", out);
+            println!("{:?}", out);
             if let Some(msg) = agg.update(out) {
-                println!("{}", msg);
+                println!("{:?}", msg);
             }
         }
     }
@@ -243,19 +243,14 @@ mod tests {
         let mut assistant_msg: Option<Message> = None;
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
-            println!("{}", delta);
+            println!("{:?}", delta);
             if let Some(msg) = agg.update(delta) {
                 assistant_msg = Some(msg);
             }
         }
         let assistant_msg = assistant_msg.unwrap();
-        println!("Assistant message: {}", assistant_msg);
-        let tc = assistant_msg
-            .tool_calls
-            .get(0)
-            .unwrap()
-            .get_tool_call()
-            .unwrap();
+        println!("Assistant message: {:?}", assistant_msg);
+        let tc = assistant_msg.tool_calls.get(0).unwrap();
         println!("Tool call: {:?}", tc);
     }
 
@@ -321,6 +316,6 @@ mod tests {
             }
         }
         let assistant_msg = assistant_msg.unwrap();
-        println!("Assistant message: {}", assistant_msg);
+        println!("Assistant message: {:?}", assistant_msg);
     }
 }

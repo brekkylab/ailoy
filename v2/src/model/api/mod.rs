@@ -5,16 +5,16 @@ use std::{fmt::Debug, sync::Arc};
 
 use crate::{
     model::LanguageModel,
-    value::{Message, MessageFmt, MessageOutput, MessageWithFmt, OPENAI_FMT, ToolDesc},
+    value::{Message, MessageOutput, MessageStyle, OPENAI_FMT, StyledMessage, ToolDesc},
 };
 
 #[derive(Clone)]
 pub struct APILanguageModel {
     model: String,
-    formatter: MessageFmt,
+    style: MessageStyle,
     make_request: Arc<
         dyn Fn(
-                Vec<MessageWithFmt>,
+                Vec<StyledMessage>,
                 Vec<ToolDesc>,
             ) -> BoxFuture<'static, Result<reqwest::Response, reqwest::Error>>
             + Send
@@ -27,14 +27,14 @@ impl APILanguageModel {
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> APILanguageModel {
         let model = model.into();
         let api_key = api_key.into();
-        let (formatter, make_request, handle_response) =
+        let (style, make_request, handle_response) =
             if model.starts_with("gpt") || model.starts_with("o") {
-                let formatter = OPENAI_FMT.clone();
+                let style = OPENAI_FMT.clone();
                 let model = model.clone();
                 let api_key = api_key.clone();
                 (
-                    formatter,
-                    Arc::new(move |msgs: Vec<MessageWithFmt>, tools: Vec<ToolDesc>| {
+                    style,
+                    Arc::new(move |msgs: Vec<StyledMessage>, tools: Vec<ToolDesc>| {
                         openai::make_request(&model, &api_key, msgs, tools)
                     }),
                     Arc::new(&openai::handle_next_response),
@@ -51,7 +51,7 @@ impl APILanguageModel {
 
         APILanguageModel {
             model,
-            formatter,
+            style,
             make_request,
             handle_response,
         }
@@ -66,7 +66,10 @@ impl LanguageModel for APILanguageModel {
     ) -> BoxStream<'static, Result<MessageOutput, String>> {
         let msgs = msgs
             .iter()
-            .map(|v| crate::value::MessageWithFmt::new(v, self.formatter.clone()))
+            .map(|v| StyledMessage {
+                data: v.clone(),
+                style: self.style.clone(),
+            })
             .collect::<Vec<_>>();
         let req = (self.make_request)(msgs, tools);
         let strm = async_stream::try_stream! {
@@ -123,9 +126,9 @@ mod tests {
         let mut strm = model.run(msgs, Vec::new());
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
-            println!("{}", delta);
+            println!("{:?}", delta);
             if let Some(msg) = agg.update(delta) {
-                println!("{}", msg);
+                println!("{:?}", msg);
             }
         }
     }
@@ -173,17 +176,8 @@ mod tests {
                 assistant_msg = Some(msg);
             }
         }
-        todo!()
-        // let tc = ToolCall::try_from_string(
-        //     assistant_msg
-        //         .unwrap()
-        //         .tool_calls
-        //         .get(0)
-        //         .unwrap()
-        //         .get_function_owned()
-        //         .unwrap(),
-        // )
-        // .unwrap();
-        // println!("Tool call: {:?}", tc);
+        let assistant_msg = assistant_msg.unwrap();
+        let tc = assistant_msg.tool_calls.get(0).unwrap();
+        println!("Tool call: {:?}", tc);
     }
 }

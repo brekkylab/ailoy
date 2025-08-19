@@ -16,6 +16,13 @@ pub enum ToolCallArg {
 }
 
 impl ToolCallArg {
+    pub fn try_from_string(s: impl AsRef<str>) -> Result<Self, String> {
+        match serde_json::from_str::<ToolCallArg>(s.as_ref()) {
+            Ok(tc) => Ok(tc),
+            Err(e) => Err(format!("Invalid tool call arg: {}", e.to_string())),
+        }
+    }
+
     pub fn new_string(s: impl Into<String>) -> Self {
         Self::String(s.into())
     }

@@ -1,56 +1,48 @@
 use std::sync::LazyLock;
 
-use crate::value::{MessageFmt, PartFmt, ToolCallFmt};
+use crate::value::{MessageStyle, PartStyle};
 
-pub static QWEN3_FMT: LazyLock<MessageFmt> = LazyLock::new(|| {
-    let tool_call_fmt = ToolCallFmt::new();
+pub static QWEN3_FMT: LazyLock<MessageStyle> = LazyLock::new(|| {
+    let part_style = PartStyle::new();
 
-    let mut part_fmt = PartFmt::new();
-    part_fmt.tool_call_fmt = tool_call_fmt;
+    let mut message_style = MessageStyle::new();
+    message_style.part_style = part_style;
+    message_style.reasoning_field = String::from("reasoning_content");
+    message_style.contents_textonly = true; // It's text-only model
 
-    let mut msg_fmt = MessageFmt::new();
-    msg_fmt.part_fmt = part_fmt;
-    msg_fmt.reasoning_field = String::from("reasoning_content");
-    msg_fmt.contents_textonly = true; // It's text-only model
-
-    msg_fmt
+    message_style
 });
 
-pub static OPENAI_FMT: LazyLock<MessageFmt> = LazyLock::new(|| {
-    let mut tool_call_fmt = ToolCallFmt::new();
-    tool_call_fmt.arguments_field = String::from("parameters");
+pub static OPENAI_FMT: LazyLock<MessageStyle> = LazyLock::new(|| {
+    let mut part_style = PartStyle::new();
+    part_style.function_arguments_field = String::from("parameters");
+    part_style.image_url_field = String::from("image_url");
 
-    let mut part_fmt = PartFmt::new();
-    part_fmt.tool_call_fmt = tool_call_fmt;
-    part_fmt.image_url_field = String::from("image_url");
-    part_fmt.audio_url_field = String::from("audio_url");
+    let mut message_style = MessageStyle::new();
+    message_style.part_style = part_style;
 
-    let mut msg_fmt = MessageFmt::new();
-    msg_fmt.part_fmt = part_fmt;
-
-    msg_fmt
+    message_style
 });
 
 #[cfg(test)]
 mod tests {
-    use crate::value::{Message, MessageWithFmt, Part, Role, ToolCall, ToolCallArg};
+    use crate::value::{Part, Role, StyledMessage};
 
-    fn get_example_msg() -> Vec<Message> {
+    fn get_example_msg() -> Vec<StyledMessage> {
         vec![
-            Message::with_role(Role::System)
-                .with_contents([Part::new_text("You are an assistant.")]),
-            Message::with_role(Role::User).with_contents([Part::new_text("Hi what's your name?")]),
-            Message::with_role(Role::Assistant)
+            StyledMessage::with_role(Role::System)
+                .with_contents([Part::Text("You are an assistant.".to_owned())]),
+            StyledMessage::with_role(Role::User)
+                .with_contents([Part::new_text("Hi what's your name?")]),
+            StyledMessage::with_role(Role::Assistant)
                 .with_reasoning("Think something...")
                 .with_tool_calls([Part::new_function(
-                    None,
-                    ToolCall::new(
-                        "get_something",
-                        ToolCallArg::new_object([("WhatToGet", ToolCallArg::new_string("name"))]),
-                    ),
+                    "",
+                    "get_something",
+                    "{\"WhatToGet\": \"name\"}",
                 )]),
-            Message::with_role(Role::Tool).with_contents([Part::Text(String::from("Jaden"))]),
-            Message::with_role(Role::Assistant)
+            StyledMessage::with_role(Role::Tool).with_contents([Part::Text(String::from("Jaden"))]),
+            StyledMessage::with_role(Role::Assistant)
                 .with_contents([Part::Text(String::from("You can call me Jaden."))]),
         ]
     }
@@ -63,7 +55,10 @@ mod tests {
         let formatter = QWEN3_FMT.clone();
         let msgs_in = msgs
             .iter()
-            .map(|msg| MessageWithFmt::new(msg, formatter.clone()))
+            .map(|msg| StyledMessage {
+                data: msg.data.clone(),
+                style: formatter.clone(),
+            })
             .collect::<Vec<_>>();
 
         let out = serde_json::to_string(&msgs_in).unwrap();
@@ -78,7 +73,10 @@ mod tests {
         let formatter = OPENAI_FMT.clone();
         let msgs_in = msgs
             .iter()
-            .map(|msg| MessageWithFmt::new(msg, formatter.clone()))
+            .map(|msg| StyledMessage {
+                data: msg.data.clone(),
+                style: formatter.clone(),
+            })
             .collect::<Vec<_>>();
 
         let out = serde_json::to_string(&msgs_in).unwrap();

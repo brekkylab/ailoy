@@ -7,7 +7,7 @@ use serde::{
 };
 use strum::{Display, EnumString};
 
-use crate::value::{Part, PartFmt, PartWithFmt};
+use crate::value::{Part, PartStyle, StyledPart};
 
 /// The author of a message (or streaming delta) in a chat.
 ///
@@ -140,13 +140,12 @@ pub struct Message {
 }
 
 impl Message {
-    /// Create an empty message
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn with_role(role: Role) -> Self {
-        Self {
+        Message {
             role: Some(role),
             reasoning: String::new(),
             contents: Vec::new(),
@@ -155,7 +154,7 @@ impl Message {
     }
 
     pub fn with_reasoning(self, reasoning: impl Into<String>) -> Self {
-        Self {
+        Message {
             role: self.role,
             reasoning: reasoning.into(),
             contents: self.contents,
@@ -164,7 +163,7 @@ impl Message {
     }
 
     pub fn with_contents(self, contents: impl IntoIterator<Item = Part>) -> Self {
-        Self {
+        Message {
             role: self.role,
             reasoning: self.reasoning,
             contents: contents.into_iter().collect(),
@@ -173,7 +172,7 @@ impl Message {
     }
 
     pub fn with_tool_calls(self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
-        Self {
+        Message {
             role: self.role,
             reasoning: self.reasoning,
             contents: self.contents,
@@ -193,179 +192,262 @@ impl Default for Message {
     }
 }
 
-impl Display for Message {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut to_write: Vec<String> = Vec::new();
-        if self.role.is_some() {
-            to_write.push(format!("role: {}", self.role.as_ref().unwrap()));
-        }
-        if !self.reasoning.is_empty() {
-            to_write.push(format!(
-                "reasoning: \"{}\"",
-                &self.reasoning.replace("\n", "\\n")
-            ));
-        }
-        if self.contents.len() > 0 {
-            to_write.push(format!(
-                "contents: [ {} ]",
-                &self
-                    .contents
-                    .iter()
-                    .map(|v| v.to_string().replace("\n", "\\n"))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ));
-        }
-        if self.tool_calls.len() > 0 {
-            to_write.push(format!(
-                "tool_calls: [ {} ]",
-                &self
-                    .tool_calls
-                    .iter()
-                    .map(|v| v.to_string().replace("\n", "\\n"))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ));
-        }
-        f.write_str(&format!("Message{{ {} }}", to_write.join(", ")))?;
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone)]
-pub struct MessageFmt {
-    pub part_fmt: PartFmt,
+pub struct MessageStyle {
+    pub part_style: PartStyle,
 
-    /// {"|HERE|": "...", "content": [...], "tool_calls": [...]}
+    /// {"||HERE||": "...", "content": [...], "tool_calls": [...]}
     /// default: "reasoning"
     pub reasoning_field: String,
 
-    /// it the value is true, put `"reasoning": null` markers
-    /// if the value is false, no field.
-    /// default: false
-    pub reasoning_null_marker: bool,
-
-    /// {"reasoning": "...", "|HERE|": [...], "tool_calls": [...]}
+    /// {"reasoning": "...", "||HERE||": [...], "tool_calls": [...]}
     /// default: "content"
     pub contents_field: String,
 
-    /// {"reasoning": "...", "contents": |HERE|, "tool_calls": [...]}
+    /// {"reasoning": "...", "content": ||HERE||, "tool_calls": [...]}
     /// true: ser/de as a string (vector must be a length 1 with text part)
     /// false: ser/de as a vector of parts (usually multimodal)
-    /// default: "false"
+    /// default: false
     pub contents_textonly: bool,
 
-    /// it the value is true, put `"contents": null` markers
-    /// if the value is false, no field.
-    /// default: false
-    pub contents_null_marker: bool,
-
-    /// {"reasoning": "...", "contents": [...], "|HERE|": [...]}
+    /// {"reasoning": "...", "content": [...], "||HERE||": [...]}
     /// default: "tool_calls"
     pub tool_calls_field: String,
-
-    /// it the value is true, put `"tool_calls": null` markers
-    /// if the value is false, no field.
-    /// default: false
-    pub tool_calls_null_marker: bool,
 }
 
-impl MessageFmt {
+impl MessageStyle {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl Default for MessageFmt {
+impl Default for MessageStyle {
     fn default() -> Self {
         Self {
-            part_fmt: PartFmt::default(),
+            part_style: PartStyle::default(),
             reasoning_field: String::from("reasoning"),
-            reasoning_null_marker: false,
             contents_field: String::from("content"),
             contents_textonly: false,
-            contents_null_marker: false,
             tool_calls_field: String::from("tool_calls"),
-            tool_calls_null_marker: false,
         }
     }
 }
 
-impl Serialize for Message {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let formatted = MessageWithFmt::new(self, MessageFmt::new());
-        formatted.serialize(serializer)
-    }
-}
-
 #[derive(Debug, Clone)]
-pub struct MessageWithFmt<'a>(&'a Message, MessageFmt);
+pub struct StyledMessage {
+    pub data: Message,
+    pub style: MessageStyle,
+}
 
-impl<'a> MessageWithFmt<'a> {
-    pub fn new(msg: &'a Message, fmt: MessageFmt) -> Self {
-        Self(msg, fmt)
+impl StyledMessage {
+    /// Create an empty message
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_role(role: Role) -> Self {
+        Self {
+            data: Message {
+                role: Some(role),
+                reasoning: String::new(),
+                contents: Vec::new(),
+                tool_calls: Vec::new(),
+            },
+            style: MessageStyle::new(),
+        }
+    }
+
+    pub fn with_reasoning(self, reasoning: impl Into<String>) -> Self {
+        Self {
+            data: Message {
+                role: self.data.role,
+                reasoning: reasoning.into(),
+                contents: self.data.contents,
+                tool_calls: self.data.tool_calls,
+            },
+            style: self.style,
+        }
+    }
+
+    pub fn with_contents(self, contents: impl IntoIterator<Item = Part>) -> Self {
+        Self {
+            data: Message {
+                role: self.data.role,
+                reasoning: self.data.reasoning,
+                contents: contents.into_iter().collect(),
+                tool_calls: self.data.tool_calls,
+            },
+            style: self.style,
+        }
+    }
+
+    pub fn with_tool_calls(self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
+        Self {
+            data: Message {
+                role: self.data.role,
+                reasoning: self.data.reasoning,
+                contents: self.data.contents,
+                tool_calls: tool_calls.into_iter().collect(),
+            },
+            style: self.style,
+        }
+    }
+
+    pub fn with_style(self, style: MessageStyle) -> Self {
+        Self {
+            data: self.data,
+            style,
+        }
     }
 }
 
-impl<'a> Serialize for MessageWithFmt<'a> {
+impl Default for StyledMessage {
+    fn default() -> Self {
+        Self {
+            data: Message::default(),
+            style: MessageStyle::default(),
+        }
+    }
+}
+
+impl Display for StyledMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Message {{")?;
+        let mut prefix_comma = false;
+        if self.data.role.is_some() {
+            f.write_fmt(format_args!(
+                "\"role\": {}",
+                self.data.role.as_ref().unwrap()
+            ))?;
+            prefix_comma = true;
+        }
+        if !self.data.reasoning.is_empty() {
+            if prefix_comma {
+                f.write_str(", ")?;
+            }
+            f.write_fmt(format_args!(
+                "\"{}\": \"{}\"",
+                self.style.reasoning_field,
+                self.data.reasoning.replace("\n", "\\n")
+            ))?;
+            prefix_comma = true;
+        }
+        if self.data.contents.len() > 0 {
+            if prefix_comma {
+                f.write_str(", ")?;
+            }
+            if self.style.contents_textonly {
+                f.write_fmt(format_args!(
+                    "\"{}\": \"{}\"",
+                    self.style.contents_field,
+                    self.data.contents[0].as_str().unwrap()
+                ))?;
+            } else {
+                f.write_fmt(format_args!(
+                    "\"{}\": [{}",
+                    self.style.contents_field,
+                    StyledPart {
+                        data: self.data.contents[0].clone(),
+                        style: self.style.part_style.clone()
+                    }
+                ))?;
+                for data in &self.data.contents[1..] {
+                    f.write_fmt(format_args!(
+                        ", {}",
+                        StyledPart {
+                            data: data.clone(),
+                            style: self.style.part_style.clone()
+                        }
+                    ))?;
+                }
+                f.write_str("]")?;
+                prefix_comma = true;
+            }
+        }
+        if self.data.tool_calls.len() > 0 {
+            if prefix_comma {
+                f.write_str(", ")?;
+            }
+            f.write_fmt(format_args!(
+                "\"{}\": [{}",
+                self.style.tool_calls_field,
+                StyledPart {
+                    data: self.data.tool_calls[0].clone(),
+                    style: self.style.part_style.clone()
+                }
+            ))?;
+            for data in &self.data.tool_calls[1..] {
+                f.write_fmt(format_args!(
+                    ", {}",
+                    StyledPart {
+                        data: data.clone(),
+                        style: self.style.part_style.clone()
+                    }
+                ))?;
+            }
+            f.write_str("]")?;
+        }
+        f.write_str("}}")?;
+        Ok(())
+    }
+}
+
+impl Serialize for StyledMessage {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("role", &self.0.role)?;
+        map.serialize_entry("role", &self.data.role)?;
 
-        if !self.0.reasoning.is_empty() {
-            map.serialize_entry(&self.1.reasoning_field, &self.0.reasoning)?;
-        } else if self.1.reasoning_null_marker {
-            map.serialize_entry(&self.1.reasoning_field, &())?;
+        if !self.data.reasoning.is_empty() {
+            map.serialize_entry(&self.style.reasoning_field, &self.data.reasoning)?;
         }
 
-        if self.1.contents_textonly {
-            if !self.0.contents.is_empty() {
+        if self.style.contents_textonly {
+            if !self.data.contents.is_empty() {
                 map.serialize_entry(
-                    &self.1.contents_field,
-                    self.0.contents.get(0).unwrap().get_text().unwrap(),
+                    &self.style.contents_field,
+                    self.data.contents.get(0).unwrap().as_str().unwrap(),
                 )?;
             }
         } else {
-            if !self.0.contents.is_empty() {
+            if !self.data.contents.is_empty() {
                 map.serialize_entry(
-                    &self.1.contents_field,
+                    &self.style.contents_field,
                     &self
-                        .0
+                        .data
                         .contents
                         .iter()
-                        .map(|v| PartWithFmt::new(v, self.1.part_fmt.clone()))
+                        .map(|v| StyledPart {
+                            data: v.clone(),
+                            style: self.style.part_style.clone(),
+                        })
                         .collect::<Vec<_>>(),
                 )?;
-            } else if self.1.contents_null_marker {
-                map.serialize_entry(&self.1.contents_field, &())?;
             }
         }
 
-        if !self.0.tool_calls.is_empty() {
+        if !self.data.tool_calls.is_empty() {
             map.serialize_entry(
-                &self.1.tool_calls_field,
+                &self.style.tool_calls_field,
                 &self
-                    .0
+                    .data
                     .tool_calls
                     .iter()
-                    .map(|v| PartWithFmt::new(v, self.1.part_fmt.clone()))
+                    .map(|v| StyledPart {
+                        data: v.clone(),
+                        style: self.style.part_style.clone(),
+                    })
                     .collect::<Vec<_>>(),
             )?;
-        } else if self.1.tool_calls_null_marker {
-            map.serialize_entry(&self.1.tool_calls_field, &())?;
         }
 
         map.end()
     }
 }
 
-impl<'de> Deserialize<'de> for Message {
+impl<'de> Deserialize<'de> for StyledMessage {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -377,7 +459,7 @@ impl<'de> Deserialize<'de> for Message {
 struct MessageVisitor;
 
 impl<'de> de::Visitor<'de> for MessageVisitor {
-    type Value = Message;
+    type Value = StyledMessage;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(r#"a map with "type" field and one other content key"#)
@@ -391,6 +473,7 @@ impl<'de> de::Visitor<'de> for MessageVisitor {
         let mut contents: Vec<Part> = Vec::new();
         let mut reasoning: String = String::new();
         let mut tool_calls: Vec<Part> = Vec::new();
+        let mut style = MessageStyle::new();
 
         while let Some(k) = map.next_key::<String>()? {
             if k == "role" {
@@ -402,32 +485,56 @@ impl<'de> de::Visitor<'de> for MessageVisitor {
                 #[derive(Deserialize)]
                 #[serde(untagged)]
                 enum ContentEither {
-                    Null,             // content: null
-                    Str(String),      // content: "..."
-                    Parts(Vec<Part>), // content: [ {...}, {...} ]
+                    Null,                   // content: null
+                    String(String),         // content: "..."
+                    Parts(Vec<StyledPart>), // content: [ {...}, {...} ]
                 }
                 match map.next_value::<ContentEither>()? {
                     ContentEither::Null => {}
-                    ContentEither::Str(s) => {
+                    ContentEither::String(s) => {
                         if !s.is_empty() {
                             contents = vec![Part::new_text(s)];
                         }
+                        style.contents_textonly = true;
                     }
-                    ContentEither::Parts(v) => {
-                        contents = v;
+                    ContentEither::Parts(mut v) => {
+                        contents.reserve(v.len());
+                        for part in v.drain(..) {
+                            contents.push(part.data);
+                            style
+                                .part_style
+                                .update(part.style)
+                                .map_err(|e| de::Error::custom(e))?;
+                        }
+                        style.contents_textonly = false;
                     }
                 }
+                style.contents_field = k;
             } else if k == "reasoning" || k == "reasoning_content" {
                 reasoning = map.next_value()?;
+                style.contents_field = k;
             } else if k == "tool_calls" {
-                tool_calls = map.next_value()?;
+                let mut v: Vec<StyledPart> = map.next_value()?;
+                tool_calls.reserve(v.len());
+                for part in v.drain(..) {
+                    tool_calls.push(part.data);
+                    style
+                        .part_style
+                        .update(part.style)
+                        .map_err(|e| de::Error::custom(e))?;
+                }
+                style.contents_textonly = false;
+                style.contents_field = k;
             }
         }
-        Ok(Message {
-            role,
-            contents,
-            reasoning,
-            tool_calls,
+        Ok(StyledMessage {
+            data: Message {
+                role,
+                contents,
+                reasoning,
+                tool_calls,
+            },
+            style,
         })
     }
 }
@@ -449,69 +556,79 @@ pub struct MessageOutput {
 }
 
 impl MessageOutput {
-    pub fn new() -> MessageOutput {
-        MessageOutput {
+    pub fn new() -> Self {
+        Self {
             delta: Message::new(),
             finish_reason: None,
         }
     }
 
     pub fn with_delta(self, delta: Message) -> Self {
-        MessageOutput {
+        Self {
             delta,
             finish_reason: self.finish_reason,
         }
     }
 
     pub fn with_finish_reason(self, finish_reason: FinishReason) -> Self {
-        MessageOutput {
+        Self {
             delta: self.delta,
             finish_reason: Some(finish_reason),
         }
     }
 }
 
-impl Display for MessageOutput {
+#[derive(Debug, Clone, Default)]
+pub struct StyledMessageOutput {
+    pub data: MessageOutput,
+    pub style: MessageStyle,
+}
+
+impl Display for StyledMessageOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut to_write: Vec<String> = Vec::new();
-        if self.delta.role.is_some()
-            || !self.delta.reasoning.is_empty()
-            || !self.delta.contents.is_empty()
-            || !self.delta.tool_calls.is_empty()
+        if self.data.delta.role.is_some()
+            || !self.data.delta.reasoning.is_empty()
+            || !self.data.delta.contents.is_empty()
+            || !self.data.delta.tool_calls.is_empty()
         {
-            to_write.push(format!("delta: {}", self.delta));
+            to_write.push(format!(
+                "\"delta\": {}",
+                StyledMessage {
+                    data: self.data.delta.clone(),
+                    style: self.style.clone()
+                }
+            ));
         }
-        if let Some(finish_reason) = &self.finish_reason {
-            to_write.push(format!("finish_reason: {}", finish_reason));
+        if let Some(finish_reason) = &self.data.finish_reason {
+            to_write.push(format!("\"finish_reason\": \"{}\"", finish_reason));
         };
-        f.write_str(&format!("MessageOutput{{ {} }}", to_write.join(", ")))?;
+        f.write_str(&format!("MessageOutput {{{}}}", to_write.join(", ")))?;
         Ok(())
     }
 }
 
-struct MessageOutputWithFmt<'a>(&'a MessageOutput, MessageFmt);
-
-impl<'a> MessageOutputWithFmt<'a> {
-    pub fn new(inner: &'a MessageOutput, fmt: MessageFmt) -> Self {
-        Self(inner, fmt)
-    }
-}
-
-impl<'a> Serialize for MessageOutputWithFmt<'a> {
+impl Serialize for StyledMessageOutput {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("delta", &MessageWithFmt::new(&self.0.delta, self.1.clone()))?;
-        if self.0.finish_reason.is_some() {
-            map.serialize_entry("finish_reason", &self.0.finish_reason)?;
+        map.serialize_entry(
+            "delta",
+            &StyledMessage {
+                data: self.data.delta.clone(),
+                style: self.style.clone(),
+            },
+        )?;
+        if self.data.finish_reason.is_some() {
+            map.serialize_entry("finish_reason", &self.data.finish_reason)?;
         }
         map.end()
     }
 }
 
-impl<'de> Deserialize<'de> for MessageOutput {
+impl<'de> Deserialize<'de> for StyledMessageOutput {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -523,7 +640,7 @@ impl<'de> Deserialize<'de> for MessageOutput {
 struct MessageOutputVisitor;
 
 impl<'de> de::Visitor<'de> for MessageOutputVisitor {
-    type Value = MessageOutput;
+    type Value = StyledMessageOutput;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(r#"a map with "type" field and one other content key"#)
@@ -533,7 +650,7 @@ impl<'de> de::Visitor<'de> for MessageOutputVisitor {
     where
         M: MapAccess<'de>,
     {
-        let mut delta: Option<Message> = None;
+        let mut delta: Option<StyledMessage> = None;
         let mut finish_reason: Option<FinishReason> = None;
 
         while let Some(k) = map.next_key::<String>()? {
@@ -547,20 +664,13 @@ impl<'de> de::Visitor<'de> for MessageOutputVisitor {
             }
         }
         let delta = delta.unwrap_or_default();
-        Ok(MessageOutput {
-            delta,
-            finish_reason,
+        Ok(StyledMessageOutput {
+            data: MessageOutput {
+                delta: delta.data,
+                finish_reason,
+            },
+            style: delta.style,
         })
-    }
-}
-
-impl Serialize for MessageOutput {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let formatted = MessageOutputWithFmt::new(self, MessageFmt::default());
-        formatted.serialize(serializer)
     }
 }
 
@@ -634,51 +744,27 @@ impl MessageAggregator {
     ///
     /// Returns `Some(Message)`, which closes and yields if message is completed, otherwise `None`.
     pub fn update(&mut self, msg_out: MessageOutput) -> Option<Message> {
+        if self.buffer.is_none() {
+            self.buffer = Some(Message::new())
+        }
+        let buffer = self.buffer.as_mut().unwrap();
         let delta = msg_out.delta;
         if let Some(role) = delta.role {
-            if self.buffer.is_some() {
-                todo!()
-            } else {
-                self.buffer = Some(Message::with_role(role));
-            }
+            buffer.role = Some(role);
         };
-
-        let buffer = self.buffer.as_mut().expect("Role not specified");
         if !delta.reasoning.is_empty() {
-            if buffer.reasoning.is_empty() {
-                buffer.reasoning = delta.reasoning;
-            } else {
-                buffer.reasoning.push_str(&delta.reasoning);
-            }
+            buffer.reasoning.push_str(&delta.reasoning);
         }
         for part in delta.contents {
-            if buffer.contents.is_empty() {
-                buffer.contents.push(part);
-            } else {
-                let last_part = buffer.contents.last_mut().unwrap();
-                if last_part.is_text() && part.is_text() {
-                    last_part
-                        .get_text_mut()
-                        .unwrap()
-                        .push_str(part.get_text().unwrap());
-                } else {
-                    buffer.contents.push(part);
-                }
+            let last_part = buffer.contents.last_mut().unwrap();
+            if let Some(part_to_push) = last_part.concatenate(part) {
+                buffer.contents.push(part_to_push);
             }
         }
         for part in delta.tool_calls {
-            if buffer.tool_calls.is_empty() {
-                buffer.tool_calls.push(part);
-            } else {
-                let last_part = buffer.tool_calls.last_mut().unwrap();
-                if last_part.is_function_string() && part.is_function_string() {
-                    last_part
-                        .get_function_string_mut()
-                        .unwrap()
-                        .push_str(part.get_function_string().unwrap());
-                } else {
-                    buffer.tool_calls.push(part);
-                }
+            let last_part = buffer.tool_calls.last_mut().unwrap();
+            if let Some(part_to_push) = last_part.concatenate(part) {
+                buffer.tool_calls.push(part_to_push);
             }
         }
 
