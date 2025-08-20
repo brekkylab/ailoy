@@ -272,9 +272,9 @@ impl PyMessageOutput {
     //     serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
     // }
 
-    // fn __repr__(&self) -> PyResult<String> {
-    //     Ok(self.inner.to_string())
-    // }
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(self.inner.to_string())
+    }
 }
 
 #[gen_stub_pyclass]

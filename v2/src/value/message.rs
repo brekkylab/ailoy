@@ -5,7 +5,6 @@ use serde::{
     de::{self, MapAccess},
     ser::{self, SerializeMap as _},
 };
-use serde_json::json;
 use strum::{Display, EnumString};
 
 use crate::value::{Part, PartStyle, StyledPart};
@@ -286,7 +285,7 @@ impl Default for StyledMessage {
 
 impl Display for StyledMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Message {{")?;
+        f.write_str("Message {")?;
         let mut prefix_comma = false;
         if self.data.role.is_some() {
             f.write_fmt(format_args!(
@@ -361,7 +360,7 @@ impl Display for StyledMessage {
             }
             f.write_str("]")?;
         }
-        f.write_str("}}")?;
+        f.write_str("}")?;
         Ok(())
     }
 }
@@ -572,6 +571,16 @@ impl MessageOutput {
             delta: self.delta,
             finish_reason: Some(finish_reason),
         }
+    }
+}
+
+impl Display for MessageOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        StyledMessageOutput {
+            data: self.clone(),
+            style: MessageStyle::new(),
+        }
+        .fmt(f)
     }
 }
 
