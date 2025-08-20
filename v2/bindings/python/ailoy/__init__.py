@@ -1,7 +1,7 @@
 from ailoy._core import (
     Part,
-    MessageDelta,
     Message,
+    MessageOutput,
     CacheProgress,
     CacheProgressIterator,
     CacheProgressSyncIterator,

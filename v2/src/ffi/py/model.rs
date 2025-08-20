@@ -15,10 +15,10 @@ use crate::{
             PyCacheProgressIterator, PyCacheProgressSyncIterator, create_cache_progress_iterator,
             create_cache_progress_sync_iterator,
         },
-        value::{PyMessage, PyMessageDelta},
+        value::{PyMessage, PyMessageOutput},
     },
     model::{LanguageModel, LocalLanguageModel},
-    value::MessageDelta,
+    value::MessageOutput,
 };
 
 #[gen_stub_pyclass]
@@ -53,14 +53,14 @@ impl PyLocalLanguageModel {
     }
 
     pub fn run(&mut self, messages: Vec<PyMessage>) -> PyResult<PyAgentRunIterator> {
-        let (tx, rx) = async_channel::unbounded::<Result<PyMessageDelta, String>>();
+        let (tx, rx) = async_channel::unbounded::<Result<PyMessageOutput, String>>();
         let messages = messages.into_iter().map(|m| m.inner).collect::<Vec<_>>();
-        let mut strm: BoxStream<'static, Result<MessageDelta, String>> =
-            Box::pin(self.inner.clone().run(Vec::new(), messages));
+        let mut strm: BoxStream<'static, Result<MessageOutput, String>> =
+            Box::pin(self.inner.clone().run(messages, Vec::new()));
 
         pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
             while let Some(item) = strm.next().await {
-                let out = item.and_then(|v| Ok(PyMessageDelta::from_inner(v)));
+                let out = item.and_then(|v| Ok(PyMessageOutput::from_inner(v)));
                 if tx.send(out).await.is_err() {
                     break; // Exit if consumer vanished
                 }
@@ -80,8 +80,8 @@ impl PyLocalLanguageModel {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
         let strm = lm
-            .run(Vec::new(), messages)
-            .then(|item| async move { item.map(|v| PyMessageDelta::from_inner(v)) })
+            .run(messages, Vec::new())
+            .then(|item| async move { item.map(|v| PyMessageOutput::from_inner(v)) })
             .boxed();
 
         Ok(PyAgentRunSyncIterator { rt, strm })
@@ -91,7 +91,7 @@ impl PyLocalLanguageModel {
 #[gen_stub_pyclass]
 #[pyclass(unsendable, name = "AgentRunIterator")]
 pub struct PyAgentRunIterator {
-    rx: async_channel::Receiver<Result<PyMessageDelta, String>>,
+    rx: async_channel::Receiver<Result<PyMessageOutput, String>>,
 }
 
 #[gen_stub_pymethods]
@@ -119,7 +119,7 @@ impl PyAgentRunIterator {
 pub struct PyAgentRunSyncIterator {
     rt: Runtime,
 
-    strm: BoxStream<'static, Result<PyMessageDelta, String>>,
+    strm: BoxStream<'static, Result<PyMessageOutput, String>>,
 }
 
 #[gen_stub_pymethods]
@@ -129,7 +129,7 @@ impl PyAgentRunSyncIterator {
         slf
     }
 
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<PyMessageDelta>> {
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<PyMessageOutput>> {
         let item = py.allow_threads(|| self.rt.block_on(async { self.strm.next().await }));
         match item {
             Some(Ok(evt)) => Ok(Some(evt)),

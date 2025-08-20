@@ -13,8 +13,8 @@ use pyo3_stub_gen::{Result, generate::StubInfo};
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<PyPart>()?;
-    m.add_class::<PyMessageDelta>()?;
     m.add_class::<PyMessage>()?;
+    m.add_class::<PyMessageOutput>()?;
     m.add_class::<PyCacheProgress>()?;
     m.add_class::<PyCacheProgressIterator>()?;
     m.add_class::<PyCacheProgressSyncIterator>()?;
