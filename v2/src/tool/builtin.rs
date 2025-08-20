@@ -3,17 +3,20 @@ use std::{
     sync::Arc,
 };
 
-use futures::future::BoxFuture;
-
 use crate::{
     tool::Tool,
-    value::{Part, ToolCall, ToolDescription, ToolDescriptionArgument},
+    value::{Part, ToolCallArgument, ToolDescription},
 };
 
 #[derive(Clone)]
 pub struct BuiltinTool {
     desc: ToolDescription,
-    f: Arc<dyn Fn(ToolCall) -> Part + Send + Sync + 'static>,
+
+    #[cfg(not(target_arch = "wasm32"))]
+    f: Arc<dyn Fn(ToolCallArgument) -> Part + Send + Sync + 'static>,
+
+    #[cfg(target_arch = "wasm32")]
+    f: Arc<dyn Fn(ToolCallArgument) -> Part + 'static>,
 }
 
 impl Debug for BuiltinTool {
@@ -26,10 +29,16 @@ impl Debug for BuiltinTool {
 }
 
 impl BuiltinTool {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(
         desc: ToolDescription,
-        f: Arc<dyn Fn(ToolCall) -> Part + Send + Sync + 'static>,
+        f: Arc<dyn Fn(ToolCallArgument) -> Part + Send + Sync + 'static>,
     ) -> Self {
+        BuiltinTool { desc, f }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn new(desc: ToolDescription, f: Arc<dyn Fn(ToolCallArgument) -> Part + 'static>) -> Self {
         BuiltinTool { desc, f }
     }
 }
@@ -39,8 +48,20 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    fn run(self: Arc<Self>, toll_call: ToolCall) -> BoxFuture<'static, Result<Vec<Part>, String>> {
-        Box::pin(async move { Ok(vec![(self.f)(toll_call)]) })
+    #[cfg(not(target_arch = "wasm32"))]
+    fn run(
+        self: Arc<Self>,
+        args: ToolCallArgument,
+    ) -> futures::future::BoxFuture<'static, Result<Vec<Part>, String>> {
+        Box::pin(async move { Ok(vec![(self.f)(args)]) })
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn run(
+        self: Arc<Self>,
+        args: ToolCallArgument,
+    ) -> futures::future::LocalBoxFuture<'static, Result<Vec<Part>, String>> {
+        Box::pin(async move { Ok(vec![(self.f)(args)]) })
     }
 }
 
@@ -50,6 +71,8 @@ pub fn create_terminal_tool() -> BuiltinTool {
         collections::HashMap,
         process::{Command, Stdio},
     };
+
+    use crate::value::ToolDescriptionArgument;
 
     let current_shell = {
         #[cfg(target_family = "unix")]
@@ -111,8 +134,8 @@ pub fn create_terminal_tool() -> BuiltinTool {
         )),
     );
 
-    let f = Arc::new(|tc: ToolCall| {
-        let args = match tc.get_argument().as_object() {
+    let f = Arc::new(|args: ToolCallArgument| {
+        let args = match args.as_object() {
             Some(a) => a,
             None => {
                 return Part::Text(

@@ -158,9 +158,13 @@ mod opfs {
         Ok(vec)
     }
 
-    pub async fn write(path: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), String> {
+    pub async fn write(
+        path: impl AsRef<Path>,
+        data: impl AsRef<[u8]>,
+        create_parent: bool,
+    ) -> Result<(), String> {
         // Get file handle
-        let handle = get_file_handle(path.as_ref(), true).await?;
+        let handle = get_file_handle(path.as_ref(), create_parent).await?;
 
         // Create writable stream
         let promise = handle.create_writable();
@@ -212,7 +216,7 @@ mod opfs {
 
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = "ailoy_filesystem_write")]
     pub async fn write_(path: String, data: js_sys::Uint8Array) -> Result<(), String> {
-        write(&path, &data.to_vec()).await
+        write(&path, &data.to_vec(), true).await
     }
 
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = "ailoy_filesystem_remove")]
