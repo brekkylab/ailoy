@@ -372,6 +372,7 @@ pub async fn mcp_tools_from_streamable_http(
 ) -> anyhow::Result<Vec<Arc<dyn Tool>>> {
     let mut client = StreamableHttpClient::new(url, None, true);
     client.initialize().await?;
+
     let tools = client.list_tools().await?;
     Ok(tools
         .tools
@@ -398,12 +399,9 @@ mod tests {
     #[wasm_bindgen_test]
     async fn test_streamable_http_client() -> anyhow::Result<()> {
         let mut client = StreamableHttpClient::new("http://localhost:8123/mcp", None, true);
-        web_sys::console::log_1(&"try to run loop!".into());
+        client.initialize().await?;
 
-        let _ = client.initialize().await.unwrap();
-        web_sys::console::log_1(&"loop running!".into());
-
-        let list_tools = client.list_tools().await.unwrap();
+        let list_tools = client.list_tools().await?;
         web_sys::console::log_1(&format!("list of tools: {:?}", list_tools).into());
 
         let call_tool = client
@@ -419,29 +417,21 @@ mod tests {
             .await
             .unwrap();
         web_sys::console::log_1(&format!("call tool result: {:?}", call_tool).into());
+
         Ok(())
     }
 
     #[wasm_bindgen_test]
     async fn test_mcp_tools_from_streamable_http() -> anyhow::Result<()> {
-        use std::collections::HashMap;
-
         let tools = mcp_tools_from_streamable_http("http://localhost:8123/mcp", "test").await?;
         let tool = tools[1].clone();
 
-        let args = ToolCallArgument::Object(HashMap::from([
-            (
-                "latitude".into(),
-                Box::new(ToolCallArgument::Number(32.7767)),
-            ),
-            (
-                "longitude".into(),
-                Box::new(ToolCallArgument::Number(-96.797)),
-            ),
-        ]));
-
+        let args = serde_json::from_value::<ToolCallArgument>(
+            serde_json::json!({"latitude": 32.7767, "longitude": -96.797}),
+        )?;
         let parts = tool.run(args).await.unwrap();
         web_sys::console::log_1(&format!("tool call result: {:?}", parts).into());
+
         Ok(())
     }
 }
