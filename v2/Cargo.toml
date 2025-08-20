@@ -15,6 +15,7 @@ async-channel = "2.5"
 async-stream = "0.3"
 futures = "0.3.31"
 indexmap = { version = "2", features = ["serde"] }
+log = "0.4.27"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { version = "3", features = ["tokio_rt"], optional = true }
@@ -24,17 +25,19 @@ pyo3 = { version = "0.25", optional = true }
 pyo3-async-runtimes = { version = "0.25", features = ["attributes", "tokio-runtime"], optional = true }
 pyo3-stub-gen = { version = "0.12.2", optional = true }
 pyo3-stub-gen-derive = { version = "0.12.2", optional = true }
-reqwest = { version = "0.12", features = ["stream"] }
-rmcp = { version = "0.5.0", features = ["client", "reqwest", "transport-streamable-http-client", "transport-sse-client"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+rmcp = { version = "0.5.0", features = ["default"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 sha1 = "0.10"
 strum = { version = "0.27", features = ["derive"] }
+thiserror = "2.0.15"
 url = "2.5.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 js-sys = "0.3"
+sse-stream = "0.2"
 tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt", "sync"] }
 wasm-bindgen = "0.2"
@@ -49,7 +52,8 @@ web-sys = { version = "0.3", features = [
     "FileSystemWritableFileStream",
     "Navigator",
     "Storage",
-    "StorageManager"
+    "StorageManager",
+    "console"
 ] }
 
 [build-dependencies]
@@ -61,9 +65,12 @@ cmake = "0.1"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cxx = "1.0"
 onig = "6"
-rmcp = { version = "0.5.0", features = ["transport-child-process"] }
+rmcp = { version = "0.5.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client"] }
 tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

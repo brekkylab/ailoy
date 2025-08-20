@@ -170,6 +170,13 @@ impl Part {
             _ => None,
         }
     }
+
+    pub fn is_text(&self) -> bool {
+        match self {
+            Part::Text(_) => true,
+            _ => false,
+        }
+    }
 }
 
 /// Describes how a [`Part`] should be mapped to a wire-format (key names & type tags).

@@ -196,6 +196,25 @@ impl<'de> Deserialize<'de> for ToolCall {
     }
 }
 
+impl TryFrom<crate::value::Part> for ToolCall {
+    type Error = String;
+
+    fn try_from(value: crate::value::Part) -> Result<Self, Self::Error> {
+        match value {
+            super::Part::FunctionString(s) => ToolCall::try_from_string(s),
+            super::Part::Function {
+                id: _,
+                name,
+                arguments,
+            } => Ok(ToolCall::new(
+                name,
+                ToolCallArg::try_from_string(arguments)?,
+            )),
+            _ => Err(String::from("Unsupported part type")),
+        }
+    }
+}
+
 struct ToolCallVisitor;
 
 impl<'de> de::Visitor<'de> for ToolCallVisitor {
