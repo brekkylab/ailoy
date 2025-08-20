@@ -105,10 +105,10 @@ impl Part {
     /// - `Text` + `Text`: appends right to left.
     /// - `FunctionString` + `FunctionString`: appends right to left (for streaming).
     /// - `Function` + `Function`:  
-    ///   - If both IDs are non-empty and **different**, denies merging (returns `Some(rhs)`).
+    ///   - If both IDs are non-empty and **different**, denies merging (returns `Some(other)`).
     ///   - Otherwise, empty `id` on the left is filled from the right; `name` and `arguments`
     ///     are appended, then merge **succeeds** (`None`).
-    /// - Any other pair: not mergeable; returns `Some(rhs)`.
+    /// - Any other pair: not mergeable; returns `Some(other)`.
     pub fn concatenate(&mut self, other: Self) -> Option<Self> {
         match (self, other) {
             (Part::Text(lhs), Part::Text(rhs)) => {
