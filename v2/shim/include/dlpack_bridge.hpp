@@ -1,9 +1,10 @@
 #pragma once
 
-#include "dlpack/dlpack.h"
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
+
+#include "dlpack/dlpack.h"
 
 namespace dlpack_bridge {
 
