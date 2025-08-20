@@ -397,7 +397,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn test_streamable_http_client() -> anyhow::Result<()> {
-        let mut client = StreamableHttpClient::new("http://localhost:3000/mcp", None, true);
+        let mut client = StreamableHttpClient::new("http://localhost:8123/mcp", None, true);
         web_sys::console::log_1(&"try to run loop!".into());
 
         let _ = client.initialize().await.unwrap();
@@ -408,8 +408,13 @@ mod tests {
 
         let call_tool = client
             .call_tool(CallToolRequestParam {
-                name: "start-notification-stream".into(),
-                arguments: Some(serde_json::Map::new()),
+                name: "get-forecast".into(),
+                arguments: Some(
+                    serde_json::json!({"latitude": 32.7767, "longitude": -96.797})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
             })
             .await
             .unwrap();
@@ -421,14 +426,22 @@ mod tests {
     async fn test_mcp_tools_from_streamable_http() -> anyhow::Result<()> {
         use std::collections::HashMap;
 
-        let tools = mcp_tools_from_streamable_http("http://localhost:3000/mcp", "sibal").await?;
-        let tool = tools[0].clone();
+        let tools = mcp_tools_from_streamable_http("http://localhost:8123/mcp", "test").await?;
+        let tool = tools[1].clone();
 
-        let args = ToolCallArgument::Object(HashMap::new());
+        let args = ToolCallArgument::Object(HashMap::from([
+            (
+                "latitude".into(),
+                Box::new(ToolCallArgument::Number(32.7767)),
+            ),
+            (
+                "longitude".into(),
+                Box::new(ToolCallArgument::Number(-96.797)),
+            ),
+        ]));
 
         let parts = tool.run(args).await.unwrap();
-        println!("tool call result: {:?}", parts);
-
+        web_sys::console::log_1(&format!("tool call result: {:?}", parts).into());
         Ok(())
     }
 }
