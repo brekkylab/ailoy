@@ -84,7 +84,7 @@ impl LanguageModel for APILanguageModel {
         self: Arc<Self>,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
-    ) -> futures::stream::BoxStream<'static, Result<MessageOutput, String>> {
+    ) -> futures::stream::LocalBoxStream<'static, Result<MessageOutput, String>> {
         let msgs = msgs
             .iter()
             .map(|v| StyledMessage {

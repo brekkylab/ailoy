@@ -46,7 +46,7 @@ impl LanguageModel for LocalLanguageModel {
         self: Arc<Self>,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
-    ) -> futures::stream::BoxStream<'static, Result<MessageOutput, String>> {
+    ) -> futures::stream::LocalBoxStream<'static, Result<MessageOutput, String>> {
         let strm = try_stream! {
             let prompt = self.chat_template.apply(msgs, tools, true)?;
             let input_tokens = self.tokenizer.encode(&prompt, true)?;

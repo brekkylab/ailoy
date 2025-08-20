@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use futures::future::BoxFuture;
+use futures::future::LocalBoxFuture;
 use rmcp::{
     model::CallToolRequestParam,
     service::{RoleClient, RunningService, ServiceExt},
@@ -63,7 +63,10 @@ impl Tool for MCPTool {
         self.desc.clone()
     }
 
-    fn run(self: Arc<Self>, args: ToolCallArg) -> BoxFuture<'static, Result<Vec<Part>, String>> {
+    fn run(
+        self: Arc<Self>,
+        args: ToolCallArg,
+    ) -> LocalBoxFuture<'static, Result<Vec<Part>, String>> {
         let peer = self.client.service.clone();
 
         Box::pin(async move {

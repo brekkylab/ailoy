@@ -48,15 +48,6 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn run(
-        self: Arc<Self>,
-        args: ToolCallArg,
-    ) -> futures::future::BoxFuture<'static, Result<Vec<Part>, String>> {
-        Box::pin(async move { Ok(vec![(self.f)(args)]) })
-    }
-
-    #[cfg(target_arch = "wasm32")]
     fn run(
         self: Arc<Self>,
         args: ToolCallArg,
