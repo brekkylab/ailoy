@@ -56,7 +56,6 @@ napi-build = "2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
 cmake = "0.1"
-cxx-build = "1.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cxx = "1.0"
@@ -72,3 +71,4 @@ path = "src/lib.rs"
 [[bin]]
 name = "py_stub_gen"
 doc = false
+required-features = ["python"]

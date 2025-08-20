@@ -49,7 +49,6 @@ dependencies = [
  "async-stream",
  "cmake",
  "cxx",
- "cxx-build",
  "futures",
  "getrandom 0.3.3",
  "indexmap",
@@ -472,21 +471,6 @@ dependencies = [
  "cxxbridge-macro",
  "foldhash",
  "link-cplusplus",
-]
-
-[[package]]
-name = "cxx-build"
-version = "1.0.168"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12d3cbb84fb003242941c231b45ca9417e786e66e94baa39584bd99df3a270b6"
-dependencies = [
- "cc",
- "codespan-reporting",
- "indexmap",
- "proc-macro2",
- "quote",
- "scratch",
- "syn",
 ]
 
 [[package]]
@@ -2331,12 +2315,6 @@ dependencies = [
  "serde_derive_internals",
  "syn",
 ]
-
-[[package]]
-name = "scratch"
-version = "1.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d68f2ec51b097e4c1a75b681a8bec621909b5e91f15bb7b840c4f2f7b01148b2"
 
 [[package]]
 name = "security-framework"
