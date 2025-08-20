@@ -1,6 +1,7 @@
 pub use ffi::*;
 
 use crate::cache::{CacheContents, CacheEntry};
+use crate::ffi::util::*;
 use anyhow::{Result, bail};
 
 fn cache_entry_new(dirname: &str, filename: &str) -> Box<CacheEntry> {
@@ -34,7 +35,7 @@ fn cache_contents_remove_with_filename_out(
 
 #[cxx::bridge]
 mod ffi {
-    // DLManagedTensorVersioned Rust 래퍼 타입
+    // Rust wrapper of DLManagedTensorVersioned
     pub struct DLPackTensor {
         inner: UniquePtr<ManagedTensor>,
     }
@@ -53,21 +54,17 @@ mod ffi {
         #[cxx_name = "tvm_language_model_t"]
         type TVMLanguageModel;
 
-        // #[namespace = "ailoy"]
         pub fn create_tvm_language_model(
             cache: &mut CacheContents,
             device: UniquePtr<DLDevice>,
         ) -> UniquePtr<TVMLanguageModel>;
 
-        // #[namespace = "ailoy"]
         #[cxx_name = "prefill_from_rs"]
         pub fn prefill(self: Pin<&mut TVMLanguageModel>, tokens: &Vec<u32>) -> ();
 
-        // #[namespace = "ailoy"]
         #[cxx_name = "decode_from_rs"]
         pub fn decode(self: Pin<&mut TVMLanguageModel>, last_token: u32) -> DLPackTensor;
 
-        // #[namespace = "ailoy"]
         #[cxx_name = "sample_from_rs"]
         pub fn sample(self: Pin<&mut TVMLanguageModel>, logits: DLPackTensor) -> u32;
     }
@@ -78,24 +75,19 @@ mod ffi {
 
         pub fn create_dldevice(device_type: i32, device_id: i32) -> UniquePtr<DLDevice>;
 
-        // C++의 ManagedTensor 타입
-        // #[namespace = "dlpack_bridge"]
         type ManagedTensor;
 
-        // #[namespace = "dlpack_bridge"]
         unsafe fn create_managed_tensor(
             tensor: *mut DLManagedTensorVersioned,
         ) -> Result<UniquePtr<ManagedTensor>>;
 
-        // 메서드들
-        // #[namespace = "dlpack_bridge"]
-        fn is_1d_float32(self: &ManagedTensor) -> bool;
-        // #[namespace = "dlpack_bridge"]
-        fn get_size(self: &ManagedTensor) -> i64;
-        // #[namespace = "dlpack_bridge"]
+        fn get_ndim(self: &ManagedTensor) -> i32;
+        fn get_dimension(self: &ManagedTensor) -> i64;
         fn is_cpu_tensor(self: &ManagedTensor) -> bool;
-        // #[namespace = "dlpack_bridge"]
-        fn get_data_ptr(self: &ManagedTensor) -> *const f32;
+        fn has_int_dtype(self: &ManagedTensor, bits: u8) -> bool;
+        fn has_float_dtype(self: &ManagedTensor, bits: u8) -> bool;
+        fn get_data_ptr_f32(self: &ManagedTensor) -> *const f32;
+        fn get_data_ptr_u16(self: &ManagedTensor) -> *const u16;
     }
     #[namespace = "ailoy"]
     extern "Rust" {
@@ -144,41 +136,45 @@ impl std::fmt::Debug for ffi::TVMLanguageModel {
 }
 
 impl ffi::DLPackTensor {
-    /// 외부에서 받은 DLManagedTensorVersioned 포인터로부터 생성
-    ///
-    /// # Safety
-    /// - `ptr`은 유효한 DLManagedTensorVersioned 포인터여야 함
-    /// - deleter 함수가 올바르게 설정되어 있어야 함
-    pub unsafe fn from_raw(ptr: *mut DLManagedTensorVersioned) -> Result<Self> {
-        // Rust 타입인 `*mut c_void`를 cxx가 이해하는 `*mut u8`로 캐스팅합니다.
-        // 이 캐스팅은 성능 저하가 없는 제로-코스트 추상화입니다.
-        let managed = unsafe { ffi::create_managed_tensor(ptr) }?;
-        Ok(Self { inner: managed })
-    }
+    // /// from raw DLManagedTensorVersioned pointer
+    // pub unsafe fn from_raw(ptr: *mut DLManagedTensorVersioned) -> Result<Self> {
+    //     let managed = unsafe { ffi::create_managed_tensor(ptr) }?;
+    //     Ok(Self { inner: managed })
+    // }
 
-    /// 1차원 float32 텐서를 Vec<f32>로 변환
+    /// 1-dimensional float32 Tensor to Vec<f32>
     pub fn to_vec_f32(&self) -> Result<Vec<f32>> {
-        if !self.inner.is_1d_float32() {
-            bail!("Tensor is not 1D float32. Other types not yet implemented");
+        let dimension = self.inner.get_dimension();
+        if dimension == -1 {
+            bail!("Tensor is not 1D.");
         }
         if !self.inner.is_cpu_tensor() {
             bail!("GPU tensors not yet supported. CPU tensors only");
         }
 
-        let size = self.inner.get_size() as usize;
-        if size <= 0 {
-            return Ok(Vec::new()); // 빈 벡터 반환
+        if self.inner.has_float_dtype(32) {
+            let data_ptr = self.inner.get_data_ptr_f32();
+            if data_ptr.is_null() {
+                bail!("Tensor data pointer is null");
+            }
+            let vec = unsafe { std::slice::from_raw_parts(data_ptr, dimension as usize).to_vec() };
+            Ok(vec)
+        } else if self.inner.has_float_dtype(16) {
+            let data_ptr = self.inner.get_data_ptr_u16();
+            if data_ptr.is_null() {
+                bail!("Tensor data pointer is null");
+            }
+            let vec = unsafe { std::slice::from_raw_parts(data_ptr, dimension as usize).to_vec() }
+                .into_iter()
+                .map(|val| util::f16_to_f32(val))
+                .collect();
+            Ok(vec)
+        } else {
+            bail!("Tensor has unsupported dtype.");
         }
-        let data_ptr = self.inner.get_data_ptr();
-        if data_ptr.is_null() {
-            bail!("Tensor data pointer is null");
-        }
-
-        let vec = unsafe { std::slice::from_raw_parts(data_ptr, size).to_vec() };
-        Ok(vec)
     }
 
-    // // Rust 타입을 C++ UniquePtr로 변환
+    // /// Rust type to C++ UniquePtr
     // fn into_inner(self) -> cxx::UniquePtr<ffi::ManagedTensor> {
     //     self.inner
     // }
