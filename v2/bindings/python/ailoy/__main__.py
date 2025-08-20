@@ -3,7 +3,7 @@ from ailoy import Part, Message, LocalLanguageModel
 
 async def main():
     user_message = Message("user")
-    user_message.append_content(Part(type="text", text="Show me the money."))
+    user_message.append_content(Part(part_type="text", text="Show me the money."))
 
     model = None
     async for v in LocalLanguageModel.create("Qwen/Qwen3-0.6B"):

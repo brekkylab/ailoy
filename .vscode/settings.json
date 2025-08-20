@@ -137,7 +137,7 @@
         "*.rs": "rust"
     },
     "rust-analyzer.cargo.buildScripts.enable": true,
-    "rust-analyzer.cargo.features": ["python", "node"],
+    "rust-analyzer.cargo.features": [],
     // "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
     "rust-analyzer.procMacro.enable": true
 }
