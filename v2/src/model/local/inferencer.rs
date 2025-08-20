@@ -137,6 +137,10 @@ mod tvm_runtime {
 
 #[cfg(any(target_family = "wasm"))]
 mod tvmjs_runtime {
+    use futures::future::BoxFuture;
+
+    use crate::cache::{Cache, CacheContents, CacheEntry, TryFromCache};
+
     #[derive(Debug)]
     pub struct Inferencer {}
 
@@ -147,6 +151,19 @@ mod tvmjs_runtime {
 
         pub fn decode(&mut self, _: u32) -> u32 {
             todo!()
+        }
+    }
+
+    impl TryFromCache for Inferencer {
+        fn claim_files(
+            cache: Cache,
+            key: impl AsRef<str>,
+        ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
+            Box::pin(async move { Ok(vec![]) })
+        }
+
+        fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String> {
+            Ok(Inferencer {})
         }
     }
 }

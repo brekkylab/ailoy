@@ -1,6 +1,6 @@
 mod openai;
 
-use futures::{StreamExt as _, future::BoxFuture, stream::BoxStream};
+use futures::StreamExt;
 use std::{fmt::Debug, sync::Arc};
 
 use crate::{
@@ -8,6 +8,7 @@ use crate::{
     value::{Message, MessageOutput, MessageStyle, OPENAI_FMT, StyledMessage, ToolDesc},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct APILanguageModel {
     model: String,
@@ -16,11 +17,30 @@ pub struct APILanguageModel {
         dyn Fn(
                 Vec<StyledMessage>,
                 Vec<ToolDesc>,
-            ) -> BoxFuture<'static, Result<reqwest::Response, reqwest::Error>>
+            )
+                -> futures::future::BoxFuture<'static, Result<reqwest::Response, reqwest::Error>>
             + Send
             + Sync,
     >,
     handle_response: Arc<dyn Fn(&mut Vec<u8>) -> Result<Vec<MessageOutput>, String> + Send + Sync>,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
+pub struct APILanguageModel {
+    model: String,
+    style: MessageStyle,
+    make_request: Arc<
+        dyn Fn(
+                Vec<StyledMessage>,
+                Vec<ToolDesc>,
+            ) -> futures::future::LocalBoxFuture<
+                'static,
+                Result<reqwest::Response, reqwest::Error>,
+            > + Send
+            + Sync,
+    >,
+    handle_response: Arc<dyn Fn(&mut Vec<u8>) -> Result<Vec<MessageOutput>, String>>,
 }
 
 impl APILanguageModel {
@@ -58,12 +78,51 @@ impl APILanguageModel {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl LanguageModel for APILanguageModel {
     fn run(
         self: Arc<Self>,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
     ) -> BoxStream<'static, Result<MessageOutput, String>> {
+        let msgs = msgs
+            .iter()
+            .map(|v| StyledMessage {
+                data: v.clone(),
+                style: self.style.clone(),
+            })
+            .collect::<Vec<_>>();
+        let req = (self.make_request)(msgs, tools);
+        let strm = async_stream::try_stream! {
+            let mut buf: Vec<u8> = Vec::with_capacity(8192);
+            let resp = req.await.map_err(|e| e.to_string())?;
+            if resp.status().is_success() {
+                let mut strm = resp.bytes_stream();
+                while let Some(chunk_res) = strm.next().await {
+                    let chunk = chunk_res.map_err(|e| e.to_string())?;
+                    buf.extend_from_slice(&chunk);
+                    let outs = (self.handle_response)(&mut buf)?;
+                    for v in outs {
+                        yield v;
+                    }
+                }
+            } else {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                Err(format!("Request failed: {} - {}", status, text))?;
+            }
+        };
+        Box::pin(strm)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl LanguageModel for APILanguageModel {
+    fn run(
+        self: Arc<Self>,
+        msgs: Vec<Message>,
+        tools: Vec<ToolDesc>,
+    ) -> futures::stream::LocalBoxStream<'static, Result<MessageOutput, String>> {
         let msgs = msgs
             .iter()
             .map(|v| StyledMessage {

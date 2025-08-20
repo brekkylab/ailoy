@@ -282,7 +282,7 @@ impl Cache {
     pub fn try_create<T>(
         self,
         key: impl Into<String>,
-    ) -> impl Stream<Item = Result<CacheProgress<T>, String>> + Send + 'static
+    ) -> impl Stream<Item = Result<CacheProgress<T>, String>> + 'static
     where
         T: TryFromCache + Send + 'static,
     {

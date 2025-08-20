@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use futures::stream::BoxStream;
-
 use crate::value::{Message, MessageOutput, ToolDesc};
 
 /// Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
@@ -31,6 +29,7 @@ use crate::value::{Message, MessageOutput, ToolDesc};
 /// However, because `run` is expected to be called repeatedly, the receiver must be clonable.  
 /// `Arc` provides cheap, thread-safe cloning of the underlying object,
 /// making it well-suited for asynchronous and concurrent use.
+#[cfg(not(target_arch = "wasm32"))]
 pub trait LanguageModel: Send + Sync + 'static {
     // Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
     /// See [`LanguageModel`] trait document for the details.
@@ -38,5 +37,16 @@ pub trait LanguageModel: Send + Sync + 'static {
         self: Arc<Self>,
         msg: Vec<Message>,
         tools: Vec<ToolDesc>,
-    ) -> BoxStream<'static, Result<MessageOutput, String>>;
+    ) -> futures::stream::BoxStream<'static, Result<MessageOutput, String>>;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub trait LanguageModel: 'static {
+    // Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
+    /// See [`LanguageModel`] trait document for the details.
+    fn run(
+        self: Arc<Self>,
+        msg: Vec<Message>,
+        tools: Vec<ToolDesc>,
+    ) -> futures::stream::LocalBoxStream<'static, Result<MessageOutput, String>>;
 }
