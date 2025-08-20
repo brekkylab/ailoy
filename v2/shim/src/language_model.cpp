@@ -217,6 +217,14 @@ NDArray tvm_language_model_t::decode(uint32_t last_token) {
   return logits;
 }
 
+DLPackTensor tvm_language_model_t::decode_from_rs(uint32_t last_token) {
+  std::lock_guard<std::mutex> lk(m_);
+  auto raw_dlpack_ptr = std::move(decode(last_token)).ToDLPackVersioned();
+  auto safe_managed_tensor =
+      dlpack_bridge::create_managed_tensor(raw_dlpack_ptr);
+  return DLPackTensor{std::move(safe_managed_tensor)};
+}
+
 uint32_t tvm_language_model_t::sample(NDArray logits) {
   // Sample token from logits
   uint32_t sampled_token =
@@ -230,17 +238,17 @@ uint32_t tvm_language_model_t::sample(NDArray logits) {
   return sampled_token;
 }
 
+uint32_t tvm_language_model_t::sample_from_rs(DLPackTensor logits) {
+  std::lock_guard<std::mutex> lk(m_);
+  auto raw_dlpack_ptr = std::move(logits.inner)->release_tensor();
+  auto v = tvm::runtime::NDArray::FromDLPackVersioned(raw_dlpack_ptr);
+  return sample(v);
+}
+
 std::unique_ptr<tvm_language_model_t>
 create_tvm_language_model(CacheContents &contents,
                           std::unique_ptr<DLDevice> device) {
   return std::make_unique<tvm_language_model_t>(contents, std::move(*device));
-}
-
-std::unique_ptr<DLDevice> create_dldevice(int device_type, int device_id) {
-  auto dev = std::make_unique<DLDevice>();
-  dev->device_type = static_cast<DLDeviceType>(device_type);
-  dev->device_id = device_id;
-  return dev;
 }
 
 } // namespace ailoy

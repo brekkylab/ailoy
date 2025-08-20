@@ -112,7 +112,6 @@ endif()
 ##################
 file(GLOB_RECURSE AILOY_CPP_SHIM_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp ${AILOY_CXXBRIDGE_CC})
 add_library(ailoy_cpp_shim STATIC ${AILOY_CPP_SHIM_SRCS})
-target_include_directories(ailoy_cpp_shim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(ailoy_cpp_shim PUBLIC ${AILOY_CXXBRIDGE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 #######
