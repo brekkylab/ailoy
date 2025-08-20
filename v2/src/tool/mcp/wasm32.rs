@@ -16,7 +16,10 @@ use sse_stream::{Error as SseError, Sse, SseStream};
 use thiserror::Error;
 
 use crate::{
-    tool::{Tool, mcp::common::*},
+    tool::{
+        Tool,
+        mcp::common::{call_tool_result_to_parts, map_mcp_tool_to_tool_description},
+    },
     value::{Part, ToolCallArgument, ToolDescription},
 };
 
@@ -62,15 +65,6 @@ impl StreamableHttpPostResponse {
         }
     }
 
-    pub fn expect_json(self) -> Result<ServerJsonRpcMessage, StreamableHttpError> {
-        match self {
-            Self::Json(message, ..) => Ok(message),
-            got => Err(StreamableHttpError::UnexpectedServerResponse(
-                format!("expect json, got {got:?}").into(),
-            )),
-        }
-    }
-
     pub fn expect_accepted(self) -> Result<(), StreamableHttpError> {
         match self {
             Self::Accepted => Ok(()),
@@ -80,7 +74,7 @@ impl StreamableHttpPostResponse {
         }
     }
 
-    pub async fn next(&mut self) -> Option<anyhow::Result<ServerJsonRpcMessage>> {
+    pub async fn next(&mut self) -> Option<Result<ServerJsonRpcMessage, StreamableHttpError>> {
         match self {
             StreamableHttpPostResponse::Json(message, _) => Some(Ok(message.clone())),
             StreamableHttpPostResponse::Sse(stream, _) => loop {
@@ -92,13 +86,17 @@ impl StreamableHttpPostResponse {
                                     return Some(Ok(message));
                                 }
                                 Err(e) => {
-                                    return Some(Err(anyhow::Error::from(e)));
+                                    return Some(Err(
+                                        StreamableHttpError::UnexpectedServerResponse(
+                                            format!("{e}").into(),
+                                        ),
+                                    ));
                                 }
                             }
                         }
                     }
-                    Some(Err(e)) => {
-                        return Some(Err(anyhow::Error::from(e)));
+                    Some(Err(_)) => {
+                        return Some(Err(StreamableHttpError::UnexpectedEndOfStream));
                     }
                     None => {
                         return None;
@@ -124,14 +122,8 @@ enum StreamableHttpError {
     UnexpectedServerResponse(Cow<'static, str>),
     #[error("Unexpected content type: {0:?}")]
     UnexpectedContentType(Option<String>),
-    #[error("Server does not support SSE")]
-    SeverDoesNotSupportSse,
-    #[error("Server does not support delete session")]
-    SeverDoesNotSupportDeleteSession,
     #[error("Deserialize error: {0}")]
     Deserialize(#[from] serde_json::Error),
-    #[error("Transport channel closed")]
-    TransportChannelClosed,
 }
 
 #[derive(Clone, Debug)]
@@ -255,7 +247,11 @@ impl StreamableHttpClient {
                 extensions: Default::default(),
             }),
         );
-        self.post_message(notification).await?;
+        self.post_message(notification)
+            .await
+            .map_err(|e| anyhow!("Failed to send initialized notification: {e}"))?
+            .expect_accepted()
+            .map_err(|e| anyhow!("Response of initialized notification is not accepted: {e}"))?;
 
         Ok(())
     }
@@ -263,9 +259,6 @@ impl StreamableHttpClient {
     async fn send_request(&self, request: ClientRequest) -> anyhow::Result<ServerJsonRpcMessage> {
         let request_id = self.next_request_id();
         let message = ClientJsonRpcMessage::request(request, request_id);
-
-        web_sys::console::log_1(&format!("Sending request: {:?}", message).into());
-
         let mut response = self.post_message(message).await?;
 
         while let Some(result) = response.next().await {
@@ -274,8 +267,7 @@ impl StreamableHttpClient {
                 ServerJsonRpcMessage::Response(_) | ServerJsonRpcMessage::Error(_) => {
                     return Ok(message);
                 }
-                ServerJsonRpcMessage::Notification(noti) => {
-                    web_sys::console::log_1(&format!("Notification: {:?}", noti).into());
+                ServerJsonRpcMessage::Notification(_) => {
                     continue;
                 }
                 _ => {
@@ -340,7 +332,7 @@ impl Tool for MCPTool {
     }
 
     fn run(
-        self: std::sync::Arc<Self>,
+        self: Arc<Self>,
         args: ToolCallArgument,
     ) -> futures::future::LocalBoxFuture<'static, Result<Vec<Part>, String>> {
         let client = self.client.clone();
