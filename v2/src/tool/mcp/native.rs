@@ -12,7 +12,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::{
     tool::{Tool, mcp::common::*},
-    value::{Part, ToolCallArgument, ToolDescription},
+    value::{Part, ToolCallArg, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
@@ -55,18 +55,15 @@ impl MCPClient {
 struct MCPTool {
     client: Arc<MCPClient>,
     name: String,
-    pub desc: ToolDescription,
+    pub desc: ToolDesc,
 }
 
 impl Tool for MCPTool {
-    fn get_description(&self) -> ToolDescription {
+    fn get_description(&self) -> ToolDesc {
         self.desc.clone()
     }
 
-    fn run(
-        self: Arc<Self>,
-        args: ToolCallArgument,
-    ) -> BoxFuture<'static, Result<Vec<Part>, String>> {
+    fn run(self: Arc<Self>, args: ToolCallArg) -> BoxFuture<'static, Result<Vec<Part>, String>> {
         let peer = self.client.service.clone();
 
         Box::pin(async move {
@@ -128,7 +125,7 @@ pub async fn mcp_tools_from_streamable_http(
 mod tests {
     #[tokio::test]
     async fn run_stdio() -> anyhow::Result<()> {
-        use std::collections::HashMap;
+        use indexmap::IndexMap;
 
         use super::*;
         use onig::Regex;
@@ -146,14 +143,14 @@ mod tests {
         let tool_name = tool.desc.name.clone();
         assert_eq!(tool_name, "get_current_time");
 
-        let mut tool_call_args: HashMap<String, Box<ToolCallArgument>> = HashMap::new();
+        let mut tool_call_args: IndexMap<String, Box<ToolCallArg>> = IndexMap::new();
         tool_call_args.insert(
             "timezone".into(),
-            Box::new(ToolCallArgument::String("Asia/Seoul".into())),
+            Box::new(ToolCallArg::String("Asia/Seoul".into())),
         );
 
         let parts = Arc::new(tool)
-            .run(ToolCallArgument::Object(tool_call_args))
+            .run(ToolCallArg::Object(tool_call_args))
             .await
             .unwrap();
         assert_eq!(parts.len(), 1);
@@ -161,8 +158,7 @@ mod tests {
         let part = parts[0].clone();
         assert_eq!(part.is_text(), true);
 
-        let parsed_part: serde_json::Value =
-            serde_json::from_str(part.get_text().unwrap()).unwrap();
+        let parsed_part: serde_json::Value = serde_json::from_str(part.as_str().unwrap()).unwrap();
         assert_eq!(parsed_part["timezone"].as_str(), Some("Asia/Seoul"));
         assert_eq!(parsed_part["is_dst"].as_bool(), Some(false));
         assert_eq!(

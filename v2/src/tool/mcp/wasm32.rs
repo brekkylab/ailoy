@@ -20,7 +20,7 @@ use crate::{
         Tool,
         mcp::common::{call_tool_result_to_parts, map_mcp_tool_to_tool_description},
     },
-    value::{Part, ToolCallArgument, ToolDescription},
+    value::{Part, ToolCallArg, ToolDesc},
 };
 
 type BoxedSseStream = LocalBoxStream<'static, Result<Sse, SseError>>;
@@ -323,17 +323,17 @@ impl StreamableHttpClient {
 struct MCPTool {
     client: Rc<StreamableHttpClient>,
     name: String,
-    pub desc: ToolDescription,
+    pub desc: ToolDesc,
 }
 
 impl Tool for MCPTool {
-    fn get_description(&self) -> ToolDescription {
+    fn get_description(&self) -> ToolDesc {
         self.desc.clone()
     }
 
     fn run(
         self: Arc<Self>,
-        args: ToolCallArgument,
+        args: ToolCallArg,
     ) -> futures::future::LocalBoxFuture<'static, Result<Vec<Part>, String>> {
         let client = self.client.clone();
 
@@ -418,7 +418,7 @@ mod tests {
         let tools = mcp_tools_from_streamable_http("http://localhost:8123/mcp", "test").await?;
         let tool = tools[1].clone();
 
-        let args = serde_json::from_value::<ToolCallArgument>(
+        let args = serde_json::from_value::<ToolCallArg>(
             serde_json::json!({"latitude": 32.7767, "longitude": -96.797}),
         )?;
         let parts = tool.run(args).await.unwrap();

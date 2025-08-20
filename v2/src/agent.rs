@@ -6,7 +6,9 @@ use tokio::sync::Mutex;
 use crate::{
     model::LanguageModel,
     tool::{MCPTransport, Tool},
-    value::{Message, MessageAggregator, MessageDelta, Part, Role, ToolCall},
+    value::{
+        FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolCall, ToolCallArg,
+    },
 };
 
 pub struct Agent {
@@ -82,38 +84,59 @@ impl Agent {
     pub fn run(
         &mut self,
         user_message: impl Into<String>,
-    ) -> impl Stream<Item = Result<MessageDelta, String>> {
+    ) -> impl Stream<Item = Result<MessageOutput, String>> {
         let lm = self.lm.clone();
         let tools = self.tools.clone();
         let msgs = self.messages.clone();
-        let user_message = Message::with_content(Role::User, Part::Text(user_message.into()));
+        let user_message =
+            Message::with_role(Role::User).with_contents(vec![Part::Text(user_message.into())]);
         async_stream::try_stream! {
             msgs.lock().await.push(user_message);
             loop {
                 let td = self.tools.iter().map(|v| v.get_description()).collect::<Vec<_>>();
-                let mut strm = lm.clone().run(td, msgs.lock().await.clone());
+                let mut strm = lm.clone().run(msgs.lock().await.clone(), td);
                 let mut aggregator = MessageAggregator::new();
-                let mut assistant_msg: Option<Message> = None;
+                let mut assistant_msg = Message::with_role(Role::Assistant);
                 while let Some(delta) = strm.next().await {
                     let delta = delta?;
                     yield delta.clone();
                     if let Some(msg) = aggregator.update(delta) {
-                        assistant_msg = Some(msg);
+                        assistant_msg = msg;
                     }
                 }
-                if let Some(msg) = aggregator.finalize() {
-                        assistant_msg = Some(msg);
+                msgs.lock().await.push(assistant_msg.clone());
+                if !assistant_msg.tool_calls.is_empty() {
+                    for part in &assistant_msg.tool_calls {
+                        let tc = match part {
+                            Part::FunctionString(s) => match ToolCall::try_from_string(s.clone()){
+                                Ok(tc) => tc,
+                                Err(_) => { continue; },
+                            },
+                            Part::Function{id: _, name, arguments} => {
+                                let Ok(arguments) = ToolCallArg::try_from_string(arguments) else {
+                                    continue;
+                                };
+                                ToolCall{name: name.to_owned(), arguments}
+                            },
+                            _ => {continue;},
+                        };
+                        let tool = tools.iter().find(|v| v.get_description().get_name() == tc.name).unwrap().clone();
+                        let resp = tool.run(tc.arguments).await?;
+                        let delta = Message::with_role(Role::Tool).with_contents(resp.clone());
+                        yield MessageOutput::new().with_delta(delta);
+                        let tool_msg = Message::with_role(Role::Tool).with_contents(resp);
+                        msgs.lock().await.push(tool_msg);
                     }
-                let assistant_msg = assistant_msg.unwrap();
-                self.messages.lock().await.push(assistant_msg.clone());
+                }
+                msgs.lock().await.push(assistant_msg.clone());
                 if !assistant_msg.tool_calls.is_empty() {
                     for part in assistant_msg.tool_calls {
-                        let tc = ToolCall::try_from_string(part.get_function_owned().unwrap()).unwrap();
-                        let tool = tools.iter().find(|v| v.get_description().get_name() == tc.get_name()).unwrap().clone();
-                        let parts = tool.run(tc.get_argument().clone()).await?;
+                        let tc: ToolCall = part.try_into().unwrap();
+                        let tool = tools.iter().find(|v| v.get_description().name == tc.name).unwrap().clone();
+                        let parts = tool.run(tc.arguments).await?;
                         for part in parts.into_iter() {
-                            yield MessageDelta::Content(Role::Tool, part.clone());
-                            let tool_msg = Message::with_content(Role::Tool, part);
+                            let tool_msg = Message::with_role(Role::Tool).with_contents([part.clone()]);
+                            yield MessageOutput{ delta: tool_msg.clone(), finish_reason: Some(FinishReason::Stop)};
                             self.messages.lock().await.push(tool_msg);
                         }
                     }
@@ -157,9 +180,6 @@ mod tests {
                 println!("{:?}", msg);
             }
         }
-        if let Some(msg) = agg.finalize() {
-            println!("{:?}", msg);
-        }
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
@@ -171,7 +191,7 @@ mod tests {
         use crate::{
             model::LocalLanguageModel,
             tool::BuiltinTool,
-            value::{ToolDescription, ToolDescriptionArgument},
+            value::{ToolDesc, ToolDescArg},
         };
 
         let cache = crate::cache::Cache::new();
@@ -187,25 +207,24 @@ mod tests {
         }
         let model = model.unwrap();
         let tools = vec![Arc::new(BuiltinTool::new(
-            ToolDescription::new(
+            ToolDesc::new(
                 "temperature",
                 "Get current temperature",
-                ToolDescriptionArgument::new_object().with_properties(
+                ToolDescArg::new_object().with_properties(
                     [
                         (
                             "location",
-                            ToolDescriptionArgument::new_string().with_desc("The city name"),
+                            ToolDescArg::new_string().with_desc("The city name"),
                         ),
                         (
                             "unit",
-                            ToolDescriptionArgument::new_string()
-                                .with_enum(["Celcius", "Fernheit"]),
+                            ToolDescArg::new_string().with_enum(["Celcius", "Fernheit"]),
                         ),
                     ],
                     ["location", "unit"],
                 ),
                 Some(
-                    ToolDescriptionArgument::new_number()
+                    ToolDescArg::new_number()
                         .with_desc("Null if the given city name is unavailable."),
                 ),
             ),
@@ -219,9 +238,9 @@ mod tests {
                     .unwrap()
                     == "Celcius"
                 {
-                    Part::new_text("40")
+                    Part::Text("40".to_owned())
                 } else {
-                    Part::new_text("104")
+                    Part::Text("104".to_owned())
                 }
             }),
         )) as Arc<dyn Tool>];
@@ -234,9 +253,6 @@ mod tests {
             if let Some(msg) = agg.update(delta) {
                 println!("{:?}", msg);
             }
-        }
-        if let Some(msg) = agg.finalize() {
-            println!("{:?}", msg);
         }
     }
 
@@ -287,9 +303,6 @@ mod tests {
             if let Some(msg) = agg.update(delta) {
                 println!("{:?}", msg);
             }
-        }
-        if let Some(msg) = agg.finalize() {
-            println!("{:?}", msg);
         }
 
         Ok(())

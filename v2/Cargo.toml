@@ -20,6 +20,7 @@ minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"]
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { version = "3", features = ["tokio_rt"], optional = true }
 napi-derive = { version = "3", optional = true }
+ordered-float = { version = "5.0.0", features = ["serde"] }
 pyo3 = { version = "0.25", optional = true }
 pyo3-async-runtimes = { version = "0.25", features = ["attributes", "tokio-runtime"], optional = true }
 pyo3-stub-gen = { version = "0.12.2", optional = true }
@@ -60,7 +61,6 @@ napi-build = "2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
 cmake = "0.1"
-cxx-build = "1.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cxx = "1.0"
@@ -79,3 +79,4 @@ path = "src/lib.rs"
 [[bin]]
 name = "py_stub_gen"
 doc = false
+required-features = ["python"]
