@@ -1,9 +1,10 @@
 use crate::ffi::util::*;
-use crate::ffi::{DLManagedTensorVersioned, DLPackTensor, ManagedTensor};
+use crate::ffi::{DLDevice, DLPackTensor};
+use anyhow::{Result, bail};
 
-unsafe impl Send for ffi::DLDevice {}
+unsafe impl Send for DLDevice {}
 
-unsafe impl Send for ffi::DLPackTensor {}
+unsafe impl Send for DLPackTensor {}
 
 impl DLPackTensor {
     // /// from raw DLManagedTensorVersioned pointer

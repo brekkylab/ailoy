@@ -36,5 +36,6 @@ pub trait VectorStore: Send + Sync {
     async fn retrieve(&self, query_embedding: Embedding, top_k: u64)
     -> Result<Vec<RetrieveResult>>;
     async fn remove_vector(&self, id: &str) -> Result<()>;
+    async fn remove_vectors(&self, ids: &[&str]) -> Result<()>;
     async fn clear(&self) -> Result<()>;
 }

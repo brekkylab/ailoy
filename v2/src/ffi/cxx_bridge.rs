@@ -1,7 +1,6 @@
 pub use ffi::*;
 
 use crate::cache::{CacheContents, CacheEntry};
-use anyhow::{Result, bail};
 
 fn cache_entry_new(dirname: &str, filename: &str) -> Box<CacheEntry> {
     Box::new(CacheEntry::new(dirname, filename))
@@ -34,16 +33,16 @@ fn cache_contents_remove_with_filename_out(
 
 #[cxx::bridge]
 mod ffi {
-    // Rust wrapper of DLManagedTensorVersioned
-    pub struct DLPackTensor {
-        inner: UniquePtr<ManagedTensor>,
-    }
-
     extern "C++" {
         include!("dlpack/dlpack.h");
 
         type DLDevice;
         type DLManagedTensorVersioned;
+    }
+
+    // Rust wrapper of DLManagedTensorVersioned
+    pub struct DLPackTensor {
+        inner: UniquePtr<ManagedTensor>,
     }
 
     #[namespace = "dlpack_bridge"]
@@ -67,15 +66,33 @@ mod ffi {
         fn get_data_ptr_u16(self: &ManagedTensor) -> *const u16;
     }
 
-    /// Rust wrapper of faiss::Index
-    pub struct FaissIndex {
-        inner: UniquePtr<FaissIndexWrapper>,
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum FaissMetricType {
+        /// basic metrics
+        InnerProduct = 0,
+        L2 = 1,
+        L1,
+        Linf,
+        Lp,
+
+        /// some additional metrics defined in scipy.spatial.distance
+        Canberra = 20,
+        BrayCurtis,
+        JensenShannon,
+
+        /// sum_i(min(a_i, b_i)) / sum_i(max(a_i, b_i)) where a_i, b_i > 0
+        Jaccard,
+        /// Squared Eucliden distance, ignoring NaNs
+        NaNEuclidean,
+        /// Gower's distance - numeric dimensions are in [0,1] and categorical
+        /// dimensions are negative integers
+        Gower,
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    enum FaissMetricType {
-        InnerProduct = 0, // Inner product (for cosine similarity with normalized vectors)
-        L2 = 1,           // Euclidean distance
+    #[derive(Debug, Clone)]
+    pub struct FaissSearchResult {
+        pub distances: Vec<f32>,
+        pub indexes: Vec<i64>,
     }
 
     #[namespace = "faiss_bridge"]
@@ -84,14 +101,27 @@ mod ffi {
 
         type FaissIndexWrapper;
 
-        // FaissIndex 생성
+        // Creator functions
         unsafe fn create_index(
             dimension: i32,
             description: &str,
             metric: FaissMetricType,
         ) -> Result<UniquePtr<FaissIndexWrapper>>;
 
-        // 벡터 추가 (add_with_ids 사용)
+        unsafe fn read_index(filename: &str) -> Result<UniquePtr<FaissIndexWrapper>>;
+
+        // Methods
+        fn is_trained(self: &FaissIndexWrapper) -> bool;
+        fn get_ntotal(self: &FaissIndexWrapper) -> i64;
+        fn get_dimension(self: &FaissIndexWrapper) -> i32;
+        fn get_metric_type(self: &FaissIndexWrapper) -> FaissMetricType;
+
+        unsafe fn train_index(
+            self: Pin<&mut FaissIndexWrapper>,
+            training_vectors: &[f32],
+            num_training_vectors: usize,
+        ) -> Result<()>;
+
         unsafe fn add_vectors_with_ids(
             self: Pin<&mut FaissIndexWrapper>,
             vectors: &[f32],
@@ -99,27 +129,20 @@ mod ffi {
             ids: &[i64],
         ) -> Result<()>;
 
-        // 검색
         unsafe fn search_vectors(
             self: &FaissIndexWrapper,
             query_vectors: &[f32],
-            num_queries: usize,
             k: usize,
-            distances: &mut [f32],
-            indices: &mut [i64],
-        ) -> Result<()>;
+        ) -> Result<FaissSearchResult>;
 
-        // 인덱스 정보 확인
-        fn is_trained(self: &FaissIndexWrapper) -> bool;
-        fn get_ntotal(self: &FaissIndexWrapper) -> i64;
-        fn get_dimension(self: &FaissIndexWrapper) -> i32;
+        unsafe fn get_by_id(self: &FaissIndexWrapper, id: i64) -> Result<Vec<f32>>;
 
-        // 학습 (필요한 경우)
-        unsafe fn train_index(
-            self: Pin<&mut FaissIndexWrapper>,
-            training_vectors: &[f32],
-            num_training_vectors: usize,
-        ) -> Result<()>;
+        unsafe fn remove_vectors(self: Pin<&mut FaissIndexWrapper>, ids: &[i64]) -> Result<usize>;
+
+        unsafe fn clear(self: Pin<&mut FaissIndexWrapper>) -> Result<()>;
+
+        unsafe fn write_index(self: &FaissIndexWrapper, filename: &str) -> Result<()>;
+
     }
 
     #[namespace = "ailoy"]

@@ -1,45 +1,76 @@
-use crate::ffi::FaissIndex;
+use anyhow::{Result, bail};
+use std::sync::atomic::{AtomicI64, Ordering};
 
-// --- 검색 결과를 위한 구조체들 ---
-#[derive(Debug, Clone)]
-pub struct SearchResult {
-    pub matches: Vec<SearchMatch>,
+use crate::ffi::{FaissIndexWrapper, FaissMetricType, FaissSearchResult, create_index, read_index};
+
+#[derive(Debug)]
+pub struct FaissIndexBuilder {
+    dimension: i32,
+    description: String,
+    metric: FaissMetricType,
 }
 
-#[derive(Debug, Clone)]
-pub struct SearchMatch {
-    pub id: String,
-    pub distance: f32,
-}
-
-impl ffi::FaissIndex {
-    /// 새로운 FAISS 인덱스를 생성합니다.
-    ///
-    /// # Arguments
-    /// * `dimension` - 벡터의 차원
-    /// * `description` - Index factory 문자열 (예: "IVF100,Flat", "HNSW32")
-    /// * `metric` - 거리 측정 방식
-    pub fn new(dimension: i32, description: &str, metric: ffi::MetricType) -> Result<Self> {
-        let wrapper = unsafe { ffi::create_index(dimension, description, metric)? };
-        Ok(Self { inner: wrapper })
+impl FaissIndexBuilder {
+    fn new(dimension: i32) -> Self {
+        FaissIndexBuilder {
+            dimension,
+            description: "IDMap2,FlatIP".to_owned(),
+            metric: FaissMetricType::L2,
+        }
     }
 
-    /// 인덱스가 학습되었는지 확인합니다.
+    fn description(mut self, description: &str) -> Self {
+        self.description = description.to_owned();
+        self
+    }
+
+    fn metric(mut self, metric: FaissMetricType) -> Self {
+        self.metric = metric;
+        self
+    }
+
+    fn build(self) -> Result<FaissIndex> {
+        FaissIndex::new(self.dimension, self.description.as_str(), self.metric)
+    }
+}
+
+/// Rust wrapper of faiss::Index
+pub struct FaissIndex {
+    inner: cxx::UniquePtr<FaissIndexWrapper>,
+    description: Option<String>,
+    next_id: AtomicI64, // thread-safe ID Generator
+}
+
+impl FaissIndex {
+    pub fn new(dimension: i32, description: &str, metric: FaissMetricType) -> Result<Self> {
+        let wrapper = unsafe { create_index(dimension, description, metric)? };
+        Ok(Self {
+            inner: wrapper,
+            description: Some(description.to_owned()),
+            next_id: AtomicI64::new(0),
+        })
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.description.as_ref().map(|s| s.as_str())
+    }
+
     pub fn is_trained(&self) -> bool {
-        ffi::is_trained(self.inner.as_ref().unwrap())
+        self.inner.is_trained()
     }
 
-    /// 인덱스에 저장된 벡터의 총 개수를 반환합니다.
     pub fn ntotal(&self) -> i64 {
-        ffi::get_ntotal(self.inner.as_ref().unwrap())
+        self.inner.get_ntotal()
     }
 
-    /// 벡터의 차원을 반환합니다.
     pub fn dimension(&self) -> i32 {
-        ffi::get_dimension(self.inner.as_ref().unwrap())
+        self.inner.get_dimension()
     }
 
-    /// 인덱스를 학습시킵니다 (IVF 계열 등 필요한 경우).
+    pub fn metric_type(&self) -> FaissMetricType {
+        self.inner.get_metric_type()
+    }
+
     pub fn train(&mut self, training_vectors: &[Vec<f32>]) -> Result<()> {
         if self.is_trained() {
             return Ok(());
@@ -48,37 +79,42 @@ impl ffi::FaissIndex {
         let flattened: Vec<f32> = training_vectors.iter().flatten().cloned().collect();
         let num_vectors = training_vectors.len();
 
-        unsafe { ffi::train_index(self.inner.as_mut().unwrap(), &flattened, num_vectors) }
+        unsafe { Ok(self.inner.pin_mut().train_index(&flattened, num_vectors)?) }
     }
 
-    /// 벡터들을 인덱스에 추가하고 할당된 ID들을 문자열로 반환합니다.
+    pub fn add_vector(&mut self, vector: &Vec<f32>) -> Result<String> {
+        let id = self.ntotal();
+
+        unsafe {
+            self.inner
+                .pin_mut()
+                .add_vectors_with_ids(vector, 1, &[id])?;
+        }
+
+        Ok(id.to_string())
+    }
+
     pub fn add_vectors(&mut self, vectors: &[Vec<f32>]) -> Result<Vec<String>> {
         if vectors.is_empty() {
             return Ok(vec![]);
         }
 
-        // 1. 벡터들을 flatten하여 하나의 배열로 만듭니다.
         let flattened: Vec<f32> = vectors.iter().flatten().cloned().collect();
         let num_vectors = vectors.len();
 
-        // 2. ID들을 생성합니다. 현재 ntotal부터 시작합니다.
-        let start_id = self.ntotal();
+        let start_id = self.next_id.fetch_add(num_vectors as i64, Ordering::SeqCst);
         let ids: Vec<i64> = (start_id..start_id + num_vectors as i64).collect();
 
-        // 3. C++의 add_vectors_with_ids를 호출합니다.
         unsafe {
-            ffi::add_vectors_with_ids(self.inner.as_mut().unwrap(), &flattened, num_vectors, &ids)?;
+            self.inner
+                .pin_mut()
+                .add_vectors_with_ids(&flattened, num_vectors, &ids)?;
         }
 
-        // 4. ID들을 String으로 변환하여 반환합니다.
         Ok(ids.into_iter().map(|id| id.to_string()).collect())
     }
 
-    /// 쿼리 벡터들과 가장 유사한 k개의 벡터들을 검색합니다.
-    ///
-    /// # Returns
-    /// Vec<SearchResult> - 각 쿼리에 대한 검색 결과
-    pub fn search(&self, query_vectors: &[Vec<f32>], k: usize) -> Result<Vec<SearchResult>> {
+    pub fn search(&self, query_vectors: &[Vec<f32>], k: usize) -> Result<Vec<FaissSearchResult>> {
         if query_vectors.is_empty() {
             return Ok(vec![]);
         }
@@ -86,41 +122,81 @@ impl ffi::FaissIndex {
         let num_queries = query_vectors.len();
         let flattened: Vec<f32> = query_vectors.iter().flatten().cloned().collect();
 
-        // 결과를 저장할 배열들을 준비합니다.
-        let mut distances = vec![0.0f32; num_queries * k];
-        let mut indices = vec![0i64; num_queries * k];
+        let search_result = unsafe { self.inner.search_vectors(&flattened, k)? };
 
-        unsafe {
-            ffi::search_vectors(
-                self.inner.as_ref().unwrap(),
-                &flattened,
-                num_queries,
-                k,
-                &mut distances,
-                &mut indices,
-            )?;
+        let expected_len = num_queries * k;
+        if search_result.indexes.len() != expected_len
+            || search_result.distances.len() != expected_len
+        {
+            bail!(
+                "C++ FFI returned mismatched result length. Expected: {}, Got: (indexes: {}, distances: {})",
+                expected_len,
+                search_result.indexes.len(),
+                search_result.distances.len()
+            );
         }
 
-        // 결과를 구조화하여 반환합니다.
-        let mut results = Vec::with_capacity(num_queries);
-        for query_idx in 0..num_queries {
-            let start = query_idx * k;
-            let end = start + k;
+        let results: Vec<FaissSearchResult> = search_result
+            .distances
+            .chunks_exact(k)
+            .zip(search_result.indexes.chunks_exact(k))
+            .map(|(distances_chunk, indexes_chunk)| FaissSearchResult {
+                distances: distances_chunk.to_vec(),
+                indexes: indexes_chunk.to_vec(),
+            })
+            .collect();
 
-            let query_results: Vec<SearchMatch> = indices[start..end]
-                .iter()
-                .zip(distances[start..end].iter())
-                .map(|(&id, &distance)| SearchMatch {
-                    id: id.to_string(),
-                    distance,
-                })
-                .collect();
-
-            results.push(SearchResult {
-                matches: query_results,
-            });
+        if results.len() != num_queries {
+            bail!(
+                "Internal logic error: Failed to group search results correctly. Expected {} groups, got {}.",
+                num_queries,
+                results.len()
+            );
         }
 
         Ok(results)
+    }
+
+    pub fn get_by_id(&self, id: &str) -> Result<Vec<f32>> {
+        let numeric_id: i64 = id.parse().map_err(|_| {
+            anyhow::anyhow!("Invalid ID format: '{}'. ID must be a valid integer.", id)
+        })?;
+
+        if numeric_id < 0 {
+            bail!("ID must be non-negative, got: {}", numeric_id);
+        }
+
+        unsafe { Ok(self.inner.get_by_id(numeric_id)?) }
+    }
+
+    pub fn remove_vectors(&mut self, ids: &[&str]) -> Result<usize> {
+        let numeric_ids: Vec<i64> = ids
+            .iter()
+            .map(|s| s.parse::<i64>())
+            .collect::<Result<Vec<i64>, _>>()?;
+        unsafe { Ok(self.inner.pin_mut().remove_vectors(&numeric_ids)?) }
+    }
+
+    pub fn clear(&mut self) -> Result<()> {
+        unsafe { Ok(self.inner.pin_mut().clear()?) }
+    }
+
+    pub fn write_index(&self, filename: &str) -> Result<()> {
+        unsafe { Ok(self.inner.write_index(filename)?) }
+    }
+
+    pub fn read_index(filename: &str) -> Result<Self> {
+        let wrapper = unsafe { read_index(filename)? };
+        let current_total = wrapper.get_ntotal();
+        Ok(Self {
+            inner: wrapper,
+            description: None,
+            next_id: AtomicI64::new(current_total),
+        })
+    }
+
+    // Debug
+    pub fn current_id_counter(&self) -> i64 {
+        self.next_id.load(Ordering::SeqCst)
     }
 }

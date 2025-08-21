@@ -1,6 +1,13 @@
 #include "faiss_bridge.hpp"
-#include <iostream>
+
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
+
+#include <faiss/impl/IDSelector.h>
+#include <faiss/index_io.h>
+
+#include "cxx_bridge.rs.h"
 
 namespace faiss_bridge {
 
@@ -19,6 +26,10 @@ int32_t FaissIndexWrapper::get_dimension() const {
   return static_cast<int32_t>(index_->d);
 }
 
+FaissMetricType FaissIndexWrapper::get_metric_type() const {
+  return FaissMetricType(index_->metric_type);
+}
+
 void FaissIndexWrapper::train_index(rust::Slice<const float> training_vectors,
                                     size_t num_training_vectors) {
   if (index_->is_trained)
@@ -30,28 +41,118 @@ void FaissIndexWrapper::train_index(rust::Slice<const float> training_vectors,
 void FaissIndexWrapper::add_vectors_with_ids(rust::Slice<const float> vectors,
                                              size_t num_vectors,
                                              rust::Slice<const int64_t> ids) {
-  // FAISS는 faiss::idx_t를 사용하므로 변환이 필요할 수 있습니다.
   std::vector<faiss::idx_t> faiss_ids(ids.begin(), ids.end());
-
   index_->add_with_ids(static_cast<faiss::idx_t>(num_vectors), vectors.data(),
                        faiss_ids.data());
 }
 
-void FaissIndexWrapper::search_vectors(rust::Slice<const float> query_vectors,
-                                       size_t num_queries, size_t k,
-                                       rust::Slice<float> distances,
-                                       rust::Slice<int64_t> indices) const {
+FaissSearchResult
+FaissIndexWrapper::search_vectors(rust::Slice<const float> query_vectors,
+                                  size_t k) const {
+  faiss::idx_t num_queries = query_vectors.size() / index_->d;
+  std::vector<float> distances_vec(num_queries * k);
+  std::vector<faiss::idx_t> indexes_vec(num_queries * k);
 
-  // FAISS 검색 결과를 임시 배열에 저장
-  std::vector<faiss::idx_t> faiss_indices(num_queries * k);
+  index_->search(num_queries, query_vectors.data(),
+                 static_cast<faiss::idx_t>(k), distances_vec.data(),
+                 indexes_vec.data());
 
-  index_->search(static_cast<faiss::idx_t>(num_queries), query_vectors.data(),
-                 static_cast<faiss::idx_t>(k), distances.data(),
-                 faiss_indices.data());
+  rust::Vec<float> rust_distances;
+  rust::Vec<int64_t> rust_indexes;
 
-  // faiss::idx_t를 int64_t로 변환
-  for (size_t i = 0; i < faiss_indices.size(); ++i) {
-    indices[i] = static_cast<int64_t>(faiss_indices[i]);
+  rust_distances.reserve(distances_vec.size());
+  std::copy(distances_vec.begin(), distances_vec.end(),
+            std::back_inserter(rust_distances));
+
+  rust_indexes.reserve(indexes_vec.size());
+  std::copy(indexes_vec.begin(), indexes_vec.end(),
+            std::back_inserter(rust_indexes));
+
+  return FaissSearchResult{std::move(rust_distances), std::move(rust_indexes)};
+}
+
+rust::Vec<float> FaissIndexWrapper::get_by_id(int64_t id) const {
+  try {
+    if (id < 0 || id >= index_->ntotal) {
+      throw std::out_of_range("ID " + std::to_string(id) +
+                              " is out of range. " + "Valid range: [0, " +
+                              std::to_string(index_->ntotal - 1) + "]");
+    }
+
+    std::vector<float> reconstructed_vector(index_->d);
+
+    index_->reconstruct(id, reconstructed_vector.data());
+
+    rust::Vec<float> result;
+    result.reserve(reconstructed_vector.size());
+    std::copy(reconstructed_vector.begin(), reconstructed_vector.end(),
+              std::back_inserter(result));
+
+    return result;
+
+  } catch (const std::exception &e) {
+    throw std::runtime_error("Failed to get vector by ID " +
+                             std::to_string(id) + ": " + e.what());
+  }
+}
+
+size_t FaissIndexWrapper::remove_vectors(rust::Slice<const int64_t> ids) {
+  if (ids.empty()) {
+    return 0;
+  }
+
+  try {
+    faiss::IDSelectorBatch selector(ids.size(), ids.data());
+
+    size_t num_removed = index_->remove_ids(selector);
+
+    return num_removed;
+  } catch (const std::exception &e) {
+    throw std::runtime_error("Failed to remove vectors: " +
+                             std::string(e.what()));
+  }
+}
+
+void FaissIndexWrapper::clear() {
+  try {
+    if (index_->ntotal > 0) {
+      faiss::IDSelectorRange selector(0, index_->ntotal);
+
+      size_t num_removed = index_->remove_ids(selector);
+    } else {
+      // log.debug("Index is already empty.")
+    }
+  } catch (const std::exception &e) {
+    // call faiss::Index::reset() if index doesn't support remove_ids()
+    try {
+      index_->reset();
+    } catch (const std::exception &reset_error) {
+      throw std::runtime_error(
+          "Failed to clear index: " + std::string(e.what()) +
+          ". Reset also failed: " + std::string(reset_error.what()));
+    }
+  }
+}
+
+void FaissIndexWrapper::write_index(rust::Str filename) const {
+  try {
+    std::string filename_str(filename);
+
+    if (!index_) {
+      throw std::runtime_error("Cannot write index: index is null");
+    }
+
+    std::filesystem::path file_path(filename_str);
+    std::filesystem::path directory = file_path.parent_path();
+
+    if (!directory.empty() && !std::filesystem::exists(directory)) {
+      std::filesystem::create_directories(directory);
+    }
+
+    faiss::write_index(index_.get(), filename_str.c_str());
+  } catch (const std::exception &e) {
+    throw std::runtime_error("Failed to write index to file '" +
+                             std::string(filename) + "': " + e.what());
   }
 }
 
@@ -68,6 +169,36 @@ create_index(int32_t dimension, rust::Str description, FaissMetricType metric) {
   } catch (const std::exception &e) {
     throw std::runtime_error("Failed to create FAISS index: " +
                              std::string(e.what()));
+  }
+}
+
+std::unique_ptr<FaissIndexWrapper> read_index(rust::Str filename) {
+  try {
+    std::string filename_str(filename);
+
+    if (!std::filesystem::exists(filename_str)) {
+      throw std::runtime_error("File does not exist: " + filename_str);
+    }
+
+    std::ifstream file_check(filename_str, std::ios::binary);
+    if (!file_check.is_open()) {
+      throw std::runtime_error("Cannot open file for reading: " + filename_str);
+    }
+    file_check.close();
+
+    std::unique_ptr<faiss::Index> loaded_index(
+        faiss::read_index(filename_str.c_str()));
+
+    if (!loaded_index) {
+      throw std::runtime_error(
+          "Failed to load index: read_index returned null");
+    }
+
+    return std::make_unique<FaissIndexWrapper>(std::move(loaded_index));
+
+  } catch (const std::exception &e) {
+    throw std::runtime_error("Failed to read index from file '" +
+                             std::string(filename) + "': " + e.what());
   }
 }
 
