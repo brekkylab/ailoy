@@ -893,8 +893,6 @@ dependencies = [
 [[package]]
 name = "gemini-rust"
 version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4349322f0de046b481d1c29d9376498c0d35fde9e4cc4da7a748198dfe2f80e0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -904,7 +902,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "tokio",
  "url",
 ]
 
@@ -2250,6 +2247,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
@@ -2861,7 +2859,6 @@ dependencies = [
  "io-uring",
  "libc",
  "mio",
- "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "slab",

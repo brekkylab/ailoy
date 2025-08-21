@@ -226,21 +226,37 @@ impl LanguageModel for GeminiLanguageModel {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
     use std::sync::LazyLock;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen::prelude::*;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
 
-    use dotenv::dotenv;
-
+    #[cfg(not(target_arch = "wasm32"))]
     static GEMINI_API_KEY: LazyLock<String> = LazyLock::new(|| {
-        dotenv().ok();
-        env::var("GEMINI_API_KEY").unwrap_or_else(|_| {
+        dotenv::dotenv().ok();
+        std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| {
             eprintln!("Warning: GEMINI_API_KEY is not set");
             "".to_string()
         })
     });
 
-    #[tokio::test]
-    async fn gemini_infer_with_thinking() {
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_namespace = console)]
+        fn log(s: &str);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn log(s: &str) {
+        println!("{}", s);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    static GEMINI_API_KEY: LazyLock<String> = LazyLock::new(|| "".to_string());
+
+    async fn _gemini_infer_with_thinking() {
         use super::*;
         use crate::value::MessageAggregator;
 
@@ -265,15 +281,26 @@ mod tests {
         let mut strm = gemini.run(msgs, Vec::new());
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
-            println!("{:?}", delta);
+            log(format!("{:?}", delta).as_str());
             if let Some(msg) = agg.update(delta) {
-                println!("{:?}", msg);
+                log(format!("{:?}", msg).as_str());
             }
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
-    async fn gemini_infer_tool_call() {
+    async fn gemini_infer_with_thinking() {
+        _gemini_infer_with_thinking().await
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test]
+    async fn gemini_infer_with_thinking() {
+        _gemini_infer_with_thinking().await
+    }
+
+    async fn _gemini_infer_tool_call() {
         use super::*;
         use crate::value::{MessageAggregator, ToolDescArg};
 
@@ -311,9 +338,10 @@ mod tests {
         let mut strm = gemini.clone().run(msgs.clone(), tools.clone());
         let mut assistant_msg: Option<Message> = None;
         while let Some(delta_opt) = strm.next().await {
-            println!("{:?}", delta_opt);
             let delta = delta_opt.unwrap();
+            log(format!("{:?}", delta).as_str());
             if let Some(msg) = agg.update(delta) {
+                log(format!("{:?}", msg).as_str());
                 assistant_msg = Some(msg);
             }
         }
@@ -329,27 +357,44 @@ mod tests {
         let mut strm = gemini.run(msgs, tools);
         let mut assistant_msg: Option<Message> = None;
         while let Some(delta_opt) = strm.next().await {
-            println!("{:?}", delta_opt);
             let delta = delta_opt.unwrap();
+            log(format!("{:?}", delta).as_str());
             if let Some(msg) = agg.update(delta) {
+                log(format!("{:?}", msg).as_str());
                 assistant_msg = Some(msg);
             }
         }
         // Final message shuold say something like "Dubai is 38.5°C"
         let assistant_msg = assistant_msg.unwrap();
-        println!("Final Answer: {:?}", assistant_msg);
+        log(format!("Final Answer: {:?}", assistant_msg).as_str());
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
-    async fn gemini_infer_with_image() {
+    async fn gemini_infer_tool_call() {
+        _gemini_infer_tool_call().await
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test]
+    async fn gemini_infer_tool_call() {
+        _gemini_infer_tool_call().await
+    }
+
+    async fn _gemini_infer_with_image() {
         use super::*;
         use crate::value::MessageAggregator;
 
         use base64::Engine;
 
+        #[cfg(target_arch = "wasm32")]
+        let test_image_url = "https://newsroom.haas.berkeley.edu/wp-content/uploads/2023/02/jensen-huang-headshot2_thmb-300x246.jpg";
+        #[cfg(not(target_arch = "wasm32"))]
         let test_image_url =
             "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
+
         let response = reqwest::get(test_image_url).await.unwrap();
+        println!("response: {:?}", response);
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
@@ -368,10 +413,22 @@ mod tests {
         let mut strm = gemini.run(msgs, Vec::new());
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
-            println!("{:?}", delta);
+            log(format!("{:?}", delta).as_str());
             if let Some(msg) = agg.update(delta) {
-                println!("{:?}", msg);
+                log(format!("{:?}", msg).as_str());
             }
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn gemini_infer_with_image() {
+        _gemini_infer_with_image().await
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test]
+    async fn gemini_infer_with_image() {
+        _gemini_infer_with_image().await
     }
 }
