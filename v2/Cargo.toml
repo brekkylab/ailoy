@@ -13,7 +13,9 @@ default = []
 anyhow = "1"
 async-channel = "2.5"
 async-stream = "0.3"
+base64 = "0.21"
 futures = "0.3.31"
+gemini-rust = "1.1.0"
 indexmap = { version = "2", features = ["serde"] }
 log = "0.4.27"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
@@ -72,6 +74,9 @@ tokio = { version = "1.0", default-features = false, features = ["macros", "rt-m
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+dotenv = "0.15"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
