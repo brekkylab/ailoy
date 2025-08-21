@@ -20,7 +20,7 @@ impl ChromaStore {
         // 필요시 인증옵션 추가 (ex. token)
     ) -> Result<Self> {
         let client = ChromaClient::new(ChromaClientOptions {
-            url: Some(chroma_url.to_string()),
+            url: Some(chroma_url.to_owned()),
             ..Default::default()
         })
         .await?;
@@ -87,9 +87,9 @@ impl VectorStore for ChromaStore {
         let opts = GetOptions {
             ids: vec![id.to_owned()],
             include: Some(vec![
-                "metadatas".to_string(),
-                "documents".to_string(),
-                "embeddings".to_string(),
+                "metadatas".to_owned(),
+                "documents".to_owned(),
+                "embeddings".to_owned(),
             ]),
             ..Default::default()
         };
@@ -205,7 +205,7 @@ mod tests {
     async fn test_add_and_get_vector() -> Result<()> {
         let store = setup_test_store().await?;
         let test_embedding = vec![1.1, 2.2, 3.3];
-        let test_document = "This is a test document.".to_string();
+        let test_document = "This is a test document.".to_owned();
         let test_metadata = json!({"source": "test_add_and_get_vector"});
 
         let input = AddInput {
@@ -236,12 +236,12 @@ mod tests {
             .add_vectors(vec![
                 AddInput {
                     embedding: vec![1.0, 1.0],
-                    document: "doc1".to_string(),
+                    document: "doc1".to_owned(),
                     metadata: Some(json!({"id": 1})),
                 },
                 AddInput {
                     embedding: vec![2.0, 2.0],
-                    document: "doc2".to_string(),
+                    document: "doc2".to_owned(),
                     metadata: Some(json!({"id": 2})),
                 },
             ])
@@ -266,17 +266,17 @@ mod tests {
         let inputs = vec![
             AddInput {
                 embedding: vec![1.0, 0.0, 0.0],
-                document: "vector one".to_string(),
+                document: "vector one".to_owned(),
                 metadata: None,
             },
             AddInput {
                 embedding: vec![0.0, 1.0, 0.0],
-                document: "vector two".to_string(),
+                document: "vector two".to_owned(),
                 metadata: None,
             },
             AddInput {
                 embedding: vec![0.9, 0.1, 0.0],
-                document: "vector one-ish".to_string(),
+                document: "vector one-ish".to_owned(),
                 metadata: None,
             },
         ];
@@ -291,10 +291,10 @@ mod tests {
 
         let retrieved_docs: Vec<_> = results.iter().map(|r| r.document.clone()).collect();
         // only these two should be exist
-        assert!(retrieved_docs.contains(&"vector one".to_string()));
-        assert!(retrieved_docs.contains(&"vector one-ish".to_string()));
+        assert!(retrieved_docs.contains(&"vector one".to_owned()));
+        assert!(retrieved_docs.contains(&"vector one-ish".to_owned()));
         // this one should not be exists
-        assert!(!retrieved_docs.contains(&"vector two".to_string()));
+        assert!(!retrieved_docs.contains(&"vector two".to_owned()));
 
         Ok(())
     }
@@ -304,7 +304,7 @@ mod tests {
         let store = setup_test_store().await?;
         let input = AddInput {
             embedding: vec![5.5, 6.6],
-            document: "to be deleted".to_string(),
+            document: "to be deleted".to_owned(),
             metadata: None,
         };
         let id_to_delete = store.add_vector(input).await?;
@@ -340,12 +340,12 @@ mod tests {
         let inputs = vec![
             AddInput {
                 embedding: vec![1.0],
-                document: "doc1".to_string(),
+                document: "doc1".to_owned(),
                 metadata: None,
             },
             AddInput {
                 embedding: vec![2.0],
-                document: "doc2".to_string(),
+                document: "doc2".to_owned(),
                 metadata: None,
             },
         ];
