@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     tool::Tool,
+    utils::BoxFuture,
     value::{Part, ToolCallArg, ToolDesc},
 };
 
@@ -48,19 +49,7 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn run(
-        self: Arc<Self>,
-        args: ToolCallArg,
-    ) -> futures::future::BoxFuture<'static, Result<Vec<Part>, String>> {
-        Box::pin(async move { Ok(vec![(self.f)(args)]) })
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn run(
-        self: Arc<Self>,
-        args: ToolCallArg,
-    ) -> futures::future::LocalBoxFuture<'static, Result<Vec<Part>, String>> {
+    fn run(self: Arc<Self>, args: ToolCallArg) -> BoxFuture<'static, Result<Vec<Part>, String>> {
         Box::pin(async move { Ok(vec![(self.f)(args)]) })
     }
 }

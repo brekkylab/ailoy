@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use futures::future::BoxFuture;
 use rmcp::{
     model::CallToolRequestParam,
     service::{RoleClient, RunningService, ServiceExt},
@@ -12,6 +11,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::{
     tool::{Tool, mcp::common::*},
+    utils::BoxFuture,
     value::{Part, ToolCallArg, ToolDesc},
 };
 

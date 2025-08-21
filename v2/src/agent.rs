@@ -288,7 +288,6 @@ mod tests {
             .await?;
 
         let agent_tools = agent.get_tools();
-        println!("{:?}", agent_tools);
         assert_eq!(agent_tools.len(), 2);
         assert_eq!(
             agent_tools[0].get_description().name,
