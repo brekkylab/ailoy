@@ -9,6 +9,8 @@ endif()
 # Avoid FetchContent warning about DOWNLOAD_EXTRACT_TIMESTAMP in CMake 3.24:
 cmake_policy(SET CMP0135 NEW)
 
+include(FetchContent)
+
 ##################
 # Global options #
 ##################
@@ -45,11 +47,6 @@ project(ailoy CXX)
 
 set(AILOY_WITH_TEST ON CACHE BOOL "Build test")
 
-include(FetchContent)
-
-FetchContent_Declare(magic_enum URL https://github.com/Neargye/magic_enum/archive/refs/tags/v0.9.7.tar.gz EXCLUDE_FROM_ALL)
-FetchContent_MakeAvailable(magic_enum)
-
 if(AILOY_WITH_TEST)
     FetchContent_Declare(googletest URL https://github.com/google/googletest/archive/refs/tags/v1.16.0.tar.gz)
     set(INSTALL_GTEST OFF)
@@ -63,113 +60,157 @@ endif()
 ######################
 # ailoy (cxx bridge) #
 ######################
-# @jhlee: Can we remove hard-coded paths?
-set(CARGO_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
-set(AILOY_CXXBRIDGE_RS ${CARGO_SOURCE_DIR}/src/ffi/cxx_bridge.rs)
-set(AILOY_CXXBRIDGE_DIR ${CMAKE_CURRENT_BINARY_DIR}/cxx_bridge)
-set(AILOY_CXXBRIDGE_CC ${AILOY_CXXBRIDGE_DIR}/cxx_bridge.rs.cc)
-set(AILOY_CXXBRIDGE_H ${AILOY_CXXBRIDGE_DIR}/cxx_bridge.rs.h)
-set(AILOY_CXXBRIDGE_BASE_DIR ${AILOY_CXXBRIDGE_DIR}/rust)
-set(AILOY_CXXBRIDGE_BASE_H ${AILOY_CXXBRIDGE_BASE_DIR}/cxx.h)
-file(MAKE_DIRECTORY ${AILOY_CXXBRIDGE_DIR})
-file(MAKE_DIRECTORY ${AILOY_CXXBRIDGE_BASE_DIR})
+set(AILOY_CXXBRIDGE_RS ${PROJECT_SOURCE_DIR}/../src/ffi/cxx_bridge.rs CACHE FILEPATH "Path to the cxx_bridge.rs")
+set(AILOY_CXXBRIDGE_OUTDIR ${PROJECT_BINARY_DIR}/cxxbridge CACHE PATH "Output dir for cxxbridge generated files")
+set(AILOY_CXXBRIDGE_CC ${AILOY_CXXBRIDGE_OUTDIR}/cxx_bridge.rs.cc)
+set(AILOY_CXXBRIDGE_H ${AILOY_CXXBRIDGE_OUTDIR}/cxx_bridge.rs.h)
+set(AILOY_CXXBRIDGE_BASE_H ${AILOY_CXXBRIDGE_OUTDIR}/rust/cxx.h)
 
-# Create header file
-execute_process(
-    COMMAND cxxbridge ${AILOY_CXXBRIDGE_RS} --header
-    OUTPUT_FILE ${AILOY_CXXBRIDGE_H}
-    WORKING_DIRECTORY ${CARGO_SOURCE_DIR}
-    RESULT_VARIABLE ret
-)
-if(NOT ret EQUAL 0)
-    message(FATAL_ERROR "cxxbridge header generation failed ${AILOY_CXXBRIDGE_RS}")
-endif()
+# Ensure the cxxbridge CLI is available (cargo install cxxbridge-cmd)
+find_program(CXXBRIDGE_EXE NAMES cxxbridge REQUIRED)
 
-# Create source file
-execute_process(
-    COMMAND cxxbridge ${AILOY_CXXBRIDGE_RS}
-    OUTPUT_FILE ${AILOY_CXXBRIDGE_CC}
-    WORKING_DIRECTORY ${CARGO_SOURCE_DIR}
-    RESULT_VARIABLE ret
-)
-if(NOT ret EQUAL 0)
-    message(FATAL_ERROR "cxxbridge cpp generation failed")
-endif()
+# Create output directories at configure time
+file(MAKE_DIRECTORY ${AILOY_CXXBRIDGE_OUTDIR})
+file(MAKE_DIRECTORY ${AILOY_CXXBRIDGE_OUTDIR}/rust)
 
-# Get base header dir
-execute_process(
-    COMMAND cxxbridge --header
-    OUTPUT_FILE ${AILOY_CXXBRIDGE_BASE_H}
-    WORKING_DIRECTORY ${CARGO_SOURCE_DIR}
-    RESULT_VARIABLE ret
+# ---- Helper script to capture stdout -> file (portable) ----
+# cxxbridge prints to stdout; CMake COMMAND has no portable redirection.
+# We call a small CMake script that uses execute_process(OUTPUT_FILE ...).
+set(_CXXBRIDGE_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/_cxxbridge.cmake)
+file(WRITE "${_CXXBRIDGE_SCRIPT}" [=[
+  if(NOT DEFINED MODE)
+    message(FATAL_ERROR "MODE not set (header|cc|base_header)")
+  endif()
+  if(NOT DEFINED CXXBRIDGE_EXE)
+    message(FATAL_ERROR "cxxbridge-cmd not cound. Please install with `cargo install cxxbridge-cmd`.")
+  endif()
+  if("${MODE}" STREQUAL "header")
+    execute_process(COMMAND ${CXXBRIDGE_EXE} ${INPUT} --header OUTPUT_FILE ${OUTPUT} RESULT_VARIABLE rv COMMAND_ECHO STDOUT)
+  elseif("${MODE}" STREQUAL "cc")
+    execute_process(COMMAND ${CXXBRIDGE_EXE} ${INPUT} OUTPUT_FILE ${OUTPUT} RESULT_VARIABLE rv COMMAND_ECHO STDOUT)
+  elseif("${MODE}" STREQUAL "base_header")
+    execute_process(COMMAND ${CXXBRIDGE_EXE} --header OUTPUT_FILE ${OUTPUT} RESULT_VARIABLE rv COMMAND_ECHO STDOUT)
+  else()
+    message(FATAL_ERROR "Unknown MODE='${MODE}'")
+  endif()
+  if(NOT rv EQUAL 0)
+    message(FATAL_ERROR "cxxbridge failed: ${rv}")
+  endif()
+]=])
+
+# ---- Per-artifact custom commands (rebuilds only when inputs change) ----
+# Generate the C++ header from the Rust bridge
+add_custom_command(
+    OUTPUT ${AILOY_CXXBRIDGE_H}
+    COMMAND ${CMAKE_COMMAND}
+        -DCXXBRIDGE_EXE=${CXXBRIDGE_EXE}
+        -DINPUT=${AILOY_CXXBRIDGE_RS}
+        -DOUTPUT=${AILOY_CXXBRIDGE_H}
+        -DMODE=header
+        -P ${_CXXBRIDGE_SCRIPT}
+    DEPENDS ${AILOY_CXXBRIDGE_RS}
+    COMMENT "cxxbridge: generating ${AILOY_CXXBRIDGE_H}"
+    VERBATIM
 )
-if(NOT ret EQUAL 0)
-    message(FATAL_ERROR "cxxbridge cpp generation failed")
-endif()
+
+# Generate the C++ source from the Rust bridge
+add_custom_command(
+    OUTPUT "${AILOY_CXXBRIDGE_CC}"
+    COMMAND ${CMAKE_COMMAND}
+        -DCXXBRIDGE_EXE=${CXXBRIDGE_EXE}
+        -DINPUT=${AILOY_CXXBRIDGE_RS}
+        -DOUTPUT=${AILOY_CXXBRIDGE_CC}
+        -DMODE=cc
+        -P ${_CXXBRIDGE_SCRIPT}
+    DEPENDS ${AILOY_CXXBRIDGE_RS}
+    COMMENT "cxxbridge: generating ${AILOY_CXXBRIDGE_CC}"
+    VERBATIM
+)
+
+# Generate the base support header (cxx.h)
+add_custom_command(
+    OUTPUT ${AILOY_CXXBRIDGE_BASE_H}
+    COMMAND ${CMAKE_COMMAND}
+        -DCXXBRIDGE_EXE=${CXXBRIDGE_EXE}
+        -DOUTPUT=${AILOY_CXXBRIDGE_BASE_H}
+        -DMODE=base_header
+        -P ${_CXXBRIDGE_SCRIPT}
+    COMMENT "cxxbridge: generating ${AILOY_CXXBRIDGE_BASE_H}"
+    VERBATIM
+)
+
+# Aggregate target so others can depend on "generation done"
+add_custom_target(ailoy_cxxbridge_gen
+  DEPENDS "${AILOY_CXXBRIDGE_H}" "${AILOY_CXXBRIDGE_CC}" "${AILOY_CXXBRIDGE_BASE_H}"
+)
+
+# Mark generated for IDEs
+set_source_files_properties(${AILOY_CXXBRIDGE_H} PROPERTIES GENERATED TRUE)
+set_source_files_properties(${AILOY_CXXBRIDGE_CC} PROPERTIES GENERATED TRUE)
+set_source_files_properties(${AILOY_CXXBRIDGE_BASE_H} PROPERTIES GENERATED TRUE)
 
 ##################
 # ailoy_cpp_shim #
 ##################
-file(GLOB_RECURSE AILOY_CPP_SHIM_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp ${AILOY_CXXBRIDGE_CC})
+file(GLOB_RECURSE AILOY_CPP_SHIM_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 add_library(ailoy_cpp_shim STATIC ${AILOY_CPP_SHIM_SRCS})
-target_include_directories(ailoy_cpp_shim PUBLIC ${AILOY_CXXBRIDGE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_dependencies(ailoy_cpp_shim ailoy_cxxbridge_gen)
+target_sources(ailoy_cpp_shim PRIVATE ${AILOY_CXXBRIDGE_CC})
+target_include_directories(ailoy_cpp_shim PUBLIC ${AILOY_CXXBRIDGE_OUTDIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 #######
 # tvm #
 #######
+FetchContent_Declare(
+    tvm
+    GIT_REPOSITORY https://github.com/brekkylab/relax.git
+    GIT_TAG e2aa6d0ebf9bd82632a510c00f3966eeee89e68a
+    EXCLUDE_FROM_ALL
+)
+set(CONDA_BUILD ON) # Actually it is not related to conda, but this is only way to disable python build
+set(BUILD_DUMMY_LIBTVM ON)
+set(BUILD_STATIC_RUNTIME ON)
+set(USE_LIBBACTRACE OFF)
+set(TVM_FFI_USE_LIBBACKTRACE OFF)
 if(APPLE)
     set(USE_METAL ON)
-    set(USE_VULKAN OFF)
     target_compile_definitions(ailoy_cpp_shim PUBLIC USE_METAL=1)
 elseif(WIN32)
-    set(USE_METAL OFF)
     set(USE_VULKAN ON)
     target_compile_definitions(ailoy_cpp_shim PUBLIC USE_VULKAN=1)
 elseif(LINUX)
-    set(USE_METAL OFF)
     set(USE_VULKAN ON)
     target_compile_definitions(ailoy_cpp_shim PUBLIC USE_VULKAN=1)
+elseif(EMSCRIPTEN)
 else()
     message(FATAL_ERROR "Not implemented")
 endif()
+FetchContent_MakeAvailable(tvm)
 
-# Define TVM root if not already defined
-include(ExternalProject)
-ExternalProject_Add(tvm_build
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm
-    BUILD_COMMAND ${CMAKE_COMMAND} --build . --target tvm_runtime --parallel 8
-    INSTALL_COMMAND ""
-    CMAKE_ARGS
-        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DUSE_METAL=${USE_METAL}
-        -DUSE_VULKAN=${USE_VULKAN}
-        -DUSE_LIBBACKTRACE=OFF
-        -DBUILD_DUMMY_LIBTVM=ON
+# Hollow wrapper for TVM runtime.
+# The static TVM runtime must be linked with --whole-archive at the final link step.
+# Since `ailoy_cpp_shim` is an intermediate static library, we must NOT pull TVM symbols
+# into it. This INTERFACE target mirrors TVM’s usage requirements (include dirs,
+# compile definitions/options) without adding `tvm_runtime` to the link line.
+# Consumers (final executables/shared libs) should link `tvm_runtime` themselves, e.g.:
+#   target_link_libraries(my_exe PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,tvm_runtime>")
+add_library(tvm_runtime_hollow INTERFACE)
+target_include_directories(tvm_runtime_hollow INTERFACE
+    $<TARGET_PROPERTY:tvm_runtime,INCLUDE_DIRECTORIES>
+    $<TARGET_PROPERTY:tvm_runtime,INTERFACE_INCLUDE_DIRECTORIES>
 )
-
-# Include and link TVM headers/libraries manually
-ExternalProject_Get_Property(tvm_build BINARY_DIR)
-set(TVM_BINARY_DIR ${BINARY_DIR})
-
-target_include_directories(ailoy_cpp_shim PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/ffi/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/3rdparty/picojson
-    ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/3rdparty/dlpack/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tvm/3rdparty/dmlc-core/include
+target_compile_definitions(tvm_runtime_hollow INTERFACE
+    $<TARGET_PROPERTY:tvm_runtime,COMPILE_DEFINITIONS>
+    $<TARGET_PROPERTY:tvm_runtime,INTERFACE_COMPILE_DEFINITIONS>
 )
-
-add_library(tvm_runtime SHARED IMPORTED GLOBAL)
-set_target_properties(tvm_runtime PROPERTIES
-    IMPORTED_LOCATION ${TVM_BINARY_DIR}/libtvm_runtime.dylib
+target_compile_options(tvm_runtime_hollow INTERFACE
+    $<TARGET_PROPERTY:tvm_runtime,COMPILE_OPTIONS>
+    $<TARGET_PROPERTY:tvm_runtime,INTERFACE_COMPILE_OPTIONS>
 )
-add_dependencies(tvm_runtime tvm_build)
-target_link_libraries(ailoy_cpp_shim PUBLIC tvm_runtime)
-target_compile_definitions(ailoy_cpp_shim PUBLIC
-    DMLC_USE_LOGGING_LIBRARY=<tvm/runtime/logging.h>
-    AILOY_USE_TVM=1
-)
+add_dependencies(tvm_runtime_hollow tvm_runtime)
 
+# User of ailoy_cpp_shim should import tvm_runtime with whole-archive options
+target_link_libraries(ailoy_cpp_shim PRIVATE tvm_runtime_hollow)
 
 if(AILOY_WITH_TEST)
     add_executable(test_tvm ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tvm.cpp)
@@ -184,4 +225,4 @@ endif()
 ###########
 
 install(TARGETS ailoy_cpp_shim ARCHIVE DESTINATION .)
-install(FILES ${TVM_BINARY_DIR}/libtvm_runtime.dylib DESTINATION .)
+install(FILES ${tvm_BINARY_DIR}/libtvm_runtime.a DESTINATION .)
