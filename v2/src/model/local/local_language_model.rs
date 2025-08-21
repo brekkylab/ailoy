@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use async_stream::try_stream;
-use futures::{Stream, future::BoxFuture};
+#[cfg(not(target_family = "wasm"))]
+use futures::stream::BoxStream;
+use futures::{Stream, StreamExt as _, future::BoxFuture, stream::LocalBoxStream};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -38,16 +40,13 @@ impl LocalLanguageModel {
     pub fn disable_reasoning(&self) {
         self.chat_template.disable_reasoning();
     }
-}
 
-#[cfg(not(target_arch = "wasm32"))]
-impl LanguageModel for LocalLanguageModel {
-    fn run(
+    fn run_inner(
         self: Arc<Self>,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
-    ) -> futures::stream::LocalBoxStream<'static, Result<MessageOutput, String>> {
-        let strm = try_stream! {
+    ) -> impl Stream<Item = Result<MessageOutput, String>> {
+        try_stream! {
             let prompt = self.chat_template.apply(msgs, tools, true)?;
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
             self.inferencer.lock().await.prefill(&input_tokens);
@@ -104,77 +103,26 @@ impl LanguageModel for LocalLanguageModel {
                 }
             }
             return;
-        };
-        Box::pin(strm)
+        }
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 impl LanguageModel for LocalLanguageModel {
+    fn run_nonsend(
+        self: Arc<Self>,
+        msg: Vec<Message>,
+        tools: Vec<ToolDesc>,
+    ) -> LocalBoxStream<'static, Result<MessageOutput, String>> {
+        self.run_inner(msg, tools).boxed_local()
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     fn run(
         self: Arc<Self>,
-        msgs: Vec<Message>,
+        msg: Vec<Message>,
         tools: Vec<ToolDesc>,
-    ) -> futures::stream::LocalBoxStream<'static, Result<MessageOutput, String>> {
-        let strm = try_stream! {
-            let prompt = self.chat_template.apply(msgs, tools, true)?;
-            let input_tokens = self.tokenizer.encode(&prompt, true)?;
-            self.inferencer.lock().await.prefill(&input_tokens);
-            let mut last_token = *input_tokens.last().unwrap();
-            let mut agg_tokens = Vec::<u32>::new();
-            let mut count = 0;
-            let mut mode = "content".to_owned();
-            let mut finish_reason = FinishReason::Stop;
-
-            yield MessageOutput::new().with_delta(Message::with_role(Role::Assistant));
-
-            // @jhlee: TODO remove hard-coded token names
-            loop {
-                count += 1;
-                if count > 16384 {
-                    Err("Too long assistant message. It may be infinite loop".to_owned())?;
-                }
-                let new_token = self.inferencer.lock().await.decode(last_token);
-                agg_tokens.push(new_token);
-                last_token = new_token;
-                let s = self.tokenizer.decode(agg_tokens.as_slice(), false)?;
-                if s.ends_with("�") {
-                    continue;
-                }
-                agg_tokens.clear();
-
-                if s == "<|im_end|>" {
-                    yield MessageOutput::new().with_finish_reason(finish_reason);
-                    break;
-                } else if s == "<tool_call>" {
-                    mode = "tool_call".to_owned();
-                    continue;
-                } else if s == "</tool_call>" {
-                    mode = "content".to_owned();
-                    finish_reason = FinishReason::ToolCalls;
-                    continue;
-                } else if s == "<think>" {
-                    mode = "reasoning".to_owned();
-                    continue;
-                } else if s == "</think>" {
-                    mode = "content".to_owned();
-                    continue;
-                } else {
-                    let delta = if mode == "content" {
-                        Message::new().with_contents(vec![Part::Text(s)])
-                    } else if mode == "reasoning" {
-                        Message::new().with_reasoning(s)
-                    } else if mode == "tool_call" {
-                        Message::new().with_tool_calls(vec![Part::FunctionString(s)])
-                    } else {
-                        unreachable!();
-                    };
-                    yield MessageOutput::new().with_delta(delta);
-                }
-            }
-            return;
-        };
-        Box::pin(strm)
+    ) -> BoxStream<'static, Result<MessageOutput, String>> {
+        self.run_inner(msg, tools).boxed()
     }
 }
 
@@ -248,15 +196,26 @@ mod tests {
             // Message::with_role(Role::User)
             //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
+        // let mut agg = MessageAggregator::new();
+        // let mut strm = model.run(msgs, Vec::new());
+        // while let Some(out) = strm.next().await {
+        //     let out = out.unwrap();
+        //     println!("{:?}", out);
+        //     if let Some(msg) = agg.update(out) {
+        //         println!("{:?}", msg);
+        //     }
+        // }
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, Vec::new());
-        while let Some(out) = strm.next().await {
-            let out = out.unwrap();
-            println!("{:?}", out);
-            if let Some(msg) = agg.update(out) {
-                println!("{:?}", msg);
+        let _ = tokio::spawn(async move {
+            while let Some(out) = strm.next().await {
+                let out = out.unwrap();
+                println!("{:?}", out);
+                if let Some(msg) = agg.update(out) {
+                    println!("{:?}", msg);
+                }
             }
-        }
+        });
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]

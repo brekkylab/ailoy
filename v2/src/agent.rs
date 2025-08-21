@@ -94,7 +94,7 @@ impl Agent {
             msgs.lock().await.push(user_message);
             loop {
                 let td = self.tools.iter().map(|v| v.get_description()).collect::<Vec<_>>();
-                let mut strm = lm.clone().run(msgs.lock().await.clone(), td);
+                let mut strm = lm.clone().run_nonsend(msgs.lock().await.clone(), td);
                 let mut aggregator = MessageAggregator::new();
                 let mut assistant_msg = Message::with_role(Role::Assistant);
                 while let Some(delta) = strm.next().await {

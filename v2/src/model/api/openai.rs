@@ -1,12 +1,27 @@
+use std::str::FromStr;
+
+use reqwest::{
+    Method, Url,
+    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue},
+};
+
 use crate::value::{MessageOutput, StyledMessage, StyledMessageOutput, ToolDesc};
 
-#[cfg(not(target_arch = "wasm32"))]
-pub fn make_request(
+pub fn build_request(
     model_name: &str,
     api_key: &str,
     msgs: Vec<StyledMessage>,
     tools: Vec<ToolDesc>,
-) -> futures::future::BoxFuture<'static, Result<reqwest::Response, reqwest::Error>> {
+) -> (Url, Method, HeaderMap, String) {
+    let url = Url::from_str("https://api.openai.com/v1/chat/completions").unwrap();
+    let method = Method::POST;
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, "application/json".try_into().unwrap());
+    headers.insert(
+        AUTHORIZATION,
+        format!("Bearer {}", api_key).try_into().unwrap(),
+    );
+    headers.insert(ACCEPT, "text/event-stream".try_into().unwrap());
     let mut body = serde_json::json!({
         "model": model_name,
         "messages": msgs,
@@ -16,50 +31,8 @@ pub fn make_request(
         body["tool_choice"] = serde_json::json!("auto");
         body["tools"] = serde_json::to_value(tools).unwrap();
     }
-
-    let req = reqwest::Client::new()
-        .request(
-            reqwest::Method::POST,
-            "https://api.openai.com/v1/chat/completions",
-        )
-        .bearer_auth(api_key)
-        .header("Content-Type", "application/json")
-        .header(reqwest::header::ACCEPT, "text/event-stream")
-        .body(body.to_string())
-        .send();
-
-    Box::pin(req)
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn make_request(
-    model_name: &str,
-    api_key: &str,
-    msgs: Vec<StyledMessage>,
-    tools: Vec<ToolDesc>,
-) -> futures::future::LocalBoxFuture<'static, Result<reqwest::Response, reqwest::Error>> {
-    let mut body = serde_json::json!({
-        "model": model_name,
-        "messages": msgs,
-        "stream": true
-    });
-    if !tools.is_empty() {
-        body["tool_choice"] = serde_json::json!("auto");
-        body["tools"] = serde_json::to_value(tools).unwrap();
-    }
-
-    let req = reqwest::Client::new()
-        .request(
-            reqwest::Method::POST,
-            "https://api.openai.com/v1/chat/completions",
-        )
-        .bearer_auth(api_key)
-        .header("Content-Type", "application/json")
-        .header(reqwest::header::ACCEPT, "text/event-stream")
-        .body(body.to_string())
-        .send();
-
-    Box::pin(req)
+    let body = body.to_string();
+    (url, method, headers, body)
 }
 
 fn drain_next_event(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
@@ -104,7 +77,7 @@ fn parse_event_data(event_bytes: &[u8]) -> Option<String> {
     }
 }
 
-pub fn handle_next_response(buf: &mut Vec<u8>) -> Result<Vec<MessageOutput>, String> {
+pub fn parse_response(buf: &mut Vec<u8>) -> Result<Vec<MessageOutput>, String> {
     let mut rv = Vec::new();
     while let Some(event_bytes) = drain_next_event(buf) {
         if let Some(payload) = parse_event_data(&event_bytes) {
