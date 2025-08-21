@@ -1,43 +1,14 @@
-use crate::value::{MessageOutput, StyledMessage, StyledMessageOutput, ToolDesc};
+use crate::{
+    utils::BoxFuture,
+    value::{MessageOutput, StyledMessage, StyledMessageOutput, ToolDesc},
+};
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn make_request(
     model_name: &str,
     api_key: &str,
     msgs: Vec<StyledMessage>,
     tools: Vec<ToolDesc>,
-) -> futures::future::BoxFuture<'static, Result<reqwest::Response, reqwest::Error>> {
-    let mut body = serde_json::json!({
-        "model": model_name,
-        "messages": msgs,
-        "stream": true
-    });
-    if !tools.is_empty() {
-        body["tool_choice"] = serde_json::json!("auto");
-        body["tools"] = serde_json::to_value(tools).unwrap();
-    }
-
-    let req = reqwest::Client::new()
-        .request(
-            reqwest::Method::POST,
-            "https://api.openai.com/v1/chat/completions",
-        )
-        .bearer_auth(api_key)
-        .header("Content-Type", "application/json")
-        .header(reqwest::header::ACCEPT, "text/event-stream")
-        .body(body.to_string())
-        .send();
-
-    Box::pin(req)
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn make_request(
-    model_name: &str,
-    api_key: &str,
-    msgs: Vec<StyledMessage>,
-    tools: Vec<ToolDesc>,
-) -> futures::future::LocalBoxFuture<'static, Result<reqwest::Response, reqwest::Error>> {
+) -> BoxFuture<'static, Result<reqwest::Response, reqwest::Error>> {
     let mut body = serde_json::json!({
         "model": model_name,
         "messages": msgs,

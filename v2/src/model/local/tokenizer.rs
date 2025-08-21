@@ -1,9 +1,11 @@
 use std::str::FromStr;
 
-use futures::future::BoxFuture;
 use tokenizers::tokenizer::Tokenizer as HFTokenizer;
 
-use crate::cache::{Cache, CacheContents, CacheEntry, TryFromCache};
+use crate::{
+    cache::{Cache, CacheContents, CacheEntry, TryFromCache},
+    utils::BoxFuture,
+};
 
 #[derive(Debug, Clone)]
 pub struct Tokenizer {

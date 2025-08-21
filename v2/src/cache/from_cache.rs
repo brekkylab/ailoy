@@ -1,8 +1,9 @@
 use std::pin::Pin;
 
-use futures::future::BoxFuture;
-
-use crate::cache::{Cache, CacheContents, CacheEntry};
+use crate::{
+    cache::{Cache, CacheContents, CacheEntry},
+    utils::{BoxFuture, MaybeSend},
+};
 
 /// Build a value by fetching the files it needs from the Ailoy [`Cache`].
 ///
@@ -60,7 +61,7 @@ use crate::cache::{Cache, CacheContents, CacheEntry};
 /// ```
 ///
 /// See also: [`Cache::try_create`], [`CacheEntry`], [`CacheContents`].
-pub trait TryFromCache: Sized + Send + 'static {
+pub trait TryFromCache: Sized + MaybeSend + 'static {
     /// Declare the set of files needed to construct `Self`.
     ///
     /// The returned future resolves to a list of logical entries (`dirname`/`filename`)
