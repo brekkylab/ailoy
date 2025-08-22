@@ -56,19 +56,19 @@ impl FaissIndex {
     }
 
     pub fn is_trained(&self) -> bool {
-        self.inner.is_trained()
+        self.inner.as_ref().unwrap().is_trained()
     }
 
     pub fn ntotal(&self) -> i64 {
-        self.inner.get_ntotal()
+        self.inner.as_ref().unwrap().get_ntotal()
     }
 
     pub fn dimension(&self) -> i32 {
-        self.inner.get_dimension()
+        self.inner.as_ref().unwrap().get_dimension()
     }
 
     pub fn metric_type(&self) -> FaissMetricType {
-        self.inner.get_metric_type()
+        self.inner.as_ref().unwrap().get_metric_type()
     }
 
     pub fn train(&mut self, training_vectors: &[Vec<f32>]) -> Result<()> {
@@ -122,7 +122,7 @@ impl FaissIndex {
         let num_queries = query_vectors.len();
         let flattened: Vec<f32> = query_vectors.iter().flatten().cloned().collect();
 
-        let search_result = unsafe { self.inner.search_vectors(&flattened, k)? };
+        let search_result = unsafe { self.inner.as_ref().unwrap().search_vectors(&flattened, k)? };
 
         let expected_len = num_queries * k;
         if search_result.indexes.len() != expected_len
@@ -166,7 +166,7 @@ impl FaissIndex {
             bail!("ID must be non-negative, got: {}", numeric_id);
         }
 
-        unsafe { Ok(self.inner.get_by_id(numeric_id)?) }
+        unsafe { Ok(self.inner.as_ref().unwrap().get_by_id(numeric_id)?) }
     }
 
     pub fn remove_vectors(&mut self, ids: &[&str]) -> Result<usize> {
@@ -182,7 +182,7 @@ impl FaissIndex {
     }
 
     pub fn write_index(&self, filename: &str) -> Result<()> {
-        unsafe { Ok(self.inner.write_index(filename)?) }
+        unsafe { Ok(self.inner.as_ref().unwrap().write_index(filename)?) }
     }
 
     pub fn read_index(filename: &str) -> Result<Self> {
