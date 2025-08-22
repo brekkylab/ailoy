@@ -226,209 +226,149 @@ impl LanguageModel for GeminiLanguageModel {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::LazyLock;
-    #[cfg(target_arch = "wasm32")]
-    use wasm_bindgen::prelude::*;
-    #[cfg(target_arch = "wasm32")]
-    use wasm_bindgen_test::*;
+    use crate::multi_platform_test;
+    use crate::utils::log;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    static GEMINI_API_KEY: LazyLock<String> = LazyLock::new(|| {
-        dotenv::dotenv().ok();
-        std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| {
-            eprintln!("Warning: GEMINI_API_KEY is not set");
-            "".to_string()
-        })
-    });
+    const GEMINI_API_KEY: &str = env!("GEMINI_API_KEY");
 
-    #[cfg(target_arch = "wasm32")]
-    #[wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen(js_namespace = console)]
-        fn log(s: &str);
-    }
+    multi_platform_test! {
+        async fn gemini_infer_with_thinking() {
+            use super::*;
+            use crate::value::MessageAggregator;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn log(s: &str) {
-        println!("{}", s);
-    }
+            let mut gemini_config = GeminiGenerationConfig::default();
+            gemini_config.max_output_tokens = Some(2048);
+            gemini_config.thinking_config =
+                Some(GeminiThinkingConfig::default().with_thoughts_included(true));
+            let gemini = Arc::new(
+                GeminiLanguageModel::new("gemini-2.5-flash", GEMINI_API_KEY)
+                    .with_config(gemini_config),
+            );
 
-    #[cfg(target_arch = "wasm32")]
-    static GEMINI_API_KEY: LazyLock<String> = LazyLock::new(|| "".to_string());
-
-    async fn _gemini_infer_with_thinking() {
-        use super::*;
-        use crate::value::MessageAggregator;
-
-        let mut gemini_config = GeminiGenerationConfig::default();
-        gemini_config.max_output_tokens = Some(2048);
-        gemini_config.thinking_config =
-            Some(GeminiThinkingConfig::default().with_thoughts_included(true));
-        let gemini = Arc::new(
-            GeminiLanguageModel::new("gemini-2.5-flash", GEMINI_API_KEY.as_str())
-                .with_config(gemini_config),
-        );
-
-        let msgs = vec![
-            Message::with_role(Role::System).with_contents(vec![Part::Text(
-                "You are a helpful mathematics assistant.".to_owned(),
-            )]),
-            Message::with_role(Role::User).with_contents(vec![Part::Text(
-                "What is the sum of the first 50 prime numbers?".to_owned(),
-            )]),
-        ];
-        let mut agg = MessageAggregator::new();
-        let mut strm = gemini.run(msgs, Vec::new());
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log(format!("{:?}", delta).as_str());
-            if let Some(msg) = agg.update(delta) {
-                log(format!("{:?}", msg).as_str());
+            let msgs = vec![
+                Message::with_role(Role::System).with_contents(vec![Part::Text(
+                    "You are a helpful mathematics assistant.".to_owned(),
+                )]),
+                Message::with_role(Role::User).with_contents(vec![Part::Text(
+                    "What is the sum of the first 50 prime numbers?".to_owned(),
+                )]),
+            ];
+            let mut agg = MessageAggregator::new();
+            let mut strm = gemini.run(msgs, Vec::new());
+            while let Some(delta_opt) = strm.next().await {
+                let delta = delta_opt.unwrap();
+                log::debug(format!("{:?}", delta).as_str());
+                if let Some(msg) = agg.update(delta) {
+                    log::debug(format!("{:?}", msg).as_str());
+                }
             }
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn gemini_infer_with_thinking() {
-        _gemini_infer_with_thinking().await
-    }
+    multi_platform_test! {
+        async fn gemini_infer_tool_call() {
+            use super::*;
+            use crate::value::{MessageAggregator, ToolDescArg};
 
-    #[cfg(target_arch = "wasm32")]
-    #[wasm_bindgen_test]
-    async fn gemini_infer_with_thinking() {
-        _gemini_infer_with_thinking().await
-    }
+            let gemini = Arc::new(GeminiLanguageModel::new(
+                "gemini-2.5-flash",
+                GEMINI_API_KEY,
+            ));
 
-    async fn _gemini_infer_tool_call() {
-        use super::*;
-        use crate::value::{MessageAggregator, ToolDescArg};
-
-        let gemini = Arc::new(GeminiLanguageModel::new(
-            "gemini-2.5-flash",
-            GEMINI_API_KEY.as_str(),
-        ));
-
-        let tools = vec![ToolDesc::new(
-            "temperature",
-            "Get current temperature",
-            ToolDescArg::new_object().with_properties(
-                [
-                    (
-                        "location",
-                        ToolDescArg::new_string().with_desc("The city name"),
-                    ),
-                    (
-                        "unit",
-                        ToolDescArg::new_string()
-                            .with_enum(["Celcius", "Fernheit"])
-                            .with_desc("The unit of temperature"),
-                    ),
-                ],
-                ["location", "unit"],
-            ),
-            Some(
-                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
-            ),
-        )];
-        let mut msgs = vec![Message::with_role(Role::User).with_contents([Part::Text(
-            "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
-        )])];
-        let mut agg = MessageAggregator::new();
-        let mut strm = gemini.clone().run(msgs.clone(), tools.clone());
-        let mut assistant_msg: Option<Message> = None;
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log(format!("{:?}", delta).as_str());
-            if let Some(msg) = agg.update(delta) {
-                log(format!("{:?}", msg).as_str());
-                assistant_msg = Some(msg);
+            let tools = vec![ToolDesc::new(
+                "temperature",
+                "Get current temperature",
+                ToolDescArg::new_object().with_properties(
+                    [
+                        (
+                            "location",
+                            ToolDescArg::new_string().with_desc("The city name"),
+                        ),
+                        (
+                            "unit",
+                            ToolDescArg::new_string()
+                                .with_enum(["Celcius", "Fernheit"])
+                                .with_desc("The unit of temperature"),
+                        ),
+                    ],
+                    ["location", "unit"],
+                ),
+                Some(
+                    ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
+                ),
+            )];
+            let mut msgs = vec![Message::with_role(Role::User).with_contents([Part::Text(
+                "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
+            )])];
+            let mut agg = MessageAggregator::new();
+            let mut strm = gemini.clone().run(msgs.clone(), tools.clone());
+            let mut assistant_msg: Option<Message> = None;
+            while let Some(delta_opt) = strm.next().await {
+                let delta = delta_opt.unwrap();
+                log::debug(format!("{:?}", delta).as_str());
+                if let Some(msg) = agg.update(delta) {
+                    log::debug(format!("{:?}", msg).as_str());
+                    assistant_msg = Some(msg);
+                }
             }
-        }
-        // This should be tool call message
-        let assistant_msg = assistant_msg.unwrap();
-        msgs.push(assistant_msg);
+            // This should be tool call message
+            let assistant_msg = assistant_msg.unwrap();
+            msgs.push(assistant_msg);
 
-        // Append a fake tool call result message
-        let tool_result_msg = Message::with_role(Role::Tool("temperature".into()))
-            .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
-        msgs.push(tool_result_msg);
+            // Append a fake tool call result message
+            let tool_result_msg = Message::with_role(Role::Tool("temperature".into()))
+                .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
+            msgs.push(tool_result_msg);
 
-        let mut strm = gemini.run(msgs, tools);
-        let mut assistant_msg: Option<Message> = None;
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log(format!("{:?}", delta).as_str());
-            if let Some(msg) = agg.update(delta) {
-                log(format!("{:?}", msg).as_str());
-                assistant_msg = Some(msg);
+            let mut strm = gemini.run(msgs, tools);
+            let mut assistant_msg: Option<Message> = None;
+            while let Some(delta_opt) = strm.next().await {
+                let delta = delta_opt.unwrap();
+                log::debug(format!("{:?}", delta).as_str());
+                if let Some(msg) = agg.update(delta) {
+                    log::debug(format!("{:?}", msg).as_str());
+                    assistant_msg = Some(msg);
+                }
             }
-        }
-        // Final message shuold say something like "Dubai is 38.5°C"
-        let assistant_msg = assistant_msg.unwrap();
-        log(format!("Final Answer: {:?}", assistant_msg).as_str());
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn gemini_infer_tool_call() {
-        _gemini_infer_tool_call().await
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    #[wasm_bindgen_test]
-    async fn gemini_infer_tool_call() {
-        _gemini_infer_tool_call().await
-    }
-
-    async fn _gemini_infer_with_image() {
-        use super::*;
-        use crate::value::MessageAggregator;
-
-        use base64::Engine;
-
-        #[cfg(target_arch = "wasm32")]
-        let test_image_url = "https://newsroom.haas.berkeley.edu/wp-content/uploads/2023/02/jensen-huang-headshot2_thmb-300x246.jpg";
-        #[cfg(not(target_arch = "wasm32"))]
-        let test_image_url =
-            "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
-
-        let response = reqwest::get(test_image_url).await.unwrap();
-        println!("response: {:?}", response);
-        let image_bytes = response.bytes().await.unwrap();
-        let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
-
-        let gemini = Arc::new(GeminiLanguageModel::new(
-            "gemini-2.5-flash",
-            GEMINI_API_KEY.as_str(),
-        ));
-
-        let msgs = vec![
-            Message::with_role(Role::User)
-                .with_contents(vec![Part::ImageData(image_base64, "image/jpeg".into())]),
-            Message::with_role(Role::User)
-                .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
-        ];
-        let mut agg = MessageAggregator::new();
-        let mut strm = gemini.run(msgs, Vec::new());
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log(format!("{:?}", delta).as_str());
-            if let Some(msg) = agg.update(delta) {
-                log(format!("{:?}", msg).as_str());
-            }
+            // Final message shuold say something like "Dubai is 38.5°C"
+            let assistant_msg = assistant_msg.unwrap();
+            log::debug(format!("Final Answer: {:?}", assistant_msg).as_str());
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn gemini_infer_with_image() {
-        _gemini_infer_with_image().await
-    }
+    multi_platform_test! {
+        async fn gemini_infer_with_image() {
+            use super::*;
+            use crate::value::MessageAggregator;
 
-    #[cfg(target_arch = "wasm32")]
-    #[wasm_bindgen_test]
-    async fn gemini_infer_with_image() {
-        _gemini_infer_with_image().await
+            use base64::Engine;
+
+            let client = reqwest::Client::new();
+            let test_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Jensen_Huang_%28cropped%29.jpg/250px-Jensen_Huang_%28cropped%29.jpg";
+            let response = client.get(test_image_url).header(reqwest::header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36").send().await.unwrap();
+            let image_bytes = response.bytes().await.unwrap();
+            let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
+
+            let gemini = Arc::new(GeminiLanguageModel::new(
+                "gemini-2.5-flash",
+                GEMINI_API_KEY,
+            ));
+
+            let msgs = vec![
+                Message::with_role(Role::User)
+                    .with_contents(vec![Part::ImageData(image_base64, "image/jpeg".into())]),
+                Message::with_role(Role::User)
+                    .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
+            ];
+            let mut agg = MessageAggregator::new();
+            let mut strm = gemini.run(msgs, Vec::new());
+            while let Some(delta_opt) = strm.next().await {
+                let delta = delta_opt.unwrap();
+                log::debug(format!("{:?}", delta));
+                if let Some(msg) = agg.update(delta) {
+                    log::debug(format!("{:?}", msg));
+                }
+            }
+        }
     }
 }
