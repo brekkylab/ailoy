@@ -90,7 +90,7 @@ fn gemini_response_to_ailoy(response: &GeminiGenerationResponse) -> Result<Messa
             }
             gemini_rust::Part::FunctionCall { function_call } => {
                 message.tool_calls.push(Part::new_function(
-                    "",
+                    "", // Gemini does not return tool call id
                     function_call.name.clone(),
                     function_call.args.to_string(),
                 ));
@@ -179,7 +179,7 @@ impl LanguageModel for GeminiLanguageModel {
                             panic!("Assistant message does not have any content")
                         }
                     }
-                    Role::Tool(tool_name) => {
+                    Role::Tool(tool_name, _) => {
                         content = content.with_function_response(
                             tool_name,
                             serde_json::from_str(&msg.contents[0].as_str().unwrap()).unwrap(),
@@ -193,21 +193,24 @@ impl LanguageModel for GeminiLanguageModel {
         }
 
         // Parse tools
-        content = content.with_tool(GeminiTool::with_functions(
-            tools
-                .iter()
-                .map(|tool| {
-                    let tool_params = serde_json::to_value(&tool.parameters).unwrap();
-                    let function_params =
-                        serde_json::from_value::<GeminiFunctionParameters>(tool_params).unwrap();
-                    GeminiFunctionDeclaration::new(
-                        tool.name.clone(),
-                        tool.description.clone(),
-                        function_params,
-                    )
-                })
-                .collect(),
-        ));
+        if tools.len() > 0 {
+            content = content.with_tool(GeminiTool::with_functions(
+                tools
+                    .iter()
+                    .map(|tool| {
+                        let tool_params = serde_json::to_value(&tool.parameters).unwrap();
+                        let function_params =
+                            serde_json::from_value::<GeminiFunctionParameters>(tool_params)
+                                .unwrap();
+                        GeminiFunctionDeclaration::new(
+                            tool.name.clone(),
+                            tool.description.clone(),
+                            function_params,
+                        )
+                    })
+                    .collect(),
+            ));
+        }
 
         // Set generation config
         content = content.with_generation_config(self.config.clone());
@@ -313,10 +316,10 @@ mod tests {
             }
             // This should be tool call message
             let assistant_msg = assistant_msg.unwrap();
-            msgs.push(assistant_msg);
+            msgs.push(assistant_msg.clone());
 
             // Append a fake tool call result message
-            let tool_result_msg = Message::with_role(Role::Tool("temperature".into()))
+            let tool_result_msg = Message::with_role(Role::Tool("temperature".into(), None))
                 .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
             msgs.push(tool_result_msg);
 

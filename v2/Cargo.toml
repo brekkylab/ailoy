@@ -10,13 +10,16 @@ default = []
 
 
 [dependencies]
+anthropic-ai-sdk = { git = "https://github.com/brekkylab/anthropic-sdk-rs.git", package = "anthropic-ai-sdk", rev = "60fef3dcaf50c02124a5a9de834b37300c3d94a9" }
 anyhow = "1"
 async-channel = "2.5"
 async-stream = "0.3"
+async-trait = "0.1.89"
 base64 = "0.21"
 futures = "0.3.31"
 gemini-rust = { git = "https://github.com/brekkylab/gemini-rust.git", branch = "main" }
 indexmap = { version = "2", features = ["serde"] }
+mime-infer = "4.0.0"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { version = "3", features = ["tokio_rt"], optional = true }
