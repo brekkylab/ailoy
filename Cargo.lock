@@ -967,6 +967,7 @@ dependencies = [
 [[package]]
 name = "gemini-rust"
 version = "1.1.0"
+source = "git+https://github.com/brekkylab/gemini-rust.git?branch=main#f49284ee87a8fcee4c7d62bbb29c003b325e3a5d"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
