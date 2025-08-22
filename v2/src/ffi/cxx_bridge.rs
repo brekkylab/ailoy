@@ -90,7 +90,7 @@ mod ffi {
     }
 
     #[derive(Debug, Clone)]
-    pub struct FaissSearchResult {
+    pub struct FaissIndexSearchResult {
         pub distances: Vec<f32>,
         pub indexes: Vec<i64>,
     }
@@ -133,9 +133,11 @@ mod ffi {
             self: &FaissIndexWrapper,
             query_vectors: &[f32],
             k: usize,
-        ) -> Result<FaissSearchResult>;
+        ) -> Result<FaissIndexSearchResult>;
 
-        unsafe fn get_by_id(self: &FaissIndexWrapper, id: i64) -> Result<Vec<f32>>;
+        // unsafe fn get_by_id(self: &FaissIndexWrapper, id: i64) -> Result<Vec<f32>>;
+
+        unsafe fn get_by_ids(self: &FaissIndexWrapper, ids: &[i64]) -> Result<Vec<f32>>;
 
         unsafe fn remove_vectors(self: Pin<&mut FaissIndexWrapper>, ids: &[i64]) -> Result<usize>;
 

@@ -84,8 +84,13 @@ impl VectorStore for ChromaStore {
     }
 
     async fn get_by_id(&self, id: &str) -> Result<Option<GetResult>> {
+        let results: Vec<GetResult> = self.get_by_ids(&[id]).await?;
+        Ok(results.into_iter().next())
+    }
+
+    async fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<GetResult>> {
         let opts = GetOptions {
-            ids: vec![id.to_owned()],
+            ids: ids.iter().map(|s| s.to_string()).collect(),
             include: Some(vec![
                 "metadatas".to_owned(),
                 "documents".to_owned(),
@@ -93,35 +98,39 @@ impl VectorStore for ChromaStore {
             ]),
             ..Default::default()
         };
-        let results = self.collection.get(opts).await?;
-        if results.ids.is_empty() {
-            return Ok(None);
+        let get_results = self.collection.get(opts).await?;
+        if get_results.ids.is_empty() {
+            return Ok(vec![]);
         }
-        let idx = 0;
-        let metadata = results
-            .metadatas
-            .as_ref()
-            .and_then(|vec| vec.get(idx))
-            .and_then(|inner_option| inner_option.as_ref())
-            .map(|map| Json::Object(map.clone()));
-        let embedding = results
-            .embeddings
-            .as_ref()
-            .and_then(|vec| vec.get(idx))
-            .and_then(|opt_vec| opt_vec.as_ref())
-            .map(|vec_f32| vec_f32.clone());
 
-        Ok(Some(GetResult {
-            id: results.ids[idx].clone(),
-            document: results
-                .documents
-                .as_ref()
-                .map(|d| d[idx].clone())
-                .unwrap_or_default()
-                .expect(""),
-            metadata: metadata,
-            embedding: embedding.unwrap(),
-        }))
+        if let (Some(documents), Some(metadatas), Some(embeddings)) = (
+            get_results.documents,
+            get_results.metadatas,
+            get_results.embeddings,
+        ) {
+            let zipped_iter = get_results
+                .ids
+                .into_iter()
+                .zip(documents.into_iter())
+                .zip(metadatas.into_iter())
+                .zip(embeddings.into_iter())
+                .map(|(((id, d), m), e)| (id, d.unwrap(), m, e.unwrap())); // 튜플을 평탄화하여 가독성 개선
+
+            let results: Vec<GetResult> = zipped_iter
+                .map(|(id, document, metadata, embedding)| GetResult {
+                    id,
+                    document,
+                    metadata: match metadata {
+                        Some(metadata) => Some(Json::Object(metadata)),
+                        None => None,
+                    },
+                    embedding,
+                })
+                .collect();
+            return Ok(results);
+        } else {
+            bail!("Results from get operation are malformed.")
+        }
     }
 
     async fn retrieve(&self, query: Embedding, top_k: u64) -> Result<Vec<RetrieveResult>> {
@@ -158,7 +167,7 @@ impl VectorStore for ChromaStore {
                     id,
                     document,
                     metadata,
-                    distance, // 예시적인 유사도 변환
+                    distance,
                 });
             }
         }
@@ -168,6 +177,13 @@ impl VectorStore for ChromaStore {
 
     async fn remove_vector(&self, id: &str) -> Result<()> {
         self.collection.delete(Some(vec![id]), None, None).await?;
+        Ok(())
+    }
+
+    async fn remove_vectors(&self, ids: &[&str]) -> Result<()> {
+        self.collection
+            .delete(Some(ids.to_vec()), None, None)
+            .await?;
         Ok(())
     }
 
@@ -257,6 +273,15 @@ mod tests {
         assert_eq!(res2.document, "doc2");
         assert_eq!(res2.embedding, vec![2.0, 2.0]);
 
+        let res = store
+            .get_by_ids(&added_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>())
+            .await?;
+        assert_eq!(res[0].document, "doc1");
+        assert_eq!(res[0].embedding, vec![1.0, 1.0]);
+
+        assert_eq!(res[1].document, "doc2");
+        assert_eq!(res[1].embedding, vec![2.0, 2.0]);
+
         Ok(())
     }
 
@@ -302,20 +327,45 @@ mod tests {
     #[tokio::test]
     async fn test_remove_vector() -> Result<()> {
         let store = setup_test_store().await?;
-        let input = AddInput {
-            embedding: vec![5.5, 6.6],
-            document: "to be deleted".to_owned(),
-            metadata: None,
-        };
-        let id_to_delete = store.add_vector(input).await?;
+        let inputs = vec![
+            AddInput {
+                embedding: vec![5.5, 6.6],
+                document: "to be deleted1".to_owned(),
+                metadata: None,
+            },
+            AddInput {
+                embedding: vec![4.4, 6.6],
+                document: "to be deleted2".to_owned(),
+                metadata: None,
+            },
+            AddInput {
+                embedding: vec![3.3, 2.2],
+                document: "to be deleted3".to_owned(),
+                metadata: None,
+            },
+        ];
+        let mut ids_to_delete = store.add_vectors(inputs).await?;
 
-        store.remove_vector(&id_to_delete).await?;
+        let first_id = ids_to_delete.swap_remove(0);
 
-        let result = store.get_by_id(&id_to_delete).await?;
+        store.remove_vector(&first_id).await?;
+        assert_eq!(store.collection.count().await?, 2);
+
+        let result = store.get_by_id(&first_id).await?;
         assert!(
             result.is_none(),
             "Vector should not be found after deletion"
         );
+
+        store
+            .remove_vectors(
+                &ids_to_delete
+                    .iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+        assert_eq!(store.collection.count().await?, 0);
 
         Ok(())
     }

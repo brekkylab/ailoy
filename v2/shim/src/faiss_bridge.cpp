@@ -71,28 +71,51 @@ FaissIndexWrapper::search_vectors(rust::Slice<const float> query_vectors,
   return FaissSearchResult{std::move(rust_distances), std::move(rust_indexes)};
 }
 
-rust::Vec<float> FaissIndexWrapper::get_by_id(int64_t id) const {
+// rust::Vec<float> FaissIndexWrapper::get_by_id(int64_t id) const {
+//   try {
+//     std::vector<float> reconstructed_vector(index_->d);
+
+//     index_->reconstruct(id, reconstructed_vector.data());
+
+//     rust::Vec<float> result;
+//     result.reserve(reconstructed_vector.size());
+//     std::copy(reconstructed_vector.begin(), reconstructed_vector.end(),
+//               std::back_inserter(result));
+
+//     return result;
+
+//   } catch (const std::exception &e) {
+//     throw std::runtime_error("Failed to get vector by ID " +
+//                              std::to_string(id) + ": " + e.what());
+//   }
+// }
+
+rust::Vec<float>
+FaissIndexWrapper::get_by_ids(rust::Slice<const int64_t> ids) const {
+  if (ids.empty()) {
+    return rust::Vec<float>();
+  }
+
   try {
-    if (id < 0 || id >= index_->ntotal) {
-      throw std::out_of_range("ID " + std::to_string(id) +
-                              " is out of range. " + "Valid range: [0, " +
-                              std::to_string(index_->ntotal - 1) + "]");
+    size_t num_ids = ids.size();
+    size_t dimension = index_->d;
+    std::vector<float> reconstructed_vectors(num_ids * dimension);
+
+    for (size_t i = 0; i < num_ids; ++i) {
+      faiss::idx_t current_id = static_cast<faiss::idx_t>(ids[i]);
+      float *destination = reconstructed_vectors.data() + (i * dimension);
+      index_->reconstruct(current_id, destination);
     }
 
-    std::vector<float> reconstructed_vector(index_->d);
-
-    index_->reconstruct(id, reconstructed_vector.data());
-
     rust::Vec<float> result;
-    result.reserve(reconstructed_vector.size());
-    std::copy(reconstructed_vector.begin(), reconstructed_vector.end(),
+    result.reserve(reconstructed_vectors.size());
+    std::copy(reconstructed_vectors.begin(), reconstructed_vectors.end(),
               std::back_inserter(result));
 
     return result;
-
   } catch (const std::exception &e) {
-    throw std::runtime_error("Failed to get vector by ID " +
-                             std::to_string(id) + ": " + e.what());
+    throw std::runtime_error("FAISS reconstruct failed: " +
+                             std::string(e.what()));
   }
 }
 

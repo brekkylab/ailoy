@@ -1,7 +1,9 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use crate::ffi::{FaissIndexWrapper, FaissMetricType, FaissSearchResult, create_index, read_index};
+use crate::ffi::{
+    FaissIndexSearchResult, FaissIndexWrapper, FaissMetricType, create_index, read_index,
+};
 
 #[derive(Debug)]
 pub struct FaissIndexBuilder {
@@ -37,7 +39,6 @@ impl FaissIndexBuilder {
 /// Rust wrapper of faiss::Index
 pub struct FaissIndex {
     inner: cxx::UniquePtr<FaissIndexWrapper>,
-    description: Option<String>,
     next_id: AtomicI64, // thread-safe ID Generator
 }
 
@@ -46,14 +47,10 @@ impl FaissIndex {
         let wrapper = unsafe { create_index(dimension, description, metric)? };
         Ok(Self {
             inner: wrapper,
-            description: Some(description.to_owned()),
             next_id: AtomicI64::new(0),
         })
     }
 
-    fn description(&self) -> Option<&str> {
-        self.description.as_ref().map(|s| s.as_str())
-    }
 
     pub fn is_trained(&self) -> bool {
         self.inner.as_ref().unwrap().is_trained()
@@ -114,7 +111,11 @@ impl FaissIndex {
         Ok(ids.into_iter().map(|id| id.to_string()).collect())
     }
 
-    pub fn search(&self, query_vectors: &[Vec<f32>], k: usize) -> Result<Vec<FaissSearchResult>> {
+    pub fn search(
+        &self,
+        query_vectors: &[Vec<f32>],
+        k: usize,
+    ) -> Result<Vec<FaissIndexSearchResult>> {
         if query_vectors.is_empty() {
             return Ok(vec![]);
         }
@@ -136,11 +137,11 @@ impl FaissIndex {
             );
         }
 
-        let results: Vec<FaissSearchResult> = search_result
+        let results: Vec<FaissIndexSearchResult> = search_result
             .distances
             .chunks_exact(k)
             .zip(search_result.indexes.chunks_exact(k))
-            .map(|(distances_chunk, indexes_chunk)| FaissSearchResult {
+            .map(|(distances_chunk, indexes_chunk)| FaissIndexSearchResult {
                 distances: distances_chunk.to_vec(),
                 indexes: indexes_chunk.to_vec(),
             })
@@ -157,18 +158,50 @@ impl FaissIndex {
         Ok(results)
     }
 
-    pub fn get_by_id(&self, id: &str) -> Result<Vec<f32>> {
-        let numeric_id: i64 = id.parse().map_err(|_| {
-            anyhow::anyhow!("Invalid ID format: '{}'. ID must be a valid integer.", id)
-        })?;
-
-        if numeric_id < 0 {
-            bail!("ID must be non-negative, got: {}", numeric_id);
+    /// assume that for every id, there is a vector corresponding to that id.
+    /// This should be guaranteed before call this function.
+    pub fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<Vec<f32>>> {
+        if ids.is_empty() {
+            return Ok(vec![]);
         }
 
-        unsafe { Ok(self.inner.as_ref().unwrap().get_by_id(numeric_id)?) }
+        let wrapper_ref = self.inner.as_ref().unwrap();
+
+        let numeric_ids: Vec<i64> = ids
+            .iter()
+            .map(|s| s.parse::<i64>())
+            .collect::<Result<Vec<i64>, _>>()
+            .context("Failed to parse one or more string IDs to integer")?;
+
+        let dimension = wrapper_ref.get_dimension() as usize;
+        let expected_len = ids.len() * dimension;
+        let flat_vectors = unsafe { wrapper_ref.get_by_ids(&numeric_ids)? };
+        if flat_vectors.len() != expected_len {
+            bail!(
+                "C++ FFI returned mismatched result length. Expected: {}, Got: {}",
+                expected_len,
+                flat_vectors.len()
+            );
+        }
+
+        let results: Vec<Vec<f32>> = flat_vectors
+            .chunks_exact(dimension)
+            .map(|chunk| chunk.to_vec())
+            .collect();
+
+        if results.len() != ids.len() {
+            bail!(
+                "Internal logic error: Failed to group get results correctly. Expected {} groups, got {}.",
+                ids.len(),
+                results.len()
+            );
+        }
+
+        Ok(results)
     }
 
+    /// assume that for every id, there is a vector corresponding to that id.
+    /// This should be guaranteed before call this function.
     pub fn remove_vectors(&mut self, ids: &[&str]) -> Result<usize> {
         let numeric_ids: Vec<i64> = ids
             .iter()
@@ -190,7 +223,6 @@ impl FaissIndex {
         let current_total = wrapper.get_ntotal();
         Ok(Self {
             inner: wrapper,
-            description: None,
             next_id: AtomicI64::new(current_total),
         })
     }

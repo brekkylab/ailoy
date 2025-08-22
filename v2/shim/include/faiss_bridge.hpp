@@ -44,6 +44,13 @@ public:
   void train_index(rust::Slice<const float> training_vectors,
                    size_t num_training_vectors);
   rust::Vec<float> get_by_id(int64_t id) const;
+
+  // assume that for every id, there is a vector corresponding to that id.
+  // This should be guaranteed before call this function.
+  rust::Vec<float> get_by_ids(rust::Slice<const int64_t> ids) const;
+
+  // assume that for every id, there is a vector corresponding to that id.
+  // This should be guaranteed before call this function.
   size_t remove_vectors(rust::Slice<const int64_t> ids);
   void clear();
 
