@@ -206,6 +206,10 @@ mod ffi {
     }
 }
 
+unsafe impl Send for ffi::FaissIndexWrapper {}
+
+unsafe impl Sync for ffi::FaissIndexWrapper {}
+
 unsafe impl Send for ffi::TVMLanguageModel {}
 
 unsafe impl Sync for ffi::TVMLanguageModel {}

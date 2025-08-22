@@ -185,8 +185,8 @@ create_index(int32_t dimension, rust::Str description, FaissMetricType metric) {
     faiss::MetricType faiss_metric = faiss::MetricType(metric);
 
     std::string desc_str(description);
-    auto faiss_index = std::unique_ptr<faiss::Index>(faiss::index_factory(
-        static_cast<int>(dimension), desc_str.c_str(), faiss_metric));
+    auto faiss_index = std::unique_ptr<faiss::Index>(
+        faiss::index_factory(dimension, desc_str.c_str(), faiss_metric));
 
     return std::make_unique<FaissIndexWrapper>(std::move(faiss_index));
   } catch (const std::exception &e) {

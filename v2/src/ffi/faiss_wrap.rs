@@ -13,7 +13,7 @@ pub struct FaissIndexBuilder {
 }
 
 impl FaissIndexBuilder {
-    fn new(dimension: i32) -> Self {
+    pub fn new(dimension: i32) -> Self {
         FaissIndexBuilder {
             dimension,
             description: "IDMap2,FlatIP".to_owned(),
@@ -21,17 +21,17 @@ impl FaissIndexBuilder {
         }
     }
 
-    fn description(mut self, description: &str) -> Self {
+    pub fn description(mut self, description: &str) -> Self {
         self.description = description.to_owned();
         self
     }
 
-    fn metric(mut self, metric: FaissMetricType) -> Self {
+    pub fn metric(mut self, metric: FaissMetricType) -> Self {
         self.metric = metric;
         self
     }
 
-    fn build(self) -> Result<FaissIndex> {
+    pub fn build(self) -> Result<FaissIndex> {
         FaissIndex::new(self.dimension, self.description.as_str(), self.metric)
     }
 }

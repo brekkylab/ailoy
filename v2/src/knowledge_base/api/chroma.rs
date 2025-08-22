@@ -34,7 +34,7 @@ impl ChromaStore {
 
 #[async_trait]
 impl VectorStore for ChromaStore {
-    async fn add_vector(&self, input: AddInput) -> Result<String> {
+    async fn add_vector(&mut self, input: AddInput) -> Result<String> {
         let id = Uuid::new_v4().to_string();
 
         let metadatas = match &input.metadata {
@@ -53,7 +53,7 @@ impl VectorStore for ChromaStore {
         Ok(id)
     }
 
-    async fn add_vectors(&self, inputs: Vec<AddInput>) -> Result<Vec<String>> {
+    async fn add_vectors(&mut self, inputs: Vec<AddInput>) -> Result<Vec<String>> {
         let ids: Vec<String> = (0..inputs.len())
             .map(|_| Uuid::new_v4().to_string())
             .collect();
@@ -133,10 +133,10 @@ impl VectorStore for ChromaStore {
         }
     }
 
-    async fn retrieve(&self, query: Embedding, top_k: u64) -> Result<Vec<RetrieveResult>> {
+    async fn retrieve(&self, query: Embedding, top_k: usize) -> Result<Vec<RetrieveResult>> {
         let opts = QueryOptions {
             query_embeddings: Some(vec![query.to_vec()]),
-            n_results: Some(top_k as usize),
+            n_results: Some(top_k),
             ..Default::default()
         };
         let QueryResult {
@@ -175,19 +175,19 @@ impl VectorStore for ChromaStore {
         Ok(out)
     }
 
-    async fn remove_vector(&self, id: &str) -> Result<()> {
+    async fn remove_vector(&mut self, id: &str) -> Result<()> {
         self.collection.delete(Some(vec![id]), None, None).await?;
         Ok(())
     }
 
-    async fn remove_vectors(&self, ids: &[&str]) -> Result<()> {
+    async fn remove_vectors(&mut self, ids: &[&str]) -> Result<()> {
         self.collection
             .delete(Some(ids.to_vec()), None, None)
             .await?;
         Ok(())
     }
 
-    async fn clear(&self) -> Result<()> {
+    async fn clear(&mut self) -> Result<()> {
         let all_items = self.collection.get(GetOptions::default()).await?;
         if !all_items.ids.is_empty() {
             self.collection
@@ -219,7 +219,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_and_get_vector() -> Result<()> {
-        let store = setup_test_store().await?;
+        let mut store = setup_test_store().await?;
         let test_embedding = vec![1.1, 2.2, 3.3];
         let test_document = "This is a test document.".to_owned();
         let test_metadata = json!({"source": "test_add_and_get_vector"});
@@ -246,7 +246,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_vectors_batch() -> Result<()> {
-        let store = setup_test_store().await?;
+        let mut store = setup_test_store().await?;
 
         let added_ids = store
             .add_vectors(vec![
@@ -287,7 +287,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_retrieve_similar_vectors() -> Result<()> {
-        let store = setup_test_store().await?;
+        let mut store = setup_test_store().await?;
         let inputs = vec![
             AddInput {
                 embedding: vec![1.0, 0.0, 0.0],
@@ -326,7 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_vector() -> Result<()> {
-        let store = setup_test_store().await?;
+        let mut store = setup_test_store().await?;
         let inputs = vec![
             AddInput {
                 embedding: vec![5.5, 6.6],
@@ -386,7 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_collection() -> Result<()> {
-        let store = setup_test_store().await?;
+        let mut store = setup_test_store().await?;
         let inputs = vec![
             AddInput {
                 embedding: vec![1.0],
