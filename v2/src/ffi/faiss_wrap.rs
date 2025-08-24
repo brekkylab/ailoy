@@ -16,8 +16,8 @@ impl FaissIndexBuilder {
     pub fn new(dimension: i32) -> Self {
         FaissIndexBuilder {
             dimension,
-            description: "IDMap2,FlatIP".to_owned(),
-            metric: FaissMetricType::L2,
+            description: "IDMap2,Flat".to_owned(),
+            metric: FaissMetricType::InnerProduct,
         }
     }
 
