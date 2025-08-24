@@ -200,6 +200,10 @@ impl VectorStore for ChromaStore {
         }
         Ok(())
     }
+
+    async fn count(&self) -> Result<usize> {
+        Ok(self.collection.count().await?)
+    }
 }
 
 #[cfg(test)]
@@ -349,7 +353,7 @@ mod tests {
         let first_id = ids_to_delete.swap_remove(0);
 
         store.remove_vector(&first_id).await?;
-        assert_eq!(store.collection.count().await?, 2);
+        assert_eq!(store.count().await?, 2);
 
         let result = store.get_by_id(&first_id).await?;
         assert!(
@@ -365,7 +369,7 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
             .await?;
-        assert_eq!(store.collection.count().await?, 0);
+        assert_eq!(store.count().await?, 0);
 
         Ok(())
     }
@@ -410,11 +414,8 @@ mod tests {
             "Vector should not be found after clearing the collection"
         );
 
-        let all_items = store.collection.get(GetOptions::default()).await?;
-        assert!(
-            all_items.ids.is_empty(),
-            "Collection should be empty after clear"
-        );
+        let count = store.count().await?;
+        assert_eq!(count, 0);
 
         Ok(())
     }

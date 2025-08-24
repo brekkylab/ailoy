@@ -44,4 +44,6 @@ pub trait VectorStore: MaybeSend + MaybeSync {
     async fn remove_vector(&mut self, id: &str) -> Result<()>;
     async fn remove_vectors(&mut self, ids: &[&str]) -> Result<()>;
     async fn clear(&mut self) -> Result<()>;
+
+    async fn count(&self) -> Result<usize>;
 }

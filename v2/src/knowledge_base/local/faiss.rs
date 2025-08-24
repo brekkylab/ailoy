@@ -187,4 +187,8 @@ impl VectorStore for FaissStore {
         self.doc_store.clear();
         Ok(())
     }
+
+    async fn count(&self) -> Result<usize> {
+        Ok(self.index.ntotal() as usize)
+    }
 }
