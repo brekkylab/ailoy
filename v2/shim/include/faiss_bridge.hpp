@@ -12,7 +12,7 @@
 
 // Forward Declaration for cxx_bridge.rs.h
 enum class FaissMetricType : uint8_t;
-struct FaissSearchResult;
+struct FaissIndexSearchResult;
 
 namespace faiss_bridge {
 
@@ -39,8 +39,8 @@ public:
 
   void add_vectors_with_ids(rust::Slice<const float> vectors,
                             size_t num_vectors, rust::Slice<const int64_t> ids);
-  FaissSearchResult search_vectors(rust::Slice<const float> query_vectors,
-                                   size_t k) const;
+  FaissIndexSearchResult search_vectors(rust::Slice<const float> query_vectors,
+                                        size_t k) const;
   void train_index(rust::Slice<const float> training_vectors,
                    size_t num_training_vectors);
   rust::Vec<float> get_by_id(int64_t id) const;

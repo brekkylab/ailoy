@@ -268,3 +268,4 @@ target_link_libraries(ailoy_cpp_shim PUBLIC faiss)
 
 install(TARGETS ailoy_cpp_shim ARCHIVE DESTINATION .)
 install(FILES ${tvm_BINARY_DIR}/libtvm_runtime.a DESTINATION .)
+install(FILES ${faiss_BINARY_DIR}/faiss/libfaiss.a DESTINATION .)

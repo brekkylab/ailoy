@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include <faiss/impl/IDSelector.h>
+#include <faiss/index_factory.h>
 #include <faiss/index_io.h>
 
 #include "cxx_bridge.rs.h"
@@ -46,7 +47,7 @@ void FaissIndexWrapper::add_vectors_with_ids(rust::Slice<const float> vectors,
                        faiss_ids.data());
 }
 
-FaissSearchResult
+FaissIndexSearchResult
 FaissIndexWrapper::search_vectors(rust::Slice<const float> query_vectors,
                                   size_t k) const {
   faiss::idx_t num_queries = query_vectors.size() / index_->d;
@@ -68,7 +69,8 @@ FaissIndexWrapper::search_vectors(rust::Slice<const float> query_vectors,
   std::copy(indexes_vec.begin(), indexes_vec.end(),
             std::back_inserter(rust_indexes));
 
-  return FaissSearchResult{std::move(rust_distances), std::move(rust_indexes)};
+  return FaissIndexSearchResult{std::move(rust_distances),
+                                std::move(rust_indexes)};
 }
 
 // rust::Vec<float> FaissIndexWrapper::get_by_id(int64_t id) const {
