@@ -19,7 +19,11 @@ pub struct FaissStore {
 
 impl FaissStore {
     pub fn new(dim: i32) -> Result<Self> {
-        let index = ffi::FaissIndexBuilder::new(dim).build().unwrap();
+        let index = ffi::FaissIndexBuilder::new(dim)
+            // .description(description)
+            // .metric(metric)
+            .build()
+            .unwrap();
         Ok(Self {
             index,
             doc_store: HashMap::new(),
