@@ -20,6 +20,7 @@ use crate::{
         Tool,
         mcp::common::{call_tool_result_to_parts, map_mcp_tool_to_tool_description},
     },
+    utils::BoxFuture,
     value::{Part, ToolCallArg, ToolDesc},
 };
 
@@ -331,10 +332,7 @@ impl Tool for MCPTool {
         self.desc.clone()
     }
 
-    fn run(
-        self: Arc<Self>,
-        args: ToolCallArg,
-    ) -> futures::future::LocalBoxFuture<'static, Result<Vec<Part>, String>> {
+    fn run(self: Arc<Self>, args: ToolCallArg) -> BoxFuture<'static, Result<Vec<Part>, String>> {
         let client = self.client.clone();
 
         Box::pin(async move {

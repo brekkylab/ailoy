@@ -1,11 +1,11 @@
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 mod tvm_runtime {
     use cxx::UniquePtr;
-    use futures::future::BoxFuture;
 
     use crate::{
         cache::{Cache, CacheContents, CacheEntry, TryFromCache},
         ffi::{TVMLanguageModel, create_dldevice, create_tvm_language_model},
+        utils::BoxFuture,
     };
 
     pub fn get_lib_extension() -> &'static str {
@@ -137,9 +137,10 @@ mod tvm_runtime {
 
 #[cfg(any(target_family = "wasm"))]
 mod tvmjs_runtime {
-    use futures::future::BoxFuture;
-
-    use crate::cache::{Cache, CacheContents, CacheEntry, TryFromCache};
+    use crate::{
+        cache::{Cache, CacheContents, CacheEntry, TryFromCache},
+        utils::BoxFuture,
+    };
 
     #[derive(Debug)]
     pub struct Inferencer {}

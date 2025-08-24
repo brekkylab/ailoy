@@ -1,11 +1,11 @@
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use futures::future::BoxFuture;
 use minijinja::{Environment, context};
 use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
 use crate::{
     cache::{Cache, CacheContents, CacheEntry, TryFromCache},
+    utils::BoxFuture,
     value::{Message, MessageStyle, QWEN3_FMT, StyledMessage, ToolDesc},
 };
 

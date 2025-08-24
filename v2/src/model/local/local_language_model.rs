@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use async_stream::try_stream;
-use futures::{Stream, future::BoxFuture};
-use tokio::sync::Mutex;
+use futures::stream::Stream;
 
 use crate::{
     cache::{Cache, CacheContents, CacheEntry, CacheProgress, TryFromCache},
@@ -10,6 +9,7 @@ use crate::{
         LanguageModel,
         local::{ChatTemplate, Inferencer, Tokenizer},
     },
+    utils::{BoxFuture, BoxStream, Mutex},
     value::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
 };
 
@@ -40,17 +40,16 @@ impl LocalLanguageModel {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl LanguageModel for LocalLanguageModel {
     fn run(
         self: Arc<Self>,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
-    ) -> futures::stream::BoxStream<'static, Result<MessageOutput, String>> {
+    ) -> BoxStream<'static, Result<MessageOutput, String>> {
         let strm = try_stream! {
             let prompt = self.chat_template.apply(msgs, tools, true)?;
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
-            self.inferencer.lock().await.prefill(&input_tokens);
+            self.inferencer.lock().prefill(&input_tokens);
             let mut last_token = *input_tokens.last().unwrap();
             let mut agg_tokens = Vec::<u32>::new();
             let mut count = 0;
@@ -65,76 +64,7 @@ impl LanguageModel for LocalLanguageModel {
                 if count > 16384 {
                     Err("Too long assistant message. It may be infinite loop".to_owned())?;
                 }
-                let new_token = self.inferencer.lock().await.decode(last_token);
-                agg_tokens.push(new_token);
-                last_token = new_token;
-                let s = self.tokenizer.decode(agg_tokens.as_slice(), false)?;
-                if s.ends_with("�") {
-                    continue;
-                }
-                agg_tokens.clear();
-
-                if s == "<|im_end|>" {
-                    yield MessageOutput::new().with_finish_reason(finish_reason);
-                    break;
-                } else if s == "<tool_call>" {
-                    mode = "tool_call".to_owned();
-                    continue;
-                } else if s == "</tool_call>" {
-                    mode = "content".to_owned();
-                    finish_reason = FinishReason::ToolCalls;
-                    continue;
-                } else if s == "<think>" {
-                    mode = "reasoning".to_owned();
-                    continue;
-                } else if s == "</think>" {
-                    mode = "content".to_owned();
-                    continue;
-                } else {
-                    let delta = if mode == "content" {
-                        Message::new().with_contents(vec![Part::Text(s)])
-                    } else if mode == "reasoning" {
-                        Message::new().with_reasoning(s)
-                    } else if mode == "tool_call" {
-                        Message::new().with_tool_calls(vec![Part::FunctionString(s)])
-                    } else {
-                        unreachable!();
-                    };
-                    yield MessageOutput::new().with_delta(delta);
-                }
-            }
-            return;
-        };
-        Box::pin(strm)
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl LanguageModel for LocalLanguageModel {
-    fn run(
-        self: Arc<Self>,
-        msgs: Vec<Message>,
-        tools: Vec<ToolDesc>,
-    ) -> futures::stream::LocalBoxStream<'static, Result<MessageOutput, String>> {
-        let strm = try_stream! {
-            let prompt = self.chat_template.apply(msgs, tools, true)?;
-            let input_tokens = self.tokenizer.encode(&prompt, true)?;
-            self.inferencer.lock().await.prefill(&input_tokens);
-            let mut last_token = *input_tokens.last().unwrap();
-            let mut agg_tokens = Vec::<u32>::new();
-            let mut count = 0;
-            let mut mode = "content".to_owned();
-            let mut finish_reason = FinishReason::Stop;
-
-            yield MessageOutput::new().with_delta(Message::with_role(Role::Assistant));
-
-            // @jhlee: TODO remove hard-coded token names
-            loop {
-                count += 1;
-                if count > 16384 {
-                    Err("Too long assistant message. It may be infinite loop".to_owned())?;
-                }
-                let new_token = self.inferencer.lock().await.decode(last_token);
+                let new_token = self.inferencer.lock().decode(last_token);
                 agg_tokens.push(new_token);
                 last_token = new_token;
                 let s = self.tokenizer.decode(agg_tokens.as_slice(), false)?;
