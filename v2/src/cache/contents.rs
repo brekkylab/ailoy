@@ -45,6 +45,21 @@ impl CacheContents {
         &self.root
     }
 
+    pub fn drain(&mut self) -> impl IntoIterator<Item = (CacheEntry, Vec<u8>)> {
+        let keys = self
+            .inner
+            .keys()
+            .into_iter()
+            .map(|v| v.clone())
+            .collect::<Vec<_>>();
+        let mut rv = Vec::new();
+        for k in keys {
+            let v = self.inner.remove(&k).unwrap();
+            rv.push((k, v));
+        }
+        rv.into_iter()
+    }
+
     /// Remove and return the bytes associated with the exact key.
     pub fn remove(&mut self, entry: &CacheEntry) -> Option<Vec<u8>> {
         self.inner.remove(entry)

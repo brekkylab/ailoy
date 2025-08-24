@@ -10,7 +10,10 @@ use futures::{Stream, StreamExt as _, stream::FuturesUnordered};
 use tokio::sync::RwLock;
 use url::Url;
 
-use crate::cache::{CacheContents, CacheEntry, TryFromCache};
+use crate::{
+    cache::{CacheContents, CacheEntry, TryFromCache},
+    utils::MaybeSend,
+};
 
 use super::{
     filesystem::{read, write},
@@ -284,7 +287,7 @@ impl Cache {
         key: impl Into<String>,
     ) -> impl Stream<Item = Result<CacheProgress<T>, String>> + 'static
     where
-        T: TryFromCache + Send + 'static,
+        T: TryFromCache + MaybeSend + 'static,
     {
         let key = key.into();
         let this = self.clone();
@@ -348,9 +351,14 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_files() {
-        let src_dir = PathBuf::from_str("/Users/ijaehwan/.cache/ailoy/Qwen--Qwen3-0.6B").unwrap();
-        let dst_dir =
-            PathBuf::from_str("/Users/ijaehwan/Workspace/ailoy/out/Qwen--Qwen3-0.6B").unwrap();
+        let src_dir = PathBuf::from_str(
+            "/Users/ijaehwan/.cache/ailoy/Qwen--Qwen3-0.6B--wasm32-unknown-unknown--webgpu",
+        )
+        .unwrap();
+        let dst_dir = PathBuf::from_str(
+            "/Users/ijaehwan/Workspace/ailoy/out/Qwen--Qwen3-0.6B--wasm32-unknown-unknown--webgpu",
+        )
+        .unwrap();
         if dst_dir.exists() {
             std::fs::remove_dir_all(&dst_dir).unwrap();
         }

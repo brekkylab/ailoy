@@ -1,4 +1,113 @@
 #[cfg(any(target_family = "unix", target_family = "windows"))]
+pub use tvm_runtime::Inferencer;
+
+#[cfg(any(target_family = "wasm"))]
+pub use tvmjs_runtime::Inferencer;
+
+use crate::{
+    cache::{Cache, CacheEntry},
+    utils::BoxFuture,
+};
+
+pub fn get_lib_extension() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "dylib"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "so"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "dll"
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        "wasm"
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "macos",
+        target_arch = "wasm32"
+    )))]
+    {
+        panic!("Unknown OS")
+    }
+}
+
+pub fn get_accelerator() -> &'static str {
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    {
+        "metal"
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        "vulkan"
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        "webgpu"
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "windows",
+        all(target_arch = "aarch64", target_os = "macos"),
+        target_arch = "wasm32",
+    )))]
+    {
+        panic!("accelerator not found")
+    }
+}
+
+pub fn claim_files(
+    cache: Cache,
+    key: impl AsRef<str>,
+) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
+    let dirname = vec![key.as_ref().replace("/", "--")].join("--");
+    let elem = CacheEntry::new(&dirname, "ndarray-cache.json");
+    Box::pin(async move {
+        let ndarray_cache_bytes = cache.get(&elem).await?;
+        let ndarray_cache_str =
+            std::str::from_utf8(&ndarray_cache_bytes).map_err(|_| format!("Internal error"))?;
+        let ndarray_cache: serde_json::Value = serde_json::from_str(ndarray_cache_str)
+            .map_err(|e| format!("JSON deserialization failed: {}", e.to_string()))?;
+        let mut rv = ndarray_cache
+            .as_object()
+            .unwrap()
+            .get("records")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                CacheEntry::new(
+                    &dirname,
+                    v.as_object()
+                        .unwrap()
+                        .get("dataPath")
+                        .unwrap()
+                        .as_str()
+                        .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        rv.push(CacheEntry::new(&dirname, "ndarray-cache.json"));
+        rv.push(CacheEntry::new(
+            format!(
+                "{}--{}--{}",
+                dirname,
+                env!("BUILD_TARGET_TRIPLE"),
+                get_accelerator()
+            ),
+            format!("rt.{}", get_lib_extension()),
+        ));
+        Ok(rv)
+    })
+}
+
+#[cfg(any(target_family = "unix", target_family = "windows"))]
 mod tvm_runtime {
     use cxx::UniquePtr;
 
@@ -8,43 +117,7 @@ mod tvm_runtime {
         utils::BoxFuture,
     };
 
-    pub fn get_lib_extension() -> &'static str {
-        #[cfg(target_os = "macos")]
-        {
-            "dylib"
-        }
-        #[cfg(target_os = "linux")]
-        {
-            "so"
-        }
-        #[cfg(target_os = "windows")]
-        {
-            "dll"
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-        {
-            panic!("Unknown OS")
-        }
-    }
-
-    pub fn get_accelerator() -> &'static str {
-        #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-        {
-            "metal"
-        }
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
-        {
-            "vulkan"
-        }
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "windows",
-            all(target_arch = "aarch64", target_os = "macos"),
-        )))]
-        {
-            panic!("accelerator not found")
-        }
-    }
+    use super::*;
 
     pub fn get_device_type(accelerator: &str) -> i32 {
         if accelerator == "metal" {
@@ -81,46 +154,7 @@ mod tvm_runtime {
             cache: Cache,
             key: impl AsRef<str>,
         ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
-            let dirname = vec![key.as_ref().replace("/", "--")].join("--");
-            let elem = CacheEntry::new(&dirname, "ndarray-cache.json");
-            Box::pin(async move {
-                let ndarray_cache_bytes = cache.get(&elem).await?;
-                let ndarray_cache_str = std::str::from_utf8(&ndarray_cache_bytes)
-                    .map_err(|_| format!("Internal error"))?;
-                let ndarray_cache: serde_json::Value = serde_json::from_str(ndarray_cache_str)
-                    .map_err(|e| format!("JSON deserialization failed: {}", e.to_string()))?;
-                let mut rv = ndarray_cache
-                    .as_object()
-                    .unwrap()
-                    .get("records")
-                    .unwrap()
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|v| {
-                        CacheEntry::new(
-                            &dirname,
-                            v.as_object()
-                                .unwrap()
-                                .get("dataPath")
-                                .unwrap()
-                                .as_str()
-                                .unwrap(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                rv.push(CacheEntry::new(&dirname, "ndarray-cache.json"));
-                rv.push(CacheEntry::new(
-                    format!(
-                        "{}--{}--{}",
-                        dirname,
-                        env!("BUILD_TARGET_TRIPLE"),
-                        get_accelerator()
-                    ),
-                    format!("rt.{}", get_lib_extension()),
-                ));
-                Ok(rv)
-            })
+            claim_files(cache, key)
         }
 
         fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String> {
@@ -137,15 +171,35 @@ mod tvm_runtime {
 
 #[cfg(any(target_family = "wasm"))]
 mod tvmjs_runtime {
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen_futures::JsFuture;
+
+    use super::*;
     use crate::{
         cache::{Cache, CacheContents, CacheEntry, TryFromCache},
         utils::BoxFuture,
     };
 
     #[derive(Debug)]
-    pub struct Inferencer {}
+    pub struct Inferencer {
+        init: Option<js_sys::Promise>,
+    }
 
     impl Inferencer {
+        pub async fn wait(&mut self) {
+            let res = if let Some(fut) = self.init.take() {
+                JsFuture::from(fut).await
+            } else {
+                return;
+            };
+            match res {
+                Ok(out) => out,
+                Err(err) => {
+                    web_sys::console::error_1(&err);
+                    err
+                }
+            };
+        }
         pub fn prefill(&mut self, _: &Vec<u32>) -> () {
             todo!()
         }
@@ -160,17 +214,76 @@ mod tvmjs_runtime {
             cache: Cache,
             key: impl AsRef<str>,
         ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
-            Box::pin(async move { Ok(vec![]) })
+            claim_files(cache, key)
         }
 
         fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String> {
-            Ok(Inferencer {})
+            use crate::ffi::js_bridge::init_js;
+            use js_sys::{Object, Reflect, Uint8Array};
+
+            // let wasm_bytes = {
+            //     let (_, buf) = contents.remove_with_filename("rt.wasm").unwrap();
+            //     let u8arr = Uint8Array::new_with_length(buf.len() as u32);
+            //     web_sys::console::log_1(&format!("wasm with size {}", buf.len()).into());
+            //     u8arr.copy_from(&buf[..]);
+            //     u8arr
+            // };
+            // let metadata = {
+            //     let (_, buf) = contents.remove_with_filename("ndarray-cache.json").unwrap();
+            //     let buf = std::str::from_utf8(&buf).unwrap();
+            //     JsString::from(buf)
+            // };
+
+            let cache_contents = {
+                let obj = Object::new();
+                for (entry, buf) in contents.drain() {
+                    let filename = entry.filename();
+                    let u8arr = Uint8Array::new_with_length(buf.len() as u32);
+                    u8arr.copy_from(&buf[..]);
+                    Reflect::set(&obj, &JsValue::from_str(filename), &u8arr.buffer().into())
+                        .unwrap();
+                }
+                obj
+            };
+
+            let fut = init_js(&cache_contents);
+
+            Ok(Inferencer { init: Some(fut) })
         }
     }
 }
 
-#[cfg(any(target_family = "unix", target_family = "windows"))]
-pub use tvm_runtime::Inferencer;
+#[cfg(all(test, target_arch = "wasm32"))]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt as _;
+    use wasm_bindgen_test::*;
 
-#[cfg(any(target_family = "wasm"))]
-pub use tvmjs_runtime::Inferencer;
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    #[wasm_bindgen_test]
+    async fn add_js_works() {
+        let cache = crate::cache::Cache::new();
+        let key = "Qwen/Qwen3-0.6B";
+        let mut model_strm = Box::pin(cache.try_create::<Inferencer>(key));
+        let mut model: Option<Inferencer> = None;
+
+        while let Some(progress) = model_strm.next().await {
+            let mut progress = progress.unwrap();
+            web_sys::console::log_1(
+                &format!(
+                    "{} ({} / {})",
+                    progress.comment, progress.current_task, progress.total_task
+                )
+                .into(),
+            );
+            if progress.current_task == progress.total_task {
+                model = progress.result.take();
+            }
+        }
+        let mut model = model.unwrap();
+        model.wait().await;
+        web_sys::console::log_1(&format!("{:?}", model).into());
+    }
+}
