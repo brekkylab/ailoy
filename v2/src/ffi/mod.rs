@@ -7,7 +7,6 @@ pub mod py;
 
 mod dlpack_wrap;
 mod faiss_wrap;
-pub mod util;
 
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 pub use cxx_bridge::*;

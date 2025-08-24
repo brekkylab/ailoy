@@ -2,6 +2,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value as Json;
 
+use crate::utils::{MaybeSend, MaybeSync};
+
 pub type Embedding = Vec<f32>;
 pub type Metadata = Json;
 
@@ -29,7 +31,7 @@ pub struct RetrieveResult {
 }
 
 #[async_trait]
-pub trait VectorStore: Send + Sync {
+pub trait VectorStore: MaybeSend + MaybeSync {
     async fn add_vector(&mut self, input: AddInput) -> Result<String>;
     async fn add_vectors(&mut self, inputs: Vec<AddInput>) -> Result<Vec<String>>;
     async fn get_by_id(&self, id: &str) -> Result<Option<GetResult>>;

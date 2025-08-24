@@ -1,5 +1,5 @@
-use crate::ffi::util::*;
 use crate::ffi::{DLDevice, DLPackTensor};
+use crate::utils::float16;
 use anyhow::{Result, bail};
 
 unsafe impl Send for DLDevice {}
@@ -38,7 +38,7 @@ impl DLPackTensor {
             }
             let vec = unsafe { std::slice::from_raw_parts(data_ptr, dimension as usize).to_vec() }
                 .into_iter()
-                .map(|val| util::f16_to_f32(val))
+                .map(|val| float16::f16_to_f32(val))
                 .collect();
             Ok(vec)
         } else {

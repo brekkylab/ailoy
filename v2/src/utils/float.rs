@@ -1,4 +1,4 @@
-pub mod util {
+pub mod float16 {
     pub fn f16_to_f32(val: u16) -> f32 {
         let sign = (val >> 15) & 0x1;
         let exponent = (val >> 10) & 0x1f;
@@ -54,10 +54,10 @@ mod tests {
 
     #[test]
     fn test_f16_conversion() {
-        assert_eq!(util::f16_to_f32(0x3c00), 1.0); // 1.0
-        assert_eq!(util::f16_to_f32(0xc000), -2.0); // -2.0
-        assert!(util::f16_to_f32(0x7c00).is_infinite()); // +inf
-        assert!(util::f16_to_f32(0xfc00).is_infinite()); // -inf
-        assert!(util::f16_to_f32(0x7e00).is_nan()); // NaN
+        assert_eq!(float16::f16_to_f32(0x3c00), 1.0); // 1.0
+        assert_eq!(float16::f16_to_f32(0xc000), -2.0); // -2.0
+        assert!(float16::f16_to_f32(0x7c00).is_infinite()); // +inf
+        assert!(float16::f16_to_f32(0xfc00).is_infinite()); // -inf
+        assert!(float16::f16_to_f32(0x7e00).is_nan()); // NaN
     }
 }
