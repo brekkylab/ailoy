@@ -141,9 +141,9 @@ size_t FaissIndexWrapper::remove_vectors(rust::Slice<const int64_t> ids) {
 void FaissIndexWrapper::clear() {
   try {
     if (index_->ntotal > 0) {
-      faiss::IDSelectorRange selector(0, index_->ntotal);
+      faiss::IDSelectorAll all_selector;
 
-      size_t num_removed = index_->remove_ids(selector);
+      size_t num_removed = index_->remove_ids(all_selector);
     } else {
       // log.debug("Index is already empty.")
     }
