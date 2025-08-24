@@ -255,12 +255,12 @@ mod tests {
         let added_ids = store
             .add_vectors(vec![
                 AddInput {
-                    embedding: vec![1.0, 1.0],
+                    embedding: vec![1.0, 1.0, 1.0],
                     document: "doc1".to_owned(),
                     metadata: Some(json!({"id": 1})),
                 },
                 AddInput {
-                    embedding: vec![2.0, 2.0],
+                    embedding: vec![2.0, 2.0, 2.0],
                     document: "doc2".to_owned(),
                     metadata: Some(json!({"id": 2})),
                 },
@@ -271,20 +271,20 @@ mod tests {
 
         let res1 = store.get_by_id(&added_ids[0]).await?.unwrap();
         assert_eq!(res1.document, "doc1");
-        assert_eq!(res1.embedding, vec![1.0, 1.0]);
+        assert_eq!(res1.embedding, vec![1.0, 1.0, 1.0]);
 
         let res2 = store.get_by_id(&added_ids[1]).await?.unwrap();
         assert_eq!(res2.document, "doc2");
-        assert_eq!(res2.embedding, vec![2.0, 2.0]);
+        assert_eq!(res2.embedding, vec![2.0, 2.0, 2.0]);
 
         let res = store
             .get_by_ids(&added_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>())
             .await?;
         assert_eq!(res[0].document, "doc1");
-        assert_eq!(res[0].embedding, vec![1.0, 1.0]);
+        assert_eq!(res[0].embedding, vec![1.0, 1.0, 1.0]);
 
         assert_eq!(res[1].document, "doc2");
-        assert_eq!(res[1].embedding, vec![2.0, 2.0]);
+        assert_eq!(res[1].embedding, vec![2.0, 2.0, 2.0]);
 
         Ok(())
     }
@@ -333,17 +333,17 @@ mod tests {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             AddInput {
-                embedding: vec![5.5, 6.6],
+                embedding: vec![5.5, 6.6, 3.3],
                 document: "to be deleted1".to_owned(),
                 metadata: None,
             },
             AddInput {
-                embedding: vec![4.4, 6.6],
+                embedding: vec![4.4, 6.6, 5.5],
                 document: "to be deleted2".to_owned(),
                 metadata: None,
             },
             AddInput {
-                embedding: vec![3.3, 2.2],
+                embedding: vec![3.3, 2.2, 6.6],
                 document: "to be deleted3".to_owned(),
                 metadata: None,
             },
@@ -393,12 +393,12 @@ mod tests {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             AddInput {
-                embedding: vec![1.0],
+                embedding: vec![1.0, 1.1, 1.2],
                 document: "doc1".to_owned(),
                 metadata: None,
             },
             AddInput {
-                embedding: vec![2.0],
+                embedding: vec![2.0, 2.1, 2.2],
                 document: "doc2".to_owned(),
                 metadata: None,
             },
