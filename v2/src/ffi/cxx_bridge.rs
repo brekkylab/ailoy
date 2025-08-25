@@ -7,7 +7,7 @@ fn cache_entry_new(dirname: &str, filename: &str) -> Box<CacheEntry> {
 }
 
 fn cache_contents_get_root(self_: &CacheContents) -> String {
-    self_.get_root().to_string_lossy().to_string()
+    self_.root.to_string_lossy().to_string()
 }
 
 fn cache_contents_remove_with_filename_out(

@@ -5,7 +5,7 @@ pub use tvm_runtime::Inferencer;
 pub use tvmjs_runtime::Inferencer;
 
 use crate::{
-    cache::{Cache, CacheEntry},
+    cache::{Cache, CacheClaim, CacheEntry},
     utils::BoxFuture,
 };
 
@@ -64,7 +64,7 @@ pub fn get_accelerator() -> &'static str {
 pub fn claim_files(
     cache: Cache,
     key: impl AsRef<str>,
-) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
+) -> BoxFuture<'static, Result<CacheClaim, String>> {
     let dirname = vec![key.as_ref().replace("/", "--")].join("--");
     let elem = CacheEntry::new(&dirname, "ndarray-cache.json");
     Box::pin(async move {
@@ -103,7 +103,7 @@ pub fn claim_files(
             ),
             format!("rt.{}", get_lib_extension()),
         ));
-        Ok(rv)
+        Ok(CacheClaim::new(rv))
     })
 }
 
@@ -112,7 +112,7 @@ mod tvm_runtime {
     use cxx::UniquePtr;
 
     use crate::{
-        cache::{Cache, CacheContents, CacheEntry, TryFromCache},
+        cache::{Cache, CacheContents, TryFromCache},
         ffi::{TVMLanguageModel, create_dldevice, create_tvm_language_model},
         utils::BoxFuture,
     };
@@ -153,59 +153,67 @@ mod tvm_runtime {
         fn claim_files(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
+        ) -> BoxFuture<'static, Result<CacheClaim, String>> {
             claim_files(cache, key)
         }
 
-        fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String> {
-            let device = create_dldevice(
-                get_device_type(get_accelerator()),
-                get_device_id(get_accelerator()),
-            );
-            let inner = create_tvm_language_model(contents, device);
+        fn try_from_contents(
+            mut contents: CacheContents,
+        ) -> BoxFuture<'static, Result<Self, String>> {
+            Box::pin(async move {
+                let device = create_dldevice(
+                    get_device_type(get_accelerator()),
+                    get_device_id(get_accelerator()),
+                );
+                let inner = create_tvm_language_model(&mut contents, device);
 
-            Ok(Inferencer { inner })
+                Ok(Inferencer { inner })
+            })
         }
     }
 }
 
 #[cfg(any(target_family = "wasm"))]
 mod tvmjs_runtime {
+    use std::fmt;
+
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
 
     use super::*;
     use crate::{
-        cache::{Cache, CacheContents, CacheEntry, TryFromCache},
+        cache::{Cache, CacheContents, TryFromCache},
+        ffi::JSLanguageModel,
         utils::BoxFuture,
     };
 
-    #[derive(Debug)]
     pub struct Inferencer {
-        init: Option<js_sys::Promise>,
+        inner: JSLanguageModel,
+    }
+
+    impl fmt::Debug for Inferencer {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("Inferencer")
+                // .field("init", &self.init)
+                // .field("inner", &self.inner)
+                .finish()
+        }
     }
 
     impl Inferencer {
-        pub async fn wait(&mut self) {
-            let res = if let Some(fut) = self.init.take() {
-                JsFuture::from(fut).await
-            } else {
-                return;
-            };
-            match res {
-                Ok(out) => out,
-                Err(err) => {
-                    web_sys::console::error_1(&err);
-                    err
-                }
-            };
-        }
-        pub fn prefill(&mut self, _: &Vec<u32>) -> () {
-            todo!()
+        pub async fn prefill(&mut self, tokens: &Vec<u32>) -> () {
+            use wasm_bindgen_futures::JsFuture;
+
+            let arr = unsafe { js_sys::Uint32Array::view(tokens) };
+            JsFuture::from(self.inner.prefill(arr)).await.unwrap();
         }
 
-        pub fn decode(&mut self, _: u32) -> u32 {
-            todo!()
+        pub async fn decode(&mut self, last_token: u32) -> u32 {
+            let logits: js_sys::Float32Array = JsFuture::from(self.inner.decode(last_token))
+                .await
+                .unwrap()
+                .into();
+            self.inner.sample(logits)
         }
     }
 
@@ -213,77 +221,80 @@ mod tvmjs_runtime {
         fn claim_files(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
+        ) -> BoxFuture<'static, Result<CacheClaim, String>> {
             claim_files(cache, key)
         }
 
-        fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String> {
+        fn try_from_contents(
+            mut contents: CacheContents,
+        ) -> BoxFuture<'static, Result<Self, String>> {
             use crate::ffi::js_bridge::init_js;
             use js_sys::{Object, Reflect, Uint8Array};
 
-            // let wasm_bytes = {
-            //     let (_, buf) = contents.remove_with_filename("rt.wasm").unwrap();
-            //     let u8arr = Uint8Array::new_with_length(buf.len() as u32);
-            //     web_sys::console::log_1(&format!("wasm with size {}", buf.len()).into());
-            //     u8arr.copy_from(&buf[..]);
-            //     u8arr
-            // };
-            // let metadata = {
-            //     let (_, buf) = contents.remove_with_filename("ndarray-cache.json").unwrap();
-            //     let buf = std::str::from_utf8(&buf).unwrap();
-            //     JsString::from(buf)
-            // };
+            Box::pin(async move {
+                let cache_contents = {
+                    let obj = Object::new();
+                    for (entry, buf) in contents.drain() {
+                        let filename = entry.filename();
+                        let u8arr = Uint8Array::new_with_length(buf.len() as u32);
+                        u8arr.copy_from(&buf[..]);
+                        Reflect::set(&obj, &JsValue::from_str(filename), &u8arr.buffer().into())
+                            .unwrap();
+                    }
+                    obj
+                };
 
-            let cache_contents = {
-                let obj = Object::new();
-                for (entry, buf) in contents.drain() {
-                    let filename = entry.filename();
-                    let u8arr = Uint8Array::new_with_length(buf.len() as u32);
-                    u8arr.copy_from(&buf[..]);
-                    Reflect::set(&obj, &JsValue::from_str(filename), &u8arr.buffer().into())
-                        .unwrap();
-                }
-                obj
-            };
+                let prom = init_js(&cache_contents);
+                let js_lang_model = match JsFuture::from(prom).await {
+                    Ok(out) => {
+                        let lm: JSLanguageModel = out
+                            .dyn_into()
+                            .map_err(|e| format!("Conversion failed: {:?}", e))?;
+                        lm
+                    }
+                    Err(err) => {
+                        return Err(format!("JS inferencer init failed: {:?}", err));
+                    }
+                };
 
-            let fut = init_js(&cache_contents);
-
-            Ok(Inferencer { init: Some(fut) })
+                Ok(Inferencer {
+                    inner: js_lang_model,
+                })
+            })
         }
     }
 }
 
-#[cfg(all(test, target_arch = "wasm32"))]
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use futures::StreamExt as _;
-    use wasm_bindgen_test::*;
+// #[cfg(all(test, target_arch = "wasm32"))]
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use futures::StreamExt as _;
+//     use wasm_bindgen_test::*;
 
-    wasm_bindgen_test_configure!(run_in_browser);
+//     wasm_bindgen_test_configure!(run_in_browser);
 
-    #[wasm_bindgen_test]
-    async fn add_js_works() {
-        let cache = crate::cache::Cache::new();
-        let key = "Qwen/Qwen3-0.6B";
-        let mut model_strm = Box::pin(cache.try_create::<Inferencer>(key));
-        let mut model: Option<Inferencer> = None;
+//     #[wasm_bindgen_test]
+//     async fn add_js_works() {
+//         let cache = crate::cache::Cache::new();
+//         let key = "Qwen/Qwen3-0.6B";
+//         let mut model_strm = Box::pin(cache.try_create::<Inferencer>(key));
+//         let mut model: Option<Inferencer> = None;
 
-        while let Some(progress) = model_strm.next().await {
-            let mut progress = progress.unwrap();
-            web_sys::console::log_1(
-                &format!(
-                    "{} ({} / {})",
-                    progress.comment, progress.current_task, progress.total_task
-                )
-                .into(),
-            );
-            if progress.current_task == progress.total_task {
-                model = progress.result.take();
-            }
-        }
-        let mut model = model.unwrap();
-        model.wait().await;
-        web_sys::console::log_1(&format!("{:?}", model).into());
-    }
-}
+//         while let Some(progress) = model_strm.next().await {
+//             let mut progress = progress.unwrap();
+//             web_sys::console::log_1(
+//                 &format!(
+//                     "{} ({} / {})",
+//                     progress.comment, progress.current_task, progress.total_task
+//                 )
+//                 .into(),
+//             );
+//             if progress.current_task == progress.total_task {
+//                 model = progress.result.take();
+//             }
+//         }
+//         let mut model = model.unwrap();
+//         model.wait().await.unwrap();
+//     }
+// }

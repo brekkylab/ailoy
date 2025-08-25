@@ -1301,7 +1301,7 @@ export class Instance implements Disposable {
     );
   }
 
-  async addParameter(
+  async ndarrayCacheUpdateBuffer(
     device: DLDevice,
     record: any,
     buffer: ArrayBuffer

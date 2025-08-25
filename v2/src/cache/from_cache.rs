@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use crate::{
-    cache::{Cache, CacheContents, CacheEntry},
+    cache::{Cache, CacheClaim, CacheContents},
     utils::{BoxFuture, MaybeSend},
 };
 
@@ -70,13 +70,13 @@ pub trait TryFromCache: Sized + MaybeSend + 'static {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>>;
+    ) -> BoxFuture<'static, Result<CacheClaim, String>>;
 
     /// Build `Self` from the previously fetched files.
     ///
     /// Implementations should verify that all required entries are present and valid,
     /// and return a descriptive `Err(String)` on failure.
-    fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String>
+    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Result<Self, String>>
     where
         Self: Sized;
 }
@@ -93,15 +93,13 @@ pub trait FromCache {
     /// Declare the set of files needed to construct `Self`.
     ///
     /// This method must not fail; return a complete list of required entries.
-    fn claim_files(
-        cache: Cache,
-        key: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Vec<CacheEntry>>>>;
+    fn claim_files(cache: Cache, key: impl AsRef<str>)
+    -> Pin<Box<dyn Future<Output = CacheClaim>>>;
 
     /// Build `Self` from the previously fetched files.
     ///
     /// Implementations may assume `contents` contain all required entries.
-    fn try_from_contents(contents: &mut CacheContents) -> Self
+    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Self>
     where
         Self: Sized;
 }

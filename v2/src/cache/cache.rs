@@ -294,16 +294,16 @@ impl Cache {
 
         try_stream! {
             // Claim files to be processed
-            let files = T::claim_files(this.clone(), key.clone()).await?;
+            let claim = T::claim_files(this.clone(), key.clone()).await?;
 
             // Number of tasks => downloading all files + initializing T
-            let total_task: usize = files.len() + 1;
+            let total_task: usize = claim.entries.len() + 1;
 
             // Current processed task
             let mut current_task = 0;
 
             // Main tasks
-            let mut tasks: FuturesUnordered<_> = files
+            let mut tasks: FuturesUnordered<_> = claim.entries
                 .into_iter()
                 .map(|entry| {
                     let this = this.clone();
@@ -328,10 +328,14 @@ impl Cache {
             }
 
             // Assemble cache contents
-            let mut contents = pairs.into_iter().collect::<CacheContents>().with_root(self.root());
+            let contents = CacheContents {
+                root: self.root.clone(),
+                entries: pairs.into_iter().collect(),
+                ctx: claim.ctx,
+            };
 
             // Final creation
-            let value = T::try_from_contents(&mut contents)?;
+            let value = T::try_from_contents(contents).await?;
             current_task += 1;
             yield CacheProgress::<T> {
                 comment: "Intialized".to_owned(),
