@@ -1,3 +1,4 @@
+pub mod async_trait;
 pub mod log;
 pub mod maybe_sync;
 #[cfg(test)]
