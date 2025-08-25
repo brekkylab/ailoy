@@ -78,14 +78,16 @@ class Part:
     def url(self) -> typing.Optional[builtins.str]: ...
     @property
     def data(self) -> typing.Optional[builtins.str]: ...
-    def __new__(cls, part_type:builtins.str, *, text:typing.Optional[builtins.str]=None, url:typing.Optional[builtins.str]=None, data:typing.Optional[builtins.str]=None, function:typing.Optional[builtins.str]=None, id:typing.Optional[builtins.str]=None, name:typing.Optional[builtins.str]=None, arguments:typing.Optional[builtins.str]=None) -> Part:
+    @property
+    def mime_type(self) -> typing.Optional[builtins.str]: ...
+    def __new__(cls, part_type:builtins.str, *, text:typing.Optional[builtins.str]=None, url:typing.Optional[builtins.str]=None, data:typing.Optional[builtins.str]=None, mime_type:typing.Optional[builtins.str]=None, function:typing.Optional[builtins.str]=None, id:typing.Optional[builtins.str]=None, name:typing.Optional[builtins.str]=None, arguments:typing.Optional[builtins.str]=None) -> Part:
         r"""
         Part(part_type, *, id=None, text=None, url=None, data=None, function=None)
         
         Examples:
         - Part(part_type="text", text="hello")
         - Part(part_type="image", url="https://example.com/cat.png")
-        - Part(part_type="image", data="<base64>")  # 'base64=' alias also accepted
+        - Part(part_type="image", data="<base64>", mime_type="image/jpeg")  # 'base64=' alias also accepted
         - Part(part_type="function", function='{"name":"foo","arguments":"{}"}')
         """
 
