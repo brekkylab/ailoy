@@ -10,7 +10,7 @@ use crate::{
         LanguageModel,
         local::{ChatTemplate, Inferencer, Tokenizer},
     },
-    utils::{BoxFuture, BoxStream, MaybeSend, Mutex},
+    utils::{BoxFuture, BoxStream, Mutex},
     value::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
 };
 
@@ -50,7 +50,10 @@ impl LanguageModel for LocalLanguageModel {
         let strm = try_stream! {
             let prompt = self.chat_template.apply(msgs, tools, true)?;
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
+            #[cfg(target_family = "wasm")]
             self.inferencer.lock().prefill(&input_tokens).await;
+            #[cfg(not(target_family = "wasm"))]
+            self.inferencer.lock().prefill(&input_tokens);
             let mut last_token = *input_tokens.last().unwrap();
             let mut agg_tokens = Vec::<u32>::new();
             let mut count = 0;
@@ -65,7 +68,10 @@ impl LanguageModel for LocalLanguageModel {
                 if count > 16384 {
                     Err("Too long assistant message. It may be infinite loop".to_owned())?;
                 }
+                #[cfg(target_family = "wasm")]
                 let new_token = self.inferencer.lock().decode(last_token).await;
+                #[cfg(not(target_family = "wasm"))]
+                let new_token = self.inferencer.lock().decode(last_token);
                 agg_tokens.push(new_token);
                 last_token = new_token;
                 let s = self.tokenizer.decode(agg_tokens.as_slice(), false)?;
