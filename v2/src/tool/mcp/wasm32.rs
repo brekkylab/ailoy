@@ -191,13 +191,9 @@ impl StreamableHttpClient {
                 let message: ServerJsonRpcMessage = response.json().await?;
                 Ok(StreamableHttpPostResponse::Json(message, session_id))
             }
-            _ => {
-                // unexpected content type
-                log::error!("unexpected content type: {:?}", content_type);
-                Err(StreamableHttpError::UnexpectedContentType(
-                    content_type.map(|ct| String::from_utf8_lossy(ct.as_bytes()).to_string()),
-                ))
-            }
+            _ => Err(StreamableHttpError::UnexpectedContentType(
+                content_type.map(|ct| String::from_utf8_lossy(ct.as_bytes()).to_string()),
+            )),
         }
     }
 
@@ -382,6 +378,7 @@ pub async fn mcp_tools_from_streamable_http(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::log;
     use wasm_bindgen_test::*;
 
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
@@ -392,7 +389,7 @@ mod tests {
         client.initialize().await?;
 
         let list_tools = client.list_tools().await?;
-        web_sys::console::log_1(&format!("list of tools: {:?}", list_tools).into());
+        log::debug(&format!("list of tools: {:?}", list_tools));
 
         let call_tool = client
             .call_tool(CallToolRequestParam {
@@ -406,7 +403,7 @@ mod tests {
             })
             .await
             .unwrap();
-        web_sys::console::log_1(&format!("call tool result: {:?}", call_tool).into());
+        log::debug(&format!("call tool result: {:?}", call_tool));
 
         Ok(())
     }
@@ -420,7 +417,7 @@ mod tests {
             serde_json::json!({"latitude": 32.7767, "longitude": -96.797}),
         )?;
         let parts = tool.run(args).await.unwrap();
-        web_sys::console::log_1(&format!("tool call result: {:?}", parts).into());
+        log::debug(&format!("tool call result: {:?}", parts));
 
         Ok(())
     }

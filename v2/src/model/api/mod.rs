@@ -1,3 +1,5 @@
+mod anthropic;
+mod gemini;
 mod openai;
 
 use futures::StreamExt;
@@ -8,6 +10,7 @@ use crate::{
     utils::{BoxFuture, BoxStream},
     value::{Message, MessageOutput, MessageStyle, OPENAI_FMT, StyledMessage, ToolDesc},
 };
+pub use gemini::*;
 
 #[derive(Clone)]
 pub struct APILanguageModel {
@@ -154,7 +157,9 @@ mod tests {
                     ),
                     (
                         "unit",
-                        ToolDescArg::new_string().with_enum(["Celcius", "Fernheit"]),
+                        ToolDescArg::new_string()
+                            .with_enum(["Celcius", "Fernheit"])
+                            .with_desc("The unit of temperature"),
                     ),
                 ],
                 ["location", "unit"],
