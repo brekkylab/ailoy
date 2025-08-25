@@ -304,7 +304,7 @@ mod tests {
             Message::with_role(Role::Assistant)
                 .with_contents([Part::new_text("\n\n")])
                 .with_tool_calls([Part::new_function_string("\n{\"name\": \"temperature\", \"arguments\": {\"location\": \"Dubai\", \"unit\": \"Celcius\"}}\n")]),
-            Message::with_role(Role::Tool("temperature".into())).with_contents([Part::new_text("40")])
+            Message::with_role(Role::Tool("temperature".into(), None)).with_contents([Part::new_text("40")])
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, tools);

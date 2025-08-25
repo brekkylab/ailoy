@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::fmt;
 
 use serde::{
@@ -152,13 +151,13 @@ impl Part {
         }
     }
 
-    pub fn as_str(&self) -> Option<Cow<str>> {
+    pub fn to_string(&self) -> Option<String> {
         match self {
-            Part::Text(str) => Some(Cow::Borrowed(str)),
-            Part::FunctionString(str) => Some(Cow::Borrowed(str)),
-            Part::ImageURL(str) => Some(Cow::Borrowed(str)),
+            Part::Text(str) => Some(str.into()),
+            Part::FunctionString(str) => Some(str.into()),
+            Part::ImageURL(str) => Some(str.into()),
             Part::ImageData(data, mime_type) => {
-                Some(Cow::Owned(format!("data:{};base64,{}", mime_type, data)))
+                Some(format!("data:{};base64,{}", mime_type, data).to_owned())
             }
             _ => None,
         }
@@ -614,7 +613,7 @@ impl Serialize for StyledPart {
             }
             Part::ImageData(..) => {
                 map.serialize_entry("type", &self.style.image_data_type)?;
-                map.serialize_entry(&self.style.image_data_field, &self.data.as_str())?;
+                map.serialize_entry(&self.style.image_data_field, &self.data.to_string())?;
             }
         };
         map.end()
