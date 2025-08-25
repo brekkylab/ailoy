@@ -2,7 +2,7 @@ use super::super::{AddInput, Embedding, GetResult, RetrieveResult, VectorStore};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
-use chromadb::client::{ChromaClient, ChromaClientOptions};
+use chromadb::client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions};
 use chromadb::collection::{
     ChromaCollection, CollectionEntries, GetOptions, QueryOptions, QueryResult,
 };
@@ -14,17 +14,29 @@ pub struct ChromaStore {
 }
 
 impl ChromaStore {
-    pub async fn new(
-        chroma_url: &str,
-        collection_name: &str,
-        // 필요시 인증옵션 추가 (ex. token)
-    ) -> Result<Self> {
+    pub async fn new(chroma_url: &str, collection_name: &str) -> Result<Self> {
         let client = ChromaClient::new(ChromaClientOptions {
             url: Some(chroma_url.to_owned()),
             ..Default::default()
         })
         .await?;
-        // existing 또는 새 컬렉션 생성
+        let collection = client
+            .get_or_create_collection(collection_name, None)
+            .await?;
+        Ok(Self { collection })
+    }
+
+    pub async fn with_auth(
+        chroma_url: &str,
+        collection_name: &str,
+        auth: ChromaAuthMethod,
+    ) -> Result<Self> {
+        let client = ChromaClient::new(ChromaClientOptions {
+            url: Some(chroma_url.to_owned()),
+            auth,
+            ..Default::default()
+        })
+        .await?;
         let collection = client
             .get_or_create_collection(collection_name, None)
             .await?;
