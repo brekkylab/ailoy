@@ -3,7 +3,7 @@ use std::str::FromStr;
 use tokenizers::tokenizer::Tokenizer as HFTokenizer;
 
 use crate::{
-    cache::{Cache, CacheContents, CacheEntry, TryFromCache},
+    cache::{Cache, CacheClaim, CacheContents, TryFromCache},
     utils::BoxFuture,
 };
 
@@ -38,16 +38,19 @@ impl TryFromCache for Tokenizer {
     fn claim_files(
         _: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
+    ) -> BoxFuture<'static, Result<CacheClaim, String>> {
         let dirname = key.as_ref().replace("/", "--");
-        Box::pin(async move { Ok(vec![CacheEntry::new(dirname, "tokenizer.json")]) })
+        Box::pin(async move { Ok(CacheClaim::new([(dirname.as_str(), "tokenizer.json")])) })
     }
 
-    fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String> {
-        let Some((_, bytes)) = contents.remove_with_filename("tokenizer.json") else {
-            return Err("tokenizer.json not exists".to_owned());
-        };
-        let s = std::str::from_utf8(&bytes).map_err(|_| "Utf-8 conversion failed".to_owned())?;
-        Ok(Tokenizer::new(s))
+    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, Result<Self, String>> {
+        Box::pin(async move {
+            let Some((_, bytes)) = contents.remove_with_filename("tokenizer.json") else {
+                return Err("tokenizer.json not exists".to_owned());
+            };
+            let s =
+                std::str::from_utf8(&bytes).map_err(|_| "Utf-8 conversion failed".to_owned())?;
+            Ok(Tokenizer::new(s))
+        })
     }
 }

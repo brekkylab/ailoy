@@ -1,0 +1,20 @@
+{
+    "name": "ailoy-js-shim",
+    "type": "module",
+    "module": "./dist/index.js",
+    "scripts": {
+        "build": "rollup -c --bundleConfigAsCjs"
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.54.2",
+        "@rollup/plugin-commonjs": "^28.0.6",
+        "@rollup/plugin-terser": "^0.4.4",
+        "@rollup/plugin-typescript": "^12.1.4",
+        "@types/node": "^24.3.0",
+        "@webgpu/types": "^0.1.64",
+        "rollup": "^4.47.1",
+        "serve": "^14.2.0",
+        "tslib": "^2.8.1",
+        "typescript": "^5.8.3"
+    }
+}

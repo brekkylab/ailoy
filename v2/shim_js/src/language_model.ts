@@ -1,0 +1,427 @@
+import { FeatureSupportError, WebGPUNotAvailableError } from "./error";
+import {
+  createPolyfillWASI,
+  detectGPUDevice,
+  DLDevice,
+  Instance,
+  instantiate,
+  NDArray,
+  PackedFunc,
+  Scalar,
+  TVMObject,
+  VirtualMachine,
+} from "./tvmjs";
+
+export async function getGPUDevice(
+  requiredFeatures: GPUFeatureName[] = ["shader-f16"]
+) {
+  const gpuDetectOutput = await detectGPUDevice();
+  if (gpuDetectOutput == undefined) {
+    throw new WebGPUNotAvailableError();
+  }
+  for (const feature of requiredFeatures) {
+    if (!gpuDetectOutput.device.features.has(feature)) {
+      throw new FeatureSupportError(feature);
+    }
+  }
+  return gpuDetectOutput.device;
+}
+
+export interface NDArrayCacheEntry {
+  name: string;
+  shape: Array<number>;
+  dtype: string;
+  format: "f32-to-bf16" | "raw";
+  byteOffset: number;
+  nbytes: number;
+}
+
+export interface NDArrayShardEntry {
+  dataPath: string;
+  format: "raw-shard";
+  nbytes: number;
+  records: Array<NDArrayCacheEntry>;
+}
+
+const PAGE_SIZE = 16;
+
+class KVCache {
+  private tvm: Instance;
+  private inner: TVMObject;
+  private fKVStateClear: PackedFunc;
+  private fKVStateAddSequence: PackedFunc;
+  private fKVStateRemoveSequence: PackedFunc;
+  private fKVStateForkSequence: PackedFunc;
+  private fKVStateBeginForward: PackedFunc;
+  private fKVStateEndForward: PackedFunc;
+  private fKVStatePopn: PackedFunc;
+  private fKVCacheGetNumAvailablePages: PackedFunc;
+  private fKVCacheGetTotalSequenceLength: PackedFunc;
+
+  constructor(tvm: Instance, vm: VirtualMachine, metadata: any) {
+    this.tvm = tvm;
+
+    // Determine prefill chunk size
+    const prefillChunkSize = metadata.prefill_chunk_size;
+    const contextWindowSize = metadata.context_window_size;
+    const slidingWindowSize = metadata.sliding_window_size;
+    // const defaultPageSize = 16;
+    const defaultMaxNumSequence = 1;
+    const maxTotalSeqLen =
+      slidingWindowSize != -1 ? slidingWindowSize : contextWindowSize;
+
+    this.inner = tvm.detachFromCurrentScope(
+      vm.getFunction("create_tir_paged_kv_cache")(
+        tvm.makeShapeTuple([defaultMaxNumSequence]), // max_num_sequence
+        tvm.makeShapeTuple([maxTotalSeqLen]), // max_total_sequence_length
+        tvm.makeShapeTuple([prefillChunkSize]), // prefill_chunk_size
+        tvm.makeShapeTuple([PAGE_SIZE]), // page_size, hard coded for now
+        tvm.makeShapeTuple([slidingWindowSize != -1 ? 1 : 0])
+      )
+    );
+
+    this.fKVStateClear = tvm.detachFromCurrentScope(
+      tvm.getGlobalFunc("vm.builtin.kv_state_clear")
+    );
+    this.fKVStateAddSequence = tvm.detachFromCurrentScope(
+      tvm.getGlobalFunc("vm.builtin.kv_state_add_sequence")
+    );
+    this.fKVStateRemoveSequence = tvm.detachFromCurrentScope(
+      tvm.getGlobalFunc("vm.builtin.kv_state_remove_sequence")
+    );
+    this.fKVStateForkSequence = tvm.detachFromCurrentScope(
+      tvm.getGlobalFunc("vm.builtin.kv_state_fork_sequence")
+    );
+    this.fKVStateForkSequence = tvm.detachFromCurrentScope(
+      tvm.getGlobalFunc("vm.builtin.kv_state_fork_sequence")
+    );
+    this.fKVStateBeginForward = tvm.detachFromCurrentScope(
+      tvm.getGlobalFunc("vm.builtin.kv_state_begin_forward")
+    );
+    this.fKVStateEndForward = tvm.detachFromCurrentScope(
+      tvm.getGlobalFunc("vm.builtin.kv_state_end_forward")
+    );
+    this.fKVStatePopn = tvm.detachFromCurrentScope(
+      tvm.getGlobalFunc("vm.builtin.kv_state_popn")
+    );
+    this.fKVCacheGetNumAvailablePages = tvm.detachFromCurrentScope(
+      tvm.getGlobalFunc("vm.builtin.attention_kv_cache_get_num_available_pages")
+    );
+    this.fKVCacheGetTotalSequenceLength = tvm.detachFromCurrentScope(
+      tvm.getGlobalFunc(
+        "vm.builtin.attention_kv_cache_get_total_sequence_length"
+      )
+    );
+    this.addSequence();
+  }
+
+  clear() {
+    this.fKVStateClear(this.inner);
+    this.addSequence();
+  }
+
+  addSequence() {
+    this.fKVStateAddSequence(
+      this.inner,
+      new Scalar(0, "int") /* Sequence ID */
+    );
+  }
+
+  removeSequence() {
+    this.fKVStateRemoveSequence(
+      this.inner,
+      new Scalar(0, "int") /* Sequence ID */
+    );
+  }
+
+  beginForward(sequence_length: number) {
+    this.fKVStateBeginForward(
+      this.inner,
+      this.tvm.makeShapeTuple([0]) /* Sequence ID */,
+      this.tvm.makeShapeTuple([sequence_length])
+    );
+  }
+
+  endForward() {
+    this.fKVStateEndForward(this.inner);
+  }
+
+  popn(num_tokens: number) {
+    this.fKVStatePopn(
+      this.inner,
+      new Scalar(0, "int") /* Sequence ID */,
+      new Scalar(num_tokens, "int")
+    );
+  }
+
+  getNumAvailablePages(): number {
+    const rv = this.fKVCacheGetNumAvailablePages(this.inner);
+    return rv;
+  }
+
+  getTotalSequenceLength(): number {
+    const rv = this.fKVCacheGetTotalSequenceLength(this.inner);
+    return rv;
+  }
+
+  getCache(): TVMObject {
+    return this.inner;
+  }
+}
+
+export class LanguageModel {
+  private tvm: Instance;
+  private vm: VirtualMachine;
+  private params: TVMObject;
+  private kvcache: KVCache;
+  private prefillChunkSize: number;
+  private history: number[] = [];
+
+  private fEmbed: PackedFunc;
+  private fPrefill: PackedFunc;
+  private fDecode: PackedFunc;
+  private fSampleTopPfromLogits: PackedFunc;
+  private device: DLDevice;
+  private config: {
+    temperature: number;
+    top_p: number;
+  };
+
+  constructor(
+    tvm: Instance,
+    device: DLDevice,
+    vm: VirtualMachine,
+    params: TVMObject,
+    kvcache: KVCache,
+    prefillChunkSize: number
+  ) {
+    this.tvm = tvm;
+    this.vm = vm;
+    this.params = params;
+    this.kvcache = kvcache;
+    this.prefillChunkSize = prefillChunkSize;
+
+    this.fEmbed = tvm.detachFromCurrentScope(vm.getFunction("embed"));
+    this.fPrefill = tvm.detachFromCurrentScope(vm.getFunction("prefill"));
+    this.fDecode = tvm.detachFromCurrentScope(vm.getFunction("decode"));
+    this.fSampleTopPfromLogits = tvm.detachFromCurrentScope(
+      tvm.getGlobalFunc("vm.builtin.sample_top_p_from_logits")
+    );
+
+    this.device = device;
+    this.config = {
+      temperature: 0.6,
+      top_p: 0.9,
+    };
+  }
+
+  private clear() {
+    this.kvcache.clear();
+    this.history = [];
+  }
+
+  async prefill(tokens: Uint32Array) {
+    if (!tokens || tokens.length === 0) {
+      throw new Error("Token must not be empty");
+    }
+
+    this.tvm.beginScope();
+
+    // Make sure that kv-cache and history is sync
+    if (this.kvcache.getTotalSequenceLength() != this.history.length)
+      this.clear();
+
+    // The longest common prefix (LCP) between inputs & previous conversations
+    let lcp_index = 0;
+    while (lcp_index < this.history.length && lcp_index < tokens.length) {
+      if (this.history[lcp_index] != tokens[lcp_index]) break;
+      ++lcp_index;
+    }
+
+    // Rewind the head of kv-cache to the LCP
+    if (lcp_index < this.history.length) {
+      this.kvcache.popn(this.history.length - lcp_index);
+    }
+
+    // Tokens to be added (wihout common prefixes)
+    const new_tokens = tokens.slice(lcp_index);
+    if (new_tokens.length == 0) return;
+
+    // Calculate remaining space in KV cache
+    if (new_tokens.length >= this.kvcache.getNumAvailablePages() * PAGE_SIZE)
+      throw Error("Context length limit exceed");
+
+    // Chunk size to be split
+    const prefillChunkSize = this.prefillChunkSize;
+    for (let i = 0; i < new_tokens.length; i += prefillChunkSize) {
+      // Prefill i to j
+      const j = Math.min(i + prefillChunkSize, new_tokens.length);
+      const length = j - i;
+      const current_new_tokens = new Int32Array(
+        new_tokens.buffer,
+        new_tokens.byteOffset + i * 4,
+        length
+      );
+
+      // Input NDArray<int32>[length]
+      const input_cpu = this.tvm.withNewScope(() => {
+        return this.tvm.detachFromCurrentScope(
+          this.tvm.empty([length], "int32", this.tvm.cpu())
+        );
+      });
+      input_cpu.copyFrom(current_new_tokens);
+      const input = this.tvm.withNewScope(() => {
+        return this.tvm.detachFromCurrentScope(
+          this.tvm.empty([length], "int32", this.device)
+        );
+      });
+      // Copy from new_tokens[i..j) – reinterpret as Int32Array
+      input.copyFrom(input_cpu);
+      await this.device.sync();
+
+      // Embedding of the input: [T, D]
+      const embedding = this.fEmbed(input, this.params) as NDArray;
+
+      // Reshape to [1, T, D]
+      const embedding_reshaped = embedding.view([
+        1,
+        embedding.shape[0],
+        embedding.shape[1],
+      ]);
+
+      // Forward prefill
+      this.kvcache.beginForward(length);
+      this.fPrefill(embedding_reshaped, this.kvcache.getCache(), this.params);
+      this.kvcache.endForward();
+    }
+
+    // Update history
+    this.history = Array.from(tokens);
+
+    this.tvm.endScope();
+  }
+
+  async decode(last_token: number): Promise<Float32Array> {
+    if (this.kvcache.getNumAvailablePages() < 1) {
+      throw new Error("Context length limit exceed");
+    }
+
+    this.tvm.beginScope();
+
+    // Input NDArray<int32>[1]
+    const input = this.tvm.empty([1], "int32", this.device);
+    const buf = new Int32Array(1);
+    buf[0] = last_token;
+    input.copyFrom(buf);
+
+    // Embed
+    const embed = this.fEmbed(input, this.params) as NDArray;
+    const embReshaped = embed.view([1, 1, embed.shape[1]]);
+
+    // In decode, the sequence length of new tokens are always 1
+    this.kvcache.beginForward(1);
+    // Forward decode (output: [logits, kv_caches])
+    const out = this.fDecode(embReshaped, this.kvcache.getCache(), this.params);
+    // Extract logits (1 x seq_len x vocab_size)
+    // Note that the seq_len is the ID of the seqence, used for decoding multiple
+    // context in parallel. In our cases, it always set to 1.
+    const logits: NDArray = this.tvm.detachFromCurrentScope(out.get(0));
+    const logitsCPU = this.tvm.detachFromCurrentScope(
+      this.tvm.empty(logits.shape, logits.dtype, this.tvm.cpu())
+    );
+    logitsCPU.copyFrom(logits);
+    await this.device.sync();
+    const rv = logitsCPU.toArray() as Float32Array;
+    logits.dispose();
+    logitsCPU.dispose();
+    this.kvcache.endForward();
+    this.tvm.endScope();
+    return rv;
+  }
+
+  sample(logits: Float32Array): number {
+    this.tvm.beginScope();
+    const logitsNDArray = this.tvm.empty(
+      [logits.length],
+      "float32",
+      this.tvm.cpu()
+    );
+    logitsNDArray.copyFrom(logits);
+    const sampled_token = this.fSampleTopPfromLogits(
+      logitsNDArray,
+      new Scalar(this.config.temperature, "int"),
+      new Scalar(this.config.top_p, "int"),
+      new Scalar(Math.random(), "int")
+    );
+    this.tvm.endScope();
+    return sampled_token;
+  }
+}
+
+export async function init(
+  cache_contents: Record<string, ArrayBuffer>
+): Promise<LanguageModel> {
+  // Load WASM
+  const tvmBytes = cache_contents["rt.wasm"];
+  delete cache_contents["rt.wasm"];
+  const tvm = await instantiate(tvmBytes, createPolyfillWASI(), undefined);
+
+  // Initialize GPU
+  const gpu: GPUDevice = await getGPUDevice();
+  tvm.initWebGPU(gpu);
+  const device = tvm.webgpu(0);
+
+  tvm.beginScope();
+
+  // Load ndarray cache
+  const ndarray_cache = JSON.parse(
+    new TextDecoder().decode(cache_contents["ndarray-cache.json"])
+  );
+  delete cache_contents["ndarray-cache.json"];
+  const entries: Array<NDArrayShardEntry> = ndarray_cache.records;
+
+  // Register parameters
+  for (const entry of entries) {
+    const buffer = cache_contents[entry.dataPath];
+    delete cache_contents[entry.dataPath];
+    for (const record of entry.records) {
+      const bufferPart = buffer.slice(
+        record.byteOffset,
+        record.byteOffset + record.nbytes
+      );
+      await tvm.ndarrayCacheUpdateBuffer(device, record, bufferPart);
+    }
+  }
+
+  // Load VM
+  const vm = tvm.detachFromCurrentScope(tvm.createVirtualMachine(device));
+
+  // Load parameters
+  const fgetMetadata = vm.getFunction("_metadata");
+  const metadataStr = fgetMetadata().toString();
+  const metadata = JSON.parse(metadataStr);
+
+  const prefillChunkSize = metadata.prefill_chunk_size;
+
+  const paramNames: string[] = [];
+  metadata.params.forEach((param: any) => {
+    paramNames.push(param.name);
+  });
+  const params = tvm.detachFromCurrentScope(
+    tvm.getParamsFromCacheByName(paramNames)
+  );
+
+  const kvCache = new KVCache(tvm, vm, metadata);
+
+  // Return
+  const rv = new LanguageModel(
+    tvm,
+    device,
+    vm,
+    params,
+    kvCache,
+    prefillChunkSize
+  );
+  tvm.endScope();
+  return rv;
+}

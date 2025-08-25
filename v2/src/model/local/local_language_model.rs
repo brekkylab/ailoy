@@ -1,10 +1,11 @@
-use std::sync::Arc;
+use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use async_stream::try_stream;
 use futures::stream::Stream;
 
 use crate::{
-    cache::{Cache, CacheContents, CacheEntry, CacheProgress, TryFromCache},
+    cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
+    dyn_maybe_send,
     model::{
         LanguageModel,
         local::{ChatTemplate, Inferencer, Tokenizer},
@@ -49,6 +50,9 @@ impl LanguageModel for LocalLanguageModel {
         let strm = try_stream! {
             let prompt = self.chat_template.apply(msgs, tools, true)?;
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
+            #[cfg(target_family = "wasm")]
+            self.inferencer.lock().prefill(&input_tokens).await;
+            #[cfg(not(target_family = "wasm"))]
             self.inferencer.lock().prefill(&input_tokens);
             let mut last_token = *input_tokens.last().unwrap();
             let mut agg_tokens = Vec::<u32>::new();
@@ -64,6 +68,9 @@ impl LanguageModel for LocalLanguageModel {
                 if count > 16384 {
                     Err("Too long assistant message. It may be infinite loop".to_owned())?;
                 }
+                #[cfg(target_family = "wasm")]
+                let new_token = self.inferencer.lock().decode(last_token).await;
+                #[cfg(not(target_family = "wasm"))]
                 let new_token = self.inferencer.lock().decode(last_token);
                 agg_tokens.push(new_token);
                 last_token = new_token;
@@ -112,35 +119,105 @@ impl TryFromCache for LocalLanguageModel {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
+    ) -> BoxFuture<'static, Result<CacheClaim, String>> {
         let key = key.as_ref().to_owned();
         Box::pin(async move {
+            let mut chat_template = ChatTemplate::claim_files(cache.clone(), &key).await?;
+            let mut tokenizer = Tokenizer::claim_files(cache.clone(), &key).await?;
+            let mut inferncer = Inferencer::claim_files(cache.clone(), &key).await?;
+            let ctx: Box<dyn_maybe_send!(Any)> = Box::new([
+                chat_template
+                    .entries
+                    .iter()
+                    .map(|v| v.clone())
+                    .collect::<Vec<_>>(),
+                tokenizer
+                    .entries
+                    .iter()
+                    .map(|v| v.clone())
+                    .collect::<Vec<_>>(),
+                inferncer
+                    .entries
+                    .iter()
+                    .map(|v| v.clone())
+                    .collect::<Vec<_>>(),
+            ]);
             let mut rv = Vec::new();
-            rv.append(&mut ChatTemplate::claim_files(cache.clone(), &key).await?);
-            rv.append(&mut Tokenizer::claim_files(cache.clone(), &key).await?);
-            rv.append(&mut Inferencer::claim_files(cache.clone(), &key).await?);
-            Ok(rv)
+            rv.append(&mut chat_template.entries);
+            rv.append(&mut tokenizer.entries);
+            rv.append(&mut inferncer.entries);
+            Ok(CacheClaim::with_ctx(rv, ctx))
         })
     }
 
-    fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String>
+    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, Result<Self, String>>
     where
         Self: Sized,
     {
-        let chat_template = ChatTemplate::try_from_contents(contents)?;
-        let tokenizer = Tokenizer::try_from_contents(contents)?;
-        let inferencer = Inferencer::try_from_contents(contents)?;
-        Ok(LocalLanguageModel {
-            chat_template,
-            tokenizer,
-            inferencer: Mutex::new(inferencer),
+        Box::pin(async move {
+            let (ct_entries, tok_entries, inf_entries) = match contents.ctx.take() {
+                Some(ctx_any) => match ctx_any.downcast::<[Vec<CacheEntry>; 3]>() {
+                    Ok(boxed) => {
+                        let [a, b, c] = *boxed;
+                        (a, b, c)
+                    }
+                    Err(_) => return Err("contents.ctx is not [Vec<CacheEntry>; 3]".into()),
+                },
+                None => return Err("contents.ctx is None".into()),
+            };
+
+            let chat_template = {
+                let mut files = BTreeMap::new();
+                for k in ct_entries {
+                    let v = contents.entries.remove(&k).unwrap();
+                    files.insert(k, v);
+                }
+                let contents = CacheContents {
+                    root: contents.root.clone(),
+                    entries: files,
+                    ctx: None,
+                };
+                ChatTemplate::try_from_contents(contents).await?
+            };
+            let tokenizer = {
+                let mut files = BTreeMap::new();
+                for k in tok_entries {
+                    let v = contents.entries.remove(&k).unwrap();
+                    files.insert(k, v);
+                }
+                let contents = CacheContents {
+                    root: contents.root.clone(),
+                    entries: files,
+                    ctx: None,
+                };
+                Tokenizer::try_from_contents(contents).await?
+            };
+            let inferencer = {
+                let mut files = BTreeMap::new();
+                for k in inf_entries {
+                    let v = contents.entries.remove(&k).unwrap();
+                    files.insert(k, v);
+                }
+                let contents = CacheContents {
+                    root: contents.root.clone(),
+                    entries: files,
+                    ctx: None,
+                };
+                Inferencer::try_from_contents(contents).await?
+            };
+
+            Ok(LocalLanguageModel {
+                chat_template,
+                tokenizer,
+                inferencer: Mutex::new(inferencer),
+            })
         })
     }
 }
 
+#[cfg(any(target_family = "unix", target_family = "windows"))]
 #[cfg(test)]
 mod tests {
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_simple_chat() {
         use futures::StreamExt;
@@ -189,7 +266,6 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_call() {
         use futures::StreamExt;
@@ -254,7 +330,6 @@ mod tests {
         println!("Tool call: {:?}", tc);
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_result_from_tool_call() {
         use futures::StreamExt;
@@ -317,5 +392,63 @@ mod tests {
         }
         let assistant_msg = assistant_msg.unwrap();
         println!("Assistant message: {:?}", assistant_msg);
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+#[cfg(test)]
+mod tests {
+    use crate::value::MessageAggregator;
+
+    use super::*;
+    use futures::StreamExt as _;
+    use wasm_bindgen_test::*;
+
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    #[wasm_bindgen_test]
+    async fn infer_simple_chat() {
+        let cache = crate::cache::Cache::new();
+        let key = "Qwen/Qwen3-0.6B";
+        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
+        let mut model: Option<LocalLanguageModel> = None;
+
+        while let Some(progress) = model_strm.next().await {
+            let mut progress = progress.unwrap();
+            web_sys::console::log_1(
+                &format!(
+                    "{} ({} / {})",
+                    progress.comment, progress.current_task, progress.total_task
+                )
+                .into(),
+            );
+            if progress.current_task == progress.total_task {
+                model = progress.result.take();
+            }
+        }
+        let model = Arc::new(model.unwrap());
+        model.as_ref().enable_reasoning();
+        let msgs = vec![
+            Message::with_role(Role::System)
+                .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
+            Message::with_role(Role::User)
+                .with_contents(vec![Part::Text("Hi what's your name?".to_owned())]),
+            // Message::with_role(Role::Assistant)
+            //     .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
+            //     .with_contents(vec![Part::Text(
+            //         "Hi! I'm an AI assistant. How can I assist you today? 😊".to_owned(),
+            //     )]),
+            // Message::with_role(Role::User)
+            //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
+        ];
+        let mut agg = MessageAggregator::new();
+        let mut strm = model.run(msgs, Vec::new());
+        while let Some(out) = strm.next().await {
+            let out = out.unwrap();
+            web_sys::console::log_1(&format!("{:?}", out).into());
+            if let Some(msg) = agg.update(out) {
+                web_sys::console::log_1(&format!("{:?}", msg).into());
+            }
+        }
     }
 }
