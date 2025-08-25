@@ -14,7 +14,7 @@ anyhow = "1.0.99"
 async-channel = "2.5"
 async-stream = "0.3"
 async-trait = "0.1.89"
-chromadb = "2.3.0"
+chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "master" }
 futures = "0.3.31"
 indexmap = { version = "2", features = ["serde"] }
 log = "0.4.27"
@@ -35,7 +35,6 @@ sha1 = "0.10"
 strum = { version = "0.27", features = ["derive"] }
 thiserror = "2.0.15"
 url = "2.5.4"
-uuid = { version = "1.18.0", features = ["v4"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
@@ -43,6 +42,7 @@ js-sys = "0.3"
 sse-stream = "0.2"
 tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt", "sync"] }
+uuid = { version = "1.18.0", features = ["v4", "js"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
@@ -72,6 +72,7 @@ parking_lot = "0.12.4"
 rmcp = { version = "0.5.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client"] }
 tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+uuid = { version = "1.18.0", features = ["v4"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
