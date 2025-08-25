@@ -379,49 +379,49 @@ pub async fn mcp_tools_from_streamable_http(
         .collect())
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use wasm_bindgen_test::*;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::*;
 
-//     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-//     #[wasm_bindgen_test]
-//     async fn test_streamable_http_client() -> anyhow::Result<()> {
-//         let mut client = StreamableHttpClient::new("http://localhost:8123/mcp", None, true);
-//         client.initialize().await?;
+    #[wasm_bindgen_test]
+    async fn test_streamable_http_client() -> anyhow::Result<()> {
+        let mut client = StreamableHttpClient::new("http://localhost:8123/mcp", None, true);
+        client.initialize().await?;
 
-//         let list_tools = client.list_tools().await?;
-//         web_sys::console::log_1(&format!("list of tools: {:?}", list_tools).into());
+        let list_tools = client.list_tools().await?;
+        web_sys::console::log_1(&format!("list of tools: {:?}", list_tools).into());
 
-//         let call_tool = client
-//             .call_tool(CallToolRequestParam {
-//                 name: "get-forecast".into(),
-//                 arguments: Some(
-//                     serde_json::json!({"latitude": 32.7767, "longitude": -96.797})
-//                         .as_object()
-//                         .unwrap()
-//                         .clone(),
-//                 ),
-//             })
-//             .await
-//             .unwrap();
-//         web_sys::console::log_1(&format!("call tool result: {:?}", call_tool).into());
+        let call_tool = client
+            .call_tool(CallToolRequestParam {
+                name: "get-forecast".into(),
+                arguments: Some(
+                    serde_json::json!({"latitude": 32.7767, "longitude": -96.797})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            })
+            .await
+            .unwrap();
+        web_sys::console::log_1(&format!("call tool result: {:?}", call_tool).into());
 
-//         Ok(())
-//     }
+        Ok(())
+    }
 
-//     #[wasm_bindgen_test]
-//     async fn test_mcp_tools_from_streamable_http() -> anyhow::Result<()> {
-//         let tools = mcp_tools_from_streamable_http("http://localhost:8123/mcp", "test").await?;
-//         let tool = tools[1].clone();
+    #[wasm_bindgen_test]
+    async fn test_mcp_tools_from_streamable_http() -> anyhow::Result<()> {
+        let tools = mcp_tools_from_streamable_http("http://localhost:8123/mcp", "test").await?;
+        let tool = tools[1].clone();
 
-//         let args = serde_json::from_value::<ToolCallArg>(
-//             serde_json::json!({"latitude": 32.7767, "longitude": -96.797}),
-//         )?;
-//         let parts = tool.run(args).await.unwrap();
-//         web_sys::console::log_1(&format!("tool call result: {:?}", parts).into());
+        let args = serde_json::from_value::<ToolCallArg>(
+            serde_json::json!({"latitude": 32.7767, "longitude": -96.797}),
+        )?;
+        let parts = tool.run(args).await.unwrap();
+        web_sys::console::log_1(&format!("tool call result: {:?}", parts).into());
 
-//         Ok(())
-//     }
-// }
+        Ok(())
+    }
+}
