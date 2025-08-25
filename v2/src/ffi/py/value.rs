@@ -35,15 +35,16 @@ impl PyPart {
     /// Examples:
     /// - Part(part_type="text", text="hello")
     /// - Part(part_type="image", url="https://example.com/cat.png")
-    /// - Part(part_type="image", data="<base64>")  # 'base64=' alias also accepted
+    /// - Part(part_type="image", data="<base64>", mime_type="image/jpeg")  # 'base64=' alias also accepted
     /// - Part(part_type="function", function='{"name":"foo","arguments":"{}"}')
     #[new]
-    #[pyo3(signature = (part_type, *, text=None, url=None, data=None, function=None, id=None, name=None, arguments=None))]
+    #[pyo3(signature = (part_type, *, text=None, url=None, data=None, mime_type=None, function=None, id=None, name=None, arguments=None))]
     fn new(
         part_type: &str,
         text: Option<String>,
         url: Option<String>,
         data: Option<String>,
+        mime_type: Option<String>,
         function: Option<String>,
         id: Option<String>,
         name: Option<String>,
@@ -69,10 +70,14 @@ impl PyPart {
             "image" => {
                 if let Some(u) = url {
                     Part::ImageURL(u)
-                } else if let Some(b) = data {
-                    Part::ImageData(b)
+                } else if let Some(data) = data
+                    && let Some(mime_type) = mime_type
+                {
+                    Part::ImageData(data, mime_type)
                 } else {
-                    return Err(PyTypeError::new_err("image needs url= or data="));
+                    return Err(PyTypeError::new_err(
+                        "image needs url= or data= with mime_type=",
+                    ));
                 }
             }
             other => return Err(PyValueError::new_err(format!("unknown type: {other}"))),
@@ -86,7 +91,7 @@ impl PyPart {
             Part::Text(_) => "text",
             Part::FunctionString(_) => "function",
             Part::Function { .. } => "function",
-            Part::ImageURL(_) | Part::ImageData(_) => "image",
+            Part::ImageURL(_) | Part::ImageData(_, _) => "image",
             // Part::AudioURL(_) | Part::AudioData(_) => "audio",
             // Part::Audio { .. } => "audio",
         }
@@ -119,7 +124,15 @@ impl PyPart {
     #[getter]
     fn data(&self) -> Option<&str> {
         match &self.inner {
-            Part::ImageData(b) => Some(b.as_str()),
+            Part::ImageData(b, _) => Some(b.as_str()),
+            _ => None,
+        }
+    }
+
+    #[getter]
+    fn mime_type(&self) -> Option<&str> {
+        match &self.inner {
+            Part::ImageData(_, mime_type) => Some(mime_type.as_str()),
             _ => None,
         }
     }
