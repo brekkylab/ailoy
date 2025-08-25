@@ -125,7 +125,7 @@ impl LanguageModel for GeminiLanguageModel {
             match &msg.role {
                 Some(role) => match role {
                     Role::System => {
-                        content = content.with_system_prompt(msg.contents[0].as_str().unwrap());
+                        content = content.with_system_prompt(msg.contents[0].to_string().unwrap());
                     }
                     Role::User => {
                         let part = msg.contents[0].clone();
@@ -182,7 +182,7 @@ impl LanguageModel for GeminiLanguageModel {
                     Role::Tool(tool_name, _) => {
                         content = content.with_function_response(
                             tool_name,
-                            serde_json::from_str(&msg.contents[0].as_str().unwrap()).unwrap(),
+                            serde_json::from_str(&msg.contents[0].to_string().unwrap()).unwrap(),
                         );
                     }
                 },

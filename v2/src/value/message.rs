@@ -313,7 +313,7 @@ impl Display for StyledMessage {
                 f.write_fmt(format_args!(
                     "\"{}\": \"{}\"",
                     self.style.contents_field,
-                    self.data.contents[0].as_str().unwrap()
+                    self.data.contents[0].to_string().unwrap()
                 ))?;
             } else {
                 f.write_fmt(format_args!(

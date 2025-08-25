@@ -248,7 +248,7 @@ impl LanguageModel for AnthropicLanguageModel {
                     Role::System => {
                         // Anthropic does not consider system message as a general message.
                         // It's rather considered as one of the generation config.
-                        let system_message = msg.contents[0].as_str().unwrap();
+                        let system_message = msg.contents[0].to_string().unwrap();
                         params.system = Some(system_message.to_string());
                         continue;
                     }
@@ -395,7 +395,7 @@ impl LanguageModel for AnthropicLanguageModel {
                 }
             }
         }
-        if let Some(thinking) = &self.config.thinking
+        if let Some(thinking) = self.config.thinking.clone()
             && thinking.enabled
         {
             params.thinking = Some(AnthropicThinking {
