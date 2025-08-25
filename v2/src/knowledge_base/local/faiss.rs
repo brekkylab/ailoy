@@ -212,7 +212,10 @@ mod tests {
         let mut store = setup_test_store().await?;
         let test_embedding = vec![1.1, 2.2, 3.3];
         let test_document = "This is a test document.".to_owned();
-        let test_metadata = json!({"source": "test_add_and_get_vector"});
+        let test_metadata = json!({"source": "test_add_and_get_vector"})
+            .as_object()
+            .unwrap()
+            .clone();
 
         let input = AddInput {
             embedding: test_embedding.clone(),
@@ -243,12 +246,12 @@ mod tests {
                 AddInput {
                     embedding: vec![1.0, 1.0, 1.0],
                     document: "doc1".to_owned(),
-                    metadata: Some(json!({"id": 1})),
+                    metadata: Some(json!({"id": 1}).as_object().unwrap().clone()),
                 },
                 AddInput {
                     embedding: vec![2.0, 2.0, 2.0],
                     document: "doc2".to_owned(),
-                    metadata: Some(json!({"id": 2})),
+                    metadata: Some(json!({"id": 2}).as_object().unwrap().clone()),
                 },
             ])
             .await?;

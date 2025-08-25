@@ -1,11 +1,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::Value as Json;
+use serde_json::{Map, Value as Json};
 
 use crate::utils::{MaybeSend, MaybeSync};
 
 pub type Embedding = Vec<f32>;
-pub type Metadata = Json;
+pub type Metadata = Map<String, Json>;
 
 #[derive(Debug)]
 pub struct AddInput {

@@ -49,11 +49,7 @@ impl VectorStore for ChromaStore {
     async fn add_vector(&mut self, input: AddInput) -> Result<String> {
         let id = Uuid::new_v4().to_string();
 
-        let metadatas = match &input.metadata {
-            Some(Json::Object(map)) => Some(vec![map.clone()]),
-            Some(_) => bail!("Metadata must be a JSON object."),
-            None => None,
-        };
+        let metadatas = input.metadata.as_ref().map(|map| vec![map.clone()]);
 
         let entry = CollectionEntries {
             ids: vec![id.as_ref()],
@@ -77,7 +73,7 @@ impl VectorStore for ChromaStore {
                     inputs
                         .iter()
                         .map(|i| match &i.metadata {
-                            Some(Json::Object(map)) => map.clone(),
+                            Some(map) => map.clone(),
                             _ => Map::new(),
                         })
                         .collect(),
@@ -132,10 +128,7 @@ impl VectorStore for ChromaStore {
                 .map(|(id, document, metadata, embedding)| GetResult {
                     id,
                     document,
-                    metadata: match metadata {
-                        Some(metadata) => Some(Json::Object(metadata)),
-                        None => None,
-                    },
+                    metadata,
                     embedding,
                 })
                 .collect();
@@ -166,15 +159,14 @@ impl VectorStore for ChromaStore {
             for i in 0..ids_vec.len() {
                 let id = ids_vec[i].clone();
                 let distance = distances_vec[i];
-                let document: String = documents
+                let document = documents
                     .as_ref()
                     .and_then(|d| d.get(0)?.get(i).cloned())
                     .unwrap_or_default();
-                let metadata: Option<Json> = metadatas
+                let metadata = metadatas
                     .as_ref()
                     .and_then(|m| m.get(0)?.get(i))
-                    .and_then(|inner_opt| inner_opt.as_ref())
-                    .map(|map_ref| Json::Object(map_ref.clone()));
+                    .and_then(|inner_opt| inner_opt.clone());
                 out.push(RetrieveResult {
                     id,
                     document,
@@ -238,7 +230,10 @@ mod tests {
         let mut store = setup_test_store().await?;
         let test_embedding = vec![1.1, 2.2, 3.3];
         let test_document = "This is a test document.".to_owned();
-        let test_metadata = json!({"source": "test_add_and_get_vector"});
+        let test_metadata = json!({"source": "test_add_and_get_vector"})
+            .as_object()
+            .unwrap()
+            .clone();
 
         let input = AddInput {
             embedding: test_embedding.clone(),
@@ -269,12 +264,12 @@ mod tests {
                 AddInput {
                     embedding: vec![1.0, 1.0, 1.0],
                     document: "doc1".to_owned(),
-                    metadata: Some(json!({"id": 1})),
+                    metadata: Some(json!({"id": 1}).as_object().unwrap().clone()),
                 },
                 AddInput {
                     embedding: vec![2.0, 2.0, 2.0],
                     document: "doc2".to_owned(),
-                    metadata: Some(json!({"id": 2})),
+                    metadata: Some(json!({"id": 2}).as_object().unwrap().clone()),
                 },
             ])
             .await?;
