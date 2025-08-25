@@ -324,18 +324,14 @@ mod tests {
             msgs.push(tool_result_msg);
 
             let mut strm = gemini.run(msgs, tools);
-            let mut assistant_msg: Option<Message> = None;
             while let Some(delta_opt) = strm.next().await {
                 let delta = delta_opt.unwrap();
                 log::debug(format!("{:?}", delta).as_str());
                 if let Some(msg) = agg.update(delta) {
-                    log::debug(format!("{:?}", msg).as_str());
-                    assistant_msg = Some(msg);
+                    // Final message shuold say something like "Dubai is 38.5°C"
+                    log::info(format!("{:?}", msg).as_str());
                 }
             }
-            // Final message shuold say something like "Dubai is 38.5°C"
-            let assistant_msg = assistant_msg.unwrap();
-            log::debug(format!("Final Answer: {:?}", assistant_msg).as_str());
         }
     }
 
@@ -369,7 +365,7 @@ mod tests {
                 let delta = delta_opt.unwrap();
                 log::debug(format!("{:?}", delta));
                 if let Some(msg) = agg.update(delta) {
-                    log::debug(format!("{:?}", msg));
+                    log::info(format!("{:?}", msg));
                 }
             }
         }
