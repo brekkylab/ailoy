@@ -1,5 +1,5 @@
 use anyhow::Result;
-use async_trait::async_trait;
+use crate::async_trait;
 use serde_json::{Map, Value as Json};
 
 use crate::utils::{MaybeSend, MaybeSync};
@@ -30,20 +30,21 @@ pub struct RetrieveResult {
     pub distance: f32,
 }
 
-#[async_trait]
-pub trait VectorStore: MaybeSend + MaybeSync {
-    async fn add_vector(&mut self, input: AddInput) -> Result<String>;
-    async fn add_vectors(&mut self, inputs: Vec<AddInput>) -> Result<Vec<String>>;
-    async fn get_by_id(&self, id: &str) -> Result<Option<GetResult>>;
-    async fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<GetResult>>;
-    async fn retrieve(
-        &self,
-        query_embedding: Embedding,
-        top_k: usize,
-    ) -> Result<Vec<RetrieveResult>>;
-    async fn remove_vector(&mut self, id: &str) -> Result<()>;
-    async fn remove_vectors(&mut self, ids: &[&str]) -> Result<()>;
-    async fn clear(&mut self) -> Result<()>;
+async_trait! {
+    pub trait VectorStore: MaybeSend + MaybeSync {
+        async fn add_vector(&mut self, input: AddInput) -> Result<String>;
+        async fn add_vectors(&mut self, inputs: Vec<AddInput>) -> Result<Vec<String>>;
+        async fn get_by_id(&self, id: &str) -> Result<Option<GetResult>>;
+        async fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<GetResult>>;
+        async fn retrieve(
+            &self,
+            query_embedding: Embedding,
+            top_k: usize,
+        ) -> Result<Vec<RetrieveResult>>;
+        async fn remove_vector(&mut self, id: &str) -> Result<()>;
+        async fn remove_vectors(&mut self, ids: &[&str]) -> Result<()>;
+        async fn clear(&mut self) -> Result<()>;
 
-    async fn count(&self) -> Result<usize>;
+        async fn count(&self) -> Result<usize>;
+    }
 }
