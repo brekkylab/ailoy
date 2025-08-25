@@ -139,5 +139,8 @@
     "rust-analyzer.cargo.buildScripts.enable": true,
     "rust-analyzer.cargo.features": [],
     // "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
-    "rust-analyzer.procMacro.enable": true
+    "rust-analyzer.procMacro.enable": true,
+    "rust-analyzer.runnables.extraEnv": {
+        "RUST_LOG": "debug"
+    }
 }
