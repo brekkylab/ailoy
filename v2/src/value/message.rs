@@ -22,7 +22,7 @@ pub enum Role {
     Assistant,
     /// Outputs produced by external tools/functions, typically in
     /// response to an assistant tool call (and often correlated via `tool_call_id`).
-    Tool,
+    Tool(String),
 }
 
 /// Represents a complete chat message composed of multiple parts (multi-modal).

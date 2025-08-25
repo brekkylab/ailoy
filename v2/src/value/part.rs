@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 
 use serde::{
@@ -59,11 +60,11 @@ pub enum Part {
     /// ```
     ImageURL(String),
 
-    /// Inline base64-encoded image bytes (no decoding/validation is performed).
+    /// Inline base64-encoded image bytes with MIME type (no decoding/validation is performed).
     /// ```json
     /// { "type": "image", "data": "<base64>" }
     /// ```
-    ImageData(String),
+    ImageData(String, String),
 }
 
 impl Part {
@@ -91,8 +92,8 @@ impl Part {
         Self::ImageURL(url.into())
     }
 
-    pub fn new_image_data(data: impl Into<String>) -> Self {
-        Self::ImageData(data.into())
+    pub fn new_image_data(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        Self::ImageData(data.into(), mime_type.into())
     }
 
     /// Merges adjacent parts of the **same variant** in place:
@@ -151,22 +152,14 @@ impl Part {
         }
     }
 
-    pub fn as_str(&self) -> Option<&str> {
+    pub fn as_str(&self) -> Option<Cow<str>> {
         match self {
-            Part::Text(str) => Some(str.as_str()),
-            Part::FunctionString(str) => Some(str.as_str()),
-            Part::ImageURL(str) => Some(str.as_str()),
-            Part::ImageData(str) => Some(str.as_str()),
-            _ => None,
-        }
-    }
-
-    pub fn as_mut_string(&mut self) -> Option<&mut String> {
-        match self {
-            Part::Text(str) => Some(str),
-            Part::FunctionString(str) => Some(str),
-            Part::ImageURL(str) => Some(str),
-            Part::ImageData(str) => Some(str),
+            Part::Text(str) => Some(Cow::Borrowed(str)),
+            Part::FunctionString(str) => Some(Cow::Borrowed(str)),
+            Part::ImageURL(str) => Some(Cow::Borrowed(str)),
+            Part::ImageData(data, mime_type) => {
+                Some(Cow::Owned(format!("data:{};base64,{}", mime_type, data)))
+            }
             _ => None,
         }
     }
@@ -439,9 +432,9 @@ impl StyledPart {
         }
     }
 
-    pub fn new_image_data(data: impl Into<String>) -> Self {
+    pub fn new_image_data(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
         Self {
-            data: Part::new_image_data(data),
+            data: Part::new_image_data(data, mime_type),
             style: PartStyle::default(),
         }
     }
@@ -492,10 +485,11 @@ impl fmt::Display for StyledPart {
                 self.style.image_url_field,
                 url
             ))?,
-            Part::ImageData(data) => f.write_fmt(format_args!(
-                "Part {{\"type\": \"{}\", \"{}\"=({} bytes)}}",
+            Part::ImageData(data, mime_type) => f.write_fmt(format_args!(
+                "Part {{\"type\": \"{}\", \"{}\"=({}, {} bytes)}}",
                 self.style.image_data_type,
                 self.style.image_data_field,
+                mime_type,
                 data.len()
             ))?,
         };
@@ -618,9 +612,9 @@ impl Serialize for StyledPart {
                 map.serialize_entry("type", &self.style.image_url_type)?;
                 map.serialize_entry(&self.style.image_url_field, url.as_str())?;
             }
-            Part::ImageData(encoded) => {
+            Part::ImageData(..) => {
                 map.serialize_entry("type", &self.style.image_data_type)?;
-                map.serialize_entry(&self.style.image_data_field, encoded.as_str())?;
+                map.serialize_entry(&self.style.image_data_field, &self.data.as_str())?;
             }
         };
         map.end()
@@ -637,6 +631,28 @@ impl<'de> Deserialize<'de> for StyledPart {
 }
 
 struct PartVisitor;
+
+impl PartVisitor {
+    fn parse_base64_data_url(&self, data_url: &str) -> Option<(String, String)> {
+        let parts: Vec<&str> = data_url.splitn(2, ',').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+
+        let header = parts[0];
+        let data = parts[1];
+
+        // Check if header starts with "data:" and ends with ";base64"
+        if !header.starts_with("data:") || !header.ends_with(";base64") {
+            return None;
+        }
+
+        // Extract mime type (between "data:" and ";base64")
+        let mime_type = &header[5..header.len() - 7]; // Remove "data:" and ";base64"
+
+        Some((mime_type.to_string(), data.to_string()))
+    }
+}
 
 impl<'de> de::Visitor<'de> for PartVisitor {
     type Value = StyledPart;
@@ -776,7 +792,11 @@ impl<'de> de::Visitor<'de> for PartVisitor {
             {
                 style.image_url_type = ty;
                 style.image_url_field = k;
-                Ok(StyledPart::new_image_data(v).with_style(style))
+                if let Some((mime_type, base64)) = self.parse_base64_data_url(&v) {
+                    Ok(StyledPart::new_image_data(base64, mime_type).with_style(style))
+                } else {
+                    Err(de::Error::custom("Invalid base64 data url"))
+                }
             }
             (Some(ty), Some((k, v)), _, _) => Err(de::Error::custom(format!(
                 "Invalid Part format(type: {}, {}: {})",

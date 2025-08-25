@@ -122,9 +122,9 @@ impl Agent {
                         };
                         let tool = tools.iter().find(|v| v.get_description().get_name() == tc.name).unwrap().clone();
                         let resp = tool.run(tc.arguments).await?;
-                        let delta = Message::with_role(Role::Tool).with_contents(resp.clone());
+                        let delta = Message::with_role(Role::Tool(tc.name.clone())).with_contents(resp.clone());
                         yield MessageOutput::new().with_delta(delta);
-                        let tool_msg = Message::with_role(Role::Tool).with_contents(resp);
+                        let tool_msg = Message::with_role(Role::Tool(tc.name)).with_contents(resp);
                         msgs.lock().await.push(tool_msg);
                     }
                 }
@@ -135,7 +135,7 @@ impl Agent {
                         let tool = tools.iter().find(|v| v.get_description().name == tc.name).unwrap().clone();
                         let parts = tool.run(tc.arguments).await?;
                         for part in parts.into_iter() {
-                            let tool_msg = Message::with_role(Role::Tool).with_contents([part.clone()]);
+                            let tool_msg = Message::with_role(Role::Tool(tc.name.clone())).with_contents([part.clone()]);
                             yield MessageOutput{ delta: tool_msg.clone(), finish_reason: Some(FinishReason::Stop)};
                             self.messages.lock().await.push(tool_msg);
                         }
