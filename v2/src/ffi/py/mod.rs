@@ -19,6 +19,7 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<PyCacheProgressIterator>()?;
     m.add_class::<PyCacheProgressSyncIterator>()?;
     m.add_class::<PyLocalLanguageModel>()?;
+    m.add_class::<PyAgentRunIterator>()?;
     m.add_class::<PyAgentRunSyncIterator>()?;
     m.add_class::<PyAgentRunIterator>()?;
     Ok(())
