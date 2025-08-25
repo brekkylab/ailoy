@@ -2016,6 +2016,7 @@ dependencies = [
 [[package]]
 name = "openai-sdk-rs"
 version = "0.1.2"
+source = "git+https://github.com/brekkylab/openai-sdk-rs.git?rev=d9b10a2084c3a3369dcd2e2084514318b5d5c275#d9b10a2084c3a3369dcd2e2084514318b5d5c275"
 dependencies = [
  "async-stream",
  "dotenv",
