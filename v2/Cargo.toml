@@ -10,6 +10,7 @@ default = []
 
 
 [dependencies]
+ailoy-macros = { path = "./macros" }
 anthropic-ai-sdk = { git = "https://github.com/brekkylab/anthropic-sdk-rs.git", package = "anthropic-ai-sdk", rev = "60fef3dcaf50c02124a5a9de834b37300c3d94a9" }
 anyhow = "1"
 async-channel = "2.5"
@@ -17,6 +18,7 @@ async-stream = "0.3"
 async-trait = "0.1.89"
 base64 = "0.21"
 chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "master" }
+derive_builder = "0.20.2"
 futures = "0.3.31"
 gemini-rust = { git = "https://github.com/brekkylab/gemini-rust.git", branch = "main" }
 indexmap = { version = "2", features = ["serde"] }
@@ -25,6 +27,7 @@ minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"]
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { version = "3", features = ["tokio_rt"], optional = true }
 napi-derive = { version = "3", optional = true }
+openai-sdk-rs = { git = "https://github.com/brekkylab/openai-sdk-rs.git", rev = "1ff5111c25dfd89992f2de5990a67c869a092397" }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 pyo3 = { version = "0.25", optional = true }
 pyo3-async-runtimes = { version = "0.25", features = ["attributes", "tokio-runtime"], optional = true }
