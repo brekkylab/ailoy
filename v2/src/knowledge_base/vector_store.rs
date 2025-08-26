@@ -1,5 +1,5 @@
-use anyhow::Result;
 use crate::async_trait;
+use anyhow::Result;
 use serde_json::{Map, Value as Json};
 
 use crate::utils::{MaybeSend, MaybeSync};
@@ -41,6 +41,11 @@ async_trait! {
             query_embedding: Embedding,
             top_k: usize,
         ) -> Result<Vec<RetrieveResult>>;
+        async fn batch_retrieve(
+            &self,
+            query_embeddings: Vec<Embedding>,
+            top_k: usize,
+        ) -> Result<Vec<Vec<RetrieveResult>>>;
         async fn remove_vector(&mut self, id: &str) -> Result<()>;
         async fn remove_vectors(&mut self, ids: &[&str]) -> Result<()>;
         async fn clear(&mut self) -> Result<()>;

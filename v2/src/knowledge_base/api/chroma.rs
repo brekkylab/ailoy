@@ -152,29 +152,91 @@ impl VectorStore for ChromaStore {
             embeddings: _,
             ..
         } = self.collection.query(opts, None).await?;
-        let mut out = vec![];
-        if let (Some(ids_vec), Some(distances_vec)) =
-            (ids.get(0), distances.as_ref().and_then(|d| d.get(0)))
-        {
-            for i in 0..ids_vec.len() {
-                let id = ids_vec[i].clone();
-                let distance = distances_vec[i];
-                let document = documents
+        let out: Vec<RetrieveResult> = ids
+            .get(0)
+            .and_then(|ids_vec| {
+                distances
                     .as_ref()
-                    .and_then(|d| d.get(0)?.get(i).cloned())
-                    .unwrap_or_default();
-                let metadata = metadatas
+                    .and_then(|d| d.get(0))
+                    .map(|distances_vec| ids_vec.iter().zip(distances_vec).enumerate())
+            })
+            .map(|iter| {
+                iter.filter_map(|(i, (id_ref, &distance))| {
+                    let id = id_ref.clone();
+                    let document = documents
+                        .as_ref()
+                        .and_then(|d| d.get(0)?.get(i).cloned())
+                        .unwrap_or_default();
+                    let metadata = metadatas
+                        .as_ref()
+                        .and_then(|m| m.get(0)?.get(i))
+                        .and_then(|inner_opt| inner_opt.clone());
+
+                    Some(RetrieveResult {
+                        id,
+                        document,
+                        metadata,
+                        distance,
+                    })
+                })
+                .collect()
+            })
+            .unwrap_or_else(Vec::new);
+
+        Ok(out)
+    }
+
+    async fn batch_retrieve(
+        &self,
+        query_embeddings: Vec<Embedding>,
+        top_k: usize,
+    ) -> Result<Vec<Vec<RetrieveResult>>> {
+        let opts = QueryOptions {
+            query_embeddings: Some(query_embeddings),
+            n_results: Some(top_k),
+            ..Default::default()
+        };
+        let QueryResult {
+            ids,
+            documents,
+            metadatas,
+            distances,
+            embeddings: _,
+            ..
+        } = self.collection.query(opts, None).await?;
+        let out: Vec<Vec<RetrieveResult>> = ids
+            .iter()
+            .enumerate()
+            .filter_map(|(outer_index, ids_vec)| {
+                distances
                     .as_ref()
-                    .and_then(|m| m.get(0)?.get(i))
-                    .and_then(|inner_opt| inner_opt.clone());
-                out.push(RetrieveResult {
-                    id,
-                    document,
-                    metadata,
-                    distance,
-                });
-            }
-        }
+                    .and_then(|d| d.get(outer_index))
+                    .map(|distances_vec| {
+                        ids_vec
+                            .iter()
+                            .zip(distances_vec)
+                            .enumerate()
+                            .filter_map(|(inner_index, (id_ref, &distance))| {
+                                let document = documents
+                                    .as_ref()
+                                    .and_then(|d| d.get(outer_index)?.get(inner_index).cloned())
+                                    .unwrap_or_default();
+                                let metadata = metadatas
+                                    .as_ref()
+                                    .and_then(|m| m.get(outer_index)?.get(inner_index))
+                                    .and_then(|inner_opt| inner_opt.clone());
+
+                                Some(RetrieveResult {
+                                    id: id_ref.clone(),
+                                    document,
+                                    metadata,
+                                    distance,
+                                })
+                            })
+                            .collect()
+                    })
+            })
+            .collect();
 
         Ok(out)
     }
@@ -320,22 +382,53 @@ mod tests {
                     document: "vector one-ish".to_owned(),
                     metadata: None,
                 },
+                AddInput {
+                    embedding: vec![0.0, 0.9, 0.1],
+                    document: "vector two-ish".to_owned(),
+                    metadata: None,
+                },
             ];
             store.add_vectors(inputs).await?;
 
-            let query_embedding = vec![0.95, 0.0, 0.0];
+            let query_embeddings = vec![vec![0.95, 0.0, 0.0], vec![0.0, 0.95, 0.0]];
 
             // top_k=2
-            let results = store.retrieve(query_embedding, 2).await?;
+            let results = store
+                .retrieve(query_embeddings.get(0).cloned().unwrap(), 2)
+                .await?;
 
             assert_eq!(results.len(), 2);
 
             let retrieved_docs: Vec<_> = results.iter().map(|r| r.document.clone()).collect();
-            // only these two should be exist
+            // should exist
             assert!(retrieved_docs.contains(&"vector one".to_owned()));
             assert!(retrieved_docs.contains(&"vector one-ish".to_owned()));
-            // this one should not be exists
+            // should not exist
             assert!(!retrieved_docs.contains(&"vector two".to_owned()));
+            assert!(!retrieved_docs.contains(&"vector two-ish".to_owned()));
+
+            // top_k=2
+            let batch_results = store.batch_retrieve(query_embeddings, 2).await?;
+
+            for (i, results) in batch_results.iter().enumerate() {
+                assert_eq!(results.len(), 2);
+                let retrieved_docs: Vec<_> = results.iter().map(|r| r.document.clone()).collect();
+                if i == 0 {
+                    // should exist
+                    assert!(retrieved_docs.contains(&"vector one".to_owned()));
+                    assert!(retrieved_docs.contains(&"vector one-ish".to_owned()));
+                    // should not exist
+                    assert!(!retrieved_docs.contains(&"vector two".to_owned()));
+                    assert!(!retrieved_docs.contains(&"vector two-ish".to_owned()));
+                } else {
+                    // should exist
+                    assert!(retrieved_docs.contains(&"vector two".to_owned()));
+                    assert!(retrieved_docs.contains(&"vector two-ish".to_owned()));
+                    // should not exist
+                    assert!(!retrieved_docs.contains(&"vector one".to_owned()));
+                    assert!(!retrieved_docs.contains(&"vector one-ish".to_owned()));
+                }
+            }
 
             Ok(())
         }

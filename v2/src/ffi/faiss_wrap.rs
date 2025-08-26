@@ -51,7 +51,6 @@ impl FaissIndex {
         })
     }
 
-
     pub fn is_trained(&self) -> bool {
         self.inner.as_ref().unwrap().is_trained()
     }

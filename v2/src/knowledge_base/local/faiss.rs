@@ -132,33 +132,33 @@ impl VectorStore for FaissStore {
             .collect::<Vec<_>>())
     }
 
-    // async fn batch_retrieve(
-    //     &self,
-    //     query_embeddings: Vec<Embedding>,
-    //     top_k: usize,
-    // ) -> Result<Vec<Vec<RetrieveResult>>> {
-    //     let index_results = self.index.search(&query_embeddings, top_k).unwrap();
+    async fn batch_retrieve(
+        &self,
+        query_embeddings: Vec<Embedding>,
+        top_k: usize,
+    ) -> Result<Vec<Vec<RetrieveResult>>> {
+        let index_results = self.index.search(&query_embeddings, top_k).unwrap();
 
-    //     Ok(index_results
-    //         .into_iter()
-    //         .map(|index_result| {
-    //             index_result
-    //                 .indexes
-    //                 .into_iter()
-    //                 .zip(index_result.distances.into_iter())
-    //                 .filter_map(|(id_i64, distance)| {
-    //                     let id = id_i64.to_string();
-    //                     self.doc_store.get(&id).map(|doc_entry| RetrieveResult {
-    //                         id,
-    //                         document: doc_entry.document.clone(),
-    //                         metadata: doc_entry.metadata.clone(),
-    //                         distance,
-    //                     })
-    //                 })
-    //                 .collect::<Vec<_>>()
-    //         })
-    //         .collect::<Vec<_>>())
-    // }
+        Ok(index_results
+            .into_iter()
+            .map(|index_result| {
+                index_result
+                    .indexes
+                    .into_iter()
+                    .zip(index_result.distances.into_iter())
+                    .filter_map(|(id_i64, distance)| {
+                        let id = id_i64.to_string();
+                        self.doc_store.get(&id).map(|doc_entry| RetrieveResult {
+                            id,
+                            document: doc_entry.document.clone(),
+                            metadata: doc_entry.metadata.clone(),
+                            distance,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>())
+    }
 
     async fn remove_vector(&mut self, id: &str) -> Result<()> {
         if !self.doc_store.contains_key(&id.to_string()) {
@@ -302,22 +302,53 @@ mod tests {
                     document: "vector one-ish".to_owned(),
                     metadata: None,
                 },
+                AddInput {
+                    embedding: vec![0.0, 0.9, 0.1],
+                    document: "vector two-ish".to_owned(),
+                    metadata: None,
+                },
             ];
             store.add_vectors(inputs).await?;
 
-            let query_embedding = vec![0.95, 0.0, 0.0];
+            let query_embeddings = vec![vec![0.95, 0.0, 0.0], vec![0.0, 0.95, 0.0]];
 
             // top_k=2
-            let results = store.retrieve(query_embedding, 2).await?;
+            let results = store
+                .retrieve(query_embeddings.get(0).cloned().unwrap(), 2)
+                .await?;
 
             assert_eq!(results.len(), 2);
 
             let retrieved_docs: Vec<_> = results.iter().map(|r| r.document.clone()).collect();
-            // only these two should be exist
+            // should exist
             assert!(retrieved_docs.contains(&"vector one".to_owned()));
             assert!(retrieved_docs.contains(&"vector one-ish".to_owned()));
-            // this one should not be exists
+            // should not exist
             assert!(!retrieved_docs.contains(&"vector two".to_owned()));
+            assert!(!retrieved_docs.contains(&"vector two-ish".to_owned()));
+
+            // top_k=2
+            let batch_results = store.batch_retrieve(query_embeddings, 2).await?;
+
+            for (i, results) in batch_results.iter().enumerate() {
+                assert_eq!(results.len(), 2);
+                let retrieved_docs: Vec<_> = results.iter().map(|r| r.document.clone()).collect();
+                if i == 0 {
+                    // should exist
+                    assert!(retrieved_docs.contains(&"vector one".to_owned()));
+                    assert!(retrieved_docs.contains(&"vector one-ish".to_owned()));
+                    // should not exist
+                    assert!(!retrieved_docs.contains(&"vector two".to_owned()));
+                    assert!(!retrieved_docs.contains(&"vector two-ish".to_owned()));
+                } else {
+                    // should exist
+                    assert!(retrieved_docs.contains(&"vector two".to_owned()));
+                    assert!(retrieved_docs.contains(&"vector two-ish".to_owned()));
+                    // should not exist
+                    assert!(!retrieved_docs.contains(&"vector one".to_owned()));
+                    assert!(!retrieved_docs.contains(&"vector one-ish".to_owned()));
+                }
+            }
 
             Ok(())
         }
