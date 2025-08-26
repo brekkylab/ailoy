@@ -276,7 +276,6 @@ impl VectorStore for ChromaStore {
 mod tests {
     use super::*;
     use serde_json::json;
-    use tokio;
 
     use ailoy_macros::multi_platform_test;
 
