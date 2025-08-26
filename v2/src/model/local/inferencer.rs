@@ -228,7 +228,7 @@ mod tvmjs_runtime {
         fn try_from_contents(
             mut contents: CacheContents,
         ) -> BoxFuture<'static, Result<Self, String>> {
-            use crate::ffi::js_bridge::init_js;
+            use crate::ffi::js_bridge::init_language_model_js;
             use js_sys::{Object, Reflect, Uint8Array};
 
             Box::pin(async move {
@@ -244,7 +244,7 @@ mod tvmjs_runtime {
                     obj
                 };
 
-                let prom = init_js(&cache_contents);
+                let prom = init_language_model_js(&cache_contents);
                 let js_lang_model = match JsFuture::from(prom).await {
                     Ok(out) => {
                         let lm: JSLanguageModel = out
