@@ -19,11 +19,8 @@ pub struct FaissStore {
 
 impl FaissStore {
     pub fn new(dim: i32) -> Result<Self> {
-        let index = ffi::FaissIndexBuilder::new(dim)
-            // .description(description)
-            // .metric(metric)
-            .build()
-            .unwrap();
+        // use only default type("IdMap2,Flat", InnerProduct) Index for now
+        let index = ffi::FaissIndexBuilder::new(dim).build().unwrap();
         Ok(Self {
             index,
             doc_store: HashMap::new(),
@@ -34,7 +31,6 @@ impl FaissStore {
 #[async_trait]
 impl VectorStore for FaissStore {
     async fn add_vector(&mut self, input: AddInput) -> Result<String> {
-        // Ok(self.add_vectors(vec![input]).await?.into_iter().next().unwrap())
         let ids: Vec<String> = self.index.add_vectors(&[input.embedding]).unwrap();
         let id = ids.iter().next().unwrap().clone();
         self.doc_store.insert(
