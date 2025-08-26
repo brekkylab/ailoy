@@ -73,25 +73,6 @@ FaissIndexWrapper::search_vectors(rust::Slice<const float> query_vectors,
                                 std::move(rust_indexes)};
 }
 
-// rust::Vec<float> FaissIndexWrapper::get_by_id(int64_t id) const {
-//   try {
-//     std::vector<float> reconstructed_vector(index_->d);
-
-//     index_->reconstruct(id, reconstructed_vector.data());
-
-//     rust::Vec<float> result;
-//     result.reserve(reconstructed_vector.size());
-//     std::copy(reconstructed_vector.begin(), reconstructed_vector.end(),
-//               std::back_inserter(result));
-
-//     return result;
-
-//   } catch (const std::exception &e) {
-//     throw std::runtime_error("Failed to get vector by ID " +
-//                              std::to_string(id) + ": " + e.what());
-//   }
-// }
-
 rust::Vec<float>
 FaissIndexWrapper::get_by_ids(rust::Slice<const int64_t> ids) const {
   if (ids.empty()) {
