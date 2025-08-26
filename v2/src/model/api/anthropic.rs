@@ -445,126 +445,132 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::{
-        multi_platform_test,
-        value::{MessageAggregator, ToolDesc, ToolDescArg},
-    };
+    use crate::value::{MessageAggregator, ToolDesc, ToolDescArg};
+    use ailoy_macros::multi_platform_test;
 
     const ANTHROPIC_API_KEY: &str = env!("ANTHROPIC_API_KEY");
 
-    multi_platform_test! {
-        async fn anthropic_infer_with_thinking() {
-            let mut config = AnthropicGenerationConfig::default();
-            config.max_tokens = 2048;
-            config.thinking = Some(AnthropicThinkingConfig::default());
-            let anthropic = Arc::new(AnthropicLanguageModel::new("claude-sonnet-4-20250514", ANTHROPIC_API_KEY).with_config(config));
+    #[multi_platform_test]
+    async fn anthropic_infer_with_thinking() {
+        let mut config = AnthropicGenerationConfig::default();
+        config.max_tokens = 2048;
+        config.thinking = Some(AnthropicThinkingConfig::default());
+        let anthropic = Arc::new(
+            AnthropicLanguageModel::new("claude-sonnet-4-20250514", ANTHROPIC_API_KEY)
+                .with_config(config),
+        );
 
-            let msgs = vec![
-                Message::with_role(Role::System).with_contents(vec![Part::Text(
-                    "You are a helpful mathematics assistant".to_owned()
-                )]),
-                Message::with_role(Role::User).with_contents(vec![Part::Text(
-                    "What is the sum of the first 50 prime numbers?".to_owned()
-                )])
-            ];
-            let mut agg = MessageAggregator::new();
-            let mut strm = anthropic.run(msgs, Vec::new());
-            while let Some(delta_opt) = strm.next().await {
-                let delta = delta_opt.unwrap();
-                if let Some(msg) = agg.update(delta) {
-                    log::info(format!("{:?}", msg).as_str());
-                }
+        let msgs = vec![
+            Message::with_role(Role::System).with_contents(vec![Part::Text(
+                "You are a helpful mathematics assistant".to_owned(),
+            )]),
+            Message::with_role(Role::User).with_contents(vec![Part::Text(
+                "What is the sum of the first 50 prime numbers?".to_owned(),
+            )]),
+        ];
+        let mut agg = MessageAggregator::new();
+        let mut strm = anthropic.run(msgs, Vec::new());
+        while let Some(delta_opt) = strm.next().await {
+            let delta = delta_opt.unwrap();
+            if let Some(msg) = agg.update(delta) {
+                log::info(format!("{:?}", msg).as_str());
             }
         }
     }
 
-    multi_platform_test! {
-        async fn anthropic_infer_tool_call() {
-            let anthropic = Arc::new(AnthropicLanguageModel::new("claude-sonnet-4-20250514", ANTHROPIC_API_KEY));
+    #[multi_platform_test]
+    async fn anthropic_infer_tool_call() {
+        let anthropic = Arc::new(AnthropicLanguageModel::new(
+            "claude-sonnet-4-20250514",
+            ANTHROPIC_API_KEY,
+        ));
 
-            let tools = vec![ToolDesc::new(
-                "temperature",
-                "Get current temperature",
-                ToolDescArg::new_object().with_properties(
-                    [
-                        (
-                            "location",
-                            ToolDescArg::new_string().with_desc("The city name"),
-                        ),
-                        (
-                            "unit",
-                            ToolDescArg::new_string()
-                                .with_enum(["Celcius", "Fernheit"])
-                                .with_desc("The unit of temperature"),
-                        ),
-                    ],
-                    ["location", "unit"],
-                ),
-                Some(
-                    ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
-                ),
-            )];
-            let mut msgs = vec![Message::with_role(Role::User).with_contents([Part::Text(
-                "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
-            )])];
-            let mut agg = MessageAggregator::new();
-            let mut strm = anthropic.clone().run(msgs.clone(), tools.clone());
-            let mut assistant_msg: Option<Message> = None;
-            while let Some(delta_opt) = strm.next().await {
-                let delta = delta_opt.unwrap();
-                if let Some(msg) = agg.update(delta) {
-                    log::info(format!("{:?}", msg).as_str());
-                    assistant_msg = Some(msg);
-                }
+        let tools = vec![ToolDesc::new(
+            "temperature",
+            "Get current temperature",
+            ToolDescArg::new_object().with_properties(
+                [
+                    (
+                        "location",
+                        ToolDescArg::new_string().with_desc("The city name"),
+                    ),
+                    (
+                        "unit",
+                        ToolDescArg::new_string()
+                            .with_enum(["Celcius", "Fernheit"])
+                            .with_desc("The unit of temperature"),
+                    ),
+                ],
+                ["location", "unit"],
+            ),
+            Some(
+                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
+            ),
+        )];
+        let mut msgs = vec![Message::with_role(Role::User).with_contents([Part::Text(
+            "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
+        )])];
+        let mut agg = MessageAggregator::new();
+        let mut strm = anthropic.clone().run(msgs.clone(), tools.clone());
+        let mut assistant_msg: Option<Message> = None;
+        while let Some(delta_opt) = strm.next().await {
+            let delta = delta_opt.unwrap();
+            if let Some(msg) = agg.update(delta) {
+                log::info(format!("{:?}", msg).as_str());
+                assistant_msg = Some(msg);
             }
-            // This should be tool call message
-            let assistant_msg = assistant_msg.unwrap();
-            msgs.push(assistant_msg.clone());
+        }
+        // This should be tool call message
+        let assistant_msg = assistant_msg.unwrap();
+        msgs.push(assistant_msg.clone());
 
-            // Append a fake tool call result message
-            let tool_call_id = if let Part::Function { id, .. } = assistant_msg.tool_calls[0].clone() {
-                Some(id)
-            } else {None};
-            let tool_result_msg = Message::with_role(Role::Tool("temperature".into(), tool_call_id))
-                .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
-            msgs.push(tool_result_msg);
+        // Append a fake tool call result message
+        let tool_call_id = if let Part::Function { id, .. } = assistant_msg.tool_calls[0].clone() {
+            Some(id)
+        } else {
+            None
+        };
+        let tool_result_msg = Message::with_role(Role::Tool("temperature".into(), tool_call_id))
+            .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
+        msgs.push(tool_result_msg);
 
-            let mut strm = anthropic.run(msgs, tools);
-            while let Some(delta_opt) = strm.next().await {
-                let delta = delta_opt.unwrap();
-                if let Some(msg) = agg.update(delta) {
-                    // Final message shuold say something like "Dubai is 38.5°C"
-                    log::info(format!("{:?}", msg).as_str());
-                }
+        let mut strm = anthropic.run(msgs, tools);
+        while let Some(delta_opt) = strm.next().await {
+            let delta = delta_opt.unwrap();
+            if let Some(msg) = agg.update(delta) {
+                // Final message shuold say something like "Dubai is 38.5°C"
+                log::info(format!("{:?}", msg).as_str());
             }
         }
     }
 
-    multi_platform_test! {
-        async fn anthropic_infer_with_image() {
-            use base64::Engine;
+    #[multi_platform_test]
+    async fn anthropic_infer_with_image() {
+        use base64::Engine;
 
-            let client = reqwest::Client::new();
-            let test_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Jensen_Huang_%28cropped%29.jpg/250px-Jensen_Huang_%28cropped%29.jpg";
-            let response = client.get(test_image_url).header(reqwest::header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36").send().await.unwrap();
-            let image_bytes = response.bytes().await.unwrap();
-            let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
+        let client = reqwest::Client::new();
+        let test_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Jensen_Huang_%28cropped%29.jpg/250px-Jensen_Huang_%28cropped%29.jpg";
+        let response = client.get(test_image_url).header(reqwest::header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36").send().await.unwrap();
+        let image_bytes = response.bytes().await.unwrap();
+        let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-            let anthropic = Arc::new(AnthropicLanguageModel::new("claude-sonnet-4-20250514", ANTHROPIC_API_KEY));
+        let anthropic = Arc::new(AnthropicLanguageModel::new(
+            "claude-sonnet-4-20250514",
+            ANTHROPIC_API_KEY,
+        ));
 
-            let msgs = vec![
-                Message::with_role(Role::User)
-                    .with_contents(vec![Part::ImageData(image_base64, "image/jpeg".into())]),
-                Message::with_role(Role::User)
-                    .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
-            ];
-            let mut agg = MessageAggregator::new();
-            let mut strm = anthropic.run(msgs, Vec::new());
-            while let Some(delta_opt) = strm.next().await {
-                let delta = delta_opt.unwrap();
-                if let Some(msg) = agg.update(delta) {
-                    log::info(format!("{:?}", msg));
-                }
+        let msgs = vec![
+            Message::with_role(Role::User)
+                .with_contents(vec![Part::ImageData(image_base64, "image/jpeg".into())]),
+            Message::with_role(Role::User)
+                .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
+        ];
+        let mut agg = MessageAggregator::new();
+        let mut strm = anthropic.run(msgs, Vec::new());
+        while let Some(delta_opt) = strm.next().await {
+            let delta = delta_opt.unwrap();
+            if let Some(msg) = agg.update(delta) {
+                log::info(format!("{:?}", msg));
             }
         }
     }

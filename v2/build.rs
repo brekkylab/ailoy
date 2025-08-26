@@ -34,9 +34,27 @@ fn build_native() {
     let cmake_install_dir = out_dir.parent().unwrap().join("deps");
 
     // Run CMake
-    Config::new(&cmake_source_dir)
-        .define("CMAKE_INSTALL_PREFIX", &cmake_install_dir)
-        .build();
+    let mut cmake_config = Config::new(&cmake_source_dir);
+    cmake_config.define("CMAKE_INSTALL_PREFIX", &cmake_install_dir);
+
+    // Add OpenMP_ROOT if macos
+    #[cfg(target_os = "macos")]
+    {
+        // Link OpenMP(brew installed)
+        let libomp_path = std::process::Command::new("brew")
+            .arg("--prefix")
+            .arg("libomp")
+            .output()
+            .expect("Failed to execute brew command")
+            .stdout;
+        let mut libomp_path_str = String::from_utf8(libomp_path).unwrap();
+        libomp_path_str = libomp_path_str.trim().to_string();
+        cmake_config.define("OpenMP_ROOT", libomp_path_str.clone());
+
+        println!("cargo:rustc-link-search=native={}/lib", libomp_path_str);
+        println!("cargo:rustc-link-lib=omp");
+    }
+    cmake_config.build();
 
     // Link to this project
     println!("cargo:rustc-link-lib=c++");
@@ -72,20 +90,6 @@ fn build_native() {
             "cargo:rustc-link-arg=-Wl,-force_load,{}",
             (cmake_install_dir.join("libtvm_runtime.a")).display()
         );
-
-        // Link OpenMP(brew installed)
-        let libomp_path = std::process::Command::new("brew")
-            .arg("--prefix")
-            .arg("libomp")
-            .output()
-            .expect("Failed to execute brew command")
-            .stdout;
-        let libomp_path_str = String::from_utf8(libomp_path).unwrap();
-        println!(
-            "cargo:rustc-link-search=native={}/lib",
-            libomp_path_str.trim()
-        );
-        println!("cargo:rustc-link-lib=omp");
 
         println!("cargo:rustc-link-lib=framework=Metal");
         println!("cargo:rustc-link-lib=framework=Foundation");

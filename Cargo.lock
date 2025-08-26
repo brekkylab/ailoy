@@ -44,6 +44,7 @@ dependencies = [
 name = "ailoy"
 version = "0.1.0"
 dependencies = [
+ "ailoy-macros",
  "anthropic-ai-sdk",
  "anyhow",
  "async-channel",
@@ -53,6 +54,7 @@ dependencies = [
  "chromadb",
  "cmake",
  "cxx",
+ "derive_builder",
  "dotenvy",
  "env_logger",
  "futures",
@@ -91,6 +93,15 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
+]
+
+[[package]]
+name = "ailoy-macros"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -182,7 +193,7 @@ dependencies = [
  "eventsource-stream",
  "futures-lite",
  "futures-util",
- "reqwest",
+ "reqwest 0.12.23",
  "serde",
  "serde_json",
  "thiserror 2.0.16",
@@ -1146,7 +1157,7 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "futures-util",
- "reqwest",
+ "reqwest 0.12.23",
  "serde",
  "serde_json",
  "thiserror 2.0.16",
@@ -2123,13 +2134,13 @@ dependencies = [
 [[package]]
 name = "openai-sdk-rs"
 version = "0.1.2"
-source = "git+https://github.com/brekkylab/openai-sdk-rs.git?rev=d9b10a2084c3a3369dcd2e2084514318b5d5c275#d9b10a2084c3a3369dcd2e2084514318b5d5c275"
+source = "git+https://github.com/brekkylab/openai-sdk-rs.git?rev=1ff5111c25dfd89992f2de5990a67c869a092397#1ff5111c25dfd89992f2de5990a67c869a092397"
 dependencies = [
  "async-stream",
  "dotenv",
  "futures-core",
  "futures-util",
- "reqwest",
+ "reqwest 0.12.23",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

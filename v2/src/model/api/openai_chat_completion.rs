@@ -1,13 +1,15 @@
+use derive_builder::Builder;
 use futures::StreamExt;
-use openai_sdk_rs::{
-    OpenAI,
-    types::chat::{
-        ChatCompletionChunk as OpenAIChatCompletionChunk, ChatCompletionRequest,
-        ChatMessage as OpenAIChatMessage, ContentBlock as OpenAIContentBlock,
-        Function as OpenAIFunction, Role as OpenAIRole, Tool as OpenAITool,
-        ToolCall as OpenAIToolCall, ToolCallFunction as OpenAIToolCallFunction,
-        ToolType as OpenAIToolType,
-    },
+use openai_sdk_rs::OpenAI;
+pub use openai_sdk_rs::types::chat::{
+    ChatCompletionChunk as OpenAIChatCompletionChunk, ChatCompletionRequest,
+    ChatMessage as OpenAIChatMessage, ContentBlock as OpenAIContentBlock,
+    Function as OpenAIFunction, FunctionParameters as OpenAIFunctionParameters,
+    ReasoningEffort as OpenAIReasoningEffort, ResponseFormat as OpenAIResponseFormat,
+    ResponseFormatJSONSchema as OpenAIResponseFormatJSONSchema, Role as OpenAIRole,
+    Stop as OpenAIStop, Tool as OpenAITool, ToolCall as OpenAIToolCall,
+    ToolCallFunction as OpenAIToolCallFunction, ToolChoiceType as OpenAIToolChoiceType,
+    ToolType as OpenAIToolType,
 };
 
 use crate::{
@@ -16,10 +18,28 @@ use crate::{
     value::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
 };
 
+#[derive(Clone, Default, Builder)]
+#[builder(default)]
+pub struct OpenAIGenerationConfig {
+    pub frequency_penalty: Option<f32>,
+    pub max_completion_tokens: Option<u32>,
+    pub n: Option<u32>,
+    pub parallel_tool_calls: Option<bool>,
+    pub presence_penalty: Option<f32>,
+    pub reasoning_effort: Option<OpenAIReasoningEffort>,
+    pub response_format: Option<OpenAIResponseFormat>,
+    pub stop: Option<OpenAIStop>,
+    pub temperature: Option<f32>,
+    pub tool_choice: Option<OpenAIToolChoiceType>,
+    pub top_p: Option<f32>,
+}
+
 pub trait OpenAIChatCompletion: LanguageModel {
     fn model_name(&self) -> &str;
 
     fn client(&self) -> &OpenAI;
+
+    fn config(&self) -> &OpenAIGenerationConfig;
 
     /// Build the chat completion request - can be overridden for service-specific behavior
     fn build_request(
@@ -29,14 +49,6 @@ pub trait OpenAIChatCompletion: LanguageModel {
     ) -> Result<ChatCompletionRequest, String> {
         let mut request = ChatCompletionRequest::default();
         request.model = self.model_name().to_string();
-
-        // Apply base configurations
-        // if let Some(max_tokens) = self.config().max_tokens {
-        //     request.max_tokens = Some(max_tokens);
-        // }
-        // if let Some(temperature) = self.config().temperature {
-        //     request.temperature = Some(temperature);
-        // }
 
         // Process messages
         for msg in msgs {
@@ -48,6 +60,20 @@ pub trait OpenAIChatCompletion: LanguageModel {
         if !tools.is_empty() {
             request.tools = Some(self.build_tools(tools)?);
         }
+
+        // Apply configurations
+        let config = self.config();
+        request.frequency_penalty = config.frequency_penalty;
+        request.max_completion_tokens = config.max_completion_tokens;
+        request.n = config.n;
+        request.parallel_tool_calls = config.parallel_tool_calls;
+        request.presence_penalty = config.presence_penalty;
+        request.reasoning_effort = config.reasoning_effort.clone();
+        request.response_format = config.response_format.clone();
+        request.stop = config.stop.clone();
+        request.temperature = config.temperature;
+        request.tool_choice = config.tool_choice.clone();
+        request.top_p = config.top_p;
 
         Ok(request)
     }
