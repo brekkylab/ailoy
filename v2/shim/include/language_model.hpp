@@ -13,6 +13,9 @@
 
 #include "tvm_runtime.hpp"
 
+// Forward Declaration for cxx_bridge.rs.h
+struct DLPackTensor;
+
 namespace ailoy {
 
 struct CacheContents;
@@ -92,22 +95,12 @@ public:
   /** Decode */
   tvm::runtime::NDArray decode(uint32_t last_token);
 
-  std::unique_ptr<DLManagedTensorVersioned>
-  decode_from_rs(uint32_t last_token) {
-    std::lock_guard<std::mutex> lk(m_);
-    return std::unique_ptr<DLManagedTensorVersioned>(
-        std::move(decode(last_token)).ToDLPackVersioned());
-  }
+  DLPackTensor decode_from_rs(uint32_t last_token);
 
   /** Sample */
   uint32_t sample(tvm::runtime::NDArray);
 
-  uint32_t sample_from_rs(std::unique_ptr<DLManagedTensorVersioned> logits) {
-    std::lock_guard<std::mutex> lk(m_);
-    auto v =
-        tvm::runtime::NDArray::FromDLPackVersioned(std::move(logits.release()));
-    return sample(v);
-  }
+  uint32_t sample_from_rs(DLPackTensor logits);
 
   config_t config;
 
@@ -134,8 +127,6 @@ private:
 
   mutable std::mutex m_;
 };
-
-std::unique_ptr<DLDevice> create_dldevice(int device_type, int device_id);
 
 std::unique_ptr<tvm_language_model_t>
 create_tvm_language_model(ailoy::CacheContents &contents,
