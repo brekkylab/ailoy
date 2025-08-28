@@ -7,7 +7,7 @@ use crate::{
     cache::{Cache, CacheContents, CacheEntry, CacheProgress, TryFromCache},
     model::{
         LanguageModel,
-        local::{ChatTemplate, Inferencer, Tokenizer},
+        local::{ChatTemplate, LanguageModelInferencer, Tokenizer},
     },
     utils::{BoxFuture, BoxStream, Mutex},
     value::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
@@ -20,7 +20,7 @@ pub struct LocalLanguageModel {
     tokenizer: Tokenizer,
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
-    inferencer: Mutex<Inferencer>,
+    inferencer: Mutex<LanguageModelInferencer>,
 }
 
 impl LocalLanguageModel {
@@ -118,7 +118,7 @@ impl TryFromCache for LocalLanguageModel {
             let mut rv = Vec::new();
             rv.append(&mut ChatTemplate::claim_files(cache.clone(), &key).await?);
             rv.append(&mut Tokenizer::claim_files(cache.clone(), &key).await?);
-            rv.append(&mut Inferencer::claim_files(cache.clone(), &key).await?);
+            rv.append(&mut LanguageModelInferencer::claim_files(cache.clone(), &key).await?);
             Ok(rv)
         })
     }
@@ -129,7 +129,7 @@ impl TryFromCache for LocalLanguageModel {
     {
         let chat_template = ChatTemplate::try_from_contents(contents)?;
         let tokenizer = Tokenizer::try_from_contents(contents)?;
-        let inferencer = Inferencer::try_from_contents(contents)?;
+        let inferencer = LanguageModelInferencer::try_from_contents(contents)?;
         Ok(LocalLanguageModel {
             chat_template,
             tokenizer,
