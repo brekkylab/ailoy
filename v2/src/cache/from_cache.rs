@@ -66,7 +66,7 @@ use crate::{
 /// ```
 ///
 /// See also: [`Cache::try_create`], [`CacheClaim`], [`CacheContents`].
-pub trait TryFromCache: Sized + MaybeSend + 'static {
+pub trait TryFromCache: Sized + MaybeSend {
     /// Declare the set of files needed to construct `Self`.
     ///
     /// The returned future resolves to a list of logical entries (`dirname`/`filename`)
@@ -94,7 +94,7 @@ pub trait TryFromCache: Sized + MaybeSend + 'static {
 ///
 /// This trait follows the same pipeline as `TryFromCache`:
 /// `claim_files` → (download & aggregate into [`CacheContents`]) → `try_from_contents`.
-pub trait FromCache {
+pub trait FromCache: Sized + MaybeSend {
     /// Declare the set of files needed to construct `Self`.
     ///
     /// This method must not fail; return a complete list of required entries.
