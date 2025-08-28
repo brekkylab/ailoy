@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ailoy_macros::multi_platform_async_trait;
 use rmcp::{
     model::CallToolRequestParam,
     service::{RoleClient, RunningService, ServiceExt},
@@ -11,7 +12,6 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::{
     tool::{Tool, mcp::common::*},
-    utils::BoxFuture,
     value::{Part, ToolCallArg, ToolDesc},
 };
 
@@ -58,34 +58,34 @@ struct MCPTool {
     pub desc: ToolDesc,
 }
 
+#[multi_platform_async_trait]
 impl Tool for MCPTool {
     fn get_description(&self) -> ToolDesc {
         self.desc.clone()
     }
 
-    fn run(self: Arc<Self>, args: ToolCallArg) -> BoxFuture<'static, Result<Vec<Part>, String>> {
+    async fn run(&self, args: ToolCallArg) -> Result<Vec<Part>, String> {
+        let tool_name = self.name.clone();
         let peer = self.client.service.clone();
 
-        Box::pin(async move {
-            // Convert your ToolCall arguments → serde_json::Map (MCP expects JSON object)
-            let arguments: Option<JsonMap<String, JsonValue>> = serde_json::to_value(args)
-                .map_err(|e| format!("serialize ToolCall arguments failed: {e}"))?
-                .as_object()
-                .cloned();
+        // Convert your ToolCall arguments → serde_json::Map (MCP expects JSON object)
+        let arguments: Option<JsonMap<String, JsonValue>> = serde_json::to_value(args)
+            .map_err(|e| format!("serialize ToolCall arguments failed: {e}"))?
+            .as_object()
+            .cloned();
 
-            // Invoke the MCP tool
-            let result = peer
-                .call_tool(CallToolRequestParam {
-                    name: self.name.clone().into(),
-                    arguments,
-                })
-                .await
-                .map_err(|e| format!("mcp call_tool failed: {e}"))?;
+        // Invoke the MCP tool
+        let result = peer
+            .call_tool(CallToolRequestParam {
+                name: tool_name.into(),
+                arguments,
+            })
+            .await
+            .map_err(|e| format!("mcp call_tool failed: {e}"))?;
 
-            let parts = call_tool_result_to_parts(&result)
-                .map_err(|e| format!("call_tool_result_to_parts failed: {e}"))?;
-            Ok(parts)
-        })
+        let parts = call_tool_result_to_parts(&result)
+            .map_err(|e| format!("call_tool_result_to_parts failed: {e}"))?;
+        Ok(parts)
     }
 }
 
@@ -149,16 +149,14 @@ mod tests {
             Box::new(ToolCallArg::String("Asia/Seoul".into())),
         );
 
-        let parts = Arc::new(tool)
-            .run(ToolCallArg::Object(tool_call_args))
-            .await
-            .unwrap();
+        let parts = tool.run(ToolCallArg::Object(tool_call_args)).await.unwrap();
         assert_eq!(parts.len(), 1);
 
         let part = parts[0].clone();
         assert_eq!(part.is_text(), true);
 
-        let parsed_part: serde_json::Value = serde_json::from_str(part.as_str().unwrap()).unwrap();
+        let parsed_part: serde_json::Value =
+            serde_json::from_str(&part.to_string().unwrap()).unwrap();
         assert_eq!(parsed_part["timezone"].as_str(), Some("Asia/Seoul"));
         assert_eq!(parsed_part["is_dst"].as_bool(), Some(false));
         assert_eq!(

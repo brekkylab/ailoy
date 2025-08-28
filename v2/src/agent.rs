@@ -107,35 +107,40 @@ impl Agent {
                 msgs.lock().await.push(assistant_msg.clone());
                 if !assistant_msg.tool_calls.is_empty() {
                     for part in &assistant_msg.tool_calls {
-                        let tc = match part {
+                        let (tc, tool_call_id) = match part {
                             Part::FunctionString(s) => match ToolCall::try_from_string(s.clone()){
-                                Ok(tc) => tc,
+                                Ok(tc) => (tc, None),
                                 Err(_) => { continue; },
                             },
-                            Part::Function{id: _, name, arguments} => {
+                            Part::Function{id, name, arguments} => {
                                 let Ok(arguments) = ToolCallArg::try_from_string(arguments) else {
                                     continue;
                                 };
-                                ToolCall{name: name.to_owned(), arguments}
+                                (ToolCall{name: name.to_owned(), arguments}, Some(id.clone()))
                             },
                             _ => {continue;},
                         };
                         let tool = tools.iter().find(|v| v.get_description().get_name() == tc.name).unwrap().clone();
                         let resp = tool.run(tc.arguments).await?;
-                        let delta = Message::with_role(Role::Tool).with_contents(resp.clone());
+                        let delta = Message::with_role(Role::Tool(tc.name.clone(), tool_call_id.clone())).with_contents(resp.clone());
                         yield MessageOutput::new().with_delta(delta);
-                        let tool_msg = Message::with_role(Role::Tool).with_contents(resp);
+                        let tool_msg = Message::with_role(Role::Tool(tc.name, tool_call_id)).with_contents(resp);
                         msgs.lock().await.push(tool_msg);
                     }
                 }
                 msgs.lock().await.push(assistant_msg.clone());
                 if !assistant_msg.tool_calls.is_empty() {
                     for part in assistant_msg.tool_calls {
+                        let tool_call_id = if let Part::Function{id, ..} = part.clone() {
+                            Some(id.clone())
+                        } else {
+                            None
+                        };
                         let tc: ToolCall = part.try_into().unwrap();
                         let tool = tools.iter().find(|v| v.get_description().name == tc.name).unwrap().clone();
                         let parts = tool.run(tc.arguments).await?;
                         for part in parts.into_iter() {
-                            let tool_msg = Message::with_role(Role::Tool).with_contents([part.clone()]);
+                            let tool_msg = Message::with_role(Role::Tool(tc.name.clone(), tool_call_id.clone())).with_contents([part.clone()]);
                             yield MessageOutput{ delta: tool_msg.clone(), finish_reason: Some(FinishReason::Stop)};
                             self.messages.lock().await.push(tool_msg);
                         }

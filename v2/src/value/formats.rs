@@ -41,7 +41,8 @@ mod tests {
                     "get_something",
                     "{\"WhatToGet\": \"name\"}",
                 )]),
-            StyledMessage::with_role(Role::Tool).with_contents([Part::Text(String::from("Jaden"))]),
+            StyledMessage::with_role(Role::Tool("get_something".into(), None))
+                .with_contents([Part::Text(String::from("Jaden"))]),
             StyledMessage::with_role(Role::Assistant)
                 .with_contents([Part::Text(String::from("You can call me Jaden."))]),
         ]

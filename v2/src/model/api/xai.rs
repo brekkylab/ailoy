@@ -1,23 +1,26 @@
 use openai_sdk_rs::OpenAI;
 
 use crate::model::api::openai_chat_completion::OpenAIChatCompletion;
-pub use crate::model::api::openai_chat_completion::{
-    OpenAIGenerationConfig, OpenAIGenerationConfigBuilder,
-};
+use crate::model::openai_chat_completion::{OpenAIGenerationConfig, OpenAIGenerationConfigBuilder};
+use crate::value::FinishReason;
+
+pub type XAIGenerationConfig = OpenAIGenerationConfig;
+pub type XAIGenerationConfigBuilder = OpenAIGenerationConfigBuilder;
 
 #[derive(Clone)]
-pub struct OpenAILanguageModel {
+pub struct XAILanguageModel {
     model_name: String,
     client: OpenAI,
-    config: OpenAIGenerationConfig,
+    config: XAIGenerationConfig,
 }
 
-impl OpenAILanguageModel {
+impl XAILanguageModel {
     pub fn new(model_name: impl Into<String>, api_key: impl Into<String>) -> Self {
         let client = OpenAI::builder()
+            .base_url("https://api.x.ai/v1")
             .api_key(api_key.into())
             .build()
-            .map_err(|e| format!("Failed to build OpenAI client: {}", e))
+            .map_err(|e| format!("Failed to build XAI client: {}", e))
             .unwrap();
 
         Self {
@@ -26,14 +29,9 @@ impl OpenAILanguageModel {
             config: OpenAIGenerationConfig::default(),
         }
     }
-
-    pub fn with_config(mut self, config: OpenAIGenerationConfig) -> Self {
-        self.config = config;
-        self
-    }
 }
 
-impl OpenAIChatCompletion for OpenAILanguageModel {
+impl OpenAIChatCompletion for XAILanguageModel {
     fn model_name(&self) -> &str {
         &self.model_name
     }
@@ -44,6 +42,17 @@ impl OpenAIChatCompletion for OpenAILanguageModel {
 
     fn config(&self) -> &OpenAIGenerationConfig {
         &self.config
+    }
+
+    fn parse_finish_reason(finish_reason: &str) -> Result<FinishReason, String> {
+        match finish_reason {
+            "stop" => Ok(FinishReason::Stop),
+            "length" => Ok(FinishReason::Length),
+            "tool_calls" => Ok(FinishReason::ToolCalls),
+            "content_filter" => Ok(FinishReason::ContentFilter),
+            "end_turn" => Ok(FinishReason::Stop),
+            _ => return Err(format!("Unknown finish reason: {}", finish_reason)),
+        }
     }
 }
 
@@ -56,11 +65,11 @@ mod tests {
     use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
-    const OPENAI_API_KEY: &str = env!("OPENAI_API_KEY");
+    const XAI_API_KEY: &str = env!("XAI_API_KEY");
 
     #[multi_platform_test]
-    async fn openai_infer_with_thinking() {
-        let model = std::sync::Arc::new(OpenAILanguageModel::new("o3-mini", OPENAI_API_KEY));
+    async fn xai_infer_with_thinking() {
+        let xai = std::sync::Arc::new(XAILanguageModel::new("grok-3-mini", XAI_API_KEY));
 
         let msgs = vec![
             Message::with_role(Role::System).with_contents(vec![Part::Text(
@@ -71,7 +80,7 @@ mod tests {
             )]),
         ];
         let mut agg = MessageAggregator::new();
-        let mut strm = model.run(msgs, Vec::new());
+        let mut strm = xai.run(msgs, Vec::new());
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
             log::debug(format!("{:?}", delta).as_str());
@@ -82,11 +91,11 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn openai_infer_tool_call() {
-        use super::*;
-        use crate::value::{MessageAggregator, ToolDescArg};
+    async fn xai_infer_tool_call() {
+        use crate::value::ToolDescArg;
 
-        let model = std::sync::Arc::new(OpenAILanguageModel::new("gpt-4.1", OPENAI_API_KEY));
+        let xai = std::sync::Arc::new(XAILanguageModel::new("grok-3", XAI_API_KEY));
+
         let tools = vec![ToolDesc::new(
             "temperature",
             "Get current temperature",
@@ -113,7 +122,7 @@ mod tests {
             "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
         )])];
         let mut agg = MessageAggregator::new();
-        let mut strm = model.clone().run(msgs.clone(), tools.clone());
+        let mut strm = xai.clone().run(msgs.clone(), tools.clone());
         let mut assistant_msg: Option<Message> = None;
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
@@ -137,7 +146,7 @@ mod tests {
             .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
         msgs.push(tool_result_msg);
 
-        let mut strm = model.run(msgs, tools);
+        let mut strm = xai.run(msgs, tools);
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
             log::debug(format!("{:?}", delta).as_str());
@@ -149,10 +158,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn openai_infer_with_image() {
-        use super::*;
-        use crate::value::MessageAggregator;
-
+    async fn xai_infer_with_image() {
         use base64::Engine;
 
         let client = reqwest::Client::new();
@@ -161,7 +167,8 @@ mod tests {
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-        let model = std::sync::Arc::new(OpenAILanguageModel::new("gpt-4.1", OPENAI_API_KEY));
+        let xai = std::sync::Arc::new(XAILanguageModel::new("grok-4", XAI_API_KEY));
+
         let msgs = vec![
             Message::with_role(Role::User)
                 .with_contents(vec![Part::ImageData(image_base64, "image/jpeg".into())]),
@@ -169,57 +176,7 @@ mod tests {
                 .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
         ];
         let mut agg = MessageAggregator::new();
-        let mut strm = model.run(msgs, Vec::new());
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log::debug(format!("{:?}", delta));
-            if let Some(msg) = agg.update(delta) {
-                log::info(format!("{:?}", msg));
-            }
-        }
-    }
-
-    #[multi_platform_test]
-    async fn openai_infer_structured_output() {
-        use super::OpenAIGenerationConfigBuilder;
-        use crate::model::api::openai_chat_completion::{
-            OpenAIResponseFormat, OpenAIResponseFormatJSONSchema,
-        };
-        use crate::value::MessageAggregator;
-        use serde_json::json;
-
-        let json_schema = serde_json::from_value::<OpenAIResponseFormatJSONSchema>(json!({
-            "name": "summarize-content",
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "summary": {
-                        "type": "string",
-                        "description": "A brief summary of the content."
-                    }
-                },
-                "required": [
-                    "summary"
-                ],
-                "additionalProperties": false
-            }
-        }))
-        .unwrap();
-        let config = OpenAIGenerationConfigBuilder::default()
-            .response_format(Some(OpenAIResponseFormat::JsonSchema { json_schema }))
-            .build()
-            .unwrap();
-
-        let model = std::sync::Arc::new(
-            OpenAILanguageModel::new("gpt-4.1", OPENAI_API_KEY).with_config(config),
-        );
-
-        let msgs = vec![
-            Message::with_role(Role::User)
-                .with_contents(vec![Part::Text("What is Artificial Intelligence?".into())]),
-        ];
-        let mut agg = MessageAggregator::new();
-        let mut strm = model.run(msgs, Vec::new());
+        let mut strm = xai.run(msgs, Vec::new());
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
             log::debug(format!("{:?}", delta));
