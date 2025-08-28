@@ -36,3 +36,12 @@ impl AsRef<CacheEntry> for CacheEntry {
         self
     }
 }
+
+impl From<(&str, &str)> for CacheEntry {
+    fn from(value: (&str, &str)) -> Self {
+        Self {
+            dirname: value.0.to_owned(),
+            filename: value.1.to_owned(),
+        }
+    }
+}

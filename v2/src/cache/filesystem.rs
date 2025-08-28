@@ -125,7 +125,7 @@ mod opfs {
         Ok(handle)
     }
 
-    pub async fn exists<P: AsRef<Path>>(path: P) -> bool {
+    pub async fn _exists<P: AsRef<Path>>(path: P) -> bool {
         match get_file_handle(path.as_ref(), false).await {
             Ok(_) => true,
             Err(_) => return false,
@@ -191,7 +191,7 @@ mod opfs {
         Ok(())
     }
 
-    pub async fn remove(path: impl AsRef<Path>) -> Result<(), String> {
+    pub async fn _remove(path: impl AsRef<Path>) -> Result<(), String> {
         let handle = get_dir_handle(path.as_ref(), false).await?;
 
         let opts = FileSystemRemoveOptions::new();
@@ -202,26 +202,6 @@ mod opfs {
             .await
             .map_err(|err| format!("FileSystemDirectoryHandle::remove_entry failed: {:?}", err))?;
         Ok(())
-    }
-
-    #[wasm_bindgen::prelude::wasm_bindgen(js_name = "ailoy_filesystem_exists")]
-    pub async fn exists_(path: String) -> bool {
-        exists(&path).await
-    }
-
-    #[wasm_bindgen::prelude::wasm_bindgen(js_name = "ailoy_filesystem_read")]
-    pub async fn read_(path: String) -> Result<Vec<u8>, String> {
-        read(&path).await
-    }
-
-    #[wasm_bindgen::prelude::wasm_bindgen(js_name = "ailoy_filesystem_write")]
-    pub async fn write_(path: String, data: js_sys::Uint8Array) -> Result<(), String> {
-        write(&path, &data.to_vec(), true).await
-    }
-
-    #[wasm_bindgen::prelude::wasm_bindgen(js_name = "ailoy_filesystem_remove")]
-    pub async fn remove_(path: String) -> Result<(), String> {
-        remove(&path).await
     }
 }
 

@@ -1,9 +1,6 @@
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::{any::Any, collections::BTreeMap, path::PathBuf};
 
-use crate::cache::CacheEntry;
+use crate::{cache::CacheEntry, dyn_maybe_send};
 
 /// A lightweight container of files fetched for a cache-backed build step.
 ///
@@ -15,39 +12,32 @@ use crate::cache::CacheEntry;
 /// This type makes minimal assumptions about how it’s filled or consumed. It merely
 /// stores entries and offers basic operations to inspect or remove them. The exact
 /// construction pipeline and access patterns are up to the caller.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct CacheContents {
-    root: PathBuf,
-    inner: BTreeMap<CacheEntry, Vec<u8>>,
+    pub root: PathBuf,
+    pub entries: BTreeMap<CacheEntry, Vec<u8>>,
+    pub ctx: Option<Box<dyn_maybe_send!(Any)>>,
 }
 
 impl CacheContents {
-    /// Create an empty collection with no associated root path.
-    pub fn new() -> Self {
-        CacheContents {
-            root: PathBuf::new(),
-            inner: BTreeMap::new(),
+    pub fn drain(&mut self) -> impl IntoIterator<Item = (CacheEntry, Vec<u8>)> {
+        let keys = self
+            .entries
+            .keys()
+            .into_iter()
+            .map(|v| v.clone())
+            .collect::<Vec<_>>();
+        let mut rv = Vec::new();
+        for k in keys {
+            let v = self.entries.remove(&k).unwrap();
+            rv.push((k, v));
         }
-    }
-
-    /// Return a new collection that remembers the given local cache root.
-    ///
-    /// This does not touch the filesystem; it only records the path for later use.
-    pub fn with_root(self, root: impl Into<PathBuf>) -> Self {
-        Self {
-            root: root.into(),
-            inner: self.inner,
-        }
-    }
-
-    /// The recorded local cache root, if any.
-    pub fn get_root(&self) -> &Path {
-        &self.root
+        rv.into_iter()
     }
 
     /// Remove and return the bytes associated with the exact key.
     pub fn remove(&mut self, entry: &CacheEntry) -> Option<Vec<u8>> {
-        self.inner.remove(entry)
+        self.entries.remove(entry)
     }
 
     /// Remove and return one entry whose `filename` matches the given value.
@@ -60,7 +50,7 @@ impl CacheContents {
     ) -> Option<(CacheEntry, Vec<u8>)> {
         let entry = {
             let Some((entry, _)) = self
-                .inner
+                .entries
                 .iter()
                 .find(|(k, _)| k.filename() == filename.as_ref())
             else {
@@ -68,19 +58,6 @@ impl CacheContents {
             };
             entry.clone()
         };
-        self.inner.remove_entry(&entry)
-    }
-}
-
-impl FromIterator<(CacheEntry, Vec<u8>)> for CacheContents {
-    /// Build a collection from `(key, bytes)` pairs.
-    ///
-    /// Later duplicates overwrite earlier ones. The resulting `root` is empty; set
-    /// it explicitly with [`with_root`] if you need it.
-    fn from_iter<T: IntoIterator<Item = (CacheEntry, Vec<u8>)>>(iter: T) -> Self {
-        CacheContents {
-            root: PathBuf::new(),
-            inner: iter.into_iter().collect(),
-        }
+        self.entries.remove_entry(&entry)
     }
 }
