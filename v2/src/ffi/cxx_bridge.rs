@@ -165,8 +165,22 @@ mod ffi {
 
         #[cxx_name = "sample_from_rs"]
         pub fn sample(self: Pin<&mut TVMLanguageModel>, logits: DLPackTensor) -> u32;
+    }
 
+    #[namespace = "ailoy"]
+    unsafe extern "C++" {
+        include!("embedding_model.hpp");
 
+        #[cxx_name = "tvm_embedding_model_t"]
+        type TVMEmbeddingModel;
+
+        pub fn create_tvm_embedding_model(
+            cache: &mut CacheContents,
+            device: UniquePtr<DLDevice>,
+        ) -> UniquePtr<TVMEmbeddingModel>;
+
+        #[cxx_name = "infer_from_rs"]
+        pub fn infer(self: Pin<&mut TVMEmbeddingModel>, tokens: &[u32]) -> DLPackTensor;
     }
 
     #[namespace = "ailoy"]
@@ -204,6 +218,16 @@ mod ffi {
 unsafe impl Send for ffi::FaissIndexWrapper {}
 
 unsafe impl Sync for ffi::FaissIndexWrapper {}
+
+unsafe impl Send for ffi::TVMEmbeddingModel {}
+
+unsafe impl Sync for ffi::TVMEmbeddingModel {}
+
+impl std::fmt::Debug for ffi::TVMEmbeddingModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TVMEmbeddingModel").finish()
+    }
+}
 
 unsafe impl Send for ffi::TVMLanguageModel {}
 
