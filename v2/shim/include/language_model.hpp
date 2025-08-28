@@ -13,9 +13,6 @@
 
 #include "tvm_runtime.hpp"
 
-// Forward Declaration for cxx_bridge.rs.h
-struct DLPackTensor;
-
 namespace ailoy {
 
 struct CacheContents;
