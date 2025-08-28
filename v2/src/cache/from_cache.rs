@@ -81,9 +81,7 @@ pub trait TryFromCache: Sized + MaybeSend {
     ///
     /// Implementations should verify that all required entries are present and valid,
     /// and return a descriptive `Err(String)` on failure.
-    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Result<Self, String>>
-    where
-        Self: Sized;
+    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Result<Self, String>>;
 }
 
 /// Infallible variant of [`TryFromCache`].
@@ -104,7 +102,5 @@ pub trait FromCache: Sized + MaybeSend {
     /// Build `Self` from the previously fetched files.
     ///
     /// Implementations may assume `contents` contain all required entries.
-    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Self>
-    where
-        Self: Sized;
+    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Self>;
 }
