@@ -9,24 +9,6 @@ use crate::{cache::CacheEntry, dyn_maybe_send};
 /// - **which files to fetch** (`entries`)
 /// - and optionally, **extra context** (`ctx`) that helps during construction.
 ///
-/// # Usage
-/// Use [`CacheClaim::new`] if you just need to declare a set of required files:
-/// ```rust,ignore
-/// let claim = CacheClaim::new([
-///     CacheEntry::new("my_model", "tokenizer.json"),
-///     CacheEntry::new("my_model", "weights.safetensors"),
-/// ]);
-/// ```
-///
-/// Use [`CacheClaim::with_ctx`] if you also need to pass additional metadata
-/// or parameters along to the build step:
-/// ```rust,ignore
-/// let claim = CacheClaim::with_ctx(
-///     [CacheEntry::new("dataset", "index.json")],
-///     Box::new(("shard_count", 4)), // custom info in ctx
-/// );
-/// ```
-///
 /// # Notes
 /// - The `ctx` value is type-erased (`Box<dyn Any>`), so both sides must agree
 ///   on what type of data is stored there.
@@ -43,6 +25,14 @@ pub struct CacheClaim {
 }
 
 impl CacheClaim {
+    /// Create a new claim
+    ///
+    /// ```rust,ignore
+    /// let claim = CacheClaim::new([
+    ///     CacheEntry::new("my_model", "tokenizer.json"),
+    ///     CacheEntry::new("my_model", "weights.safetensors"),
+    /// ]);
+    /// ```
     pub fn new(entries: impl IntoIterator<Item = impl Into<CacheEntry>>) -> Self {
         Self {
             entries: entries.into_iter().map(|v| v.into()).collect(),
@@ -50,6 +40,17 @@ impl CacheClaim {
         }
     }
 
+    /// Create a new claim with a context
+    ///
+    /// Use this if you also need to pass additional metadata
+    /// or parameters along to the build step:
+    ///
+    /// ```rust,ignore
+    /// let claim = CacheClaim::with_ctx(
+    ///     [CacheEntry::new("dataset", "index.json")],
+    ///     Box::new(("shard_count", 4)), // custom info in ctx
+    /// );
+    /// ```
     pub fn with_ctx(
         entries: impl IntoIterator<Item = impl Into<CacheEntry>>,
         ctx: Box<dyn_maybe_send!(Any)>,
