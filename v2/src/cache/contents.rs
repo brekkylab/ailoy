@@ -20,29 +20,6 @@ pub struct CacheContents {
 }
 
 impl CacheContents {
-    // /// Create an empty collection with no associated root path.
-    // pub fn new() -> Self {
-    //     CacheContents {
-    //         root: PathBuf::new(),
-    //         inner: BTreeMap::new(),
-    //     }
-    // }
-
-    // /// Return a new collection that remembers the given local cache root.
-    // ///
-    // /// This does not touch the filesystem; it only records the path for later use.
-    // pub fn with_root(self, root: impl Into<PathBuf>) -> Self {
-    //     Self {
-    //         root: root.into(),
-    //         inner: self.inner,
-    //     }
-    // }
-
-    // /// The recorded local cache root, if any.
-    // pub fn get_root(&self) -> &Path {
-    //     &self.root
-    // }
-
     pub fn drain(&mut self) -> impl IntoIterator<Item = (CacheEntry, Vec<u8>)> {
         let keys = self
             .entries
@@ -84,16 +61,3 @@ impl CacheContents {
         self.entries.remove_entry(&entry)
     }
 }
-
-// impl FromIterator<(CacheEntry, Vec<u8>)> for CacheContents {
-//     /// Build a collection from `(key, bytes)` pairs.
-//     ///
-//     /// Later duplicates overwrite earlier ones. The resulting `root` is empty; set
-//     /// it explicitly with [`with_root`] if you need it.
-//     fn from_iter<T: IntoIterator<Item = (CacheEntry, Vec<u8>)>>(iter: T) -> Self {
-//         CacheContents {
-//             root: PathBuf::new(),
-//             entries: iter.into_iter().collect(),
-//         }
-//     }
-// }
