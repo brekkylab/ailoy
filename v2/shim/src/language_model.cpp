@@ -23,10 +23,12 @@ double random_float(double min, double max) {
   return dis(gen);
 }
 
-int get_int_from_picojson(picojson::object obj, std::string key) {
+int get_int_from_picojson(picojson::object obj, std::string key,
+                          int default_value = 0) {
   // picojson gets numbers as double, so need to cast
   if (obj.count(key) > 0)
     return static_cast<int>(obj.at(key).get<double>());
+  return default_value;
 }
 
 constexpr size_t page_size = 16;
@@ -35,15 +37,16 @@ kv_cache_t::kv_cache_t(tvm_runtime_t &rt) {
   auto fn = rt.get_vm_function("create_tir_paged_kv_cache");
   if (!fn.defined())
     throw std::runtime_error("create_tir_paged_kv_cache not defined");
-  kv_cache_ = fn(IntTuple{1}, // max_num_sequence
-                 IntTuple{get_int_from_picojson(rt.get_metadata(),
-                                                "context_window_size")},
-                 IntTuple{get_int_from_picojson(rt.get_metadata(),
-                                                "prefill_chunk_size")},
-                 IntTuple{page_size}, // page size
-                 IntTuple{get_int_from_picojson(rt.get_metadata(),
-                                                "sliding_window_size") != -1})
-                  .cast<ObjectRef>();
+  kv_cache_ =
+      fn(IntTuple{1}, // max_num_sequence
+         IntTuple{
+             get_int_from_picojson(rt.get_metadata(), "context_window_size")},
+         IntTuple{
+             get_int_from_picojson(rt.get_metadata(), "prefill_chunk_size")},
+         IntTuple{page_size}, // page size
+         IntTuple{get_int_from_picojson(rt.get_metadata(),
+                                        "sliding_window_size", -1) != -1})
+          .cast<ObjectRef>();
   fkv_state_clear_ = rt.get_function("vm.builtin.kv_state_clear");
   fkv_state_add_sequence_ = rt.get_function("vm.builtin.kv_state_add_sequence");
   fkv_state_remove_sequence_ =
