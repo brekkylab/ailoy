@@ -135,8 +135,6 @@ mod ffi {
             k: usize,
         ) -> Result<FaissIndexSearchResult>;
 
-        // unsafe fn get_by_id(self: &FaissIndexWrapper, id: i64) -> Result<Vec<f32>>;
-
         unsafe fn get_by_ids(self: &FaissIndexWrapper, ids: &[i64]) -> Result<Vec<f32>>;
 
         unsafe fn remove_vectors(self: Pin<&mut FaissIndexWrapper>, ids: &[i64]) -> Result<usize>;
@@ -160,7 +158,7 @@ mod ffi {
         ) -> UniquePtr<TVMLanguageModel>;
 
         #[cxx_name = "prefill_from_rs"]
-        pub fn prefill(self: Pin<&mut TVMLanguageModel>, tokens: &Vec<u32>) -> ();
+        pub fn prefill(self: Pin<&mut TVMLanguageModel>, tokens: &[u32]) -> ();
 
         #[cxx_name = "decode_from_rs"]
         pub fn decode(self: Pin<&mut TVMLanguageModel>, last_token: u32) -> DLPackTensor;
@@ -168,10 +166,7 @@ mod ffi {
         #[cxx_name = "sample_from_rs"]
         pub fn sample(self: Pin<&mut TVMLanguageModel>, logits: DLPackTensor) -> u32;
 
-        // #[cxx_name = "faiss_vector_store_t"]
-        // type FAISSVectorStore;
 
-        // pub fn create_faiss_vector_store(dimension: u32) -> UniquePtr<FAISSVectorStore>;
     }
 
     #[namespace = "ailoy"]

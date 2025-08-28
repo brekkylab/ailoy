@@ -185,7 +185,7 @@ void tvm_language_model_t::prefill(const std::vector<uint32_t> &tokens) {
   history_ = tokens;
 }
 
-void tvm_language_model_t::prefill_from_rs(const rust::Vec<uint32_t> &tokens) {
+void tvm_language_model_t::prefill_from_rs(rust::Slice<const uint32_t> tokens) {
   std::lock_guard<std::mutex> lk(m_);
   std::vector<uint32_t> converted(tokens.begin(), tokens.end());
   return prefill(converted);

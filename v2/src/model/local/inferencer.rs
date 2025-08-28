@@ -66,7 +66,7 @@ mod tvm_runtime {
     }
 
     impl Inferencer {
-        pub fn prefill(&mut self, tokens: &Vec<u32>) -> () {
+        pub fn prefill(&mut self, tokens: &[u32]) -> () {
             self.inner.pin_mut().prefill(tokens)
         }
 
@@ -146,7 +146,7 @@ mod tvmjs_runtime {
     pub struct Inferencer {}
 
     impl Inferencer {
-        pub fn prefill(&mut self, _: &Vec<u32>) -> () {
+        pub fn prefill(&mut self, _: &[u32]) -> () {
             todo!()
         }
 
