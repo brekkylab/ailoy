@@ -185,6 +185,12 @@ void tvm_language_model_t::prefill(const std::vector<uint32_t> &tokens) {
   history_ = tokens;
 }
 
+void tvm_language_model_t::prefill_from_rs(const rust::Vec<uint32_t> &tokens) {
+  std::lock_guard<std::mutex> lk(m_);
+  std::vector<uint32_t> converted(tokens.begin(), tokens.end());
+  return prefill(converted);
+}
+
 NDArray tvm_language_model_t::decode(uint32_t last_token) {
   DLDataType U32 = DLDataType{.code = kDLUInt, .bits = 32, .lanes = 1};
   DLDataType I32 = DLDataType{.code = kDLInt, .bits = 32, .lanes = 1};

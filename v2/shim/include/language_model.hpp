@@ -86,11 +86,7 @@ public:
   /** Prefill */
   void prefill(const std::vector<uint32_t> &tokens);
 
-  void prefill_from_rs(const rust::Vec<uint32_t> &tokens) {
-    std::lock_guard<std::mutex> lk(m_);
-    std::vector<uint32_t> converted(tokens.begin(), tokens.end());
-    return prefill(converted);
-  }
+  void prefill_from_rs(rust::Slice<const uint32_t> tokens);
 
   /** Decode */
   tvm::runtime::NDArray decode(uint32_t last_token);
