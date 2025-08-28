@@ -1,6 +1,7 @@
 #include "language_model.hpp"
 
 #include <random>
+#include <string>
 
 #include <dlpack/dlpack.h>
 #include <tvm/ffi/container/shape.h>
@@ -8,8 +9,6 @@
 
 #include "cxx_bridge.rs.h"
 #include "tvm_runtime.hpp"
-
-#include <iostream>
 
 using namespace tvm;
 using namespace tvm::runtime;
