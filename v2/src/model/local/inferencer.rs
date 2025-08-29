@@ -1,9 +1,11 @@
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 pub use tvm_runtime::EmbeddingModelInferencer;
+#[cfg(any(target_family = "unix", target_family = "windows"))]
 pub use tvm_runtime::LanguageModelInferencer;
 
 #[cfg(any(target_family = "wasm"))]
-// pub use tvmjs_runtime::EmbeddingModelInferencer;
+pub use tvmjs_runtime::EmbeddingModelInferencer;
+#[cfg(any(target_family = "wasm"))]
 pub use tvmjs_runtime::LanguageModelInferencer;
 
 use crate::{
@@ -216,14 +218,15 @@ mod tvm_runtime {
 mod tvmjs_runtime {
     use std::fmt;
 
+    use js_sys::{Float32Array, Uint32Array};
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
 
     use super::*;
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
-        ffi::JSLanguageModel,
-        utils::BoxFuture,
+        ffi::{JSEmbeddingModel, JSLanguageModel},
+        utils::{BoxFuture, float16},
     };
 
     pub struct LanguageModelInferencer {
@@ -241,14 +244,12 @@ mod tvmjs_runtime {
 
     impl LanguageModelInferencer {
         pub async fn prefill(&mut self, tokens: &[u32]) -> () {
-            use wasm_bindgen_futures::JsFuture;
-
-            let arr = unsafe { js_sys::Uint32Array::view(tokens) };
+            let arr = unsafe { Uint32Array::view(tokens) };
             JsFuture::from(self.inner.prefill(arr)).await.unwrap();
         }
 
         pub async fn decode(&mut self, last_token: u32) -> u32 {
-            let logits: js_sys::Float32Array = JsFuture::from(self.inner.decode(last_token))
+            let logits: Float32Array = JsFuture::from(self.inner.decode(last_token))
                 .await
                 .unwrap()
                 .into();
@@ -284,7 +285,7 @@ mod tvmjs_runtime {
                 };
 
                 let prom = init_language_model_js(&cache_contents);
-                let js_lang_model = match JsFuture::from(prom).await {
+                let js_lm = match JsFuture::from(prom).await {
                     Ok(out) => {
                         let lm: JSLanguageModel = out
                             .dyn_into()
@@ -296,44 +297,89 @@ mod tvmjs_runtime {
                     }
                 };
 
-                Ok(LanguageModelInferencer {
-                    inner: js_lang_model,
-                })
+                Ok(LanguageModelInferencer { inner: js_lm })
+            })
+        }
+    }
+
+    pub struct EmbeddingModelInferencer {
+        inner: JSEmbeddingModel,
+    }
+
+    impl fmt::Debug for EmbeddingModelInferencer {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("EmbeddingModelInferencer")
+                // .field("init", &self.init)
+                // .field("inner", &self.inner)
+                .finish()
+        }
+    }
+
+    impl EmbeddingModelInferencer {
+        pub async fn infer(&mut self, tokens: &[u32]) -> Vec<f32> {
+            use wasm_bindgen_futures::JsFuture;
+
+            let arr = unsafe { js_sys::Uint32Array::view(tokens) };
+            let res = self.inner.infer(arr);
+            let result_vector = JsFuture::from(res).await.unwrap();
+
+            let f32_vec = if let Some(f32_array) = result_vector.dyn_ref::<js_sys::Float32Array>() {
+                f32_array.to_vec()
+            } else if let Some(u16_array) = result_vector.dyn_ref::<js_sys::Uint16Array>() {
+                u16_array
+                    .to_vec()
+                    .into_iter()
+                    .map(|val| float16::f16_to_f32(val))
+                    .collect()
+            } else {
+                vec![]
+            };
+            f32_vec
+        }
+    }
+
+    impl TryFromCache for EmbeddingModelInferencer {
+        fn claim_files(
+            cache: Cache,
+            key: impl AsRef<str>,
+        ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+            claim_files(cache, key)
+        }
+
+        fn try_from_contents(
+            mut contents: CacheContents,
+        ) -> BoxFuture<'static, Result<Self, String>> {
+            use crate::ffi::js_bridge::init_embedding_model_js;
+            use js_sys::{Object, Reflect, Uint8Array};
+
+            Box::pin(async move {
+                let cache_contents = {
+                    let obj = Object::new();
+                    for (entry, buf) in contents.drain() {
+                        let filename = entry.filename();
+                        let u8arr = Uint8Array::new_with_length(buf.len() as u32);
+                        u8arr.copy_from(&buf[..]);
+                        Reflect::set(&obj, &JsValue::from_str(filename), &u8arr.buffer().into())
+                            .unwrap();
+                    }
+                    obj
+                };
+
+                let prom = init_embedding_model_js(&cache_contents);
+                let js_em: JSEmbeddingModel = match JsFuture::from(prom).await {
+                    Ok(out) => {
+                        let em: JSEmbeddingModel = out
+                            .dyn_into()
+                            .map_err(|e| format!("Conversion failed: {:?}", e))?;
+                        em
+                    }
+                    Err(err) => {
+                        return Err(format!("JS inferencer init failed: {:?}", err));
+                    }
+                };
+
+                Ok(EmbeddingModelInferencer { inner: js_em })
             })
         }
     }
 }
-
-// #[cfg(all(test, target_arch = "wasm32"))]
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use futures::StreamExt as _;
-//     use wasm_bindgen_test::*;
-
-//     wasm_bindgen_test_configure!(run_in_browser);
-
-//     #[wasm_bindgen_test]
-//     async fn add_js_works() {
-//         let cache = crate::cache::Cache::new();
-//         let key = "Qwen/Qwen3-0.6B";
-//         let mut model_strm = Box::pin(cache.try_create::<LanguageModelInferencer>(key));
-//         let mut model: Option<LanguageModelInferencer> = None;
-
-//         while let Some(progress) = model_strm.next().await {
-//             let mut progress = progress.unwrap();
-//             web_sys::console::log_1(
-//                 &format!(
-//                     "{} ({} / {})",
-//                     progress.comment, progress.current_task, progress.total_task
-//                 )
-//                 .into(),
-//             );
-//             if progress.current_task == progress.total_task {
-//                 model = progress.result.take();
-//             }
-//         }
-//         let mut model = model.unwrap();
-//         model.wait().await.unwrap();
-//     }
-// }
