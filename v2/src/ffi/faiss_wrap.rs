@@ -78,7 +78,7 @@ impl FaissIndex {
         unsafe { Ok(self.inner.pin_mut().train_index(&flattened, num_vectors)?) }
     }
 
-    pub fn add_vector(&mut self, vector: &Vec<f32>) -> Result<String> {
+    pub fn add_vector(&mut self, vector: &[f32]) -> Result<String> {
         let id = self.ntotal();
 
         unsafe {
