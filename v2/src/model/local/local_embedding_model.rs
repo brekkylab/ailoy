@@ -1,9 +1,11 @@
+use std::{any::Any, collections::BTreeMap, sync::Arc};
+
 use anyhow::Result;
 use futures::stream::Stream;
-use std::sync::Arc;
 
 use crate::{
-    cache::{Cache, CacheContents, CacheEntry, CacheProgress, TryFromCache},
+    cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
+    dyn_maybe_send,
     knowledge_base::Embedding,
     model::{
         EmbeddingModel,
@@ -43,25 +45,77 @@ impl TryFromCache for LocalEmbeddingModel {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
+    ) -> BoxFuture<'static, Result<CacheClaim, String>> {
         let key = key.as_ref().to_owned();
         Box::pin(async move {
+            let mut tokenizer = Tokenizer::claim_files(cache.clone(), &key).await?;
+            let mut inferncer = EmbeddingModelInferencer::claim_files(cache.clone(), &key).await?;
+            let ctx: Box<dyn_maybe_send!(Any)> = Box::new([
+                tokenizer
+                    .entries
+                    .iter()
+                    .map(|v| v.clone())
+                    .collect::<Vec<_>>(),
+                inferncer
+                    .entries
+                    .iter()
+                    .map(|v| v.clone())
+                    .collect::<Vec<_>>(),
+            ]);
             let mut rv = Vec::new();
-            rv.append(&mut Tokenizer::claim_files(cache.clone(), &key).await?);
-            rv.append(&mut EmbeddingModelInferencer::claim_files(cache.clone(), &key).await?);
-            Ok(rv)
+            rv.append(&mut tokenizer.entries);
+            rv.append(&mut inferncer.entries);
+            Ok(CacheClaim::with_ctx(rv, ctx))
         })
     }
 
-    fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String>
+    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, Result<Self, String>>
     where
         Self: Sized,
     {
-        let tokenizer = Tokenizer::try_from_contents(contents)?;
-        let inferencer = EmbeddingModelInferencer::try_from_contents(contents)?;
-        Ok(LocalEmbeddingModel {
-            tokenizer,
-            inferencer: Mutex::new(inferencer),
+        Box::pin(async move {
+            let (tok_entries, inf_entries) = match contents.ctx.take() {
+                Some(ctx_any) => match ctx_any.downcast::<[Vec<CacheEntry>; 2]>() {
+                    Ok(boxed) => {
+                        let [a, b] = *boxed;
+                        (a, b)
+                    }
+                    Err(_) => return Err("contents.ctx is not [Vec<CacheEntry>; 3]".into()),
+                },
+                None => return Err("contents.ctx is None".into()),
+            };
+
+            let tokenizer = {
+                let mut files = BTreeMap::new();
+                for k in tok_entries {
+                    let v = contents.entries.remove(&k).unwrap();
+                    files.insert(k, v);
+                }
+                let contents = CacheContents {
+                    root: contents.root.clone(),
+                    entries: files,
+                    ctx: None,
+                };
+                Tokenizer::try_from_contents(contents).await?
+            };
+            let inferencer = {
+                let mut files = BTreeMap::new();
+                for k in inf_entries {
+                    let v = contents.entries.remove(&k).unwrap();
+                    files.insert(k, v);
+                }
+                let contents = CacheContents {
+                    root: contents.root.clone(),
+                    entries: files,
+                    ctx: None,
+                };
+                EmbeddingModelInferencer::try_from_contents(contents).await?
+            };
+
+            Ok(LocalEmbeddingModel {
+                tokenizer,
+                inferencer: Mutex::new(inferencer),
+            })
         })
     }
 }
@@ -72,7 +126,7 @@ mod tests {
     use super::*;
     use futures::StreamExt;
 
-    fn dot(a: &Vec<f32>, b: &Vec<f32>) -> f32 {
+    fn dot(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {
             panic!("Cannot dot two vectors of different lengths");
         }

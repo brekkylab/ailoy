@@ -4,7 +4,7 @@ use minijinja::{Environment, context};
 use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
 use crate::{
-    cache::{Cache, CacheContents, CacheEntry, TryFromCache},
+    cache::{Cache, CacheClaim, CacheContents, TryFromCache},
     utils::BoxFuture,
     value::{Message, MessageStyle, QWEN3_FMT, StyledMessage, ToolDesc},
 };
@@ -102,16 +102,19 @@ impl TryFromCache for ChatTemplate {
     fn claim_files(
         _: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>> {
+    ) -> BoxFuture<'static, Result<CacheClaim, String>> {
         let dirname = key.as_ref().replace("/", "--");
-        Box::pin(async move { Ok(vec![CacheEntry::new(dirname, "chat_template.j2")]) })
+        Box::pin(async move { Ok(CacheClaim::new([(dirname.as_str(), "chat_template.j2")])) })
     }
 
-    fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String> {
-        let Some((entry, bytes)) = contents.remove_with_filename("chat_template.j2") else {
-            return Err("chat_template.j2 not exists".to_owned());
-        };
-        let s = std::str::from_utf8(&bytes).map_err(|_| "Utf-8 conversion failed".to_owned())?;
-        Ok(ChatTemplate::new(entry.path(), s.to_owned()))
+    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, Result<Self, String>> {
+        Box::pin(async move {
+            let Some((entry, bytes)) = contents.remove_with_filename("chat_template.j2") else {
+                return Err("chat_template.j2 not exists".to_owned());
+            };
+            let s =
+                std::str::from_utf8(&bytes).map_err(|_| "Utf-8 conversion failed".to_owned())?;
+            Ok(ChatTemplate::new(entry.path(), s.to_owned()))
+        })
     }
 }

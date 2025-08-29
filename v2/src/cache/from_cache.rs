@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use crate::{
-    cache::{Cache, CacheContents, CacheEntry},
+    cache::{Cache, CacheClaim, CacheContents},
     utils::{BoxFuture, MaybeSend},
 };
 
@@ -10,58 +10,63 @@ use crate::{
 /// # How it works
 /// The construction pipeline is:
 /// 1. **`claim_files(cache, key)`** → declare which logical files (`CacheEntry`s)
-///    are required to build `Self`.
-/// 2. The caller (typically [`Cache::try_create`]) **loads(or downloads)** those files
+///    are required to build `Self`. Optionally, attach a `ctx` (boxed `Any`)
+///    containing extra metadata needed for reconstruction.
+/// 2. The caller (typically [`Cache::try_create`]) **loads (or downloads)** those files
 ///    and **aggregates** them into a [`CacheContents`] (handling local/remote logic).
-/// 3. **`try_from_contents(contents)`** → parse/assemble `Self` from the provided
-///    bytes in `contents`.
+/// 3. **`try_from_contents(contents)`** → asynchronously parse/assemble `Self` from
+///    the provided bytes in `contents`.
 ///
-/// Use `TryFromCache` when either discovering the file list or constructing the type
-/// can fail (e.g., remote lookup, missing files, decode errors). If both steps are
-/// infallible in your case, see [`FromCache`] for a simpler variant.
-///
-/// Implementations should treat `key` as a free-form selector (e.g., a model ID).
-/// `claim_files` should be **pure** (idempotent; no writes) and may inspect `cache`
-/// (e.g., for root or remote URL) to compute paths.
-///
-/// # Contracts
-/// - `claim_files` must return logical filenames (by `dirname`/`filename`) that will
-///   be present in the remote directory manifest(s).
-/// - `try_from_contents` should *only* read from `contents` and return a meaningful
-///   error if any required entry is absent or malformed.
-/// - Implementations are free to consume entries from `contents` (e.g., via
-///   remove-like APIs) to detect missing files.
+/// # Contracts (rules you must follow)
+/// - **`claim_files` should be lightweight**: its main job is to declare which
+///   logical files are required. It should not perform heavy work such as
+///   reading file contents or changing state. At most, it may inspect `cache`
+///   (e.g., to check a root path or remote URL).
+/// - **File names must match the manifest**: the logical names returned from
+///   `claim_files` must exist in the remote directory manifest (`dirname`/`filename`).
+/// - **`try_from_contents` must validate and consume files**: it takes ownership
+///   of `CacheContents`, extracts the required entries, and removes them as it goes.
+///   Since LLM models can include very large files, avoid copying data unnecessarily,
+///   as this may lead to out-of-memory issues.
+/// - **If you use `ctx`**: both `claim_files` and `try_from_contents` must agree
+///   on how to interpret it. `ctx` is just a generic box (`Any`) that carries
+///   extra information between the two steps. If no extra info is needed, you
+///   can leave it empty.
 ///
 /// # Example
 /// ```rust,ignore
 /// struct MyModel { tokenizer: Vec<u8>, weights: Vec<u8> }
 ///
 /// impl TryFromCache for MyModel {
-///     fn claim_files(
-///         _cache: Cache,
-///         key: impl AsRef<str>,
-///     ) -> Pin<Box<dyn Future<Output = Result<Vec<CacheEntry>, String>>>> {
+///     fn claim_files(cache: Cache, key: impl AsRef<str>)
+///     -> BoxFuture<'static, Result<CacheClaim, String>> {
 ///         let k = key.as_ref().to_owned();
 ///         Box::pin(async move {
-///             Ok(vec![
-///                 CacheEntry::new(&format!("{k}"), "tokenizer.json"),
-///                 CacheEntry::new(&format!("{k}"), "model.safetensors"),
-///             ])
+///             Ok(CacheClaim::with_ctx(
+///                 vec![
+///                     CacheEntry::new(&k, "tokenizer.json"),
+///                     CacheEntry::new(&k, "model.safetensors"),
+///                 ],
+///                 Box::new(()), // empty ctx in this simple case
+///             ))
 ///         })
 ///     }
 ///
-///     fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String> {
-///         let tokenizer = contents.remove_with_filename_str("tokenizer.json")
-///             .ok_or("missing tokenizer.json")?.1;
-///         let weights = contents.remove_with_filename_str("model.safetensors")
-///             .ok_or("missing model.safetensors")?.1;
-///         Ok(MyModel { tokenizer, weights })
+///     fn try_from_contents(contents: CacheContents)
+///     -> BoxFuture<'static, Result<Self, String>> {
+///         Box::pin(async move {
+///             let tokenizer = contents.remove_with_filename_str("tokenizer.json")
+///                 .ok_or("missing tokenizer.json")?.1;
+///             let weights = contents.remove_with_filename_str("model.safetensors")
+///                 .ok_or("missing model.safetensors")?.1;
+///             Ok(MyModel { tokenizer, weights })
+///         })
 ///     }
 /// }
 /// ```
 ///
-/// See also: [`Cache::try_create`], [`CacheEntry`], [`CacheContents`].
-pub trait TryFromCache: Sized + MaybeSend + 'static {
+/// See also: [`Cache::try_create`], [`CacheClaim`], [`CacheContents`].
+pub trait TryFromCache: Sized + MaybeSend {
     /// Declare the set of files needed to construct `Self`.
     ///
     /// The returned future resolves to a list of logical entries (`dirname`/`filename`)
@@ -70,15 +75,13 @@ pub trait TryFromCache: Sized + MaybeSend + 'static {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<Vec<CacheEntry>, String>>;
+    ) -> BoxFuture<'static, Result<CacheClaim, String>>;
 
     /// Build `Self` from the previously fetched files.
     ///
     /// Implementations should verify that all required entries are present and valid,
     /// and return a descriptive `Err(String)` on failure.
-    fn try_from_contents(contents: &mut CacheContents) -> Result<Self, String>
-    where
-        Self: Sized;
+    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Result<Self, String>>;
 }
 
 /// Infallible variant of [`TryFromCache`].
@@ -89,19 +92,15 @@ pub trait TryFromCache: Sized + MaybeSend + 'static {
 ///
 /// This trait follows the same pipeline as `TryFromCache`:
 /// `claim_files` → (download & aggregate into [`CacheContents`]) → `try_from_contents`.
-pub trait FromCache {
+pub trait FromCache: Sized + MaybeSend {
     /// Declare the set of files needed to construct `Self`.
     ///
     /// This method must not fail; return a complete list of required entries.
-    fn claim_files(
-        cache: Cache,
-        key: impl AsRef<str>,
-    ) -> Pin<Box<dyn Future<Output = Vec<CacheEntry>>>>;
+    fn claim_files(cache: Cache, key: impl AsRef<str>)
+    -> Pin<Box<dyn Future<Output = CacheClaim>>>;
 
     /// Build `Self` from the previously fetched files.
     ///
     /// Implementations may assume `contents` contain all required entries.
-    fn try_from_contents(contents: &mut CacheContents) -> Self
-    where
-        Self: Sized;
+    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Self>;
 }

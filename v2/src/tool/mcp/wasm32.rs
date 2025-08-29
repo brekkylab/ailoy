@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
+use ailoy_macros::multi_platform_async_trait;
 use anyhow::anyhow;
 use futures::{StreamExt, stream::LocalBoxStream};
 use rmcp::model::{
@@ -20,7 +21,6 @@ use crate::{
         Tool,
         mcp::common::{call_tool_result_to_parts, map_mcp_tool_to_tool_description},
     },
-    utils::BoxFuture,
     value::{Part, ToolCallArg, ToolDesc},
 };
 
@@ -323,32 +323,32 @@ struct MCPTool {
     pub desc: ToolDesc,
 }
 
+#[multi_platform_async_trait]
 impl Tool for MCPTool {
     fn get_description(&self) -> ToolDesc {
         self.desc.clone()
     }
 
-    fn run(self: Arc<Self>, args: ToolCallArg) -> BoxFuture<'static, Result<Vec<Part>, String>> {
+    async fn run(&self, args: ToolCallArg) -> Result<Vec<Part>, String> {
         let client = self.client.clone();
+        let tool_name = self.name.clone();
 
-        Box::pin(async move {
-            let arguments: Option<JsonMap<String, JsonValue>> = serde_json::to_value(args)
-                .map_err(|e| format!("serialize ToolCall arguments failed: {e}"))?
-                .as_object()
-                .cloned();
+        let arguments: Option<JsonMap<String, JsonValue>> = serde_json::to_value(args)
+            .map_err(|e| format!("serialize ToolCall arguments failed: {e}"))?
+            .as_object()
+            .cloned();
 
-            let result = client
-                .call_tool(CallToolRequestParam {
-                    name: self.name.clone().into(),
-                    arguments,
-                })
-                .await
-                .map_err(|e| format!("mcp call_tool failed: {e}"))?;
+        let result = client
+            .call_tool(CallToolRequestParam {
+                name: tool_name.into(),
+                arguments,
+            })
+            .await
+            .map_err(|e| format!("mcp call_tool failed: {e}"))?;
 
-            let parts = call_tool_result_to_parts(&result)
-                .map_err(|e| format!("call_tool_result_to_parts failed: {e}"))?;
-            Ok(parts)
-        })
+        let parts = call_tool_result_to_parts(&result)
+            .map_err(|e| format!("call_tool_result_to_parts failed: {e}"))?;
+        Ok(parts)
     }
 }
 

@@ -292,7 +292,7 @@ mod unsync {
         /// An RAII guard is returned to allow scoped unlock of the lock.\
         /// When the guard goes out of scope, the mutex will be unlocked.\
         /// Attempts to lock a mutex in the thread which already holds the lock will result in a deadlock.
-        pub fn lock(&self) -> RefMut<T> {
+        pub fn lock(&'_ self) -> RefMut<'_, T> {
             self.cell.borrow_mut()
         }
 
@@ -301,7 +301,7 @@ mod unsync {
         /// Otherwise, an RAII guard is returned.\
         /// The lock will be unlocked when the guard is dropped.\
         /// This function does not block.
-        pub fn try_lock(&self) -> Option<RefMut<T>> {
+        pub fn try_lock(&'_ self) -> Option<RefMut<'_, T>> {
             self.cell.try_borrow_mut().ok()
         }
 

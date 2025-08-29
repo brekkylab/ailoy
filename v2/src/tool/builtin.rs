@@ -3,9 +3,10 @@ use std::{
     sync::Arc,
 };
 
+use ailoy_macros::multi_platform_async_trait;
+
 use crate::{
     tool::Tool,
-    utils::BoxFuture,
     value::{Part, ToolCallArg, ToolDesc},
 };
 
@@ -44,13 +45,15 @@ impl BuiltinTool {
     }
 }
 
+#[multi_platform_async_trait]
 impl Tool for BuiltinTool {
     fn get_description(&self) -> ToolDesc {
         self.desc.clone()
     }
 
-    fn run(self: Arc<Self>, args: ToolCallArg) -> BoxFuture<'static, Result<Vec<Part>, String>> {
-        Box::pin(async move { Ok(vec![(self.f)(args)]) })
+    async fn run(&self, args: ToolCallArg) -> Result<Vec<Part>, String> {
+        let tool_func = self.f.clone();
+        Ok(vec![tool_func(args)])
     }
 }
 
