@@ -123,11 +123,13 @@ impl TryFromCache for LocalEmbeddingModel {
     }
 }
 
-#[cfg(any(target_family = "unix", target_family = "windows"))]
 #[cfg(test)]
 mod tests {
     use super::*;
     use futures::StreamExt;
+
+    use crate::utils::log;
+    use ailoy_macros::multi_platform_test;
 
     fn dot(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {
@@ -137,7 +139,7 @@ mod tests {
         a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
     }
 
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_embedding() {
         let cache = crate::cache::Cache::new();
         let key = "BAAI/bge-m3";
@@ -158,10 +160,11 @@ mod tests {
 
         let embedding = model.run("What is BGE M3?".to_owned()).await.unwrap();
         assert_eq!(embedding.len(), 1024);
+        // log::info(format!("{:?}", embedding.normalized()));
     }
 
-    #[tokio::test]
-    async fn test_similariry() {
+    #[multi_platform_test]
+    async fn check_similarity() {
         use futures::StreamExt;
 
         use super::*;
@@ -173,10 +176,10 @@ mod tests {
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
-            println!(
+            log::info(format!(
                 "{} ({} / {})",
                 progress.comment, progress.current_task, progress.total_task
-            );
+            ));
             if progress.current_task == progress.total_task {
                 model = progress.result.take();
             }
@@ -203,5 +206,9 @@ mod tests {
         assert!(
             dot(&query_embedding2, &answer_embedding1) < dot(&query_embedding2, &answer_embedding2)
         );
+        // log::info(format!("{:?}", dot(&query_embedding1, &answer_embedding1)));
+        // log::info(format!("{:?}", dot(&query_embedding1, &answer_embedding2)));
+        // log::info(format!("{:?}", dot(&query_embedding2, &answer_embedding1)));
+        // log::info(format!("{:?}", dot(&query_embedding2, &answer_embedding2)));
     }
 }
