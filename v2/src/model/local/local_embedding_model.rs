@@ -11,7 +11,7 @@ use crate::{
         EmbeddingModel,
         local::{EmbeddingModelInferencer, Tokenizer},
     },
-    utils::{BoxFuture, Mutex, Normalize},
+    utils::{BoxFuture, Mutex, Normalize as _},
 };
 use ailoy_macros::multi_platform_async_trait;
 
@@ -36,8 +36,11 @@ impl LocalEmbeddingModel {
 impl EmbeddingModel for LocalEmbeddingModel {
     async fn run(self: Arc<Self>, text: String) -> Result<Embedding> {
         let input_tokens = self.tokenizer.encode(&text, true).unwrap();
-        let tensor = self.inferencer.lock().infer(&input_tokens);
-        return tensor.to_vec_f32();
+        #[cfg(target_family = "wasm")]
+        let embedding = Ok(self.inferencer.lock().infer(&input_tokens).await);
+        #[cfg(not(target_family = "wasm"))]
+        let embedding = self.inferencer.lock().infer(&input_tokens).to_vec_f32();
+        embedding
     }
 }
 
