@@ -1,6 +1,7 @@
 import commonjs from "@rollup/plugin-commonjs";
 import terser from "@rollup/plugin-terser";
 import typescript from "@rollup/plugin-typescript";
+import copy from "rollup-plugin-copy";
 
 const tsconfig = "tsconfig.build.json";
 
@@ -20,7 +21,10 @@ export default [
       typescript({
         tsconfig,
       }),
-      terser(),
+      copy({
+        targets: [{ src: "src/faiss/faiss_bridge.wasm", dest: "dist/" }],
+      }),
+      // terser(),
     ],
   },
 ];
