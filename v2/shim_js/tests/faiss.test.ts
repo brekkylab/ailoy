@@ -39,9 +39,9 @@ describe("Faiss VectorStore", async () => {
       2
     );
 
-    // id of 0 should be 1
+    // id of 0 should be 0
     expect(searchResults.indexes[0]).to.be.equal(0n);
-    // id of 1 should be 2
+    // id of 1 should be 1
     expect(searchResults.indexes[1]).to.be.equal(1n);
 
     // distance of 0 should be less than 1
