@@ -7,7 +7,7 @@ FAISS_DEPS_DIR="$BUILD_DIR/deps/faiss"
 mkdir -p "$FAISS_DEPS_DIR" || { echo "Error: Could not create directory $FAISS_DEPS_DIR"; exit 1; }
 
 # # Download and extract
-FAISS_WEB_URL="https://github.com/brekkylab/faiss-web/releases/download/v1.11.0-wasm/faiss-v1.11.0-wasm.tar.gz"
+FAISS_WEB_URL="https://github.com/brekkylab/faiss-web/releases/download/v1.12.0-wasm/faiss-v1.12.0-wasm.tar.gz"
 curl -L -s "$FAISS_WEB_URL" | tar -xzf - -C "$FAISS_DEPS_DIR"
 
 # Build faiss_bridge
