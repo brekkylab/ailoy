@@ -27,8 +27,8 @@ docker run --rm \
     -lFortranRuntime \
     -lembind \
     -s WASM=1 \
+    -s ENVIRONMENT=web \
     -s EXPORT_ES6=1 \
-    -s MODULARIZE=1 \
     -s EXPORT_NAME="FaissModule" \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s DISABLE_EXCEPTION_CATCHING=0 \

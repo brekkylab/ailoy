@@ -10,44 +10,55 @@
 
 using namespace emscripten;
 
+EMSCRIPTEN_DECLARE_VAL_TYPE(Float32Array);
+EMSCRIPTEN_DECLARE_VAL_TYPE(BigInt64Array);
+
 enum class FaissMetricType : uint8_t {
-  METRIC_INNER_PRODUCT = 0,
-  METRIC_L2 = 1,
-  METRIC_L1 = 2,
-  METRIC_Linf = 3,
-  METRIC_Lp = 4,
-  METRIC_Canberra = 20,
-  METRIC_BrayCurtis = 21,
-  METRIC_JensenShannon = 22,
-  METRIC_Jaccard = 23
+  InnerProduct = 0,
+  L2 = 1,
+  L1 = 2,
+  Linf = 3,
+  Lp = 4,
+  Canberra = 20,
+  BrayCurtis = 21,
+  JensenShannon = 22,
+  Jaccard = 23
 };
 
 struct FaissIndexSearchResult {
-  std::vector<float> distances;
-  std::vector<int64_t> ids;
+  Float32Array distances;
+  BigInt64Array indexes;
+
+  FaissIndexSearchResult()
+      : distances(val::global("Float32Array").new_()),
+        indexes(val::global("BigInt64Array").new_()) {}
+
+  FaissIndexSearchResult(const Float32Array &distances,
+                         const BigInt64Array &indexes)
+      : distances(distances), indexes(indexes) {}
 };
 
-class FaissIndexWrapper {
+class FaissIndex {
 private:
   std::unique_ptr<faiss::Index> index_;
 
 public:
-  explicit FaissIndexWrapper(std::unique_ptr<faiss::Index> index)
+  explicit FaissIndex(std::unique_ptr<faiss::Index> index)
       : index_(std::move(index)) {
     if (!index_) {
-      throw std::runtime_error("FaissIndexWrapper: null index provided");
+      throw std::runtime_error("FaissIndex: null index provided");
     }
   }
 
-  ~FaissIndexWrapper() = default;
+  ~FaissIndex() = default;
 
   // No copy constructors
-  FaissIndexWrapper(const FaissIndexWrapper &) = delete;
-  FaissIndexWrapper &operator=(const FaissIndexWrapper &) = delete;
+  FaissIndex(const FaissIndex &) = delete;
+  FaissIndex &operator=(const FaissIndex &) = delete;
 
   // Move constructors
-  FaissIndexWrapper(FaissIndexWrapper &&) = default;
-  FaissIndexWrapper &operator=(FaissIndexWrapper &&) = default;
+  FaissIndex(FaissIndex &&) = default;
+  FaissIndex &operator=(FaissIndex &&) = default;
 
   bool is_trained() const { return index_->is_trained; }
 
@@ -90,23 +101,26 @@ public:
 
     faiss::idx_t num_queries = query_vectors.size() / index_->d;
     std::vector<float> distances_vec(num_queries * k);
-    std::vector<faiss::idx_t> ids_vec(num_queries * k);
+    std::vector<faiss::idx_t> indexes_vec(num_queries * k);
 
     index_->search(num_queries, query_vectors.data(),
                    static_cast<faiss::idx_t>(k), distances_vec.data(),
-                   ids_vec.data());
+                   indexes_vec.data());
 
-    std::vector<int64_t> result_ids(ids_vec.begin(), ids_vec.end());
+    // Convert to JavaScript typed arrays
+    Float32Array distances_js =
+        createTypedArray<float>(distances_vec).as<Float32Array>();
+    BigInt64Array indexes_js =
+        createTypedArray<int64_t>(indexes_vec).as<BigInt64Array>();
 
-    return FaissIndexSearchResult{std::move(distances_vec),
-                                  std::move(result_ids)};
+    return FaissIndexSearchResult(distances_js, indexes_js);
   }
 
-  std::vector<float> get_by_ids(const val &ids_js) const {
+  Float32Array get_by_ids(const val &ids_js) const {
     std::vector<int64_t> ids = convertTypedArray<int64_t>(ids_js);
 
     if (ids.empty()) {
-      return std::vector<float>();
+      return createTypedArray<float>(std::vector<float>()).as<Float32Array>();
     }
 
     try {
@@ -120,7 +134,7 @@ public:
         index_->reconstruct(current_id, destination);
       }
 
-      return reconstructed_vectors;
+      return createTypedArray<float>(reconstructed_vectors).as<Float32Array>();
     } catch (const std::exception &e) {
       throw std::runtime_error("FAISS reconstruct failed: " +
                                std::string(e.what()));
@@ -204,19 +218,39 @@ private:
 
     return result;
   }
+
+  // Helper function to create JavaScript typed arrays from C++ vectors
+  template <typename T>
+  val createTypedArray(const std::vector<T> &cpp_vector) const {
+    val array;
+    if constexpr (std::is_same_v<T, float>) {
+      // Create Float32Array
+      array = val::global("Float32Array").new_(cpp_vector.size());
+    } else if constexpr (std::is_same_v<T, int64_t>) {
+      // Create BigInt64Array
+      array = val::global("BigInt64Array").new_(cpp_vector.size());
+    } else {
+      throw std::runtime_error("Not Implemented");
+    }
+
+    for (size_t i = 0; i < cpp_vector.size(); ++i) {
+      array.set(i, val(static_cast<T>(cpp_vector[i])));
+    }
+    return array;
+  }
 };
 
 // Factory functions
-std::unique_ptr<FaissIndexWrapper> create_index(int32_t dimension,
-                                                const std::string &description,
-                                                FaissMetricType metric) {
+std::unique_ptr<FaissIndex> create_index(int32_t dimension,
+                                         const std::string &description,
+                                         FaissMetricType metric) {
   try {
     faiss::MetricType faiss_metric = faiss::MetricType(metric);
 
     auto faiss_index = std::unique_ptr<faiss::Index>(
         faiss::index_factory(dimension, description.c_str(), faiss_metric));
 
-    return std::make_unique<FaissIndexWrapper>(std::move(faiss_index));
+    return std::make_unique<FaissIndex>(std::move(faiss_index));
   } catch (const std::exception &e) {
     throw std::runtime_error("Failed to create FAISS index: " +
                              std::string(e.what()));
@@ -224,7 +258,7 @@ std::unique_ptr<FaissIndexWrapper> create_index(int32_t dimension,
 }
 
 // TODO: Handle read_index (filesystem should be determined)
-// std::unique_ptr<FaissIndexWrapper> read_index(const std::string &filename) {
+// std::unique_ptr<FaissIndex> read_index(const std::string &filename) {
 //   try {
 //     if (!std::filesystem::exists(filename)) {
 //       throw std::runtime_error("File does not exist: " + filename);
@@ -244,7 +278,7 @@ std::unique_ptr<FaissIndexWrapper> create_index(int32_t dimension,
 //           "Failed to load index: read_index returned null");
 //     }
 
-//     return std::make_unique<FaissIndexWrapper>(std::move(loaded_index));
+//     return std::make_unique<FaissIndex>(std::move(loaded_index));
 
 //   } catch (const std::exception &e) {
 //     throw std::runtime_error("Failed to read index from file '" + filename +
@@ -254,41 +288,39 @@ std::unique_ptr<FaissIndexWrapper> create_index(int32_t dimension,
 
 // Emscripten bindings
 EMSCRIPTEN_BINDINGS(faiss_bridge) {
+  register_type<Float32Array>("Float32Array");
+  register_type<BigInt64Array>("BigInt64Array");
+
   // Bind the FaissMetricType enum
   enum_<FaissMetricType>("FaissMetricType")
-      .value("METRIC_INNER_PRODUCT", FaissMetricType::METRIC_INNER_PRODUCT)
-      .value("METRIC_L2", FaissMetricType::METRIC_L2)
-      .value("METRIC_L1", FaissMetricType::METRIC_L1)
-      .value("METRIC_Linf", FaissMetricType::METRIC_Linf)
-      .value("METRIC_Lp", FaissMetricType::METRIC_Lp)
-      .value("METRIC_Canberra", FaissMetricType::METRIC_Canberra)
-      .value("METRIC_BrayCurtis", FaissMetricType::METRIC_BrayCurtis)
-      .value("METRIC_JensenShannon", FaissMetricType::METRIC_JensenShannon)
-      .value("METRIC_Jaccard", FaissMetricType::METRIC_Jaccard);
+      .value("InnerProduct", FaissMetricType::InnerProduct)
+      .value("L2", FaissMetricType::L2)
+      .value("L1", FaissMetricType::L1)
+      .value("Linf", FaissMetricType::Linf)
+      .value("Lp", FaissMetricType::Lp)
+      .value("Canberra", FaissMetricType::Canberra)
+      .value("BrayCurtis", FaissMetricType::BrayCurtis)
+      .value("JensenShannon", FaissMetricType::JensenShannon)
+      .value("Jaccard", FaissMetricType::Jaccard);
 
   // Bind the search result structure
   value_object<FaissIndexSearchResult>("FaissIndexSearchResult")
       .field("distances", &FaissIndexSearchResult::distances)
-      .field("ids", &FaissIndexSearchResult::ids);
+      .field("indexes", &FaissIndexSearchResult::indexes);
 
-  // Bind the main wrapper class
-  class_<FaissIndexWrapper>("FaissIndexWrapper")
-      .function("is_trained", &FaissIndexWrapper::is_trained)
-      .function("get_ntotal", &FaissIndexWrapper::get_ntotal)
-      .function("get_dimension", &FaissIndexWrapper::get_dimension)
-      .function("get_metric_type", &FaissIndexWrapper::get_metric_type)
-      .function("train_index", &FaissIndexWrapper::train_index)
-      .function("add_vectors_with_ids",
-                &FaissIndexWrapper::add_vectors_with_ids)
-      .function("search_vectors", &FaissIndexWrapper::search_vectors)
-      .function("get_by_ids", &FaissIndexWrapper::get_by_ids)
-      .function("remove_vectors", &FaissIndexWrapper::remove_vectors)
-      .function("clear", &FaissIndexWrapper::clear);
+  // Bind the main FaissIndex class
+  class_<FaissIndex>("FaissIndex")
+      .function("is_trained", &FaissIndex::is_trained)
+      .function("get_ntotal", &FaissIndex::get_ntotal)
+      .function("get_dimension", &FaissIndex::get_dimension)
+      .function("get_metric_type", &FaissIndex::get_metric_type)
+      .function("train_index", &FaissIndex::train_index)
+      .function("add_vectors_with_ids", &FaissIndex::add_vectors_with_ids)
+      .function("search_vectors", &FaissIndex::search_vectors)
+      .function("get_by_ids", &FaissIndex::get_by_ids)
+      .function("remove_vectors", &FaissIndex::remove_vectors)
+      .function("clear", &FaissIndex::clear);
 
   // Bind factory functions
   function("create_index", &create_index, allow_raw_pointers());
-
-  // Register std::vector types for automatic conversion
-  register_vector<float>("VectorFloat");
-  register_vector<int64_t>("VectorInt64");
 }

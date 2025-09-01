@@ -67,7 +67,7 @@ mod ffi {
     }
 
     #[derive(Debug, Clone, Copy, PartialEq)]
-    pub enum FaissMetricType {
+    enum FaissMetricType {
         /// basic metrics
         InnerProduct = 0,
         L2 = 1,
@@ -90,7 +90,7 @@ mod ffi {
     }
 
     #[derive(Debug, Clone)]
-    pub struct FaissIndexSearchResult {
+    struct FaissIndexSearchResult {
         pub distances: Vec<f32>,
         pub indexes: Vec<i64>,
     }

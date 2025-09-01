@@ -5,26 +5,23 @@ import copy from "rollup-plugin-copy";
 
 const tsconfig = "tsconfig.build.json";
 
-export default [
-  // main build
-  {
-    input: "src/index.ts",
-    output: [
-      {
-        file: "dist/index.js",
-        format: "esm",
-        exports: "named",
-      },
-    ],
-    plugins: [
-      commonjs(),
-      typescript({
-        tsconfig,
-      }),
-      copy({
-        targets: [{ src: "src/faiss/faiss_bridge.wasm", dest: "dist/" }],
-      }),
-      // terser(),
-    ],
-  },
-];
+export default {
+  input: "src/index.ts",
+  output: [
+    {
+      file: "dist/index.js",
+      format: "esm",
+      exports: "named",
+    },
+  ],
+  plugins: [
+    commonjs(),
+    typescript({
+      tsconfig,
+    }),
+    copy({
+      targets: [{ src: "src/faiss/faiss_bridge.wasm", dest: "dist/" }],
+    }),
+    terser(),
+  ],
+};

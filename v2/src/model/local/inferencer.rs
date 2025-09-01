@@ -113,7 +113,7 @@ mod tvm_runtime {
 
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
-        ffi::{TVMLanguageModel, create_dldevice, create_tvm_language_model},
+        ffi::cxx_bridge::{TVMLanguageModel, create_dldevice, create_tvm_language_model},
         utils::BoxFuture,
     };
 
@@ -183,7 +183,7 @@ mod tvmjs_runtime {
     use super::*;
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
-        ffi::JSLanguageModel,
+        ffi::js_bridge::JSLanguageModel,
         utils::BoxFuture,
     };
 
