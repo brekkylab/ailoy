@@ -65,11 +65,11 @@ mod tests {
     use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
-    const XAI_API_KEY: &str = env!("XAI_API_KEY");
+    const XAI_API_KEY: Option<&str> = option_env!("XAI_API_KEY");
 
     #[multi_platform_test]
     async fn xai_infer_with_thinking() {
-        let xai = std::sync::Arc::new(XAILanguageModel::new("grok-3-mini", XAI_API_KEY));
+        let mut xai = XAILanguageModel::new("grok-3-mini", XAI_API_KEY.unwrap());
 
         let msgs = vec![
             Message::with_role(Role::System).with_contents(vec![Part::Text(
@@ -94,7 +94,7 @@ mod tests {
     async fn xai_infer_tool_call() {
         use crate::value::ToolDescArg;
 
-        let xai = std::sync::Arc::new(XAILanguageModel::new("grok-3", XAI_API_KEY));
+        let mut xai = XAILanguageModel::new("grok-3", XAI_API_KEY.unwrap());
 
         let tools = vec![ToolDesc::new(
             "temperature",
@@ -122,14 +122,16 @@ mod tests {
             "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
         )])];
         let mut agg = MessageAggregator::new();
-        let mut strm = xai.clone().run(msgs.clone(), tools.clone());
         let mut assistant_msg: Option<Message> = None;
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log::debug(format!("{:?}", delta).as_str());
-            if let Some(msg) = agg.update(delta) {
-                log::info(format!("{:?}", msg).as_str());
-                assistant_msg = Some(msg);
+        {
+            let mut strm = xai.run(msgs.clone(), tools.clone());
+            while let Some(delta_opt) = strm.next().await {
+                let delta = delta_opt.unwrap();
+                log::debug(format!("{:?}", delta).as_str());
+                if let Some(msg) = agg.update(delta) {
+                    log::info(format!("{:?}", msg).as_str());
+                    assistant_msg = Some(msg);
+                }
             }
         }
         // This should be tool call message
@@ -167,7 +169,7 @@ mod tests {
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-        let xai = std::sync::Arc::new(XAILanguageModel::new("grok-4", XAI_API_KEY));
+        let mut xai = XAILanguageModel::new("grok-4", XAI_API_KEY.unwrap());
 
         let msgs = vec![
             Message::with_role(Role::User)
