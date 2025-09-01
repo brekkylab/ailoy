@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 
 import { init_faiss_index_wrapper } from "../src/index";
 
-describe("Faiss VectorStore", async () => {
-  it("VectorStore operations", async () => {
+describe("FaissIndexWrapper", async () => {
+  it("Basic Operations", async () => {
     const vs = await init_faiss_index_wrapper({
       dimension: 10,
       description: "IDMap2,Flat",
