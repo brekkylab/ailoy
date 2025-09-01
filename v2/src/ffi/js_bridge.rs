@@ -40,9 +40,6 @@ extern "C" {
     #[wasm_bindgen(js_name = "init_faiss_index_wrapper")]
     pub fn init_faiss_index_wrapper(args: &JsValue) -> js_sys::Promise;
 
-    #[wasm_bindgen(js_name = "load_faiss_wasm_from_bytes")]
-    pub fn load_faiss_wasm_from_bytes(bytes: &js_sys::Uint8Array) -> js_sys::Promise;
-
     // Methods for FaissIndexWrapper
     #[wasm_bindgen(method, js_class = "FaissIndexWrapper", js_name = "get_metric_type")]
     pub fn get_metric_type(this: &FaissIndexWrapper) -> js_sys::JsString;

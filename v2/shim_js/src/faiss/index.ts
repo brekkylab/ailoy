@@ -66,7 +66,6 @@ export class FaissIndexWrapper {
   }
 
   remove_vectors(ids: BigInt64Array): number {
-    console.log("ids: ", ids);
     return this.index.remove_vectors(ids);
   }
 }
