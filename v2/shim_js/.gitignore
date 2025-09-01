@@ -1,3 +1,2 @@
-deps
 src/faiss/faiss_bridge.js
 src/faiss/faiss_bridge.wasm
