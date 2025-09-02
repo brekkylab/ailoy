@@ -231,8 +231,12 @@ impl LanguageModel for GeminiLanguageModel {
 mod tests {
     use crate::utils::log;
     use ailoy_macros::multi_platform_test;
+    use std::sync::LazyLock;
 
-    const GEMINI_API_KEY: &str = env!("GEMINI_API_KEY");
+    static GEMINI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("GEMINI_API_KEY")
+            .expect("Environment variable 'GEMINI_API_KEY' is required for the tests.")
+    });
 
     #[multi_platform_test]
     async fn gemini_infer_with_thinking() {
@@ -244,7 +248,8 @@ mod tests {
         gemini_config.thinking_config =
             Some(GeminiThinkingConfig::default().with_thoughts_included(true));
         let gemini = Arc::new(
-            GeminiLanguageModel::new("gemini-2.5-flash", GEMINI_API_KEY).with_config(gemini_config),
+            GeminiLanguageModel::new("gemini-2.5-flash", *GEMINI_API_KEY)
+                .with_config(gemini_config),
         );
 
         let msgs = vec![
@@ -271,7 +276,10 @@ mod tests {
         use super::*;
         use crate::value::{MessageAggregator, ToolDescArg};
 
-        let gemini = Arc::new(GeminiLanguageModel::new("gemini-2.5-flash", GEMINI_API_KEY));
+        let gemini = Arc::new(GeminiLanguageModel::new(
+            "gemini-2.5-flash",
+            *GEMINI_API_KEY,
+        ));
 
         let tools = vec![ToolDesc::new(
             "temperature",
@@ -342,7 +350,10 @@ mod tests {
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-        let gemini = Arc::new(GeminiLanguageModel::new("gemini-2.5-flash", GEMINI_API_KEY));
+        let gemini = Arc::new(GeminiLanguageModel::new(
+            "gemini-2.5-flash",
+            *GEMINI_API_KEY,
+        ));
 
         let msgs = vec![
             Message::with_role(Role::User)
