@@ -1,6 +1,9 @@
-use crate::ffi::cxx_bridge::{DLDevice, DLPackTensor};
-use crate::utils::float16;
 use anyhow::{Result, bail};
+
+use crate::{
+    ffi::cxx_bridge::{DLDevice, DLPackTensor},
+    utils::float16,
+};
 
 unsafe impl Send for DLDevice {}
 

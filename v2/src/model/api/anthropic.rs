@@ -444,9 +444,10 @@ impl LanguageModel for AnthropicLanguageModel {
 mod tests {
     use std::sync::Arc;
 
+    use ailoy_macros::multi_platform_test;
+
     use super::*;
     use crate::value::{MessageAggregator, ToolDesc, ToolDescArg};
-    use ailoy_macros::multi_platform_test;
 
     const ANTHROPIC_API_KEY: &str = env!("ANTHROPIC_API_KEY");
 

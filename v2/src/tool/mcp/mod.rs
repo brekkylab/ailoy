@@ -5,8 +5,9 @@ mod wasm32;
 
 mod common;
 
-use crate::tool::Tool;
 use std::sync::Arc;
+
+use crate::tool::Tool;
 
 pub enum MCPTransport {
     Stdio(&'static str, Vec<&'static str>),

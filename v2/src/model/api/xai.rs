@@ -1,8 +1,12 @@
 use openai_sdk_rs::OpenAI;
 
-use crate::model::api::openai_chat_completion::OpenAIChatCompletion;
-use crate::model::openai_chat_completion::{OpenAIGenerationConfig, OpenAIGenerationConfigBuilder};
-use crate::value::FinishReason;
+use crate::{
+    model::{
+        api::openai_chat_completion::OpenAIChatCompletion,
+        openai_chat_completion::{OpenAIGenerationConfig, OpenAIGenerationConfigBuilder},
+    },
+    value::FinishReason,
+};
 
 pub type XAIGenerationConfig = OpenAIGenerationConfig;
 pub type XAIGenerationConfigBuilder = OpenAIGenerationConfigBuilder;
@@ -58,12 +62,15 @@ impl OpenAIChatCompletion for XAILanguageModel {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::model::LanguageModel;
-    use crate::utils::log;
-    use crate::value::{Message, MessageAggregator, Part, Role, ToolDesc};
     use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
+
+    use super::*;
+    use crate::{
+        model::LanguageModel,
+        utils::log,
+        value::{Message, MessageAggregator, Part, Role, ToolDesc},
+    };
 
     const XAI_API_KEY: &str = env!("XAI_API_KEY");
 

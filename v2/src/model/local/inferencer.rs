@@ -1,6 +1,5 @@
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 pub use tvm_runtime::Inferencer;
-
 #[cfg(any(target_family = "wasm"))]
 pub use tvmjs_runtime::Inferencer;
 
@@ -111,13 +110,12 @@ pub fn claim_files(
 mod tvm_runtime {
     use cxx::UniquePtr;
 
+    use super::*;
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
         ffi::cxx_bridge::{TVMLanguageModel, create_dldevice, create_tvm_language_model},
         utils::BoxFuture,
     };
-
-    use super::*;
 
     pub fn get_device_type(accelerator: &str) -> i32 {
         if accelerator == "metal" {
@@ -228,8 +226,9 @@ mod tvmjs_runtime {
         fn try_from_contents(
             mut contents: CacheContents,
         ) -> BoxFuture<'static, Result<Self, String>> {
-            use crate::ffi::js_bridge::init_language_model_js;
             use js_sys::{Object, Reflect, Uint8Array};
+
+            use crate::ffi::js_bridge::init_language_model_js;
 
             Box::pin(async move {
                 let cache_contents = {

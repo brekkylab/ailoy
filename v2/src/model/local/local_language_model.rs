@@ -398,11 +398,11 @@ mod tests {
 #[cfg(all(test, target_arch = "wasm32"))]
 #[cfg(test)]
 mod tests {
-    use crate::value::MessageAggregator;
-
-    use super::*;
     use futures::StreamExt as _;
     use wasm_bindgen_test::*;
+
+    use super::*;
+    use crate::value::MessageAggregator;
 
     wasm_bindgen_test_configure!(run_in_browser);
 

@@ -5,10 +5,9 @@ mod value;
 
 use cache_progress::*;
 use model::*;
-use value::*;
-
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
+use value::*;
 
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {

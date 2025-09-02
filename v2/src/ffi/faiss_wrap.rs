@@ -1,8 +1,10 @@
-use std::fmt;
-use std::str::FromStr;
+use std::{
+    fmt,
+    str::FromStr,
+    sync::atomic::{AtomicI64, Ordering},
+};
 
 use anyhow::{Context, Result, bail};
-use std::sync::atomic::{AtomicI64, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FaissMetricType {

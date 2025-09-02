@@ -267,8 +267,7 @@ mod tests {
         use futures::StreamExt;
 
         use super::*;
-        use crate::model::LocalLanguageModel;
-        use crate::tool::MCPTransport;
+        use crate::{model::LocalLanguageModel, tool::MCPTransport};
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";

@@ -126,10 +126,10 @@ mod tests {
     #[tokio::test]
     async fn run_stdio() -> anyhow::Result<()> {
         use indexmap::IndexMap;
-
-        use super::*;
         use onig::Regex;
         use rmcp::transport::ConfigureCommandExt;
+
+        use super::*;
 
         let command = tokio::process::Command::new("uvx").configure(|cmd| {
             cmd.arg("mcp-server-time");

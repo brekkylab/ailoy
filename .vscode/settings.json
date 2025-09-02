@@ -32,6 +32,7 @@
     },
     "[rust]": {
         "editor.formatOnSave": true,
+        "editor.defaultFormatter": "rust-lang.rust-analyzer"
     },
     "cmake.configureOnOpen": true,
     "cmake.configureArgs": [
@@ -142,5 +143,8 @@
     "rust-analyzer.procMacro.enable": true,
     "rust-analyzer.runnables.extraEnv": {
         "RUST_LOG": "debug"
-    }
+    },
+    "rust-analyzer.rustfmt.extraArgs": [
+        "+nightly"
+    ],
 }

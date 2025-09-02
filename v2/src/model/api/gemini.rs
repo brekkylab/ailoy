@@ -229,8 +229,9 @@ impl LanguageModel for GeminiLanguageModel {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::log;
     use ailoy_macros::multi_platform_test;
+
+    use crate::utils::log;
 
     const GEMINI_API_KEY: &str = env!("GEMINI_API_KEY");
 
@@ -331,10 +332,10 @@ mod tests {
 
     #[multi_platform_test]
     async fn gemini_infer_with_image() {
+        use base64::Engine;
+
         use super::*;
         use crate::value::MessageAggregator;
-
-        use base64::Engine;
 
         let client = reqwest::Client::new();
         let test_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Jensen_Huang_%28cropped%29.jpg/250px-Jensen_Huang_%28cropped%29.jpg";
