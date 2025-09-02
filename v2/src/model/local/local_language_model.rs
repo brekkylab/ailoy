@@ -426,7 +426,7 @@ mod tests {
                 model = progress.result.take();
             }
         }
-        let model = Arc::new(model.unwrap());
+        let mut model = model.unwrap();
         model.as_ref().enable_reasoning();
         let msgs = vec![
             Message::with_role(Role::System)
