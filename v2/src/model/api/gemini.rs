@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use futures::stream::StreamExt;
 use gemini_rust::{
     Content as GeminiContent, FunctionCall as GeminiFunctionCall,
@@ -113,11 +111,11 @@ fn gemini_response_to_ailoy(response: &GeminiGenerationResponse) -> Result<Messa
 }
 
 impl LanguageModel for GeminiLanguageModel {
-    fn run(
-        self: Arc<Self>,
+    fn run<'a>(
+        self: &'a mut Self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
-    ) -> BoxStream<'static, Result<MessageOutput, String>> {
+    ) -> BoxStream<'a, Result<MessageOutput, String>> {
         let mut content = self.inner.generate_content();
 
         // Parse messages
@@ -231,8 +229,12 @@ impl LanguageModel for GeminiLanguageModel {
 mod tests {
     use crate::utils::log;
     use ailoy_macros::multi_platform_test;
+    use std::sync::LazyLock;
 
-    const GEMINI_API_KEY: &str = env!("GEMINI_API_KEY");
+    static GEMINI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("GEMINI_API_KEY")
+            .expect("Environment variable 'GEMINI_API_KEY' is required for the tests.")
+    });
 
     #[multi_platform_test]
     async fn gemini_infer_with_thinking() {
@@ -243,9 +245,8 @@ mod tests {
         gemini_config.max_output_tokens = Some(2048);
         gemini_config.thinking_config =
             Some(GeminiThinkingConfig::default().with_thoughts_included(true));
-        let gemini = Arc::new(
-            GeminiLanguageModel::new("gemini-2.5-flash", GEMINI_API_KEY).with_config(gemini_config),
-        );
+        let mut gemini = GeminiLanguageModel::new("gemini-2.5-flash", *GEMINI_API_KEY)
+            .with_config(gemini_config);
 
         let msgs = vec![
             Message::with_role(Role::System).with_contents(vec![Part::Text(
@@ -271,7 +272,7 @@ mod tests {
         use super::*;
         use crate::value::{MessageAggregator, ToolDescArg};
 
-        let gemini = Arc::new(GeminiLanguageModel::new("gemini-2.5-flash", GEMINI_API_KEY));
+        let mut gemini = GeminiLanguageModel::new("gemini-2.5-flash", *GEMINI_API_KEY);
 
         let tools = vec![ToolDesc::new(
             "temperature",
@@ -299,14 +300,16 @@ mod tests {
             "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
         )])];
         let mut agg = MessageAggregator::new();
-        let mut strm = gemini.clone().run(msgs.clone(), tools.clone());
         let mut assistant_msg: Option<Message> = None;
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log::debug(format!("{:?}", delta).as_str());
-            if let Some(msg) = agg.update(delta) {
-                log::debug(format!("{:?}", msg).as_str());
-                assistant_msg = Some(msg);
+        {
+            let mut strm = gemini.run(msgs.clone(), tools.clone());
+            while let Some(delta_opt) = strm.next().await {
+                let delta = delta_opt.unwrap();
+                log::debug(format!("{:?}", delta).as_str());
+                if let Some(msg) = agg.update(delta) {
+                    log::debug(format!("{:?}", msg).as_str());
+                    assistant_msg = Some(msg);
+                }
             }
         }
         // This should be tool call message
@@ -342,7 +345,7 @@ mod tests {
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-        let gemini = Arc::new(GeminiLanguageModel::new("gemini-2.5-flash", GEMINI_API_KEY));
+        let mut gemini = GeminiLanguageModel::new("gemini-2.5-flash", *GEMINI_API_KEY);
 
         let msgs = vec![
             Message::with_role(Role::User)

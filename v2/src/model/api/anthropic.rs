@@ -230,11 +230,11 @@ fn anthropic_stream_event_to_ailoy(
 }
 
 impl LanguageModel for AnthropicLanguageModel {
-    fn run(
-        self: std::sync::Arc<Self>,
+    fn run<'a>(
+        self: &'a mut Self,
         msgs: Vec<crate::value::Message>,
         tools: Vec<crate::value::ToolDesc>,
-    ) -> BoxStream<'static, Result<crate::value::MessageOutput, String>> {
+    ) -> BoxStream<'a, Result<crate::value::MessageOutput, String>> {
         let mut params = CreateMessageParams::new(RequiredMessageParams {
             model: self.model_name.clone(),
             messages: vec![],
@@ -442,23 +442,24 @@ impl LanguageModel for AnthropicLanguageModel {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::value::{MessageAggregator, ToolDesc, ToolDescArg};
     use ailoy_macros::multi_platform_test;
+    use std::sync::LazyLock;
 
-    const ANTHROPIC_API_KEY: &str = env!("ANTHROPIC_API_KEY");
+    static ANTHROPIC_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("ANTHROPIC_API_KEY")
+            .expect("Environment variable 'ANTHROPIC_API_KEY' is required for the tests.")
+    });
 
     #[multi_platform_test]
     async fn anthropic_infer_with_thinking() {
         let mut config = AnthropicGenerationConfig::default();
         config.max_tokens = 2048;
         config.thinking = Some(AnthropicThinkingConfig::default());
-        let anthropic = Arc::new(
-            AnthropicLanguageModel::new("claude-sonnet-4-20250514", ANTHROPIC_API_KEY)
-                .with_config(config),
-        );
+        let mut anthropic =
+            AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY)
+                .with_config(config);
 
         let msgs = vec![
             Message::with_role(Role::System).with_contents(vec![Part::Text(
@@ -480,10 +481,8 @@ mod tests {
 
     #[multi_platform_test]
     async fn anthropic_infer_tool_call() {
-        let anthropic = Arc::new(AnthropicLanguageModel::new(
-            "claude-sonnet-4-20250514",
-            ANTHROPIC_API_KEY,
-        ));
+        let mut anthropic =
+            AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY);
 
         let tools = vec![ToolDesc::new(
             "temperature",
@@ -511,13 +510,15 @@ mod tests {
             "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
         )])];
         let mut agg = MessageAggregator::new();
-        let mut strm = anthropic.clone().run(msgs.clone(), tools.clone());
         let mut assistant_msg: Option<Message> = None;
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            if let Some(msg) = agg.update(delta) {
-                log::info(format!("{:?}", msg).as_str());
-                assistant_msg = Some(msg);
+        {
+            let mut strm = anthropic.run(msgs.clone(), tools.clone());
+            while let Some(delta_opt) = strm.next().await {
+                let delta = delta_opt.unwrap();
+                if let Some(msg) = agg.update(delta) {
+                    log::info(format!("{:?}", msg).as_str());
+                    assistant_msg = Some(msg);
+                }
             }
         }
         // This should be tool call message
@@ -554,10 +555,8 @@ mod tests {
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-        let anthropic = Arc::new(AnthropicLanguageModel::new(
-            "claude-sonnet-4-20250514",
-            ANTHROPIC_API_KEY,
-        ));
+        let mut anthropic =
+            AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY);
 
         let msgs = vec![
             Message::with_role(Role::User)
