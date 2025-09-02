@@ -445,17 +445,22 @@ mod tests {
     use super::*;
     use crate::value::{MessageAggregator, ToolDesc, ToolDescArg};
     use ailoy_macros::multi_platform_test;
+    use std::sync::LazyLock;
 
-    const ANTHROPIC_API_KEY: Option<&str> = option_env!("ANTHROPIC_API_KEY");
+    static ANTHROPIC_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("ANTHROPIC_API_KEY")
+            .expect("Environment variable 'ANTHROPIC_API_KEY' is required for the tests.")
+    });
 
     #[multi_platform_test]
     async fn anthropic_infer_with_thinking() {
         let mut config = AnthropicGenerationConfig::default();
         config.max_tokens = 2048;
         config.thinking = Some(AnthropicThinkingConfig::default());
-        let mut anthropic =
-            AnthropicLanguageModel::new("claude-sonnet-4-20250514", ANTHROPIC_API_KEY.unwrap())
-                .with_config(config);
+        let anthropic = Arc::new(
+            AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY)
+                .with_config(config),
+        );
 
         let msgs = vec![
             Message::with_role(Role::System).with_contents(vec![Part::Text(
@@ -477,8 +482,10 @@ mod tests {
 
     #[multi_platform_test]
     async fn anthropic_infer_tool_call() {
-        let mut anthropic =
-            AnthropicLanguageModel::new("claude-sonnet-4-20250514", ANTHROPIC_API_KEY.unwrap());
+        let anthropic = Arc::new(AnthropicLanguageModel::new(
+            "claude-sonnet-4-20250514",
+            *ANTHROPIC_API_KEY,
+        ));
 
         let tools = vec![ToolDesc::new(
             "temperature",
@@ -551,8 +558,10 @@ mod tests {
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-        let mut anthropic =
-            AnthropicLanguageModel::new("claude-sonnet-4-20250514", ANTHROPIC_API_KEY.unwrap());
+        let anthropic = Arc::new(AnthropicLanguageModel::new(
+            "claude-sonnet-4-20250514",
+            *ANTHROPIC_API_KEY,
+        ));
 
         let msgs = vec![
             Message::with_role(Role::User)
