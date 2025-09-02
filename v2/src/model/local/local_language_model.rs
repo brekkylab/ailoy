@@ -427,7 +427,7 @@ mod tests {
             }
         }
         let mut model = model.unwrap();
-        model.as_ref().enable_reasoning();
+        model.enable_reasoning();
         let msgs = vec![
             Message::with_role(Role::System)
                 .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
