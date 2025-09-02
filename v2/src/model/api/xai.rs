@@ -73,7 +73,7 @@ mod tests {
 
     #[multi_platform_test]
     async fn xai_infer_with_thinking() {
-        let xai = std::sync::Arc::new(XAILanguageModel::new("grok-3-mini", *XAI_API_KEY));
+        let mut xai = XAILanguageModel::new("grok-3-mini", *XAI_API_KEY);
 
         let msgs = vec![
             Message::with_role(Role::System).with_contents(vec![Part::Text(
@@ -98,7 +98,7 @@ mod tests {
     async fn xai_infer_tool_call() {
         use crate::value::ToolDescArg;
 
-        let xai = std::sync::Arc::new(XAILanguageModel::new("grok-3", *XAI_API_KEY));
+        let mut xai = XAILanguageModel::new("grok-3", *XAI_API_KEY);
 
         let tools = vec![ToolDesc::new(
             "temperature",
@@ -173,7 +173,7 @@ mod tests {
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-        let xai = std::sync::Arc::new(XAILanguageModel::new("grok-4", *XAI_API_KEY));
+        let mut xai = XAILanguageModel::new("grok-4", *XAI_API_KEY);
 
         let msgs = vec![
             Message::with_role(Role::User)
