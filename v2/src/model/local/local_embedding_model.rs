@@ -148,10 +148,10 @@ mod tests {
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
-            println!(
+            log::info(format!(
                 "{} ({} / {})",
                 progress.comment, progress.current_task, progress.total_task
-            );
+            ));
             if progress.current_task == progress.total_task {
                 model = progress.result.take();
             }
@@ -160,7 +160,7 @@ mod tests {
 
         let embedding = model.run("What is BGE M3?".to_owned()).await.unwrap();
         assert_eq!(embedding.len(), 1024);
-        // log::info(format!("{:?}", embedding.normalized()));
+        log::debug(format!("{:?}", embedding.normalized()));
     }
 
     #[multi_platform_test]
@@ -206,9 +206,9 @@ mod tests {
         assert!(
             dot(&query_embedding2, &answer_embedding1) < dot(&query_embedding2, &answer_embedding2)
         );
-        // log::info(format!("{:?}", dot(&query_embedding1, &answer_embedding1)));
-        // log::info(format!("{:?}", dot(&query_embedding1, &answer_embedding2)));
-        // log::info(format!("{:?}", dot(&query_embedding2, &answer_embedding1)));
-        // log::info(format!("{:?}", dot(&query_embedding2, &answer_embedding2)));
+        log::debug(format!("{:?}", dot(&query_embedding1, &answer_embedding1)));
+        log::debug(format!("{:?}", dot(&query_embedding1, &answer_embedding2)));
+        log::debug(format!("{:?}", dot(&query_embedding2, &answer_embedding1)));
+        log::debug(format!("{:?}", dot(&query_embedding2, &answer_embedding2)));
     }
 }
