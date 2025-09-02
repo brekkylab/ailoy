@@ -230,11 +230,11 @@ fn anthropic_stream_event_to_ailoy(
 }
 
 impl LanguageModel for AnthropicLanguageModel {
-    fn run(
-        self: std::sync::Arc<Self>,
+    fn run<'a>(
+        self: &'a mut Self,
         msgs: Vec<crate::value::Message>,
         tools: Vec<crate::value::ToolDesc>,
-    ) -> BoxStream<'static, Result<crate::value::MessageOutput, String>> {
+    ) -> BoxStream<'a, Result<crate::value::MessageOutput, String>> {
         let mut params = CreateMessageParams::new(RequiredMessageParams {
             model: self.model_name.clone(),
             messages: vec![],
@@ -442,8 +442,6 @@ impl LanguageModel for AnthropicLanguageModel {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::value::{MessageAggregator, ToolDesc, ToolDescArg};
     use ailoy_macros::multi_platform_test;
@@ -515,13 +513,15 @@ mod tests {
             "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
         )])];
         let mut agg = MessageAggregator::new();
-        let mut strm = anthropic.clone().run(msgs.clone(), tools.clone());
         let mut assistant_msg: Option<Message> = None;
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            if let Some(msg) = agg.update(delta) {
-                log::info(format!("{:?}", msg).as_str());
-                assistant_msg = Some(msg);
+        {
+            let mut strm = anthropic.run(msgs.clone(), tools.clone());
+            while let Some(delta_opt) = strm.next().await {
+                let delta = delta_opt.unwrap();
+                if let Some(msg) = agg.update(delta) {
+                    log::info(format!("{:?}", msg).as_str());
+                    assistant_msg = Some(msg);
+                }
             }
         }
         // This should be tool call message

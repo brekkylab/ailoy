@@ -1,4 +1,4 @@
-use std::{any::Any, collections::BTreeMap, sync::Arc};
+use std::{any::Any, collections::BTreeMap};
 
 use async_stream::try_stream;
 use futures::stream::Stream;
@@ -10,7 +10,7 @@ use crate::{
         LanguageModel,
         local::{ChatTemplate, Inferencer, Tokenizer},
     },
-    utils::{BoxFuture, BoxStream, Mutex},
+    utils::{BoxFuture, BoxStream},
     value::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
 };
 
@@ -21,7 +21,7 @@ pub struct LocalLanguageModel {
     tokenizer: Tokenizer,
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
-    inferencer: Mutex<Inferencer>,
+    inferencer: Inferencer,
 }
 
 impl LocalLanguageModel {
@@ -42,18 +42,18 @@ impl LocalLanguageModel {
 }
 
 impl LanguageModel for LocalLanguageModel {
-    fn run(
-        self: Arc<Self>,
+    fn run<'a>(
+        self: &'a mut Self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
-    ) -> BoxStream<'static, Result<MessageOutput, String>> {
+    ) -> BoxStream<'a, Result<MessageOutput, String>> {
         let strm = try_stream! {
             let prompt = self.chat_template.apply(msgs, tools, true)?;
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
             #[cfg(target_family = "wasm")]
-            self.inferencer.lock().prefill(&input_tokens).await;
+            self.inferencer.prefill(&input_tokens).await;
             #[cfg(not(target_family = "wasm"))]
-            self.inferencer.lock().prefill(&input_tokens);
+            self.inferencer.prefill(&input_tokens);
             let mut last_token = *input_tokens.last().unwrap();
             let mut agg_tokens = Vec::<u32>::new();
             let mut count = 0;
@@ -69,9 +69,9 @@ impl LanguageModel for LocalLanguageModel {
                     Err("Too long assistant message. It may be infinite loop".to_owned())?;
                 }
                 #[cfg(target_family = "wasm")]
-                let new_token = self.inferencer.lock().decode(last_token).await;
+                let new_token = self.inferencer.decode(last_token).await;
                 #[cfg(not(target_family = "wasm"))]
-                let new_token = self.inferencer.lock().decode(last_token);
+                let new_token = self.inferencer.decode(last_token);
                 agg_tokens.push(new_token);
                 last_token = new_token;
                 let s = self.tokenizer.decode(agg_tokens.as_slice(), false)?;
@@ -209,7 +209,7 @@ impl TryFromCache for LocalLanguageModel {
             Ok(LocalLanguageModel {
                 chat_template,
                 tokenizer,
-                inferencer: Mutex::new(inferencer),
+                inferencer,
             })
         })
     }
@@ -240,8 +240,8 @@ mod tests {
                 model = progress.result.take();
             }
         }
-        let model = Arc::new(model.unwrap());
-        model.as_ref().enable_reasoning();
+        let mut model = model.unwrap();
+        model.enable_reasoning();
         let msgs = vec![
             Message::with_role(Role::System)
                 .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
@@ -287,8 +287,8 @@ mod tests {
                 model = progress.result.take();
             }
         }
-        let model = Arc::new(model.unwrap());
-        model.as_ref().disable_reasoning();
+        let mut model = model.unwrap();
+        model.disable_reasoning();
         let tools = vec![ToolDesc::new(
             "temperature",
             "Get current temperature",
@@ -351,8 +351,8 @@ mod tests {
                 model = progress.result.take();
             }
         }
-        let model = Arc::new(model.unwrap());
-        model.as_ref().disable_reasoning();
+        let mut model = model.unwrap();
+        model.disable_reasoning();
         let tools = vec![ToolDesc::new(
             "temperature",
             "Get current temperature",
