@@ -117,14 +117,16 @@ mod tests {
             "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
         )])];
         let mut agg = MessageAggregator::new();
-        let mut strm = model.clone().run(msgs.clone(), tools.clone());
         let mut assistant_msg: Option<Message> = None;
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log::debug(format!("{:?}", delta).as_str());
-            if let Some(msg) = agg.update(delta) {
-                log::info(format!("{:?}", msg).as_str());
-                assistant_msg = Some(msg);
+        {
+            let mut strm = model.run(msgs.clone(), tools.clone());
+            while let Some(delta_opt) = strm.next().await {
+                let delta = delta_opt.unwrap();
+                log::debug(format!("{:?}", delta).as_str());
+                if let Some(msg) = agg.update(delta) {
+                    log::info(format!("{:?}", msg).as_str());
+                    assistant_msg = Some(msg);
+                }
             }
         }
         // This should be tool call message

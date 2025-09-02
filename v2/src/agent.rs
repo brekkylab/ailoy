@@ -12,15 +12,18 @@ use crate::{
 };
 
 pub struct Agent {
-    lm: Arc<dyn LanguageModel>,
+    lm: Box<dyn LanguageModel>,
     tools: Vec<Arc<dyn Tool>>,
     messages: Arc<Mutex<Vec<Message>>>,
 }
 
 impl Agent {
-    pub fn new(lm: impl LanguageModel, tools: impl IntoIterator<Item = Arc<dyn Tool>>) -> Self {
+    pub fn new(
+        lm: impl LanguageModel + 'static,
+        tools: impl IntoIterator<Item = Arc<dyn Tool>>,
+    ) -> Self {
         Self {
-            lm: Arc::new(lm),
+            lm: Box::new(lm),
             tools: tools.into_iter().collect(),
             messages: Arc::new(Mutex::new(Vec::new())),
         }
@@ -81,29 +84,35 @@ impl Agent {
         Ok(())
     }
 
-    pub fn run(
-        &mut self,
+    pub fn run<'a>(
+        &'a mut self,
         user_message: impl Into<String>,
     ) -> impl Stream<Item = Result<MessageOutput, String>> {
-        let lm = self.lm.clone();
         let tools = self.tools.clone();
         let msgs = self.messages.clone();
         let user_message =
             Message::with_role(Role::User).with_contents(vec![Part::Text(user_message.into())]);
         async_stream::try_stream! {
             msgs.lock().await.push(user_message);
+            let td = self
+                .tools
+                .iter()
+                .map(|v| v.get_description())
+                .collect::<Vec<_>>();
             loop {
-                let td = self.tools.iter().map(|v| v.get_description()).collect::<Vec<_>>();
-                let mut strm = lm.clone().run(msgs.lock().await.clone(), td);
-                let mut aggregator = MessageAggregator::new();
                 let mut assistant_msg = Message::with_role(Role::Assistant);
-                while let Some(delta) = strm.next().await {
-                    let delta = delta?;
-                    yield delta.clone();
-                    if let Some(msg) = aggregator.update(delta) {
-                        assistant_msg = msg;
+                {
+                    let mut strm = self.lm.run(msgs.lock().await.clone(), td.clone());
+                    let mut aggregator = MessageAggregator::new();
+                    while let Some(delta) = strm.next().await {
+                        let delta = delta?;
+                        yield delta.clone();
+                        if let Some(msg) = aggregator.update(delta) {
+                            assistant_msg = msg;
+                        }
                     }
                 }
+
                 msgs.lock().await.push(assistant_msg.clone());
                 if !assistant_msg.tool_calls.is_empty() {
                     for part in &assistant_msg.tool_calls {
