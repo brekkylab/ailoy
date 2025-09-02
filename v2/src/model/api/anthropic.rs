@@ -447,8 +447,12 @@ mod tests {
     use super::*;
     use crate::value::{MessageAggregator, ToolDesc, ToolDescArg};
     use ailoy_macros::multi_platform_test;
+    use std::sync::LazyLock;
 
-    const ANTHROPIC_API_KEY: &str = env!("ANTHROPIC_API_KEY");
+    static ANTHROPIC_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("ANTHROPIC_API_KEY")
+            .expect("Environment variable 'ANTHROPIC_API_KEY' is required for the tests.")
+    });
 
     #[multi_platform_test]
     async fn anthropic_infer_with_thinking() {
@@ -456,7 +460,7 @@ mod tests {
         config.max_tokens = 2048;
         config.thinking = Some(AnthropicThinkingConfig::default());
         let anthropic = Arc::new(
-            AnthropicLanguageModel::new("claude-sonnet-4-20250514", ANTHROPIC_API_KEY)
+            AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY)
                 .with_config(config),
         );
 
@@ -482,7 +486,7 @@ mod tests {
     async fn anthropic_infer_tool_call() {
         let anthropic = Arc::new(AnthropicLanguageModel::new(
             "claude-sonnet-4-20250514",
-            ANTHROPIC_API_KEY,
+            *ANTHROPIC_API_KEY,
         ));
 
         let tools = vec![ToolDesc::new(
@@ -556,7 +560,7 @@ mod tests {
 
         let anthropic = Arc::new(AnthropicLanguageModel::new(
             "claude-sonnet-4-20250514",
-            ANTHROPIC_API_KEY,
+            *ANTHROPIC_API_KEY,
         ));
 
         let msgs = vec![
