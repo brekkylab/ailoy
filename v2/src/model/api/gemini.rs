@@ -245,10 +245,8 @@ mod tests {
         gemini_config.max_output_tokens = Some(2048);
         gemini_config.thinking_config =
             Some(GeminiThinkingConfig::default().with_thoughts_included(true));
-        let gemini = Arc::new(
-            GeminiLanguageModel::new("gemini-2.5-flash", *GEMINI_API_KEY)
-                .with_config(gemini_config),
-        );
+        let mut gemini = GeminiLanguageModel::new("gemini-2.5-flash", *GEMINI_API_KEY)
+            .with_config(gemini_config);
 
         let msgs = vec![
             Message::with_role(Role::System).with_contents(vec![Part::Text(
@@ -274,10 +272,7 @@ mod tests {
         use super::*;
         use crate::value::{MessageAggregator, ToolDescArg};
 
-        let gemini = Arc::new(GeminiLanguageModel::new(
-            "gemini-2.5-flash",
-            *GEMINI_API_KEY,
-        ));
+        let mut gemini = GeminiLanguageModel::new("gemini-2.5-flash", *GEMINI_API_KEY);
 
         let tools = vec![ToolDesc::new(
             "temperature",
@@ -350,10 +345,7 @@ mod tests {
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-        let gemini = Arc::new(GeminiLanguageModel::new(
-            "gemini-2.5-flash",
-            *GEMINI_API_KEY,
-        ));
+        let mut gemini = GeminiLanguageModel::new("gemini-2.5-flash", *GEMINI_API_KEY);
 
         let msgs = vec![
             Message::with_role(Role::User)

@@ -64,7 +64,7 @@ mod tests {
 
     #[multi_platform_test]
     async fn openai_infer_with_thinking() {
-        let model = std::sync::Arc::new(OpenAILanguageModel::new("o3-mini", *OPENAI_API_KEY));
+        let mut model = OpenAILanguageModel::new("o3-mini", *OPENAI_API_KEY);
 
         let msgs = vec![
             Message::with_role(Role::System).with_contents(vec![Part::Text(
@@ -90,7 +90,7 @@ mod tests {
         use super::*;
         use crate::value::{MessageAggregator, ToolDescArg};
 
-        let model = std::sync::Arc::new(OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY));
+        let mut model = OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY);
         let tools = vec![ToolDesc::new(
             "temperature",
             "Get current temperature",
@@ -167,7 +167,7 @@ mod tests {
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-        let model = std::sync::Arc::new(OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY));
+        let mut model = OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY);
         let msgs = vec![
             Message::with_role(Role::User)
                 .with_contents(vec![Part::ImageData(image_base64, "image/jpeg".into())]),
@@ -216,9 +216,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let model = std::sync::Arc::new(
-            OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY).with_config(config),
-        );
+        let mut model = OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY).with_config(config);
 
         let msgs = vec![
             Message::with_role(Role::User)

@@ -457,10 +457,9 @@ mod tests {
         let mut config = AnthropicGenerationConfig::default();
         config.max_tokens = 2048;
         config.thinking = Some(AnthropicThinkingConfig::default());
-        let anthropic = Arc::new(
+        let mut anthropic =
             AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY)
-                .with_config(config),
-        );
+                .with_config(config);
 
         let msgs = vec![
             Message::with_role(Role::System).with_contents(vec![Part::Text(
@@ -482,10 +481,8 @@ mod tests {
 
     #[multi_platform_test]
     async fn anthropic_infer_tool_call() {
-        let anthropic = Arc::new(AnthropicLanguageModel::new(
-            "claude-sonnet-4-20250514",
-            *ANTHROPIC_API_KEY,
-        ));
+        let mut anthropic =
+            AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY);
 
         let tools = vec![ToolDesc::new(
             "temperature",
@@ -558,10 +555,8 @@ mod tests {
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-        let anthropic = Arc::new(AnthropicLanguageModel::new(
-            "claude-sonnet-4-20250514",
-            *ANTHROPIC_API_KEY,
-        ));
+        let mut anthropic =
+            AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY);
 
         let msgs = vec![
             Message::with_role(Role::User)
