@@ -16,13 +16,15 @@ EMSCRIPTEN_DECLARE_VAL_TYPE(BigInt64Array);
 enum class FaissMetricType : uint8_t {
   InnerProduct = 0,
   L2 = 1,
-  L1 = 2,
-  Linf = 3,
-  Lp = 4,
+  L1,
+  Linf,
+  Lp,
   Canberra = 20,
-  BrayCurtis = 21,
-  JensenShannon = 22,
-  Jaccard = 23
+  BrayCurtis,
+  JensenShannon,
+  Jaccard,
+  NaNEuclidean,
+  Gower,
 };
 
 struct FaissIndexSearchResult {
