@@ -286,8 +286,8 @@ impl<T> LanguageModel for T
 where
     T: OpenAIChatCompletion + Clone,
 {
-    fn run(
-        self: std::sync::Arc<Self>,
+    fn run<'a>(
+        self: &'a mut Self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
     ) -> BoxStream<'static, Result<MessageOutput, String>> {

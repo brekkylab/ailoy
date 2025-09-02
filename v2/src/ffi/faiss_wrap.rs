@@ -182,7 +182,7 @@ impl FaissIndex {
             js_sys::Reflect::set(&obj, &"dimension".into(), &dimension.into()).unwrap();
             js_sys::Reflect::set(&obj, &"description".into(), &description.into()).unwrap();
             js_sys::Reflect::set(&obj, &"metric".into(), &metric.to_string().into()).unwrap();
-            let promise = crate::ffi::js_bridge::init_faiss_index_wrapper(&obj.into());
+            let promise = crate::ffi::js_bridge::init_faiss_index_wrapper(&obj.into()).unwrap();
             let js_result = wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
             let js_instance =
                 js_result.unchecked_into::<crate::ffi::js_bridge::FaissIndexWrapper>();
@@ -249,7 +249,7 @@ impl FaissIndex {
             for (i, &val) in flattened.iter().enumerate() {
                 arr.set_index(i as u32, val);
             }
-            self.inner().train_index(&arr, num_vectors as u32);
+            self.inner().train_index(&arr, num_vectors as u32).unwrap();
             Ok(())
         }
     }
@@ -289,7 +289,8 @@ impl FaissIndex {
             }
 
             self.inner()
-                .add_vectors_with_ids(&vector_arr, ids.len() as u32, &ids_arr);
+                .add_vectors_with_ids(&vector_arr, ids.len() as u32, &ids_arr)
+                .unwrap();
         }
 
         Ok(ids.into_iter().map(|id| id.to_string()).collect())
@@ -320,7 +321,10 @@ impl FaissIndex {
                 for (i, val) in flattened.into_iter().enumerate() {
                     query_vectors_arr.set_index(i as u32, val);
                 }
-                let raw_result = self.inner().search_vectors(&query_vectors_arr, k as u32);
+                let raw_result = self
+                    .inner()
+                    .search_vectors(&query_vectors_arr, k as u32)
+                    .unwrap();
                 FaissIndexSearchResult {
                     distances: raw_result.distances().to_vec(),
                     indexes: raw_result.indexes().to_vec(),
@@ -389,7 +393,7 @@ impl FaissIndex {
                 for (i, val) in numeric_ids.into_iter().enumerate() {
                     ids_arr.set_index(i as u32, val);
                 }
-                let flat_vectors = self.inner().get_by_ids(&ids_arr);
+                let flat_vectors = self.inner().get_by_ids(&ids_arr).unwrap();
                 flat_vectors.to_vec()
             }
         };
@@ -436,7 +440,7 @@ impl FaissIndex {
             for (i, val) in numeric_ids.into_iter().enumerate() {
                 arr.set_index(i as u32, val);
             }
-            Ok(self.inner().remove_vectors(&arr) as usize)
+            Ok(self.inner().remove_vectors(&arr).unwrap() as usize)
         }
     }
 
@@ -448,7 +452,7 @@ impl FaissIndex {
 
         #[cfg(target_family = "wasm")]
         {
-            self.inner().clear();
+            self.inner().clear().unwrap();
             Ok(())
         }
     }

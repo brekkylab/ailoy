@@ -49,6 +49,8 @@ impl OpenAIChatCompletion for OpenAILanguageModel {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
+
     use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
@@ -59,11 +61,14 @@ mod tests {
         value::{Message, MessageAggregator, Part, Role, ToolDesc},
     };
 
-    const OPENAI_API_KEY: &str = env!("OPENAI_API_KEY");
+    static OPENAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("OPENAI_API_KEY")
+            .expect("Environment variable 'OPENAI_API_KEY' is required for the tests.")
+    });
 
     #[multi_platform_test]
     async fn openai_infer_with_thinking() {
-        let model = std::sync::Arc::new(OpenAILanguageModel::new("o3-mini", OPENAI_API_KEY));
+        let mut model = OpenAILanguageModel::new("o3-mini", *OPENAI_API_KEY);
 
         let msgs = vec![
             Message::with_role(Role::System).with_contents(vec![Part::Text(
@@ -89,7 +94,7 @@ mod tests {
         use super::*;
         use crate::value::{MessageAggregator, ToolDescArg};
 
-        let model = std::sync::Arc::new(OpenAILanguageModel::new("gpt-4.1", OPENAI_API_KEY));
+        let mut model = OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY);
         let tools = vec![ToolDesc::new(
             "temperature",
             "Get current temperature",
@@ -116,14 +121,16 @@ mod tests {
             "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
         )])];
         let mut agg = MessageAggregator::new();
-        let mut strm = model.clone().run(msgs.clone(), tools.clone());
         let mut assistant_msg: Option<Message> = None;
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log::debug(format!("{:?}", delta).as_str());
-            if let Some(msg) = agg.update(delta) {
-                log::info(format!("{:?}", msg).as_str());
-                assistant_msg = Some(msg);
+        {
+            let mut strm = model.run(msgs.clone(), tools.clone());
+            while let Some(delta_opt) = strm.next().await {
+                let delta = delta_opt.unwrap();
+                log::debug(format!("{:?}", delta).as_str());
+                if let Some(msg) = agg.update(delta) {
+                    log::info(format!("{:?}", msg).as_str());
+                    assistant_msg = Some(msg);
+                }
             }
         }
         // This should be tool call message
@@ -164,7 +171,7 @@ mod tests {
         let image_bytes = response.bytes().await.unwrap();
         let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
 
-        let model = std::sync::Arc::new(OpenAILanguageModel::new("gpt-4.1", OPENAI_API_KEY));
+        let mut model = OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY);
         let msgs = vec![
             Message::with_role(Role::User)
                 .with_contents(vec![Part::ImageData(image_base64, "image/jpeg".into())]),
@@ -216,9 +223,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let model = std::sync::Arc::new(
-            OpenAILanguageModel::new("gpt-4.1", OPENAI_API_KEY).with_config(config),
-        );
+        let mut model = OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY).with_config(config);
 
         let msgs = vec![
             Message::with_role(Role::User)
