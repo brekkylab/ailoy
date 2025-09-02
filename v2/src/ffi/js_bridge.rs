@@ -37,15 +37,12 @@ extern "C" {
     #[wasm_bindgen(js_name = "FaissIndexWrapper")]
     pub type FaissIndexWrapper;
 
-    #[wasm_bindgen(js_name = "init_faiss_index_wrapper")]
-    pub fn init_faiss_index_wrapper(args: &JsValue) -> js_sys::Promise;
+    #[wasm_bindgen(catch, js_name = "init_faiss_index_wrapper")]
+    pub fn init_faiss_index_wrapper(args: &JsValue) -> Result<js_sys::Promise, JsValue>;
 
     // Methods for FaissIndexWrapper
     #[wasm_bindgen(method, js_class = "FaissIndexWrapper", js_name = "get_metric_type")]
     pub fn get_metric_type(this: &FaissIndexWrapper) -> js_sys::JsString;
-
-    #[wasm_bindgen(method, js_class = "FaissIndexWrapper", js_name = "clear")]
-    pub fn clear(this: &FaissIndexWrapper);
 
     #[wasm_bindgen(method, js_class = "FaissIndexWrapper", js_name = "is_trained")]
     pub fn is_trained(this: &FaissIndexWrapper) -> bool;
@@ -56,15 +53,16 @@ extern "C" {
     #[wasm_bindgen(method, js_class = "FaissIndexWrapper", js_name = "get_ntotal")]
     pub fn get_ntotal(this: &FaissIndexWrapper) -> i64;
 
-    #[wasm_bindgen(method, js_class = "FaissIndexWrapper", js_name = "train_index")]
+    #[wasm_bindgen(method, catch, js_class = "FaissIndexWrapper", js_name = "train_index")]
     pub fn train_index(
         this: &FaissIndexWrapper,
         training_vectors: &js_sys::Float32Array,
         num_training_vectors: u32,
-    );
+    ) -> Result<(), JsValue>;
 
     #[wasm_bindgen(
         method,
+        catch,
         js_class = "FaissIndexWrapper",
         js_name = "add_vectors_with_ids"
     )]
@@ -73,21 +71,37 @@ extern "C" {
         vectors: &js_sys::Float32Array,
         num_vectors: u32,
         ids: &js_sys::BigInt64Array,
-    );
+    ) -> Result<(), JsValue>;
 
-    #[wasm_bindgen(method, js_class = "FaissIndexWrapper", js_name = "search_vectors")]
+    #[wasm_bindgen(
+        method,
+        catch,
+        js_class = "FaissIndexWrapper",
+        js_name = "search_vectors"
+    )]
     pub fn search_vectors(
         this: &FaissIndexWrapper,
         query_vectors: &js_sys::Float32Array,
         k: u32,
-    ) -> FaissIndexSearchResult;
+    ) -> Result<FaissIndexSearchResult, JsValue>;
 
-    #[wasm_bindgen(method, js_class = "FaissIndexWrapper", js_name = "get_by_ids")]
+    #[wasm_bindgen(method, catch, js_class = "FaissIndexWrapper", js_name = "get_by_ids")]
     pub fn get_by_ids(
         this: &FaissIndexWrapper,
         ids: &js_sys::BigInt64Array,
-    ) -> js_sys::Float32Array;
+    ) -> Result<js_sys::Float32Array, JsValue>;
 
-    #[wasm_bindgen(method, js_class = "FaissIndexWrapper", js_name = "remove_vectors")]
-    pub fn remove_vectors(this: &FaissIndexWrapper, ids: &js_sys::BigInt64Array) -> u32;
+    #[wasm_bindgen(
+        method,
+        catch,
+        js_class = "FaissIndexWrapper",
+        js_name = "remove_vectors"
+    )]
+    pub fn remove_vectors(
+        this: &FaissIndexWrapper,
+        ids: &js_sys::BigInt64Array,
+    ) -> Result<u32, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_class = "FaissIndexWrapper", js_name = "clear")]
+    pub fn clear(this: &FaissIndexWrapper) -> Result<(), JsValue>;
 }
