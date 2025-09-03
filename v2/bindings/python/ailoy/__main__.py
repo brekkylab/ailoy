@@ -1,5 +1,6 @@
 import asyncio
-from ailoy import Part, Message, LocalLanguageModel
+from ailoy._core import Part, Message, LocalLanguageModel
+
 
 async def main():
     user_message = Message("user")
@@ -10,9 +11,10 @@ async def main():
         print(v.comment, v.current, v.total)
         if v.result:
             model = v.result
-    
+
     async for resp in model.run([user_message]):
         print(resp)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
