@@ -8,7 +8,7 @@ use crate::{
     dyn_maybe_send,
     model::{
         LanguageModel,
-        local::{ChatTemplate, Inferencer, Tokenizer},
+        local::{ChatTemplate, LanguageModelInferencer, Tokenizer},
     },
     utils::{BoxFuture, BoxStream},
     value::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
@@ -21,7 +21,7 @@ pub struct LocalLanguageModel {
     tokenizer: Tokenizer,
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
-    inferencer: Inferencer,
+    inferencer: LanguageModelInferencer,
 }
 
 impl LocalLanguageModel {
@@ -124,7 +124,7 @@ impl TryFromCache for LocalLanguageModel {
         Box::pin(async move {
             let mut chat_template = ChatTemplate::claim_files(cache.clone(), &key).await?;
             let mut tokenizer = Tokenizer::claim_files(cache.clone(), &key).await?;
-            let mut inferncer = Inferencer::claim_files(cache.clone(), &key).await?;
+            let mut inferncer = LanguageModelInferencer::claim_files(cache.clone(), &key).await?;
             let ctx: Box<dyn_maybe_send!(Any)> = Box::new([
                 chat_template
                     .entries
@@ -203,7 +203,7 @@ impl TryFromCache for LocalLanguageModel {
                     entries: files,
                     ctx: None,
                 };
-                Inferencer::try_from_contents(contents).await?
+                LanguageModelInferencer::try_from_contents(contents).await?
             };
 
             Ok(LocalLanguageModel {

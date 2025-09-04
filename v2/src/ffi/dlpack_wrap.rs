@@ -10,12 +10,6 @@ unsafe impl Send for DLDevice {}
 unsafe impl Send for DLPackTensor {}
 
 impl DLPackTensor {
-    // /// from raw DLManagedTensorVersioned pointer
-    // pub unsafe fn from_raw(ptr: *mut DLManagedTensorVersioned) -> Result<Self> {
-    //     let managed = unsafe { ffi::create_managed_tensor(ptr) }?;
-    //     Ok(Self { inner: managed })
-    // }
-
     /// 1-dimensional float32 Tensor to Vec<f32>
     pub fn to_vec_f32(&self) -> Result<Vec<f32>> {
         let managed_tensor = self.inner.as_ref().unwrap();
@@ -48,9 +42,4 @@ impl DLPackTensor {
             bail!("Tensor has unsupported dtype.");
         }
     }
-
-    // /// Rust type to C++ UniquePtr
-    // fn into_inner(self) -> cxx::UniquePtr<ffi::ManagedTensor> {
-    //     self.inner
-    // }
 }
