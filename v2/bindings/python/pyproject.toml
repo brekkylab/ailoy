@@ -20,6 +20,7 @@ python-source = "."
 python-packages = ["ailoy"]
 
 [tool.ruff]
+extend-select = ["I"]
 exclude = [
     "ailoy/_core.pyi"
 ]

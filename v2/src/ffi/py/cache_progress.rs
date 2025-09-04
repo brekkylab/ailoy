@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use futures::{StreamExt as _, stream::BoxStream};
 use pyo3::{
-    exceptions::{PyRuntimeError, PyStopAsyncIteration},
+    exceptions::{PyRuntimeError, PyStopAsyncIteration, PyStopIteration},
     prelude::*,
 };
 use pyo3_stub_gen::{PyStubType, TypeInfo, derive::*};
@@ -13,7 +13,7 @@ use crate::{
     ffi::py::base::PyWrapper,
 };
 
-#[pyclass(name = "GenericClass", subclass)]
+#[pyclass(subclass)]
 pub struct GenericClass {}
 
 impl PyStubType for GenericClass {
@@ -78,17 +78,17 @@ impl PyCacheProgressSyncIterator {
         slf
     }
 
-    #[gen_stub(override_return_type(type_repr="typing.Optional[CacheProgress[CacheResultT]]", imports=("typing")))]
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyCacheProgress>>> {
+    #[gen_stub(override_return_type(type_repr="CacheProgress[CacheResultT]", imports=("typing")))]
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Py<PyCacheProgress>> {
         let item = py.allow_threads(|| self.rt.block_on(async { self.strm.next().await }));
         match item {
             Some(Ok(evt)) => {
                 let initializer = PyClassInitializer::from(GenericClass {}).add_subclass(evt);
                 let obj: Py<PyCacheProgress> = Py::new(py, initializer)?;
-                Ok(Some(obj))
+                Ok(obj)
             }
             Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
-            None => Ok(None), // StopIteration
+            None => Err(PyStopIteration::new_err(())), // StopIteration
         }
     }
 }
@@ -165,7 +165,7 @@ impl PyCacheProgressIterator {
         slf
     }
 
-    #[gen_stub(override_return_type(type_repr="typing.Awaitable[typing.Optional[CacheProgress[CacheResultT]]]", imports=("typing")))]
+    #[gen_stub(override_return_type(type_repr="typing.Awaitable[CacheProgress[CacheResultT]]", imports=("typing")))]
     fn __anext__(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let rx = self.rx.clone();
         let fut = async move {
@@ -243,6 +243,8 @@ where
             if tx.send(out).await.is_err() {
                 break; // Exit if consumer vanished
             }
+            // Add a yield point to allow other tasks to run
+            tokio::task::yield_now().await;
         }
     });
 

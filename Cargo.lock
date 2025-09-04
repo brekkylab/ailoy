@@ -84,6 +84,7 @@ dependencies = [
  "sha1",
  "sse-stream",
  "strum",
+ "strum_macros",
  "thiserror 2.0.16",
  "tokenizers",
  "tokio",

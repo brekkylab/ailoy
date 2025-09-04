@@ -3,16 +3,9 @@
 
 import builtins
 import typing
+from enum import Enum
 
 CacheResultT = typing.TypeVar("CacheResultT")
-
-class AgentRunIterator:
-    def __aiter__(self) -> AgentRunIterator: ...
-    def __anext__(self) -> typing.Any: ...
-
-class AgentRunSyncIterator:
-    def __iter__(self) -> AgentRunSyncIterator: ...
-    def __next__(self) -> typing.Optional[MessageOutput]: ...
 
 class CacheProgress(typing.Generic[CacheResultT]):
     @property
@@ -26,50 +19,199 @@ class CacheProgress(typing.Generic[CacheResultT]):
 
 class CacheProgressIterator(typing.Generic[CacheResultT]):
     def __aiter__(self) -> CacheProgressIterator[CacheResultT]: ...
-    def __anext__(self) -> typing.Awaitable[typing.Optional[CacheProgress[CacheResultT]]]: ...
+    def __anext__(self) -> typing.Awaitable[CacheProgress[CacheResultT]]: ...
 
 class CacheProgressSyncIterator(typing.Generic[CacheResultT]):
     def __iter__(self) -> CacheProgressSyncIterator[CacheResultT]: ...
-    def __next__(self) -> typing.Optional[CacheProgress[CacheResultT]]: ...
+    def __next__(self) -> CacheProgress[CacheResultT]: ...
+
+class LanguageModelRunIterator:
+    def __aiter__(self) -> LanguageModelRunIterator: ...
+    def __anext__(self) -> typing.Awaitable[MessageOutput]: ...
+
+class LanguageModelRunSyncIterator:
+    def __iter__(self) -> LanguageModelRunSyncIterator: ...
+    def __next__(self) -> MessageOutput: ...
 
 class LocalLanguageModel:
     @classmethod
     def create(cls, model_name:builtins.str) -> CacheProgressIterator[LocalLanguageModel]: ...
     @classmethod
     def create_sync(cls, model_name:builtins.str) -> CacheProgressSyncIterator[LocalLanguageModel]: ...
-    def run(self, messages:typing.Sequence[Message]) -> AgentRunIterator: ...
-    def run_sync(self, messages:typing.Sequence[Message]) -> AgentRunSyncIterator: ...
+    def run(self, messages:typing.Sequence[Message]) -> LanguageModelRunIterator: ...
+    def run_sync(self, messages:typing.Sequence[Message]) -> LanguageModelRunSyncIterator: ...
 
 class Message:
+    r"""
+    Represents a complete chat message composed of multiple parts (multi-modal).
+    
+    # OpenAI-compatible shape
+    Serialization/deserialization follows the OpenAI chat/response message conventions:
+    - `role` matches OpenAI roles (e.g., `"system"`, `"user"`, `"assistant"`, `"tool"`).
+    - `content` is an array of typed parts (e.g., `{ "type": "text", "text": "..." }`,
+      images, etc.), rather than a single string. This aligns with the modern “array-of-parts”
+      format used by OpenAI’s Chat/Responses APIs.
+    - `tool_calls` (when present) is compatible with OpenAI function/tool calling:
+      each element mirrors OpenAI’s `tool_calls[]` item. In this implementation
+      each `tool_calls` entry is stored as a `Part` (commonly `Part::Json`) containing the
+      raw JSON payload (`{"type":"function","id":"...","function":{"name":"...","arguments":"..."}}`).
+    - `reasoning` is optional and is used to carry model reasoning parts when available from
+      reasoning-capable models. Treat it as **auxiliary** content; if your target API
+      does not accept a `reasoning` field, omit/strip it before sending.
+    
+    Because this type supports multi-modal content, exact `Part` variants (text, image, JSON, …)
+    may differ from text-only implementations, while staying wire-compatible with OpenAI.
+    
+    # Fields
+    - `role`: Author of the message.
+    - `contents`: Primary, user-visible content as a list of parts (text, images, etc.).
+    - `reasoning`: Optional reasoning parts (usually text). Not intended for end users.
+    - `tool_calls`: Tool/function call requests emitted by the assistant, each stored as a part
+      (typically a JSON part containing an OpenAI-shaped `tool_calls[]` item).
+    
+    # Invariants & recommendations
+    - Order is preserved: parts appear in the order they were appended.
+    - `reasoning` and `tool_calls` should be present only on assistant messages.
+    - If you target strict OpenAI endpoints that don’t accept `reasoning`, drop that field
+      during serialization.
+    - Parsing/validation of `tool_calls` JSON is the caller’s responsibility.
+    
+    # Examples
+    
+    ## User message with text + image
+    ```json
+    {
+      "role": "user",
+      "contents": [
+        { "type": "text", "text": "What does this sign say?" },
+        { "type": "input_image", "image_url": { "url": "https://example.com/sign.jpg" } }
+      ]
+    }
+    ```
+    
+    ## Assistant message requesting a tool call
+    ```json
+    {
+      "role": "assistant",
+      "contents": [ { "type": "text", "text": "I'll look that up." } ],
+      "tool_calls": [
+        {
+          "type": "function",
+          "id": "call_abc123",
+          "function": {
+            "name": "foo",
+            "arguments": "{\"location\":\"Dubai\",\"unit\":\"Celsius\"}"
+          }
+        }
+      ]
+    }
+    ```
+    
+    ## Assistant message with optional reasoning parts
+    ```json
+    {
+      "role": "assistant",
+      "contents": [ { "type": "text", "text": "The current temperature is 42 °C." } ],
+      "reasoning": [ { "type": "text", "text": "(model reasoning tokens, if exposed)" } ]
+    }
+    ```
+    """
     @property
-    def role(self) -> typing.Optional[builtins.str]: ...
+    def role(self) -> typing.Optional[Role]: ...
     @property
-    def content(self) -> list: ...
+    def content(self) -> builtins.list[Part]: ...
     @property
-    def reasoning(self) -> str: ...
+    def reasoning(self) -> builtins.str: ...
     @property
-    def tool_calls(self) -> list: ...
+    def tool_calls(self) -> builtins.list[Part]: ...
     @content.setter
     def content(self, value: builtins.list[Part]) -> None: ...
     @reasoning.setter
     def reasoning(self, value: builtins.str) -> None: ...
     @tool_calls.setter
     def tool_calls(self, value: builtins.list[Part]) -> None: ...
-    def __new__(cls, role:builtins.str) -> Message:
-        r"""
-        Message(role: str)
-        role is one of: "system" | "user" | "assistant" | "tool"
-        """
+    def __new__(cls, role:Role) -> Message: ...
+    def __repr__(self) -> builtins.str: ...
     def append_content(self, part:Part) -> None: ...
     def append_tool_call(self, part:Part) -> None: ...
 
 class MessageAggregator:
-    ...
+    r"""
+    Incrementally assembles one or more [`Message`]s from a stream of [`MessageDelta`]s.
+    
+    # What this does
+    `MessageAggregator` is a small state machine with a single-item buffer:
+    - It **coalesces adjacent chunks of the same kind** to avoid fragmentation
+      (e.g., text → text string-append; tool-call JSON → JSON string-append).
+    - It **flushes** the buffered chunk into the current [`Message`] whenever a new,
+      non-mergeable delta arrives.
+    - When the **role changes** (e.g., `assistant` → `tool`), it closes the current
+      message and returns it from [`update`], starting a new one for the new role.
+    
+    This is handy for token-by-token or chunked streaming from LLM APIs, where many
+    tiny deltas arrive back-to-back.
+    
+    # Merge rules (contiguous-only)
+    - `Content(Text) + Content(Text)` → append text
+    - `Reasoning(Text) + Reasoning(Text)` → append text
+    - `ToolCall(Function { id: _, function })`
+      + `ToolCall(Function { id: None, function })` → append `function`
+    
+    Any other case is not merged; instead, the buffer is flushed to the current message.
+    
+    # Lifecycle
+    1. Construct with [`new`].
+    2. Feed deltas in order with [`update`].
+       - Returns `Some(Message)` **only** when a role boundary is crossed,
+         finalizing and yielding the previous role’s message.
+       - Returns `None` otherwise.
+    3. Call [`finalize`] to flush and retrieve the last in-progress message (if any).
+    
+    # Guarantees & Notes
+    - **Order-preserving**: incorporation order matches arrival order.
+    - **Zero parsing**: tool-call JSON is treated as raw text; parse post-aggregation.
+    - **Cheap steady-state**: merges use `String::push_str`.
+    - **Single-threaded**: not synchronized; use on one task/thread at a time.
+    - **Panics**: none expected.
+    
+    # Example
+    ```rust
+    # use crate::value::{MessageAggregator, MessageDelta, Part, Role, Message};
+    let mut agg = MessageAggregator::new();
+    
+    // assistant streams content
+    assert!(agg.update(MessageDelta::new_assistant_tool_call(Part::Text("Hel".into()))).is_none());
+    assert!(agg.update(MessageDelta::new_assistant_content(Part::Text("lo".into()))).is_none());
+    
+    // role switches to tool: prior assistant message is returned
+    let m1 = agg.update(MessageDelta::new_tool_content(Part::Text("ok".into()))).unwrap();
+    // ... use m1
+    
+    // finalize remaining (tool) message
+    let m2 = agg.finalize().unwrap();
+    // ... use m2
+    ```
+    """
+    def __new__(cls) -> MessageAggregator: ...
 
 class MessageOutput:
-    ...
+    @property
+    def delta(self) -> Message: ...
+    @property
+    def finish_reason(self) -> typing.Optional[FinishReason]: ...
+    def __repr__(self) -> builtins.str: ...
 
 class Part:
+    r"""
+    Represents one typed unit of message content.
+    
+    A `Part` is a single element inside a message’s `content` (and, for tools, sometimes
+    under `tool_calls`). The enum itself is **transport-agnostic**; any OpenAI-style JSON
+    shape is produced/consumed by higher-level (de)serializers.
+    
+    # Notes
+    - No validation is performed. It just store the value as-is.
+    """
     @property
     def part_type(self) -> builtins.str: ...
     @property
@@ -92,3 +234,119 @@ class Part:
         - Part(part_type="image", data="<base64>", mime_type="image/jpeg")  # 'base64=' alias also accepted
         - Part(part_type="function", function='{"name":"foo","arguments":"{}"}')
         """
+    def __repr__(self) -> builtins.str: ...
+    class Text(Part):
+        r"""
+        Plain UTF-8 text.
+        
+        Without style, it can be serialized as:
+        ```json
+        { "type": "text", "text": "hello" }
+        ```
+        """
+        __match_args__ = ("_0",)
+        @property
+        def _0(self) -> builtins.str: ...
+        def __new__(cls, _0:builtins.str) -> Part.Text: ...
+        def __len__(self) -> builtins.int: ...
+        def __getitem__(self, key:builtins.int) -> typing.Any: ...
+    
+    class FunctionString(Part):
+        r"""
+        The **verbatim string** of a tool/function payload as it was streamed/received
+        (often a JSON string). This may be incomplete or invalid while streaming. It is
+        intended for *as-is accumulation* and later parsing by the caller.
+        
+        ```json
+        "{\"type\": \"function\", \"function\": \"...\""}
+        ```
+        """
+        __match_args__ = ("_0",)
+        @property
+        def _0(self) -> builtins.str: ...
+        def __new__(cls, _0:builtins.str) -> Part.FunctionString: ...
+        def __len__(self) -> builtins.int: ...
+        def __getitem__(self, key:builtins.int) -> typing.Any: ...
+    
+    class Function(Part):
+        r"""
+        A **partially parsed** function.
+         - `id`: the `tool_call_id` to correlate results. Use an empty string if undefined.
+         - `name`: function/tool name. May be assembled from streaming chunks.
+         - `arguments`: raw arguments **string** (typically JSON), preserved verbatim.
+        
+         Can be mapped to wire formats (e.g., OpenAI `tool_calls[].function`).
+        
+        ```json
+        {
+          "id": "call_abc",
+          "type": "function",
+          "function": { "name": "weather", "arguments": "{ \"city\": \"Paris\" }" }
+        }
+        ```
+        """
+        __match_args__ = ("id", "name", "arguments",)
+        @property
+        def id(self) -> builtins.str: ...
+        @property
+        def name(self) -> builtins.str: ...
+        @property
+        def arguments(self) -> builtins.str: ...
+        def __new__(cls, id:builtins.str, name:builtins.str, arguments:builtins.str) -> Part.Function: ...
+    
+    class ImageURL(Part):
+        r"""
+        A web-addressable image URL (no fetching/validation is performed).
+        ```json
+        { "type": "image", "url": "https://example.com/cat.png" }
+        ```
+        """
+        __match_args__ = ("_0",)
+        @property
+        def _0(self) -> builtins.str: ...
+        def __new__(cls, _0:builtins.str) -> Part.ImageURL: ...
+        def __len__(self) -> builtins.int: ...
+        def __getitem__(self, key:builtins.int) -> typing.Any: ...
+    
+    class ImageData(Part):
+        r"""
+        Inline base64-encoded image bytes with MIME type (no decoding/validation is performed).
+        ```json
+        { "type": "image", "data": "<base64>" }
+        ```
+        """
+        __match_args__ = ("data", "mime_type",)
+        @property
+        def data(self) -> builtins.str: ...
+        @property
+        def mime_type(self) -> builtins.str: ...
+        def __new__(cls, data:builtins.str, mime_type:builtins.str) -> Part.ImageData: ...
+    
+
+class FinishReason(Enum):
+    Stop = ...
+    Length = ...
+    ContentFilter = ...
+    ToolCalls = ...
+
+class Role(Enum):
+    r"""
+    The author of a message (or streaming delta) in a chat.
+    """
+    System = ...
+    r"""
+    System instructions and constraints provided to the assistant.
+    """
+    User = ...
+    r"""
+    Content authored by the end user.
+    """
+    Assistant = ...
+    r"""
+    Content authored by the assistant/model.
+    """
+    Tool = ...
+    r"""
+    Outputs produced by external tools/functions, typically in
+    response to an assistant tool call (and often correlated via `tool_call_id`).
+    """

@@ -131,10 +131,10 @@ impl LanguageModel for GeminiLanguageModel {
                             Part::Text(text) => {
                                 content = content.with_user_message(text);
                             }
-                            Part::ImageData(base64, mime_type) => {
+                            Part::ImageData { data, mime_type } => {
                                 content = content.with_message(GeminiMessage {
                                     role: GeminiRole::User,
-                                    content: GeminiContent::inline_data(mime_type, base64),
+                                    content: GeminiContent::inline_data(mime_type, data),
                                 });
                             }
                             Part::ImageURL(_) => {
@@ -177,7 +177,10 @@ impl LanguageModel for GeminiLanguageModel {
                             panic!("Assistant message does not have any content")
                         }
                     }
-                    Role::Tool(tool_name, _) => {
+                    Role::Tool => {
+                        let tool_name = msg.tool_call_id.clone().expect(
+                            "Gemini Tool message should have the tool name as tool_call_id",
+                        );
                         content = content.with_function_response(
                             tool_name,
                             serde_json::from_str(&msg.contents[0].to_string().unwrap()).unwrap(),
@@ -319,7 +322,8 @@ mod tests {
         msgs.push(assistant_msg.clone());
 
         // Append a fake tool call result message
-        let tool_result_msg = Message::with_role(Role::Tool("temperature".into(), None))
+        let tool_result_msg = Message::with_role(Role::Tool)
+            .with_tool_call_id("temperature")
             .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
         msgs.push(tool_result_msg);
 
@@ -350,8 +354,10 @@ mod tests {
         let mut gemini = GeminiLanguageModel::new("gemini-2.5-flash", *GEMINI_API_KEY);
 
         let msgs = vec![
-            Message::with_role(Role::User)
-                .with_contents(vec![Part::ImageData(image_base64, "image/jpeg".into())]),
+            Message::with_role(Role::User).with_contents(vec![Part::ImageData {
+                data: image_base64,
+                mime_type: "image/jpeg".into(),
+            }]),
             Message::with_role(Role::User)
                 .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
         ];

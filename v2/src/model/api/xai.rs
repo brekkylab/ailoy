@@ -151,13 +151,11 @@ mod tests {
         msgs.push(assistant_msg.clone());
 
         // Append a fake tool call result message
-        let tool_call_id = if let Part::Function { id, .. } = assistant_msg.tool_calls[0].clone() {
-            Some(id)
-        } else {
-            None
-        };
-        let tool_result_msg = Message::with_role(Role::Tool("temperature".into(), tool_call_id))
+        let mut tool_result_msg = Message::with_role(Role::Tool)
             .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
+        if let Part::Function { id, .. } = assistant_msg.tool_calls[0].clone() {
+            tool_result_msg = tool_result_msg.with_tool_call_id(id);
+        }
         msgs.push(tool_result_msg);
 
         let mut strm = xai.run(msgs, tools);
@@ -184,8 +182,10 @@ mod tests {
         let mut xai = XAILanguageModel::new("grok-4", *XAI_API_KEY);
 
         let msgs = vec![
-            Message::with_role(Role::User)
-                .with_contents(vec![Part::ImageData(image_base64, "image/jpeg".into())]),
+            Message::with_role(Role::User).with_contents(vec![Part::ImageData {
+                data: image_base64,
+                mime_type: "image/jpeg".into(),
+            }]),
             Message::with_role(Role::User)
                 .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
         ];

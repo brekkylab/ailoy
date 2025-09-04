@@ -3,24 +3,35 @@ mod cache_progress;
 mod model;
 mod value;
 
-use cache_progress::*;
-use model::*;
+use cache_progress::{
+    PyCacheProgress as CacheProgress, PyCacheProgressIterator as CacheProgressIterator,
+    PyCacheProgressSyncIterator as CacheProgressSyncIterator,
+};
+use model::{
+    PyLanguageModelRunIterator as LanguageModelRunIterator,
+    PyLanguageModelRunSyncIterator as LanguageModelRunSyncIterator,
+    PyLocalLanguageModel as LocalLanguageModel,
+};
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
-use value::*;
+
+use crate::value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role};
 
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
-    m.add_class::<PyPart>()?;
-    m.add_class::<PyMessage>()?;
-    m.add_class::<PyMessageOutput>()?;
-    m.add_class::<PyCacheProgress>()?;
-    m.add_class::<PyCacheProgressIterator>()?;
-    m.add_class::<PyCacheProgressSyncIterator>()?;
-    m.add_class::<PyLocalLanguageModel>()?;
-    m.add_class::<PyAgentRunIterator>()?;
-    m.add_class::<PyAgentRunSyncIterator>()?;
-    m.add_class::<PyAgentRunIterator>()?;
+    // Add classes in alphabetical order
+    m.add_class::<CacheProgress>()?;
+    m.add_class::<CacheProgressIterator>()?;
+    m.add_class::<CacheProgressSyncIterator>()?;
+    m.add_class::<FinishReason>()?;
+    m.add_class::<LanguageModelRunIterator>()?;
+    m.add_class::<LanguageModelRunSyncIterator>()?;
+    m.add_class::<LocalLanguageModel>()?;
+    m.add_class::<Message>()?;
+    m.add_class::<MessageAggregator>()?;
+    m.add_class::<MessageOutput>()?;
+    m.add_class::<Part>()?;
+    m.add_class::<Role>()?;
     Ok(())
 }
 

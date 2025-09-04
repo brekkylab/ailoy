@@ -15,6 +15,11 @@ use serde::{
 /// # Notes
 /// - No validation is performed. It just store the value as-is.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "python",
+    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
+)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum Part {
     /// Plain UTF-8 text.
     ///
@@ -63,7 +68,7 @@ pub enum Part {
     /// ```json
     /// { "type": "image", "data": "<base64>" }
     /// ```
-    ImageData(String, String),
+    ImageData { data: String, mime_type: String },
 }
 
 impl Part {
@@ -92,7 +97,10 @@ impl Part {
     }
 
     pub fn new_image_data(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
-        Self::ImageData(data.into(), mime_type.into())
+        Self::ImageData {
+            data: data.into(),
+            mime_type: mime_type.into(),
+        }
     }
 
     /// Merges adjacent parts of the **same variant** in place:
@@ -156,7 +164,7 @@ impl Part {
             Part::Text(str) => Some(str.into()),
             Part::FunctionString(str) => Some(str.into()),
             Part::ImageURL(str) => Some(str.into()),
-            Part::ImageData(data, mime_type) => {
+            Part::ImageData { data, mime_type } => {
                 Some(format!("data:{};base64,{}", mime_type, data).to_owned())
             }
             _ => None,
@@ -484,7 +492,7 @@ impl fmt::Display for StyledPart {
                 self.style.image_url_field,
                 url
             ))?,
-            Part::ImageData(data, mime_type) => f.write_fmt(format_args!(
+            Part::ImageData{data, mime_type} => f.write_fmt(format_args!(
                 "Part {{\"type\": \"{}\", \"{}\"=({}, {} bytes)}}",
                 self.style.image_data_type,
                 self.style.image_data_field,
@@ -611,7 +619,7 @@ impl Serialize for StyledPart {
                 map.serialize_entry("type", &self.style.image_url_type)?;
                 map.serialize_entry(&self.style.image_url_field, url.as_str())?;
             }
-            Part::ImageData(..) => {
+            Part::ImageData { .. } => {
                 map.serialize_entry("type", &self.style.image_data_type)?;
                 map.serialize_entry(&self.style.image_data_field, &self.data.to_string())?;
             }

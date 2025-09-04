@@ -114,7 +114,10 @@ pub fn call_tool_result_to_parts(result: &CallToolResult) -> anyhow::Result<Vec<
             .iter()
             .map(|c| match c.raw.clone() {
                 RawContent::Text(text) => Part::Text(text.text),
-                RawContent::Image(image) => Part::ImageData(image.data, image.mime_type),
+                RawContent::Image(image) => Part::ImageData {
+                    data: image.data,
+                    mime_type: image.mime_type,
+                },
                 // RawContent::Audio(audio) => Part::Audio {
                 //     data: audio.data.clone(),
                 //     format: audio.mime_type.replace(r"^audio\/", ""),

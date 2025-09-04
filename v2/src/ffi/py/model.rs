@@ -1,6 +1,6 @@
 use futures::StreamExt;
 use pyo3::{
-    exceptions::{PyRuntimeError, PyStopAsyncIteration},
+    exceptions::{PyRuntimeError, PyStopAsyncIteration, PyStopIteration},
     prelude::*,
     types::PyType,
 };
@@ -14,9 +14,9 @@ use crate::{
             PyCacheProgressIterator, PyCacheProgressSyncIterator, create_cache_progress_iterator,
             create_cache_progress_sync_iterator,
         },
-        value::{PyMessage, PyMessageOutput},
     },
     model::{LanguageModel, LocalLanguageModel},
+    value::{Message, MessageOutput},
 };
 
 #[gen_stub_pyclass]
@@ -60,43 +60,40 @@ impl PyLocalLanguageModel {
 
     pub fn run(
         mut self_: PyRefMut<'_, Self>,
-        messages: Vec<PyMessage>,
-    ) -> PyResult<PyAgentRunIterator> {
-        let messages = messages.into_iter().map(|m| m.inner).collect::<Vec<_>>();
+        messages: Vec<Message>,
+    ) -> PyResult<PyLanguageModelRunIterator> {
         let model = self_
             .inner
             .take()
             .ok_or_else(|| PyRuntimeError::new_err("Model already consumed"))?;
 
-        let (tx, rx) = async_channel::unbounded::<Result<PyMessageOutput, String>>();
+        let (tx, rx) = async_channel::unbounded::<Result<MessageOutput, String>>();
 
         pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
             let mut model = model;
-            let mut strm = model
-                .run(messages, Vec::new())
-                .map(|r| r.map(PyMessageOutput::from_inner))
-                .boxed();
+            let mut strm = model.run(messages, Vec::new()).boxed();
 
             while let Some(item) = strm.next().await {
                 if tx.send(item).await.is_err() {
                     break; // Exit if consumer vanished
                 }
+                // Add a yield point to allow other tasks to run
+                tokio::task::yield_now().await;
             }
         });
-        Ok(PyAgentRunIterator { rx })
+        Ok(PyLanguageModelRunIterator { rx })
     }
 
     pub fn run_sync(
         mut self_: PyRefMut<'_, Self>,
-        messages: Vec<PyMessage>,
-    ) -> PyResult<PyAgentRunSyncIterator> {
-        let messages = messages.into_iter().map(|m| m.inner).collect::<Vec<_>>();
+        messages: Vec<Message>,
+    ) -> PyResult<PyLanguageModelRunSyncIterator> {
         let model = self_
             .inner
             .take()
             .ok_or_else(|| PyRuntimeError::new_err("Model already consumed"))?;
 
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<PyMessageOutput, String>>(16);
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<MessageOutput, String>>(16);
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -104,10 +101,7 @@ impl PyLocalLanguageModel {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         rt.spawn(async move {
             let mut model = model;
-            let mut stream = model
-                .run(messages, Vec::new())
-                .then(|item| async move { item.map(PyMessageOutput::from_inner) })
-                .boxed();
+            let mut stream = model.run(messages, Vec::new()).boxed();
 
             while let Some(item) = stream.next().await {
                 if tx.send(item).await.is_err() {
@@ -116,23 +110,24 @@ impl PyLocalLanguageModel {
             }
         });
 
-        Ok(PyAgentRunSyncIterator { rt, rx })
+        Ok(PyLanguageModelRunSyncIterator { rt, rx })
     }
 }
 
 #[gen_stub_pyclass]
-#[pyclass(unsendable, name = "AgentRunIterator")]
-pub struct PyAgentRunIterator {
-    rx: async_channel::Receiver<Result<PyMessageOutput, String>>,
+#[pyclass(unsendable, name = "LanguageModelRunIterator")]
+pub struct PyLanguageModelRunIterator {
+    rx: async_channel::Receiver<Result<MessageOutput, String>>,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyAgentRunIterator {
+impl PyLanguageModelRunIterator {
     fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
+    #[gen_stub(override_return_type(type_repr="typing.Awaitable[MessageOutput]", imports=("typing")))]
     fn __anext__(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let rx = self.rx.clone();
         let fut = async move {
@@ -142,30 +137,31 @@ impl PyAgentRunIterator {
                 Err(_) => Err(PyStopAsyncIteration::new_err(())),
             }
         };
-        pyo3_async_runtimes::tokio::future_into_py(py, fut).map(|a| a.unbind())
+        let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
+        Ok(py_fut.into())
     }
 }
 
 #[gen_stub_pyclass]
-#[pyclass(unsendable, name = "AgentRunSyncIterator")]
-pub struct PyAgentRunSyncIterator {
+#[pyclass(unsendable, name = "LanguageModelRunSyncIterator")]
+pub struct PyLanguageModelRunSyncIterator {
     rt: Runtime,
-    rx: tokio::sync::mpsc::Receiver<Result<PyMessageOutput, String>>,
+    rx: tokio::sync::mpsc::Receiver<Result<MessageOutput, String>>,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyAgentRunSyncIterator {
+impl PyLanguageModelRunSyncIterator {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<PyMessageOutput>> {
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
         let item = py.allow_threads(|| self.rt.block_on(self.rx.recv()));
         match item {
-            Some(Ok(evt)) => Ok(Some(evt)),
+            Some(Ok(evt)) => Ok(evt),
             Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
-            None => Ok(None), // StopIteration
+            None => Err(PyStopIteration::new_err(())), // StopIteration
         }
     }
 }

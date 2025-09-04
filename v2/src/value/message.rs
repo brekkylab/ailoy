@@ -13,6 +13,8 @@ use crate::value::{Part, PartStyle, StyledPart};
 #[derive(Clone, Debug, Display, Serialize, Deserialize, PartialEq, Eq, EnumString)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "snake_case")]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum Role {
     /// System instructions and constraints provided to the assistant.
     System,
@@ -22,7 +24,7 @@ pub enum Role {
     Assistant,
     /// Outputs produced by external tools/functions, typically in
     /// response to an assistant tool call (and often correlated via `tool_call_id`).
-    Tool(String, Option<String>),
+    Tool,
 }
 
 /// Represents a complete chat message composed of multiple parts (multi-modal).
@@ -37,8 +39,8 @@ pub enum Role {
 ///   each element mirrors OpenAI’s `tool_calls[]` item. In this implementation
 ///   each `tool_calls` entry is stored as a `Part` (commonly `Part::Json`) containing the
 ///   raw JSON payload (`{"type":"function","id":"...","function":{"name":"...","arguments":"..."}}`).
-/// - `reasoning` is optional and is used to carry model reasoning parts when available
-///   from reasoning-capable models. Treat it as **auxiliary** content; if your target API
+/// - `reasoning` is optional and is used to carry model reasoning parts when available from
+///   reasoning-capable models. Treat it as **auxiliary** content; if your target API
 ///   does not accept a `reasoning` field, omit/strip it before sending.
 ///
 /// Because this type supports multi-modal content, exact `Part` variants (text, image, JSON, …)
@@ -98,11 +100,14 @@ pub enum Role {
 /// }
 /// ```
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct Message {
     pub role: Option<Role>,
     pub reasoning: String,
     pub contents: Vec<Part>,
     pub tool_calls: Vec<Part>,
+    pub tool_call_id: Option<String>,
 }
 
 impl Message {
@@ -116,6 +121,7 @@ impl Message {
             reasoning: String::new(),
             contents: Vec::new(),
             tool_calls: Vec::new(),
+            tool_call_id: None,
         }
     }
 
@@ -125,6 +131,7 @@ impl Message {
             reasoning: reasoning.into(),
             contents: self.contents,
             tool_calls: self.tool_calls,
+            tool_call_id: None,
         }
     }
 
@@ -134,6 +141,7 @@ impl Message {
             reasoning: self.reasoning,
             contents: contents.into_iter().collect(),
             tool_calls: self.tool_calls,
+            tool_call_id: None,
         }
     }
 
@@ -143,6 +151,17 @@ impl Message {
             reasoning: self.reasoning,
             contents: self.contents,
             tool_calls: tool_calls.into_iter().collect(),
+            tool_call_id: None,
+        }
+    }
+
+    pub fn with_tool_call_id(self, tool_call_id: impl Into<String>) -> Self {
+        Message {
+            role: self.role,
+            reasoning: self.reasoning,
+            contents: self.contents,
+            tool_calls: self.tool_calls,
+            tool_call_id: Some(tool_call_id.into()),
         }
     }
 }
@@ -154,7 +173,18 @@ impl Default for Message {
             reasoning: String::new(),
             contents: Vec::new(),
             tool_calls: Vec::new(),
+            tool_call_id: None,
         }
+    }
+}
+
+impl Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        StyledMessage {
+            data: self.clone(),
+            style: MessageStyle::new(),
+        }
+        .fmt(f)
     }
 }
 
@@ -179,6 +209,8 @@ pub struct MessageStyle {
     /// {"reasoning": "...", "content": [...], "||HERE||": [...]}
     /// default: "tool_calls"
     pub tool_calls_field: String,
+
+    pub tool_call_id_field: String,
 }
 
 impl MessageStyle {
@@ -195,6 +227,7 @@ impl Default for MessageStyle {
             contents_field: String::from("content"),
             contents_textonly: false,
             tool_calls_field: String::from("tool_calls"),
+            tool_call_id_field: String::from("tool_call_id"),
         }
     }
 }
@@ -225,6 +258,7 @@ impl StyledMessage {
                 reasoning: String::new(),
                 contents: Vec::new(),
                 tool_calls: Vec::new(),
+                tool_call_id: None,
             },
             style: MessageStyle::new(),
         }
@@ -237,6 +271,7 @@ impl StyledMessage {
                 reasoning: reasoning.into(),
                 contents: self.data.contents,
                 tool_calls: self.data.tool_calls,
+                tool_call_id: None,
             },
             style: self.style,
         }
@@ -249,6 +284,7 @@ impl StyledMessage {
                 reasoning: self.data.reasoning,
                 contents: contents.into_iter().collect(),
                 tool_calls: self.data.tool_calls,
+                tool_call_id: None,
             },
             style: self.style,
         }
@@ -261,6 +297,20 @@ impl StyledMessage {
                 reasoning: self.data.reasoning,
                 contents: self.data.contents,
                 tool_calls: tool_calls.into_iter().collect(),
+                tool_call_id: None,
+            },
+            style: self.style,
+        }
+    }
+
+    pub fn with_tool_call_id(self, tool_call_id: impl Into<String>) -> Self {
+        Self {
+            data: Message {
+                role: self.data.role,
+                reasoning: self.data.reasoning,
+                contents: self.data.contents,
+                tool_calls: self.data.tool_calls,
+                tool_call_id: Some(tool_call_id.into()),
             },
             style: self.style,
         }
@@ -455,6 +505,7 @@ impl<'de> Deserialize<'de> for StyledMessage {
                 let mut reasoning: Option<String> = None;
                 let mut contents: Option<Vec<Part>> = None;
                 let mut tool_calls: Option<Vec<Part>> = None;
+                let mut tool_call_id: Option<String> = None;
 
                 let mut style = MessageStyle::default();
 
@@ -513,6 +564,11 @@ impl<'de> Deserialize<'de> for StyledMessage {
                             tool_calls = Some(out);
                         }
 
+                        key if key == style.tool_call_id_field => {
+                            style.tool_call_id_field = key.to_string();
+                            tool_call_id = Some(map.next_value()?);
+                        }
+
                         // Unknown: skip
                         _ => {
                             let _ = map.next_value::<de::IgnoredAny>()?;
@@ -525,6 +581,7 @@ impl<'de> Deserialize<'de> for StyledMessage {
                     reasoning: reasoning.unwrap_or_default(),
                     contents: contents.unwrap_or_default(),
                     tool_calls: tool_calls.unwrap_or_default(),
+                    tool_call_id: tool_call_id,
                 };
 
                 Ok(StyledMessage { data, style })
@@ -538,6 +595,8 @@ impl<'de> Deserialize<'de> for StyledMessage {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, EnumString, Display)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 pub enum FinishReason {
     Stop,
     Length,
@@ -546,6 +605,8 @@ pub enum FinishReason {
 }
 
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct MessageOutput {
     pub delta: Message,
     pub finish_reason: Option<FinishReason>,
@@ -735,6 +796,9 @@ impl<'de> de::Visitor<'de> for MessageOutputVisitor {
 /// // ... use m2
 /// ```
 #[derive(Debug)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", doc(hidden))]
 pub struct MessageAggregator {
     /// Last unflushed delta; candidate for coalescing.
     buffer: Option<Message>,

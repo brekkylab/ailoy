@@ -131,10 +131,13 @@ impl Agent {
                         };
                         let tool = tools.iter().find(|v| v.get_description().get_name() == tc.name).unwrap().clone();
                         let resp = tool.run(tc.arguments).await?;
-                        let delta = Message::with_role(Role::Tool(tc.name.clone(), tool_call_id.clone())).with_contents(resp.clone());
-                        yield MessageOutput::new().with_delta(delta);
-                        let tool_msg = Message::with_role(Role::Tool(tc.name, tool_call_id)).with_contents(resp);
-                        msgs.lock().await.push(tool_msg);
+                        let mut delta = Message::with_role(Role::Tool).with_contents(resp.clone());
+                        if let Some(tool_call_id) = tool_call_id {
+                            delta = delta.with_tool_call_id(tool_call_id);
+                        }
+                        yield MessageOutput::new().with_delta(delta.clone());
+                        // let tool_msg = Message::with_role(Role::Tool).with_contents(resp);
+                        msgs.lock().await.push(delta);
                     }
                 }
                 msgs.lock().await.push(assistant_msg.clone());
@@ -149,7 +152,10 @@ impl Agent {
                         let tool = tools.iter().find(|v| v.get_description().name == tc.name).unwrap().clone();
                         let parts = tool.run(tc.arguments).await?;
                         for part in parts.into_iter() {
-                            let tool_msg = Message::with_role(Role::Tool(tc.name.clone(), tool_call_id.clone())).with_contents([part.clone()]);
+                            let mut tool_msg = Message::with_role(Role::Tool).with_contents([part.clone()]);
+                            if let Some(tool_call_id) = tool_call_id.clone() {
+                                tool_msg = tool_msg.with_tool_call_id(tool_call_id);
+                            }
                             yield MessageOutput{ delta: tool_msg.clone(), finish_reason: Some(FinishReason::Stop)};
                             self.messages.lock().await.push(tool_msg);
                         }

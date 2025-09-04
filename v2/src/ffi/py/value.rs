@@ -1,35 +1,14 @@
-use std::str::FromStr;
-
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyList, PyString},
 };
 use pyo3_stub_gen::derive::*;
 
-use crate::{
-    ffi::py::base::PyWrapper,
-    value::{Message, MessageAggregator, MessageOutput, Part, Role},
-};
-
-#[derive(Clone)]
-#[gen_stub_pyclass]
-#[pyclass(name = "Part")]
-pub struct PyPart {
-    inner: Part,
-}
-
-impl PyWrapper for PyPart {
-    type Inner = Part;
-
-    fn from_inner(inner: Self::Inner) -> Self {
-        Self { inner }
-    }
-}
+use crate::value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role};
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyPart {
+impl Part {
     /// Part(part_type, *, id=None, text=None, url=None, data=None, function=None)
     ///
     /// Examples:
@@ -39,7 +18,7 @@ impl PyPart {
     /// - Part(part_type="function", function='{"name":"foo","arguments":"{}"}')
     #[new]
     #[pyo3(signature = (part_type, *, text=None, url=None, data=None, mime_type=None, function=None, id=None, name=None, arguments=None))]
-    fn new(
+    fn __new__(
         part_type: &str,
         text: Option<String>,
         url: Option<String>,
@@ -73,7 +52,7 @@ impl PyPart {
                 } else if let Some(data) = data
                     && let Some(mime_type) = mime_type
                 {
-                    Part::ImageData(data, mime_type)
+                    Part::ImageData { data, mime_type }
                 } else {
                     return Err(PyTypeError::new_err(
                         "image needs url= or data= with mime_type=",
@@ -82,16 +61,20 @@ impl PyPart {
             }
             other => return Err(PyValueError::new_err(format!("unknown type: {other}"))),
         };
-        Ok(Self { inner })
+        Ok(inner)
+    }
+
+    fn __repr__(&self) -> String {
+        self.to_string().unwrap_or("".into())
     }
 
     #[getter]
     fn part_type(&self) -> &'static str {
-        match &self.inner {
+        match &self {
             Part::Text(_) => "text",
             Part::FunctionString(_) => "function",
             Part::Function { .. } => "function",
-            Part::ImageURL(_) | Part::ImageData(_, _) => "image",
+            Part::ImageURL(_) | Part::ImageData { .. } => "image",
             // Part::AudioURL(_) | Part::AudioData(_) => "audio",
             // Part::Audio { .. } => "audio",
         }
@@ -99,7 +82,7 @@ impl PyPart {
 
     #[getter]
     fn text(&self) -> Option<&str> {
-        match &self.inner {
+        match &self {
             Part::Text(s) => Some(s.as_str()),
             _ => None,
         }
@@ -107,7 +90,7 @@ impl PyPart {
 
     #[getter]
     fn function(&self) -> Option<&str> {
-        match &self.inner {
+        match &self {
             Part::FunctionString(s) => Some(s.as_str()),
             _ => None,
         }
@@ -115,7 +98,7 @@ impl PyPart {
 
     #[getter]
     fn url(&self) -> Option<&str> {
-        match &self.inner {
+        match &self {
             Part::ImageURL(u) => Some(u.as_str()),
             _ => None,
         }
@@ -123,16 +106,16 @@ impl PyPart {
 
     #[getter]
     fn data(&self) -> Option<&str> {
-        match &self.inner {
-            Part::ImageData(b, _) => Some(b.as_str()),
+        match &self {
+            Part::ImageData { data, .. } => Some(data.as_str()),
             _ => None,
         }
     }
 
     #[getter]
     fn mime_type(&self) -> Option<&str> {
-        match &self.inner {
-            Part::ImageData(_, mime_type) => Some(mime_type.as_str()),
+        match &self {
+            Part::ImageData { mime_type, .. } => Some(mime_type.as_str()),
             _ => None,
         }
     }
@@ -148,95 +131,61 @@ impl PyPart {
     // fn to_json(&self) -> PyResult<String> {
     //     serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
     // }
-
-    // fn __repr__(&self) -> PyResult<String> {
-    //     Ok(self.inner.to_string())
-    // }
-}
-
-#[derive(Clone)]
-#[gen_stub_pyclass]
-#[pyclass(name = "Message")]
-pub struct PyMessage {
-    pub inner: Message,
-}
-
-impl PyWrapper for PyMessage {
-    type Inner = Message;
-
-    fn from_inner(inner: Self::Inner) -> Self {
-        Self { inner }
-    }
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyMessage {
-    /// Message(role: str)
-    /// role is one of: "system" | "user" | "assistant" | "tool"
+impl Message {
     #[new]
-    fn new(role: &str) -> PyResult<Self> {
-        let role = Role::from_str(role).map_err(|_| PyValueError::new_err(role.to_owned()))?;
-        Ok(Self {
-            inner: Message::with_role(role),
-        })
+    fn __new__(role: &Role) -> Self {
+        Self::with_role(role.clone())
+    }
+
+    fn __repr__(&self) -> String {
+        self.to_string()
     }
 
     #[getter]
-    fn role(&self) -> PyResult<Option<String>> {
-        Ok(self.inner.role.as_ref().map(|r| r.to_string()))
+    fn role(&self) -> Option<Role> {
+        self.role.clone()
     }
 
     #[getter]
-    fn content<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
-        PyList::new(
-            py,
-            self.inner
-                .contents
-                .clone()
-                .into_iter()
-                .map(|inner| PyPart { inner }),
-        )
+    fn content(&self) -> Vec<Part> {
+        self.contents.clone()
     }
 
     #[setter]
-    fn set_content(&mut self, contents: Vec<PyPart>) {
-        self.inner.contents = contents.into_iter().map(|v| v.inner).collect();
+    fn set_content(&mut self, contents: Vec<Part>) {
+        self.contents = contents;
     }
 
-    fn append_content(&mut self, part: PyPart) {
-        self.inner.contents.push(part.inner);
+    fn append_content(&mut self, part: Part) {
+        self.contents.push(part);
     }
 
     #[getter]
-    fn reasoning<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
-        Ok(PyString::new(py, &self.inner.reasoning))
+    fn reasoning(&self) -> String {
+        self.reasoning.clone()
     }
 
     #[setter]
     fn set_reasoning(&mut self, reasoning: String) {
-        self.inner.reasoning = reasoning;
+        self.reasoning = reasoning;
     }
 
     #[getter]
-    fn tool_calls<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
-        PyList::new(
-            py,
-            self.inner
-                .tool_calls
-                .clone()
-                .into_iter()
-                .map(|inner| PyPart { inner }),
-        )
+    fn tool_calls(&self) -> Vec<Part> {
+        self.tool_calls.clone()
     }
 
     #[setter]
-    fn set_tool_calls(&mut self, tool_calls: Vec<PyPart>) {
-        self.inner.tool_calls = tool_calls.into_iter().map(|v| v.inner).collect();
+    fn set_tool_calls(&mut self, tool_calls: Vec<Part>) {
+        self.tool_calls = tool_calls;
     }
 
-    fn append_tool_call(&mut self, part: PyPart) {
-        self.inner.tool_calls.push(part.inner);
+    fn append_tool_call(&mut self, part: Part) {
+        self.tool_calls.push(part);
     }
 
     // #[staticmethod]
@@ -250,29 +199,25 @@ impl PyMessage {
     // fn to_json(&self) -> PyResult<String> {
     //     serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
     // }
-
-    // fn __repr__(&self) -> PyResult<String> {
-    //     Ok(self.inner.to_string())
-    // }
 }
 
-#[derive(Clone)]
-#[gen_stub_pyclass]
-#[pyclass(name = "MessageOutput")]
-pub struct PyMessageOutput {
-    inner: MessageOutput,
-}
-
-impl PyWrapper for PyMessageOutput {
-    type Inner = MessageOutput;
-
-    fn from_inner(inner: Self::Inner) -> Self {
-        Self { inner }
-    }
-}
-
+#[gen_stub_pymethods]
 #[pymethods]
-impl PyMessageOutput {
+impl MessageOutput {
+    fn __repr__(&self) -> String {
+        self.to_string()
+    }
+
+    #[getter]
+    fn delta(&self) -> Message {
+        self.delta.clone()
+    }
+
+    #[getter]
+    fn finish_reason(&self) -> Option<FinishReason> {
+        self.finish_reason.clone()
+    }
+
     // #[staticmethod]
     // fn from_json(s: &str) -> PyResult<Self> {
     //     Ok(PyMessageOutput {
@@ -284,26 +229,13 @@ impl PyMessageOutput {
     // fn to_json(&self) -> PyResult<String> {
     //     serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
     // }
-
-    fn __repr__(&self) -> PyResult<String> {
-        Ok(self.inner.to_string())
-    }
-}
-
-#[gen_stub_pyclass]
-#[pyclass(name = "MessageAggregator")]
-pub struct PyMessageAggregator {
-    inner: MessageAggregator,
-}
-
-impl PyWrapper for PyMessageAggregator {
-    type Inner = MessageAggregator;
-
-    fn from_inner(inner: Self::Inner) -> Self {
-        Self { inner }
-    }
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyMessageAggregator {}
+impl MessageAggregator {
+    #[new]
+    fn __new__() -> Self {
+        Self::new()
+    }
+}
