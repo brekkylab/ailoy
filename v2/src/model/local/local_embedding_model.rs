@@ -1,4 +1,4 @@
-use std::{any::Any, collections::BTreeMap, sync::Arc};
+use std::{any::Any, collections::BTreeMap};
 
 use anyhow::Result;
 use futures::stream::Stream;
@@ -11,7 +11,7 @@ use crate::{
         EmbeddingModel,
         local::{EmbeddingModelInferencer, Tokenizer},
     },
-    utils::{BoxFuture, Mutex, Normalize as _},
+    utils::{BoxFuture, Normalize as _},
 };
 use ailoy_macros::multi_platform_async_trait;
 
@@ -20,7 +20,7 @@ pub struct LocalEmbeddingModel {
     tokenizer: Tokenizer,
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
-    inferencer: Mutex<EmbeddingModelInferencer>,
+    inferencer: EmbeddingModelInferencer,
 }
 
 impl LocalEmbeddingModel {
@@ -34,12 +34,12 @@ impl LocalEmbeddingModel {
 
 #[multi_platform_async_trait]
 impl EmbeddingModel for LocalEmbeddingModel {
-    async fn run(self: Arc<Self>, text: String) -> Result<Embedding> {
+    async fn run(self: &mut Self, text: String) -> Result<Embedding> {
         let input_tokens = self.tokenizer.encode(&text, true).unwrap();
         #[cfg(target_family = "wasm")]
-        let embedding = Ok(self.inferencer.lock().infer(&input_tokens).await);
+        let embedding = Ok(self.inferencer.infer(&input_tokens).await);
         #[cfg(not(target_family = "wasm"))]
-        let embedding = self.inferencer.lock().infer(&input_tokens).to_vec_f32();
+        let embedding = self.inferencer.infer(&input_tokens).to_vec_f32();
         embedding
     }
 }
@@ -117,7 +117,7 @@ impl TryFromCache for LocalEmbeddingModel {
 
             Ok(LocalEmbeddingModel {
                 tokenizer,
-                inferencer: Mutex::new(inferencer),
+                inferencer: inferencer,
             })
         })
     }
@@ -156,7 +156,7 @@ mod tests {
                 model = progress.result.take();
             }
         }
-        let model = Arc::new(model.unwrap());
+        let mut model = model.unwrap();
 
         let embedding = model.run("What is BGE M3?".to_owned()).await.unwrap();
         assert_eq!(embedding.len(), 1024);
@@ -184,22 +184,20 @@ mod tests {
                 model = progress.result.take();
             }
         }
-        let model = Arc::new(model.unwrap());
+        let mut model = model.unwrap();
 
         let query_embedding1 = model
-            .clone()
             .run("What is BGE M3?".to_owned())
             .await
             .unwrap()
             .normalized();
         let query_embedding2 = model
-            .clone()
             .run("Defination of BM25".to_owned())
             .await
             .unwrap()
             .normalized();
-        let answer_embedding1 = model.clone().run("BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.".to_owned()).await.unwrap().normalized();
-        let answer_embedding2 = model.clone().run("BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document".to_owned()).await.unwrap().normalized();
+        let answer_embedding1 = model.run("BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.".to_owned()).await.unwrap().normalized();
+        let answer_embedding2 = model.run("BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document".to_owned()).await.unwrap().normalized();
         assert!(
             dot(&query_embedding1, &answer_embedding1) > dot(&query_embedding1, &answer_embedding2)
         );
