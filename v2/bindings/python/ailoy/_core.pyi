@@ -92,4 +92,3 @@ class Part:
         - Part(part_type="image", data="<base64>", mime_type="image/jpeg")  # 'base64=' alias also accepted
         - Part(part_type="function", function='{"name":"foo","arguments":"{}"}')
         """
-

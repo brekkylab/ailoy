@@ -16,14 +16,6 @@ use crate::{
 #[pyclass(name = "GenericClass", subclass)]
 pub struct GenericClass {}
 
-#[pymethods]
-impl GenericClass {
-    #[new]
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
 impl PyStubType for GenericClass {
     fn type_output() -> TypeInfo {
         TypeInfo {
