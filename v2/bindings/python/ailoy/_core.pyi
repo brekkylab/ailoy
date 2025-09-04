@@ -38,8 +38,10 @@ class LocalLanguageModel:
     def create(cls, model_name:builtins.str) -> CacheProgressIterator[LocalLanguageModel]: ...
     @classmethod
     def create_sync(cls, model_name:builtins.str) -> CacheProgressSyncIterator[LocalLanguageModel]: ...
-    def run(self, messages:typing.Sequence[Message]) -> LanguageModelRunIterator: ...
-    def run_sync(self, messages:typing.Sequence[Message]) -> LanguageModelRunSyncIterator: ...
+    def run(self, messages:typing.Sequence[Message], tools:typing.Sequence[ToolDesc]) -> LanguageModelRunIterator: ...
+    def run_sync(self, messages:typing.Sequence[Message], tools:typing.Sequence[ToolDesc]) -> LanguageModelRunSyncIterator: ...
+    def enable_reasoning(self) -> None: ...
+    def disable_reasoning(self) -> None: ...
 
 class Message:
     r"""
@@ -124,12 +126,16 @@ class Message:
     def reasoning(self) -> builtins.str: ...
     @property
     def tool_calls(self) -> builtins.list[Part]: ...
+    @property
+    def tool_call_id(self) -> typing.Optional[builtins.str]: ...
     @content.setter
     def content(self, value: builtins.list[Part]) -> None: ...
     @reasoning.setter
     def reasoning(self, value: builtins.str) -> None: ...
     @tool_calls.setter
     def tool_calls(self, value: builtins.list[Part]) -> None: ...
+    @tool_call_id.setter
+    def tool_call_id(self, value: typing.Optional[builtins.str]) -> None: ...
     def __new__(cls, role:Role) -> Message: ...
     def __repr__(self) -> builtins.str: ...
     def append_content(self, part:Part) -> None: ...
@@ -322,6 +328,124 @@ class Part:
         def mime_type(self) -> builtins.str: ...
         def __new__(cls, data:builtins.str, mime_type:builtins.str) -> Part.ImageData: ...
     
+
+class ToolDesc:
+    r"""
+    Describes a single callable tool for an LLM: its human-readable name/description,
+    the JSON-shaped parameter schema, and the JSON-shaped return schema. Tool
+    descriptions are typically embedded in a chat template’s system/header section
+    so the model knows *what it can call* and *how to format arguments/returns*.
+    
+    This struct pairs with `ToolDescArg`, a reduced, recursive
+    JSON-Schema–style node used to express `parameters` and `return`.
+    
+    # Fields
+    - `name`
+      Human-friendly identifier the model can reference when calling the tool.
+    - `description`
+      Short, imperative explanation of what the tool does and when to use it.
+    - `parameters`
+      Schema describing the request payload. In practice this is **usually**
+      `ToolDescArg::Object` with `properties` (argument names) and
+      `required` (argument names that must be present).
+    - `return`
+      Schema describing the tool’s JSON response. Can be any `ToolDescArg`,
+      commonly an `Object`.
+    
+    # Serialization format
+    This type serializes/deserializes with a fixed outer wrapper so that the JSON
+    matches common chat-template expectations (e.g., Hugging Face
+    `apply_chat_template`):
+    
+    ```json
+    {
+      "type": "function",
+      "function": {
+        "name": "tool_name",
+        "description": "What the tool does",
+        "parameters": { /* ToolDescArg */ },
+        "return": { /* ToolDescArg */ }
+      }
+    }
+    ```
+    
+    Notes:
+    - The Rust field `r#return` is emitted/parsed as the JSON key `"return"`.
+    - Ordering of `Object.properties` is preserved via `IndexMap`, which can help
+      readability and (for some models) prompt stability.
+    
+    # Conventions & tips
+    - Keep `name` concise and stable; avoid spaces that could be misparsed.
+    - Write `description` as guidance for the model (“Use this to … when …”).
+    - Prefer explicit, narrow schemas. For example, use `String { enum: [...] }`
+      to constrain literals; mark truly required args in `required`.
+    - For `parameters`, use `Object` with well-named properties; avoid deeply
+      nested or overly generic shapes unless necessary.
+    - For `return`, document the *machine-readable* JSON shape your tool produces.
+      (LLMs tend to follow the declared schema more reliably than prose.)
+    
+    # Example
+    Building a tool that fetches weather by city and returns a number:
+    
+    ```rust
+    use indexmap::IndexMap;
+    
+    let params = ToolDescArg::new_object().with_properties(
+        [("location", ToolDescArg::new_string()
+            .with_desc("The city name"))],
+        ["location"],
+    );
+    
+    let ret = ToolDescArg::new_number()
+        .with_desc("Current temperature in Celsius");
+    
+    let tool = ToolDesc {
+        name: "weather".into(),
+        description: "Get the current temperature for a city".into(),
+        parameters: params,
+        r#return: ret,
+    };
+    
+    let json = serde_json::to_string_pretty(&tool).unwrap();
+    // Yields:
+    // {
+    //   "type": "function",
+    //   "function": {
+    //     "name": "weather",
+    //     "description": "Get the current temperature for a city",
+    //     "parameters": {
+    //       "type": "object",
+    //       "properties": {
+    //         "location": { "type": "string", "description": "The city name" }
+    //       },
+    //       "required": ["location"]
+    //     },
+    //     "return": { "type": "number", "description": "Current temperature in Celsius" }
+    //   }
+    // }
+    ```
+    
+    # Compatibility
+    The emitted JSON shape matches the commonly used “function tool” format and
+    is suitable for chat templates that accept a list of tools with schemas (e.g.,
+    Hugging Face Transformers’ `apply_chat_template`). The schema nodes themselves
+    intentionally support a reduced subset of JSON Schema for predictability.
+    
+    For more background on the expected schema shape, see:
+    https://huggingface.co/docs/transformers/v4.53.3/en/chat_extras#schema
+    
+    See also: [`ToolDescArg`].
+    """
+    @property
+    def name(self) -> builtins.str: ...
+    @property
+    def description(self) -> builtins.str: ...
+    @property
+    def parameters(self) -> dict: ...
+    @property
+    def returns(self) -> typing.Optional[dict]: ...
+    def __new__(cls, name:builtins.str, description:builtins.str, parameters:dict, *, returns:typing.Optional[dict]=None) -> ToolDesc: ...
+    def __repr__(self) -> builtins.str: ...
 
 class FinishReason(Enum):
     Stop = ...

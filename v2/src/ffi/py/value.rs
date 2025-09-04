@@ -1,10 +1,16 @@
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
+    types::PyDict,
 };
 use pyo3_stub_gen::derive::*;
 
-use crate::value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role};
+use crate::{
+    ffi::py::base::{json_to_pydict, pydict_to_json},
+    value::{
+        FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc, ToolDescArg,
+    },
+};
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -188,6 +194,16 @@ impl Message {
         self.tool_calls.push(part);
     }
 
+    #[getter]
+    fn tool_call_id(&self) -> Option<String> {
+        self.tool_call_id.clone()
+    }
+
+    #[setter]
+    fn set_tool_call_id(&mut self, tool_call_id: Option<String>) {
+        self.tool_call_id = tool_call_id;
+    }
+
     // #[staticmethod]
     // fn from_json(s: &str) -> PyResult<Self> {
     //     Ok(PyMessage {
@@ -237,5 +253,68 @@ impl MessageAggregator {
     #[new]
     fn __new__() -> Self {
         Self::new()
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl ToolDesc {
+    #[new]
+    #[pyo3(signature = (name, description, parameters, *, returns=None))]
+    fn __new__(
+        py: Python<'_>,
+        name: String,
+        description: String,
+        parameters: Py<PyDict>,
+        returns: Option<Py<PyDict>>,
+    ) -> PyResult<Self> {
+        let parameters =
+            serde_json::from_value::<ToolDescArg>(pydict_to_json(py, parameters.bind(py)).unwrap())
+                .expect("parameters is not a valid JSON schema");
+        let returns = if let Some(returns) = returns {
+            Some(
+                serde_json::from_value::<ToolDescArg>(
+                    pydict_to_json(py, returns.bind(py)).unwrap(),
+                )
+                .expect("returns is not a valid JSON schema"),
+            )
+        } else {
+            None
+        };
+        Ok(Self::new(name, description, parameters, returns))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ToolDesc(name=\"{}\", description=\"{}\")",
+            self.name, self.description
+        )
+    }
+
+    #[getter]
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    #[getter]
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+
+    #[getter]
+    fn parameters<'py>(&self, py: Python<'py>) -> Bound<'py, PyDict> {
+        let json_value = serde_json::to_value(self.parameters.clone()).unwrap();
+        json_to_pydict(py, &json_value).unwrap()
+    }
+
+    #[getter]
+    fn returns<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyDict>> {
+        match &self.r#return {
+            Some(r#return) => {
+                let json_value = serde_json::to_value(r#return).unwrap();
+                Some(json_to_pydict(py, &json_value).unwrap())
+            }
+            None => None,
+        }
     }
 }

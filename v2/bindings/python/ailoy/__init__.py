@@ -13,4 +13,5 @@ from ailoy._core import (
     MessageOutput,
     Part,
     Role,
+    ToolDesc,
 )

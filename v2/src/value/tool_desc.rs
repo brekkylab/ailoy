@@ -367,6 +367,8 @@ impl<'de> Deserialize<'de> for ToolDescArg {
 ///
 /// See also: [`ToolDescArg`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct ToolDesc {
     pub name: String,
 

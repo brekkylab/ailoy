@@ -136,7 +136,6 @@ impl Agent {
                             delta = delta.with_tool_call_id(tool_call_id);
                         }
                         yield MessageOutput::new().with_delta(delta.clone());
-                        // let tool_msg = Message::with_role(Role::Tool).with_contents(resp);
                         msgs.lock().await.push(delta);
                     }
                 }

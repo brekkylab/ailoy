@@ -16,7 +16,7 @@ use crate::{
         },
     },
     model::{LanguageModel, LocalLanguageModel},
-    value::{Message, MessageOutput},
+    value::{Message, MessageOutput, ToolDesc},
 };
 
 #[gen_stub_pyclass]
@@ -61,17 +61,19 @@ impl PyLocalLanguageModel {
     pub fn run(
         mut self_: PyRefMut<'_, Self>,
         messages: Vec<Message>,
+        tools: Vec<ToolDesc>,
     ) -> PyResult<PyLanguageModelRunIterator> {
         let model = self_
             .inner
             .take()
             .ok_or_else(|| PyRuntimeError::new_err("Model already consumed"))?;
+        model.disable_reasoning();
 
         let (tx, rx) = async_channel::unbounded::<Result<MessageOutput, String>>();
 
         pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
             let mut model = model;
-            let mut strm = model.run(messages, Vec::new()).boxed();
+            let mut strm = model.run(messages, tools).boxed();
 
             while let Some(item) = strm.next().await {
                 if tx.send(item).await.is_err() {
@@ -87,6 +89,7 @@ impl PyLocalLanguageModel {
     pub fn run_sync(
         mut self_: PyRefMut<'_, Self>,
         messages: Vec<Message>,
+        tools: Vec<ToolDesc>,
     ) -> PyResult<PyLanguageModelRunSyncIterator> {
         let model = self_
             .inner
@@ -101,7 +104,7 @@ impl PyLocalLanguageModel {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         rt.spawn(async move {
             let mut model = model;
-            let mut stream = model.run(messages, Vec::new()).boxed();
+            let mut stream = model.run(messages, tools).boxed();
 
             while let Some(item) = stream.next().await {
                 if tx.send(item).await.is_err() {
@@ -111,6 +114,24 @@ impl PyLocalLanguageModel {
         });
 
         Ok(PyLanguageModelRunSyncIterator { rt, rx })
+    }
+
+    fn enable_reasoning(&self) {
+        match &self.inner {
+            Some(inner) => {
+                inner.enable_reasoning();
+            }
+            None => {}
+        }
+    }
+
+    fn disable_reasoning(&self) {
+        match &self.inner {
+            Some(inner) => {
+                inner.disable_reasoning();
+            }
+            None => {}
+        }
     }
 }
 

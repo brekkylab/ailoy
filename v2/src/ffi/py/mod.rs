@@ -15,7 +15,7 @@ use model::{
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
 
-use crate::value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role};
+use crate::value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc};
 
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
@@ -32,6 +32,7 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<MessageOutput>()?;
     m.add_class::<Part>()?;
     m.add_class::<Role>()?;
+    m.add_class::<ToolDesc>()?;
     Ok(())
 }
 
