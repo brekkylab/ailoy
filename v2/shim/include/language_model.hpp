@@ -2,9 +2,6 @@
 
 #include <memory>
 #include <mutex>
-#include <optional>
-#include <string>
-#include <unordered_map>
 #include <vector>
 
 #include <rust/cxx.h>
@@ -12,9 +9,6 @@
 #include <tvm/runtime/ndarray.h>
 
 #include "tvm_runtime.hpp"
-
-// Forward Declaration for cxx_bridge.rs.h
-struct DLPackTensor;
 
 namespace ailoy {
 
@@ -86,11 +80,7 @@ public:
   /** Prefill */
   void prefill(const std::vector<uint32_t> &tokens);
 
-  void prefill_from_rs(const rust::Vec<uint32_t> &tokens) {
-    std::lock_guard<std::mutex> lk(m_);
-    std::vector<uint32_t> converted(tokens.begin(), tokens.end());
-    return prefill(converted);
-  }
+  void prefill_from_rs(rust::Slice<const uint32_t> tokens);
 
   /** Decode */
   tvm::runtime::NDArray decode(uint32_t last_token);

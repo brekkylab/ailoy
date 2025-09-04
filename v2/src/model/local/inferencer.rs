@@ -1,8 +1,12 @@
 #[cfg(any(target_family = "unix", target_family = "windows"))]
-pub use tvm_runtime::Inferencer;
+pub use tvm_runtime::EmbeddingModelInferencer;
+#[cfg(any(target_family = "unix", target_family = "windows"))]
+pub use tvm_runtime::LanguageModelInferencer;
 
 #[cfg(any(target_family = "wasm"))]
-pub use tvmjs_runtime::Inferencer;
+pub use tvmjs_runtime::EmbeddingModelInferencer;
+#[cfg(any(target_family = "wasm"))]
+pub use tvmjs_runtime::LanguageModelInferencer;
 
 use crate::{
     cache::{Cache, CacheClaim, CacheEntry},
@@ -113,7 +117,10 @@ mod tvm_runtime {
 
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
-        ffi::cxx_bridge::{TVMLanguageModel, create_dldevice, create_tvm_language_model},
+        ffi::cxx_bridge::{
+            DLPackTensor, TVMEmbeddingModel, TVMLanguageModel, create_dldevice,
+            create_tvm_embedding_model, create_tvm_language_model,
+        },
         utils::BoxFuture,
     };
 
@@ -134,12 +141,46 @@ mod tvm_runtime {
     }
 
     #[derive(Debug)]
-    pub struct Inferencer {
+    pub struct EmbeddingModelInferencer {
+        inner: UniquePtr<TVMEmbeddingModel>,
+    }
+
+    impl EmbeddingModelInferencer {
+        pub fn infer(&mut self, tokens: &[u32]) -> DLPackTensor {
+            self.inner.pin_mut().infer(tokens)
+        }
+    }
+
+    impl TryFromCache for EmbeddingModelInferencer {
+        fn claim_files(
+            cache: Cache,
+            key: impl AsRef<str>,
+        ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+            claim_files(cache, key)
+        }
+
+        fn try_from_contents(
+            mut contents: CacheContents,
+        ) -> BoxFuture<'static, Result<Self, String>> {
+            Box::pin(async move {
+                let device = create_dldevice(
+                    get_device_type(get_accelerator()),
+                    get_device_id(get_accelerator()),
+                );
+                let inner = create_tvm_embedding_model(&mut contents, device);
+
+                Ok(EmbeddingModelInferencer { inner })
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct LanguageModelInferencer {
         inner: UniquePtr<TVMLanguageModel>,
     }
 
-    impl Inferencer {
-        pub fn prefill(&mut self, tokens: &Vec<u32>) -> () {
+    impl LanguageModelInferencer {
+        pub fn prefill(&mut self, tokens: &[u32]) -> () {
             self.inner.pin_mut().prefill(tokens)
         }
 
@@ -149,7 +190,7 @@ mod tvm_runtime {
         }
     }
 
-    impl TryFromCache for Inferencer {
+    impl TryFromCache for LanguageModelInferencer {
         fn claim_files(
             cache: Cache,
             key: impl AsRef<str>,
@@ -167,7 +208,7 @@ mod tvm_runtime {
                 );
                 let inner = create_tvm_language_model(&mut contents, device);
 
-                Ok(Inferencer { inner })
+                Ok(LanguageModelInferencer { inner })
             })
         }
     }
@@ -177,39 +218,38 @@ mod tvm_runtime {
 mod tvmjs_runtime {
     use std::fmt;
 
+    use js_sys::{Float32Array, Uint32Array};
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
 
     use super::*;
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
-        ffi::js_bridge::JSLanguageModel,
-        utils::BoxFuture,
+        ffi::js_bridge::{JSEmbeddingModel, JSLanguageModel},
+        utils::{BoxFuture, float16},
     };
 
-    pub struct Inferencer {
+    pub struct LanguageModelInferencer {
         inner: JSLanguageModel,
     }
 
-    impl fmt::Debug for Inferencer {
+    impl fmt::Debug for LanguageModelInferencer {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("Inferencer")
+            f.debug_struct("LanguageModelInferencer")
                 // .field("init", &self.init)
                 // .field("inner", &self.inner)
                 .finish()
         }
     }
 
-    impl Inferencer {
-        pub async fn prefill(&mut self, tokens: &Vec<u32>) -> () {
-            use wasm_bindgen_futures::JsFuture;
-
-            let arr = unsafe { js_sys::Uint32Array::view(tokens) };
+    impl LanguageModelInferencer {
+        pub async fn prefill(&mut self, tokens: &[u32]) -> () {
+            let arr = unsafe { Uint32Array::view(tokens) };
             JsFuture::from(self.inner.prefill(arr)).await.unwrap();
         }
 
         pub async fn decode(&mut self, last_token: u32) -> u32 {
-            let logits: js_sys::Float32Array = JsFuture::from(self.inner.decode(last_token))
+            let logits: Float32Array = JsFuture::from(self.inner.decode(last_token))
                 .await
                 .unwrap()
                 .into();
@@ -217,7 +257,7 @@ mod tvmjs_runtime {
         }
     }
 
-    impl TryFromCache for Inferencer {
+    impl TryFromCache for LanguageModelInferencer {
         fn claim_files(
             cache: Cache,
             key: impl AsRef<str>,
@@ -245,7 +285,7 @@ mod tvmjs_runtime {
                 };
 
                 let prom = init_language_model_js(&cache_contents);
-                let js_lang_model = match JsFuture::from(prom).await {
+                let js_lm = match JsFuture::from(prom).await {
                     Ok(out) => {
                         let lm: JSLanguageModel = out
                             .dyn_into()
@@ -257,44 +297,89 @@ mod tvmjs_runtime {
                     }
                 };
 
-                Ok(Inferencer {
-                    inner: js_lang_model,
-                })
+                Ok(LanguageModelInferencer { inner: js_lm })
+            })
+        }
+    }
+
+    pub struct EmbeddingModelInferencer {
+        inner: JSEmbeddingModel,
+    }
+
+    impl fmt::Debug for EmbeddingModelInferencer {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("EmbeddingModelInferencer")
+                // .field("init", &self.init)
+                // .field("inner", &self.inner)
+                .finish()
+        }
+    }
+
+    impl EmbeddingModelInferencer {
+        pub async fn infer(&mut self, tokens: &[u32]) -> Vec<f32> {
+            use wasm_bindgen_futures::JsFuture;
+
+            let arr = unsafe { js_sys::Uint32Array::view(tokens) };
+            let res = self.inner.infer(arr);
+            let result_vector = JsFuture::from(res).await.unwrap();
+
+            let f32_vec = if let Some(f32_array) = result_vector.dyn_ref::<js_sys::Float32Array>() {
+                f32_array.to_vec()
+            } else if let Some(u16_array) = result_vector.dyn_ref::<js_sys::Uint16Array>() {
+                u16_array
+                    .to_vec()
+                    .into_iter()
+                    .map(|val| float16::f16_to_f32(val))
+                    .collect()
+            } else {
+                vec![]
+            };
+            f32_vec
+        }
+    }
+
+    impl TryFromCache for EmbeddingModelInferencer {
+        fn claim_files(
+            cache: Cache,
+            key: impl AsRef<str>,
+        ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+            claim_files(cache, key)
+        }
+
+        fn try_from_contents(
+            mut contents: CacheContents,
+        ) -> BoxFuture<'static, Result<Self, String>> {
+            use crate::ffi::js_bridge::init_embedding_model_js;
+            use js_sys::{Object, Reflect, Uint8Array};
+
+            Box::pin(async move {
+                let cache_contents = {
+                    let obj = Object::new();
+                    for (entry, buf) in contents.drain() {
+                        let filename = entry.filename();
+                        let u8arr = Uint8Array::new_with_length(buf.len() as u32);
+                        u8arr.copy_from(&buf[..]);
+                        Reflect::set(&obj, &JsValue::from_str(filename), &u8arr.buffer().into())
+                            .unwrap();
+                    }
+                    obj
+                };
+
+                let prom = init_embedding_model_js(&cache_contents);
+                let js_em: JSEmbeddingModel = match JsFuture::from(prom).await {
+                    Ok(out) => {
+                        let em: JSEmbeddingModel = out
+                            .dyn_into()
+                            .map_err(|e| format!("Conversion failed: {:?}", e))?;
+                        em
+                    }
+                    Err(err) => {
+                        return Err(format!("JS inferencer init failed: {:?}", err));
+                    }
+                };
+
+                Ok(EmbeddingModelInferencer { inner: js_em })
             })
         }
     }
 }
-
-// #[cfg(all(test, target_arch = "wasm32"))]
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use futures::StreamExt as _;
-//     use wasm_bindgen_test::*;
-
-//     wasm_bindgen_test_configure!(run_in_browser);
-
-//     #[wasm_bindgen_test]
-//     async fn add_js_works() {
-//         let cache = crate::cache::Cache::new();
-//         let key = "Qwen/Qwen3-0.6B";
-//         let mut model_strm = Box::pin(cache.try_create::<Inferencer>(key));
-//         let mut model: Option<Inferencer> = None;
-
-//         while let Some(progress) = model_strm.next().await {
-//             let mut progress = progress.unwrap();
-//             web_sys::console::log_1(
-//                 &format!(
-//                     "{} ({} / {})",
-//                     progress.comment, progress.current_task, progress.total_task
-//                 )
-//                 .into(),
-//             );
-//             if progress.current_task == progress.total_task {
-//                 model = progress.result.take();
-//             }
-//         }
-//         let mut model = model.unwrap();
-//         model.wait().await.unwrap();
-//     }
-// }

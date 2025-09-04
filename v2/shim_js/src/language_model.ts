@@ -1,47 +1,12 @@
-import { FeatureSupportError, WebGPUNotAvailableError } from "./error";
 import {
-  createPolyfillWASI,
-  detectGPUDevice,
-  DLDevice,
   Instance,
-  instantiate,
   NDArray,
   PackedFunc,
   Scalar,
   TVMObject,
   VirtualMachine,
 } from "./tvmjs";
-
-export async function getGPUDevice(
-  requiredFeatures: GPUFeatureName[] = ["shader-f16"]
-) {
-  const gpuDetectOutput = await detectGPUDevice();
-  if (gpuDetectOutput == undefined) {
-    throw new WebGPUNotAvailableError();
-  }
-  for (const feature of requiredFeatures) {
-    if (!gpuDetectOutput.device.features.has(feature)) {
-      throw new FeatureSupportError(feature);
-    }
-  }
-  return gpuDetectOutput.device;
-}
-
-export interface NDArrayCacheEntry {
-  name: string;
-  shape: Array<number>;
-  dtype: string;
-  format: "f32-to-bf16" | "raw";
-  byteOffset: number;
-  nbytes: number;
-}
-
-export interface NDArrayShardEntry {
-  dataPath: string;
-  format: "raw-shard";
-  nbytes: number;
-  records: Array<NDArrayCacheEntry>;
-}
+import { init as init_tvm_runtime, TVMRuntime } from "./tvm_runtime";
 
 const PAGE_SIZE = 16;
 
@@ -170,9 +135,8 @@ class KVCache {
 }
 
 export class LanguageModel {
+  private rt: TVMRuntime;
   private tvm: Instance;
-  private vm: VirtualMachine;
-  private params: TVMObject;
   private kvcache: KVCache;
   private prefillChunkSize: number;
   private history: number[] = [];
@@ -181,34 +145,26 @@ export class LanguageModel {
   private fPrefill: PackedFunc;
   private fDecode: PackedFunc;
   private fSampleTopPfromLogits: PackedFunc;
-  private device: DLDevice;
   private config: {
     temperature: number;
     top_p: number;
   };
 
-  constructor(
-    tvm: Instance,
-    device: DLDevice,
-    vm: VirtualMachine,
-    params: TVMObject,
-    kvcache: KVCache,
-    prefillChunkSize: number
-  ) {
-    this.tvm = tvm;
-    this.vm = vm;
-    this.params = params;
-    this.kvcache = kvcache;
-    this.prefillChunkSize = prefillChunkSize;
+  constructor(rt: TVMRuntime) {
+    this.rt = rt;
+    this.tvm = this.rt.tvm;
 
-    this.fEmbed = tvm.detachFromCurrentScope(vm.getFunction("embed"));
-    this.fPrefill = tvm.detachFromCurrentScope(vm.getFunction("prefill"));
-    this.fDecode = tvm.detachFromCurrentScope(vm.getFunction("decode"));
-    this.fSampleTopPfromLogits = tvm.detachFromCurrentScope(
-      tvm.getGlobalFunc("vm.builtin.sample_top_p_from_logits")
+    this.prefillChunkSize = this.rt.metadata.prefill_chunk_size;
+
+    this.kvcache = new KVCache(this.tvm, this.rt.vm, this.rt.metadata);
+
+    this.fEmbed = this.rt.get_function("embed");
+    this.fPrefill = this.rt.get_function("prefill");
+    this.fDecode = this.rt.get_function("decode");
+    this.fSampleTopPfromLogits = this.tvm.detachFromCurrentScope(
+      this.tvm.getGlobalFunc("vm.builtin.sample_top_p_from_logits")
     );
 
-    this.device = device;
     this.config = {
       temperature: 0.6,
       top_p: 0.9,
@@ -272,15 +228,15 @@ export class LanguageModel {
       input_cpu.copyFrom(current_new_tokens);
       const input = this.tvm.withNewScope(() => {
         return this.tvm.detachFromCurrentScope(
-          this.tvm.empty([length], "int32", this.device)
+          this.tvm.empty([length], "int32", this.rt.device)
         );
       });
       // Copy from new_tokens[i..j) – reinterpret as Int32Array
       input.copyFrom(input_cpu);
-      await this.device.sync();
+      await this.rt.device.sync();
 
       // Embedding of the input: [T, D]
-      const embedding = this.fEmbed(input, this.params) as NDArray;
+      const embedding = this.fEmbed(input, this.rt.params) as NDArray;
 
       // Reshape to [1, T, D]
       const embedding_reshaped = embedding.view([
@@ -291,7 +247,11 @@ export class LanguageModel {
 
       // Forward prefill
       this.kvcache.beginForward(length);
-      this.fPrefill(embedding_reshaped, this.kvcache.getCache(), this.params);
+      this.fPrefill(
+        embedding_reshaped,
+        this.kvcache.getCache(),
+        this.rt.params
+      );
       this.kvcache.endForward();
     }
 
@@ -309,19 +269,23 @@ export class LanguageModel {
     this.tvm.beginScope();
 
     // Input NDArray<int32>[1]
-    const input = this.tvm.empty([1], "int32", this.device);
+    const input = this.tvm.empty([1], "int32", this.rt.device);
     const buf = new Int32Array(1);
     buf[0] = last_token;
     input.copyFrom(buf);
 
     // Embed
-    const embed = this.fEmbed(input, this.params) as NDArray;
+    const embed = this.fEmbed(input, this.rt.params) as NDArray;
     const embReshaped = embed.view([1, 1, embed.shape[1]]);
 
     // In decode, the sequence length of new tokens are always 1
     this.kvcache.beginForward(1);
     // Forward decode (output: [logits, kv_caches])
-    const out = this.fDecode(embReshaped, this.kvcache.getCache(), this.params);
+    const out = this.fDecode(
+      embReshaped,
+      this.kvcache.getCache(),
+      this.rt.params
+    );
     // Extract logits (1 x seq_len x vocab_size)
     // Note that the seq_len is the ID of the seqence, used for decoding multiple
     // context in parallel. In our cases, it always set to 1.
@@ -330,7 +294,7 @@ export class LanguageModel {
       this.tvm.empty(logits.shape, logits.dtype, this.tvm.cpu())
     );
     logitsCPU.copyFrom(logits);
-    await this.device.sync();
+    await this.rt.device.sync();
     const rv = logitsCPU.toArray() as Float32Array;
     logits.dispose();
     logitsCPU.dispose();
@@ -361,67 +325,7 @@ export class LanguageModel {
 export async function init(
   cache_contents: Record<string, ArrayBuffer>
 ): Promise<LanguageModel> {
-  // Load WASM
-  const tvmBytes = cache_contents["rt.wasm"];
-  delete cache_contents["rt.wasm"];
-  const tvm = await instantiate(tvmBytes, createPolyfillWASI(), undefined);
-
-  // Initialize GPU
-  const gpu: GPUDevice = await getGPUDevice();
-  tvm.initWebGPU(gpu);
-  const device = tvm.webgpu(0);
-
-  tvm.beginScope();
-
-  // Load ndarray cache
-  const ndarray_cache = JSON.parse(
-    new TextDecoder().decode(cache_contents["ndarray-cache.json"])
-  );
-  delete cache_contents["ndarray-cache.json"];
-  const entries: Array<NDArrayShardEntry> = ndarray_cache.records;
-
-  // Register parameters
-  for (const entry of entries) {
-    const buffer = cache_contents[entry.dataPath];
-    delete cache_contents[entry.dataPath];
-    for (const record of entry.records) {
-      const bufferPart = buffer.slice(
-        record.byteOffset,
-        record.byteOffset + record.nbytes
-      );
-      await tvm.ndarrayCacheUpdateBuffer(device, record, bufferPart);
-    }
-  }
-
-  // Load VM
-  const vm = tvm.detachFromCurrentScope(tvm.createVirtualMachine(device));
-
-  // Load parameters
-  const fgetMetadata = vm.getFunction("_metadata");
-  const metadataStr = fgetMetadata().toString();
-  const metadata = JSON.parse(metadataStr);
-
-  const prefillChunkSize = metadata.prefill_chunk_size;
-
-  const paramNames: string[] = [];
-  metadata.params.forEach((param: any) => {
-    paramNames.push(param.name);
-  });
-  const params = tvm.detachFromCurrentScope(
-    tvm.getParamsFromCacheByName(paramNames)
-  );
-
-  const kvCache = new KVCache(tvm, vm, metadata);
-
-  // Return
-  const rv = new LanguageModel(
-    tvm,
-    device,
-    vm,
-    params,
-    kvCache,
-    prefillChunkSize
-  );
-  tvm.endScope();
+  const rt = await init_tvm_runtime(cache_contents);
+  const rv = new LanguageModel(rt);
   return rv;
 }
