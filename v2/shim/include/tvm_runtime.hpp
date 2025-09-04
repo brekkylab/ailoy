@@ -7,6 +7,9 @@
 #include <tvm/runtime/module.h>
 #include <tvm/runtime/ndarray.h>
 
+// Forward Declaration for cxx_bridge.rs.h
+struct DLPackTensor;
+
 namespace ailoy {
 
 struct CacheContents;
