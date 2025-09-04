@@ -26,9 +26,7 @@ class CacheProgress(typing.Generic[CacheResultT]):
 
 class CacheProgressIterator(typing.Generic[CacheResultT]):
     def __aiter__(self) -> CacheProgressIterator[CacheResultT]: ...
-    def __anext__(
-        self,
-    ) -> typing.Awaitable[typing.Optional[CacheProgress[CacheResultT]]]: ...
+    def __anext__(self) -> typing.Awaitable[typing.Optional[CacheProgress[CacheResultT]]]: ...
 
 class CacheProgressSyncIterator(typing.Generic[CacheResultT]):
     def __iter__(self) -> CacheProgressSyncIterator[CacheResultT]: ...
@@ -36,15 +34,11 @@ class CacheProgressSyncIterator(typing.Generic[CacheResultT]):
 
 class LocalLanguageModel:
     @classmethod
-    def create(
-        cls, model_name: builtins.str
-    ) -> CacheProgressIterator[LocalLanguageModel]: ...
+    def create(cls, model_name:builtins.str) -> CacheProgressIterator[LocalLanguageModel]: ...
     @classmethod
-    def create_sync(
-        cls, model_name: builtins.str
-    ) -> CacheProgressSyncIterator[LocalLanguageModel]: ...
-    def run(self, messages: typing.Sequence[Message]) -> AgentRunIterator: ...
-    def run_sync(self, messages: typing.Sequence[Message]) -> AgentRunSyncIterator: ...
+    def create_sync(cls, model_name:builtins.str) -> CacheProgressSyncIterator[LocalLanguageModel]: ...
+    def run(self, messages:typing.Sequence[Message]) -> AgentRunIterator: ...
+    def run_sync(self, messages:typing.Sequence[Message]) -> AgentRunSyncIterator: ...
 
 class Message:
     @property
@@ -61,16 +55,19 @@ class Message:
     def reasoning(self, value: builtins.str) -> None: ...
     @tool_calls.setter
     def tool_calls(self, value: builtins.list[Part]) -> None: ...
-    def __new__(cls, role: builtins.str) -> Message:
+    def __new__(cls, role:builtins.str) -> Message:
         r"""
         Message(role: str)
         role is one of: "system" | "user" | "assistant" | "tool"
         """
-    def append_content(self, part: Part) -> None: ...
-    def append_tool_call(self, part: Part) -> None: ...
+    def append_content(self, part:Part) -> None: ...
+    def append_tool_call(self, part:Part) -> None: ...
 
-class MessageAggregator: ...
-class MessageOutput: ...
+class MessageAggregator:
+    ...
+
+class MessageOutput:
+    ...
 
 class Part:
     @property
@@ -85,25 +82,14 @@ class Part:
     def data(self) -> typing.Optional[builtins.str]: ...
     @property
     def mime_type(self) -> typing.Optional[builtins.str]: ...
-    def __new__(
-        cls,
-        part_type: builtins.str,
-        *,
-        text: typing.Optional[builtins.str] = None,
-        url: typing.Optional[builtins.str] = None,
-        data: typing.Optional[builtins.str] = None,
-        mime_type: typing.Optional[builtins.str] = None,
-        function: typing.Optional[builtins.str] = None,
-        id: typing.Optional[builtins.str] = None,
-        name: typing.Optional[builtins.str] = None,
-        arguments: typing.Optional[builtins.str] = None,
-    ) -> Part:
+    def __new__(cls, part_type:builtins.str, *, text:typing.Optional[builtins.str]=None, url:typing.Optional[builtins.str]=None, data:typing.Optional[builtins.str]=None, mime_type:typing.Optional[builtins.str]=None, function:typing.Optional[builtins.str]=None, id:typing.Optional[builtins.str]=None, name:typing.Optional[builtins.str]=None, arguments:typing.Optional[builtins.str]=None) -> Part:
         r"""
         Part(part_type, *, id=None, text=None, url=None, data=None, function=None)
-
+        
         Examples:
         - Part(part_type="text", text="hello")
         - Part(part_type="image", url="https://example.com/cat.png")
         - Part(part_type="image", data="<base64>", mime_type="image/jpeg")  # 'base64=' alias also accepted
         - Part(part_type="function", function='{"name":"foo","arguments":"{}"}')
         """
+

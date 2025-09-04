@@ -18,3 +18,8 @@ manifest-path = "../../Cargo.toml"
 module-name = "ailoy._core"
 python-source = "."
 python-packages = ["ailoy"]
+
+[tool.ruff]
+exclude = [
+    "ailoy/_core.pyi"
+]
