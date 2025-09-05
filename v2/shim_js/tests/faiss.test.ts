@@ -21,7 +21,7 @@ describe("FaissIndexWrapper", async () => {
       2,
       new BigInt64Array([0n, 1n])
     );
-    expect(vs.get_ntotal()).to.be.equal(2);
+    expect(vs.get_ntotal()).to.be.equal(2n);
 
     // get by id
     const result0 = vs.get_by_ids(new BigInt64Array([0n]));
@@ -51,6 +51,6 @@ describe("FaissIndexWrapper", async () => {
 
     // clear
     vs.clear();
-    expect(vs.get_ntotal()).to.be.equal(0);
+    expect(vs.get_ntotal()).to.be.equal(0n);
   });
 });
