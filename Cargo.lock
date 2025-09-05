@@ -56,6 +56,8 @@ dependencies = [
  "cxx",
  "derive_builder",
  "dotenvy",
+ "downcast-rs",
+ "dyn-clone",
  "env_logger",
  "futures",
  "gemini-rust",
@@ -870,6 +872,12 @@ name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
+name = "downcast-rs"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 
 [[package]]
 name = "dtor"

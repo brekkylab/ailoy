@@ -9,6 +9,8 @@ pub trait PyWrapper: PyClass + Send + 'static {
     type Inner: Send;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>>;
+
+    fn into_inner(&self) -> PyResult<Self::Inner>;
 }
 
 pub fn json_value_to_py_object(py: Python, value: &Value) -> PyResult<PyObject> {

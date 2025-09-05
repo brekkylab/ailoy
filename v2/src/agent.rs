@@ -11,6 +11,7 @@ use crate::{
     },
 };
 
+#[derive(Clone)]
 pub struct Agent {
     lm: Box<dyn LanguageModel>,
     tools: Vec<Arc<dyn Tool>>,
@@ -27,6 +28,10 @@ impl Agent {
             tools: tools.into_iter().collect(),
             messages: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    pub fn get_lm(&self) -> &Box<dyn LanguageModel> {
+        &self.lm
     }
 
     pub fn get_tools(&self) -> Vec<Arc<dyn Tool>> {

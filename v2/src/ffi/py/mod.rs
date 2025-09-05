@@ -1,8 +1,13 @@
+mod agent;
 mod base;
 mod cache_progress;
 mod model;
 mod value;
 
+use agent::{
+    PyAgent as Agent, PyAgentRunIterator as AgentRunIterator,
+    PyAgentRunSyncIterator as AgentRunSyncIterator,
+};
 use cache_progress::{
     PyCacheProgress as CacheProgress, PyCacheProgressIterator as CacheProgressIterator,
     PyCacheProgressSyncIterator as CacheProgressSyncIterator,
@@ -23,6 +28,9 @@ use crate::value::{FinishReason, Message, MessageAggregator, MessageOutput, Part
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // Add classes in alphabetical order
+    m.add_class::<Agent>()?;
+    m.add_class::<AgentRunIterator>()?;
+    m.add_class::<AgentRunSyncIterator>()?;
     m.add_class::<AnthropicLanguageModel>()?;
     m.add_class::<CacheProgress>()?;
     m.add_class::<CacheProgressIterator>()?;

@@ -1,7 +1,7 @@
-use std::{any::Any, collections::BTreeMap};
+use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use async_stream::try_stream;
-use futures::stream::Stream;
+use futures::{lock::Mutex, stream::Stream};
 
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
@@ -14,14 +14,14 @@ use crate::{
     value::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LocalLanguageModel {
     chat_template: ChatTemplate,
 
     tokenizer: Tokenizer,
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
-    inferencer: LanguageModelInferencer,
+    inferencer: Arc<Mutex<LanguageModelInferencer>>,
 }
 
 impl LocalLanguageModel {
@@ -50,10 +50,15 @@ impl LanguageModel for LocalLanguageModel {
         let strm = try_stream! {
             let prompt = self.chat_template.apply(msgs, tools, true)?;
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
-            #[cfg(target_family = "wasm")]
-            self.inferencer.prefill(&input_tokens).await;
-            #[cfg(not(target_family = "wasm"))]
-            self.inferencer.prefill(&input_tokens);
+
+            {
+                let mut inferencer = self.inferencer.lock().await;
+                #[cfg(target_family = "wasm")]
+                inferencer.prefill(&input_tokens).await;
+                #[cfg(not(target_family = "wasm"))]
+                inferencer.prefill(&input_tokens);
+            }
+
             let mut last_token = *input_tokens.last().unwrap();
             let mut agg_tokens = Vec::<u32>::new();
             let mut count = 0;
@@ -68,12 +73,18 @@ impl LanguageModel for LocalLanguageModel {
                 if count > 16384 {
                     Err("Too long assistant message. It may be infinite loop".to_owned())?;
                 }
-                #[cfg(target_family = "wasm")]
-                let new_token = self.inferencer.decode(last_token).await;
-                #[cfg(not(target_family = "wasm"))]
-                let new_token = self.inferencer.decode(last_token);
-                agg_tokens.push(new_token);
-                last_token = new_token;
+
+                {
+                    let mut inferencer = self.inferencer.lock().await;
+                    #[cfg(target_family = "wasm")]
+                    let new_token = inferencer.decode(last_token).await;
+                    #[cfg(not(target_family = "wasm"))]
+                    let new_token = inferencer.decode(last_token);
+
+                    agg_tokens.push(new_token);
+                    last_token = new_token;
+                }
+
                 let s = self.tokenizer.decode(agg_tokens.as_slice(), false)?;
                 if s.ends_with("�") {
                     continue;
@@ -209,7 +220,7 @@ impl TryFromCache for LocalLanguageModel {
             Ok(LocalLanguageModel {
                 chat_template,
                 tokenizer,
-                inferencer,
+                inferencer: Arc::new(Mutex::new(inferencer)),
             })
         })
     }

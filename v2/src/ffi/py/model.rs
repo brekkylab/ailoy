@@ -23,21 +23,15 @@ use crate::{
     value::{Message, MessageOutput, ToolDesc},
 };
 
-#[gen_stub_pyclass]
-#[pyclass(name = "LanguageModel", subclass)]
-pub struct PyLanguageModel {}
-
-trait PyLanguageModelMethods: PyClass {
-    type Inner: LanguageModel;
-
-    fn inner(&mut self) -> Result<Self::Inner, PyErr>;
-
+pub trait PyLanguageModelMethods<T: LanguageModel + 'static>:
+    PyWrapper<Inner = T> + PyClass<BaseType = PyLanguageModel>
+{
     fn run(
         &mut self,
         messages: Vec<Message>,
         tools: Vec<ToolDesc>,
     ) -> PyResult<PyLanguageModelRunIterator> {
-        let model = self.inner()?;
+        let model = self.into_inner()?;
 
         let (tx, rx) = async_channel::unbounded::<Result<MessageOutput, String>>();
 
@@ -61,7 +55,7 @@ trait PyLanguageModelMethods: PyClass {
         messages: Vec<Message>,
         tools: Vec<ToolDesc>,
     ) -> PyResult<PyLanguageModelRunSyncIterator> {
-        let model = self.inner()?;
+        let model = self.into_inner()?;
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<MessageOutput, String>>(16);
 
@@ -83,6 +77,10 @@ trait PyLanguageModelMethods: PyClass {
         Ok(PyLanguageModelRunSyncIterator { rt, rx })
     }
 }
+
+#[gen_stub_pyclass]
+#[pyclass(name = "LanguageModel", subclass)]
+pub struct PyLanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -113,7 +111,7 @@ impl PyLanguageModel {
 #[gen_stub_pyclass]
 #[pyclass(name = "LocalLanguageModel", extends = PyLanguageModel)]
 pub struct PyLocalLanguageModel {
-    inner: Option<LocalLanguageModel>,
+    inner: LocalLanguageModel,
 }
 
 impl PyWrapper for PyLocalLanguageModel {
@@ -121,21 +119,17 @@ impl PyWrapper for PyLocalLanguageModel {
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
         let base = PyLanguageModel {};
-        let child = Self { inner: Some(inner) };
+        let child = Self { inner };
         let py_obj = Py::new(py, (child, base))?;
         Ok(py_obj)
     }
-}
 
-impl PyLanguageModelMethods for PyLocalLanguageModel {
-    type Inner = LocalLanguageModel;
-
-    fn inner(&mut self) -> Result<Self::Inner, PyErr> {
-        self.inner
-            .take()
-            .ok_or_else(|| PyRuntimeError::new_err("Model already consumed"))
+    fn into_inner(&self) -> PyResult<Self::Inner> {
+        Ok(self.inner.clone())
     }
 }
+
+impl PyLanguageModelMethods<LocalLanguageModel> for PyLocalLanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -181,21 +175,11 @@ impl PyLocalLanguageModel {
     }
 
     fn enable_reasoning(&self) {
-        match &self.inner {
-            Some(inner) => {
-                inner.enable_reasoning();
-            }
-            None => {}
-        }
+        self.inner.enable_reasoning();
     }
 
     fn disable_reasoning(&self) {
-        match &self.inner {
-            Some(inner) => {
-                inner.disable_reasoning();
-            }
-            None => {}
-        }
+        self.inner.disable_reasoning();
     }
 }
 
@@ -262,19 +246,17 @@ impl PyWrapper for PyOpenAILanguageModel {
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
         let base = PyLanguageModel {};
-        let child = Self { inner: inner };
+        let child = Self { inner };
         let py_obj = Py::new(py, (child, base))?;
         Ok(py_obj)
     }
-}
 
-impl PyLanguageModelMethods for PyOpenAILanguageModel {
-    type Inner = OpenAILanguageModel;
-
-    fn inner(&mut self) -> Result<Self::Inner, PyErr> {
+    fn into_inner(&self) -> PyResult<Self::Inner> {
         Ok(self.inner.clone())
     }
 }
+
+impl PyLanguageModelMethods<OpenAILanguageModel> for PyOpenAILanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -314,19 +296,17 @@ impl PyWrapper for PyGeminiLanguageModel {
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
         let base = PyLanguageModel {};
-        let child = Self { inner: inner };
+        let child = Self { inner };
         let py_obj = Py::new(py, (child, base))?;
         Ok(py_obj)
     }
-}
 
-impl PyLanguageModelMethods for PyGeminiLanguageModel {
-    type Inner = GeminiLanguageModel;
-
-    fn inner(&mut self) -> Result<Self::Inner, PyErr> {
+    fn into_inner(&self) -> PyResult<Self::Inner> {
         Ok(self.inner.clone())
     }
 }
+
+impl PyLanguageModelMethods<GeminiLanguageModel> for PyGeminiLanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -366,19 +346,17 @@ impl PyWrapper for PyAnthropicLanguageModel {
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
         let base = PyLanguageModel {};
-        let child = Self { inner: inner };
+        let child = Self { inner };
         let py_obj = Py::new(py, (child, base))?;
         Ok(py_obj)
     }
-}
 
-impl PyLanguageModelMethods for PyAnthropicLanguageModel {
-    type Inner = AnthropicLanguageModel;
-
-    fn inner(&mut self) -> Result<Self::Inner, PyErr> {
+    fn into_inner(&self) -> PyResult<Self::Inner> {
         Ok(self.inner.clone())
     }
 }
+
+impl PyLanguageModelMethods<AnthropicLanguageModel> for PyAnthropicLanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -418,19 +396,17 @@ impl PyWrapper for PyXAILanguageModel {
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
         let base = PyLanguageModel {};
-        let child = Self { inner: inner };
+        let child = Self { inner };
         let py_obj = Py::new(py, (child, base))?;
         Ok(py_obj)
     }
-}
 
-impl PyLanguageModelMethods for PyXAILanguageModel {
-    type Inner = XAILanguageModel;
-
-    fn inner(&mut self) -> Result<Self::Inner, PyErr> {
+    fn into_inner(&self) -> PyResult<Self::Inner> {
         Ok(self.inner.clone())
     }
 }
+
+impl PyLanguageModelMethods<XAILanguageModel> for PyXAILanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]

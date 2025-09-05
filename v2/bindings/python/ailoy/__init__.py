@@ -1,6 +1,9 @@
 # ruff: noqa: F401
 
 from ailoy._core import (
+    Agent,
+    AgentRunIterator,
+    AgentRunSyncIterator,
     AnthropicLanguageModel,
     CacheProgress,
     CacheProgressIterator,
