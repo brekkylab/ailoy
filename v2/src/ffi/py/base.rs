@@ -5,10 +5,10 @@ use pyo3::{
 };
 use serde_json::Value;
 
-pub trait PyWrapper: PyClass<BaseType = PyAny> + Send + 'static {
+pub trait PyWrapper: PyClass + Send + 'static {
     type Inner: Send;
 
-    fn from_inner(inner: Self::Inner) -> Self;
+    fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>>;
 }
 
 pub fn json_value_to_py_object(py: Python, value: &Value) -> PyResult<PyObject> {

@@ -131,7 +131,7 @@ impl Message {
             reasoning: reasoning.into(),
             contents: self.contents,
             tool_calls: self.tool_calls,
-            tool_call_id: None,
+            tool_call_id: self.tool_call_id,
         }
     }
 
@@ -141,7 +141,7 @@ impl Message {
             reasoning: self.reasoning,
             contents: contents.into_iter().collect(),
             tool_calls: self.tool_calls,
-            tool_call_id: None,
+            tool_call_id: self.tool_call_id,
         }
     }
 
@@ -151,7 +151,7 @@ impl Message {
             reasoning: self.reasoning,
             contents: self.contents,
             tool_calls: tool_calls.into_iter().collect(),
-            tool_call_id: None,
+            tool_call_id: self.tool_call_id,
         }
     }
 
@@ -798,10 +798,9 @@ impl<'de> de::Visitor<'de> for MessageOutputVisitor {
 #[derive(Debug)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
-#[cfg_attr(feature = "python", doc(hidden))]
 pub struct MessageAggregator {
     /// Last unflushed delta; candidate for coalescing.
-    buffer: Option<Message>,
+    pub buffer: Option<Message>,
 }
 
 impl MessageAggregator {

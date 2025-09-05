@@ -122,7 +122,7 @@ where
                     let result = if current == total {
                         let result_inner = progress.result.expect("last event must carry result");
                         let obj: Py<PyAny> = Python::with_gil(|py| {
-                            Py::new(py, T::from_inner(result_inner)).map(|v| v.into_any())
+                            T::into_py_obj(result_inner, py).map(|o| o.into_any())
                         })
                         .map_err(|e| e.to_string())?;
                         Some(obj)
@@ -211,7 +211,7 @@ where
                             Some(inner) => {
                                 // T::Inner -> Py<PyAny>
                                 match Python::with_gil(|py| {
-                                    Py::new(py, T::from_inner(inner)).map(|o| o.into_any())
+                                    T::into_py_obj(inner, py).map(|o| o.into_any())
                                 }) {
                                     Ok(obj) => Some(obj),
                                     Err(e) => {

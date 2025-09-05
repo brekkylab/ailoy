@@ -1,6 +1,19 @@
 import asyncio
 
-from ailoy._core import LocalLanguageModel, Message, Part, Role, ToolDesc
+from ailoy._core import (
+    LanguageModel,
+    LocalLanguageModel,
+    Message,
+    MessageAggregator,
+    Part,
+    Role,
+    ToolDesc,
+)
+
+
+class Agent:
+    def __init__(self, model: LanguageModel):
+        self.model = model
 
 
 async def main():
@@ -34,24 +47,24 @@ async def main():
 
     tool_result_message = Message(role=Role.Tool)
     tool_result_message.tool_call_id = "tool_call_0"
-    tool_result_message.append_content(Part.Text("36"))
+    tool_result_message.append_content(Part.Text('{"temperature": 38.5}'))
 
     model = None
     async for v in LocalLanguageModel.create("Qwen/Qwen3-0.6B"):
         print(v.comment, v.current, v.total)
         if v.result:
             model = v.result
+            model.disable_reasoning()
 
-    model.disable_reasoning()
-    async for resp in model.run(
+    agent = Agent(model)
+
+    agg = MessageAggregator()
+    async for resp in agent.model.run(
         [user_message, tool_call_message, tool_result_message], tools=[tool]
     ):
-        msg = resp.delta
-        if msg.reasoning:
-            print(f"\033[33m{msg.reasoning}\033[0m", end="", flush=True)
-        else:
-            for c in msg.content:
-                print(c.text, end="", flush=True)
+        msg = agg.update(resp)
+        if msg:
+            print(msg)
 
 
 if __name__ == "__main__":

@@ -254,6 +254,16 @@ impl MessageAggregator {
     fn __new__() -> Self {
         Self::new()
     }
+
+    #[getter]
+    fn buffer(&self) -> Option<Message> {
+        self.buffer.clone()
+    }
+
+    #[pyo3(name = "update")]
+    fn update_(&mut self, msg_out: MessageOutput) -> Option<Message> {
+        self.update(msg_out)
+    }
 }
 
 #[gen_stub_pymethods]
