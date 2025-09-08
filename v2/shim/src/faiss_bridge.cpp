@@ -12,44 +12,44 @@
 
 namespace faiss_bridge {
 
-FaissIndexWrapper::FaissIndexWrapper(std::unique_ptr<faiss::Index> index)
+FaissIndexInner::FaissIndexInner(std::unique_ptr<faiss::Index> index)
     : index_(std::move(index)) {
   if (!index_) {
-    throw std::runtime_error("FaissIndexWrapper: null index provided");
+    throw std::runtime_error("FaissIndexInner: null index provided");
   }
 }
 
-bool FaissIndexWrapper::is_trained() const { return index_->is_trained; }
+bool FaissIndexInner::is_trained() const { return index_->is_trained; }
 
-int64_t FaissIndexWrapper::get_ntotal() const { return index_->ntotal; }
+int64_t FaissIndexInner::get_ntotal() const { return index_->ntotal; }
 
-int32_t FaissIndexWrapper::get_dimension() const {
+int32_t FaissIndexInner::get_dimension() const {
   return static_cast<int32_t>(index_->d);
 }
 
-FaissMetricType FaissIndexWrapper::get_metric_type() const {
+FaissMetricType FaissIndexInner::get_metric_type() const {
   return FaissMetricType(index_->metric_type);
 }
 
-void FaissIndexWrapper::train_index(rust::Slice<const float> training_vectors,
-                                    size_t num_training_vectors) {
+void FaissIndexInner::train_index(rust::Slice<const float> training_vectors,
+                                  size_t num_training_vectors) {
   if (index_->is_trained)
     return; // skip training
   index_->train(static_cast<faiss::idx_t>(num_training_vectors),
                 training_vectors.data());
 }
 
-void FaissIndexWrapper::add_vectors_with_ids(rust::Slice<const float> vectors,
-                                             size_t num_vectors,
-                                             rust::Slice<const int64_t> ids) {
+void FaissIndexInner::add_vectors_with_ids(rust::Slice<const float> vectors,
+                                           size_t num_vectors,
+                                           rust::Slice<const int64_t> ids) {
   std::vector<faiss::idx_t> faiss_ids(ids.begin(), ids.end());
   index_->add_with_ids(static_cast<faiss::idx_t>(num_vectors), vectors.data(),
                        faiss_ids.data());
 }
 
 FaissIndexSearchResult
-FaissIndexWrapper::search_vectors(rust::Slice<const float> query_vectors,
-                                  size_t k) const {
+FaissIndexInner::search_vectors(rust::Slice<const float> query_vectors,
+                                size_t k) const {
   faiss::idx_t num_queries = query_vectors.size() / index_->d;
   std::vector<float> distances_vec(num_queries * k);
   std::vector<faiss::idx_t> indexes_vec(num_queries * k);
@@ -74,7 +74,7 @@ FaissIndexWrapper::search_vectors(rust::Slice<const float> query_vectors,
 }
 
 rust::Vec<float>
-FaissIndexWrapper::get_by_ids(rust::Slice<const int64_t> ids) const {
+FaissIndexInner::get_by_ids(rust::Slice<const int64_t> ids) const {
   if (ids.empty()) {
     return rust::Vec<float>();
   }
@@ -102,7 +102,7 @@ FaissIndexWrapper::get_by_ids(rust::Slice<const int64_t> ids) const {
   }
 }
 
-size_t FaissIndexWrapper::remove_vectors(rust::Slice<const int64_t> ids) {
+size_t FaissIndexInner::remove_vectors(rust::Slice<const int64_t> ids) {
   if (ids.empty()) {
     return 0;
   }
@@ -119,7 +119,7 @@ size_t FaissIndexWrapper::remove_vectors(rust::Slice<const int64_t> ids) {
   }
 }
 
-void FaissIndexWrapper::clear() {
+void FaissIndexInner::clear() {
   try {
     if (index_->ntotal > 0) {
       faiss::IDSelectorAll all_selector;
@@ -140,7 +140,7 @@ void FaissIndexWrapper::clear() {
   }
 }
 
-void FaissIndexWrapper::write_index(rust::Str filename) const {
+void FaissIndexInner::write_index(rust::Str filename) const {
   try {
     std::string filename_str(filename);
 
@@ -162,7 +162,7 @@ void FaissIndexWrapper::write_index(rust::Str filename) const {
   }
 }
 
-std::unique_ptr<FaissIndexWrapper>
+std::unique_ptr<FaissIndexInner>
 create_index(int32_t dimension, rust::Str description, FaissMetricType metric) {
   try {
     faiss::MetricType faiss_metric = faiss::MetricType(metric);
@@ -171,14 +171,14 @@ create_index(int32_t dimension, rust::Str description, FaissMetricType metric) {
     auto faiss_index = std::unique_ptr<faiss::Index>(
         faiss::index_factory(dimension, desc_str.c_str(), faiss_metric));
 
-    return std::make_unique<FaissIndexWrapper>(std::move(faiss_index));
+    return std::make_unique<FaissIndexInner>(std::move(faiss_index));
   } catch (const std::exception &e) {
     throw std::runtime_error("Failed to create FAISS index: " +
                              std::string(e.what()));
   }
 }
 
-std::unique_ptr<FaissIndexWrapper> read_index(rust::Str filename) {
+std::unique_ptr<FaissIndexInner> read_index(rust::Str filename) {
   try {
     std::string filename_str(filename);
 
@@ -200,7 +200,7 @@ std::unique_ptr<FaissIndexWrapper> read_index(rust::Str filename) {
           "Failed to load index: read_index returned null");
     }
 
-    return std::make_unique<FaissIndexWrapper>(std::move(loaded_index));
+    return std::make_unique<FaissIndexInner>(std::move(loaded_index));
 
   } catch (const std::exception &e) {
     throw std::runtime_error("Failed to read index from file '" +

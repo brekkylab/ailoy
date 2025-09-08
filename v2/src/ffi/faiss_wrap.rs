@@ -161,9 +161,9 @@ impl FaissIndexBuilder {
 /// Rust wrapper of faiss::Index
 pub struct FaissIndex {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
-    inner: cxx::UniquePtr<crate::ffi::cxx_bridge::FaissIndexWrapper>,
+    inner: cxx::UniquePtr<crate::ffi::cxx_bridge::FaissIndexInner>,
     #[cfg(target_family = "wasm")]
-    inner: crate::ffi::js_bridge::FaissIndexWrapper,
+    inner: crate::ffi::js_bridge::FaissIndexInner,
 
     next_id: AtomicI64, // thread-safe ID Generator
 }
@@ -182,10 +182,9 @@ impl FaissIndex {
             js_sys::Reflect::set(&obj, &"dimension".into(), &dimension.into()).unwrap();
             js_sys::Reflect::set(&obj, &"description".into(), &description.into()).unwrap();
             js_sys::Reflect::set(&obj, &"metric".into(), &metric.to_string().into()).unwrap();
-            let promise = crate::ffi::js_bridge::init_faiss_index_wrapper(&obj.into()).unwrap();
+            let promise = crate::ffi::js_bridge::init_faiss_index_inner(&obj.into()).unwrap();
             let js_result = wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
-            let js_instance =
-                js_result.unchecked_into::<crate::ffi::js_bridge::FaissIndexWrapper>();
+            let js_instance = js_result.unchecked_into::<crate::ffi::js_bridge::FaissIndexInner>();
             js_instance
         };
 
@@ -196,12 +195,12 @@ impl FaissIndex {
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
-    fn inner(&self) -> &crate::ffi::cxx_bridge::FaissIndexWrapper {
+    fn inner(&self) -> &crate::ffi::cxx_bridge::FaissIndexInner {
         self.inner.as_ref().unwrap()
     }
 
     #[cfg(target_family = "wasm")]
-    fn inner(&self) -> &crate::ffi::js_bridge::FaissIndexWrapper {
+    fn inner(&self) -> &crate::ffi::js_bridge::FaissIndexInner {
         &self.inner
     }
 
