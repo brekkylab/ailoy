@@ -99,49 +99,49 @@ mod ffi {
     unsafe extern "C++" {
         include!("faiss_bridge.hpp");
 
-        type FaissIndexWrapper;
+        type FaissIndexInner;
 
         // Creator functions
         unsafe fn create_index(
             dimension: i32,
             description: &str,
             metric: FaissMetricType,
-        ) -> Result<UniquePtr<FaissIndexWrapper>>;
+        ) -> Result<UniquePtr<FaissIndexInner>>;
 
-        unsafe fn read_index(filename: &str) -> Result<UniquePtr<FaissIndexWrapper>>;
+        unsafe fn read_index(filename: &str) -> Result<UniquePtr<FaissIndexInner>>;
 
         // Methods
-        fn is_trained(self: &FaissIndexWrapper) -> bool;
-        fn get_ntotal(self: &FaissIndexWrapper) -> i64;
-        fn get_dimension(self: &FaissIndexWrapper) -> i32;
-        fn get_metric_type(self: &FaissIndexWrapper) -> FaissMetricType;
+        fn is_trained(self: &FaissIndexInner) -> bool;
+        fn get_ntotal(self: &FaissIndexInner) -> i64;
+        fn get_dimension(self: &FaissIndexInner) -> i32;
+        fn get_metric_type(self: &FaissIndexInner) -> FaissMetricType;
 
         unsafe fn train_index(
-            self: Pin<&mut FaissIndexWrapper>,
+            self: Pin<&mut FaissIndexInner>,
             training_vectors: &[f32],
             num_training_vectors: usize,
         ) -> Result<()>;
 
         unsafe fn add_vectors_with_ids(
-            self: Pin<&mut FaissIndexWrapper>,
+            self: Pin<&mut FaissIndexInner>,
             vectors: &[f32],
             num_vectors: usize,
             ids: &[i64],
         ) -> Result<()>;
 
         unsafe fn search_vectors(
-            self: &FaissIndexWrapper,
+            self: &FaissIndexInner,
             query_vectors: &[f32],
             k: usize,
         ) -> Result<FaissIndexSearchResult>;
 
-        unsafe fn get_by_ids(self: &FaissIndexWrapper, ids: &[i64]) -> Result<Vec<f32>>;
+        unsafe fn get_by_ids(self: &FaissIndexInner, ids: &[i64]) -> Result<Vec<f32>>;
 
-        unsafe fn remove_vectors(self: Pin<&mut FaissIndexWrapper>, ids: &[i64]) -> Result<usize>;
+        unsafe fn remove_vectors(self: Pin<&mut FaissIndexInner>, ids: &[i64]) -> Result<usize>;
 
-        unsafe fn clear(self: Pin<&mut FaissIndexWrapper>) -> Result<()>;
+        unsafe fn clear(self: Pin<&mut FaissIndexInner>) -> Result<()>;
 
-        unsafe fn write_index(self: &FaissIndexWrapper, filename: &str) -> Result<()>;
+        unsafe fn write_index(self: &FaissIndexInner, filename: &str) -> Result<()>;
 
     }
 
@@ -215,9 +215,9 @@ mod ffi {
     }
 }
 
-unsafe impl Send for ffi::FaissIndexWrapper {}
+unsafe impl Send for ffi::FaissIndexInner {}
 
-unsafe impl Sync for ffi::FaissIndexWrapper {}
+unsafe impl Sync for ffi::FaissIndexInner {}
 
 unsafe impl Send for ffi::TVMEmbeddingModel {}
 

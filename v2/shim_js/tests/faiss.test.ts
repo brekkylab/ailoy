@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 
-import { init_faiss_index_wrapper } from "../src/index";
+import { init_faiss_index_inner } from "../src/index";
 
-describe("FaissIndexWrapper", async () => {
+describe("FaissIndexInner", async () => {
   it("Basic Operations", async () => {
-    const vs = await init_faiss_index_wrapper({
+    const vs = await init_faiss_index_inner({
       dimension: 10,
       description: "IDMap2,Flat",
       metric: "L2",
