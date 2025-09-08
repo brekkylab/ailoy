@@ -16,21 +16,21 @@ struct FaissIndexSearchResult;
 
 namespace faiss_bridge {
 
-class FaissIndexWrapper {
+class FaissIndexInner {
 private:
   std::unique_ptr<faiss::Index> index_;
 
 public:
-  explicit FaissIndexWrapper(std::unique_ptr<faiss::Index> index);
-  ~FaissIndexWrapper() = default;
+  explicit FaissIndexInner(std::unique_ptr<faiss::Index> index);
+  ~FaissIndexInner() = default;
 
   // No copy constructors
-  FaissIndexWrapper(const FaissIndexWrapper &) = delete;
-  FaissIndexWrapper &operator=(const FaissIndexWrapper &) = delete;
+  FaissIndexInner(const FaissIndexInner &) = delete;
+  FaissIndexInner &operator=(const FaissIndexInner &) = delete;
 
   // Move constructors
-  FaissIndexWrapper(FaissIndexWrapper &&) = default;
-  FaissIndexWrapper &operator=(FaissIndexWrapper &&) = default;
+  FaissIndexInner(FaissIndexInner &&) = default;
+  FaissIndexInner &operator=(FaissIndexInner &&) = default;
 
   bool is_trained() const;
   int64_t get_ntotal() const;
@@ -57,10 +57,10 @@ public:
   void write_index(rust::Str filename) const;
 };
 
-// FaissIndexWrapper 생성 함수
-std::unique_ptr<FaissIndexWrapper>
+// FaissIndexInner factory
+std::unique_ptr<FaissIndexInner>
 create_index(int32_t dimension, rust::Str description, FaissMetricType metric);
 
-std::unique_ptr<FaissIndexWrapper> read_index(rust::Str filename);
+std::unique_ptr<FaissIndexInner> read_index(rust::Str filename);
 
 } // namespace faiss_bridge
