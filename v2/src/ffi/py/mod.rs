@@ -24,10 +24,14 @@ use model::{
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
 use tool::{
-    PyBuiltinTool as BuiltinTool, PyTool as Tool, PythonAsyncFunctionTool, PythonFunctionTool,
+    PyBuiltinTool as BuiltinTool, PyMCPTool as MCPTool, PyTool as Tool, PythonAsyncFunctionTool,
+    PythonFunctionTool,
 };
 
-use crate::value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc};
+use crate::{
+    tool::mcp::MCPTransport,
+    value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc},
+};
 
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
@@ -49,6 +53,8 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<Message>()?;
     m.add_class::<MessageAggregator>()?;
     m.add_class::<MessageOutput>()?;
+    m.add_class::<MCPTool>()?;
+    m.add_class::<MCPTransport>()?;
     m.add_class::<OpenAILanguageModel>()?;
     m.add_class::<Part>()?;
     m.add_class::<PythonAsyncFunctionTool>()?;

@@ -306,7 +306,10 @@ mod tests {
         agent
             .add_mcp_tools(
                 "time",
-                MCPTransport::Stdio("uvx", vec!["mcp-server-time"]),
+                MCPTransport::Stdio {
+                    command: "uvx".into(),
+                    args: vec!["mcp-server-time".into()],
+                },
                 vec![],
             )
             .await?;

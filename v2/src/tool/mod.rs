@@ -1,5 +1,5 @@
-mod builtin;
-mod mcp;
+pub mod builtin;
+pub mod mcp;
 
 use std::fmt::Debug;
 

@@ -17,7 +17,9 @@ use crate::{
             PyAnthropicLanguageModel, PyGeminiLanguageModel, PyLanguageModel, PyLocalLanguageModel,
             PyOpenAILanguageModel, PyXAILanguageModel,
         },
-        tool::{PyBuiltinTool, PyToolMethods, PythonAsyncFunctionTool, PythonFunctionTool},
+        tool::{
+            PyBuiltinTool, PyMCPTool, PyToolMethods, PythonAsyncFunctionTool, PythonFunctionTool,
+        },
     },
     model::{
         LocalLanguageModel, anthropic::AnthropicLanguageModel, gemini::GeminiLanguageModel,
@@ -64,6 +66,8 @@ impl PyAgent {
             .into_iter()
             .map(|tool| {
                 if let Ok(tool) = tool.downcast::<PyBuiltinTool>() {
+                    Ok(Arc::new(tool.as_unbound().borrow(py).inner().clone()) as Arc<dyn Tool>)
+                } else if let Ok(tool) = tool.downcast::<PyMCPTool>() {
                     Ok(Arc::new(tool.as_unbound().borrow(py).inner().clone()) as Arc<dyn Tool>)
                 } else if let Ok(tool) = tool.downcast::<PythonFunctionTool>() {
                     Ok(Arc::new(tool.as_unbound().borrow(py).clone()) as Arc<dyn Tool>)

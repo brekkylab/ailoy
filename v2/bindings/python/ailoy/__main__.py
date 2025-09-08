@@ -4,6 +4,7 @@ from ailoy._core import (
     Agent,
     BuiltinTool,
     LocalLanguageModel,
+    MCPTransport,
     MessageAggregator,
     Part,
     PythonAsyncFunctionTool,
@@ -38,6 +39,8 @@ async def main():
     )
 
     tool_term = BuiltinTool.terminal()
+
+    mcp_tools = await MCPTransport.Stdio("uvx", ["mcp-server-time"]).tools("time")
 
     # tool = ToolDesc(
     #     "temperature",
@@ -78,9 +81,9 @@ async def main():
             model = v.result
             model.disable_reasoning()
 
-    agent = Agent(model, [tool_temp, tool_term])
+    agent = Agent(model, mcp_tools)
     agg = MessageAggregator()
-    async for resp in agent.run("What is the temperature of Seoul now?"):
+    async for resp in agent.run("What time is it now in Asia/Seoul?"):
         msg = agg.update(resp)
         if msg:
             print(msg)

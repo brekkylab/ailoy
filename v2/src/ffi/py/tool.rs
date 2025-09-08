@@ -9,7 +9,10 @@ use pyo3_stub_gen::derive::*;
 
 use crate::{
     ffi::py::base::{PyWrapper, json_to_pydict, pydict_to_json},
-    tool::{BuiltinTool, Tool, create_terminal_tool},
+    tool::{
+        BuiltinTool, MCPTransport, Tool, create_terminal_tool,
+        mcp::native::{MCPTool, mcp_tools_from_stdio, mcp_tools_from_streamable_http},
+    },
     value::{Part, ToolCallArg, ToolDesc},
 };
 
@@ -46,11 +49,11 @@ impl PyTool {
 pub trait PyToolMethods<T: Tool + Clone + 'static> {
     fn inner(&self) -> &T;
 
-    fn description_(&self) -> PyResult<ToolDesc> {
+    fn get_description(&self) -> PyResult<ToolDesc> {
         Ok(self.inner().get_description())
     }
 
-    fn run_(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
+    fn call(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
         let args = if let Some(kwargs) = kwargs {
             serde_json::from_value::<ToolCallArg>(pydict_to_json(py, kwargs).unwrap())
                 .expect("args is not a valid ToolCallArg")
@@ -112,13 +115,88 @@ impl PyBuiltinTool {
 
     #[getter]
     fn description(&self) -> PyResult<ToolDesc> {
-        self.description_()
+        self.get_description()
     }
 
     #[gen_stub(override_return_type(type_repr = "typing.Awaitable[list[Part]]"))]
     #[pyo3(signature = (**kwargs))]
     fn __call__(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
-        self.run_(py, kwargs)
+        self.call(py, kwargs)
+    }
+}
+
+#[gen_stub_pyclass]
+#[pyclass(name = "MCPTool", extends = PyTool)]
+pub struct PyMCPTool {
+    inner: MCPTool,
+}
+
+impl PyWrapper for PyMCPTool {
+    type Inner = MCPTool;
+
+    fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
+        let base = PyTool {};
+        let child = Self { inner };
+        Py::new(py, (child, base))
+    }
+
+    fn into_inner(&self) -> PyResult<Self::Inner> {
+        Ok(self.inner.clone())
+    }
+}
+
+impl PyToolMethods<MCPTool> for PyMCPTool {
+    fn inner(&self) -> &MCPTool {
+        &self.inner
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyMCPTool {
+    #[getter]
+    fn description(&self) -> PyResult<ToolDesc> {
+        self.get_description()
+    }
+
+    #[gen_stub(override_return_type(type_repr = "typing.Awaitable[list[Part]]"))]
+    #[pyo3(signature = (**kwargs))]
+    fn __call__(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
+        self.call(py, kwargs)
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl MCPTransport {
+    #[gen_stub(override_return_type(type_repr = "typing.Awaitable[list[MCPTool]]"))]
+    fn tools(&self, py: Python<'_>, tool_name_prefix: String) -> PyResult<Py<PyAny>> {
+        let self_clone = self.clone();
+        let fut = async move {
+            match self_clone {
+                MCPTransport::Stdio { command, args } => {
+                    mcp_tools_from_stdio(command.clone(), args.clone(), tool_name_prefix.as_str())
+                        .await
+                }
+                MCPTransport::StreamableHttp { url } => {
+                    mcp_tools_from_streamable_http(url.as_str(), tool_name_prefix.as_str()).await
+                }
+            }
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+            .into_iter()
+            .map(|t| {
+                Python::attach(|py| {
+                    Ok(Py::new(py, (PyMCPTool { inner: t }, PyTool::new()))?
+                        .into_pyobject(py)
+                        .unwrap()
+                        .into_any()
+                        .unbind())
+                })
+            })
+            .collect::<PyResult<Vec<Py<PyAny>>>>()
+        };
+        let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
+        Ok(py_fut.into())
     }
 }
 

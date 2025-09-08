@@ -1,7 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
-mod native;
+pub mod native;
 #[cfg(target_arch = "wasm32")]
-mod wasm32;
+pub mod wasm32;
 
 mod common;
 
@@ -9,26 +9,31 @@ use std::sync::Arc;
 
 use crate::tool::Tool;
 
+#[derive(PartialEq, Clone)]
+#[cfg_attr(
+    feature = "python",
+    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
+)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum MCPTransport {
-    Stdio(&'static str, Vec<&'static str>),
-    StreamableHttp(&'static str),
+    Stdio { command: String, args: Vec<String> },
+    StreamableHttp { url: String },
 }
 
 impl MCPTransport {
     pub async fn get_tools(self, tool_name_prefix: &str) -> anyhow::Result<Vec<Arc<dyn Tool>>> {
         match self {
-            MCPTransport::Stdio(_command, _args) => {
+            MCPTransport::Stdio {
+                command: _command,
+                args: _args,
+            } => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    use rmcp::transport::child_process::ConfigureCommandExt;
-                    use tokio::process::Command;
-
-                    let command = Command::new(_command).configure(|cmd| {
-                        for arg in _args.iter() {
-                            cmd.arg(arg);
-                        }
-                    });
-                    return native::mcp_tools_from_stdio(command, tool_name_prefix).await;
+                    return native::mcp_tools_from_stdio(_command, _args, tool_name_prefix)
+                        .await?
+                        .into_iter()
+                        .map(|tool| Ok(Arc::new(tool) as Arc<dyn Tool>))
+                        .collect::<anyhow::Result<Vec<Arc<dyn Tool>>>>();
                 }
 
                 #[cfg(target_arch = "wasm32")]
@@ -38,12 +43,20 @@ impl MCPTransport {
                     ))
                 }
             }
-            MCPTransport::StreamableHttp(url) => {
+            MCPTransport::StreamableHttp { url } => {
                 #[cfg(not(target_arch = "wasm32"))]
-                return native::mcp_tools_from_streamable_http(url, tool_name_prefix).await;
+                return native::mcp_tools_from_streamable_http(url.as_str(), tool_name_prefix)
+                    .await?
+                    .into_iter()
+                    .map(|tool| Ok(Arc::new(tool) as Arc<dyn Tool>))
+                    .collect::<anyhow::Result<Vec<Arc<dyn Tool>>>>();
 
                 #[cfg(target_arch = "wasm32")]
-                return wasm32::mcp_tools_from_streamable_http(url, tool_name_prefix).await;
+                return wasm32::mcp_tools_from_streamable_http(url.as_str(), tool_name_prefix)
+                    .await?
+                    .into_iter()
+                    .map(|tool| Ok(Arc::new(tool) as Arc<dyn Tool>))
+                    .collect::<anyhow::Result<Vec<Arc<dyn Tool>>>>();
             }
         }
     }
