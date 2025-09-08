@@ -12,8 +12,13 @@ export class EmbeddingModel {
   constructor(rt: TVMRuntime) {
     this.rt = rt;
     this.tvm = this.rt.tvm;
+
+    this.tvm.beginScope();
+
     this.contextWindowSize = this.rt.metadata.context_window_size || 8192;
     this.fPrefill = this.rt.get_function("prefill");
+
+    this.tvm.endScope();
   }
 
   async infer(tokens: Uint32Array): Promise<Float32Array | Uint16Array> {
