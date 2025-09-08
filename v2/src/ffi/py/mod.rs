@@ -2,6 +2,7 @@ mod agent;
 mod base;
 mod cache_progress;
 mod model;
+mod tool;
 mod value;
 
 use agent::{
@@ -22,6 +23,7 @@ use model::{
 };
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
+use tool::PyBuiltinTool as BuiltinTool;
 
 use crate::value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc};
 
@@ -32,6 +34,7 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<AgentRunIterator>()?;
     m.add_class::<AgentRunSyncIterator>()?;
     m.add_class::<AnthropicLanguageModel>()?;
+    m.add_class::<BuiltinTool>()?;
     m.add_class::<CacheProgress>()?;
     m.add_class::<CacheProgressIterator>()?;
     m.add_class::<CacheProgressSyncIterator>()?;

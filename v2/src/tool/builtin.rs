@@ -233,5 +233,5 @@ pub fn create_terminal_tool() -> BuiltinTool {
         Part::Text(output.to_string())
     });
 
-    BuiltinTool { desc, f }
+    BuiltinTool::new(desc, f)
 }
