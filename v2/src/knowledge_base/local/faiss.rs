@@ -17,9 +17,9 @@ pub struct FaissStore {
 }
 
 impl FaissStore {
-    pub fn new(dim: i32) -> Result<Self> {
+    pub async fn new(dim: i32) -> Result<Self> {
         // use only default type("IdMap2,Flat", InnerProduct) Index for now
-        let index = ffi::FaissIndexBuilder::new(dim).build().unwrap();
+        let index = ffi::FaissIndexBuilder::new(dim).build().await.unwrap();
         Ok(Self {
             index,
             doc_store: HashMap::new(),
@@ -200,11 +200,11 @@ mod tests {
     use serde_json::json;
 
     async fn setup_test_store() -> Result<FaissStore> {
-        Ok(FaissStore::new(3).unwrap())
+        Ok(FaissStore::new(3).await.unwrap())
     }
 
     #[multi_platform_test]
-    async fn test_add_and_get_vector() -> Result<()> {
+    async fn faiss_add_and_get_vector() -> Result<()> {
         let mut store = setup_test_store().await?;
         let test_embedding = vec![1.1, 2.2, 3.3];
         let test_document = "This is a test document.".to_owned();
@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_add_vectors_batch() -> Result<()> {
+    async fn faiss_add_vectors_batch() -> Result<()> {
         let mut store = setup_test_store().await?;
 
         let added_ids = store
@@ -275,7 +275,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_retrieve_similar_vectors() -> Result<()> {
+    async fn faiss_retrieve_similar_vectors() -> Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             AddInput {
@@ -345,7 +345,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_remove_vector() -> Result<()> {
+    async fn faiss_remove_vector() -> Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             AddInput {
@@ -391,7 +391,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_get_non_existent_vector() -> Result<()> {
+    async fn faiss_get_non_existent_vector() -> Result<()> {
         let store = setup_test_store().await?;
         let non_existent_id = "-1";
 
@@ -406,7 +406,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_clear_collection() -> Result<()> {
+    async fn faiss_clear_collection() -> Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             AddInput {

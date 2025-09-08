@@ -1,4 +1,4 @@
-use crate::ffi::{DLDevice, DLPackTensor};
+use crate::ffi::cxx_bridge::{DLDevice, DLPackTensor};
 use crate::utils::float16;
 use anyhow::{Result, bail};
 
