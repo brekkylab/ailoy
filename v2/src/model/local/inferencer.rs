@@ -117,7 +117,7 @@ mod tvm_runtime {
 
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
-        ffi::{
+        ffi::cxx_bridge::{
             DLPackTensor, TVMEmbeddingModel, TVMLanguageModel, create_dldevice,
             create_tvm_embedding_model, create_tvm_language_model,
         },
@@ -225,7 +225,7 @@ mod tvmjs_runtime {
     use super::*;
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
-        ffi::{JSEmbeddingModel, JSLanguageModel},
+        ffi::js_bridge::{JSEmbeddingModel, JSLanguageModel},
         utils::{BoxFuture, float16},
     };
 

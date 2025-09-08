@@ -11,7 +11,7 @@ use crate::{
         EmbeddingModel,
         local::{EmbeddingModelInferencer, Tokenizer},
     },
-    utils::{BoxFuture, Normalize as _},
+    utils::BoxFuture,
 };
 use ailoy_macros::multi_platform_async_trait;
 
@@ -128,7 +128,7 @@ mod tests {
     use super::*;
     use futures::StreamExt;
 
-    use crate::utils::log;
+    use crate::utils::{Normalize, log};
     use ailoy_macros::multi_platform_test;
 
     fn dot(a: &[f32], b: &[f32]) -> f32 {

@@ -146,7 +146,7 @@ fn build_wasm() {
     // npm run build
     let status = Command::new("npm")
         .arg("run")
-        .arg("build")
+        .arg("build:ts")
         .current_dir(&shim_js_dir)
         .status()
         .expect("failed to run npm run build");
