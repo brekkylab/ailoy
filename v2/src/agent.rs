@@ -140,31 +140,32 @@ impl Agent {
                         if let Some(tool_call_id) = tool_call_id {
                             delta = delta.with_tool_call_id(tool_call_id);
                         }
-                        yield MessageOutput::new().with_delta(delta.clone());
+                        yield MessageOutput::new().with_delta(delta.clone()).with_finish_reason(FinishReason::Stop);
                         msgs.lock().await.push(delta);
                     }
                 }
-                msgs.lock().await.push(assistant_msg.clone());
-                if !assistant_msg.tool_calls.is_empty() {
-                    for part in assistant_msg.tool_calls {
-                        let tool_call_id = if let Part::Function{id, ..} = part.clone() {
-                            Some(id.clone())
-                        } else {
-                            None
-                        };
-                        let tc: ToolCall = part.try_into().unwrap();
-                        let tool = tools.iter().find(|v| v.get_description().name == tc.name).unwrap().clone();
-                        let parts = tool.run(tc.arguments).await?;
-                        for part in parts.into_iter() {
-                            let mut tool_msg = Message::with_role(Role::Tool).with_contents([part.clone()]);
-                            if let Some(tool_call_id) = tool_call_id.clone() {
-                                tool_msg = tool_msg.with_tool_call_id(tool_call_id);
-                            }
-                            yield MessageOutput{ delta: tool_msg.clone(), finish_reason: Some(FinishReason::Stop)};
-                            self.messages.lock().await.push(tool_msg);
-                        }
-                    }
-                } else {
+                // msgs.lock().await.push(assistant_msg.clone());
+                // if !assistant_msg.tool_calls.is_empty() {
+                //     for part in assistant_msg.tool_calls {
+                //         let tool_call_id = if let Part::Function{id, ..} = part.clone() {
+                //             Some(id.clone())
+                //         } else {
+                //             None
+                //         };
+                //         let tc: ToolCall = part.try_into().unwrap();
+                //         let tool = tools.iter().find(|v| v.get_description().name == tc.name).unwrap().clone();
+                //         let parts = tool.run(tc.arguments).await?;
+                //         for part in parts.into_iter() {
+                //             let mut tool_msg = Message::with_role(Role::Tool).with_contents([part.clone()]);
+                //             if let Some(tool_call_id) = tool_call_id.clone() {
+                //                 tool_msg = tool_msg.with_tool_call_id(tool_call_id);
+                //             }
+                //             yield MessageOutput{ delta: tool_msg.clone(), finish_reason: Some(FinishReason::Stop)};
+                //             self.messages.lock().await.push(tool_msg);
+                //         }
+                //     }
+                // }
+                 else {
                     break;
                 }
             }

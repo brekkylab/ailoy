@@ -184,7 +184,9 @@ pub fn create_terminal_tool() -> BuiltinTool {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         // Apply cwd
-        if let Some(dir) = cwd {
+        if let Some(dir) = cwd
+            && !dir.is_empty()
+        {
             command.current_dir(dir);
         }
 

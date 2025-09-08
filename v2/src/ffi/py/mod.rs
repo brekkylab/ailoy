@@ -23,7 +23,9 @@ use model::{
 };
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
-use tool::PyBuiltinTool as BuiltinTool;
+use tool::{
+    PyBuiltinTool as BuiltinTool, PyTool as Tool, PythonAsyncFunctionTool, PythonFunctionTool,
+};
 
 use crate::value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc};
 
@@ -49,7 +51,10 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<MessageOutput>()?;
     m.add_class::<OpenAILanguageModel>()?;
     m.add_class::<Part>()?;
+    m.add_class::<PythonAsyncFunctionTool>()?;
+    m.add_class::<PythonFunctionTool>()?;
     m.add_class::<Role>()?;
+    m.add_class::<Tool>()?;
     m.add_class::<ToolDesc>()?;
     m.add_class::<XAILanguageModel>()?;
     Ok(())

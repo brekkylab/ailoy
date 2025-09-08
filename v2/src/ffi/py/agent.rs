@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use futures::StreamExt;
 use pyo3::{
     Python,
     exceptions::{PyRuntimeError, PyStopAsyncIteration, PyStopIteration, PyTypeError},
     prelude::*,
+    types::PyList,
 };
 use pyo3_stub_gen::derive::*;
 
@@ -14,11 +17,13 @@ use crate::{
             PyAnthropicLanguageModel, PyGeminiLanguageModel, PyLanguageModel, PyLocalLanguageModel,
             PyOpenAILanguageModel, PyXAILanguageModel,
         },
+        tool::{PyBuiltinTool, PyToolMethods, PythonAsyncFunctionTool, PythonFunctionTool},
     },
     model::{
         LocalLanguageModel, anthropic::AnthropicLanguageModel, gemini::GeminiLanguageModel,
         openai::OpenAILanguageModel, xai::XAILanguageModel,
     },
+    tool::Tool,
     value::MessageOutput,
 };
 
@@ -44,16 +49,47 @@ impl PyWrapper for PyAgent {
 #[pymethods]
 impl PyAgent {
     #[new]
-    pub fn __new__(py: Python<'_>, lm: Bound<'_, PyAny>) -> PyResult<Py<Self>> {
+    pub fn __new__(
+        py: Python<'_>,
+        lm: Bound<'_, PyAny>,
+        #[gen_stub(override_type(type_repr = "typing.List[Tool]"))] tools: Bound<'_, PyList>,
+    ) -> PyResult<Py<Self>> {
         if !lm.is_instance_of::<PyLanguageModel>() {
             return Err(PyTypeError::new_err(
                 "lm must be a subclass of LanguageModel",
             ));
         }
 
+        let tools = tools
+            .into_iter()
+            .map(|tool| {
+                if let Ok(tool) = tool.downcast::<PyBuiltinTool>() {
+                    Ok(Arc::new(tool.as_unbound().borrow(py).inner().clone()) as Arc<dyn Tool>)
+                } else if let Ok(tool) = tool.downcast::<PythonFunctionTool>() {
+                    Ok(Arc::new(tool.as_unbound().borrow(py).clone()) as Arc<dyn Tool>)
+                } else if let Ok(tool) = tool.downcast::<PythonAsyncFunctionTool>() {
+                    Ok(Arc::new(tool.as_unbound().borrow(py).clone()) as Arc<dyn Tool>)
+                } else {
+                    return Err(PyTypeError::new_err("Unknown tool provided"));
+                }
+            })
+            .collect::<PyResult<Vec<Arc<dyn Tool>>>>()?;
+
         let agent: Agent = if let Ok(lm) = lm.downcast::<PyLocalLanguageModel>() {
             let model = lm.borrow_mut().into_inner()?;
-            Agent::new(model, Vec::new())
+            Agent::new(model, tools)
+        } else if let Ok(lm) = lm.downcast::<PyOpenAILanguageModel>() {
+            let model = lm.borrow_mut().into_inner()?;
+            Agent::new(model, tools)
+        } else if let Ok(lm) = lm.downcast::<PyGeminiLanguageModel>() {
+            let model = lm.borrow_mut().into_inner()?;
+            Agent::new(model, tools)
+        } else if let Ok(lm) = lm.downcast::<PyAnthropicLanguageModel>() {
+            let model = lm.borrow_mut().into_inner()?;
+            Agent::new(model, tools)
+        } else if let Ok(lm) = lm.downcast::<PyXAILanguageModel>() {
+            let model = lm.borrow_mut().into_inner()?;
+            Agent::new(model, tools)
         } else {
             return Err(PyTypeError::new_err("Unknown language model provided"));
         };
@@ -63,7 +99,7 @@ impl PyAgent {
 
     #[gen_stub(override_return_type(type_repr="LanguageModel", imports=()))]
     #[getter]
-    pub fn lm(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn lm(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let inner = self.into_inner()?;
         let lm_ref = inner.get_lm();
 
@@ -172,7 +208,7 @@ impl PyAgentRunSyncIterator {
     }
 
     fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
-        let item = py.allow_threads(|| self.rt.block_on(self.rx.recv()));
+        let item = py.detach(|| self.rt.block_on(self.rx.recv()));
         match item {
             Some(Ok(evt)) => Ok(evt),
             Some(Err(e)) => Err(PyRuntimeError::new_err(e)),

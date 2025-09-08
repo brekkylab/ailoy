@@ -31,8 +31,8 @@ napi = { version = "3", features = ["tokio_rt"], optional = true }
 napi-derive = { version = "3", optional = true }
 openai-sdk-rs = { git = "https://github.com/brekkylab/openai-sdk-rs.git", rev = "1ff5111c25dfd89992f2de5990a67c869a092397" }
 ordered-float = { version = "5.0.0", features = ["serde"] }
-pyo3 = { version = "0.25", optional = true }
-pyo3-async-runtimes = { version = "0.25", features = ["attributes", "tokio-runtime"], optional = true }
+pyo3 = { version = "0.26", optional = true }
+pyo3-async-runtimes = { version = "0.26", features = ["attributes", "tokio-runtime"], optional = true }
 pyo3-stub-gen = { version = "0.12.2", optional = true }
 pyo3-stub-gen-derive = { version = "0.12.2", optional = true }
 reqwest = { version = "0.12", features = ["json", "stream"] }

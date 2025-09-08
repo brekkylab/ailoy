@@ -80,7 +80,7 @@ impl PyCacheProgressSyncIterator {
 
     #[gen_stub(override_return_type(type_repr="CacheProgress[CacheResultT]", imports=("typing")))]
     fn __next__(&mut self, py: Python<'_>) -> PyResult<Py<PyCacheProgress>> {
-        let item = py.allow_threads(|| self.rt.block_on(async { self.strm.next().await }));
+        let item = py.detach(|| self.rt.block_on(async { self.strm.next().await }));
         match item {
             Some(Ok(evt)) => {
                 let initializer = PyClassInitializer::from(GenericClass {}).add_subclass(evt);
@@ -121,7 +121,7 @@ where
                     let total = progress.total_task;
                     let result = if current == total {
                         let result_inner = progress.result.expect("last event must carry result");
-                        let obj: Py<PyAny> = Python::with_gil(|py| {
+                        let obj: Py<PyAny> = Python::attach(|py| {
                             T::into_py_obj(result_inner, py).map(|o| o.into_any())
                         })
                         .map_err(|e| e.to_string())?;
@@ -170,7 +170,7 @@ impl PyCacheProgressIterator {
         let rx = self.rx.clone();
         let fut = async move {
             match rx.recv().await {
-                Ok(Ok(evt)) => Python::with_gil(|py| {
+                Ok(Ok(evt)) => Python::attach(|py| {
                     let initializer = PyClassInitializer::from(GenericClass {}).add_subclass(evt);
                     let obj: Py<PyCacheProgress> = Py::new(py, initializer)?;
                     Ok(obj)
@@ -210,7 +210,7 @@ where
                         match progress.result.take() {
                             Some(inner) => {
                                 // T::Inner -> Py<PyAny>
-                                match Python::with_gil(|py| {
+                                match Python::attach(|py| {
                                     T::into_py_obj(inner, py).map(|o| o.into_any())
                                 }) {
                                     Ok(obj) => Some(obj),

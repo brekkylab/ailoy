@@ -19,7 +19,10 @@ from ailoy._core import (
     MessageOutput,
     OpenAILanguageModel,
     Part,
+    PythonAsyncFunctionTool,
+    PythonFunctionTool,
     Role,
+    Tool,
     ToolDesc,
     XAILanguageModel,
 )

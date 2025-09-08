@@ -2,11 +2,43 @@ import asyncio
 
 from ailoy._core import (
     Agent,
+    BuiltinTool,
     LocalLanguageModel,
+    MessageAggregator,
+    Part,
+    PythonAsyncFunctionTool,
+    ToolDesc,
 )
 
 
 async def main():
+    async def tool_temperature(location: str, unit: str = "Celcius") -> list[Part]:
+        await asyncio.sleep(1.0)
+        return [Part.Text('{"temperature":"36"}')]
+
+    tool_temp = PythonAsyncFunctionTool(
+        description=ToolDesc(
+            "temperature",
+            "Get current temperature",
+            {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "The city name"},
+                    "unit": {
+                        "type": "string",
+                        "description": "Default: Celcius",
+                        "enum": ["Celcius", "Fernheit"],
+                    },
+                },
+                "required": ["location"],
+            },
+            returns={"type": "number"},
+        ),
+        func=tool_temperature,
+    )
+
+    tool_term = BuiltinTool.terminal()
+
     # tool = ToolDesc(
     #     "temperature",
     #     "Get current temperature",
@@ -39,16 +71,19 @@ async def main():
     # tool_result_message.tool_call_id = "tool_call_0"
     # tool_result_message.append_content(Part.Text('{"temperature": 38.5}'))
 
-    model = None
+    # model = None
     async for v in LocalLanguageModel.create("Qwen/Qwen3-0.6B"):
         print(v.comment, v.current, v.total)
         if v.result:
             model = v.result
             model.disable_reasoning()
 
-    agent = Agent(model)
-    async for resp in agent.run("What is your name?"):
-        print(resp)
+    agent = Agent(model, [tool_temp, tool_term])
+    agg = MessageAggregator()
+    async for resp in agent.run("What is the temperature of Seoul now?"):
+        msg = agg.update(resp)
+        if msg:
+            print(msg)
     # async for resp in agent.lm.run(
     #     [user_message, tool_call_message, tool_result_message], tools=[tool]
     # ):

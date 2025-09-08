@@ -226,7 +226,7 @@ impl PyLanguageModelRunSyncIterator {
     }
 
     fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
-        let item = py.allow_threads(|| self.rt.block_on(self.rx.recv()));
+        let item = py.detach(|| self.rt.block_on(self.rx.recv()));
         match item {
             Some(Ok(evt)) => Ok(evt),
             Some(Err(e)) => Err(PyRuntimeError::new_err(e)),

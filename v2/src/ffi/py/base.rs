@@ -13,7 +13,7 @@ pub trait PyWrapper: PyClass + Send + 'static {
     fn into_inner(&self) -> PyResult<Self::Inner>;
 }
 
-pub fn json_value_to_py_object(py: Python, value: &Value) -> PyResult<PyObject> {
+pub fn json_value_to_py_object(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
     match value {
         Value::Null => Ok(py.None()),
         Value::Bool(b) => Ok(b.into_py_any(py).unwrap()),
@@ -66,7 +66,7 @@ pub fn json_to_pydict<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py
 }
 
 // Conversion from PyDict back to serde_json::Value
-fn py_object_to_json_value(py: Python, obj: &PyObject) -> PyResult<Value> {
+fn py_object_to_json_value(py: Python, obj: &Py<PyAny>) -> PyResult<Value> {
     if obj.is_none(py) {
         Ok(Value::Null)
     } else if let Ok(b) = obj.extract::<bool>(py) {
