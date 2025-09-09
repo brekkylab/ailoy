@@ -405,12 +405,18 @@ class PythonFunctionTool(Tool):
     @property
     def description(self) -> ToolDesc: ...
     def __new__(cls, description:ToolDesc, func:typing.Callable[..., list[Part]]) -> PythonFunctionTool: ...
-    def __call__(self, **kwargs) -> list[Part]: ...
+    def __call__(self, **kwargs) -> list[Part]:
+        r"""
+        Unlike another tools, this tool's __call__ is executed synchronously.
+        """
 
 class Tool:
     @property
     def description(self) -> ToolDesc: ...
-    def run(self, **kwargs) -> typing.Awaitable[list[Part]]: ...
+    def __call__(self, **kwargs) -> typing.Any:
+        r"""
+        This is not a function used by Agents, but this let users directly call the tool function for debugging purpose.
+        """
 
 class ToolDesc:
     r"""

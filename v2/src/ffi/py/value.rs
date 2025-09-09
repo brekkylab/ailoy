@@ -314,7 +314,7 @@ impl ToolDesc {
     #[getter]
     fn parameters<'py>(&self, py: Python<'py>) -> Bound<'py, PyDict> {
         let json_value = serde_json::to_value(self.parameters.clone()).unwrap();
-        json_to_pydict(py, &json_value).unwrap()
+        json_to_pydict(py, &json_value).unwrap().unwrap()
     }
 
     #[getter]
@@ -322,7 +322,7 @@ impl ToolDesc {
         match &self.r#return {
             Some(r#return) => {
                 let json_value = serde_json::to_value(r#return).unwrap();
-                Some(json_to_pydict(py, &json_value).unwrap())
+                Some(json_to_pydict(py, &json_value).unwrap().unwrap())
             }
             None => None,
         }

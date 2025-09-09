@@ -32,16 +32,16 @@ impl PyTool {
     #[getter]
     fn description(&self) -> PyResult<ToolDesc> {
         Err(PyNotImplementedError::new_err(
-            "Tool subclasses must implement 'description'",
+            "Tool subclasses must implement 'description' getter",
         ))
     }
 
+    /// This is not a function used by Agents, but this let users directly call the tool function for debugging purpose.
     #[allow(unused_variables)]
-    #[gen_stub(override_return_type(type_repr = "typing.Awaitable[list[Part]]"))]
     #[pyo3(signature = (**kwargs))]
-    fn run(&self, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
+    fn __call__(&self, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
         Err(PyNotImplementedError::new_err(
-            "Tool subclasses must implement 'run'",
+            "Tool subclasses must implement '__call__'",
         ))
     }
 }
@@ -49,7 +49,7 @@ impl PyTool {
 pub trait PyToolMethods<T: Tool + Clone + 'static> {
     fn inner(&self) -> &T;
 
-    fn get_description(&self) -> PyResult<ToolDesc> {
+    fn _description(&self) -> PyResult<ToolDesc> {
         Ok(self.inner().get_description())
     }
 
@@ -115,7 +115,7 @@ impl PyBuiltinTool {
 
     #[getter]
     fn description(&self) -> PyResult<ToolDesc> {
-        self.get_description()
+        self._description()
     }
 
     #[gen_stub(override_return_type(type_repr = "typing.Awaitable[list[Part]]"))]
@@ -156,7 +156,7 @@ impl PyToolMethods<MCPTool> for PyMCPTool {
 impl PyMCPTool {
     #[getter]
     fn description(&self) -> PyResult<ToolDesc> {
-        self.get_description()
+        self._description()
     }
 
     #[gen_stub(override_return_type(type_repr = "typing.Awaitable[list[Part]]"))]
@@ -200,6 +200,29 @@ impl MCPTransport {
     }
 }
 
+fn pylist_to_parts(list: Py<PyAny>) -> Result<Vec<Part>, String> {
+    let parts = Python::attach(|py| {
+        if let Ok(list) = list.downcast_bound::<PyList>(py) {
+            list.iter()
+                .map(|item| {
+                    if let Ok(item) = item.downcast::<Part>() {
+                        Ok(item.as_unbound().borrow(py).clone())
+                    } else {
+                        Err(PyRuntimeError::new_err("Tool item is not a type of Part"))
+                    }
+                })
+                .collect::<PyResult<Vec<Part>>>()
+        } else {
+            Err(PyRuntimeError::new_err(
+                "Tool result should be a list of Part",
+            ))
+        }
+    })
+    .map_err(|e| e.to_string())?;
+
+    Ok(parts)
+}
+
 #[derive(Debug, Clone)]
 #[gen_stub_pyclass]
 #[pyclass(name = "PythonFunctionTool", extends = PyTool)]
@@ -216,35 +239,17 @@ impl Tool for PythonFunctionTool {
     }
 
     async fn run(&self, args: ToolCallArg) -> Result<Vec<Part>, String> {
-        let func = &self.func;
         let result = Python::attach(|py| -> PyResult<Py<PyAny>> {
-            let kwargs = json_to_pydict(py, &serde_json::to_value(args).unwrap())?;
-            let result = func.call(py, PyTuple::empty(py), Some(&kwargs))?;
+            let kwargs = match json_to_pydict(py, &serde_json::to_value(args).unwrap())? {
+                Some(kwargs) => Some(&kwargs.clone()),
+                None => None,
+            };
+            let result = self.func.call(py, PyTuple::empty(py), kwargs)?;
             Ok(result)
         })
         .map_err(|e| e.to_string())?;
 
-        let parts = Python::attach(|py| {
-            if let Ok(result) = result.downcast_bound::<PyList>(py) {
-                result
-                    .iter()
-                    .map(|item| {
-                        if let Ok(item) = item.downcast::<Part>() {
-                            Ok(item.as_unbound().borrow(py).clone())
-                        } else {
-                            Err(PyRuntimeError::new_err("Tool item is not a type of Part"))
-                        }
-                    })
-                    .collect::<PyResult<Vec<Part>>>()
-            } else {
-                Err(PyRuntimeError::new_err(
-                    "Tool result should be a list of Part",
-                ))
-            }
-        })
-        .map_err(|e| e.to_string())?;
-
-        Ok(parts)
+        pylist_to_parts(result)
     }
 }
 
@@ -271,11 +276,11 @@ impl PythonFunctionTool {
         Ok(self.get_description())
     }
 
+    /// Unlike another tools, this tool's __call__ is executed synchronously.
     #[gen_stub(override_return_type(type_repr = "list[Part]"))]
     #[pyo3(signature = (**kwargs))]
     fn __call__(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
-        let result = self.func.call(py, PyTuple::empty(py), kwargs)?;
-        Ok(result)
+        self.func.call(py, PyTuple::empty(py), kwargs)
     }
 }
 
@@ -299,8 +304,11 @@ impl Tool for PythonAsyncFunctionTool {
         let result = Python::attach(|py| -> PyResult<Py<PyAny>> {
             let asyncio = py.import("asyncio")?;
 
-            let kwargs = json_to_pydict(py, &serde_json::to_value(args).unwrap()).unwrap();
-            let coro = func.call(py, PyTuple::empty(py), Some(&kwargs))?;
+            let kwargs = match json_to_pydict(py, &serde_json::to_value(args).unwrap())? {
+                Some(kwargs) => Some(&kwargs.clone()),
+                None => None,
+            };
+            let coro = func.call(py, PyTuple::empty(py), kwargs)?;
 
             let result = if let Ok(loop_obj) = asyncio.call_method0("get_running_loop") {
                 let task = asyncio.call_method1("create_task", (coro,))?;
@@ -313,27 +321,13 @@ impl Tool for PythonAsyncFunctionTool {
         })
         .map_err(|e| e.to_string())?;
 
-        let parts = Python::attach(|py| {
-            if let Ok(result) = result.downcast_bound::<PyList>(py) {
-                result
-                    .iter()
-                    .map(|item| {
-                        if let Ok(item) = item.downcast::<Part>() {
-                            Ok(item.as_unbound().borrow(py).clone())
-                        } else {
-                            Err(PyRuntimeError::new_err("Tool item is not a type of Part"))
-                        }
-                    })
-                    .collect::<PyResult<Vec<Part>>>()
-            } else {
-                Err(PyRuntimeError::new_err(
-                    "Tool result should be a list of Part",
-                ))
-            }
-        })
-        .map_err(|e| e.to_string())?;
+        pylist_to_parts(result)
+    }
+}
 
-        Ok(parts)
+impl PyToolMethods<PythonAsyncFunctionTool> for PythonAsyncFunctionTool {
+    fn inner(&self) -> &PythonAsyncFunctionTool {
+        self
     }
 }
 
@@ -360,32 +354,12 @@ impl PythonAsyncFunctionTool {
 
     #[getter]
     fn description(&self) -> PyResult<ToolDesc> {
-        Ok(self.get_description())
+        self._description()
     }
 
     #[gen_stub(override_return_type(type_repr = "typing.Awaitable[list[Part]]"))]
     #[pyo3(signature = (**kwargs))]
     fn __call__(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
-        let args = if let Some(kwargs) = kwargs {
-            serde_json::from_value::<ToolCallArg>(pydict_to_json(py, kwargs).unwrap())
-                .expect("args is not a valid ToolCallArg")
-        } else {
-            ToolCallArg::new_null()
-        };
-
-        let self_clone = self.clone();
-        let fut = async move {
-            let parts = self_clone
-                .run(args)
-                .await
-                .map_err(|e| PyRuntimeError::new_err(e))?;
-            let parts_any = parts
-                .into_iter()
-                .map(|p| Python::attach(|py| Ok(p.into_pyobject(py).unwrap().into_any().unbind())))
-                .collect::<PyResult<Vec<Py<PyAny>>>>();
-            parts_any
-        };
-        let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
-        Ok(py_fut.into())
+        self.call(py, kwargs)
     }
 }

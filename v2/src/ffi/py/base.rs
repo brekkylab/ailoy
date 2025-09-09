@@ -49,7 +49,7 @@ pub fn json_value_to_py_object(py: Python, value: &Value) -> PyResult<Py<PyAny>>
     }
 }
 
-pub fn json_to_pydict<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyDict>> {
+pub fn json_to_pydict<'py>(py: Python<'py>, value: &Value) -> PyResult<Option<Bound<'py, PyDict>>> {
     match value {
         Value::Object(obj) => {
             let py_dict = PyDict::new(py);
@@ -57,8 +57,9 @@ pub fn json_to_pydict<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py
                 let py_val = json_value_to_py_object(py, val)?;
                 py_dict.set_item(key, py_val)?;
             }
-            Ok(py_dict)
+            Ok(Some(py_dict))
         }
+        Value::Null => Ok(None),
         _ => Err(pyo3::exceptions::PyTypeError::new_err(
             "JSON value is not an object, cannot convert to PyDict",
         )),
