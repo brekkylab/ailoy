@@ -13,7 +13,7 @@ pub fn debug(s: impl Into<String> + std::fmt::Display) {
 }
 
 #[macro_export]
-macro_rules! debug_fmt {
+macro_rules! debug {
     ($($args:tt)*) => {
         $crate::utils::log::debug(format!($($args)*))
     };
@@ -28,7 +28,7 @@ pub fn info(s: impl Into<String> + std::fmt::Display) {
 }
 
 #[macro_export]
-macro_rules! info_fmt {
+macro_rules! info {
     ($($args:tt)*) => {
         $crate::utils::log::info(format!($($args)*))
     };
@@ -43,7 +43,7 @@ pub fn warn(s: impl Into<String> + std::fmt::Display) {
 }
 
 #[macro_export]
-macro_rules! warn_fmt {
+macro_rules! warn {
     ($($args:tt)*) => {
         $crate::utils::log::warn(format!($($args)*))
     };
@@ -58,7 +58,7 @@ pub fn error(s: impl Into<String> + std::fmt::Display) {
 }
 
 #[macro_export]
-macro_rules! error_fmt {
+macro_rules! error {
     ($($args:tt)*) => {
         $crate::utils::log::error(format!($($args)*))
     };
