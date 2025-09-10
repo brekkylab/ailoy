@@ -23,61 +23,65 @@ class KVCache {
   private fKVCacheGetNumAvailablePages: PackedFunc;
   private fKVCacheGetTotalSequenceLength: PackedFunc;
 
-  constructor(tvm: Instance, vm: VirtualMachine, metadata: any) {
-    this.tvm = tvm;
+  constructor(rt: TVMRuntime) {
+    this.tvm = rt.tvm;
 
+    this.tvm.beginScope();
     // Determine prefill chunk size
-    const prefillChunkSize = metadata.prefill_chunk_size;
-    const contextWindowSize = metadata.context_window_size;
-    const slidingWindowSize = metadata.sliding_window_size;
+    const prefillChunkSize = rt.metadata.prefill_chunk_size;
+    const contextWindowSize = rt.metadata.context_window_size;
+    const slidingWindowSize = rt.metadata.sliding_window_size;
     // const defaultPageSize = 16;
     const defaultMaxNumSequence = 1;
     const maxTotalSeqLen =
       slidingWindowSize != -1 ? slidingWindowSize : contextWindowSize;
 
-    this.inner = tvm.detachFromCurrentScope(
-      vm.getFunction("create_tir_paged_kv_cache")(
-        tvm.makeShapeTuple([defaultMaxNumSequence]), // max_num_sequence
-        tvm.makeShapeTuple([maxTotalSeqLen]), // max_total_sequence_length
-        tvm.makeShapeTuple([prefillChunkSize]), // prefill_chunk_size
-        tvm.makeShapeTuple([PAGE_SIZE]), // page_size, hard coded for now
-        tvm.makeShapeTuple([slidingWindowSize != -1 ? 1 : 0])
+    this.inner = this.tvm.detachFromCurrentScope(
+      rt.vm.getFunction("create_tir_paged_kv_cache")(
+        this.tvm.makeShapeTuple([defaultMaxNumSequence]), // max_num_sequence
+        this.tvm.makeShapeTuple([maxTotalSeqLen]), // max_total_sequence_length
+        this.tvm.makeShapeTuple([prefillChunkSize]), // prefill_chunk_size
+        this.tvm.makeShapeTuple([PAGE_SIZE]), // page_size, hard coded for now
+        this.tvm.makeShapeTuple([slidingWindowSize != -1 ? 1 : 0])
       )
     );
 
-    this.fKVStateClear = tvm.detachFromCurrentScope(
-      tvm.getGlobalFunc("vm.builtin.kv_state_clear")
+    this.fKVStateClear = this.tvm.detachFromCurrentScope(
+      this.tvm.getGlobalFunc("vm.builtin.kv_state_clear")
     );
-    this.fKVStateAddSequence = tvm.detachFromCurrentScope(
-      tvm.getGlobalFunc("vm.builtin.kv_state_add_sequence")
+    this.fKVStateAddSequence = this.tvm.detachFromCurrentScope(
+      this.tvm.getGlobalFunc("vm.builtin.kv_state_add_sequence")
     );
-    this.fKVStateRemoveSequence = tvm.detachFromCurrentScope(
-      tvm.getGlobalFunc("vm.builtin.kv_state_remove_sequence")
+    this.fKVStateRemoveSequence = this.tvm.detachFromCurrentScope(
+      this.tvm.getGlobalFunc("vm.builtin.kv_state_remove_sequence")
     );
-    this.fKVStateForkSequence = tvm.detachFromCurrentScope(
-      tvm.getGlobalFunc("vm.builtin.kv_state_fork_sequence")
+    this.fKVStateForkSequence = this.tvm.detachFromCurrentScope(
+      this.tvm.getGlobalFunc("vm.builtin.kv_state_fork_sequence")
     );
-    this.fKVStateForkSequence = tvm.detachFromCurrentScope(
-      tvm.getGlobalFunc("vm.builtin.kv_state_fork_sequence")
+    this.fKVStateForkSequence = this.tvm.detachFromCurrentScope(
+      this.tvm.getGlobalFunc("vm.builtin.kv_state_fork_sequence")
     );
-    this.fKVStateBeginForward = tvm.detachFromCurrentScope(
-      tvm.getGlobalFunc("vm.builtin.kv_state_begin_forward")
+    this.fKVStateBeginForward = this.tvm.detachFromCurrentScope(
+      this.tvm.getGlobalFunc("vm.builtin.kv_state_begin_forward")
     );
-    this.fKVStateEndForward = tvm.detachFromCurrentScope(
-      tvm.getGlobalFunc("vm.builtin.kv_state_end_forward")
+    this.fKVStateEndForward = this.tvm.detachFromCurrentScope(
+      this.tvm.getGlobalFunc("vm.builtin.kv_state_end_forward")
     );
-    this.fKVStatePopn = tvm.detachFromCurrentScope(
-      tvm.getGlobalFunc("vm.builtin.kv_state_popn")
+    this.fKVStatePopn = this.tvm.detachFromCurrentScope(
+      this.tvm.getGlobalFunc("vm.builtin.kv_state_popn")
     );
-    this.fKVCacheGetNumAvailablePages = tvm.detachFromCurrentScope(
-      tvm.getGlobalFunc("vm.builtin.attention_kv_cache_get_num_available_pages")
+    this.fKVCacheGetNumAvailablePages = this.tvm.detachFromCurrentScope(
+      this.tvm.getGlobalFunc(
+        "vm.builtin.attention_kv_cache_get_num_available_pages"
+      )
     );
-    this.fKVCacheGetTotalSequenceLength = tvm.detachFromCurrentScope(
-      tvm.getGlobalFunc(
+    this.fKVCacheGetTotalSequenceLength = this.tvm.detachFromCurrentScope(
+      this.tvm.getGlobalFunc(
         "vm.builtin.attention_kv_cache_get_total_sequence_length"
       )
     );
     this.addSequence();
+    this.tvm.endScope();
   }
 
   clear() {
@@ -154,9 +158,11 @@ export class LanguageModel {
     this.rt = rt;
     this.tvm = this.rt.tvm;
 
+    this.tvm.beginScope();
+
     this.prefillChunkSize = this.rt.metadata.prefill_chunk_size;
 
-    this.kvcache = new KVCache(this.tvm, this.rt.vm, this.rt.metadata);
+    this.kvcache = new KVCache(this.rt);
 
     this.fEmbed = this.rt.get_function("embed");
     this.fPrefill = this.rt.get_function("prefill");
@@ -169,6 +175,8 @@ export class LanguageModel {
       temperature: 0.6,
       top_p: 0.9,
     };
+
+    this.tvm.endScope();
   }
 
   private clear() {
