@@ -19,6 +19,8 @@ from ailoy._core import (
     LanguageModelRunSyncIterator,
     LocalEmbeddingModel,
     LocalLanguageModel,
+    MCPTool,
+    MCPTransport,
     Message,
     MessageAggregator,
     MessageOutput,
