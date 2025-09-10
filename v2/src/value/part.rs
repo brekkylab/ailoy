@@ -518,6 +518,7 @@ impl<'a> Serialize for PartFunctionRef<'a> {
     }
 }
 
+#[derive(Debug)]
 struct PartFunctionOwned {
     name: String,
     arguments: String,
@@ -535,6 +536,8 @@ impl<'de> Deserialize<'de> for PartFunctionOwned {
 
 struct PartFunctionVisitor;
 
+static ALLOWED_ARGUMENT_FIELDS: &'static [&'static str] = &["arguments", "parameter", "input"];
+
 impl<'de> de::Visitor<'de> for PartFunctionVisitor {
     type Value = PartFunctionOwned;
 
@@ -551,10 +554,8 @@ impl<'de> de::Visitor<'de> for PartFunctionVisitor {
         while let Some(k) = map.next_key::<String>()? {
             if k == "name" {
                 name = Some((String::from("name"), map.next_value()?));
-            } else if k == "arguments" {
-                arguments = Some((String::from("arguments"), map.next_value()?));
-            } else if k == "parameters" {
-                arguments = Some((String::from("parameters"), map.next_value()?));
+            } else if ALLOWED_ARGUMENT_FIELDS.contains(&k.as_str()) {
+                arguments = Some((String::from(k), map.next_value()?));
             }
         }
         let mut rv = PartFunctionOwned {
@@ -753,14 +754,14 @@ impl<'de> de::Visitor<'de> for PartVisitor {
             }
             (ty, Some((k, v)), _, _) if k == "function" => {
                 if let Some(ty) = ty {
-                    style.text_type = ty;
+                    style.function_type = ty;
                 }
                 style.function_field = k;
                 Ok(StyledPart::new_function_string(v).with_style(style))
             }
             (ty, _, id, Some((k, v))) if k == "function" => {
                 if let Some(ty) = ty {
-                    style.text_type = ty;
+                    style.function_type = ty;
                 }
                 style.function_field = k;
                 if let Some((idk, idv)) = id {
@@ -820,11 +821,12 @@ mod test {
             assert_eq!(roundtrip, part);
         }
         {
-            let part = StyledPart::new_function("asdf1234", "fn", "false");
+            let part =
+                StyledPart::new_function("asdf1234", "fn", r#"{"argument":"this is argument."}"#);
             let s = serde_json::to_string(&part).unwrap();
             assert_eq!(
                 s,
-                r#"{"type":"function","id":"asdf1234","function":{"name":"fn","arguments":false}}"#
+                r#"{"type":"function","id":"asdf1234","function":{"name":"fn","arguments":"{\"argument\":\"this is argument.\"}"}}"#
             );
             let roundtrip = serde_json::from_str::<StyledPart>(&s).unwrap();
             assert_eq!(roundtrip, part);
@@ -834,12 +836,17 @@ mod test {
     #[test]
     fn part_serde_with_format() {
         let mut style = PartStyle::new();
-        style.text_type = String::from("text1");
-        style.text_field = String::from("text2");
+        style.function_type = String::from("tool_use");
+        style.function_arguments_field = String::from("input");
         {
-            let part = StyledPart::new_text("This is a text").with_style(style);
+            let part =
+                StyledPart::new_function("asdf1234", "fn", r#"{"argument":"this is argument."}"#)
+                    .with_style(style);
             let s = serde_json::to_string(&part).unwrap();
-            assert_eq!(s, r#"{"type":"text1","text2":"This is a text"}"#);
+            assert_eq!(
+                s,
+                r#"{"type":"tool_use","id":"asdf1234","function":{"name":"fn","input":"{\"argument\":\"this is argument.\"}"}}"#
+            );
             let roundtrip = serde_json::from_str::<StyledPart>(&s).unwrap();
             assert_eq!(roundtrip, part);
         }
