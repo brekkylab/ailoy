@@ -1,6 +1,6 @@
 use futures::StreamExt;
 use pyo3::{
-    PyClass,
+    IntoPyObjectExt, PyClass,
     exceptions::{PyNotImplementedError, PyRuntimeError, PyStopAsyncIteration, PyStopIteration},
     prelude::*,
     types::PyType,
@@ -432,5 +432,28 @@ impl PyXAILanguageModel {
         tools: Vec<ToolDesc>,
     ) -> PyResult<PyLanguageModelRunSyncIterator> {
         self.run_sync(messages, tools)
+    }
+}
+
+impl<'py> IntoPyObject<'py> for Box<dyn LanguageModel> {
+    type Target = PyAny;
+    type Output = Bound<'py, Self::Target>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        let py_any = if let Some(model) = self.downcast_ref::<LocalLanguageModel>() {
+            PyLocalLanguageModel::into_py_obj(model.clone(), py)?.into_py_any(py)
+        } else if let Some(model) = self.downcast_ref::<OpenAILanguageModel>() {
+            PyOpenAILanguageModel::into_py_obj(model.clone(), py)?.into_py_any(py)
+        } else if let Some(model) = self.downcast_ref::<GeminiLanguageModel>() {
+            PyGeminiLanguageModel::into_py_obj(model.clone(), py)?.into_py_any(py)
+        } else if let Some(model) = self.downcast_ref::<AnthropicLanguageModel>() {
+            PyAnthropicLanguageModel::into_py_obj(model.clone(), py)?.into_py_any(py)
+        } else if let Some(model) = self.downcast_ref::<XAILanguageModel>() {
+            PyXAILanguageModel::into_py_obj(model.clone(), py)?.into_py_any(py)
+        } else {
+            Err(PyRuntimeError::new_err("Failed to downcast LanguageModel"))
+        }?;
+        Ok(py_any.into_bound(py))
     }
 }

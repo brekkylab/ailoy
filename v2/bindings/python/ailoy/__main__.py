@@ -81,9 +81,10 @@ async def main():
             model = v.result
             model.disable_reasoning()
 
-    agent = Agent(model, mcp_tools)
+    agent = Agent(model, [*mcp_tools, tool_temp, tool_term])
     agg = MessageAggregator()
     async for resp in agent.run("What time is it now in Asia/Seoul?"):
+        print(resp)
         msg = agg.update(resp)
         if msg:
             print(msg)

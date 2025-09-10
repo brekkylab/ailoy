@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use pyo3::{
-    exceptions::{PyNotImplementedError, PyRuntimeError},
+    exceptions::{PyNotImplementedError, PyRuntimeError, PyTypeError},
     prelude::*,
     types::{PyDict, PyList, PyTuple},
 };
@@ -16,6 +16,7 @@ use crate::{
     value::{Part, ToolCallArg, ToolDesc},
 };
 
+#[derive(Clone)]
 #[gen_stub_pyclass]
 #[pyclass(name = "Tool", subclass)]
 pub struct PyTool {}
@@ -119,6 +120,13 @@ impl PyBuiltinTool {
     fn __call__(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
         self.call(py, kwargs)
     }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BuiltinTool(name=\"{}\")",
+            self.inner.get_description().name
+        )
+    }
 }
 
 #[gen_stub_pyclass]
@@ -159,6 +167,10 @@ impl PyMCPTool {
     #[pyo3(signature = (**kwargs))]
     fn __call__(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
         self.call(py, kwargs)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("MCPTool(name=\"{}\")", self.inner.get_description().name)
     }
 }
 
@@ -278,6 +290,13 @@ impl PythonFunctionTool {
     fn __call__(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
         self.func.call(py, PyTuple::empty(py), kwargs)
     }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PythonFunctionTool(name=\"{}\")",
+            self.get_description().name
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -357,5 +376,61 @@ impl PythonAsyncFunctionTool {
     #[pyo3(signature = (**kwargs))]
     fn __call__(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
         self.call(py, kwargs)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PythonAsyncFunctionTool(name=\"{}\")",
+            self.get_description().name
+        )
+    }
+}
+
+pub struct ArcTool(pub Arc<dyn Tool>);
+
+impl<'py> IntoPyObject<'py> for ArcTool {
+    type Target = PyAny;
+    type Output = Bound<'py, Self::Target>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        let py_any = if let Some(tool) = self.0.downcast_ref::<BuiltinTool>() {
+            Ok(PyBuiltinTool::into_py_obj(tool.clone(), py)?.into_any())
+        } else if let Some(tool) = self.0.downcast_ref::<MCPTool>() {
+            Ok(PyMCPTool::into_py_obj(tool.clone(), py)?.into_any())
+        } else if let Some(tool) = self.0.downcast_ref::<PythonFunctionTool>() {
+            Ok(Py::new(py, (tool.clone(), PyTool {}))?.into_any())
+        } else if let Some(tool) = self.0.downcast_ref::<PythonAsyncFunctionTool>() {
+            Ok(Py::new(py, (tool.clone(), PyTool {}))?.into_any())
+        } else {
+            Err(PyRuntimeError::new_err("Failed to downcast Tool"))
+        }?;
+        Ok(py_any.into_bound(py))
+    }
+}
+
+impl<'py> FromPyObject<'py> for ArcTool {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        Python::attach(|py| {
+            if let Ok(tool) = ob.downcast::<PyBuiltinTool>() {
+                Ok(ArcTool(
+                    Arc::new(tool.as_unbound().borrow(py).inner().clone()) as Arc<dyn Tool>,
+                ))
+            } else if let Ok(tool) = ob.downcast::<PyMCPTool>() {
+                Ok(ArcTool(
+                    Arc::new(tool.as_unbound().borrow(py).inner().clone()) as Arc<dyn Tool>,
+                ))
+            } else if let Ok(tool) = ob.downcast::<PythonFunctionTool>() {
+                Ok(ArcTool(
+                    Arc::new(tool.as_unbound().borrow(py).clone()) as Arc<dyn Tool>
+                ))
+            } else if let Ok(tool) = ob.downcast::<PythonAsyncFunctionTool>() {
+                Ok(ArcTool(
+                    Arc::new(tool.as_unbound().borrow(py).clone()) as Arc<dyn Tool>
+                ))
+            } else {
+                Err(PyTypeError::new_err("Unknown tool object provided"))
+            }
+        })
     }
 }

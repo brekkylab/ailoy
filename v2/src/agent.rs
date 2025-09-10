@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 use crate::{
     model::LanguageModel,
     tool::{MCPTransport, Tool},
+    utils::log,
     value::{
         FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolCall, ToolCallArg,
     },
@@ -38,23 +39,7 @@ impl Agent {
         self.tools.clone()
     }
 
-    pub async fn add_mcp_tools(
-        &mut self,
-        client_name: &str,
-        transport: MCPTransport,
-        tools_to_add: Vec<String>,
-    ) -> anyhow::Result<()> {
-        let mut tools = transport.get_tools(client_name).await?;
-
-        // If tools_to_add is not empty, filter out the tools not in the whitelist.
-        if !tools_to_add.is_empty() {
-            tools.retain(|t| {
-                let tool_desc = t.get_description();
-                let tool_name = tool_desc.name.split("--").last().unwrap();
-                tools_to_add.contains(&tool_name.to_string())
-            })
-        }
-
+    pub async fn add_tools(&mut self, tools: Vec<Arc<dyn Tool>>) -> anyhow::Result<()> {
         for tool in tools.iter() {
             let tool_name = tool.get_description().name;
 
@@ -65,10 +50,10 @@ impl Agent {
                 .find(|t| t.get_description().name == tool_name)
                 .is_some()
             {
-                println!(
-                    "MCP tool \"{}\" is already registered. Skip adding the tool.",
+                log::warn(format!(
+                    "Tool \"{}\" is already registered. Skip adding the tool.",
                     tool_name
-                );
+                ));
                 continue;
             }
 
@@ -78,8 +63,44 @@ impl Agent {
         Ok(())
     }
 
-    pub async fn remove_mcp_tools(&mut self, client_name: &str) -> anyhow::Result<()> {
-        // Remove MCP tools
+    pub async fn add_tool(&mut self, tool: Arc<dyn Tool>) -> anyhow::Result<()> {
+        self.add_tools(vec![tool]).await
+    }
+
+    pub async fn add_mcp_tools(
+        &mut self,
+        client_name: String,
+        transport: MCPTransport,
+        tools_to_add: Vec<String>,
+    ) -> anyhow::Result<()> {
+        let mut tools = transport.get_tools(client_name.as_str()).await?;
+
+        // If tools_to_add is not empty, filter out the tools not in the whitelist.
+        if !tools_to_add.is_empty() {
+            tools.retain(|t| {
+                let tool_desc = t.get_description();
+                let tool_name = tool_desc.name.split("--").last().unwrap();
+                tools_to_add.contains(&tool_name.to_string())
+            })
+        }
+
+        self.add_tools(tools).await
+    }
+
+    pub async fn remove_tools(&mut self, tool_names: Vec<String>) -> anyhow::Result<()> {
+        self.tools.retain(|t| {
+            let tool_name = t.get_description().name;
+            // Remove the tool if its name belongs to `tool_names`
+            !tool_names.contains(&tool_name)
+        });
+        Ok(())
+    }
+
+    pub async fn remove_tool(&mut self, tool_name: String) -> anyhow::Result<()> {
+        self.remove_tools(vec![tool_name]).await
+    }
+
+    pub async fn remove_mcp_tools(&mut self, client_name: String) -> anyhow::Result<()> {
         self.tools.retain(|t| {
             let tool_name = t.get_description().name;
             // Remove the MCP tool if its description name is prefixed with the provided client name.
@@ -303,16 +324,14 @@ mod tests {
         let model = model.unwrap();
 
         let mut agent = Agent::new(model, vec![]);
+        let transport = MCPTransport::Stdio {
+            command: "uvx".into(),
+            args: vec!["mcp-server-time".into()],
+        };
         agent
-            .add_mcp_tools(
-                "time",
-                MCPTransport::Stdio {
-                    command: "uvx".into(),
-                    args: vec!["mcp-server-time".into()],
-                },
-                vec![],
-            )
-            .await?;
+            .add_tools(transport.get_tools("time").await.unwrap())
+            .await
+            .unwrap();
 
         let agent_tools = agent.get_tools();
         assert_eq!(agent_tools.len(), 2);

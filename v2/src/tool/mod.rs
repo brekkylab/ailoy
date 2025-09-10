@@ -5,6 +5,7 @@ use std::fmt::Debug;
 
 use ailoy_macros::multi_platform_async_trait;
 pub use builtin::*;
+use downcast_rs::{Downcast, impl_downcast};
 pub use mcp::*;
 
 use crate::{
@@ -13,8 +14,10 @@ use crate::{
 };
 
 #[multi_platform_async_trait]
-pub trait Tool: Debug + MaybeSend + MaybeSync + 'static {
+pub trait Tool: Debug + Downcast + MaybeSend + MaybeSync + 'static {
     fn get_description(&self) -> ToolDesc;
 
     async fn run(&self, args: ToolCallArg) -> Result<Vec<Part>, String>;
 }
+
+impl_downcast!(Tool);
