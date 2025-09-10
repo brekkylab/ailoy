@@ -3,7 +3,7 @@ use pyo3::{
     prelude::*,
     types::{PyDict, PyList},
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 pub trait PyWrapper: PyClass + Send + 'static {
     type Inner: Send;
@@ -108,13 +108,13 @@ fn py_object_to_json_value(py: Python, obj: &Py<PyAny>) -> PyResult<Value> {
     }
 }
 
-// Main conversion function from PyDict to serde_json::Value
-pub fn pydict_to_json(py: Python, py_dict: &Bound<PyDict>) -> PyResult<Value> {
+// Main conversion function from PyDict to serde_json::Map
+pub fn pydict_to_json(py: Python, py_dict: &Bound<PyDict>) -> PyResult<Map<String, Value>> {
     let mut map = serde_json::Map::new();
     for (key, value) in py_dict.iter() {
         let key_str = key.extract::<String>()?;
         let json_val = py_object_to_json_value(py, &value.into())?;
         map.insert(key_str, json_val);
     }
-    Ok(Value::Object(map))
+    Ok(map)
 }

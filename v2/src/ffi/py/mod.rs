@@ -4,6 +4,7 @@ mod cache_progress;
 mod model;
 mod tool;
 mod value;
+mod vector_store;
 
 use agent::{
     PyAgent as Agent, PyAgentRunIterator as AgentRunIterator,
@@ -27,8 +28,10 @@ use tool::{
     PyBuiltinTool as BuiltinTool, PyMCPTool as MCPTool, PyTool as Tool, PythonAsyncFunctionTool,
     PythonFunctionTool,
 };
+use vector_store::{BaseVectorStore, ChromaVectorStore, FaissVectorStore};
 
 use crate::{
+    ffi::py::vector_store::{VectorStoreAddInput, VectorStoreGetResult, VectorStoreRetrieveResult},
     tool::mcp::MCPTransport,
     value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc},
 };
@@ -40,10 +43,13 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<AgentRunIterator>()?;
     m.add_class::<AgentRunSyncIterator>()?;
     m.add_class::<AnthropicLanguageModel>()?;
+    m.add_class::<BaseVectorStore>()?;
     m.add_class::<BuiltinTool>()?;
     m.add_class::<CacheProgress>()?;
     m.add_class::<CacheProgressIterator>()?;
     m.add_class::<CacheProgressSyncIterator>()?;
+    m.add_class::<ChromaVectorStore>()?;
+    m.add_class::<FaissVectorStore>()?;
     m.add_class::<FinishReason>()?;
     m.add_class::<GeminiLanguageModel>()?;
     m.add_class::<LanguageModel>()?;
@@ -62,6 +68,9 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<Role>()?;
     m.add_class::<Tool>()?;
     m.add_class::<ToolDesc>()?;
+    m.add_class::<VectorStoreAddInput>()?;
+    m.add_class::<VectorStoreGetResult>()?;
+    m.add_class::<VectorStoreRetrieveResult>()?;
     m.add_class::<XAILanguageModel>()?;
     Ok(())
 }

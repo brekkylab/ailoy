@@ -278,14 +278,16 @@ impl ToolDesc {
         parameters: Py<PyDict>,
         returns: Option<Py<PyDict>>,
     ) -> PyResult<Self> {
-        let parameters =
-            serde_json::from_value::<ToolDescArg>(pydict_to_json(py, parameters.bind(py)).unwrap())
-                .expect("parameters is not a valid JSON schema");
+        let parameters = serde_json::from_value::<ToolDescArg>(serde_json::Value::Object(
+            pydict_to_json(py, parameters.bind(py))?,
+        ))
+        .expect("parameters is not a valid JSON schema");
         let returns = if let Some(returns) = returns {
             Some(
-                serde_json::from_value::<ToolDescArg>(
-                    pydict_to_json(py, returns.bind(py)).unwrap(),
-                )
+                serde_json::from_value::<ToolDescArg>(serde_json::Value::Object(pydict_to_json(
+                    py,
+                    returns.bind(py),
+                )?))
                 .expect("returns is not a valid JSON schema"),
             )
         } else {

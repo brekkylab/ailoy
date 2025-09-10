@@ -23,12 +23,6 @@ pub struct PyTool {}
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyTool {
-    #[gen_stub(skip)]
-    #[new]
-    fn new() -> Self {
-        Self {}
-    }
-
     #[getter]
     fn description(&self) -> PyResult<ToolDesc> {
         Err(PyNotImplementedError::new_err(
@@ -55,8 +49,10 @@ pub trait PyToolMethods<T: Tool + Clone + 'static> {
 
     fn call(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
         let args = if let Some(kwargs) = kwargs {
-            serde_json::from_value::<ToolCallArg>(pydict_to_json(py, kwargs).unwrap())
-                .expect("args is not a valid ToolCallArg")
+            serde_json::from_value::<ToolCallArg>(serde_json::Value::Object(pydict_to_json(
+                py, kwargs,
+            )?))
+            .expect("args is not a valid ToolCallArg")
         } else {
             ToolCallArg::new_null()
         };
@@ -186,7 +182,7 @@ impl MCPTransport {
             .into_iter()
             .map(|t| {
                 Python::attach(|py| {
-                    Ok(Py::new(py, (PyMCPTool { inner: t }, PyTool::new()))?
+                    Ok(Py::new(py, (PyMCPTool { inner: t }, PyTool {}))?
                         .into_pyobject(py)
                         .unwrap()
                         .into_any()
