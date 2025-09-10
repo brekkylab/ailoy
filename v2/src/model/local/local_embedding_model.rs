@@ -1,8 +1,8 @@
-use std::{any::Any, collections::BTreeMap};
+use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::Result;
-use futures::stream::Stream;
+use futures::{lock::Mutex, stream::Stream};
 
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
@@ -15,12 +15,12 @@ use crate::{
     utils::BoxFuture,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LocalEmbeddingModel {
     tokenizer: Tokenizer,
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
-    inferencer: EmbeddingModelInferencer,
+    inferencer: Arc<Mutex<EmbeddingModelInferencer>>,
 }
 
 impl LocalEmbeddingModel {
@@ -36,10 +36,13 @@ impl LocalEmbeddingModel {
 impl EmbeddingModel for LocalEmbeddingModel {
     async fn run(self: &mut Self, text: String) -> Result<Embedding> {
         let input_tokens = self.tokenizer.encode(&text, true).unwrap();
+        let mut inferencer = self.inferencer.lock().await;
+
         #[cfg(target_family = "wasm")]
-        let embedding = Ok(self.inferencer.infer(&input_tokens).await);
+        let embedding = Ok(inferencer.infer(&input_tokens).await);
         #[cfg(not(target_family = "wasm"))]
-        let embedding = self.inferencer.infer(&input_tokens).to_vec_f32();
+        let embedding = inferencer.infer(&input_tokens).to_vec_f32();
+
         embedding
     }
 }
@@ -117,7 +120,7 @@ impl TryFromCache for LocalEmbeddingModel {
 
             Ok(LocalEmbeddingModel {
                 tokenizer,
-                inferencer: inferencer,
+                inferencer: Arc::new(Mutex::new(inferencer)),
             })
         })
     }

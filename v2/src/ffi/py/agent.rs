@@ -13,7 +13,7 @@ use crate::{
     agent::Agent,
     ffi::py::{
         base::PyWrapper,
-        model::{
+        language_model::{
             PyAnthropicLanguageModel, PyGeminiLanguageModel, PyLanguageModel, PyLocalLanguageModel,
             PyOpenAILanguageModel, PyXAILanguageModel,
         },

@@ -1,7 +1,8 @@
 mod agent;
 mod base;
 mod cache_progress;
-mod model;
+mod embedding_model;
+mod language_model;
 mod tool;
 mod value;
 mod vector_store;
@@ -14,7 +15,10 @@ use cache_progress::{
     PyCacheProgress as CacheProgress, PyCacheProgressIterator as CacheProgressIterator,
     PyCacheProgressSyncIterator as CacheProgressSyncIterator,
 };
-use model::{
+use embedding_model::{
+    PyEmbeddingModel as EmbeddingModel, PyLocalEmbeddingModel as LocalEmbeddingModel,
+};
+use language_model::{
     PyAnthropicLanguageModel as AnthropicLanguageModel,
     PyGeminiLanguageModel as GeminiLanguageModel, PyLanguageModel as LanguageModel,
     PyLanguageModelRunIterator as LanguageModelRunIterator,
@@ -49,12 +53,14 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<CacheProgressIterator>()?;
     m.add_class::<CacheProgressSyncIterator>()?;
     m.add_class::<ChromaVectorStore>()?;
+    m.add_class::<EmbeddingModel>()?;
     m.add_class::<FaissVectorStore>()?;
     m.add_class::<FinishReason>()?;
     m.add_class::<GeminiLanguageModel>()?;
     m.add_class::<LanguageModel>()?;
     m.add_class::<LanguageModelRunIterator>()?;
     m.add_class::<LanguageModelRunSyncIterator>()?;
+    m.add_class::<LocalEmbeddingModel>()?;
     m.add_class::<LocalLanguageModel>()?;
     m.add_class::<Message>()?;
     m.add_class::<MessageAggregator>()?;
