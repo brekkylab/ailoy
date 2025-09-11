@@ -39,14 +39,44 @@ fn pylist_to_tools(tools: Py<PyList>) -> PyResult<Vec<Arc<dyn Tool>>> {
     })
 }
 
+impl PyAgent {
+    fn _spawn(
+        &self,
+        message: String,
+    ) -> PyResult<(
+        &'static tokio::runtime::Runtime,
+        async_channel::Receiver<Result<MessageOutput, String>>,
+    )> {
+        let mut inner = self.inner.clone();
+
+        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        let (tx, rx) = async_channel::unbounded::<Result<MessageOutput, String>>();
+
+        rt.spawn(async move {
+            let mut strm = inner.run(message).boxed();
+
+            while let Some(item) = strm.next().await {
+                if tx.send(item).await.is_err() {
+                    break; // Exit if consumer vanished
+                }
+                // Add a yield point to allow other tasks to run
+                tokio::task::yield_now().await;
+            }
+        });
+
+        Ok((rt, rx))
+    }
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyAgent {
     #[new]
+    #[pyo3(signature = (lm, tools = None))]
     fn __new__(
         py: Python<'_>,
         lm: Bound<'_, PyAny>,
-        #[gen_stub(override_type(type_repr = "list[Tool]"))] tools: Bound<'_, PyList>,
+        #[gen_stub(override_type(type_repr = "list[Tool]"))] tools: Option<Py<PyList>>,
     ) -> PyResult<Py<Self>> {
         if !lm.is_instance_of::<PyLanguageModel>() {
             return Err(PyTypeError::new_err(
@@ -54,7 +84,7 @@ impl PyAgent {
             ));
         }
 
-        let tools = pylist_to_tools(tools.unbind())?;
+        let tools = tools.map_or_else(|| Ok(vec![]), |tools| pylist_to_tools(tools))?;
 
         let agent: Agent = if let Ok(lm) = lm.downcast::<PyLocalLanguageModel>() {
             let model = lm.borrow_mut().into_inner()?;
@@ -122,44 +152,13 @@ impl PyAgent {
         await_future(self.inner.remove_tool(tool_name))
     }
 
-    fn run(&mut self, message: String) -> PyResult<PyAgentRunIterator> {
-        let mut inner = self.inner.clone();
-
-        let (tx, rx) = async_channel::unbounded::<Result<MessageOutput, String>>();
-
-        pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
-            let mut strm = inner.run(message).boxed();
-
-            while let Some(item) = strm.next().await {
-                if tx.send(item).await.is_err() {
-                    break; // Exit if consumer vanished
-                }
-                // Add a yield point to allow other tasks to run
-                tokio::task::yield_now().await;
-            }
-        });
+    fn run(&self, message: String) -> PyResult<PyAgentRunIterator> {
+        let (_, rx) = self._spawn(message)?;
         Ok(PyAgentRunIterator { rx })
     }
 
     fn run_sync(&mut self, message: String) -> PyResult<PyAgentRunSyncIterator> {
-        let mut inner = self.inner.clone();
-
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<MessageOutput, String>>(16);
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        rt.spawn(async move {
-            let mut stream = inner.run(message).boxed();
-
-            while let Some(item) = stream.next().await {
-                if tx.send(item).await.is_err() {
-                    break;
-                }
-            }
-        });
-
+        let (rt, rx) = self._spawn(message)?;
         Ok(PyAgentRunSyncIterator { rt, rx })
     }
 }
@@ -182,8 +181,7 @@ impl PyAgentRunIterator {
         let rx = self.rx.clone();
         let fut = async move {
             match rx.recv().await {
-                Ok(Ok(evt)) => Ok(evt),
-                Ok(Err(e)) => Err(PyRuntimeError::new_err(e)),
+                Ok(res) => res.map_err(|e| PyRuntimeError::new_err(e)),
                 Err(_) => Err(PyStopAsyncIteration::new_err(())),
             }
         };
@@ -195,8 +193,8 @@ impl PyAgentRunIterator {
 #[gen_stub_pyclass]
 #[pyclass(unsendable, name = "AgentRunSyncIterator")]
 pub struct PyAgentRunSyncIterator {
-    rt: tokio::runtime::Runtime,
-    rx: tokio::sync::mpsc::Receiver<Result<MessageOutput, String>>,
+    rt: &'static tokio::runtime::Runtime,
+    rx: async_channel::Receiver<Result<MessageOutput, String>>,
 }
 
 #[gen_stub_pymethods]
@@ -209,9 +207,8 @@ impl PyAgentRunSyncIterator {
     fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
         let item = py.detach(|| self.rt.block_on(self.rx.recv()));
         match item {
-            Some(Ok(evt)) => Ok(evt),
-            Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
-            None => Err(PyStopIteration::new_err(())), // StopIteration
+            Ok(res) => res.map_err(|e| PyRuntimeError::new_err(e)),
+            Err(_) => Err(PyStopIteration::new_err(())),
         }
     }
 }

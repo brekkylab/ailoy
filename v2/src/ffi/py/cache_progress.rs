@@ -6,17 +6,16 @@ use pyo3::{
     prelude::*,
 };
 use pyo3_stub_gen::{PyStubType, TypeInfo, derive::*};
-use tokio::runtime::Runtime;
 
 use crate::{
     cache::{Cache, CacheProgress, TryFromCache},
-    ffi::py::base::PyWrapper,
+    ffi::py::base::{PyWrapper, await_future},
 };
 
 #[pyclass(subclass)]
-pub struct GenericClass {}
+pub struct GenericCacheResultT {}
 
-impl PyStubType for GenericClass {
+impl PyStubType for GenericCacheResultT {
     fn type_output() -> TypeInfo {
         TypeInfo {
             name: format!("typing.Generic[CacheResultT]"),
@@ -47,7 +46,7 @@ impl PyStubType for CacheResultT {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "CacheProgress", extends = GenericClass)]
+#[pyclass(name = "CacheProgress", extends = GenericCacheResultT)]
 pub struct PyCacheProgress {
     #[pyo3(get)]
     pub comment: String,
@@ -63,33 +62,28 @@ pub struct PyCacheProgress {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(unsendable, name = "CacheProgressSyncIterator", extends = GenericClass)]
+#[pyclass(unsendable, name = "CacheProgressSyncIterator", extends = GenericCacheResultT)]
 pub struct PyCacheProgressSyncIterator {
-    rt: Runtime,
-
     strm: BoxStream<'static, Result<PyCacheProgress, String>>,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyCacheProgressSyncIterator {
-    #[gen_stub(override_return_type(type_repr="CacheProgressSyncIterator[CacheResultT]", imports=("typing")))]
+    #[gen_stub(override_return_type(type_repr = "CacheProgressSyncIterator[CacheResultT]"))]
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    #[gen_stub(override_return_type(type_repr="CacheProgress[CacheResultT]", imports=("typing")))]
+    #[gen_stub(override_return_type(type_repr = "CacheProgress[CacheResultT]"))]
     fn __next__(&mut self, py: Python<'_>) -> PyResult<Py<PyCacheProgress>> {
-        let item = py.detach(|| self.rt.block_on(async { self.strm.next().await }));
-        match item {
-            Some(Ok(evt)) => {
-                let initializer = PyClassInitializer::from(GenericClass {}).add_subclass(evt);
-                let obj: Py<PyCacheProgress> = Py::new(py, initializer)?;
-                Ok(obj)
+        await_future(async {
+            match self.strm.next().await {
+                Some(res) => res.map_err(|e| PyRuntimeError::new_err(e.to_string())),
+                None => Err(PyStopIteration::new_err(())),
             }
-            Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
-            None => Err(PyStopIteration::new_err(())), // StopIteration
-        }
+        })
+        .map(|evt| Py::new(py, (evt, GenericCacheResultT {})))?
     }
 }
 
@@ -101,12 +95,6 @@ where
     T: PyWrapper,
     T::Inner: TryFromCache,
 {
-    // attach current-thread runtime
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-
     // Rust stream
     let strm: BoxStream<'static, Result<CacheProgress<T::Inner>, String>> =
         Box::pin(Cache::new().try_create::<T::Inner>(model_key));
@@ -121,7 +109,7 @@ where
                     let total = progress.total_task;
                     let result = if current == total {
                         let result_inner = progress.result.expect("last event must carry result");
-                        let obj: Py<PyAny> = Python::attach(|py| {
+                        let obj = Python::attach(|py| {
                             T::into_py_obj(result_inner, py).map(|o| o.into_any())
                         })
                         .map_err(|e| e.to_string())?;
@@ -133,11 +121,7 @@ where
                         comment,
                         current,
                         total,
-                        result: if let Some(result) = result {
-                            Some(CacheResultT(result))
-                        } else {
-                            None
-                        },
+                        result: result.map(|res| CacheResultT(res)),
                     })
                 }
                 Err(e) => Err(e),
@@ -145,14 +129,14 @@ where
         })
         .boxed();
 
-    let iter = PyCacheProgressSyncIterator { rt, strm };
-    let initializer = PyClassInitializer::from(GenericClass {}).add_subclass(iter);
-    let obj: Py<PyCacheProgressSyncIterator> = Py::new(py, initializer)?;
-    Ok(obj)
+    Py::new(
+        py,
+        (PyCacheProgressSyncIterator { strm }, GenericCacheResultT {}),
+    )
 }
 
 #[gen_stub_pyclass]
-#[pyclass(unsendable, name = "CacheProgressIterator", extends = GenericClass)]
+#[pyclass(unsendable, name = "CacheProgressIterator", extends = GenericCacheResultT)]
 pub struct PyCacheProgressIterator {
     rx: async_channel::Receiver<Result<PyCacheProgress, String>>,
 }
@@ -160,22 +144,20 @@ pub struct PyCacheProgressIterator {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyCacheProgressIterator {
-    #[gen_stub(override_return_type(type_repr="CacheProgressIterator[CacheResultT]", imports=("typing")))]
+    #[gen_stub(override_return_type(type_repr = "CacheProgressIterator[CacheResultT]"))]
     fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    #[gen_stub(override_return_type(type_repr="typing.Awaitable[CacheProgress[CacheResultT]]", imports=("typing")))]
+    #[gen_stub(override_return_type(type_repr = "typing.Awaitable[CacheProgress[CacheResultT]]"))]
     fn __anext__(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let rx = self.rx.clone();
         let fut = async move {
             match rx.recv().await {
-                Ok(Ok(evt)) => Python::attach(|py| {
-                    let initializer = PyClassInitializer::from(GenericClass {}).add_subclass(evt);
-                    let obj: Py<PyCacheProgress> = Py::new(py, initializer)?;
-                    Ok(obj)
+                Ok(res) => Python::attach(|py| {
+                    let prog = res.map_err(|e| PyRuntimeError::new_err(e))?;
+                    Py::new(py, (prog, GenericCacheResultT {}))
                 }),
-                Ok(Err(e)) => Err(PyRuntimeError::new_err(e)),
                 Err(_) => Err(PyStopAsyncIteration::new_err(())),
             }
         };
@@ -209,7 +191,6 @@ where
                     let result = if current == total {
                         match progress.result.take() {
                             Some(inner) => {
-                                // T::Inner -> Py<PyAny>
                                 match Python::attach(|py| {
                                     T::into_py_obj(inner, py).map(|o| o.into_any())
                                 }) {
@@ -230,11 +211,7 @@ where
                         comment,
                         current,
                         total,
-                        result: if let Some(result) = result {
-                            Some(CacheResultT(result))
-                        } else {
-                            None
-                        },
+                        result: result.map(|res| CacheResultT(res)),
                     })
                 }
                 Err(e) => Err(e),
@@ -248,8 +225,5 @@ where
         }
     });
 
-    let iter = PyCacheProgressIterator { rx };
-    let initializer = PyClassInitializer::from(GenericClass {}).add_subclass(iter);
-    let obj: Py<PyCacheProgressIterator> = Py::new(py, initializer)?;
-    Ok(obj)
+    Py::new(py, (PyCacheProgressIterator { rx }, GenericCacheResultT {}))
 }

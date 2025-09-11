@@ -120,13 +120,18 @@ pub fn pydict_to_json(py: Python, py_dict: &Bound<PyDict>) -> PyResult<Map<Strin
     Ok(map)
 }
 
-pub fn await_future<T, E: ToString>(fut: impl Future<Output = Result<T, E>>) -> PyResult<T> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-    let result = rt
-        .block_on(fut)
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()));
+pub fn await_future<T, E: ToString + std::any::Any>(
+    fut: impl Future<Output = Result<T, E>>,
+) -> PyResult<T> {
+    let rt = pyo3_async_runtimes::tokio::get_runtime();
+    let result = rt.block_on(fut).map_err(|e| {
+        if std::any::TypeId::of::<E>() == std::any::TypeId::of::<PyErr>() {
+            let any_err = Box::new(e) as Box<dyn std::any::Any>;
+            let py_err = *any_err.downcast::<PyErr>().unwrap();
+            py_err
+        } else {
+            PyRuntimeError::new_err(e.to_string())
+        }
+    });
     result
 }

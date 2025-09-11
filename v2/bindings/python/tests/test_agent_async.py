@@ -15,7 +15,7 @@ async def agent():
             model = v.result
             model.disable_reasoning()
 
-    agent = ai.Agent(model, [])
+    agent = ai.Agent(model)
     return agent
 
 

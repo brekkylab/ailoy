@@ -26,20 +26,23 @@ use crate::{
 pub trait PyLanguageModelMethods<T: LanguageModel + 'static>:
     PyWrapper<Inner = T> + PyClass<BaseType = PyLanguageModel>
 {
-    fn run(
-        &mut self,
+    fn _spawn(
+        &self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
-    ) -> PyResult<PyLanguageModelRunIterator> {
+        tools: Option<Vec<ToolDesc>>,
+    ) -> PyResult<(
+        &'static tokio::runtime::Runtime,
+        async_channel::Receiver<Result<MessageOutput, String>>,
+    )> {
         let model = self.into_inner()?;
 
         let (tx, rx) = async_channel::unbounded::<Result<MessageOutput, String>>();
-
-        pyo3_async_runtimes::tokio::get_runtime().spawn(async move {
+        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        rt.spawn(async move {
             let mut model = model;
-            let mut strm = model.run(messages, tools).boxed();
+            let mut stream = model.run(messages, tools.unwrap_or(vec![])).boxed();
 
-            while let Some(item) = strm.next().await {
+            while let Some(item) = stream.next().await {
                 if tx.send(item).await.is_err() {
                     break; // Exit if consumer vanished
                 }
@@ -47,33 +50,25 @@ pub trait PyLanguageModelMethods<T: LanguageModel + 'static>:
                 tokio::task::yield_now().await;
             }
         });
+
+        Ok((rt, rx))
+    }
+
+    fn _run(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<ToolDesc>>,
+    ) -> PyResult<PyLanguageModelRunIterator> {
+        let (_, rx) = self._spawn(messages, tools)?;
         Ok(PyLanguageModelRunIterator { rx })
     }
 
-    fn run_sync(
-        &mut self,
+    fn _run_sync(
+        &self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunSyncIterator> {
-        let model = self.into_inner()?;
-
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<MessageOutput, String>>(16);
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        rt.spawn(async move {
-            let mut model = model;
-            let mut stream = model.run(messages, tools).boxed();
-
-            while let Some(item) = stream.next().await {
-                if tx.send(item).await.is_err() {
-                    break;
-                }
-            }
-        });
-
+        let (rt, rx) = self._spawn(messages, tools)?;
         Ok(PyLanguageModelRunSyncIterator { rt, rx })
     }
 }
@@ -156,22 +151,22 @@ impl PyLocalLanguageModel {
         create_cache_progress_sync_iterator::<PyLocalLanguageModel>(model_name, py)
     }
 
-    #[pyo3(name = "run")]
-    fn run_(
+    #[pyo3(signature = (messages, tools = None))]
+    fn run(
         &mut self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunIterator> {
-        self.run(messages, tools)
+        self._run(messages, tools)
     }
 
-    #[pyo3(name = "run_sync")]
-    fn run_sync_(
+    #[pyo3(signature = (messages, tools = None))]
+    fn run_sync(
         &mut self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunSyncIterator> {
-        self.run_sync(messages, tools)
+        self._run_sync(messages, tools)
     }
 
     fn enable_reasoning(&self) {
@@ -196,13 +191,12 @@ impl PyLanguageModelRunIterator {
         slf
     }
 
-    #[gen_stub(override_return_type(type_repr="typing.Awaitable[MessageOutput]", imports=("typing")))]
-    fn __anext__(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageOutput]"))]
+    fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let rx = self.rx.clone();
         let fut = async move {
             match rx.recv().await {
-                Ok(Ok(evt)) => Ok(evt),
-                Ok(Err(e)) => Err(PyRuntimeError::new_err(e)),
+                Ok(res) => res.map_err(|e| PyRuntimeError::new_err(e.to_string())),
                 Err(_) => Err(PyStopAsyncIteration::new_err(())),
             }
         };
@@ -214,8 +208,8 @@ impl PyLanguageModelRunIterator {
 #[gen_stub_pyclass]
 #[pyclass(unsendable, name = "LanguageModelRunSyncIterator")]
 pub struct PyLanguageModelRunSyncIterator {
-    rt: Runtime,
-    rx: tokio::sync::mpsc::Receiver<Result<MessageOutput, String>>,
+    rt: &'static Runtime,
+    rx: async_channel::Receiver<Result<MessageOutput, String>>,
 }
 
 #[gen_stub_pymethods]
@@ -228,9 +222,8 @@ impl PyLanguageModelRunSyncIterator {
     fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
         let item = py.detach(|| self.rt.block_on(self.rx.recv()));
         match item {
-            Some(Ok(evt)) => Ok(evt),
-            Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
-            None => Err(PyStopIteration::new_err(())), // StopIteration
+            Ok(res) => res.map_err(|e| PyRuntimeError::new_err(e.to_string())),
+            Err(_) => Err(PyStopIteration::new_err(())),
         }
     }
 }
@@ -266,22 +259,22 @@ impl PyOpenAILanguageModel {
         Self::into_py_obj(OpenAILanguageModel::new(model_name, api_key), py)
     }
 
-    #[pyo3(name = "run")]
-    fn run_(
+    #[pyo3(signature = (messages, tools = None))]
+    fn run(
         &mut self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunIterator> {
-        self.run(messages, tools)
+        self._run(messages, tools)
     }
 
-    #[pyo3(name = "run_sync")]
-    fn run_sync_(
+    #[pyo3(signature = (messages, tools = None))]
+    fn run_sync(
         &mut self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunSyncIterator> {
-        self.run_sync(messages, tools)
+        self._run_sync(messages, tools)
     }
 }
 
@@ -316,22 +309,22 @@ impl PyGeminiLanguageModel {
         Self::into_py_obj(GeminiLanguageModel::new(model_name, api_key), py)
     }
 
-    #[pyo3(name = "run")]
-    fn run_(
+    #[pyo3(signature = (messages, tools = None))]
+    fn run(
         &mut self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunIterator> {
-        self.run(messages, tools)
+        self._run(messages, tools)
     }
 
-    #[pyo3(name = "run_sync")]
-    fn run_sync_(
+    #[pyo3(signature = (messages, tools = None))]
+    fn run_sync(
         &mut self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunSyncIterator> {
-        self.run_sync(messages, tools)
+        self._run_sync(messages, tools)
     }
 }
 
@@ -366,22 +359,22 @@ impl PyAnthropicLanguageModel {
         Self::into_py_obj(AnthropicLanguageModel::new(model_name, api_key), py)
     }
 
-    #[pyo3(name = "run")]
-    fn run_(
+    #[pyo3(signature = (messages, tools = None))]
+    fn run(
         &mut self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunIterator> {
-        self.run(messages, tools)
+        self._run(messages, tools)
     }
 
-    #[pyo3(name = "run_sync")]
-    fn run_sync_(
+    #[pyo3(signature = (messages, tools = None))]
+    fn run_sync(
         &mut self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunSyncIterator> {
-        self.run_sync(messages, tools)
+        self._run_sync(messages, tools)
     }
 }
 
@@ -416,22 +409,22 @@ impl PyXAILanguageModel {
         Self::into_py_obj(XAILanguageModel::new(model_name, api_key), py)
     }
 
-    #[pyo3(name = "run")]
-    fn run_(
+    #[pyo3(signature = (messages, tools = None))]
+    fn run(
         &mut self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunIterator> {
-        self.run(messages, tools)
+        self._run(messages, tools)
     }
 
-    #[pyo3(name = "run_sync")]
-    fn run_sync_(
+    #[pyo3(signature = (messages, tools = None))]
+    fn run_sync(
         &mut self,
         messages: Vec<Message>,
-        tools: Vec<ToolDesc>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunSyncIterator> {
-        self.run_sync(messages, tools)
+        self._run_sync(messages, tools)
     }
 }
 
