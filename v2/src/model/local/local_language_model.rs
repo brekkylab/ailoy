@@ -229,6 +229,8 @@ impl TryFromCache for LocalLanguageModel {
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     #[tokio::test]
     async fn infer_simple_chat() {
         use futures::StreamExt;
@@ -282,7 +284,7 @@ mod tests {
         use futures::StreamExt;
 
         use super::*;
-        use crate::value::{MessageAggregator, Role, ToolDesc, ToolDescArg};
+        use crate::value::{MessageAggregator, Role, ToolDesc};
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
@@ -300,26 +302,32 @@ mod tests {
         }
         let mut model = model.unwrap();
         model.disable_reasoning();
-        let tools = vec![ToolDesc::new(
-            "temperature",
-            "Get current temperature",
-            ToolDescArg::new_object().with_properties(
-                [
-                    (
-                        "location",
-                        ToolDescArg::new_string().with_desc("The city name"),
-                    ),
-                    (
-                        "unit",
-                        ToolDescArg::new_string().with_enum(["Celcius", "Fernheit"]),
-                    ),
-                ],
-                ["location", "unit"],
-            ),
-            Some(
-                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
-            ),
-        )];
+        let tools = vec![
+            ToolDesc::new(
+                "temperature".into(),
+                "Get current temperature".into(),
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city name"
+                        },
+                        "unit": {
+                            "type": "string",
+                            "enum": ["Celsius", "Fahrenheit"]
+                        }
+                    },
+                    "required": ["location", "unit"]
+                }),
+                Some(json!({
+                    "type": "number",
+                    "description": "Null if the given city name is unavailable.",
+                    "nullable": true,
+                })),
+            )
+            .unwrap(),
+        ];
         let msgs = vec![
             Message::with_role(Role::User).with_contents(vec![Part::Text(
                 "How much hot currently in Dubai?".to_owned(),
@@ -346,7 +354,7 @@ mod tests {
         use futures::StreamExt;
 
         use super::*;
-        use crate::value::{MessageAggregator, Role, ToolDesc, ToolDescArg};
+        use crate::value::{MessageAggregator, Role, ToolDesc};
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
@@ -364,32 +372,39 @@ mod tests {
         }
         let mut model = model.unwrap();
         model.disable_reasoning();
-        let tools = vec![ToolDesc::new(
-            "temperature",
-            "Get current temperature",
-            ToolDescArg::new_object().with_properties(
-                [
-                    (
-                        "location",
-                        ToolDescArg::new_string().with_desc("The city name"),
-                    ),
-                    (
-                        "unit",
-                        ToolDescArg::new_string().with_enum(["Celcius", "Fernheit"]),
-                    ),
-                ],
-                ["location", "unit"],
-            ),
-            Some(
-                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
-            ),
-        )];
+        let tools = vec![
+            ToolDesc::new(
+                "temperature".into(),
+                "Get current temperature".into(),
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city name"
+                        },
+                        "unit": {
+                            "type": "string",
+                            "description": "The unit of temperature",
+                            "enum": ["Celsius", "Fahrenheit"]
+                        }
+                    },
+                    "required": ["location", "unit"]
+                }),
+                Some(json!({
+                    "type": "number",
+                    "description": "Null if the given city name is unavailable.",
+                    "nullable": true,
+                })),
+            )
+            .unwrap(),
+        ];
         let msgs = vec![
             Message::with_role(Role::User)
                 .with_contents([Part::new_text("How much hot currently in Dubai?".to_owned())]),
             Message::with_role(Role::Assistant)
                 .with_contents([Part::new_text("\n\n")])
-                .with_tool_calls([Part::new_function_string("\n{\"name\": \"temperature\", \"arguments\": {\"location\": \"Dubai\", \"unit\": \"Celcius\"}}\n")]),
+                .with_tool_calls([Part::new_function_string("\n{\"name\": \"temperature\", \"arguments\": {\"location\": \"Dubai\", \"unit\": \"Celsius\"}}\n")]),
             Message::with_role(Role::Tool).with_tool_call_id("temperature").with_contents([Part::new_text("40")])
         ];
         let mut agg = MessageAggregator::new();

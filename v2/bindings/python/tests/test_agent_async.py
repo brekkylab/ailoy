@@ -1,4 +1,5 @@
 import asyncio
+from typing import Literal
 
 import pytest
 import pytest_asyncio
@@ -37,30 +38,21 @@ async def test_builtin_tool(agent: ai.Agent):
 
 
 async def test_python_async_function_tool(agent: ai.Agent):
-    async def tool_temperature(location: str, unit: str = "Celcuis"):
+    async def tool_temperature(
+        location: str, unit: Literal["Celsius", "Fahrenheit"] = "Celsius"
+    ):
+        """
+        Get temperature of the provided location
+        Args:
+            location: The city name
+            unit: The unit of temperature
+        Returns:
+            int: The temperature
+        """
         await asyncio.sleep(1.0)
         return [ai.Part.Text('{"temperature":"36"}')]
 
-    tool = ai.PythonAsyncFunctionTool(
-        description=ai.ToolDesc(
-            "temperature",
-            "Get current temperature",
-            {
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "The city name"},
-                    "unit": {
-                        "type": "string",
-                        "description": "Default: Celcius",
-                        "enum": ["Celcius", "Fernheit"],
-                    },
-                },
-                "required": ["location"],
-            },
-            returns={"type": "number"},
-        ),
-        func=tool_temperature,
-    )
+    tool = ai.PythonAsyncFunctionTool(func=tool_temperature)
 
     agent.add_tool(tool)
     agg = ai.MessageAggregator()

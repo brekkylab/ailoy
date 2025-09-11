@@ -231,7 +231,7 @@ fn pylist_to_parts(list: Py<PyAny>) -> Result<Vec<Part>, String> {
 
 #[derive(Debug, Clone)]
 #[gen_stub_pyclass]
-#[pyclass(name = "PythonFunctionTool", extends = PyTool)]
+#[pyclass(name = "PythonFunctionTool", extends = PyTool, subclass)]
 pub struct PythonFunctionTool {
     desc: ToolDesc,
     // Sync tool function
@@ -302,7 +302,7 @@ impl PythonFunctionTool {
 
 #[derive(Debug, Clone)]
 #[gen_stub_pyclass]
-#[pyclass(name = "PythonAsyncFunctionTool", extends = PyTool)]
+#[pyclass(name = "PythonAsyncFunctionTool", extends = PyTool, subclass)]
 pub struct PythonAsyncFunctionTool {
     desc: ToolDesc,
     // Async tool function

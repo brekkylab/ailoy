@@ -251,7 +251,7 @@ mod tests {
                     (
                         "unit",
                         ToolDescArg::new_string()
-                            .with_enum(["Celcius", "Fernheit"])
+                            .with_enum(["Celsius", "Fernheit"])
                             .with_desc("The unit of temperature"),
                     ),
                 ],

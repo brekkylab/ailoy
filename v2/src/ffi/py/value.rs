@@ -1,5 +1,5 @@
 use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::PyDict,
 };
@@ -7,9 +7,7 @@ use pyo3_stub_gen::derive::*;
 
 use crate::{
     ffi::py::base::{json_to_pydict, pydict_to_json},
-    value::{
-        FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc, ToolDescArg,
-    },
+    value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc},
 };
 
 #[gen_stub_pymethods]
@@ -278,22 +276,16 @@ impl ToolDesc {
         parameters: Py<PyDict>,
         returns: Option<Py<PyDict>>,
     ) -> PyResult<Self> {
-        let parameters = serde_json::from_value::<ToolDescArg>(serde_json::Value::Object(
-            pydict_to_json(py, parameters.bind(py))?,
-        ))
-        .expect("parameters is not a valid JSON schema");
+        let parameters = serde_json::Value::Object(pydict_to_json(py, parameters.bind(py))?);
         let returns = if let Some(returns) = returns {
-            Some(
-                serde_json::from_value::<ToolDescArg>(serde_json::Value::Object(pydict_to_json(
-                    py,
-                    returns.bind(py),
-                )?))
-                .expect("returns is not a valid JSON schema"),
-            )
+            Some(serde_json::Value::Object(pydict_to_json(
+                py,
+                returns.bind(py),
+            )?))
         } else {
             None
         };
-        Ok(Self::new(name, description, parameters, returns))
+        Self::new(name, description, parameters, returns).map_err(|e| PyRuntimeError::new_err(e))
     }
 
     fn __repr__(&self) -> String {
@@ -321,9 +313,9 @@ impl ToolDesc {
 
     #[getter]
     fn returns<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyDict>> {
-        match &self.r#return {
-            Some(r#return) => {
-                let json_value = serde_json::to_value(r#return).unwrap();
+        match &self.returns {
+            Some(returns) => {
+                let json_value = serde_json::to_value(returns).unwrap();
                 Some(json_to_pydict(py, &json_value).unwrap().unwrap())
             }
             None => None,

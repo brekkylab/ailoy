@@ -83,12 +83,17 @@ where
         // Call progress_callback if exists
         if let Some(callback) = &progress_callback {
             Python::attach(|py| {
-                let py_progress = PyCacheProgress {
-                    comment: progress.comment.clone(),
-                    current: progress.current_task,
-                    total: progress.total_task,
-                };
-                let py_obj = Py::new(py, (py_progress, GenericCacheResultT {}))?;
+                let py_obj = Py::new(
+                    py,
+                    (
+                        PyCacheProgress {
+                            comment: progress.comment.clone(),
+                            current: progress.current_task,
+                            total: progress.total_task,
+                        },
+                        GenericCacheResultT {},
+                    ),
+                )?;
                 callback.call1(py, (py_obj,))
             })?;
         }

@@ -453,7 +453,7 @@ mod tests {
     use ailoy_macros::multi_platform_test;
 
     use super::*;
-    use crate::value::{MessageAggregator, ToolDesc, ToolDescArg};
+    use crate::value::{MessageAggregator, ToolDesc};
 
     static ANTHROPIC_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
         option_env!("ANTHROPIC_API_KEY")
@@ -489,33 +489,40 @@ mod tests {
 
     #[multi_platform_test]
     async fn anthropic_infer_tool_call() {
+        use serde_json::json;
+
         let mut anthropic =
             AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY);
 
-        let tools = vec![ToolDesc::new(
-            "temperature",
-            "Get current temperature",
-            ToolDescArg::new_object().with_properties(
-                [
-                    (
-                        "location",
-                        ToolDescArg::new_string().with_desc("The city name"),
-                    ),
-                    (
-                        "unit",
-                        ToolDescArg::new_string()
-                            .with_enum(["Celcius", "Fernheit"])
-                            .with_desc("The unit of temperature"),
-                    ),
-                ],
-                ["location", "unit"],
-            ),
-            Some(
-                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
-            ),
-        )];
+        let tools = vec![
+            ToolDesc::new(
+                "temperature".into(),
+                "Get current temperature".into(),
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city name"
+                        },
+                        "unit": {
+                            "type": "string",
+                            "description": "The unit of temperature",
+                            "enum": ["Celsius", "Fahrenheit"]
+                        }
+                    },
+                    "required": ["location", "unit"]
+                }),
+                Some(json!({
+                    "type": "number",
+                    "description": "Null if the given city name is unavailable.",
+                    "nullable": true,
+                })),
+            )
+            .unwrap(),
+        ];
         let mut msgs = vec![Message::with_role(Role::User).with_contents([Part::Text(
-            "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
+            "How much hot currently in Dubai? Answer in Celsius.".to_owned(),
         )])];
         let mut agg = MessageAggregator::new();
         let mut assistant_msg: Option<Message> = None;

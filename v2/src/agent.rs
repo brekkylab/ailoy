@@ -155,7 +155,7 @@ impl Agent {
                             },
                             _ => {continue;},
                         };
-                        let tool = tools.iter().find(|v| v.get_description().get_name() == tc.name).unwrap().clone();
+                        let tool = tools.iter().find(|v| v.get_description().name == tc.name).unwrap().clone();
                         let resp = tool.run(tc.arguments).await?;
                         let mut delta = Message::with_role(Role::Tool).with_contents(resp.clone());
                         if let Some(tool_call_id) = tool_call_id {
@@ -232,13 +232,10 @@ mod tests {
     #[tokio::test]
     async fn run_tool_call() {
         use futures::StreamExt;
+        use serde_json::json;
 
         use super::*;
-        use crate::{
-            model::LocalLanguageModel,
-            tool::BuiltinTool,
-            value::{ToolDesc, ToolDescArg},
-        };
+        use crate::{model::LocalLanguageModel, tool::BuiltinTool, value::ToolDesc};
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
@@ -252,28 +249,32 @@ mod tests {
             }
         }
         let model = model.unwrap();
+        let tool_desc = ToolDesc::new(
+            "temperature".into(),
+            "Get current temperature".into(),
+            json!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The city name"
+                    },
+                    "unit": {
+                        "type": "string",
+                        "enum": ["Celsius", "Fahrenheit"]
+                    }
+                },
+                "required": ["location", "unit"]
+            }),
+            Some(json!({
+                "type": "number",
+                "description": "Null if the given city name is unavailable.",
+                "nullable": true,
+            })),
+        )
+        .unwrap();
         let tools = vec![Arc::new(BuiltinTool::new(
-            ToolDesc::new(
-                "temperature",
-                "Get current temperature",
-                ToolDescArg::new_object().with_properties(
-                    [
-                        (
-                            "location",
-                            ToolDescArg::new_string().with_desc("The city name"),
-                        ),
-                        (
-                            "unit",
-                            ToolDescArg::new_string().with_enum(["Celcius", "Fernheit"]),
-                        ),
-                    ],
-                    ["location", "unit"],
-                ),
-                Some(
-                    ToolDescArg::new_number()
-                        .with_desc("Null if the given city name is unavailable."),
-                ),
-            ),
+            tool_desc,
             Arc::new(|args| {
                 if args
                     .as_object()
@@ -282,7 +283,7 @@ mod tests {
                     .unwrap()
                     .as_str()
                     .unwrap()
-                    == "Celcius"
+                    == "Celsius"
                 {
                     Part::Text("40".to_owned())
                 } else {

@@ -24,6 +24,7 @@ dyn-clone = "1.0.20"
 futures = "0.3.31"
 gemini-rust = { git = "https://github.com/brekkylab/gemini-rust.git", branch = "main" }
 indexmap = { version = "2", features = ["serde"] }
+jsonschema = "0.33.0"
 mime-infer = "4.0.0"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
