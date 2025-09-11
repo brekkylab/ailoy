@@ -77,7 +77,10 @@ if __name__ == "__main__":
 ### Setup development environment
 
 ```bash
-pip install -e .
+pip install maturin
+
+# This generates `_core.cpython-3xx-darwin.so` under `ailoy/`
+maturin develop
 ```
 
 ### Generate wheel

@@ -176,7 +176,7 @@ impl PyAgentRunIterator {
         slf
     }
 
-    #[gen_stub(override_return_type(type_repr="typing.Awaitable[MessageOutput]", imports=("typing")))]
+    #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageOutput]"))]
     fn __anext__(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let rx = self.rx.clone();
         let fut = async move {

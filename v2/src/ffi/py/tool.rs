@@ -81,9 +81,7 @@ impl PyWrapper for PyBuiltinTool {
     type Inner = BuiltinTool;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        let base = PyTool {};
-        let child = Self { inner };
-        Py::new(py, (child, base))
+        Py::new(py, (Self { inner }, PyTool {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -102,12 +100,15 @@ impl PyToolMethods<BuiltinTool> for PyBuiltinTool {
 impl PyBuiltinTool {
     #[staticmethod]
     fn terminal(py: Python<'_>) -> PyResult<Py<Self>> {
-        let base = PyTool {};
-        let child = Self {
-            inner: create_terminal_tool(),
-        };
-        let py_obj = Py::new(py, (child, base))?;
-        Ok(py_obj)
+        Py::new(
+            py,
+            (
+                Self {
+                    inner: create_terminal_tool(),
+                },
+                PyTool {},
+            ),
+        )
     }
 
     #[getter]
@@ -139,9 +140,7 @@ impl PyWrapper for PyMCPTool {
     type Inner = MCPTool;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        let base = PyTool {};
-        let child = Self { inner };
-        Py::new(py, (child, base))
+        Py::new(py, (Self { inner }, PyTool {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -195,8 +194,7 @@ impl MCPTransport {
             .map(|t| {
                 Python::attach(|py| {
                     Ok(Py::new(py, (PyMCPTool { inner: t }, PyTool {}))?
-                        .into_pyobject(py)
-                        .unwrap()
+                        .into_pyobject(py)?
                         .into_any()
                         .unbind())
                 })
@@ -270,13 +268,16 @@ impl PythonFunctionTool {
         description: ToolDesc,
         #[gen_stub(override_type(type_repr = "typing.Callable[..., list[Part]]"))] func: Py<PyAny>,
     ) -> PyResult<Py<Self>> {
-        let base = PyTool {};
-        let child = PythonFunctionTool {
-            desc: description,
-            func: Arc::new(func),
-        };
-        let py_obj = Py::new(py, (child, base))?;
-        Ok(py_obj)
+        Py::new(
+            py,
+            (
+                PythonFunctionTool {
+                    desc: description,
+                    func: Arc::new(func),
+                },
+                PyTool {},
+            ),
+        )
     }
 
     #[getter]
@@ -358,13 +359,16 @@ impl PythonAsyncFunctionTool {
         ))]
         func: Py<PyAny>,
     ) -> PyResult<Py<Self>> {
-        let base = PyTool {};
-        let child = PythonAsyncFunctionTool {
-            desc: description,
-            func: Arc::new(func),
-        };
-        let py_obj = Py::new(py, (child, base))?;
-        Ok(py_obj)
+        Py::new(
+            py,
+            (
+                PythonAsyncFunctionTool {
+                    desc: description,
+                    func: Arc::new(func),
+                },
+                PyTool {},
+            ),
+        )
     }
 
     #[getter]

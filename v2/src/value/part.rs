@@ -465,10 +465,10 @@ impl fmt::Display for StyledPart {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.data {
             Part::Text(text) => {
-                f.write_fmt(format_args!("Part {{\"type\": \"{}\", \"{}\"=\"{}\"}}", self.style.text_type, self.style.text_field, text))?
+                f.write_fmt(format_args!("Part {{\"type\": \"{}\", \"{}\": \"{}\"}}", self.style.text_type, self.style.text_field, text))?
             }
             Part::FunctionString(text) => f.write_fmt(format_args!(
-                "Part {{\"type\": \"{}\", {}: \"{}\"}}",
+                "Part {{\"type\": \"{}\", \"{}\": \"{}\"}}",
                 self.style.function_type, self.style.function_field, text
             ))?,
             Part::Function {
@@ -476,7 +476,7 @@ impl fmt::Display for StyledPart {
                 name,
                 arguments,
             } => f.write_fmt(format_args!(
-                "Part {{\"type\": \"{}\", \"{}\"=\"{}\", \"{}\": {{\"{}\": \"{}\", \"{}\": \"{}\"}}}}",
+                "Part {{\"type\": \"{}\", \"{}\":\"{}\", \"{}\": {{\"{}\": \"{}\", \"{}\": \"{}\"}}}}",
                 self.style.function_type,
                 self.style.function_id_field,
                 id,
@@ -487,13 +487,13 @@ impl fmt::Display for StyledPart {
                 arguments
             ))?,
             Part::ImageURL(url) => f.write_fmt(format_args!(
-                "Part {{\"type\": \"{}\", \"{}\"=\"{}\"}}",
+                "Part {{\"type\": \"{}\", \"{}\": \"{}\"}}",
                 self.style.image_url_type,
                 self.style.image_url_field,
                 url
             ))?,
             Part::ImageData{data, mime_type} => f.write_fmt(format_args!(
-                "Part {{\"type\": \"{}\", \"{}\"=({}, {} bytes)}}",
+                "Part {{\"type\": \"{}\", \"{}\":({}, {} bytes)}}",
                 self.style.image_data_type,
                 self.style.image_data_field,
                 mime_type,

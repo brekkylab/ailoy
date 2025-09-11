@@ -60,7 +60,6 @@ def test_vectorstore_operations(vs: ai.BaseVectorStore, emb: ai.LocalEmbeddingMo
     assert get_result0.metadata == input0.metadata
     assert get_result0.embedding == input0.embedding
 
-    # assume the query is more related to Ailoy
     query = "What is Ailoy?"
     query_emb = emb.run_sync(query)
     retrieve_results = vs.retrieve(query_emb, top_k=2)

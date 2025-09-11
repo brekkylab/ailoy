@@ -73,10 +73,7 @@ impl PyWrapper for PyLocalEmbeddingModel {
     }
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        let base = PyEmbeddingModel {};
-        let child = Self { inner };
-        let py_obj = Py::new(py, (child, base))?;
-        Ok(py_obj)
+        Py::new(py, (Self { inner }, PyEmbeddingModel {}))
     }
 }
 

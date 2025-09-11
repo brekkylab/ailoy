@@ -126,10 +126,12 @@ pub fn await_future<T, E: ToString + std::any::Any>(
     let rt = pyo3_async_runtimes::tokio::get_runtime();
     let result = rt.block_on(fut).map_err(|e| {
         if std::any::TypeId::of::<E>() == std::any::TypeId::of::<PyErr>() {
+            // PyErr is returned as-is
             let any_err = Box::new(e) as Box<dyn std::any::Any>;
             let py_err = *any_err.downcast::<PyErr>().unwrap();
             py_err
         } else {
+            // Other errors are converted to PyRuntimeError
             PyRuntimeError::new_err(e.to_string())
         }
     });

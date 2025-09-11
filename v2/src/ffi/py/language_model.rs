@@ -110,10 +110,7 @@ impl PyWrapper for PyLocalLanguageModel {
     type Inner = LocalLanguageModel;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        let base = PyLanguageModel {};
-        let child = Self { inner };
-        let py_obj = Py::new(py, (child, base))?;
-        Ok(py_obj)
+        Py::new(py, (Self { inner }, PyLanguageModel {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -247,10 +244,7 @@ impl PyWrapper for PyOpenAILanguageModel {
     type Inner = OpenAILanguageModel;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        let base = PyLanguageModel {};
-        let child = Self { inner };
-        let py_obj = Py::new(py, (child, base))?;
-        Ok(py_obj)
+        Py::new(py, (Self { inner }, PyLanguageModel {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -297,10 +291,7 @@ impl PyWrapper for PyGeminiLanguageModel {
     type Inner = GeminiLanguageModel;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        let base = PyLanguageModel {};
-        let child = Self { inner };
-        let py_obj = Py::new(py, (child, base))?;
-        Ok(py_obj)
+        Py::new(py, (Self { inner }, PyLanguageModel {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -347,10 +338,7 @@ impl PyWrapper for PyAnthropicLanguageModel {
     type Inner = AnthropicLanguageModel;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        let base = PyLanguageModel {};
-        let child = Self { inner };
-        let py_obj = Py::new(py, (child, base))?;
-        Ok(py_obj)
+        Py::new(py, (Self { inner }, PyLanguageModel {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -397,10 +385,7 @@ impl PyWrapper for PyXAILanguageModel {
     type Inner = XAILanguageModel;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        let base = PyLanguageModel {};
-        let child = Self { inner };
-        let py_obj = Py::new(py, (child, base))?;
-        Ok(py_obj)
+        Py::new(py, (Self { inner }, PyLanguageModel {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
