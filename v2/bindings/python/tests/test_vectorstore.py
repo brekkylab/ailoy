@@ -5,8 +5,13 @@ import ailoy as ai
 
 
 @pytest.fixture(scope="module")
+def emb():
+    return ai.LocalEmbeddingModel.create_sync("BAAI/bge-m3")
+
+
+@pytest.fixture(scope="module")
 def faiss():
-    return ai.FaissVectorStore(dim=10)
+    return ai.FaissVectorStore(dim=1024)
 
 
 @pytest.fixture(scope="module")
@@ -26,17 +31,22 @@ def vs(request: FixtureRequest):
 
 
 @pytest.mark.parametrize("vs", ["faiss", "chroma"], indirect=True)
-def test_vectorstore_operations(vs: ai.BaseVectorStore):
+def test_vectorstore_operations(vs: ai.BaseVectorStore, emb: ai.LocalEmbeddingModel):
     vs.clear()
 
+    doc0 = "Ailoy is an awesome library"
+    emb0 = emb.run_sync(doc0)
     input0 = ai.VectorStoreAddInput(
-        embedding=[1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        document="Ailoy is an awesome library",
+        embedding=emb0,
+        document=doc0,
         metadata={"topic": "Ailoy"},
     )
+
+    doc1 = "Langchain is a library"
+    emb1 = emb.run_sync(doc1)
     input1 = ai.VectorStoreAddInput(
-        embedding=[0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        document="Langchain is a library",
+        embedding=emb1,
+        document=doc1,
         metadata={"topic": "Langchain"},
     )
 
@@ -51,8 +61,9 @@ def test_vectorstore_operations(vs: ai.BaseVectorStore):
     assert get_result0.embedding == input0.embedding
 
     # assume the query is more related to Ailoy
-    query_embedding = [0.9, 0.1, 0, 0, 0, 0, 0, 0, 0, 0]
-    retrieve_results = vs.retrieve(query_embedding, top_k=2)
+    query = "What is Ailoy?"
+    query_emb = emb.run_sync(query)
+    retrieve_results = vs.retrieve(query_emb, top_k=2)
     assert len(retrieve_results) == 2
     assert retrieve_results[0].id == id0
     assert retrieve_results[0].distance < retrieve_results[1].distance

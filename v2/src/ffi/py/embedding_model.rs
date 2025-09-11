@@ -8,11 +8,8 @@ use pyo3_stub_gen_derive::*;
 
 use crate::{
     ffi::py::{
-        base::PyWrapper,
-        cache_progress::{
-            PyCacheProgressIterator, PyCacheProgressSyncIterator, create_cache_progress_iterator,
-            create_cache_progress_sync_iterator,
-        },
+        base::{PyWrapper, await_future},
+        cache_progress::await_cache_result,
     },
     model::{EmbeddingModel, LocalEmbeddingModel},
 };
@@ -93,23 +90,37 @@ impl PyEmbeddingModelMethods<LocalEmbeddingModel> for PyLocalEmbeddingModel {
 #[pymethods]
 impl PyLocalEmbeddingModel {
     #[classmethod]
-    #[gen_stub(override_return_type(type_repr = "CacheProgressIterator[LocalEmbeddingModel]"))]
-    fn create(
-        _cls: &Bound<'_, PyType>,
-        py: Python<'_>,
+    #[gen_stub(override_return_type(type_repr = "typing.Awaitable[LocalEmbeddingModel]"))]
+    #[pyo3(signature = (model_name, progress_callback = None))]
+    fn create<'a>(
+        _cls: &Bound<'a, PyType>,
+        py: Python<'a>,
         model_name: String,
-    ) -> PyResult<Py<PyCacheProgressIterator>> {
-        create_cache_progress_iterator::<PyLocalEmbeddingModel>(model_name, py)
+        #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
+        progress_callback: Option<Py<PyAny>>,
+    ) -> PyResult<Bound<'a, PyAny>> {
+        let fut = async move {
+            let inner =
+                await_cache_result::<LocalEmbeddingModel>(model_name, progress_callback).await?;
+            Python::attach(|py| Py::new(py, (PyLocalEmbeddingModel { inner }, PyEmbeddingModel {})))
+        };
+        pyo3_async_runtimes::tokio::future_into_py(py, fut)
     }
 
     #[classmethod]
-    #[gen_stub(override_return_type(type_repr = "CacheProgressSyncIterator[LocalEmbeddingModel]"))]
+    #[pyo3(signature = (model_name, progress_callback = None))]
     fn create_sync(
         _cls: &Bound<'_, PyType>,
         py: Python<'_>,
         model_name: String,
-    ) -> PyResult<Py<PyCacheProgressSyncIterator>> {
-        create_cache_progress_sync_iterator::<PyLocalEmbeddingModel>(model_name, py)
+        #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
+        progress_callback: Option<Py<PyAny>>,
+    ) -> PyResult<Py<PyLocalEmbeddingModel>> {
+        let inner = await_future(await_cache_result::<LocalEmbeddingModel>(
+            model_name,
+            progress_callback,
+        ))?;
+        Py::new(py, (PyLocalEmbeddingModel { inner }, PyEmbeddingModel {}))
     }
 
     async fn run(&mut self, message: String) -> PyResult<Embedding> {

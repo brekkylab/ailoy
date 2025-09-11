@@ -8,8 +8,6 @@ from ailoy._core import (
     BaseVectorStore,
     BuiltinTool,
     CacheProgress,
-    CacheProgressIterator,
-    CacheProgressSyncIterator,
     ChromaVectorStore,
     EmbeddingModel,
     FaissVectorStore,

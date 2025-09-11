@@ -434,6 +434,39 @@ impl ChromaVectorStore {
         Py::new(py, (ChromaVectorStore { inner }, BaseVectorStore {}))
     }
 
+    fn collection_exists(&self, collection_name: String) -> PyResult<bool> {
+        let col = await_future(self.inner.get_collection(collection_name.as_str()))?;
+        Ok(col.is_some())
+    }
+
+    #[pyo3(signature = (collection_name, metadata = None))]
+    fn create_collection(
+        &self,
+        py: Python<'_>,
+        collection_name: String,
+        metadata: Option<Py<PyDict>>,
+    ) -> PyResult<Py<PyDict>> {
+        let metadata = metadata.map(|metadata| pydict_to_json(py, metadata.bind(py)).unwrap());
+        let col = await_future(
+            self.inner
+                .create_collection(collection_name.as_str(), metadata),
+        )?;
+        let dict = PyDict::new(py);
+        dict.set_item("id", col.id())?;
+        dict.set_item("name", col.name())?;
+        if let Some(m) = col.metadata() {
+            dict.set_item(
+                "metadata",
+                json_to_pydict(py, &serde_json::Value::Object(m.clone()))?,
+            )?;
+        }
+        Ok(dict.unbind())
+    }
+
+    fn delete_collection(&self, collection_name: String) -> PyResult<()> {
+        await_future(self.inner.delete_collection(collection_name.as_str()))
+    }
+
     fn add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
         self._add_vector(input)
     }

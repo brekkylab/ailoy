@@ -10,11 +10,10 @@ pytestmark = [pytest.mark.asyncio]
 
 @pytest_asyncio.fixture(scope="module")
 async def agent():
-    async for v in ai.LocalLanguageModel.create("Qwen/Qwen3-0.6B"):
-        if v.result:
-            model = v.result
-            model.disable_reasoning()
-
+    model = await ai.LocalLanguageModel.create(
+        "Qwen/Qwen3-0.6B", progress_callback=lambda prog: print(prog)
+    )
+    model.disable_reasoning()
     agent = ai.Agent(model)
     return agent
 

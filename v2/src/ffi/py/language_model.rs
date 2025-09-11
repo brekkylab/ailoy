@@ -10,11 +10,8 @@ use tokio::runtime::Runtime;
 
 use crate::{
     ffi::py::{
-        base::PyWrapper,
-        cache_progress::{
-            PyCacheProgressIterator, PyCacheProgressSyncIterator, create_cache_progress_iterator,
-            create_cache_progress_sync_iterator,
-        },
+        base::{PyWrapper, await_future},
+        cache_progress::await_cache_result,
     },
     model::{
         LanguageModel, LocalLanguageModel, anthropic::AnthropicLanguageModel,
@@ -129,26 +126,38 @@ impl PyLanguageModelMethods<LocalLanguageModel> for PyLocalLanguageModel {}
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyLocalLanguageModel {
-    // Async version of creation
     #[classmethod]
-    #[gen_stub(override_return_type(type_repr="CacheProgressIterator[LocalLanguageModel]", imports=("typing")))]
-    pub fn create(
-        _cls: &Bound<'_, PyType>,
-        py: Python,
-        model_name: &str,
-    ) -> PyResult<Py<PyCacheProgressIterator>> {
-        create_cache_progress_iterator::<PyLocalLanguageModel>(model_name.to_string(), py)
+    #[gen_stub(override_return_type(type_repr = "typing.Awaitable[LocalLanguageModel]"))]
+    #[pyo3(signature = (model_name, progress_callback = None))]
+    fn create<'a>(
+        _cls: &Bound<'a, PyType>,
+        py: Python<'a>,
+        model_name: String,
+        #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
+        progress_callback: Option<Py<PyAny>>,
+    ) -> PyResult<Bound<'a, PyAny>> {
+        let fut = async move {
+            let inner =
+                await_cache_result::<LocalLanguageModel>(model_name, progress_callback).await?;
+            Python::attach(|py| Py::new(py, (PyLocalLanguageModel { inner }, PyLanguageModel {})))
+        };
+        pyo3_async_runtimes::tokio::future_into_py(py, fut)
     }
 
-    // Sync version of creation
     #[classmethod]
-    #[gen_stub(override_return_type(type_repr="CacheProgressSyncIterator[LocalLanguageModel]", imports=("typing")))]
-    pub fn create_sync(
+    #[pyo3(signature = (model_name, progress_callback = None))]
+    fn create_sync(
         _cls: &Bound<'_, PyType>,
-        py: Python,
-        model_name: &str,
-    ) -> PyResult<Py<PyCacheProgressSyncIterator>> {
-        create_cache_progress_sync_iterator::<PyLocalLanguageModel>(model_name, py)
+        py: Python<'_>,
+        model_name: String,
+        #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
+        progress_callback: Option<Py<PyAny>>,
+    ) -> PyResult<Py<PyLocalLanguageModel>> {
+        let inner = await_future(await_cache_result::<LocalLanguageModel>(
+            model_name,
+            progress_callback,
+        ))?;
+        Py::new(py, (PyLocalLanguageModel { inner }, PyLanguageModel {}))
     }
 
     #[pyo3(signature = (messages, tools = None))]
@@ -255,7 +264,7 @@ impl PyLanguageModelMethods<OpenAILanguageModel> for PyOpenAILanguageModel {}
 #[pymethods]
 impl PyOpenAILanguageModel {
     #[new]
-    pub fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
+    fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
         Self::into_py_obj(OpenAILanguageModel::new(model_name, api_key), py)
     }
 
@@ -305,7 +314,7 @@ impl PyLanguageModelMethods<GeminiLanguageModel> for PyGeminiLanguageModel {}
 #[pymethods]
 impl PyGeminiLanguageModel {
     #[new]
-    pub fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
+    fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
         Self::into_py_obj(GeminiLanguageModel::new(model_name, api_key), py)
     }
 
@@ -355,7 +364,7 @@ impl PyLanguageModelMethods<AnthropicLanguageModel> for PyAnthropicLanguageModel
 #[pymethods]
 impl PyAnthropicLanguageModel {
     #[new]
-    pub fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
+    fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
         Self::into_py_obj(AnthropicLanguageModel::new(model_name, api_key), py)
     }
 
@@ -405,7 +414,7 @@ impl PyLanguageModelMethods<XAILanguageModel> for PyXAILanguageModel {}
 #[pymethods]
 impl PyXAILanguageModel {
     #[new]
-    pub fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
+    fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
         Self::into_py_obj(XAILanguageModel::new(model_name, api_key), py)
     }
 

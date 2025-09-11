@@ -11,10 +11,7 @@ use agent::{
     PyAgent as Agent, PyAgentRunIterator as AgentRunIterator,
     PyAgentRunSyncIterator as AgentRunSyncIterator,
 };
-use cache_progress::{
-    PyCacheProgress as CacheProgress, PyCacheProgressIterator as CacheProgressIterator,
-    PyCacheProgressSyncIterator as CacheProgressSyncIterator,
-};
+use cache_progress::PyCacheProgress as CacheProgress;
 use embedding_model::{
     PyEmbeddingModel as EmbeddingModel, PyLocalEmbeddingModel as LocalEmbeddingModel,
 };
@@ -50,8 +47,6 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<BaseVectorStore>()?;
     m.add_class::<BuiltinTool>()?;
     m.add_class::<CacheProgress>()?;
-    m.add_class::<CacheProgressIterator>()?;
-    m.add_class::<CacheProgressSyncIterator>()?;
     m.add_class::<ChromaVectorStore>()?;
     m.add_class::<EmbeddingModel>()?;
     m.add_class::<FaissVectorStore>()?;

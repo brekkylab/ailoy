@@ -12,6 +12,7 @@ pip install ailoy-py
 
 ## Quickstart
 
+### Asynchronous version (recommended)
 ```python
 import asyncio
 
@@ -19,12 +20,10 @@ from ailoy import Agent, LocalLanguageModel
 
 async def main():
     # Create Qwen3-0.6B LocalLanguageModel
-    async for v in LocalLanguageModel.create("Qwen/Qwen3-0.6B"):
-        if v.result:
-            model = v.result
+    model = await LocalLanguageModel.create("Qwen/Qwen3-0.6B")
 
     # Create an agent using this model
-    agent = Agent(model, [])
+    agent = Agent(model)
 
     # Ask a prompt and iterate over agent's responses
     async for resp in agent.run("What is your name?"):
@@ -33,6 +32,26 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+```
+
+### Synchronous version
+```python
+from ailoy import Agent, LocalLanguageModel
+
+def main():
+    # Create Qwen3-0.6B LocalLanguageModel
+    model = await LocalLanguageModel.create_sync("Qwen/Qwen3-0.6B")
+
+    # Create an agent using this model
+    agent = Agent(model)
+
+    # Ask a prompt and iterate over agent's responses
+    for resp in agent.run_sync("What is your name?"):
+        print(resp)
+
+
+if __name__ == "__main__":
+    main()
 ```
 
 ## Building from source
