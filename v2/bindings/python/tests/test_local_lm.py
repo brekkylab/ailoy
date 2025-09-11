@@ -29,7 +29,7 @@ async def test_simple_chat(agent: ai.Agent):
 
 async def test_builtin_tool(agent: ai.Agent):
     tool = ai.BuiltinTool.terminal()
-    await agent.add_tool(tool)
+    agent.add_tool(tool)
     agg = ai.MessageAggregator()
     async for resp in agent.run("List the files in the current directory."):
         message = agg.update(resp)
@@ -63,23 +63,23 @@ async def test_python_async_function_tool(agent: ai.Agent):
         func=tool_temperature,
     )
 
-    await agent.add_tool(tool)
+    agent.add_tool(tool)
     agg = ai.MessageAggregator()
     async for resp in agent.run("What is the temperature in Seoul now?"):
         message = agg.update(resp)
         if message:
             print(message)
 
-    await agent.remove_tool(tool.description.name)
+    agent.remove_tool(tool.description.name)
 
 
 async def test_mcp_tools(agent: ai.Agent):
     tools = await ai.MCPTransport.Stdio("uvx", ["mcp-server-time"]).tools("time")
-    await agent.add_tools(tools)
+    agent.add_tools(tools)
     agg = ai.MessageAggregator()
     async for resp in agent.run("What time is it now in Asia/Seoul?"):
         message = agg.update(resp)
         if message:
             print(message)
 
-    await agent.remove_tools([t.description.name for t in tools])
+    agent.remove_tools([t.description.name for t in tools])

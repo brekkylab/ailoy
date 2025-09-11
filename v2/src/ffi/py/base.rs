@@ -1,5 +1,6 @@
 use pyo3::{
     IntoPyObjectExt, PyClass,
+    exceptions::PyRuntimeError,
     prelude::*,
     types::{PyDict, PyList},
 };
@@ -117,4 +118,15 @@ pub fn pydict_to_json(py: Python, py_dict: &Bound<PyDict>) -> PyResult<Map<Strin
         map.insert(key_str, json_val);
     }
     Ok(map)
+}
+
+pub fn await_future<T, E: ToString>(fut: impl Future<Output = Result<T, E>>) -> PyResult<T> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    let result = rt
+        .block_on(fut)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()));
+    result
 }

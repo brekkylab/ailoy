@@ -12,7 +12,7 @@ use pyo3_stub_gen::derive::*;
 use crate::{
     agent::Agent,
     ffi::py::{
-        base::PyWrapper,
+        base::{PyWrapper, await_future},
         language_model::{
             PyAnthropicLanguageModel, PyGeminiLanguageModel, PyLanguageModel, PyLocalLanguageModel,
             PyOpenAILanguageModel, PyXAILanguageModel,
@@ -98,40 +98,28 @@ impl PyAgent {
         Ok(PyList::new(py, tools)?.unbind())
     }
 
-    async fn add_tools(
+    fn add_tools(
         &mut self,
         #[gen_stub(override_type(type_repr = "list[Tool]"))] tools: Py<PyList>,
     ) -> PyResult<()> {
         let tools = pylist_to_tools(tools)?;
-        self.inner
-            .add_tools(tools)
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        await_future(self.inner.add_tools(tools))
     }
 
-    async fn add_tool(
+    fn add_tool(
         &mut self,
         #[gen_stub(override_type(type_repr = "Tool"))] tool: Py<PyAny>,
     ) -> PyResult<()> {
         let tool = Python::attach(|py| tool.extract::<ArcTool>(py).map(|arc| arc.0))?;
-        self.inner
-            .add_tool(tool)
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        await_future(self.inner.add_tool(tool))
     }
 
-    async fn remove_tools(&mut self, tool_names: Vec<String>) -> PyResult<()> {
-        self.inner
-            .remove_tools(tool_names)
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    fn remove_tools(&mut self, tool_names: Vec<String>) -> PyResult<()> {
+        await_future(self.inner.remove_tools(tool_names))
     }
 
-    async fn remove_tool(&mut self, tool_name: String) -> PyResult<()> {
-        self.inner
-            .remove_tool(tool_name)
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    fn remove_tool(&mut self, tool_name: String) -> PyResult<()> {
+        await_future(self.inner.remove_tool(tool_name))
     }
 
     fn run(&mut self, message: String) -> PyResult<PyAgentRunIterator> {

@@ -1,10 +1,8 @@
-use std::sync::Arc;
-
-use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyDict};
+use pyo3::{exceptions::PyNotImplementedError, prelude::*, types::PyDict};
 use pyo3_stub_gen::derive::*;
 
 use crate::{
-    ffi::py::base::{json_to_pydict, pydict_to_json},
+    ffi::py::base::{await_future, json_to_pydict, pydict_to_json},
     knowledge_base::{AddInput, ChromaStore, FaissStore, GetResult, RetrieveResult, VectorStore},
 };
 
@@ -174,111 +172,163 @@ pub trait VectorStoreMethods<T: VectorStore + 'static> {
 
     fn inner_mut(&mut self) -> &mut T;
 
-    async fn _add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
-        let id = self
-            .inner_mut()
-            .add_vector(input.into())
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(id)
+    fn _add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
+        await_future(self.inner_mut().add_vector(input.into()))
     }
 
-    async fn _add_vectors(
-        &mut self,
-        inputs: Vec<Py<VectorStoreAddInput>>,
-    ) -> PyResult<Vec<String>> {
-        let ids = self
-            .inner_mut()
-            .add_vectors(inputs.into_iter().map(|input| input.into()).collect())
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(ids)
+    fn _add_vectors(&mut self, inputs: Vec<Py<VectorStoreAddInput>>) -> PyResult<Vec<String>> {
+        await_future(
+            self.inner_mut()
+                .add_vectors(inputs.into_iter().map(|input| input.into()).collect()),
+        )
     }
 
-    async fn _get_by_id(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
-        let result = self
-            .inner()
-            .get_by_id(id.as_str())
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    fn _get_by_id(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
+        let result = await_future(self.inner().get_by_id(id.as_str()))?;
         match result {
             Some(result) => Ok(Some(VectorStoreGetResult::from(result))),
             None => Ok(None),
         }
     }
 
-    async fn _get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
-        Ok(self
-            .inner()
-            .get_by_ids(&ids.iter().map(|id| id.as_str()).collect::<Vec<_>>())
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
-            .into_iter()
-            .map(|result| VectorStoreGetResult::from(result))
-            .collect())
+    fn _get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
+        Ok(await_future(
+            self.inner()
+                .get_by_ids(&ids.iter().map(|id| id.as_str()).collect::<Vec<_>>()),
+        )?
+        .into_iter()
+        .map(|result| VectorStoreGetResult::from(result))
+        .collect::<Vec<_>>())
     }
 
-    async fn _retrieve(
+    fn _retrieve(
         &self,
         query_embedding: Embedding,
         top_k: usize,
     ) -> PyResult<Vec<VectorStoreRetrieveResult>> {
-        Ok(self
-            .inner()
-            .retrieve(query_embedding, top_k)
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+        Ok(await_future(self.inner().retrieve(query_embedding, top_k))?
             .into_iter()
             .map(|result| VectorStoreRetrieveResult::from(result))
-            .collect())
+            .collect::<Vec<_>>())
     }
 
-    async fn _batch_retrieve(
+    fn _batch_retrieve(
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
     ) -> PyResult<Vec<Vec<VectorStoreRetrieveResult>>> {
-        Ok(self
-            .inner()
-            .batch_retrieve(query_embeddings, top_k)
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
-            .into_iter()
-            .map(|batch| {
-                batch
-                    .into_iter()
-                    .map(|item| VectorStoreRetrieveResult::from(item))
-                    .collect()
-            })
-            .collect())
+        Ok(
+            await_future(self.inner().batch_retrieve(query_embeddings, top_k))?
+                .into_iter()
+                .map(|batch| {
+                    batch
+                        .into_iter()
+                        .map(|item| VectorStoreRetrieveResult::from(item))
+                        .collect()
+                })
+                .collect(),
+        )
     }
 
-    async fn _remove_vector(&mut self, id: String) -> PyResult<()> {
-        self.inner_mut()
-            .remove_vector(id.as_str())
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    fn _remove_vector(&mut self, id: String) -> PyResult<()> {
+        await_future(self.inner_mut().remove_vector(id.as_str()))
     }
 
-    async fn _remove_vectors(&mut self, ids: Vec<String>) -> PyResult<()> {
-        self.inner_mut()
-            .remove_vectors(&ids.iter().map(|id| id.as_str()).collect::<Vec<_>>())
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    fn _remove_vectors(&mut self, ids: Vec<String>) -> PyResult<()> {
+        await_future(
+            self.inner_mut()
+                .remove_vectors(&ids.iter().map(|id| id.as_str()).collect::<Vec<_>>()),
+        )
     }
 
-    async fn _clear(&mut self) -> PyResult<()> {
-        self.inner_mut()
-            .clear()
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    fn _clear(&mut self) -> PyResult<()> {
+        await_future(self.inner_mut().clear())
     }
 
-    async fn _count(&self) -> PyResult<usize> {
-        self.inner()
-            .count()
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    fn _count(&self) -> PyResult<usize> {
+        await_future(self.inner().count())
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl BaseVectorStore {
+    #[allow(unused_variables)]
+    fn add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
+        Err(PyNotImplementedError::new_err(
+            "Subclass of BaseVectorStore must implement 'add_vector'",
+        ))
+    }
+
+    #[allow(unused_variables)]
+    fn add_vectors(&mut self, inputs: Vec<Py<VectorStoreAddInput>>) -> PyResult<Vec<String>> {
+        Err(PyNotImplementedError::new_err(
+            "Subclass of BaseVectorStore must implement 'add_vectors'",
+        ))
+    }
+
+    #[allow(unused_variables)]
+    fn get_by_id(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
+        Err(PyNotImplementedError::new_err(
+            "Subclass of BaseVectorStore must implement 'get_by_id'",
+        ))
+    }
+
+    #[allow(unused_variables)]
+    fn get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
+        Err(PyNotImplementedError::new_err(
+            "Subclass of BaseVectorStore must implement 'get_by_ids'",
+        ))
+    }
+
+    #[allow(unused_variables)]
+    fn retrieve(
+        &self,
+        query_embedding: Embedding,
+        top_k: usize,
+    ) -> PyResult<Vec<VectorStoreRetrieveResult>> {
+        Err(PyNotImplementedError::new_err(
+            "Subclass of BaseVectorStore must implement 'retrieve'",
+        ))
+    }
+
+    #[allow(unused_variables)]
+    fn batch_retrieve(
+        &self,
+        query_embeddings: Vec<Embedding>,
+        top_k: usize,
+    ) -> PyResult<Vec<Vec<VectorStoreRetrieveResult>>> {
+        Err(PyNotImplementedError::new_err(
+            "Subclass of BaseVectorStore must implement 'batch_retrieve'",
+        ))
+    }
+
+    #[allow(unused_variables)]
+    fn remove_vector(&mut self, id: String) -> PyResult<()> {
+        Err(PyNotImplementedError::new_err(
+            "Subclass of BaseVectorStore must implement 'remove_vector'",
+        ))
+    }
+
+    #[allow(unused_variables)]
+    fn remove_vectors(&mut self, ids: Vec<String>) -> PyResult<()> {
+        Err(PyNotImplementedError::new_err(
+            "Subclass of BaseVectorStore must implement 'remove_vectors'",
+        ))
+    }
+
+    #[allow(unused_variables)]
+    fn clear(&mut self) -> PyResult<()> {
+        Err(PyNotImplementedError::new_err(
+            "Subclass of BaseVectorStore must implement 'clear'",
+        ))
+    }
+
+    #[allow(unused_variables)]
+    fn count(&self) -> PyResult<usize> {
+        Err(PyNotImplementedError::new_err(
+            "Subclass of BaseVectorStore must implement 'count'",
+        ))
     }
 }
 
@@ -303,63 +353,56 @@ impl VectorStoreMethods<FaissStore> for FaissVectorStore {
 impl FaissVectorStore {
     #[new]
     fn __new__(py: Python<'_>, dim: i32) -> PyResult<Py<Self>> {
-        let runtime = tokio::runtime::Runtime::new().map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to create runtime: {}", e.to_string()))
-        })?;
-        let inner = runtime.block_on(async {
-            FaissStore::new(dim)
-                .await
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
-        })?;
+        let inner = await_future(FaissStore::new(dim))?;
         Py::new(py, (FaissVectorStore { inner }, BaseVectorStore {}))
     }
 
-    async fn add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
-        self._add_vector(input).await
+    fn add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
+        self._add_vector(input)
     }
 
-    async fn add_vectors(&mut self, inputs: Vec<Py<VectorStoreAddInput>>) -> PyResult<Vec<String>> {
-        self._add_vectors(inputs).await
+    fn add_vectors(&mut self, inputs: Vec<Py<VectorStoreAddInput>>) -> PyResult<Vec<String>> {
+        self._add_vectors(inputs)
     }
 
-    async fn get_by_id(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
-        self._get_by_id(id).await
+    fn get_by_id(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
+        self._get_by_id(id)
     }
 
-    async fn get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
-        self._get_by_ids(ids).await
+    fn get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
+        self._get_by_ids(ids)
     }
 
-    async fn retrieve(
+    fn retrieve(
         &self,
         query_embedding: Embedding,
         top_k: usize,
     ) -> PyResult<Vec<VectorStoreRetrieveResult>> {
-        self._retrieve(query_embedding, top_k).await
+        self._retrieve(query_embedding, top_k)
     }
 
-    async fn batch_retrieve(
+    fn batch_retrieve(
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
     ) -> PyResult<Vec<Vec<VectorStoreRetrieveResult>>> {
-        self._batch_retrieve(query_embeddings, top_k).await
+        self._batch_retrieve(query_embeddings, top_k)
     }
 
-    async fn remove_vector(&mut self, id: String) -> PyResult<()> {
-        self._remove_vector(id).await
+    fn remove_vector(&mut self, id: String) -> PyResult<()> {
+        self._remove_vector(id)
     }
 
-    async fn remove_vectors(&mut self, ids: Vec<String>) -> PyResult<()> {
-        self._remove_vectors(ids).await
+    fn remove_vectors(&mut self, ids: Vec<String>) -> PyResult<()> {
+        self._remove_vectors(ids)
     }
 
-    async fn clear(&mut self) -> PyResult<()> {
-        self._clear().await
+    fn clear(&mut self) -> PyResult<()> {
+        self._clear()
     }
 
-    async fn count(&self) -> PyResult<usize> {
-        self._count().await
+    fn count(&self) -> PyResult<usize> {
+        self._count()
     }
 }
 
@@ -367,7 +410,6 @@ impl FaissVectorStore {
 #[pyclass(name = "ChromaVectorStore", extends = BaseVectorStore)]
 pub struct ChromaVectorStore {
     inner: ChromaStore,
-    rt: Arc<tokio::runtime::Runtime>,
 }
 
 impl VectorStoreMethods<ChromaStore> for ChromaVectorStore {
@@ -385,72 +427,58 @@ impl VectorStoreMethods<ChromaStore> for ChromaVectorStore {
 impl ChromaVectorStore {
     #[new]
     fn __new__(py: Python<'_>, chroma_url: String, collection_name: String) -> PyResult<Py<Self>> {
-        let rt = tokio::runtime::Runtime::new().map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to create runtime: {}", e.to_string()))
-        })?;
-        let inner = rt.block_on(async {
-            ChromaStore::new(chroma_url.as_str(), collection_name.as_str())
-                .await
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
-        })?;
-        Py::new(
-            py,
-            (
-                ChromaVectorStore {
-                    inner,
-                    rt: Arc::new(rt),
-                },
-                BaseVectorStore {},
-            ),
-        )
+        let inner = await_future(ChromaStore::new(
+            chroma_url.as_str(),
+            collection_name.as_str(),
+        ))?;
+        Py::new(py, (ChromaVectorStore { inner }, BaseVectorStore {}))
     }
 
-    async fn add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
-        self.rt.clone().block_on(self._add_vector(input))
+    fn add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
+        self._add_vector(input)
     }
 
-    async fn add_vectors(&mut self, inputs: Vec<Py<VectorStoreAddInput>>) -> PyResult<Vec<String>> {
-        self.rt.clone().block_on(self._add_vectors(inputs))
+    fn add_vectors(&mut self, inputs: Vec<Py<VectorStoreAddInput>>) -> PyResult<Vec<String>> {
+        self._add_vectors(inputs)
     }
 
-    async fn get_by_id(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
-        self.rt.block_on(self._get_by_id(id))
+    fn get_by_id(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
+        self._get_by_id(id)
     }
 
-    async fn get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
-        self.rt.block_on(self._get_by_ids(ids))
+    fn get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
+        self._get_by_ids(ids)
     }
 
-    async fn retrieve(
+    fn retrieve(
         &self,
         query_embedding: Embedding,
         top_k: usize,
     ) -> PyResult<Vec<VectorStoreRetrieveResult>> {
-        self.rt.block_on(self._retrieve(query_embedding, top_k))
+        self._retrieve(query_embedding, top_k)
     }
 
-    async fn batch_retrieve(
+    fn batch_retrieve(
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
     ) -> PyResult<Vec<Vec<VectorStoreRetrieveResult>>> {
-        self.rt
-            .block_on(self._batch_retrieve(query_embeddings, top_k))
+        self._batch_retrieve(query_embeddings, top_k)
     }
 
-    async fn remove_vector(&mut self, id: String) -> PyResult<()> {
-        self.rt.clone().block_on(self._remove_vector(id))
+    fn remove_vector(&mut self, id: String) -> PyResult<()> {
+        self._remove_vector(id)
     }
 
-    async fn remove_vectors(&mut self, ids: Vec<String>) -> PyResult<()> {
-        self.rt.clone().block_on(self._remove_vectors(ids))
+    fn remove_vectors(&mut self, ids: Vec<String>) -> PyResult<()> {
+        self._remove_vectors(ids)
     }
 
-    async fn clear(&mut self) -> PyResult<()> {
-        self.rt.clone().block_on(self._clear())
+    fn clear(&mut self) -> PyResult<()> {
+        self._clear()
     }
 
-    async fn count(&self) -> PyResult<usize> {
-        self.rt.block_on(self._count())
+    fn count(&self) -> PyResult<usize> {
+        self._count()
     }
 }
