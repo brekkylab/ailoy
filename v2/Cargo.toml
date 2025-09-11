@@ -26,7 +26,7 @@ gemini-rust = { git = "https://github.com/brekkylab/gemini-rust.git", branch = "
 indexmap = { version = "2", features = ["serde"] }
 jsonschema = "0.33.0"
 mime-infer = "4.0.0"
-minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
+minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json", "preserve_order"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { version = "3", features = ["tokio_rt"], optional = true }
 napi-derive = { version = "3", optional = true }
