@@ -5,7 +5,7 @@ use pyo3::{
     Python,
     exceptions::{PyRuntimeError, PyStopAsyncIteration, PyStopIteration, PyTypeError},
     prelude::*,
-    types::PyList,
+    types::{PyList, PyString},
 };
 use pyo3_stub_gen::derive::*;
 
@@ -14,13 +14,13 @@ use crate::{
     ffi::py::{
         base::{PyWrapper, await_future},
         language_model::{
-            PyAnthropicLanguageModel, PyGeminiLanguageModel, PyLanguageModel, PyLocalLanguageModel,
-            PyOpenAILanguageModel, PyXAILanguageModel,
+            PyAnthropicLanguageModel, PyBaseLanguageModel, PyGeminiLanguageModel,
+            PyLocalLanguageModel, PyOpenAILanguageModel, PyXAILanguageModel,
         },
         tool::ArcTool,
     },
     tool::Tool,
-    value::MessageOutput,
+    value::{MessageOutput, Part},
 };
 
 #[gen_stub_pyclass]
@@ -42,7 +42,8 @@ fn pylist_to_tools(tools: Py<PyList>) -> PyResult<Vec<Arc<dyn Tool>>> {
 impl PyAgent {
     fn _spawn(
         &self,
-        message: String,
+        py: Python<'_>,
+        contents: Py<PyAny>,
     ) -> PyResult<(
         &'static tokio::runtime::Runtime,
         async_channel::Receiver<Result<MessageOutput, String>>,
@@ -52,8 +53,30 @@ impl PyAgent {
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         let (tx, rx) = async_channel::unbounded::<Result<MessageOutput, String>>();
 
+        let contents_bound = contents.bind(py);
+        let parts = if let Ok(list) = contents_bound.downcast::<PyList>() {
+            list.into_iter()
+                .map(|item| {
+                    if let Ok(item) = item.downcast::<Part>() {
+                        Ok(item.as_unbound().borrow(py).clone())
+                    } else {
+                        // If the list item is not a type of part, it's just converted to a text type part.
+                        let text = item.to_string();
+                        Ok(Part::new_text(text))
+                    }
+                })
+                .collect::<PyResult<Vec<Part>>>()
+        } else if let Ok(str) = contents_bound.downcast::<PyString>() {
+            let text = str.to_string();
+            Ok(vec![Part::new_text(text)])
+        } else {
+            Err(PyTypeError::new_err(
+                "contents should be either a str or a list of Part",
+            ))
+        }?;
+
         rt.spawn(async move {
-            let mut strm = inner.run(message).boxed();
+            let mut strm = inner.run(parts).boxed();
 
             while let Some(item) = strm.next().await {
                 if tx.send(item).await.is_err() {
@@ -75,12 +98,12 @@ impl PyAgent {
     #[pyo3(signature = (lm, tools = None))]
     fn __new__(
         py: Python<'_>,
-        lm: Bound<'_, PyAny>,
-        #[gen_stub(override_type(type_repr = "list[Tool]"))] tools: Option<Py<PyList>>,
+        #[gen_stub(override_type(type_repr = "BaseLanguageModel"))] lm: Bound<'_, PyAny>,
+        #[gen_stub(override_type(type_repr = "list[BaseTool]"))] tools: Option<Py<PyList>>,
     ) -> PyResult<Py<Self>> {
-        if !lm.is_instance_of::<PyLanguageModel>() {
+        if !lm.is_instance_of::<PyBaseLanguageModel>() {
             return Err(PyTypeError::new_err(
-                "lm must be a subclass of LanguageModel",
+                "lm must be a subclass of BaseLanguageModel",
             ));
         }
 
@@ -108,7 +131,7 @@ impl PyAgent {
         Py::new(py, Self { inner: agent })
     }
 
-    #[gen_stub(override_return_type(type_repr = "LanguageModel"))]
+    #[gen_stub(override_return_type(type_repr = "BaseLanguageModel"))]
     #[getter]
     fn lm(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let lm_ref = self.inner.get_lm();
@@ -116,7 +139,7 @@ impl PyAgent {
         Ok(obj.unbind())
     }
 
-    #[gen_stub(override_return_type(type_repr = "list[Tool]"))]
+    #[gen_stub(override_return_type(type_repr = "list[BaseTool]"))]
     #[getter]
     fn tools(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
         let tools = self
@@ -130,7 +153,7 @@ impl PyAgent {
 
     fn add_tools(
         &mut self,
-        #[gen_stub(override_type(type_repr = "list[Tool]"))] tools: Py<PyList>,
+        #[gen_stub(override_type(type_repr = "list[BaseTool]"))] tools: Py<PyList>,
     ) -> PyResult<()> {
         let tools = pylist_to_tools(tools)?;
         await_future(self.inner.add_tools(tools))
@@ -138,7 +161,7 @@ impl PyAgent {
 
     fn add_tool(
         &mut self,
-        #[gen_stub(override_type(type_repr = "Tool"))] tool: Py<PyAny>,
+        #[gen_stub(override_type(type_repr = "BaseTool"))] tool: Py<PyAny>,
     ) -> PyResult<()> {
         let tool = Python::attach(|py| tool.extract::<ArcTool>(py).map(|arc| arc.0))?;
         await_future(self.inner.add_tool(tool))
@@ -152,13 +175,21 @@ impl PyAgent {
         await_future(self.inner.remove_tool(tool_name))
     }
 
-    fn run(&self, message: String) -> PyResult<PyAgentRunIterator> {
-        let (_, rx) = self._spawn(message)?;
+    fn run(
+        &self,
+        py: Python<'_>,
+        #[gen_stub(override_type(type_repr = "str | list[Part]"))] contents: Py<PyAny>,
+    ) -> PyResult<PyAgentRunIterator> {
+        let (_, rx) = self._spawn(py, contents)?;
         Ok(PyAgentRunIterator { rx })
     }
 
-    fn run_sync(&mut self, message: String) -> PyResult<PyAgentRunSyncIterator> {
-        let (rt, rx) = self._spawn(message)?;
+    fn run_sync(
+        &self,
+        py: Python<'_>,
+        #[gen_stub(override_type(type_repr = "str | list[Part]"))] contents: Py<PyAny>,
+    ) -> PyResult<PyAgentRunSyncIterator> {
+        let (rt, rx) = self._spawn(py, contents)?;
         Ok(PyAgentRunSyncIterator { rt, rx })
     }
 }

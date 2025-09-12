@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use pyo3::{
+    PyClass,
     exceptions::{PyNotImplementedError, PyRuntimeError, PyTypeError},
     prelude::*,
     types::{PyDict, PyList, PyTuple},
@@ -18,16 +19,16 @@ use crate::{
 
 #[derive(Clone)]
 #[gen_stub_pyclass]
-#[pyclass(name = "Tool", subclass)]
-pub struct PyTool {}
+#[pyclass(name = "BaseTool", subclass)]
+pub struct PyBaseTool {}
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyTool {
+impl PyBaseTool {
     #[getter]
     fn description(&self) -> PyResult<ToolDesc> {
         Err(PyNotImplementedError::new_err(
-            "Tool subclasses must implement 'description' getter",
+            "BaseTool subclasses must implement 'description' getter",
         ))
     }
 
@@ -36,12 +37,12 @@ impl PyTool {
     #[pyo3(signature = (**kwargs))]
     fn __call__(&self, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
         Err(PyNotImplementedError::new_err(
-            "Tool subclasses must implement '__call__'",
+            "BaseTool subclasses must implement '__call__'",
         ))
     }
 }
 
-pub trait PyToolMethods<T: Tool + Clone + 'static> {
+pub trait PyToolMethods<T: Tool + Clone + 'static>: PyClass<BaseType = PyBaseTool> {
     fn inner(&self) -> &T;
 
     fn _description(&self) -> PyResult<ToolDesc> {
@@ -72,7 +73,7 @@ pub trait PyToolMethods<T: Tool + Clone + 'static> {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "BuiltinTool", extends = PyTool)]
+#[pyclass(name = "BuiltinTool", extends = PyBaseTool)]
 pub struct PyBuiltinTool {
     inner: BuiltinTool,
 }
@@ -81,7 +82,7 @@ impl PyWrapper for PyBuiltinTool {
     type Inner = BuiltinTool;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyTool {}))
+        Py::new(py, (Self { inner }, PyBaseTool {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -106,7 +107,7 @@ impl PyBuiltinTool {
                 Self {
                     inner: create_terminal_tool(),
                 },
-                PyTool {},
+                PyBaseTool {},
             ),
         )
     }
@@ -131,7 +132,7 @@ impl PyBuiltinTool {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "MCPTool", extends = PyTool)]
+#[pyclass(name = "MCPTool", extends = PyBaseTool)]
 pub struct PyMCPTool {
     inner: MCPTool,
 }
@@ -140,7 +141,7 @@ impl PyWrapper for PyMCPTool {
     type Inner = MCPTool;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyTool {}))
+        Py::new(py, (Self { inner }, PyBaseTool {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -193,7 +194,7 @@ impl MCPTransport {
             .into_iter()
             .map(|t| {
                 Python::attach(|py| {
-                    Ok(Py::new(py, (PyMCPTool { inner: t }, PyTool {}))?
+                    Ok(Py::new(py, (PyMCPTool { inner: t }, PyBaseTool {}))?
                         .into_pyobject(py)?
                         .into_any()
                         .unbind())
@@ -206,32 +207,32 @@ impl MCPTransport {
     }
 }
 
-fn pylist_to_parts(list: Py<PyAny>) -> Result<Vec<Part>, String> {
-    let parts = Python::attach(|py| {
-        if let Ok(list) = list.downcast_bound::<PyList>(py) {
+fn function_tool_result_to_parts(result: Py<PyAny>) -> Result<Vec<Part>, String> {
+    Python::attach(|py| {
+        if let Ok(list) = result.downcast_bound::<PyList>(py) {
             list.iter()
                 .map(|item| {
                     if let Ok(item) = item.downcast::<Part>() {
                         Ok(item.as_unbound().borrow(py).clone())
                     } else {
-                        Err(PyRuntimeError::new_err("Tool item is not a type of Part"))
+                        // If the list item is not a type of part, it's just converted to a text type part.
+                        let text = item.to_string();
+                        Ok(Part::new_text(text))
                     }
                 })
                 .collect::<PyResult<Vec<Part>>>()
         } else {
-            Err(PyRuntimeError::new_err(
-                "Tool result should be a list of Part",
-            ))
+            // If the result is not a list of part, it's just converted to a single text type part.
+            let text = result.to_string();
+            Ok(vec![Part::new_text(text)])
         }
     })
-    .map_err(|e| e.to_string())?;
-
-    Ok(parts)
+    .map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Clone)]
 #[gen_stub_pyclass]
-#[pyclass(name = "PythonFunctionTool", extends = PyTool, subclass)]
+#[pyclass(name = "PythonFunctionTool", extends = PyBaseTool, subclass)]
 pub struct PythonFunctionTool {
     desc: ToolDesc,
     // Sync tool function
@@ -255,7 +256,7 @@ impl Tool for PythonFunctionTool {
         })
         .map_err(|e| e.to_string())?;
 
-        pylist_to_parts(result)
+        function_tool_result_to_parts(result)
     }
 }
 
@@ -265,8 +266,8 @@ impl PythonFunctionTool {
     #[new]
     fn __new__(
         py: Python<'_>,
+        #[gen_stub(override_type(type_repr = "typing.Callable[..., typing.Any]"))] func: Py<PyAny>,
         description: ToolDesc,
-        #[gen_stub(override_type(type_repr = "typing.Callable[..., list[Part]]"))] func: Py<PyAny>,
     ) -> PyResult<Py<Self>> {
         Py::new(
             py,
@@ -275,7 +276,7 @@ impl PythonFunctionTool {
                     desc: description,
                     func: Arc::new(func),
                 },
-                PyTool {},
+                PyBaseTool {},
             ),
         )
     }
@@ -302,7 +303,7 @@ impl PythonFunctionTool {
 
 #[derive(Debug, Clone)]
 #[gen_stub_pyclass]
-#[pyclass(name = "PythonAsyncFunctionTool", extends = PyTool, subclass)]
+#[pyclass(name = "PythonAsyncFunctionTool", extends = PyBaseTool, subclass)]
 pub struct PythonAsyncFunctionTool {
     desc: ToolDesc,
     // Async tool function
@@ -337,7 +338,7 @@ impl Tool for PythonAsyncFunctionTool {
         })
         .map_err(|e| e.to_string())?;
 
-        pylist_to_parts(result)
+        function_tool_result_to_parts(result)
     }
 }
 
@@ -353,11 +354,11 @@ impl PythonAsyncFunctionTool {
     #[new]
     fn __new__(
         py: Python<'_>,
-        description: ToolDesc,
         #[gen_stub(override_type(
-            type_repr = "typing.Callable[..., typing.Awaitable[list[Part]]]"
+            type_repr = "typing.Callable[..., typing.Awaitable[typing.Any]]"
         ))]
         func: Py<PyAny>,
+        description: ToolDesc,
     ) -> PyResult<Py<Self>> {
         Py::new(
             py,
@@ -366,7 +367,7 @@ impl PythonAsyncFunctionTool {
                     desc: description,
                     func: Arc::new(func),
                 },
-                PyTool {},
+                PyBaseTool {},
             ),
         )
     }
@@ -403,11 +404,11 @@ impl<'py> IntoPyObject<'py> for ArcTool {
         } else if let Some(tool) = self.0.downcast_ref::<MCPTool>() {
             Ok(PyMCPTool::into_py_obj(tool.clone(), py)?.into_any())
         } else if let Some(tool) = self.0.downcast_ref::<PythonFunctionTool>() {
-            Ok(Py::new(py, (tool.clone(), PyTool {}))?.into_any())
+            Ok(Py::new(py, (tool.clone(), PyBaseTool {}))?.into_any())
         } else if let Some(tool) = self.0.downcast_ref::<PythonAsyncFunctionTool>() {
-            Ok(Py::new(py, (tool.clone(), PyTool {}))?.into_any())
+            Ok(Py::new(py, (tool.clone(), PyBaseTool {}))?.into_any())
         } else {
-            Err(PyRuntimeError::new_err("Failed to downcast Tool"))
+            Err(PyRuntimeError::new_err("Failed to downcast BaseTool"))
         }?;
         Ok(py_any.into_bound(py))
     }

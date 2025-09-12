@@ -65,7 +65,7 @@ impl LanguageModel for LocalLanguageModel {
             let mut mode = "content".to_owned();
             let mut finish_reason = FinishReason::Stop;
 
-            yield MessageOutput::new().with_delta(Message::with_role(Role::Assistant));
+            yield MessageOutput::new().with_delta(Message::new().with_role(Role::Assistant));
 
             // @jhlee: TODO remove hard-coded token names
             loop {
@@ -256,9 +256,11 @@ mod tests {
         let mut model = model.unwrap();
         model.enable_reasoning();
         let msgs = vec![
-            Message::with_role(Role::System)
+            Message::new()
+                .with_role(Role::System)
                 .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
-            Message::with_role(Role::User)
+            Message::new()
+                .with_role(Role::User)
                 .with_contents(vec![Part::Text("Hi what's your name?".to_owned())]),
             // Message::with_role(Role::Assistant)
             //     .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
@@ -329,9 +331,11 @@ mod tests {
             .unwrap(),
         ];
         let msgs = vec![
-            Message::with_role(Role::User).with_contents(vec![Part::Text(
-                "How much hot currently in Dubai?".to_owned(),
-            )]),
+            Message::new()
+                .with_role(Role::User)
+                .with_contents(vec![Part::Text(
+                    "How much hot currently in Dubai?".to_owned(),
+                )]),
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, tools);
@@ -400,12 +404,12 @@ mod tests {
             .unwrap(),
         ];
         let msgs = vec![
-            Message::with_role(Role::User)
+            Message::new().with_role(Role::User)
                 .with_contents([Part::new_text("How much hot currently in Dubai?".to_owned())]),
-            Message::with_role(Role::Assistant)
+            Message::new().with_role(Role::Assistant)
                 .with_contents([Part::new_text("\n\n")])
                 .with_tool_calls([Part::new_function_string("\n{\"name\": \"temperature\", \"arguments\": {\"location\": \"Dubai\", \"unit\": \"Celsius\"}}\n")]),
-            Message::with_role(Role::Tool).with_tool_call_id("temperature").with_contents([Part::new_text("40")])
+            Message::new().with_role(Role::Tool).with_tool_call_id("temperature").with_contents([Part::new_text("40")])
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, tools);

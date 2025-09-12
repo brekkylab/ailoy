@@ -50,7 +50,7 @@ async def test_python_async_function_tool(agent: ai.Agent):
             int: The temperature
         """
         await asyncio.sleep(1.0)
-        return [ai.Part.Text('{"temperature":"36"}')]
+        return 36
 
     tool = ai.PythonAsyncFunctionTool(func=tool_temperature)
 

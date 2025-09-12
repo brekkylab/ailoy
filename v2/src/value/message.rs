@@ -99,7 +99,7 @@ pub enum Role {
 ///   "reasoning": [ { "type": "text", "text": "(model reasoning tokens, if exposed)" } ]
 /// }
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct Message {
@@ -112,69 +112,38 @@ pub struct Message {
 
 impl Message {
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_role(role: Role) -> Self {
-        Message {
-            role: Some(role),
-            reasoning: String::new(),
-            contents: Vec::new(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-        }
-    }
-
-    pub fn with_reasoning(self, reasoning: impl Into<String>) -> Self {
-        Message {
-            role: self.role,
-            reasoning: reasoning.into(),
-            contents: self.contents,
-            tool_calls: self.tool_calls,
-            tool_call_id: self.tool_call_id,
-        }
-    }
-
-    pub fn with_contents(self, contents: impl IntoIterator<Item = Part>) -> Self {
-        Message {
-            role: self.role,
-            reasoning: self.reasoning,
-            contents: contents.into_iter().collect(),
-            tool_calls: self.tool_calls,
-            tool_call_id: self.tool_call_id,
-        }
-    }
-
-    pub fn with_tool_calls(self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
-        Message {
-            role: self.role,
-            reasoning: self.reasoning,
-            contents: self.contents,
-            tool_calls: tool_calls.into_iter().collect(),
-            tool_call_id: self.tool_call_id,
-        }
-    }
-
-    pub fn with_tool_call_id(self, tool_call_id: impl Into<String>) -> Self {
-        Message {
-            role: self.role,
-            reasoning: self.reasoning,
-            contents: self.contents,
-            tool_calls: self.tool_calls,
-            tool_call_id: Some(tool_call_id.into()),
-        }
-    }
-}
-
-impl Default for Message {
-    fn default() -> Self {
         Self {
             role: None,
-            reasoning: String::new(),
-            contents: Vec::new(),
-            tool_calls: Vec::new(),
+            reasoning: String::default(),
+            contents: Vec::default(),
+            tool_calls: Vec::default(),
             tool_call_id: None,
         }
+    }
+
+    pub fn with_role(&mut self, role: Role) -> Self {
+        self.role = Some(role);
+        self.clone()
+    }
+
+    pub fn with_reasoning(&mut self, reasoning: impl Into<String>) -> Self {
+        self.reasoning = reasoning.into();
+        self.clone()
+    }
+
+    pub fn with_contents(&mut self, contents: impl IntoIterator<Item = Part>) -> Self {
+        self.contents = contents.into_iter().collect();
+        self.clone()
+    }
+
+    pub fn with_tool_calls(&mut self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
+        self.tool_calls = tool_calls.into_iter().collect();
+        self.clone()
+    }
+
+    pub fn with_tool_call_id(&mut self, tool_call_id: impl Into<String>) -> Self {
+        self.tool_call_id = Some(tool_call_id.into());
+        self.clone()
     }
 }
 
@@ -363,7 +332,7 @@ impl Display for StyledMessage {
                 f.write_fmt(format_args!(
                     "\"{}\": \"{}\"",
                     self.style.contents_field,
-                    self.data.contents[0].to_string().unwrap()
+                    self.data.contents[0].to_string()
                 ))?;
             } else {
                 f.write_fmt(format_args!(

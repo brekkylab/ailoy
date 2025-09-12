@@ -159,15 +159,22 @@ impl Part {
         }
     }
 
-    pub fn to_string(&self) -> Option<String> {
+    pub fn to_string(&self) -> String {
         match self {
-            Part::Text(str) => Some(str.into()),
-            Part::FunctionString(str) => Some(str.into()),
-            Part::ImageURL(str) => Some(str.into()),
+            Part::Text(str) => str.into(),
+            Part::FunctionString(str) => str.into(),
+            Part::Function {
+                id,
+                name,
+                arguments,
+            } => format!(
+                "{{\"id\":\"{}\",\"type\":\"function\",\"function\":{{\"name\":\"{}\", \"arguments\":{}}}}}",
+                id, name, arguments
+            ),
+            Part::ImageURL(str) => str.into(),
             Part::ImageData { data, mime_type } => {
-                Some(format!("data:{};base64,{}", mime_type, data).to_owned())
+                format!("data:{};base64,{}", mime_type, data).to_owned()
             }
-            _ => None,
         }
     }
 
@@ -464,9 +471,10 @@ impl StyledPart {
 impl fmt::Display for StyledPart {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.data {
-            Part::Text(text) => {
-                f.write_fmt(format_args!("Part {{\"type\": \"{}\", \"{}\": \"{}\"}}", self.style.text_type, self.style.text_field, text))?
-            }
+            Part::Text(text) => f.write_fmt(format_args!(
+                "Part {{\"type\": \"{}\", \"{}\": \"{}\"}}",
+                self.style.text_type, self.style.text_field, text
+            ))?,
             Part::FunctionString(text) => f.write_fmt(format_args!(
                 "Part {{\"type\": \"{}\", \"{}\": \"{}\"}}",
                 self.style.function_type, self.style.function_field, text
@@ -476,7 +484,7 @@ impl fmt::Display for StyledPart {
                 name,
                 arguments,
             } => f.write_fmt(format_args!(
-                "Part {{\"type\": \"{}\", \"{}\":\"{}\", \"{}\": {{\"{}\": \"{}\", \"{}\": \"{}\"}}}}",
+                "Part {{\"type\": \"{}\", \"{}\":\"{}\", \"{}\": {{\"{}\": \"{}\", \"{}\": {}}}}}",
                 self.style.function_type,
                 self.style.function_id_field,
                 id,
@@ -488,11 +496,9 @@ impl fmt::Display for StyledPart {
             ))?,
             Part::ImageURL(url) => f.write_fmt(format_args!(
                 "Part {{\"type\": \"{}\", \"{}\": \"{}\"}}",
-                self.style.image_url_type,
-                self.style.image_url_field,
-                url
+                self.style.image_url_type, self.style.image_url_field, url
             ))?,
-            Part::ImageData{data, mime_type} => f.write_fmt(format_args!(
+            Part::ImageData { data, mime_type } => f.write_fmt(format_args!(
                 "Part {{\"type\": \"{}\", \"{}\":({}, {} bytes)}}",
                 self.style.image_data_type,
                 self.style.image_data_field,
@@ -828,11 +834,11 @@ mod test {
             assert_eq!(roundtrip, part);
         }
         {
-            let part = StyledPart::new_function("asdf1234", "fn", "false");
+            let part = StyledPart::new_function("asdf1234", "fn", r#"{"arg": false}"#);
             let s = serde_json::to_string(&part).unwrap();
             assert_eq!(
                 s,
-                r#"{"type":"function","id":"asdf1234","function":{"name":"fn","arguments":false}}"#
+                r#"{"type":"function","id":"asdf1234","function":{"name":"fn","arguments":{"arg":false}}}"#
             );
             let roundtrip = serde_json::from_str::<StyledPart>(&s).unwrap();
             assert_eq!(roundtrip, part);

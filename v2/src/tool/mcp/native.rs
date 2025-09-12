@@ -165,8 +165,7 @@ mod tests {
         let part = parts[0].clone();
         assert_eq!(part.is_text(), true);
 
-        let parsed_part: serde_json::Value =
-            serde_json::from_str(&part.to_string().unwrap()).unwrap();
+        let parsed_part: serde_json::Value = serde_json::from_str(&part.to_string()).unwrap();
         assert_eq!(parsed_part["timezone"].as_str(), Some("Asia/Seoul"));
         assert_eq!(parsed_part["is_dst"].as_bool(), Some(false));
         assert_eq!(

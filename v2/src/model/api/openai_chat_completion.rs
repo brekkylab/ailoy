@@ -83,9 +83,7 @@ pub trait OpenAIChatCompletion: LanguageModel {
         match &msg.role {
             Some(role) => match role {
                 Role::System => {
-                    let content = msg.contents[0]
-                        .to_string()
-                        .expect("The system message should be exist in contents");
+                    let content = msg.contents[0].to_string();
                     Ok(OpenAIChatMessage::system(content))
                 }
                 Role::User => {
@@ -115,9 +113,7 @@ pub trait OpenAIChatCompletion: LanguageModel {
                     blocks.push(OpenAIContentBlock::image(url, None));
                 }
                 Part::ImageData { .. } => {
-                    let base64_url = part
-                        .to_string()
-                        .expect("The base64 data url should not be None");
+                    let base64_url = part.to_string();
                     blocks.push(OpenAIContentBlock::image(base64_url, None));
                 }
                 _ => return Err("Invalid content type for user message".to_string()),

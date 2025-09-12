@@ -254,7 +254,7 @@ class PythonFunctionTool(_PythonFunctionTool):
 
             tool_desc = ToolDesc(**json_schema.get("function"))
 
-        return super().__new__(cls, tool_desc, func)
+        return super().__new__(cls, func, tool_desc)
 
 
 class PythonAsyncFunctionTool(_PythonAsyncFunctionTool):
@@ -271,4 +271,4 @@ class PythonAsyncFunctionTool(_PythonAsyncFunctionTool):
 
             tool_desc = ToolDesc(**json_schema.get("function"))
 
-        return super().__new__(cls, tool_desc, func)
+        return super().__new__(cls, func, tool_desc)

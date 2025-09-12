@@ -21,7 +21,7 @@ use crate::{
 };
 
 pub trait PyLanguageModelMethods<T: LanguageModel + 'static>:
-    PyWrapper<Inner = T> + PyClass<BaseType = PyLanguageModel>
+    PyWrapper<Inner = T> + PyClass<BaseType = PyBaseLanguageModel>
 {
     fn _spawn(
         &self,
@@ -71,12 +71,12 @@ pub trait PyLanguageModelMethods<T: LanguageModel + 'static>:
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "LanguageModel", subclass)]
-pub struct PyLanguageModel {}
+#[pyclass(name = "BaseLanguageModel", subclass)]
+pub struct PyBaseLanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyLanguageModel {
+impl PyBaseLanguageModel {
     #[allow(unused_variables)]
     fn run(
         &mut self,
@@ -101,7 +101,7 @@ impl PyLanguageModel {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "LocalLanguageModel", extends = PyLanguageModel)]
+#[pyclass(name = "LocalLanguageModel", extends = PyBaseLanguageModel)]
 pub struct PyLocalLanguageModel {
     inner: LocalLanguageModel,
 }
@@ -110,7 +110,7 @@ impl PyWrapper for PyLocalLanguageModel {
     type Inner = LocalLanguageModel;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyLanguageModel {}))
+        Py::new(py, (Self { inner }, PyBaseLanguageModel {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -136,7 +136,9 @@ impl PyLocalLanguageModel {
         let fut = async move {
             let inner =
                 await_cache_result::<LocalLanguageModel>(model_name, progress_callback).await?;
-            Python::attach(|py| Py::new(py, (PyLocalLanguageModel { inner }, PyLanguageModel {})))
+            Python::attach(|py| {
+                Py::new(py, (PyLocalLanguageModel { inner }, PyBaseLanguageModel {}))
+            })
         };
         pyo3_async_runtimes::tokio::future_into_py(py, fut)
     }
@@ -154,7 +156,7 @@ impl PyLocalLanguageModel {
             model_name,
             progress_callback,
         ))?;
-        Py::new(py, (PyLocalLanguageModel { inner }, PyLanguageModel {}))
+        Py::new(py, (PyLocalLanguageModel { inner }, PyBaseLanguageModel {}))
     }
 
     #[pyo3(signature = (messages, tools = None))]
@@ -235,7 +237,7 @@ impl PyLanguageModelRunSyncIterator {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "OpenAILanguageModel", extends = PyLanguageModel)]
+#[pyclass(name = "OpenAILanguageModel", extends = PyBaseLanguageModel)]
 pub struct PyOpenAILanguageModel {
     inner: OpenAILanguageModel,
 }
@@ -244,7 +246,7 @@ impl PyWrapper for PyOpenAILanguageModel {
     type Inner = OpenAILanguageModel;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyLanguageModel {}))
+        Py::new(py, (Self { inner }, PyBaseLanguageModel {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -282,7 +284,7 @@ impl PyOpenAILanguageModel {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "GeminiLanguageModel", extends = PyLanguageModel)]
+#[pyclass(name = "GeminiLanguageModel", extends = PyBaseLanguageModel)]
 pub struct PyGeminiLanguageModel {
     inner: GeminiLanguageModel,
 }
@@ -291,7 +293,7 @@ impl PyWrapper for PyGeminiLanguageModel {
     type Inner = GeminiLanguageModel;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyLanguageModel {}))
+        Py::new(py, (Self { inner }, PyBaseLanguageModel {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -329,7 +331,7 @@ impl PyGeminiLanguageModel {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "AnthropicLanguageModel", extends = PyLanguageModel)]
+#[pyclass(name = "AnthropicLanguageModel", extends = PyBaseLanguageModel)]
 pub struct PyAnthropicLanguageModel {
     inner: AnthropicLanguageModel,
 }
@@ -338,7 +340,7 @@ impl PyWrapper for PyAnthropicLanguageModel {
     type Inner = AnthropicLanguageModel;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyLanguageModel {}))
+        Py::new(py, (Self { inner }, PyBaseLanguageModel {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -376,7 +378,7 @@ impl PyAnthropicLanguageModel {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "XAILanguageModel", extends = PyLanguageModel)]
+#[pyclass(name = "XAILanguageModel", extends = PyBaseLanguageModel)]
 pub struct PyXAILanguageModel {
     inner: XAILanguageModel,
 }
@@ -385,7 +387,7 @@ impl PyWrapper for PyXAILanguageModel {
     type Inner = XAILanguageModel;
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyLanguageModel {}))
+        Py::new(py, (Self { inner }, PyBaseLanguageModel {}))
     }
 
     fn into_inner(&self) -> PyResult<Self::Inner> {
@@ -439,7 +441,9 @@ impl<'py> IntoPyObject<'py> for Box<dyn LanguageModel> {
         } else if let Some(model) = self.downcast_ref::<XAILanguageModel>() {
             PyXAILanguageModel::into_py_obj(model.clone(), py)?.into_py_any(py)
         } else {
-            Err(PyRuntimeError::new_err("Failed to downcast LanguageModel"))
+            Err(PyRuntimeError::new_err(
+                "Failed to downcast BaseLanguageModel",
+            ))
         }?;
         Ok(py_any.into_bound(py))
     }

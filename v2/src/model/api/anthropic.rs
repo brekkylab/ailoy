@@ -104,7 +104,7 @@ fn anthropic_stream_event_to_ailoy(
                 message.id
             ));
             Ok(Some(
-                MessageOutput::new().with_delta(Message::with_role(Role::Assistant)),
+                MessageOutput::new().with_delta(Message::new().with_role(Role::Assistant)),
             ))
         }
         AnthropicStreamEvent::ContentBlockStart {
@@ -148,7 +148,8 @@ fn anthropic_stream_event_to_ailoy(
                     // There's no way to figure out the name of server tool, so fill it as empty.
                     Ok(Some(
                         MessageOutput::new().with_delta(
-                            Message::with_role(Role::Tool)
+                            Message::new()
+                                .with_role(Role::Tool)
                                 .with_tool_call_id(tool_use_id)
                                 .with_contents(vec![Part::Text(content)]),
                         ),
@@ -251,7 +252,7 @@ impl LanguageModel for AnthropicLanguageModel {
                     Role::System => {
                         // Anthropic does not consider system message as a general message.
                         // It's rather considered as one of the generation config.
-                        let system_message = msg.contents[0].to_string().unwrap();
+                        let system_message = msg.contents[0].to_string();
                         params.system = Some(system_message.to_string());
                         continue;
                     }
@@ -470,12 +471,16 @@ mod tests {
                 .with_config(config);
 
         let msgs = vec![
-            Message::with_role(Role::System).with_contents(vec![Part::Text(
-                "You are a helpful mathematics assistant".to_owned(),
-            )]),
-            Message::with_role(Role::User).with_contents(vec![Part::Text(
-                "What is the sum of the first 50 prime numbers?".to_owned(),
-            )]),
+            Message::new()
+                .with_role(Role::System)
+                .with_contents(vec![Part::Text(
+                    "You are a helpful mathematics assistant".to_owned(),
+                )]),
+            Message::new()
+                .with_role(Role::User)
+                .with_contents(vec![Part::Text(
+                    "What is the sum of the first 50 prime numbers?".to_owned(),
+                )]),
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = anthropic.run(msgs, Vec::new());
@@ -521,9 +526,13 @@ mod tests {
             )
             .unwrap(),
         ];
-        let mut msgs = vec![Message::with_role(Role::User).with_contents([Part::Text(
-            "How much hot currently in Dubai? Answer in Celsius.".to_owned(),
-        )])];
+        let mut msgs = vec![
+            Message::new()
+                .with_role(Role::User)
+                .with_contents([Part::Text(
+                    "How much hot currently in Dubai? Answer in Celsius.".to_owned(),
+                )]),
+        ];
         let mut agg = MessageAggregator::new();
         let mut assistant_msg: Option<Message> = None;
         {
@@ -541,7 +550,8 @@ mod tests {
         msgs.push(assistant_msg.clone());
 
         // Append a fake tool call result message
-        let mut tool_result_msg = Message::with_role(Role::Tool)
+        let mut tool_result_msg = Message::new()
+            .with_role(Role::Tool)
             .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
         if let Part::Function { id, .. } = assistant_msg.tool_calls[0].clone() {
             tool_result_msg = tool_result_msg.with_tool_call_id(id);
@@ -572,11 +582,14 @@ mod tests {
             AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY);
 
         let msgs = vec![
-            Message::with_role(Role::User).with_contents(vec![Part::ImageData {
-                data: image_base64,
-                mime_type: "image/jpeg".into(),
-            }]),
-            Message::with_role(Role::User)
+            Message::new()
+                .with_role(Role::User)
+                .with_contents(vec![Part::ImageData {
+                    data: image_base64,
+                    mime_type: "image/jpeg".into(),
+                }]),
+            Message::new()
+                .with_role(Role::User)
                 .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
         ];
         let mut agg = MessageAggregator::new();

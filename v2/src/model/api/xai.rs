@@ -84,12 +84,16 @@ mod tests {
         let mut xai = XAILanguageModel::new("grok-3-mini", *XAI_API_KEY);
 
         let msgs = vec![
-            Message::with_role(Role::System).with_contents(vec![Part::Text(
-                "You are a helpful mathematics assistant.".to_owned(),
-            )]),
-            Message::with_role(Role::User).with_contents(vec![Part::Text(
-                "What is the sum of the first 50 prime numbers?".to_owned(),
-            )]),
+            Message::new()
+                .with_role(Role::System)
+                .with_contents(vec![Part::Text(
+                    "You are a helpful mathematics assistant.".to_owned(),
+                )]),
+            Message::new()
+                .with_role(Role::User)
+                .with_contents(vec![Part::Text(
+                    "What is the sum of the first 50 prime numbers?".to_owned(),
+                )]),
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = xai.run(msgs, Vec::new());
@@ -135,9 +139,13 @@ mod tests {
             )
             .unwrap(),
         ];
-        let mut msgs = vec![Message::with_role(Role::User).with_contents([Part::Text(
-            "How much hot currently in Dubai? Answer in Celsius.".to_owned(),
-        )])];
+        let mut msgs = vec![
+            Message::new()
+                .with_role(Role::User)
+                .with_contents([Part::Text(
+                    "How much hot currently in Dubai? Answer in Celsius.".to_owned(),
+                )]),
+        ];
         let mut agg = MessageAggregator::new();
         let mut assistant_msg: Option<Message> = None;
         {
@@ -156,7 +164,8 @@ mod tests {
         msgs.push(assistant_msg.clone());
 
         // Append a fake tool call result message
-        let mut tool_result_msg = Message::with_role(Role::Tool)
+        let mut tool_result_msg = Message::new()
+            .with_role(Role::Tool)
             .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
         if let Part::Function { id, .. } = assistant_msg.tool_calls[0].clone() {
             tool_result_msg = tool_result_msg.with_tool_call_id(id);
@@ -187,11 +196,14 @@ mod tests {
         let mut xai = XAILanguageModel::new("grok-4", *XAI_API_KEY);
 
         let msgs = vec![
-            Message::with_role(Role::User).with_contents(vec![Part::ImageData {
-                data: image_base64,
-                mime_type: "image/jpeg".into(),
-            }]),
-            Message::with_role(Role::User)
+            Message::new()
+                .with_role(Role::User)
+                .with_contents(vec![Part::ImageData {
+                    data: image_base64,
+                    mime_type: "image/jpeg".into(),
+                }]),
+            Message::new()
+                .with_role(Role::User)
                 .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
         ];
         let mut agg = MessageAggregator::new();

@@ -106,18 +106,16 @@ impl Agent {
             // Remove the MCP tool if its description name is prefixed with the provided client name.
             !tool_name.starts_with(format!("{}--", client_name).as_str())
         });
-
         Ok(())
     }
 
     pub fn run<'a>(
         &'a mut self,
-        user_message: impl Into<String>,
+        contents: Vec<Part>,
     ) -> impl Stream<Item = Result<MessageOutput, String>> {
         let tools = self.tools.clone();
         let msgs = self.messages.clone();
-        let user_message =
-            Message::with_role(Role::User).with_contents(vec![Part::Text(user_message.into())]);
+        let user_message = Message::new().with_role(Role::User).with_contents(contents);
         async_stream::try_stream! {
             msgs.lock().await.push(user_message);
             let td = self
@@ -126,7 +124,7 @@ impl Agent {
                 .map(|v| v.get_description())
                 .collect::<Vec<_>>();
             loop {
-                let mut assistant_msg = Message::with_role(Role::Assistant);
+                let mut assistant_msg = Message::new().with_role(Role::Assistant);
                 {
                     let mut strm = self.lm.run(msgs.lock().await.clone(), td.clone());
                     let mut aggregator = MessageAggregator::new();
@@ -157,7 +155,7 @@ impl Agent {
                         };
                         let tool = tools.iter().find(|v| v.get_description().name == tc.name).unwrap().clone();
                         let resp = tool.run(tc.arguments).await?;
-                        let mut delta = Message::with_role(Role::Tool).with_contents(resp.clone());
+                        let mut delta = Message::new().with_role(Role::Tool).with_contents(resp.clone());
                         if let Some(tool_call_id) = tool_call_id {
                             delta = delta.with_tool_call_id(tool_call_id);
                         }
@@ -219,7 +217,7 @@ mod tests {
         let mut agent = Agent::new(model, Vec::new());
 
         let mut agg = MessageAggregator::new();
-        let mut strm = Box::pin(agent.run("Hi what's your name?"));
+        let mut strm = Box::pin(agent.run(vec![Part::Text("Hi what's your name?".into())]));
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
             if let Some(msg) = agg.update(delta) {
@@ -294,7 +292,8 @@ mod tests {
         let mut agent = Agent::new(model, tools);
 
         let mut agg = MessageAggregator::new();
-        let mut strm = Box::pin(agent.run("How much hot currently in Dubai?"));
+        let mut strm =
+            Box::pin(agent.run(vec![Part::Text("How much hot currently in Dubai?".into())]));
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
             if let Some(msg) = agg.update(delta) {
@@ -343,7 +342,9 @@ mod tests {
         assert_eq!(agent_tools[1].get_description().name, "time--convert_time");
 
         let mut agg = MessageAggregator::new();
-        let mut strm = Box::pin(agent.run("What time is it now in America/New_York timezone?"));
+        let mut strm = Box::pin(agent.run(vec![Part::Text(
+            "What time is it now in America/New_York timezone?".into(),
+        )]));
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
             if let Some(msg) = agg.update(delta) {

@@ -13,11 +13,11 @@ use agent::{
 };
 use cache_progress::PyCacheProgress as CacheProgress;
 use embedding_model::{
-    PyEmbeddingModel as EmbeddingModel, PyLocalEmbeddingModel as LocalEmbeddingModel,
+    PyBaseEmbeddingModel as BaseEmbeddingModel, PyLocalEmbeddingModel as LocalEmbeddingModel,
 };
 use language_model::{
-    PyAnthropicLanguageModel as AnthropicLanguageModel,
-    PyGeminiLanguageModel as GeminiLanguageModel, PyLanguageModel as LanguageModel,
+    PyAnthropicLanguageModel as AnthropicLanguageModel, PyBaseLanguageModel as BaseLanguageModel,
+    PyGeminiLanguageModel as GeminiLanguageModel,
     PyLanguageModelRunIterator as LanguageModelRunIterator,
     PyLanguageModelRunSyncIterator as LanguageModelRunSyncIterator,
     PyLocalLanguageModel as LocalLanguageModel, PyOpenAILanguageModel as OpenAILanguageModel,
@@ -26,8 +26,8 @@ use language_model::{
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
 use tool::{
-    PyBuiltinTool as BuiltinTool, PyMCPTool as MCPTool, PyTool as Tool, PythonAsyncFunctionTool,
-    PythonFunctionTool,
+    PyBaseTool as BaseTool, PyBuiltinTool as BuiltinTool, PyMCPTool as MCPTool,
+    PythonAsyncFunctionTool, PythonFunctionTool,
 };
 use vector_store::{BaseVectorStore, ChromaVectorStore, FaissVectorStore};
 
@@ -44,15 +44,16 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<AgentRunIterator>()?;
     m.add_class::<AgentRunSyncIterator>()?;
     m.add_class::<AnthropicLanguageModel>()?;
+    m.add_class::<BaseEmbeddingModel>()?;
+    m.add_class::<BaseLanguageModel>()?;
     m.add_class::<BaseVectorStore>()?;
+    m.add_class::<BaseTool>()?;
     m.add_class::<BuiltinTool>()?;
     m.add_class::<CacheProgress>()?;
     m.add_class::<ChromaVectorStore>()?;
-    m.add_class::<EmbeddingModel>()?;
     m.add_class::<FaissVectorStore>()?;
     m.add_class::<FinishReason>()?;
     m.add_class::<GeminiLanguageModel>()?;
-    m.add_class::<LanguageModel>()?;
     m.add_class::<LanguageModelRunIterator>()?;
     m.add_class::<LanguageModelRunSyncIterator>()?;
     m.add_class::<LocalEmbeddingModel>()?;
@@ -67,7 +68,6 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<PythonAsyncFunctionTool>()?;
     m.add_class::<PythonFunctionTool>()?;
     m.add_class::<Role>()?;
-    m.add_class::<Tool>()?;
     m.add_class::<ToolDesc>()?;
     m.add_class::<VectorStoreAddInput>()?;
     m.add_class::<VectorStoreGetResult>()?;

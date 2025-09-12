@@ -123,7 +123,7 @@ impl LanguageModel for GeminiLanguageModel {
             match &msg.role {
                 Some(role) => match role {
                     Role::System => {
-                        content = content.with_system_prompt(msg.contents[0].to_string().unwrap());
+                        content = content.with_system_prompt(msg.contents[0].to_string());
                     }
                     Role::User => {
                         let part = msg.contents[0].clone();
@@ -183,7 +183,7 @@ impl LanguageModel for GeminiLanguageModel {
                         );
                         content = content.with_function_response(
                             tool_name,
-                            serde_json::from_str(&msg.contents[0].to_string().unwrap()).unwrap(),
+                            serde_json::from_str(&msg.contents[0].to_string()).unwrap(),
                         );
                     }
                 },
@@ -254,12 +254,16 @@ mod tests {
             .with_config(gemini_config);
 
         let msgs = vec![
-            Message::with_role(Role::System).with_contents(vec![Part::Text(
-                "You are a helpful mathematics assistant.".to_owned(),
-            )]),
-            Message::with_role(Role::User).with_contents(vec![Part::Text(
-                "What is the sum of the first 50 prime numbers?".to_owned(),
-            )]),
+            Message::new()
+                .with_role(Role::System)
+                .with_contents(vec![Part::Text(
+                    "You are a helpful mathematics assistant.".to_owned(),
+                )]),
+            Message::new()
+                .with_role(Role::User)
+                .with_contents(vec![Part::Text(
+                    "What is the sum of the first 50 prime numbers?".to_owned(),
+                )]),
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = gemini.run(msgs, Vec::new());
@@ -308,9 +312,13 @@ mod tests {
             )
             .unwrap(),
         ];
-        let mut msgs = vec![Message::with_role(Role::User).with_contents([Part::Text(
-            "How much hot currently in Dubai? Answer in Celsius.".to_owned(),
-        )])];
+        let mut msgs = vec![
+            Message::new()
+                .with_role(Role::User)
+                .with_contents([Part::Text(
+                    "How much hot currently in Dubai? Answer in Celsius.".to_owned(),
+                )]),
+        ];
         let mut agg = MessageAggregator::new();
         let mut assistant_msg: Option<Message> = None;
         {
@@ -329,7 +337,8 @@ mod tests {
         msgs.push(assistant_msg.clone());
 
         // Append a fake tool call result message
-        let tool_result_msg = Message::with_role(Role::Tool)
+        let tool_result_msg = Message::new()
+            .with_role(Role::Tool)
             .with_tool_call_id("temperature")
             .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
         msgs.push(tool_result_msg);
@@ -361,11 +370,14 @@ mod tests {
         let mut gemini = GeminiLanguageModel::new("gemini-2.5-flash", *GEMINI_API_KEY);
 
         let msgs = vec![
-            Message::with_role(Role::User).with_contents(vec![Part::ImageData {
-                data: image_base64,
-                mime_type: "image/jpeg".into(),
-            }]),
-            Message::with_role(Role::User)
+            Message::new()
+                .with_role(Role::User)
+                .with_contents(vec![Part::ImageData {
+                    data: image_base64,
+                    mime_type: "image/jpeg".into(),
+                }]),
+            Message::new()
+                .with_role(Role::User)
                 .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
         ];
         let mut agg = MessageAggregator::new();

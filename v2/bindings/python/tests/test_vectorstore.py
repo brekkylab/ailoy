@@ -24,7 +24,7 @@ def chroma():
         pytest.skip(f"ChromaDB is not running on {url}. Skip Chroma test..")
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def vs(request: FixtureRequest):
     """Indirect fixture that returns the requested vector store."""
     return request.getfixturevalue(request.param)

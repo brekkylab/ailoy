@@ -17,7 +17,7 @@ use crate::{
 type Embedding = Vec<f32>;
 
 pub trait PyEmbeddingModelMethods<T: EmbeddingModel + 'static>:
-    PyClass<BaseType = PyEmbeddingModel>
+    PyClass<BaseType = PyBaseEmbeddingModel>
 {
     fn inner(&mut self) -> &mut T;
 
@@ -38,29 +38,29 @@ pub trait PyEmbeddingModelMethods<T: EmbeddingModel + 'static>:
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "EmbeddingModel", subclass)]
-pub struct PyEmbeddingModel {}
+#[pyclass(name = "BaseEmbeddingModel", subclass)]
+pub struct PyBaseEmbeddingModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyEmbeddingModel {
+impl PyBaseEmbeddingModel {
     #[allow(unused_variables)]
     async fn run(&mut self, message: String) -> PyResult<Embedding> {
         Err(PyNotImplementedError::new_err(
-            "Subclass of EmbeddingModel must implement 'run'",
+            "Subclass of BaseEmbeddingModel must implement 'run'",
         ))
     }
 
     #[allow(unused_variables)]
     fn run_sync(&mut self, message: String) -> PyResult<Embedding> {
         Err(PyNotImplementedError::new_err(
-            "Subclass of EmbeddingModel must implement 'run_sync'",
+            "Subclass of BaseEmbeddingModel must implement 'run_sync'",
         ))
     }
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "LocalEmbeddingModel", extends = PyEmbeddingModel)]
+#[pyclass(name = "LocalEmbeddingModel", extends = PyBaseEmbeddingModel)]
 pub struct PyLocalEmbeddingModel {
     inner: LocalEmbeddingModel,
 }
@@ -73,7 +73,7 @@ impl PyWrapper for PyLocalEmbeddingModel {
     }
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyEmbeddingModel {}))
+        Py::new(py, (Self { inner }, PyBaseEmbeddingModel {}))
     }
 }
 
@@ -99,7 +99,12 @@ impl PyLocalEmbeddingModel {
         let fut = async move {
             let inner =
                 await_cache_result::<LocalEmbeddingModel>(model_name, progress_callback).await?;
-            Python::attach(|py| Py::new(py, (PyLocalEmbeddingModel { inner }, PyEmbeddingModel {})))
+            Python::attach(|py| {
+                Py::new(
+                    py,
+                    (PyLocalEmbeddingModel { inner }, PyBaseEmbeddingModel {}),
+                )
+            })
         };
         pyo3_async_runtimes::tokio::future_into_py(py, fut)
     }
@@ -117,7 +122,10 @@ impl PyLocalEmbeddingModel {
             model_name,
             progress_callback,
         ))?;
-        Py::new(py, (PyLocalEmbeddingModel { inner }, PyEmbeddingModel {}))
+        Py::new(
+            py,
+            (PyLocalEmbeddingModel { inner }, PyBaseEmbeddingModel {}),
+        )
     }
 
     async fn run(&mut self, message: String) -> PyResult<Embedding> {

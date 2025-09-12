@@ -1,7 +1,9 @@
+use std::str::FromStr;
+
 use pyo3::{
-    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::PyDict,
+    types::{PyDict, PyString, PyType},
 };
 use pyo3_stub_gen::derive::*;
 
@@ -13,136 +15,111 @@ use crate::{
 #[gen_stub_pymethods]
 #[pymethods]
 impl Part {
-    /// Part(part_type, *, id=None, text=None, url=None, data=None, function=None)
-    ///
-    /// Examples:
-    /// - Part(part_type="text", text="hello")
-    /// - Part(part_type="image", url="https://example.com/cat.png")
-    /// - Part(part_type="image", data="<base64>", mime_type="image/jpeg")  # 'base64=' alias also accepted
-    /// - Part(part_type="function", function='{"name":"foo","arguments":"{}"}')
-    #[new]
-    #[pyo3(signature = (part_type, *, text=None, url=None, data=None, mime_type=None, function=None, id=None, name=None, arguments=None))]
-    fn __new__(
-        part_type: &str,
-        text: Option<String>,
-        url: Option<String>,
-        data: Option<String>,
-        mime_type: Option<String>,
-        function: Option<String>,
-        id: Option<String>,
-        name: Option<String>,
-        arguments: Option<String>,
+    #[classmethod]
+    #[pyo3(name = "new_text")]
+    fn _new_text(_cls: Bound<'_, PyType>, text: String) -> PyResult<Self> {
+        Ok(Self::new_text(text))
+    }
+
+    #[classmethod]
+    #[pyo3(name = "new_image_url")]
+    fn _new_image_url(_cls: Bound<'_, PyType>, url: String) -> PyResult<Self> {
+        Ok(Self::new_image_url(url))
+    }
+
+    #[classmethod]
+    #[pyo3(name = "new_image_data")]
+    fn _new_image_data(_cls: Bound<'_, PyType>, data: String, mime_type: String) -> PyResult<Self> {
+        Ok(Self::new_image_data(data, mime_type))
+    }
+
+    #[classmethod]
+    #[pyo3(name = "new_function")]
+    fn _new_function(
+        _cls: Bound<'_, PyType>,
+        id: String,
+        name: String,
+        arguments: String,
     ) -> PyResult<Self> {
-        let inner = match part_type {
-            "text" => Part::Text(text.ok_or_else(|| PyTypeError::new_err("text= required"))?),
-            "function" => {
-                if function.is_some() {
-                    Part::new_function_string(function.unwrap())
-                } else if name.is_some() || arguments.is_some() {
-                    Part::new_function(
-                        id.unwrap_or_default(),
-                        name.unwrap_or_default(),
-                        arguments.unwrap_or_default(),
-                    )
-                } else {
-                    Err(PyTypeError::new_err(
-                        "function= or name= or arguments= required",
-                    ))?
-                }
-            }
-            "image" => {
-                if let Some(u) = url {
-                    Part::ImageURL(u)
-                } else if let Some(data) = data
-                    && let Some(mime_type) = mime_type
-                {
-                    Part::ImageData { data, mime_type }
-                } else {
-                    return Err(PyTypeError::new_err(
-                        "image needs url= or data= with mime_type=",
-                    ));
-                }
-            }
-            other => return Err(PyValueError::new_err(format!("unknown type: {other}"))),
-        };
-        Ok(inner)
+        Ok(Self::new_function(id, name, arguments))
     }
 
     fn __repr__(&self) -> String {
-        self.to_string().unwrap_or("".into())
+        let s = match &self {
+            Part::Text(text) => format!("Text(\"{}\")", text),
+            Part::FunctionString(_) | Part::Function { .. } => {
+                format!("Function({})", self.to_string())
+            }
+            Part::ImageURL(url) => format!("ImageURL(\"{}\")", url),
+            Part::ImageData { .. } => {
+                let mut s = self.to_string();
+                if s.len() > 30 {
+                    s.truncate(30);
+                    s += "...";
+                }
+                format!("ImageData(\"{}\")", s)
+            }
+        };
+        format!("Part.{}", s)
     }
 
     #[getter]
     fn part_type(&self) -> &'static str {
         match &self {
             Part::Text(_) => "text",
-            Part::FunctionString(_) => "function",
-            Part::Function { .. } => "function",
-            Part::ImageURL(_) | Part::ImageData { .. } => "image",
-            // Part::AudioURL(_) | Part::AudioData(_) => "audio",
-            // Part::Audio { .. } => "audio",
+            Part::FunctionString(_) | Part::Function { .. } => "function",
+            Part::ImageURL(_) => "image_url",
+            Part::ImageData { .. } => "image_data",
         }
     }
 
     #[getter]
-    fn text(&self) -> Option<&str> {
+    fn text(&self) -> Option<String> {
         match &self {
-            Part::Text(s) => Some(s.as_str()),
+            Part::Text(..) => Some(self.to_string()),
             _ => None,
         }
     }
 
     #[getter]
-    fn function(&self) -> Option<&str> {
+    fn function(&self) -> Option<String> {
         match &self {
-            Part::FunctionString(s) => Some(s.as_str()),
+            Part::Function { .. } | Part::FunctionString(..) => Some(self.to_string()),
             _ => None,
         }
     }
 
     #[getter]
-    fn url(&self) -> Option<&str> {
+    fn url(&self) -> Option<String> {
         match &self {
-            Part::ImageURL(u) => Some(u.as_str()),
+            Part::ImageURL(..) => Some(self.to_string()),
             _ => None,
         }
     }
 
     #[getter]
-    fn data(&self) -> Option<&str> {
+    fn data(&self) -> Option<String> {
         match &self {
-            Part::ImageData { data, .. } => Some(data.as_str()),
+            Part::ImageData { data, .. } => Some(data.clone()),
             _ => None,
         }
     }
 
     #[getter]
-    fn mime_type(&self) -> Option<&str> {
+    fn mime_type(&self) -> Option<String> {
         match &self {
-            Part::ImageData { mime_type, .. } => Some(mime_type.as_str()),
+            Part::ImageData { mime_type, .. } => Some(mime_type.clone()),
             _ => None,
         }
     }
-
-    // #[staticmethod]
-    // fn from_json(s: &str) -> PyResult<Self> {
-    //     Ok(PyPart {
-    //         inner: serde_json::from_str::<Part>(s)
-    //             .map_err(|e| PyValueError::new_err(e.to_string()))?,
-    //     })
-    // }
-
-    // fn to_json(&self) -> PyResult<String> {
-    //     serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
-    // }
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl Message {
     #[new]
-    fn __new__(role: &Role) -> Self {
-        Self::with_role(role.clone())
+    fn __new__() -> PyResult<Self> {
+        Ok(Self::default())
     }
 
     fn __repr__(&self) -> String {
@@ -154,17 +131,41 @@ impl Message {
         self.role.clone()
     }
 
+    #[setter]
+    fn set_role(
+        &mut self,
+        #[gen_stub(override_type(
+            type_repr = "Role | typing.Literal[\"system\",\"user\",\"assistant\",\"tool\"]"
+        ))]
+        role: Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        Python::attach(|py| {
+            if let Ok(role) = role.downcast::<PyString>() {
+                self.role = Some(
+                    Role::from_str(&role.to_string())
+                        .map_err(|e| PyValueError::new_err(e.to_string()))?,
+                );
+                Ok(())
+            } else if let Ok(role) = role.downcast::<Role>() {
+                self.role = Some(role.clone().unbind().borrow(py).clone());
+                Ok(())
+            } else {
+                return Err(PyTypeError::new_err("role should be either Role or str"));
+            }
+        })
+    }
+
     #[getter]
-    fn content(&self) -> Vec<Part> {
+    fn contents(&self) -> Vec<Part> {
         self.contents.clone()
     }
 
     #[setter]
-    fn set_content(&mut self, contents: Vec<Part>) {
+    fn set_contents(&mut self, contents: Vec<Part>) {
         self.contents = contents;
     }
 
-    fn append_content(&mut self, part: Part) {
+    fn append_contents(&mut self, part: Part) {
         self.contents.push(part);
     }
 
@@ -201,18 +202,6 @@ impl Message {
     fn set_tool_call_id(&mut self, tool_call_id: Option<String>) {
         self.tool_call_id = tool_call_id;
     }
-
-    // #[staticmethod]
-    // fn from_json(s: &str) -> PyResult<Self> {
-    //     Ok(PyMessage {
-    //         inner: serde_json::from_str::<Message>(s)
-    //             .map_err(|e| PyValueError::new_err(e.to_string()))?,
-    //     })
-    // }
-
-    // fn to_json(&self) -> PyResult<String> {
-    //     serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
-    // }
 }
 
 #[gen_stub_pymethods]
@@ -231,18 +220,6 @@ impl MessageOutput {
     fn finish_reason(&self) -> Option<FinishReason> {
         self.finish_reason.clone()
     }
-
-    // #[staticmethod]
-    // fn from_json(s: &str) -> PyResult<Self> {
-    //     Ok(PyMessageOutput {
-    //         inner: serde_json::from_str::<MessageOutput>(s)
-    //             .map_err(|e| PyValueError::new_err(e.to_string()))?,
-    //     })
-    // }
-
-    // fn to_json(&self) -> PyResult<String> {
-    //     serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
-    // }
 }
 
 #[gen_stub_pymethods]
@@ -285,7 +262,7 @@ impl ToolDesc {
         } else {
             None
         };
-        Self::new(name, description, parameters, returns).map_err(|e| PyRuntimeError::new_err(e))
+        Self::new(name, description, parameters, returns).map_err(|e| PyValueError::new_err(e))
     }
 
     fn __repr__(&self) -> String {
