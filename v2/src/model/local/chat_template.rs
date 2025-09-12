@@ -69,6 +69,8 @@ impl ChatTemplate {
         tools: impl IntoIterator<Item = ToolDesc>,
         add_generation_prompt: bool,
     ) -> Result<String, String> {
+        use serde_json::json;
+
         let messages = messages
             .into_iter()
             .map(|v| crate::value::StyledMessage {
@@ -76,7 +78,15 @@ impl ChatTemplate {
                 style: self.style.clone(),
             })
             .collect::<Vec<_>>();
-        let tools = tools.into_iter().collect::<Vec<_>>();
+        let tools = tools
+            .into_iter()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "function": tool
+                })
+            })
+            .collect::<Vec<_>>();
         let do_reasoning = *self.do_reasoning.lock().unwrap();
         let ctx = if tools.is_empty() {
             context!(messages => messages, add_generation_prompt=>add_generation_prompt, enable_thinking=>do_reasoning)
