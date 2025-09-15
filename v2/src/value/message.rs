@@ -121,29 +121,29 @@ impl Message {
         }
     }
 
-    pub fn with_role(&mut self, role: Role) -> Self {
+    pub fn with_role(mut self, role: Role) -> Self {
         self.role = Some(role);
-        self.clone()
+        self
     }
 
-    pub fn with_reasoning(&mut self, reasoning: impl Into<String>) -> Self {
+    pub fn with_reasoning(mut self, reasoning: impl Into<String>) -> Self {
         self.reasoning = reasoning.into();
-        self.clone()
+        self
     }
 
-    pub fn with_contents(&mut self, contents: impl IntoIterator<Item = Part>) -> Self {
+    pub fn with_contents(mut self, contents: impl IntoIterator<Item = Part>) -> Self {
         self.contents = contents.into_iter().collect();
-        self.clone()
+        self
     }
 
-    pub fn with_tool_calls(&mut self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
+    pub fn with_tool_calls(mut self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
         self.tool_calls = tool_calls.into_iter().collect();
-        self.clone()
+        self
     }
 
-    pub fn with_tool_call_id(&mut self, tool_call_id: impl Into<String>) -> Self {
+    pub fn with_tool_call_id(mut self, tool_call_id: impl Into<String>) -> Self {
         self.tool_call_id = Some(tool_call_id.into());
-        self.clone()
+        self
     }
 }
 

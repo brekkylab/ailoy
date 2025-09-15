@@ -3,7 +3,7 @@ use std::str::FromStr;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyDict, PyString, PyType},
+    types::{PyDict, PyString},
 };
 use pyo3_stub_gen::derive::*;
 
@@ -15,35 +15,6 @@ use crate::{
 #[gen_stub_pymethods]
 #[pymethods]
 impl Part {
-    #[classmethod]
-    #[pyo3(name = "new_text")]
-    fn _new_text(_cls: Bound<'_, PyType>, text: String) -> PyResult<Self> {
-        Ok(Self::new_text(text))
-    }
-
-    #[classmethod]
-    #[pyo3(name = "new_image_url")]
-    fn _new_image_url(_cls: Bound<'_, PyType>, url: String) -> PyResult<Self> {
-        Ok(Self::new_image_url(url))
-    }
-
-    #[classmethod]
-    #[pyo3(name = "new_image_data")]
-    fn _new_image_data(_cls: Bound<'_, PyType>, data: String, mime_type: String) -> PyResult<Self> {
-        Ok(Self::new_image_data(data, mime_type))
-    }
-
-    #[classmethod]
-    #[pyo3(name = "new_function")]
-    fn _new_function(
-        _cls: Bound<'_, PyType>,
-        id: String,
-        name: String,
-        arguments: String,
-    ) -> PyResult<Self> {
-        Ok(Self::new_function(id, name, arguments))
-    }
-
     fn __repr__(&self) -> String {
         let s = match &self {
             Part::Text(text) => format!("Text(\"{}\")", text),
