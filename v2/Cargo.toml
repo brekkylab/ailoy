@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-node = ["dep:napi", "dep:napi-derive"]
 python = ["dep:pyo3", "dep:pyo3-async-runtimes", "dep:pyo3-stub-gen", "dep:pyo3-stub-gen-derive"]
+nodejs = ["dep:napi", "dep:napi-derive"]
 default = []
 
 

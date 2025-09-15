@@ -5,6 +5,7 @@ use serde::{
     de::{self, MapAccess},
     ser::SerializeMap as _,
 };
+use strum_macros::AsRefStr;
 
 /// Represents one typed unit of message content.
 ///
@@ -14,7 +15,7 @@ use serde::{
 ///
 /// # Notes
 /// - No validation is performed. It just store the value as-is.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, AsRefStr)]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum

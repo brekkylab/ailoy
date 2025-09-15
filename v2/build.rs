@@ -118,7 +118,7 @@ fn build_native() {
         println!("cargo:rustc-link-lib=dylib=libiomp5md");
     }
 
-    if std::env::var_os("CARGO_FEATURE_NODE").is_some() {
+    if std::env::var_os("CARGO_FEATURE_NODEJS").is_some() {
         napi_build::setup();
     }
 

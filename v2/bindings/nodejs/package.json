@@ -1,0 +1,36 @@
+{
+    "name": "ailoy-node",
+    "version": "0.2.0",
+    "main": "index.js",
+    "napi": {
+        "binaryName": "ailoy_core",
+        "targets": [
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+            "aarch64-apple-darwin"
+        ]
+    },
+    "scripts": {
+        "build": "napi build --platform --release --package ailoy --features node --manifest-path ../../../Cargo.toml --js ailoy_core.js --dts ailoy_core.d.ts --esm -o ./src",
+        "build:debug": "napi build --platform",
+        "build:ts": "vite build",
+        "prepublishOnly": "napi prepublish -t npm",
+        "test": "node test.js",
+        "version": "napi version"
+    },
+    "devDependencies": {
+        "@napi-rs/cli": "^3.2.0",
+        "vite": "^7.1.5",
+        "vite-plugin-dts": "^4.5.4",
+        "vite-plugin-static-copy": "^3.1.2"
+    },
+    "files": [
+        "index.js",
+        "index.d.ts"
+    ],
+    "publishConfig": {
+        "registry": "https://registry.npmjs.org/",
+        "access": "public"
+    },
+    "repository": "https://github.com/brekkylab/ailoy"
+}
