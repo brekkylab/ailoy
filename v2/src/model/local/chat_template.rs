@@ -88,6 +88,7 @@ impl ChatTemplate {
             })
             .collect::<Vec<_>>();
         let do_reasoning = *self.do_reasoning.lock().unwrap();
+
         let ctx = if tools.is_empty() {
             context!(messages=>messages, add_generation_prompt=>add_generation_prompt, enable_thinking=>do_reasoning)
         } else {
@@ -131,7 +132,7 @@ impl TryFromCache for ChatTemplate {
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
+    use std::{sync::LazyLock, vec};
 
     use ailoy_macros::multi_platform_test;
     use serde_json::json;
@@ -139,8 +140,8 @@ mod tests {
     use super::*;
     use crate::value::{Part, Role, ToolDesc};
 
-    fn setup_input(index: i32) -> (Vec<Message>, Vec<ToolDesc>, bool) {
-        let tools = vec![
+    static TOOLS: LazyLock<Vec<ToolDesc>> = LazyLock::new(|| {
+        vec![
             ToolDesc::new(
                 "get_current_temperature".into(),
                 "Get the current temperature at a location.".into(),
@@ -182,15 +183,17 @@ mod tests {
                     "description": "The current wind speed at the given location in km/h, as a float.",
                 })),
             ).unwrap(),
-        ];
+        ]
+    });
 
+    fn setup_input(index: i32) -> ((Vec<Message>, Vec<ToolDesc>, bool), &'static str) {
         let msgs = match index {
-            0 => (vec![
+            0 => ((vec![
                 Message::with_role(Role::User).with_contents(vec![Part::Text(
                     "Introduce yourself in one sentence.".to_owned(),
                 )]),
-            ], vec![], false),
-            1 => (vec![
+            ], vec![], false), "<|im_start|>user\nIntroduce yourself in one sentence.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            1 => ((vec![
                 Message::with_role(Role::System).with_contents(vec![Part::Text(
                     "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
                         .to_owned(),
@@ -198,8 +201,8 @@ mod tests {
                 Message::with_role(Role::User).with_contents(vec![Part::Text(
                     "Who are you? Answer it simply.".to_owned(),
                 )]),
-            ], vec![], false),
-            2 => (vec![
+            ], vec![], false), "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nWho are you? Answer it simply.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            2 => ((vec![
                 Message::with_role(Role::System).with_contents(vec![Part::Text(
                     "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
                         .to_owned(),
@@ -209,8 +212,8 @@ mod tests {
                 )]),
                 Message::with_role(Role::Assistant)
                     .with_contents(vec![Part::Text("A bacterium.".to_owned())]),
-            ], vec![], true),
-            3 => (vec![
+            ], vec![], true), "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nWhich is bigger, a virus or a bacterium?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nA bacterium.<|im_end|>\n<|im_start|>assistant\n"),
+            3 => ((vec![
                 Message::with_role(Role::System).with_contents(vec![Part::Text(
                     "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
                         .to_owned(),
@@ -220,8 +223,8 @@ mod tests {
                 Message::with_role(Role::Assistant)
                     .with_reasoning("\nOkay, the user wants me to introduce myself. Let me start by acknowledging their request. I should be friendly and open. I can say something like, \"Hi, I'm an AI assistant here. I'm here to help you with your questions!\" That's a good start. Now, I need to add some personal details or a brief introduction. Maybe mention my name or a trait, like being a language model. Let me check if that's needed. Oh, the user might want to know more about their role. So, include that. Make sure it's concise and positive. Alright, that should cover it.\n")
                     .with_contents(vec![Part::Text("Hi! I'm an AI assistant here, and I'm excited to help you with your questions. I'm designed to support you in various ways, and I'm here to be your guide! Let me know how I can assist you! 😊".to_owned())]),
-            ], vec![], true),
-            4 => (vec![
+            ], vec![], true), "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nIntroduce yourself.<|im_end|>\n<|im_start|>assistant\n<think>\nOkay, the user wants me to introduce myself. Let me start by acknowledging their request. I should be friendly and open. I can say something like, \"Hi, I'm an AI assistant here. I'm here to help you with your questions!\" That's a good start. Now, I need to add some personal details or a brief introduction. Maybe mention my name or a trait, like being a language model. Let me check if that's needed. Oh, the user might want to know more about their role. So, include that. Make sure it's concise and positive. Alright, that should cover it.\n</think>\n\nHi! I'm an AI assistant here, and I'm excited to help you with your questions. I'm designed to support you in various ways, and I'm here to be your guide! Let me know how I can assist you! 😊<|im_end|>\n<|im_start|>assistant\n"),
+            4 => ((vec![
                 Message::with_role(Role::System).with_contents(vec![Part::Text(
                     "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
                         .to_owned(),
@@ -232,8 +235,8 @@ mod tests {
                     .with_contents(vec![Part::Text("<think>\nOkay, the user wants me to introduce myself. Let me start by acknowledging their request. I should be friendly and open. I can say something like, \"Hi, I'm an AI assistant here. I'm here to help you with your questions!\" That's a good start. Now, I need to add some personal details or a brief introduction. Maybe mention my name or a trait, like being a language model. Let me check if that's needed. Oh, the user might want to know more about their role. So, include that. Make sure it's concise and positive. Alright, that should cover it.\n</think>\n\nHi! I'm an AI assistant here, and I'm excited to help you with your questions. I'm designed to support you in various ways, and I'm here to be your guide! Let me know how I can assist you! 😊".to_owned())]),
                     Message::with_role(Role::User)
                     .with_contents(vec![Part::Text("I love you.".to_owned())]),                
-            ], vec![], true),
-            5 => (vec![
+            ], vec![], true), "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nIntroduce yourself.<|im_end|>\n<|im_start|>assistant\nHi! I'm an AI assistant here, and I'm excited to help you with your questions. I'm designed to support you in various ways, and I'm here to be your guide! Let me know how I can assist you! 😊<|im_end|>\n<|im_start|>user\nI love you.<|im_end|>\n<|im_start|>assistant\n"),
+            5 => ((vec![
                 Message::with_role(Role::System).with_contents(vec![Part::Text(
                     "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
                         .to_owned(),
@@ -244,16 +247,16 @@ mod tests {
                     .with_contents(vec![Part::Text("I am Qwen, a helpful assistant created by Alibaba Cloud.".to_owned())]),
                     Message::with_role(Role::User)
                     .with_contents(vec![Part::Text("Repeat it.".to_owned())]),                
-            ], vec![], false),
-            6 => (vec![
+            ], vec![], false), "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nWho are you? Answer it simply.<|im_end|>\n<|im_start|>assistant\nI am Qwen, a helpful assistant created by Alibaba Cloud.<|im_end|>\n<|im_start|>user\nRepeat it.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            6 => ((vec![
                 Message::with_role(Role::System).with_contents(vec![Part::Text(
                     "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
                         .to_owned(),
                 )]),
                 Message::with_role(Role::User)
                     .with_contents(vec![Part::Text("How is the current weather in Seoul?".to_owned())]),
-            ], tools, false),
-            7 => (vec![
+            ], TOOLS.clone(), false), "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\":\"function\",\"function\":{\"name\":\"get_current_temperature\",\"description\":\"Get the current temperature at a location.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"location\":{\"type\":\"string\",\"description\":\"The location to get the temperature for, in the format \\\"City, Country\\\"\"},\"unit\":{\"type\":\"string\",\"description\":\"The unit to return the temperature in.\",\"enum\":[\"celsius\",\"fahrenheit\"]}},\"required\":[\"location\",\"unit\"]}}}\n{\"type\":\"function\",\"function\":{\"name\":\"get_current_wind_speed\",\"description\":\"Get the current wind speed in km/h at a given location.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"location\":{\"type\":\"string\",\"description\":\"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}},\"required\":[\"location\"]}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n<|im_start|>user\nHow is the current weather in Seoul?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            7 => ((vec![
                 Message::with_role(Role::System).with_contents(vec![Part::Text(
                     "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
                         .to_owned(),
@@ -264,20 +267,17 @@ mod tests {
                     .with_tool_calls(vec![Part::Function { id: "".to_owned(), name: "get_current_temperature".to_owned(), arguments: r#"{"location": "Seoul, South Korea", "unit": "celsius"}"#.to_owned() }]),
                 Message::with_role(Role::Tool).with_tool_call_id("get_current_temperature")
                     .with_contents(vec![Part::Text("20.5".to_owned())]),
-            ], tools, false),
-            _ => (vec![], vec![], false),
+            ], TOOLS.clone(), false), "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\":\"function\",\"function\":{\"name\":\"get_current_temperature\",\"description\":\"Get the current temperature at a location.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"location\":{\"type\":\"string\",\"description\":\"The location to get the temperature for, in the format \\\"City, Country\\\"\"},\"unit\":{\"type\":\"string\",\"description\":\"The unit to return the temperature in.\",\"enum\":[\"celsius\",\"fahrenheit\"]}},\"required\":[\"location\",\"unit\"]}}}\n{\"type\":\"function\",\"function\":{\"name\":\"get_current_wind_speed\",\"description\":\"Get the current wind speed in km/h at a given location.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"location\":{\"type\":\"string\",\"description\":\"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}},\"required\":[\"location\"]}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n<|im_start|>user\nHow is the current weather in Seoul?<|im_end|>\n<|im_start|>assistant\n<tool_call>\n{\"name\": \"get_current_temperature\", \"arguments\": {\"location\": \"Seoul, South Korea\", \"unit\": \"celsius\"}}\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\n20.5\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            _ => ((vec![], vec![], false), ""),
         };
         msgs
     }
 
     #[multi_platform_test]
     async fn test_chat_template() {
-        use std::{
-            fs::File,
-            io::{BufWriter, Write},
-        };
-
         use futures::StreamExt;
+
+        use crate::debug;
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
@@ -295,26 +295,16 @@ mod tests {
             }
         }
         let template = template.unwrap();
-        let (msgs, tools, do_reasoning) = setup_input(7);
-        if do_reasoning {
-            template.enable_reasoning();
-        } else {
-            template.disable_reasoning();
+        for i in 0..8 {
+            let ((msgs, tools, do_reasoning), expected) = setup_input(i);
+            if do_reasoning {
+                template.enable_reasoning();
+            } else {
+                template.disable_reasoning();
+            }
+            let prompt = template.apply(msgs, tools, true);
+            debug!("{}", prompt.as_ref().unwrap());
+            assert_eq!(prompt.unwrap().as_str(), expected);
         }
-        println!(
-            "########### {}",
-            serde_json::to_string(&tools.first().unwrap()).unwrap()
-        );
-        let strm = template.apply(msgs, tools, true);
-        println!("{}", strm.as_ref().unwrap());
-        let f = File::options()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(format!("{}.json", 7))
-            .unwrap();
-        let mut buf = BufWriter::new(f);
-        buf.write_all(strm.unwrap().as_bytes()).unwrap();
-        let _ = buf.flush();
     }
 }
