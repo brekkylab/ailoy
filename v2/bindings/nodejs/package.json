@@ -11,9 +11,9 @@
         ]
     },
     "scripts": {
-        "build": "napi build --platform --release --package ailoy --features node --manifest-path ../../../Cargo.toml --js ailoy_core.js --dts ailoy_core.d.ts --esm -o ./src",
-        "build:debug": "napi build --platform",
+        "build:napi": "napi build --platform --release --package ailoy --features nodejs --manifest-path ../../../Cargo.toml --js ailoy_core.js --dts ailoy_core.d.ts --esm -o ./src",
         "build:ts": "vite build",
+        "build": "npm run build:napi && npm run build:ts",
         "prepublishOnly": "napi prepublish -t npm",
         "test": "node test.js",
         "version": "napi version"

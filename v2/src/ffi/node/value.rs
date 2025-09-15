@@ -471,6 +471,22 @@ impl From<_MessageOutput> for MessageOutput {
     }
 }
 
+impl FromNapiValue for MessageOutput {
+    unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+        let env = Env::from(env);
+        let obj = unsafe { Object::from_napi_value(env.raw(), napi_val)? };
+
+        let delta: Message = get_property(obj, "delta")?;
+        let finish_reason: Option<FinishReason> = obj.get("finishReason")?;
+
+        Ok(_MessageOutput {
+            delta: delta.into(),
+            finish_reason,
+        }
+        .into())
+    }
+}
+
 #[napi]
 impl MessageOutput {
     #[napi(getter)]

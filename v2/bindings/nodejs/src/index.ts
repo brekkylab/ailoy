@@ -1,4 +1,10 @@
-import { Message as Message, Part, Role, MessageOutput } from "./ailoy_core";
+import {
+  Message as Message,
+  Part,
+  Role,
+  MessageOutput,
+  OpenAILanguageModel as _OpenAILanguageModel,
+} from "./ailoy_core";
 import util from "util";
 
 // Add custom inspect symbol to Part
@@ -27,4 +33,16 @@ if (typeof MessageOutput !== "undefined" && MessageOutput.prototype) {
     };
 }
 
-export { Message, MessageOutput, Part, Role };
+// Add `run` function returning asyncIterator
+class OpenAILanguageModel extends _OpenAILanguageModel {
+  run(messages: Array<Message>) {
+    const iterator = super.iterator(messages);
+    return {
+      [Symbol.asyncIterator]() {
+        return iterator;
+      },
+    };
+  }
+}
+
+export { Message, MessageOutput, Part, Role, OpenAILanguageModel };
