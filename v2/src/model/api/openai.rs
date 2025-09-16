@@ -49,13 +49,17 @@ impl OpenAIChatCompletion for OpenAILanguageModel {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::model::LanguageModel;
-    use crate::utils::log;
-    use crate::value::{Message, MessageAggregator, Part, Role, ToolDesc};
+    use std::sync::LazyLock;
+
     use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
-    use std::sync::LazyLock;
+
+    use super::*;
+    use crate::{
+        model::LanguageModel,
+        utils::log,
+        value::{Message, MessageAggregator, Part, Role, ToolDesc},
+    };
 
     static OPENAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
         option_env!("OPENAI_API_KEY")
@@ -156,10 +160,10 @@ mod tests {
 
     #[multi_platform_test]
     async fn openai_infer_with_image() {
+        use base64::Engine;
+
         use super::*;
         use crate::value::MessageAggregator;
-
-        use base64::Engine;
 
         let client = reqwest::Client::new();
         let test_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Jensen_Huang_%28cropped%29.jpg/250px-Jensen_Huang_%28cropped%29.jpg";
@@ -187,12 +191,15 @@ mod tests {
 
     #[multi_platform_test]
     async fn openai_infer_structured_output() {
-        use super::OpenAIGenerationConfigBuilder;
-        use crate::model::api::openai_chat_completion::{
-            OpenAIResponseFormat, OpenAIResponseFormatJSONSchema,
-        };
-        use crate::value::MessageAggregator;
         use serde_json::json;
+
+        use super::OpenAIGenerationConfigBuilder;
+        use crate::{
+            model::api::openai_chat_completion::{
+                OpenAIResponseFormat, OpenAIResponseFormatJSONSchema,
+            },
+            value::MessageAggregator,
+        };
 
         let json_schema = serde_json::from_value::<OpenAIResponseFormatJSONSchema>(json!({
             "name": "summarize-content",

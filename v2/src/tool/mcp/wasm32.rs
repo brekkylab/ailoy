@@ -1,7 +1,8 @@
-use std::borrow::Cow;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::AtomicU32;
+use std::{
+    borrow::Cow,
+    rc::Rc,
+    sync::{Arc, atomic::AtomicU32},
+};
 
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::anyhow;
@@ -377,9 +378,10 @@ pub async fn mcp_tools_from_streamable_http(
 
 #[cfg(test)]
 mod tests {
+    use wasm_bindgen_test::*;
+
     use super::*;
     use crate::utils::log;
-    use wasm_bindgen_test::*;
 
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 

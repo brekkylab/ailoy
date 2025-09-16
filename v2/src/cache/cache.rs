@@ -10,14 +10,13 @@ use futures::{Stream, StreamExt as _, stream::FuturesUnordered};
 use tokio::sync::RwLock;
 use url::Url;
 
-use crate::{
-    cache::{CacheContents, CacheEntry, TryFromCache},
-    utils::MaybeSend,
-};
-
 use super::{
     filesystem::{read, write},
     manifest::{Manifest, ManifestDirectory},
+};
+use crate::{
+    cache::{CacheContents, CacheEntry, TryFromCache},
+    utils::MaybeSend,
 };
 
 async fn download(url: Url) -> Result<Vec<u8>, String> {
