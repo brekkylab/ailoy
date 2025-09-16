@@ -1,3 +1,4 @@
+mod block;
 mod formats;
 mod message;
 mod part;
