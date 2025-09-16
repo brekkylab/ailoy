@@ -2,6 +2,7 @@ mod block;
 mod formats;
 mod message;
 mod part;
+mod primitive;
 mod tool_call;
 mod tool_desc;
 
