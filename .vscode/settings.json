@@ -144,7 +144,5 @@
     "rust-analyzer.runnables.extraEnv": {
         "RUST_LOG": "debug"
     },
-    "rust-analyzer.rustfmt.extraArgs": [
-        "+nightly"
-    ],
+    "rust-analyzer.rustfmt.extraArgs": [],
 }
