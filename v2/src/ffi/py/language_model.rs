@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 use futures::StreamExt;
 use pyo3::{
     IntoPyObjectExt, PyClass,
@@ -9,20 +11,23 @@ use pyo3_stub_gen::derive::*;
 use tokio::runtime::Runtime;
 
 use crate::{
-    ffi::py::{
-        base::{PyWrapper, await_future},
-        cache_progress::await_cache_result,
-    },
+    ffi::py::{base::await_future, cache_progress::await_cache_result},
     model::{
-        LanguageModel, LocalLanguageModel, anthropic::AnthropicLanguageModel,
+        ArcMutexLanguageModel, LocalLanguageModel, anthropic::AnthropicLanguageModel,
         gemini::GeminiLanguageModel, openai::OpenAILanguageModel, xai::XAILanguageModel,
     },
     value::{Message, MessageOutput, ToolDesc},
 };
 
-pub trait PyLanguageModelMethods<T: LanguageModel + 'static>:
-    PyWrapper<Inner = T> + PyClass<BaseType = PyBaseLanguageModel>
-{
+pub trait PyLanguageModelMethods: PyClass<BaseType = PyBaseLanguageModel> {
+    fn from_inner(inner: ArcMutexLanguageModel) -> Self;
+
+    fn into_inner(&self) -> ArcMutexLanguageModel;
+
+    fn into_py_obj(py: Python<'_>, inner: ArcMutexLanguageModel) -> PyResult<Py<Self>> {
+        Py::new(py, (Self::from_inner(inner), PyBaseLanguageModel {}))
+    }
+
     fn _spawn(
         &self,
         messages: Vec<Message>,
@@ -31,12 +36,12 @@ pub trait PyLanguageModelMethods<T: LanguageModel + 'static>:
         &'static tokio::runtime::Runtime,
         async_channel::Receiver<Result<MessageOutput, String>>,
     )> {
-        let model = self.into_inner()?;
+        let model = self.into_inner().model;
 
         let (tx, rx) = async_channel::unbounded::<Result<MessageOutput, String>>();
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         rt.spawn(async move {
-            let mut model = model;
+            let mut model = model.lock().await;
             let mut stream = model.run(messages, tools.unwrap_or(vec![])).boxed();
 
             while let Some(item) = stream.next().await {
@@ -103,22 +108,18 @@ impl PyBaseLanguageModel {
 #[gen_stub_pyclass]
 #[pyclass(name = "LocalLanguageModel", extends = PyBaseLanguageModel)]
 pub struct PyLocalLanguageModel {
-    inner: LocalLanguageModel,
+    inner: ArcMutexLanguageModel,
 }
 
-impl PyWrapper for PyLocalLanguageModel {
-    type Inner = LocalLanguageModel;
-
-    fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyBaseLanguageModel {}))
+impl PyLanguageModelMethods for PyLocalLanguageModel {
+    fn from_inner(inner: ArcMutexLanguageModel) -> Self {
+        Self { inner }
     }
 
-    fn into_inner(&self) -> PyResult<Self::Inner> {
-        Ok(self.inner.clone())
+    fn into_inner(&self) -> ArcMutexLanguageModel {
+        self.inner.clone()
     }
 }
-
-impl PyLanguageModelMethods<LocalLanguageModel> for PyLocalLanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -136,9 +137,7 @@ impl PyLocalLanguageModel {
         let fut = async move {
             let inner =
                 await_cache_result::<LocalLanguageModel>(model_name, progress_callback).await?;
-            Python::attach(|py| {
-                Py::new(py, (PyLocalLanguageModel { inner }, PyBaseLanguageModel {}))
-            })
+            Python::attach(|py| Self::into_py_obj(py, ArcMutexLanguageModel::new(inner)))
         };
         pyo3_async_runtimes::tokio::future_into_py(py, fut)
     }
@@ -151,12 +150,18 @@ impl PyLocalLanguageModel {
         model_name: String,
         #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
         progress_callback: Option<Py<PyAny>>,
-    ) -> PyResult<Py<PyLocalLanguageModel>> {
+    ) -> PyResult<Py<Self>> {
         let inner = await_future(await_cache_result::<LocalLanguageModel>(
             model_name,
             progress_callback,
         ))?;
-        Py::new(py, (PyLocalLanguageModel { inner }, PyBaseLanguageModel {}))
+        Py::new(
+            py,
+            (
+                Self::from_inner(ArcMutexLanguageModel::new(inner)),
+                PyBaseLanguageModel {},
+            ),
+        )
     }
 
     #[pyo3(signature = (messages, tools = None))]
@@ -177,12 +182,28 @@ impl PyLocalLanguageModel {
         self._run_sync(messages, tools)
     }
 
-    fn enable_reasoning(&self) {
-        self.inner.enable_reasoning();
+    fn enable_reasoning(&self) -> PyResult<()> {
+        await_future(async move {
+            let arc_model = self
+                .inner
+                .into_inner::<LocalLanguageModel>()
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            let model = arc_model.lock().await;
+            model.enable_reasoning();
+            Ok::<(), PyErr>(())
+        })
     }
 
-    fn disable_reasoning(&self) {
-        self.inner.disable_reasoning();
+    fn disable_reasoning(&self) -> PyResult<()> {
+        await_future(async move {
+            let arc_model = self
+                .inner
+                .into_inner::<LocalLanguageModel>()
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            let model = arc_model.lock().await;
+            model.disable_reasoning();
+            Ok::<(), PyErr>(())
+        })
     }
 }
 
@@ -239,29 +260,33 @@ impl PyLanguageModelRunSyncIterator {
 #[gen_stub_pyclass]
 #[pyclass(name = "OpenAILanguageModel", extends = PyBaseLanguageModel)]
 pub struct PyOpenAILanguageModel {
-    inner: OpenAILanguageModel,
+    inner: ArcMutexLanguageModel,
 }
 
-impl PyWrapper for PyOpenAILanguageModel {
-    type Inner = OpenAILanguageModel;
-
-    fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyBaseLanguageModel {}))
+impl PyLanguageModelMethods for PyOpenAILanguageModel {
+    fn from_inner(inner: ArcMutexLanguageModel) -> Self {
+        Self { inner }
     }
 
-    fn into_inner(&self) -> PyResult<Self::Inner> {
-        Ok(self.inner.clone())
+    fn into_inner(&self) -> ArcMutexLanguageModel {
+        self.inner.clone()
     }
 }
-
-impl PyLanguageModelMethods<OpenAILanguageModel> for PyOpenAILanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyOpenAILanguageModel {
     #[new]
     fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
-        Self::into_py_obj(OpenAILanguageModel::new(model_name, api_key), py)
+        Py::new(
+            py,
+            (
+                Self::from_inner(ArcMutexLanguageModel::new(OpenAILanguageModel::new(
+                    model_name, api_key,
+                ))),
+                PyBaseLanguageModel {},
+            ),
+        )
     }
 
     #[pyo3(signature = (messages, tools = None))]
@@ -286,29 +311,33 @@ impl PyOpenAILanguageModel {
 #[gen_stub_pyclass]
 #[pyclass(name = "GeminiLanguageModel", extends = PyBaseLanguageModel)]
 pub struct PyGeminiLanguageModel {
-    inner: GeminiLanguageModel,
+    inner: ArcMutexLanguageModel,
 }
 
-impl PyWrapper for PyGeminiLanguageModel {
-    type Inner = GeminiLanguageModel;
-
-    fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyBaseLanguageModel {}))
+impl PyLanguageModelMethods for PyGeminiLanguageModel {
+    fn from_inner(inner: ArcMutexLanguageModel) -> Self {
+        Self { inner }
     }
 
-    fn into_inner(&self) -> PyResult<Self::Inner> {
-        Ok(self.inner.clone())
+    fn into_inner(&self) -> ArcMutexLanguageModel {
+        self.inner.clone()
     }
 }
-
-impl PyLanguageModelMethods<GeminiLanguageModel> for PyGeminiLanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyGeminiLanguageModel {
     #[new]
     fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
-        Self::into_py_obj(GeminiLanguageModel::new(model_name, api_key), py)
+        Py::new(
+            py,
+            (
+                Self::from_inner(ArcMutexLanguageModel::new(GeminiLanguageModel::new(
+                    model_name, api_key,
+                ))),
+                PyBaseLanguageModel {},
+            ),
+        )
     }
 
     #[pyo3(signature = (messages, tools = None))]
@@ -333,29 +362,33 @@ impl PyGeminiLanguageModel {
 #[gen_stub_pyclass]
 #[pyclass(name = "AnthropicLanguageModel", extends = PyBaseLanguageModel)]
 pub struct PyAnthropicLanguageModel {
-    inner: AnthropicLanguageModel,
+    inner: ArcMutexLanguageModel,
 }
 
-impl PyWrapper for PyAnthropicLanguageModel {
-    type Inner = AnthropicLanguageModel;
-
-    fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyBaseLanguageModel {}))
+impl PyLanguageModelMethods for PyAnthropicLanguageModel {
+    fn from_inner(inner: ArcMutexLanguageModel) -> Self {
+        Self { inner }
     }
 
-    fn into_inner(&self) -> PyResult<Self::Inner> {
-        Ok(self.inner.clone())
+    fn into_inner(&self) -> ArcMutexLanguageModel {
+        self.inner.clone()
     }
 }
-
-impl PyLanguageModelMethods<AnthropicLanguageModel> for PyAnthropicLanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyAnthropicLanguageModel {
     #[new]
     fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
-        Self::into_py_obj(AnthropicLanguageModel::new(model_name, api_key), py)
+        Py::new(
+            py,
+            (
+                Self::from_inner(ArcMutexLanguageModel::new(AnthropicLanguageModel::new(
+                    model_name, api_key,
+                ))),
+                PyBaseLanguageModel {},
+            ),
+        )
     }
 
     #[pyo3(signature = (messages, tools = None))]
@@ -380,29 +413,33 @@ impl PyAnthropicLanguageModel {
 #[gen_stub_pyclass]
 #[pyclass(name = "XAILanguageModel", extends = PyBaseLanguageModel)]
 pub struct PyXAILanguageModel {
-    inner: XAILanguageModel,
+    inner: ArcMutexLanguageModel,
 }
 
-impl PyWrapper for PyXAILanguageModel {
-    type Inner = XAILanguageModel;
-
-    fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self { inner }, PyBaseLanguageModel {}))
+impl PyLanguageModelMethods for PyXAILanguageModel {
+    fn from_inner(inner: ArcMutexLanguageModel) -> Self {
+        Self { inner }
     }
 
-    fn into_inner(&self) -> PyResult<Self::Inner> {
-        Ok(self.inner.clone())
+    fn into_inner(&self) -> ArcMutexLanguageModel {
+        self.inner.clone()
     }
 }
-
-impl PyLanguageModelMethods<XAILanguageModel> for PyXAILanguageModel {}
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyXAILanguageModel {
     #[new]
     fn __new__(py: Python<'_>, model_name: String, api_key: String) -> PyResult<Py<Self>> {
-        Self::into_py_obj(XAILanguageModel::new(model_name, api_key), py)
+        Py::new(
+            py,
+            (
+                Self::from_inner(ArcMutexLanguageModel::new(XAILanguageModel::new(
+                    model_name, api_key,
+                ))),
+                PyBaseLanguageModel {},
+            ),
+        )
     }
 
     #[pyo3(signature = (messages, tools = None))]
@@ -424,22 +461,22 @@ impl PyXAILanguageModel {
     }
 }
 
-impl<'py> IntoPyObject<'py> for Box<dyn LanguageModel> {
+impl<'py> IntoPyObject<'py> for ArcMutexLanguageModel {
     type Target = PyAny;
     type Output = Bound<'py, Self::Target>;
     type Error = PyErr;
 
     fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
-        let py_any = if let Some(model) = self.downcast_ref::<LocalLanguageModel>() {
-            PyLocalLanguageModel::into_py_obj(model.clone(), py)?.into_py_any(py)
-        } else if let Some(model) = self.downcast_ref::<OpenAILanguageModel>() {
-            PyOpenAILanguageModel::into_py_obj(model.clone(), py)?.into_py_any(py)
-        } else if let Some(model) = self.downcast_ref::<GeminiLanguageModel>() {
-            PyGeminiLanguageModel::into_py_obj(model.clone(), py)?.into_py_any(py)
-        } else if let Some(model) = self.downcast_ref::<AnthropicLanguageModel>() {
-            PyAnthropicLanguageModel::into_py_obj(model.clone(), py)?.into_py_any(py)
-        } else if let Some(model) = self.downcast_ref::<XAILanguageModel>() {
-            PyXAILanguageModel::into_py_obj(model.clone(), py)?.into_py_any(py)
+        let py_any = if self.type_id == TypeId::of::<LocalLanguageModel>() {
+            PyLocalLanguageModel::into_py_obj(py, self)?.into_py_any(py)
+        } else if self.type_id == TypeId::of::<OpenAILanguageModel>() {
+            PyOpenAILanguageModel::into_py_obj(py, self)?.into_py_any(py)
+        } else if self.type_id == TypeId::of::<GeminiLanguageModel>() {
+            PyGeminiLanguageModel::into_py_obj(py, self)?.into_py_any(py)
+        } else if self.type_id == TypeId::of::<AnthropicLanguageModel>() {
+            PyAnthropicLanguageModel::into_py_obj(py, self)?.into_py_any(py)
+        } else if self.type_id == TypeId::of::<XAILanguageModel>() {
+            PyXAILanguageModel::into_py_obj(py, self)?.into_py_any(py)
         } else {
             Err(PyRuntimeError::new_err(
                 "Failed to downcast BaseLanguageModel",

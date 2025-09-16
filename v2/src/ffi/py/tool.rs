@@ -84,10 +84,6 @@ impl PyWrapper for PyBuiltinTool {
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, (Self { inner }, PyBaseTool {}))
     }
-
-    fn into_inner(&self) -> PyResult<Self::Inner> {
-        Ok(self.inner.clone())
-    }
 }
 
 impl PyToolMethods<BuiltinTool> for PyBuiltinTool {
@@ -142,10 +138,6 @@ impl PyWrapper for PyMCPTool {
 
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, (Self { inner }, PyBaseTool {}))
-    }
-
-    fn into_inner(&self) -> PyResult<Self::Inner> {
-        Ok(self.inner.clone())
     }
 }
 

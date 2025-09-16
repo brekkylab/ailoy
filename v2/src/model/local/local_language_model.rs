@@ -14,7 +14,7 @@ use crate::{
     value::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LocalLanguageModel {
     chat_template: ChatTemplate,
 
