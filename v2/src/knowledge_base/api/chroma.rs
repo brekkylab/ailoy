@@ -1,13 +1,13 @@
-use super::super::{AddInput, Embedding, GetResult, RetrieveResult, VectorStore};
-
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::{Result, bail};
-use chromadb::client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions};
-use chromadb::collection::{
-    ChromaCollection, CollectionEntries, GetOptions, QueryOptions, QueryResult,
+use chromadb::{
+    client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions},
+    collection::{ChromaCollection, CollectionEntries, GetOptions, QueryOptions, QueryResult},
 };
 use serde_json::{Map, Value as Json};
 use uuid::Uuid;
+
+use super::super::{AddInput, Embedding, GetResult, RetrieveResult, VectorStore};
 
 pub struct ChromaStore {
     collection: ChromaCollection,
@@ -274,10 +274,10 @@ impl VectorStore for ChromaStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use ailoy_macros::multi_platform_test;
     use serde_json::json;
 
-    use ailoy_macros::multi_platform_test;
+    use super::*;
 
     async fn setup_test_store() -> Result<ChromaStore> {
         let client = ChromaClient::new(ChromaClientOptions::default()).await?;

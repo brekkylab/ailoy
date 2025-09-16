@@ -1,5 +1,6 @@
-use futures::StreamExt;
 use std::{fmt::Debug, sync::Arc};
+
+use futures::StreamExt;
 
 use crate::{
     model::LanguageModel,

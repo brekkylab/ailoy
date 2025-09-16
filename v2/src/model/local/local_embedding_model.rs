@@ -1,5 +1,6 @@
 use std::{any::Any, collections::BTreeMap};
 
+use ailoy_macros::multi_platform_async_trait;
 use anyhow::Result;
 use futures::stream::Stream;
 
@@ -13,7 +14,6 @@ use crate::{
     },
     utils::BoxFuture,
 };
-use ailoy_macros::multi_platform_async_trait;
 
 #[derive(Debug)]
 pub struct LocalEmbeddingModel {
@@ -125,11 +125,11 @@ impl TryFromCache for LocalEmbeddingModel {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
+    use super::*;
     use crate::utils::{Normalize, log};
-    use ailoy_macros::multi_platform_test;
 
     fn dot(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {

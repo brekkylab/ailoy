@@ -442,10 +442,12 @@ impl LanguageModel for AnthropicLanguageModel {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
+
+    use ailoy_macros::multi_platform_test;
+
     use super::*;
     use crate::value::{MessageAggregator, ToolDesc, ToolDescArg};
-    use ailoy_macros::multi_platform_test;
-    use std::sync::LazyLock;
 
     static ANTHROPIC_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
         option_env!("ANTHROPIC_API_KEY")

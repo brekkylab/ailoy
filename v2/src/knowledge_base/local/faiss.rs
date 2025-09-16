@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
-use super::super::{AddInput, Embedding, GetResult, Metadata, RetrieveResult, VectorStore};
-use crate::ffi;
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::Result;
+
+use super::super::{AddInput, Embedding, GetResult, Metadata, RetrieveResult, VectorStore};
+use crate::ffi;
 
 pub struct DocEntry {
     pub document: String,
@@ -194,10 +195,11 @@ impl VectorStore for FaissStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ailoy_macros::multi_platform_test;
     use anyhow::Ok;
     use serde_json::json;
+
+    use super::*;
 
     async fn setup_test_store() -> Result<FaissStore> {
         Ok(FaissStore::new(3).await.unwrap())
