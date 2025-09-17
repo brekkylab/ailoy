@@ -44,131 +44,97 @@ pub enum Data {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Mode {
-    Think,
+    Think { signature: Option<String> },
     Content,
-    ToolCall,
+    ToolCall { id: Option<String> },
     Refusal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Part {
-    data: Data,
+    pub data: Data,
+    pub mode: Mode,
+}
+
+#[derive(Clone, Debug)]
+pub struct PartBuilder {
+    data: Option<Data>,
     mode: Mode,
 }
 
-impl Part {
-    // pub fn text(text: impl Into<String>) -> Self {
-    //     Self::Text(text.into())
-    // }
+impl PartBuilder {
+    pub fn new() -> Self {
+        Self {
+            data: None,
+            mode: Mode::Content,
+        }
+    }
 
-    // pub fn function_string(function: impl Into<String>) -> Self {
-    //     Self::Function(PartFunction::String(function.into()))
-    // }
+    pub fn data(&mut self, data: Data) -> &mut Self {
+        self.data = Some(data);
+        self
+    }
 
-    // pub fn function(name: impl Into<String>, args: impl Into<String>) -> Self {
-    //     Self::Function(PartFunction::Parsed {
-    //         name: name.into(),
-    //         args: args.into(),
-    //     })
-    // }
+    pub fn text(&mut self, data: impl Into<String>) -> &mut Self {
+        self.data = Some(Data::Text(data.into()));
+        self
+    }
 
-    // pub fn image_url(url: impl Into<String>) -> Self {
-    //     Self::Image(PartMedia::URL(url.into()))
-    // }
+    pub fn function_string(&mut self, data: impl Into<String>) -> &mut Self {
+        self.data = Some(Data::Function(FunctionData::String(data.into())));
+        self
+    }
 
-    // pub fn image_base64(data: impl Into<String>, media_type: impl Into<String>) -> Self {
-    //     Self::Image(PartMedia::Base64 {
-    //         data: data.into(),
-    //         media_type: media_type.into(),
-    //     })
-    // }
+    pub fn function(&mut self, name: impl Into<String>, args: impl Into<String>) -> &mut Self {
+        self.data = Some(Data::Function(FunctionData::Parsed {
+            name: name.into(),
+            args: args.into(),
+        }));
+        self
+    }
 
-    // pub fn is_text(&self) -> bool {
-    //     match self {
-    //         Part::Text(_) => true,
-    //         _ => false,
-    //     }
-    // }
+    pub fn mode(&mut self, mode: Mode) -> &mut Self {
+        self.mode = mode;
+        self
+    }
 
-    // pub fn is_function(&self) -> bool {
-    //     match self {
-    //         Part::Function(_) => true,
-    //         _ => false,
-    //     }
-    // }
+    pub fn think(&mut self) -> &mut Self {
+        self.mode = Mode::Think { signature: None };
+        self
+    }
 
-    // pub fn is_image(&self) -> bool {
-    //     match self {
-    //         Part::Image(_) => true,
-    //         _ => false,
-    //     }
-    // }
+    pub fn think_with_signature(&mut self, sig: impl Into<String>) -> &mut Self {
+        self.mode = Mode::Think {
+            signature: Some(sig.into()),
+        };
+        self
+    }
 
-    // /// Merges adjacent parts of the **same variant** in place:
-    // ///
-    // /// # Returns
-    // /// `None`` if successfully merged
-    // /// `Some(Value)` if something cannot be merged
-    // ///
-    // /// # Concatenation semantics
-    // /// - `Text` + `Text`: appends right to left.
-    // /// - `FunctionString` + `FunctionString`: appends right to left (for streaming).
-    // /// - `Function` + `Function`:
-    // ///   - If both IDs are non-empty and **different**, denies merging (returns `Some(other)`).
-    // ///   - Otherwise, empty `id` on the left is filled from the right; `name` and `arguments`
-    // ///     are appended, then merge **succeeds** (`None`).
-    // /// - Any other pair: not mergeable; returns `Some(other)`.
-    // pub fn concatenate(&mut self, other: Self) -> Option<Self> {
-    //     match (self, other) {
-    //         (Part::Text(lhs), Part::Text(rhs)) => {
-    //             lhs.push_str(&rhs);
-    //             None
-    //         }
-    //         (Part::FunctionString(lhs), Part::FunctionString(rhs)) => {
-    //             lhs.push_str(&rhs);
-    //             None
-    //         }
-    //         (
-    //             Part::Function {
-    //                 id: id1,
-    //                 name: name1,
-    //                 arguments: arguments1,
-    //             },
-    //             Part::Function {
-    //                 id: id2,
-    //                 name: name2,
-    //                 arguments: arguments2,
-    //             },
-    //         ) => {
-    //             // Function ID changed: Treat as a different function call
-    //             if !id1.is_empty() && !id2.is_empty() && id1 != &id2 {
-    //                 Some(Part::Function {
-    //                     id: id2,
-    //                     name: name2,
-    //                     arguments: arguments2,
-    //                 })
-    //             } else {
-    //                 if id1.is_empty() {
-    //                     *id1 = id2;
-    //                 }
-    //                 name1.push_str(&name2);
-    //                 arguments1.push_str(&arguments2);
-    //                 None
-    //             }
-    //         }
-    //         (_, other) => Some(other),
-    //     }
-    // }
+    pub fn content(&mut self) -> &mut Self {
+        self.mode = Mode::Content;
+        self
+    }
 
-    // pub fn to_string(&self) -> Option<String> {
-    //     match self {
-    //         Part::Text(str) => Some(str.into()),
-    //         Part::FunctionString(str) => Some(str.into()),
-    //         Part::ImageURL(str) => Some(str.into()),
-    //         Part::ImageData(data, mime_type) => {
-    //             Some(format!("data:{};base64,{}", mime_type, data).to_owned())
-    //         }
-    //         _ => None,
-    //     }
-    // }
+    pub fn tool_call(&mut self) -> &mut Self {
+        self.mode = Mode::ToolCall { id: None };
+        self
+    }
+
+    pub fn tool_call_with_id(&mut self, id: impl Into<String>) -> &mut Self {
+        self.mode = Mode::ToolCall {
+            id: Some(id.into()),
+        };
+        self
+    }
+
+    pub fn build(self) -> Result<Part, ()> {
+        if let Some(data) = self.data {
+            Ok(Part {
+                data,
+                mode: self.mode,
+            })
+        } else {
+            Err(())
+        }
+    }
 }
