@@ -3,13 +3,19 @@ import {
   Part,
   Role,
   MessageOutput,
-  CacheProgress,
   LanguageModelRunIterator,
   LocalLanguageModel,
   OpenAILanguageModel,
   GeminiLanguageModel,
   AnthropicLanguageModel,
   XAILanguageModel,
+  Agent,
+  AgentRunIterator,
+} from "./ailoy_core";
+import type {
+  CacheProgress,
+  AgentRunIteratorResult,
+  LanguageModelIteratorResult,
 } from "./ailoy_core";
 import util from "util";
 
@@ -44,11 +50,17 @@ export {
   MessageOutput,
   Part,
   Role,
-  CacheProgress,
   LanguageModelRunIterator,
   LocalLanguageModel,
   OpenAILanguageModel,
   GeminiLanguageModel,
   AnthropicLanguageModel,
   XAILanguageModel,
+  Agent,
+  AgentRunIterator,
+};
+export type {
+  CacheProgress,
+  AgentRunIteratorResult,
+  LanguageModelIteratorResult,
 };

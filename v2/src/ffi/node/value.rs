@@ -3,33 +3,31 @@ use napi_derive::napi;
 
 use crate::{
     ffi::node::common::{get_property, json_parse, json_stringify},
-    value::{
-        FinishReason, Message as _Message, MessageOutput as _MessageOutput, Part as _Part, Role,
-    },
+    value::{FinishReason, Message, MessageOutput, Part, Role},
 };
 
 ////////////
 /// Part ///
 ////////////
 
-#[napi]
-pub struct Part {
-    inner: _Part,
+#[napi(js_name = "Part")]
+pub struct JsPart {
+    inner: Part,
 }
 
-impl Into<_Part> for Part {
-    fn into(self) -> _Part {
+impl Into<Part> for JsPart {
+    fn into(self) -> Part {
         self.inner
     }
 }
 
-impl From<_Part> for Part {
-    fn from(part: _Part) -> Self {
+impl From<Part> for JsPart {
+    fn from(part: Part) -> Self {
         Self { inner: part }
     }
 }
 
-impl FromNapiValue for Part {
+impl FromNapiValue for JsPart {
     unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
         let env = Env::from(env);
         let obj = unsafe { Object::from_napi_value(env.raw(), napi_val)? };
@@ -38,13 +36,13 @@ impl FromNapiValue for Part {
         match part_type.as_str() {
             "Text" => {
                 let text = get_property(obj, "text")?;
-                Ok(_Part::Text(text).into())
+                Ok(Part::Text(text).into())
             }
             "Function" => {
                 let id: String = get_property(obj, "id")?;
                 let name: String = get_property(obj, "name")?;
                 let arguments: Object = get_property(obj, "arguments")?;
-                Ok(_Part::Function {
+                Ok(Part::Function {
                     id,
                     name,
                     arguments: json_stringify(env, arguments)?,
@@ -53,12 +51,12 @@ impl FromNapiValue for Part {
             }
             "ImageURL" => {
                 let url: String = get_property(obj, "url")?;
-                Ok(_Part::ImageURL(url).into())
+                Ok(Part::ImageURL(url).into())
             }
             "ImageData" => {
                 let data: String = get_property(obj, "data")?;
                 let mime_type: String = get_property(obj, "mimeType")?;
-                Ok(_Part::ImageData { data, mime_type }.into())
+                Ok(Part::ImageData { data, mime_type }.into())
             }
             _ => Err(NapiError::new(
                 Status::Unknown,
@@ -69,33 +67,33 @@ impl FromNapiValue for Part {
 }
 
 #[napi]
-impl Part {
+impl JsPart {
     #[napi(factory)]
-    pub fn new_text(text: String) -> Part {
-        Part {
-            inner: _Part::new_text(text),
+    pub fn new_text(text: String) -> Self {
+        Self {
+            inner: Part::new_text(text),
         }
     }
 
     #[napi(factory)]
-    pub fn new_function(env: Env, id: String, name: String, arguments: Object) -> Part {
+    pub fn new_function(env: Env, id: String, name: String, arguments: Object) -> Self {
         let arguments_str = json_stringify(env, arguments).unwrap();
-        Part {
-            inner: _Part::new_function(id, name, arguments_str),
+        Self {
+            inner: Part::new_function(id, name, arguments_str),
         }
     }
 
     #[napi(factory)]
-    pub fn new_image_url(url: String) -> Part {
-        Part {
-            inner: _Part::new_image_url(url),
+    pub fn new_image_url(url: String) -> Self {
+        Self {
+            inner: Part::new_image_url(url),
         }
     }
 
     #[napi(factory)]
-    pub fn new_image_data(data: String, mime_type: String) -> Part {
-        Part {
-            inner: _Part::new_image_data(data, mime_type),
+    pub fn new_image_data(data: String, mime_type: String) -> Self {
+        Self {
+            inner: Part::new_image_data(data, mime_type),
         }
     }
 
@@ -107,7 +105,7 @@ impl Part {
     #[napi(getter)]
     pub fn text(&self) -> Result<Option<String>> {
         Ok(match &self.inner {
-            _Part::Text(text) => Some(text.clone()),
+            Part::Text(text) => Some(text.clone()),
             _ => None,
         })
     }
@@ -115,7 +113,7 @@ impl Part {
     #[napi(setter)]
     pub fn set_text(&mut self, text: String) -> Result<()> {
         match &mut self.inner {
-            _Part::Text(text_) => {
+            Part::Text(text_) => {
                 *text_ = text;
                 Ok(())
             }
@@ -129,7 +127,7 @@ impl Part {
     #[napi(getter)]
     pub fn id(&self) -> Result<Option<String>> {
         Ok(match &self.inner {
-            _Part::Function { id, .. } => Some(id.clone()),
+            Part::Function { id, .. } => Some(id.clone()),
             _ => None,
         })
     }
@@ -137,7 +135,7 @@ impl Part {
     #[napi(setter)]
     pub fn set_id(&mut self, id: String) -> Result<()> {
         match &mut self.inner {
-            _Part::Function { id: id_, .. } => {
+            Part::Function { id: id_, .. } => {
                 *id_ = id;
                 Ok(())
             }
@@ -151,7 +149,7 @@ impl Part {
     #[napi(getter)]
     pub fn name(&self) -> Result<Option<String>> {
         Ok(match &self.inner {
-            _Part::Function { name, .. } => Some(name.clone()),
+            Part::Function { name, .. } => Some(name.clone()),
             _ => None,
         })
     }
@@ -159,7 +157,7 @@ impl Part {
     #[napi(setter)]
     pub fn set_name(&mut self, name: String) -> Result<()> {
         match &mut self.inner {
-            _Part::Function { name: name_, .. } => {
+            Part::Function { name: name_, .. } => {
                 *name_ = name;
                 Ok(())
             }
@@ -173,7 +171,7 @@ impl Part {
     #[napi(getter)]
     pub fn arguments<'a>(&'a self, env: Env) -> Result<Option<Object<'a>>> {
         Ok(match &self.inner {
-            _Part::Function { arguments, .. } => Some(json_parse(env, arguments.clone())?),
+            Part::Function { arguments, .. } => Some(json_parse(env, arguments.clone())?),
             _ => None,
         })
     }
@@ -181,7 +179,7 @@ impl Part {
     #[napi(setter)]
     pub fn set_arguments(&mut self, env: Env, arguments: Object) -> Result<()> {
         match &mut self.inner {
-            _Part::Function {
+            Part::Function {
                 arguments: arguments_,
                 ..
             } => {
@@ -198,7 +196,7 @@ impl Part {
     #[napi(getter)]
     pub fn url(&self) -> Result<Option<String>> {
         Ok(match &self.inner {
-            _Part::ImageURL(url) => Some(url.clone()),
+            Part::ImageURL(url) => Some(url.clone()),
             _ => None,
         })
     }
@@ -206,7 +204,7 @@ impl Part {
     #[napi(setter)]
     pub fn set_url(&mut self, url: String) -> Result<()> {
         match &mut self.inner {
-            _Part::ImageURL(url_) => {
+            Part::ImageURL(url_) => {
                 *url_ = url;
                 Ok(())
             }
@@ -220,7 +218,7 @@ impl Part {
     #[napi(getter)]
     pub fn data(&self) -> Result<Option<String>> {
         Ok(match &self.inner {
-            _Part::ImageData { data, .. } => Some(data.clone()),
+            Part::ImageData { data, .. } => Some(data.clone()),
             _ => None,
         })
     }
@@ -228,7 +226,7 @@ impl Part {
     #[napi(setter)]
     pub fn set_data(&mut self, data: String) -> Result<()> {
         match &mut self.inner {
-            _Part::ImageData { data: data_, .. } => {
+            Part::ImageData { data: data_, .. } => {
                 *data_ = data;
                 Ok(())
             }
@@ -242,7 +240,7 @@ impl Part {
     #[napi(getter)]
     pub fn mime_type(&self) -> Result<Option<String>> {
         Ok(match &self.inner {
-            _Part::ImageData { mime_type, .. } => Some(mime_type.clone()),
+            Part::ImageData { mime_type, .. } => Some(mime_type.clone()),
             _ => None,
         })
     }
@@ -250,7 +248,7 @@ impl Part {
     #[napi(setter)]
     pub fn set_mime_type(&mut self, mime_type: String) -> Result<()> {
         match &mut self.inner {
-            _Part::ImageData {
+            Part::ImageData {
                 mime_type: mime_type_,
                 ..
             } => {
@@ -269,18 +267,18 @@ impl Part {
         let mut obj = Object::new(&env)?;
         obj.set("partType", self.part_type())?;
         match self.inner {
-            _Part::Text(..) => {
+            Part::Text(..) => {
                 obj.set("text", self.text())?;
             }
-            _Part::Function { .. } => {
+            Part::Function { .. } => {
                 obj.set("id", self.id())?;
                 obj.set("name", self.name())?;
                 obj.set("arguments", self.arguments(env))?;
             }
-            _Part::ImageURL(..) => {
+            Part::ImageURL(..) => {
                 obj.set("url", self.url())?;
             }
-            _Part::ImageData { .. } => {
+            Part::ImageData { .. } => {
                 obj.set("data", self.data())?;
                 obj.set("mimeType", self.mime_type())?;
             }
@@ -303,24 +301,24 @@ impl Part {
 /// Message ///
 ///////////////
 
-#[napi]
-pub struct Message {
-    inner: _Message,
+#[napi(js_name = "Message")]
+pub struct JsMessage {
+    inner: Message,
 }
 
-impl Into<_Message> for Message {
-    fn into(self) -> _Message {
+impl Into<Message> for JsMessage {
+    fn into(self) -> Message {
         self.inner
     }
 }
 
-impl From<_Message> for Message {
-    fn from(msg: _Message) -> Self {
+impl From<Message> for JsMessage {
+    fn from(msg: Message) -> Self {
         Self { inner: msg }
     }
 }
 
-impl FromNapiValue for Message {
+impl FromNapiValue for JsMessage {
     unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
         let env = Env::from(env);
         let obj = unsafe { Object::from_napi_value(env.raw(), napi_val)? };
@@ -331,7 +329,7 @@ impl FromNapiValue for Message {
         let contents_len = contents_array.get_array_length()?;
         let mut contents = Vec::with_capacity(contents_len as usize);
         for i in 0..contents_len {
-            let part: Part = contents_array.get(i)?.ok_or_else(|| {
+            let part: JsPart = contents_array.get(i)?.ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("Missing contents[{}]", i))
             })?;
             contents.push(part.into());
@@ -341,7 +339,7 @@ impl FromNapiValue for Message {
         let tool_calls_len = tool_calls_array.get_array_length()?;
         let mut tool_calls = Vec::with_capacity(tool_calls_len as usize);
         for i in 0..tool_calls_len {
-            let part: Part = tool_calls_array.get(i)?.ok_or_else(|| {
+            let part: JsPart = tool_calls_array.get(i)?.ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("Missing toolCalls[{}]", i))
             })?;
             tool_calls.push(part.into());
@@ -351,7 +349,7 @@ impl FromNapiValue for Message {
 
         let tool_call_id: Option<String> = get_property(obj, "toolCallId")?;
 
-        Ok(_Message {
+        Ok(Message {
             role,
             contents,
             reasoning,
@@ -363,11 +361,11 @@ impl FromNapiValue for Message {
 }
 
 #[napi]
-impl Message {
+impl JsMessage {
     #[napi(constructor)]
     pub fn new() -> Self {
         Self {
-            inner: _Message::new(),
+            inner: Message::new(),
         }
     }
 
@@ -382,7 +380,7 @@ impl Message {
     }
 
     #[napi(getter)]
-    pub fn contents(&self) -> Vec<Part> {
+    pub fn contents(&self) -> Vec<JsPart> {
         self.inner
             .contents
             .clone()
@@ -392,7 +390,7 @@ impl Message {
     }
 
     #[napi(setter)]
-    pub fn set_contents(&mut self, contents: Vec<Part>) {
+    pub fn set_contents(&mut self, contents: Vec<JsPart>) {
         self.inner.contents = contents.into_iter().map(|c| c.into()).collect();
     }
 
@@ -407,7 +405,7 @@ impl Message {
     }
 
     #[napi(getter)]
-    pub fn tool_calls(&self) -> Vec<Part> {
+    pub fn tool_calls(&self) -> Vec<JsPart> {
         self.inner
             .tool_calls
             .clone()
@@ -417,7 +415,7 @@ impl Message {
     }
 
     #[napi(setter)]
-    pub fn set_tool_calls(&mut self, tool_calls: Vec<Part>) {
+    pub fn set_tool_calls(&mut self, tool_calls: Vec<JsPart>) {
         self.inner.tool_calls = tool_calls.into_iter().map(|c| c.into()).collect();
     }
 
@@ -454,32 +452,32 @@ impl Message {
 /// MessageOutput ///
 /////////////////////
 
-#[napi]
-pub struct MessageOutput {
-    inner: _MessageOutput,
+#[napi(js_name = "MessageOutput")]
+pub struct JsMessageOutput {
+    inner: MessageOutput,
 }
 
-impl Into<_MessageOutput> for MessageOutput {
-    fn into(self) -> _MessageOutput {
+impl Into<MessageOutput> for JsMessageOutput {
+    fn into(self) -> MessageOutput {
         self.inner
     }
 }
 
-impl From<_MessageOutput> for MessageOutput {
-    fn from(msg: _MessageOutput) -> Self {
+impl From<MessageOutput> for JsMessageOutput {
+    fn from(msg: MessageOutput) -> Self {
         Self { inner: msg }
     }
 }
 
-impl FromNapiValue for MessageOutput {
+impl FromNapiValue for JsMessageOutput {
     unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
         let env = Env::from(env);
         let obj = unsafe { Object::from_napi_value(env.raw(), napi_val)? };
 
-        let delta: Message = get_property(obj, "delta")?;
+        let delta: JsMessage = get_property(obj, "delta")?;
         let finish_reason: Option<FinishReason> = obj.get("finishReason")?;
 
-        Ok(_MessageOutput {
+        Ok(MessageOutput {
             delta: delta.into(),
             finish_reason,
         }
@@ -488,9 +486,9 @@ impl FromNapiValue for MessageOutput {
 }
 
 #[napi]
-impl MessageOutput {
+impl JsMessageOutput {
     #[napi(getter)]
-    pub fn delta(&self) -> Message {
+    pub fn delta(&self) -> JsMessage {
         self.inner.delta.clone().into()
     }
 
