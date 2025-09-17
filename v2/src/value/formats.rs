@@ -30,19 +30,25 @@ mod tests {
 
     fn get_example_msg() -> Vec<StyledMessage> {
         vec![
-            StyledMessage::with_role(Role::System)
+            StyledMessage::new()
+                .with_role(Role::System)
                 .with_contents([Part::Text("You are an assistant.".to_owned())]),
-            StyledMessage::with_role(Role::User)
+            StyledMessage::new()
+                .with_role(Role::User)
                 .with_contents([Part::new_text("Hi what's your name?")]),
-            StyledMessage::with_role(Role::Assistant)
+            StyledMessage::new()
+                .with_role(Role::Assistant)
                 .with_reasoning("Think something...")
                 .with_tool_calls([Part::new_function(
                     "",
                     "get_something",
                     "{\"WhatToGet\": \"name\"}",
                 )]),
-            StyledMessage::with_role(Role::Tool).with_contents([Part::Text(String::from("Jaden"))]),
-            StyledMessage::with_role(Role::Assistant)
+            StyledMessage::new()
+                .with_role(Role::Tool)
+                .with_contents([Part::Text(String::from("Jaden"))]),
+            StyledMessage::new()
+                .with_role(Role::Assistant)
                 .with_contents([Part::Text(String::from("You can call me Jaden."))]),
         ]
     }

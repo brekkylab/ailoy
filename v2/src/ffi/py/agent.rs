@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use futures::StreamExt;
+use futures::{StreamExt, lock::Mutex};
 use pyo3::{
     Python,
     exceptions::{PyRuntimeError, PyStopAsyncIteration, PyStopIteration, PyTypeError},
@@ -12,10 +12,11 @@ use pyo3_stub_gen::derive::*;
 use crate::{
     agent::Agent,
     ffi::py::{
-        base::{PyWrapper, await_future},
+        base::await_future,
         language_model::{
             PyAnthropicLanguageModel, PyBaseLanguageModel, PyGeminiLanguageModel,
-            PyLocalLanguageModel, PyOpenAILanguageModel, PyXAILanguageModel,
+            PyLanguageModelMethods, PyLocalLanguageModel, PyOpenAILanguageModel,
+            PyXAILanguageModel,
         },
         tool::ArcTool,
     },
@@ -26,7 +27,7 @@ use crate::{
 #[gen_stub_pyclass]
 #[pyclass(name = "Agent")]
 pub struct PyAgent {
-    inner: Agent,
+    inner: Arc<Mutex<Agent>>,
 }
 
 fn pylist_to_tools(tools: Py<PyList>) -> PyResult<Vec<Arc<dyn Tool>>> {
@@ -48,7 +49,7 @@ impl PyAgent {
         &'static tokio::runtime::Runtime,
         async_channel::Receiver<Result<MessageOutput, String>>,
     )> {
-        let mut inner = self.inner.clone();
+        let inner = self.inner.clone();
 
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         let (tx, rx) = async_channel::unbounded::<Result<MessageOutput, String>>();
@@ -76,6 +77,7 @@ impl PyAgent {
         }?;
 
         rt.spawn(async move {
+            let mut inner = inner.lock().await;
             let mut strm = inner.run(parts).boxed();
 
             while let Some(item) = strm.next().await {
@@ -110,44 +112,52 @@ impl PyAgent {
         let tools = tools.map_or_else(|| Ok(vec![]), |tools| pylist_to_tools(tools))?;
 
         let agent: Agent = if let Ok(lm) = lm.downcast::<PyLocalLanguageModel>() {
-            let model = lm.borrow_mut().into_inner()?;
-            Agent::new(model, tools)
+            let model = lm.borrow().into_inner();
+            Agent::new_from_arc(model, tools)
         } else if let Ok(lm) = lm.downcast::<PyOpenAILanguageModel>() {
-            let model = lm.borrow_mut().into_inner()?;
-            Agent::new(model, tools)
+            let model = lm.borrow().into_inner();
+            Agent::new_from_arc(model, tools)
         } else if let Ok(lm) = lm.downcast::<PyGeminiLanguageModel>() {
-            let model = lm.borrow_mut().into_inner()?;
-            Agent::new(model, tools)
+            let model = lm.borrow().into_inner();
+            Agent::new_from_arc(model, tools)
         } else if let Ok(lm) = lm.downcast::<PyAnthropicLanguageModel>() {
-            let model = lm.borrow_mut().into_inner()?;
-            Agent::new(model, tools)
+            let model = lm.borrow().into_inner();
+            Agent::new_from_arc(model, tools)
         } else if let Ok(lm) = lm.downcast::<PyXAILanguageModel>() {
-            let model = lm.borrow_mut().into_inner()?;
-            Agent::new(model, tools)
+            let model = lm.borrow().into_inner();
+            Agent::new_from_arc(model, tools)
         } else {
             return Err(PyTypeError::new_err("Unknown language model provided"));
         };
 
-        Py::new(py, Self { inner: agent })
+        Py::new(
+            py,
+            Self {
+                inner: Arc::new(Mutex::new(agent)),
+            },
+        )
     }
 
     #[gen_stub(override_return_type(type_repr = "BaseLanguageModel"))]
     #[getter]
     fn lm(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let lm_ref = self.inner.get_lm();
-        let obj = lm_ref.clone().into_pyobject(py)?;
+        let lm = await_future(async { Ok::<_, PyErr>(self.inner.lock().await.get_lm()) })?;
+        let obj = lm.into_pyobject(py)?;
         Ok(obj.unbind())
     }
 
     #[gen_stub(override_return_type(type_repr = "list[BaseTool]"))]
     #[getter]
     fn tools(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
-        let tools = self
-            .inner
-            .get_tools()
-            .into_iter()
-            .map(|t| ArcTool(t).into_pyobject(py))
-            .collect::<PyResult<Vec<_>>>()?;
+        let tools = await_future(async {
+            self.inner
+                .lock()
+                .await
+                .get_tools()
+                .into_iter()
+                .map(|t| ArcTool(t).into_pyobject(py))
+                .collect::<PyResult<Vec<_>>>()
+        })?;
         Ok(PyList::new(py, tools)?.unbind())
     }
 
@@ -156,7 +166,7 @@ impl PyAgent {
         #[gen_stub(override_type(type_repr = "list[BaseTool]"))] tools: Py<PyList>,
     ) -> PyResult<()> {
         let tools = pylist_to_tools(tools)?;
-        await_future(self.inner.add_tools(tools))
+        await_future(async { self.inner.lock().await.add_tools(tools).await })
     }
 
     fn add_tool(
@@ -164,15 +174,15 @@ impl PyAgent {
         #[gen_stub(override_type(type_repr = "BaseTool"))] tool: Py<PyAny>,
     ) -> PyResult<()> {
         let tool = Python::attach(|py| tool.extract::<ArcTool>(py).map(|arc| arc.0))?;
-        await_future(self.inner.add_tool(tool))
+        await_future(async { self.inner.lock().await.add_tool(tool).await })
     }
 
     fn remove_tools(&mut self, tool_names: Vec<String>) -> PyResult<()> {
-        await_future(self.inner.remove_tools(tool_names))
+        await_future(async { self.inner.lock().await.remove_tools(tool_names).await })
     }
 
     fn remove_tool(&mut self, tool_name: String) -> PyResult<()> {
-        await_future(self.inner.remove_tool(tool_name))
+        await_future(async { self.inner.lock().await.remove_tool(tool_name).await })
     }
 
     fn run(

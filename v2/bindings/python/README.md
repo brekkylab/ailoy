@@ -86,5 +86,5 @@ maturin develop
 ### Generate wheel
 
 ```bash
-python -m build -w
+maturin build --out ./dist
 ```

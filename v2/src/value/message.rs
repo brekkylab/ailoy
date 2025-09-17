@@ -113,38 +113,32 @@ pub struct Message {
 
 impl Message {
     pub fn new() -> Self {
-        Self {
-            role: None,
-            reasoning: String::default(),
-            contents: Vec::default(),
-            tool_calls: Vec::default(),
-            tool_call_id: None,
-        }
+        Self::default()
     }
 
-    pub fn with_role(&mut self, role: Role) -> Self {
+    pub fn with_role(mut self, role: Role) -> Self {
         self.role = Some(role);
-        self.clone()
+        self
     }
 
-    pub fn with_reasoning(&mut self, reasoning: impl Into<String>) -> Self {
+    pub fn with_reasoning(mut self, reasoning: impl Into<String>) -> Self {
         self.reasoning = reasoning.into();
-        self.clone()
+        self
     }
 
-    pub fn with_contents(&mut self, contents: impl IntoIterator<Item = Part>) -> Self {
+    pub fn with_contents(mut self, contents: impl IntoIterator<Item = Part>) -> Self {
         self.contents = contents.into_iter().collect();
-        self.clone()
+        self
     }
 
-    pub fn with_tool_calls(&mut self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
+    pub fn with_tool_calls(mut self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
         self.tool_calls = tool_calls.into_iter().collect();
-        self.clone()
+        self
     }
 
-    pub fn with_tool_call_id(&mut self, tool_call_id: impl Into<String>) -> Self {
+    pub fn with_tool_call_id(mut self, tool_call_id: impl Into<String>) -> Self {
         self.tool_call_id = Some(tool_call_id.into());
-        self.clone()
+        self
     }
 }
 
@@ -216,81 +210,39 @@ pub struct StyledMessage {
 }
 
 impl StyledMessage {
-    /// Create an empty message
+    /// Create an empty message with default style
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn with_role(role: Role) -> Self {
-        Self {
-            data: Message {
-                role: Some(role),
-                reasoning: String::new(),
-                contents: Vec::new(),
-                tool_calls: Vec::new(),
-                tool_call_id: None,
-            },
-            style: MessageStyle::new(),
-        }
+    pub fn with_role(mut self, role: Role) -> Self {
+        self.data.role = Some(role);
+        self
     }
 
-    pub fn with_reasoning(self, reasoning: impl Into<String>) -> Self {
-        Self {
-            data: Message {
-                role: self.data.role,
-                reasoning: reasoning.into(),
-                contents: self.data.contents,
-                tool_calls: self.data.tool_calls,
-                tool_call_id: None,
-            },
-            style: self.style,
-        }
+    pub fn with_reasoning(mut self, reasoning: impl Into<String>) -> Self {
+        self.data.reasoning = reasoning.into();
+        self
     }
 
-    pub fn with_contents(self, contents: impl IntoIterator<Item = Part>) -> Self {
-        Self {
-            data: Message {
-                role: self.data.role,
-                reasoning: self.data.reasoning,
-                contents: contents.into_iter().collect(),
-                tool_calls: self.data.tool_calls,
-                tool_call_id: None,
-            },
-            style: self.style,
-        }
+    pub fn with_contents(mut self, contents: impl IntoIterator<Item = Part>) -> Self {
+        self.data.contents = contents.into_iter().collect();
+        self
     }
 
-    pub fn with_tool_calls(self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
-        Self {
-            data: Message {
-                role: self.data.role,
-                reasoning: self.data.reasoning,
-                contents: self.data.contents,
-                tool_calls: tool_calls.into_iter().collect(),
-                tool_call_id: None,
-            },
-            style: self.style,
-        }
+    pub fn with_tool_calls(mut self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
+        self.data.tool_calls = tool_calls.into_iter().collect();
+        self
     }
 
-    pub fn with_tool_call_id(self, tool_call_id: impl Into<String>) -> Self {
-        Self {
-            data: Message {
-                role: self.data.role,
-                reasoning: self.data.reasoning,
-                contents: self.data.contents,
-                tool_calls: self.data.tool_calls,
-                tool_call_id: Some(tool_call_id.into()),
-            },
-            style: self.style,
-        }
+    pub fn with_tool_call_id(mut self, tool_call_id: impl Into<String>) -> Self {
+        self.data.tool_call_id = Some(tool_call_id.into());
+        self
     }
 
-    pub fn with_style(self, style: MessageStyle) -> Self {
-        Self {
-            data: self.data,
-            style,
-        }
+    pub fn with_style(mut self, style: MessageStyle) -> Self {
+        self.style = style;
+        self
     }
 }
 

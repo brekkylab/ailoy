@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use futures::{Stream, StreamExt};
-use tokio::sync::Mutex;
+use futures::{Stream, StreamExt, lock::Mutex};
 
 use crate::{
-    model::LanguageModel,
+    model::{ArcMutexLanguageModel, LanguageModel},
     tool::{MCPTransport, Tool},
     utils::log,
     value::{
@@ -12,9 +11,9 @@ use crate::{
     },
 };
 
-#[derive(Clone)]
+// #[derive(Clone)]
 pub struct Agent {
-    lm: Box<dyn LanguageModel>,
+    lm: ArcMutexLanguageModel,
     tools: Vec<Arc<dyn Tool>>,
     messages: Arc<Mutex<Vec<Message>>>,
 }
@@ -25,14 +24,25 @@ impl Agent {
         tools: impl IntoIterator<Item = Arc<dyn Tool>>,
     ) -> Self {
         Self {
-            lm: Box::new(lm),
+            lm: ArcMutexLanguageModel::new(lm),
             tools: tools.into_iter().collect(),
             messages: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
-    pub fn get_lm(&self) -> &Box<dyn LanguageModel> {
-        &self.lm
+    pub fn new_from_arc(
+        lm: ArcMutexLanguageModel,
+        tools: impl IntoIterator<Item = Arc<dyn Tool>>,
+    ) -> Self {
+        Self {
+            lm,
+            tools: tools.into_iter().collect(),
+            messages: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn get_lm(&self) -> ArcMutexLanguageModel {
+        self.lm.clone()
     }
 
     pub fn get_tools(&self) -> Vec<Arc<dyn Tool>> {
@@ -126,7 +136,8 @@ impl Agent {
             loop {
                 let mut assistant_msg = Message::new().with_role(Role::Assistant);
                 {
-                    let mut strm = self.lm.run(msgs.lock().await.clone(), td.clone());
+                    let mut model = self.lm.model.lock().await;
+                    let mut strm = model.run(msgs.lock().await.clone(), td.clone());
                     let mut aggregator = MessageAggregator::new();
                     while let Some(delta) = strm.next().await {
                         let delta = delta?;

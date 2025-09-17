@@ -68,10 +68,6 @@ pub struct PyLocalEmbeddingModel {
 impl PyWrapper for PyLocalEmbeddingModel {
     type Inner = LocalEmbeddingModel;
 
-    fn into_inner(&self) -> PyResult<Self::Inner> {
-        Ok(self.inner.clone())
-    }
-
     fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, (Self { inner }, PyBaseEmbeddingModel {}))
     }
