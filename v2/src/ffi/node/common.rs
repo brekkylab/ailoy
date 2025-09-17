@@ -1,4 +1,12 @@
+use std::sync::OnceLock;
+
 use napi::{Env, Error, Result as NapiResult, Status, bindgen_prelude::*};
+
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+pub fn get_or_create_runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
+}
 
 pub fn get_property<T: FromNapiValue>(obj: Object, name: &str) -> NapiResult<T> {
     let prop: T = obj

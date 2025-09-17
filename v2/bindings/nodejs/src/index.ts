@@ -3,7 +3,13 @@ import {
   Part,
   Role,
   MessageOutput,
-  OpenAILanguageModel as _OpenAILanguageModel,
+  CacheProgress,
+  LanguageModelRunIterator,
+  LocalLanguageModel,
+  OpenAILanguageModel,
+  GeminiLanguageModel,
+  AnthropicLanguageModel,
+  XAILanguageModel,
 } from "./ailoy_core";
 import util from "util";
 
@@ -33,16 +39,16 @@ if (typeof MessageOutput !== "undefined" && MessageOutput.prototype) {
     };
 }
 
-// Add `run` function returning asyncIterator
-class OpenAILanguageModel extends _OpenAILanguageModel {
-  run(messages: Array<Message>) {
-    const iterator = super.iterator(messages);
-    return {
-      [Symbol.asyncIterator]() {
-        return iterator;
-      },
-    };
-  }
-}
-
-export { Message, MessageOutput, Part, Role, OpenAILanguageModel };
+export {
+  Message,
+  MessageOutput,
+  Part,
+  Role,
+  CacheProgress,
+  LanguageModelRunIterator,
+  LocalLanguageModel,
+  OpenAILanguageModel,
+  GeminiLanguageModel,
+  AnthropicLanguageModel,
+  XAILanguageModel,
+};
