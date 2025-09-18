@@ -80,10 +80,7 @@ pub struct JsAgent {
 
 #[napi]
 impl JsAgent {
-    #[napi(
-        constructor,
-        ts_args_type = "lm: LocalLanguageModel | OpenAILanguageModel | GeminiLanguageModel | AnthropicLanguageModel | XAILanguageModel"
-    )]
+    #[napi(constructor, ts_args_type = "lm: LanguageModel")]
     pub fn new(lm: Unknown<'_>) -> napi::Result<JsAgent> {
         let agent = if let Ok(model) =
             unsafe { JsLocalLanguageModel::from_napi_value(lm.env(), lm.raw()) }

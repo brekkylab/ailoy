@@ -4,6 +4,7 @@
     "main": "index.js",
     "napi": {
         "binaryName": "ailoy_core",
+        "dtsHeaderFile": "./src/header.d.ts",
         "targets": [
             "x86_64-pc-windows-msvc",
             "x86_64-unknown-linux-gnu",
@@ -20,6 +21,8 @@
     },
     "devDependencies": {
         "@napi-rs/cli": "^3.2.0",
+        "@trivago/prettier-plugin-sort-imports": "^5.2.2",
+        "prettier": "^3.6.2",
         "vite": "^7.1.5",
         "vite-plugin-dts": "^4.5.4",
         "vite-plugin-static-copy": "^3.1.2"
