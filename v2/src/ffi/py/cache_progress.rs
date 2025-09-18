@@ -40,7 +40,7 @@ impl PyStubType for CacheResultT {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "CacheProgress", extends = GenericCacheResultT)]
+#[pyclass(name = "CacheProgress")]
 pub struct PyCacheProgress {
     #[pyo3(get)]
     pub comment: String,
@@ -85,14 +85,11 @@ where
             Python::attach(|py| {
                 let py_obj = Py::new(
                     py,
-                    (
-                        PyCacheProgress {
-                            comment: progress.comment.clone(),
-                            current: progress.current_task,
-                            total: progress.total_task,
-                        },
-                        GenericCacheResultT {},
-                    ),
+                    PyCacheProgress {
+                        comment: progress.comment.clone(),
+                        current: progress.current_task,
+                        total: progress.total_task,
+                    },
                 )?;
                 callback.call1(py, (py_obj,))
             })?;
