@@ -15,7 +15,7 @@ use crate::{
     utils::BoxFuture,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LocalEmbeddingModel {
     tokenizer: Tokenizer,
 
