@@ -22,6 +22,13 @@ export declare class AnthropicLanguageModel {
 }
 export type JsAnthropicLanguageModel = AnthropicLanguageModel;
 
+export declare class BuiltinTool {
+  static terminal(): BuiltinTool;
+  get description(): ToolDesc;
+  call(kwargs?: Record<string, any> | undefined | null): Promise<Array<JsPart>>;
+}
+export type JsBuiltinTool = BuiltinTool;
+
 export declare class ChromaVectorStore {
   static create(
     chromaUrl: string,
@@ -73,6 +80,12 @@ export declare class GeminiLanguageModel {
 }
 export type JsGeminiLanguageModel = GeminiLanguageModel;
 
+export declare class JsFunctionTool {
+  constructor(desc: ToolDesc, func: (arg: any) => Promise<any>);
+  get description(): ToolDesc;
+  call(kwargs?: Record<string, any> | undefined | null): Promise<Array<JsPart>>;
+}
+
 export declare class LanguageModelRunIterator {
   [Symbol.asyncIterator](): this;
   next(): Promise<LanguageModelIteratorResult>;
@@ -95,6 +108,20 @@ export declare class LocalLanguageModel {
   run(messages: Array<JsMessage>): LanguageModelRunIterator;
 }
 export type JsLocalLanguageModel = LocalLanguageModel;
+
+export declare class MCPTool {
+  get description(): ToolDesc;
+  call(kwargs?: Record<string, any> | undefined | null): Promise<Array<JsPart>>;
+}
+export type JsMCPTool = MCPTool;
+
+export declare class MCPTransport {
+  get type(): string;
+  get stdio(): { command: string; args: Array<string> };
+  get streamableHttp(): { url: string };
+  tools(toolNamePrefix: string): Promise<Array<MCPTool>>;
+}
+export type JsMCPTransport = MCPTransport;
 
 /** Message /// */
 export declare class Message {
@@ -201,6 +228,13 @@ export declare const enum Role {
    * response to an assistant tool call (and often correlated via `tool_call_id`).
    */
   Tool = "Tool",
+}
+
+export interface ToolDesc {
+  name: string;
+  description: string;
+  parameters: any;
+  returns?: any;
 }
 
 export interface VectorStoreAddInput {

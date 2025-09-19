@@ -8,6 +8,12 @@ pub fn get_or_create_runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
 }
 
+pub fn await_future<T>(fut: impl Future<Output = napi::Result<T>>) -> napi::Result<T> {
+    let rt = get_or_create_runtime();
+    let result = rt.block_on(fut);
+    result
+}
+
 pub fn get_property<T: FromNapiValue>(obj: Object, name: &str) -> NapiResult<T> {
     let prop: T = obj
         .get(name)?
