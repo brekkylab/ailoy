@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use crate::value::Part;
 
 /// The author of a message (or streaming delta) in a chat.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum Role {
     /// System instructions and constraints provided to the assistant.
     System,

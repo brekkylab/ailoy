@@ -62,7 +62,7 @@ impl Marshal<Message> for OpenAIMarshal {
         }
 
         // Encode whole message
-        let mut rv = Value::object_empty();
+        let mut rv = Value::object([("role", item.role.to_string())]);
         if !contents.as_array().unwrap().is_empty() {
             rv.as_object_mut()
                 .unwrap()
@@ -88,12 +88,36 @@ mod tests {
     use crate::value::{Marshaled, Message, PartBuilder, Role};
 
     #[test]
-    pub fn serialize_simple_message() {
-        let mut msg = Message::new(Role::Assistant);
+    pub fn serialize_text() {
+        let mut msg = Message::new(Role::User);
         msg.parts.push(
             PartBuilder::new()
                 .content()
                 .text("Explain me about Riemann hypothesis")
+                .build()
+                .unwrap(),
+        );
+        msg.parts.push(
+            PartBuilder::new()
+                .content()
+                .text("How cold brew is different from the normal coffee?")
+                .build()
+                .unwrap(),
+        );
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"user","content":[{"type":"text","text":"Explain me about Riemann hypothesis"},{"type":"text","text":"How cold brew is different from the normal coffee?"}]}"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_function() {
+        let mut msg = Message::new(Role::Assistant);
+        msg.parts.push(
+            PartBuilder::new()
+                .content()
+                .text("Calling the functions...")
                 .build()
                 .unwrap(),
         );
@@ -105,8 +129,37 @@ mod tests {
                 .build()
                 .unwrap(),
         );
-        println!("{:?}", msg);
+        msg.parts.push(
+            PartBuilder::new()
+                .content()
+                .tool_call_with_id("funcid_7890ab")
+                .function("temperature", "{\"unit\": \"fernheit\"}")
+                .build()
+                .unwrap(),
+        );
         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
-        println!("{}", serde_json::to_string_pretty(&marshaled).unwrap());
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"assistant","content":[{"type":"text","text":"Calling the functions..."}],"tool_calls":[{"type":"function","function":{"name":"temperature","arguments":"{\"unit\": \"celcius\"}"},"id":"funcid_123456"},{"type":"function","function":{"name":"temperature","arguments":"{\"unit\": \"fernheit\"}"},"id":"funcid_7890ab"}]}"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_image() {
+        let mut msg = Message::new(Role::User);
+        msg.parts.push(
+            PartBuilder::new()
+                .content()
+                .text("What you can see in this image?")
+                .build()
+                .unwrap(),
+        );
+        msg.parts
+            .push(PartBuilder::new().content().image_url("https://upload.wikimedia.org/wikipedia/commons/b/bd/Golden_Retriever_Dukedestiny01_drvd.jpg").build().unwrap());
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image_url","image_url":{"url":"https://upload.wikimedia.org/wikipedia/commons/b/bd/Golden_Retriever_Dukedestiny01_drvd.jpg"}}]}"#
+        );
     }
 }

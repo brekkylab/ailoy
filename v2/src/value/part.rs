@@ -109,6 +109,23 @@ impl PartBuilder {
         }
     }
 
+    pub fn image_url(self, url: impl Into<String>) -> Self {
+        Self {
+            data: Some(Data::Image(MediaData::URL(url.into()))),
+            mode: self.mode,
+        }
+    }
+
+    pub fn image_base64(self, media_type: impl Into<String>, data: impl Into<String>) -> Self {
+        Self {
+            data: Some(Data::Image(MediaData::Base64 {
+                media_type: media_type.into(),
+                data: data.into(),
+            })),
+            mode: self.mode,
+        }
+    }
+
     pub fn mode(self, mode: Mode) -> Self {
         Self {
             data: self.data,
