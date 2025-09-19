@@ -1,3 +1,6 @@
+use serde::Deserialize;
+use serde_json::from_str;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FunctionData {
     /// The **verbatim string** of a tool/function payload as it was streamed/received
@@ -13,10 +16,18 @@ pub enum FunctionData {
 
 impl FunctionData {
     /// Parse raw function string to parsed one
-    pub fn parse(self) -> Self {
+    pub fn parse(self) -> Result<(String, String), String> {
         match self {
-            Self::String(_) => todo!(),
-            _ => self,
+            Self::String(s) => {
+                #[derive(Deserialize)]
+                struct Inner {
+                    name: String,
+                    args: String,
+                }
+                let parsed: Inner = from_str(&s).unwrap();
+                Ok((parsed.name, parsed.args))
+            }
+            Self::Parsed { name, args } => Ok((name, args)),
         }
     }
 }
@@ -64,67 +75,84 @@ pub struct PartBuilder {
 
 impl PartBuilder {
     pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn data(self, data: Data) -> Self {
         Self {
-            data: None,
+            data: Some(data),
+            mode: self.mode,
+        }
+    }
+
+    pub fn text(self, data: impl Into<String>) -> Self {
+        Self {
+            data: Some(Data::Text(data.into())),
+            mode: self.mode,
+        }
+    }
+
+    pub fn function_string(self, data: impl Into<String>) -> Self {
+        Self {
+            data: Some(Data::Function(FunctionData::String(data.into()))),
+            mode: self.mode,
+        }
+    }
+
+    pub fn function(self, name: impl Into<String>, args: impl Into<String>) -> Self {
+        Self {
+            data: Some(Data::Function(FunctionData::Parsed {
+                name: name.into(),
+                args: args.into(),
+            })),
+            mode: self.mode,
+        }
+    }
+
+    pub fn mode(self, mode: Mode) -> Self {
+        Self {
+            data: self.data,
+            mode,
+        }
+    }
+
+    pub fn think(self) -> Self {
+        Self {
+            data: self.data,
+            mode: Mode::Think { signature: None },
+        }
+    }
+
+    pub fn think_with_signature(self, sig: impl Into<String>) -> Self {
+        Self {
+            data: self.data,
+            mode: Mode::Think {
+                signature: Some(sig.into()),
+            },
+        }
+    }
+
+    pub fn content(self) -> Self {
+        Self {
+            data: self.data,
             mode: Mode::Content,
         }
     }
 
-    pub fn data(&mut self, data: Data) -> &mut Self {
-        self.data = Some(data);
-        self
+    pub fn tool_call(self) -> Self {
+        Self {
+            data: self.data,
+            mode: Mode::ToolCall { id: None },
+        }
     }
 
-    pub fn text(&mut self, data: impl Into<String>) -> &mut Self {
-        self.data = Some(Data::Text(data.into()));
-        self
-    }
-
-    pub fn function_string(&mut self, data: impl Into<String>) -> &mut Self {
-        self.data = Some(Data::Function(FunctionData::String(data.into())));
-        self
-    }
-
-    pub fn function(&mut self, name: impl Into<String>, args: impl Into<String>) -> &mut Self {
-        self.data = Some(Data::Function(FunctionData::Parsed {
-            name: name.into(),
-            args: args.into(),
-        }));
-        self
-    }
-
-    pub fn mode(&mut self, mode: Mode) -> &mut Self {
-        self.mode = mode;
-        self
-    }
-
-    pub fn think(&mut self) -> &mut Self {
-        self.mode = Mode::Think { signature: None };
-        self
-    }
-
-    pub fn think_with_signature(&mut self, sig: impl Into<String>) -> &mut Self {
-        self.mode = Mode::Think {
-            signature: Some(sig.into()),
-        };
-        self
-    }
-
-    pub fn content(&mut self) -> &mut Self {
-        self.mode = Mode::Content;
-        self
-    }
-
-    pub fn tool_call(&mut self) -> &mut Self {
-        self.mode = Mode::ToolCall { id: None };
-        self
-    }
-
-    pub fn tool_call_with_id(&mut self, id: impl Into<String>) -> &mut Self {
-        self.mode = Mode::ToolCall {
-            id: Some(id.into()),
-        };
-        self
+    pub fn tool_call_with_id(self, id: impl Into<String>) -> Self {
+        Self {
+            data: self.data,
+            mode: Mode::ToolCall {
+                id: Some(id.into()),
+            },
+        }
     }
 
     pub fn build(self) -> Result<Part, ()> {
@@ -135,6 +163,15 @@ impl PartBuilder {
             })
         } else {
             Err(())
+        }
+    }
+}
+
+impl Default for PartBuilder {
+    fn default() -> Self {
+        Self {
+            data: None,
+            mode: Mode::Content,
         }
     }
 }

@@ -18,21 +18,29 @@ pub enum Role {
 
 #[derive(Clone, Debug)]
 pub struct Message {
-    pub role: Option<Role>,
+    pub role: Role,
     pub parts: Vec<Part>,
 }
 
 impl Message {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(role: Role) -> Self {
+        Self {
+            role,
+            parts: Vec::new(),
+        }
     }
 }
 
-impl Default for Message {
-    fn default() -> Self {
+pub struct MessageDelta {
+    pub role: Option<Role>,
+    pub parts: Vec<Part>,
+}
+
+impl MessageDelta {
+    pub fn new() -> Self {
         Self {
             role: None,
-            parts: Vec::default(),
+            parts: Vec::new(),
         }
     }
 }

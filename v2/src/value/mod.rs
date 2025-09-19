@@ -1,3 +1,4 @@
+mod dialect;
 mod marshal;
 mod message;
 mod part;

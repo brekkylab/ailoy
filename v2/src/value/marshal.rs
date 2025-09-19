@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use serde::{Deserialize, Serialize};
 
 use crate::value::Value;
@@ -12,7 +14,16 @@ pub trait Unmarshal<T>: Default {
 
 pub struct Marshaled<'d, D, M: Marshal<D>> {
     data: &'d D,
-    m: std::marker::PhantomData<M>,
+    m: PhantomData<M>,
+}
+
+impl<'d, D, M: Marshal<D>> Marshaled<'d, D, M> {
+    pub fn new(data: &'d D) -> Self {
+        Self {
+            data,
+            m: PhantomData::default(),
+        }
+    }
 }
 
 impl<'d, D, M: Marshal<D>> Serialize for Marshaled<'d, D, M> {
