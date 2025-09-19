@@ -1,6 +1,9 @@
 // prettier-ignore
 /* @ts-ignore */
 export type LanguageModel = LocalLanguageModel | OpenAILanguageModel | GeminiLanguageModel | AnthropicLanguageModel | XAILanguageModel;
+/* @ts-ignore */
+export type EmbeddingModel = LocalEmbeddingModel;
+export type Embedding = Array<number>;
 export declare class Agent {
   constructor(lm: LanguageModel);
   run(parts: Array<JsPart>): AgentRunIterator;
@@ -28,6 +31,15 @@ export declare class LanguageModelRunIterator {
   [Symbol.asyncIterator](): this;
   next(): Promise<LanguageModelIteratorResult>;
 }
+
+export declare class LocalEmbeddingModel {
+  static create(
+    modelName: string,
+    progressCallback?: ((arg: CacheProgress) => void) | undefined | null
+  ): Promise<LocalEmbeddingModel>;
+  run(message: string): Promise<Embedding>;
+}
+export type JsLocalEmbeddingModel = LocalEmbeddingModel;
 
 export declare class LocalLanguageModel {
   static create(

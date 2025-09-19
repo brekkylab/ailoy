@@ -35,6 +35,7 @@ export {
   AnthropicLanguageModel,
   GeminiLanguageModel,
   LanguageModelRunIterator,
+  LocalEmbeddingModel,
   LocalLanguageModel,
   OpenAILanguageModel,
   XAILanguageModel,
@@ -42,6 +43,8 @@ export {
 export type {
   AgentRunIteratorResult,
   CacheProgress,
+  Embedding,
+  EmbeddingModel,
   LanguageModel,
   LanguageModelIteratorResult,
 } from "./ailoy_core";
