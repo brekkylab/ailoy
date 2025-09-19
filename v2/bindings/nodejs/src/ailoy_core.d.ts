@@ -3,7 +3,8 @@
 export type LanguageModel = LocalLanguageModel | OpenAILanguageModel | GeminiLanguageModel | AnthropicLanguageModel | XAILanguageModel;
 /* @ts-ignore */
 export type EmbeddingModel = LocalEmbeddingModel;
-export type Embedding = Array<number>;
+/* @ts-ignore */
+export type VectorStore = FaissVectorStore | ChromaVectorStore;
 export declare class Agent {
   constructor(lm: LanguageModel);
   run(parts: Array<JsPart>): AgentRunIterator;
@@ -20,6 +21,51 @@ export declare class AnthropicLanguageModel {
   run(messages: Array<JsMessage>): LanguageModelRunIterator;
 }
 export type JsAnthropicLanguageModel = AnthropicLanguageModel;
+
+export declare class ChromaVectorStore {
+  static create(
+    chromaUrl: string,
+    collectionName: string
+  ): Promise<ChromaVectorStore>;
+  addVector(input: VectorStoreAddInput): Promise<string>;
+  addVectors(inputs: Array<VectorStoreAddInput>): Promise<Array<string>>;
+  getById(id: string): Promise<VectorStoreGetResult | null>;
+  getByIds(ids: Array<string>): Promise<Array<VectorStoreGetResult>>;
+  retrieve(
+    queryEmbedding: Embedding,
+    topK: number
+  ): Promise<Array<VectorStoreRetrieveResult>>;
+  batchRetrieve(
+    queryEmbeddings: Array<Embedding>,
+    topK: number
+  ): Promise<Array<Array<VectorStoreRetrieveResult>>>;
+  removeVector(id: string): Promise<void>;
+  removeVectors(ids: Array<string>): Promise<void>;
+  clear(): Promise<void>;
+  count(): Promise<number>;
+}
+export type JsChromaVectorStore = ChromaVectorStore;
+
+export declare class FaissVectorStore {
+  static create(dim: number): Promise<FaissVectorStore>;
+  addVector(input: VectorStoreAddInput): Promise<string>;
+  addVectors(inputs: Array<VectorStoreAddInput>): Promise<Array<string>>;
+  getById(id: string): Promise<VectorStoreGetResult | null>;
+  getByIds(ids: Array<string>): Promise<Array<VectorStoreGetResult>>;
+  retrieve(
+    queryEmbedding: Embedding,
+    topK: number
+  ): Promise<Array<VectorStoreRetrieveResult>>;
+  batchRetrieve(
+    queryEmbeddings: Array<Embedding>,
+    topK: number
+  ): Promise<Array<Array<VectorStoreRetrieveResult>>>;
+  removeVector(id: string): Promise<void>;
+  removeVectors(ids: Array<string>): Promise<void>;
+  clear(): Promise<void>;
+  count(): Promise<number>;
+}
+export type JsFaissVectorStore = FaissVectorStore;
 
 export declare class GeminiLanguageModel {
   constructor(modelName: string, apiKey: string);
@@ -126,6 +172,8 @@ export interface CacheProgress {
   total: number;
 }
 
+export type Embedding = Array<number>;
+
 export declare const enum FinishReason {
   Stop = "Stop",
   Length = "Length",
@@ -137,6 +185,8 @@ export interface LanguageModelIteratorResult {
   value?: JsMessageOutput;
   done: boolean;
 }
+
+export type Metadata = Record<string, any> | undefined | null;
 
 /** The author of a message (or streaming delta) in a chat. */
 export declare const enum Role {
@@ -151,4 +201,24 @@ export declare const enum Role {
    * response to an assistant tool call (and often correlated via `tool_call_id`).
    */
   Tool = "Tool",
+}
+
+export interface VectorStoreAddInput {
+  embedding: Embedding;
+  document: string;
+  metadata: Metadata;
+}
+
+export interface VectorStoreGetResult {
+  id: string;
+  document: string;
+  metadata: Metadata;
+  embedding: Embedding;
+}
+
+export interface VectorStoreRetrieveResult {
+  id: string;
+  document: string;
+  metadata: Metadata;
+  distance: number;
 }

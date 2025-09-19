@@ -33,6 +33,8 @@ export {
   Agent,
   AgentRunIterator,
   AnthropicLanguageModel,
+  ChromaVectorStore,
+  FaissVectorStore,
   GeminiLanguageModel,
   LanguageModelRunIterator,
   LocalEmbeddingModel,
@@ -47,4 +49,8 @@ export type {
   EmbeddingModel,
   LanguageModel,
   LanguageModelIteratorResult,
+  VectorStore,
+  VectorStoreAddInput,
+  VectorStoreGetResult,
+  VectorStoreRetrieveResult,
 } from "./ailoy_core";

@@ -3,4 +3,5 @@
 export type LanguageModel = LocalLanguageModel | OpenAILanguageModel | GeminiLanguageModel | AnthropicLanguageModel | XAILanguageModel;
 /* @ts-ignore */
 export type EmbeddingModel = LocalEmbeddingModel;
-export type Embedding = Array<number>;
+/* @ts-ignore */
+export type VectorStore = FaissVectorStore | ChromaVectorStore;

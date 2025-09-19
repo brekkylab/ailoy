@@ -9,18 +9,23 @@ use crate::{
     model::{EmbeddingModel, LocalEmbeddingModel},
 };
 
-type Embedding = Vec<f32>;
+#[napi]
+pub type Embedding = Vec<f64>;
 
 pub trait JsEmbeddingModelMethods<T: EmbeddingModel + 'static> {
     fn inner(&self) -> Arc<Mutex<LocalEmbeddingModel>>;
 
     async fn _run(&mut self, message: String) -> napi::Result<Embedding> {
-        self.inner()
+        Ok(self
+            .inner()
             .lock()
             .await
             .run(message)
             .await
-            .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+            .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?
+            .into_iter()
+            .map(|f| f as f64)
+            .collect::<Vec<_>>())
     }
 }
 
