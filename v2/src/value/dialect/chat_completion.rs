@@ -3,9 +3,9 @@ use base64::Engine;
 use crate::value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, Unmarshal, Value};
 
 #[derive(Clone, Debug, Default)]
-pub struct OpenAIMarshal;
+pub struct ChatCompletionMarshal;
 
-impl Marshal<Message> for OpenAIMarshal {
+impl Marshal<Message> for ChatCompletionMarshal {
     fn marshal(&mut self, item: &Message) -> Value {
         let mut contents = Value::array_empty();
         let mut tool_calls = Value::array_empty();
@@ -35,14 +35,14 @@ impl Marshal<Message> for OpenAIMarshal {
                     name,
                     arguments,
                 } => {
+                    let arguments_str = serde_json::to_string(arguments)
+                        .map_err(|_| String::from("Invald function"))
+                        .unwrap();
                     let mut value = Value::object([
                         ("type", Value::string("function")),
                         (
                             "function",
-                            Value::object([
-                                ("name", name),
-                                ("arguments", &serde_json::to_string(arguments).unwrap()),
-                            ]),
+                            Value::object([("name", name), ("arguments", &arguments_str)]),
                         ),
                     ]);
                     if let Some(id) = id {
@@ -82,9 +82,9 @@ impl Marshal<Message> for OpenAIMarshal {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct OpenAIUnmarshal;
+pub struct ChatCompletionUnmarshal;
 
-impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
+impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
     fn unmarshal(&mut self, val: Value) -> Result<MessageDelta, String> {
         let root = val
             .as_object()
@@ -111,8 +111,10 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
             && !contents.is_null()
         {
             if let Some(text) = contents.as_str() {
+                // Contents can be a single string
                 rv.parts.push(PartDelta::TextContent(text.into()));
             } else if let Some(contents) = contents.as_array() {
+                // In case of part vector
                 for content in contents {
                     let Some(content) = content.as_object() else {
                         return Err(String::from("Invalid part"));
@@ -193,7 +195,7 @@ mod tests {
         msg.parts.push(Part::text_content(
             "How cold brew is different from the normal coffee?",
         ));
-        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
+        let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"user","content":[{"type":"text","text":"Explain me about Riemann hypothesis"},{"type":"text","text":"How cold brew is different from the normal coffee?"}]}"#
@@ -206,19 +208,19 @@ mod tests {
         msg.parts
             .push(Part::text_content("Calling the functions..."));
         msg.parts.push(Part::function_tool_call_with_id(
-            "temperatrue",
-            "{\"unit\": \"celcius\"}",
+            "temperature",
+            Value::object([("unit", "celcius")]),
             "funcid_123456",
         ));
         msg.parts.push(Part::function_tool_call_with_id(
-            "temperatrue",
-            "{\"unit\": \"fernheit\"}",
-            "funcid_123456",
+            "temperature",
+            Value::object([("unit", "fernheit")]),
+            "funcid_7890ab",
         ));
-        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
+        let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"assistant","content":[{"type":"text","text":"Calling the functions..."}],"tool_calls":[{"type":"function","function":{"name":"temperature","arguments":"{\"unit\": \"celcius\"}"},"id":"funcid_123456"},{"type":"function","function":{"name":"temperature","arguments":"{\"unit\": \"fernheit\"}"},"id":"funcid_7890ab"}]}"#
+            r#"{"role":"assistant","content":[{"type":"text","text":"Calling the functions..."}],"tool_calls":[{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"celcius\"}"},"id":"funcid_123456"},{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"fernheit\"}"},"id":"funcid_7890ab"}]}"#
         );
         // println!("{}", serde_json::to_string(&marshaled).unwrap());
     }
@@ -232,7 +234,7 @@ mod tests {
             .decode(b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=")
             .expect("invalid base64");
         msg.parts.push(Part::image_content(bytes));
-        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
+        let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image_url","image_url":{"url":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="}}]}"#
@@ -246,7 +248,7 @@ mod tests {
             r#"{"index":0,"content":"Hello"}"#,
             r#"{"index":0,"content":[{"type":"text","text":" world!"}]}"#,
         ];
-        let mut u = OpenAIUnmarshal;
+        let mut u = ChatCompletionUnmarshal;
 
         let mut delta = MessageDelta::new();
 
@@ -273,7 +275,7 @@ mod tests {
             r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":" France","name":null},"type": null}]}"#,
             r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"\"}","name":null},"type":null}]}"#,
         ];
-        let mut u = OpenAIUnmarshal;
+        let mut u = ChatCompletionUnmarshal;
 
         let mut delta = MessageDelta::new();
 
@@ -310,7 +312,7 @@ mod tests {
             r#"{"tool_calls":[{"index":1,"id":null,"function":{"arguments":" Qatar","name":null},"type": null}]}"#,
             r#"{"tool_calls":[{"index":1,"id":null,"function":{"arguments":"\"}","name":null},"type":null}]}"#,
         ];
-        let mut u = OpenAIUnmarshal;
+        let mut u = ChatCompletionUnmarshal;
 
         let mut delta = MessageDelta::new();
 
