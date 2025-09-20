@@ -2,13 +2,13 @@ use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
 
-use crate::value::Value;
+use crate::value::{Delta, Value};
 
 pub trait Marshal<T>: Default {
     fn marshal(&mut self, item: &T) -> Value;
 }
 
-pub trait Unmarshal<T>: Default {
+pub trait Unmarshal<T: Delta>: Default {
     fn unmarshal(&mut self, val: Value) -> Result<T, String>;
 }
 
@@ -37,30 +37,30 @@ impl<'d, D, M: Marshal<D>> Serialize for Marshaled<'d, D, M> {
     }
 }
 
-pub struct Unmarshaled<D, U: Unmarshal<D>> {
+pub struct Unmarshaled<D: Delta, U: Unmarshal<D>> {
     data: D,
     u: std::marker::PhantomData<U>,
 }
 
-impl<D, U: Unmarshal<D>> Unmarshaled<D, U> {
+impl<D: Delta, U: Unmarshal<D>> Unmarshaled<D, U> {
     pub fn get(self) -> D {
         self.data
     }
 }
 
-impl<'de, D, U: Unmarshal<D>> Deserialize<'de> for Unmarshaled<D, U> {
-    fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
-    where
-        De: serde::Deserializer<'de>,
-    {
-        let v = Value::deserialize(deserializer)?;
-        let mut u = U::default();
-        let data = u
-            .unmarshal(v)
-            .map_err(|_| serde::de::Error::custom("Unable to decode"))?;
-        Ok(Unmarshaled {
-            data,
-            u: std::marker::PhantomData::default(),
-        })
-    }
-}
+// impl<'de, D: Delta, U: Unmarshal<D>> Deserialize<'de> for Unmarshaled<D, U> {
+//     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
+//     where
+//         De: serde::Deserializer<'de>,
+//     {
+//         let v = Value::deserialize(deserializer)?;
+//         let mut u = U::default();
+//         let delta = u
+//             .unmarshal(v)
+//             .map_err(|_| serde::de::Error::custom("Unable to decode"))?;
+//         Ok(Unmarshaled {
+//             data: delta.finish().unwrap(),
+//             u: std::marker::PhantomData::default(),
+//         })
+//     }
+// }
