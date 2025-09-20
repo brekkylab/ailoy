@@ -48,19 +48,19 @@ impl<D: Delta, U: Unmarshal<D>> Unmarshaled<D, U> {
     }
 }
 
-// impl<'de, D: Delta, U: Unmarshal<D>> Deserialize<'de> for Unmarshaled<D, U> {
-//     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
-//     where
-//         De: serde::Deserializer<'de>,
-//     {
-//         let v = Value::deserialize(deserializer)?;
-//         let mut u = U::default();
-//         let delta = u
-//             .unmarshal(v)
-//             .map_err(|_| serde::de::Error::custom("Unable to decode"))?;
-//         Ok(Unmarshaled {
-//             data: delta.finish().unwrap(),
-//             u: std::marker::PhantomData::default(),
-//         })
-//     }
-// }
+impl<'de, D: Delta, U: Unmarshal<D>> Deserialize<'de> for Unmarshaled<D, U> {
+    fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
+    where
+        De: serde::Deserializer<'de>,
+    {
+        let v = Value::deserialize(deserializer)?;
+        let mut u = U::default();
+        let delta = u
+            .unmarshal(v)
+            .map_err(|_| serde::de::Error::custom("Unable to decode"))?;
+        Ok(Unmarshaled {
+            data: delta,
+            u: std::marker::PhantomData::default(),
+        })
+    }
+}

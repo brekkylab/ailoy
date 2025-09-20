@@ -204,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    pub fn deserialize_delta() {
+    pub fn deserialize_text() {
         let delta1 = r#"{"role":"assistant","content":""}"#;
         let delta2 = r#"{"content":"Hello"}"#;
         let delta3 = r#"{"content":[{"type":"text","text":" world!"}]}"#;
@@ -213,20 +213,22 @@ mod tests {
         let delta = MessageDelta::new();
 
         let val = serde_json::from_str::<Value>(delta1).unwrap();
-        let v = u.unmarshal(val).unwrap();
-        println!("{:?}", v);
-        let delta = delta.aggregate(v).unwrap();
+        let cur_delta = u.unmarshal(val).unwrap();
+        assert_eq!(cur_delta.role.clone().unwrap(), Role::Assistant);
+        let delta = delta.aggregate(cur_delta).unwrap();
 
         let val = serde_json::from_str::<Value>(delta2).unwrap();
-        let v = u.unmarshal(val).unwrap();
-        println!("{:?}", v);
-        let delta = delta.aggregate(v).unwrap();
+        let cur_delta = u.unmarshal(val).unwrap();
+        assert_eq!(cur_delta.parts.len(), 1);
+        assert_eq!(cur_delta.parts[0].as_text().unwrap(), "Hello");
+        let delta = delta.aggregate(cur_delta).unwrap();
 
         let val = serde_json::from_str::<Value>(delta3).unwrap();
-        let v = u.unmarshal(val).unwrap();
-        println!("{:?}", v);
-        let delta = delta.aggregate(v).unwrap();
+        let cur_delta = u.unmarshal(val).unwrap();
+        assert_eq!(cur_delta.parts.len(), 1);
+        assert_eq!(cur_delta.parts[0].as_text().unwrap(), " world!");
+        let delta = delta.aggregate(cur_delta).unwrap();
 
-        println!("{:?}", delta);
+        assert_eq!(delta.parts[0].as_text().unwrap(), "Hello world!");
     }
 }

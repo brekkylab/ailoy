@@ -67,10 +67,89 @@ impl Part {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PartDelta {
     Null,
-    TextReasoning(String),
+    TextReasoning {
+        text: String,
+        signature: Option<String>,
+    },
     TextContent(String),
     TextToolCall(String),
-    FunctionToolCall { name: String, arguments: String },
+    FunctionToolCall {
+        name: String,
+        arguments: String,
+    },
+}
+
+impl PartDelta {
+    pub fn is_reasoning(&self) -> bool {
+        match self {
+            PartDelta::TextReasoning { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_content(&self) -> bool {
+        match self {
+            PartDelta::TextContent { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_tool_call(&self) -> bool {
+        match self {
+            PartDelta::TextToolCall { .. } | PartDelta::FunctionToolCall { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_text(&self) -> bool {
+        match self {
+            PartDelta::TextReasoning { .. }
+            | PartDelta::TextContent(..)
+            | PartDelta::TextToolCall(..) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_function(&self) -> bool {
+        match self {
+            PartDelta::FunctionToolCall { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            PartDelta::TextReasoning { text, .. } => Some(text.as_str()),
+            PartDelta::TextContent(text) => Some(text.as_str()),
+            PartDelta::TextToolCall(text) => Some(text.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn as_text_mut(&mut self) -> Option<&mut String> {
+        match self {
+            PartDelta::TextReasoning { text, .. } => Some(text),
+            PartDelta::TextContent(text) => Some(text),
+            PartDelta::TextToolCall(text) => Some(text),
+            _ => None,
+        }
+    }
+
+    pub fn as_function(&self) -> Option<(&str, &str)> {
+        match self {
+            PartDelta::FunctionToolCall { name, arguments } => {
+                Some((name.as_str(), arguments.as_str()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn as_function_mut(&mut self) -> Option<(&mut String, &mut String)> {
+        match self {
+            PartDelta::FunctionToolCall { name, arguments } => Some((name, arguments)),
+            _ => None,
+        }
+    }
 }
 
 impl Default for PartDelta {
@@ -85,9 +164,27 @@ impl Delta for PartDelta {
     fn aggregate(self, other: Self) -> Result<Self, ()> {
         match (self, other) {
             (PartDelta::Null, other) => Ok(other),
-            (PartDelta::TextReasoning(mut lhs), PartDelta::TextReasoning(rhs)) => {
-                lhs.push_str(&rhs);
-                Ok(PartDelta::TextReasoning(lhs))
+            (
+                PartDelta::TextReasoning {
+                    text: mut ltext,
+                    signature: lsig,
+                },
+                PartDelta::TextReasoning {
+                    text: rtext,
+                    signature: rsig,
+                },
+            ) => {
+                ltext.push_str(&rtext);
+                let sig = match (lsig, rsig) {
+                    (None, None) => None,
+                    (None, Some(rsig)) => Some(rsig),
+                    (Some(lsig), None) => Some(lsig),
+                    (Some(_), Some(rsig)) => Some(rsig),
+                };
+                Ok(PartDelta::TextReasoning {
+                    text: ltext,
+                    signature: sig,
+                })
             }
             (PartDelta::TextContent(mut lhs), PartDelta::TextContent(rhs)) => {
                 lhs.push_str(&rhs);
@@ -121,7 +218,9 @@ impl Delta for PartDelta {
     fn finish(self) -> Result<Self::Item, String> {
         match self {
             PartDelta::Null => Ok(Part::text_content(String::new())),
-            PartDelta::TextReasoning(s) => Ok(Part::text_reasoning(s)),
+            PartDelta::TextReasoning { text, signature } => {
+                Ok(Part::TextReasoning { text, signature })
+            }
             PartDelta::TextContent(s) => Ok(Part::text_content(s)),
             PartDelta::TextToolCall(s) => match serde_json::from_str::<Value>(&s) {
                 Ok(root) => {
