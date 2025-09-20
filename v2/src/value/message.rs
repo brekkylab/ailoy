@@ -91,10 +91,25 @@ impl Delta for MessageDelta {
                 // Aggregate parts if same type
                 match (last, &part_new) {
                     (PartDelta::TextReasoning { .. }, PartDelta::TextReasoning { .. })
-                    | (PartDelta::TextContent { .. }, PartDelta::TextContent { .. })
-                    | (PartDelta::FunctionToolCall { .. }, PartDelta::FunctionToolCall { .. }) => {
+                    | (PartDelta::TextContent { .. }, PartDelta::TextContent { .. }) => {
                         let part_updated = parts.pop().unwrap().aggregate(part_new)?;
                         parts.push(part_updated);
+                    }
+                    (
+                        PartDelta::FunctionToolCall { id: id1, .. },
+                        PartDelta::FunctionToolCall { id: id2, .. },
+                    ) => {
+                        match (id1, id2) {
+                            // If ID is different, push as a new pert
+                            (Some(lhs), Some(rhs)) if lhs != rhs => {
+                                parts.push(part_new);
+                            }
+                            // Otherwise aggregate
+                            _ => {
+                                let part_updated = parts.pop().unwrap().aggregate(part_new)?;
+                                parts.push(part_updated);
+                            }
+                        };
                     }
                     _ => {
                         parts.push(part_new);

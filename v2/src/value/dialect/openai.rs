@@ -1,9 +1,6 @@
 use base64::Engine;
-use indexmap::IndexMap;
 
-use crate::value::{
-    Delta, Marshal, Message, MessageDelta, Part, PartDelta, Role, Unmarshal, Value,
-};
+use crate::value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, Unmarshal, Value};
 
 #[derive(Clone, Debug, Default)]
 pub struct OpenAIMarshal;
@@ -38,20 +35,22 @@ impl Marshal<Message> for OpenAIMarshal {
                     name,
                     arguments,
                 } => {
-                    let mut value = Value::object([("type", Value::string("function"))]);
+                    let mut value = Value::object([
+                        ("type", Value::string("function")),
+                        (
+                            "function",
+                            Value::object([
+                                ("name", name),
+                                ("arguments", &serde_json::to_string(arguments).unwrap()),
+                            ]),
+                        ),
+                    ]);
                     if let Some(id) = id {
                         value
                             .as_object_mut()
                             .unwrap()
                             .insert("id".into(), id.into());
                     };
-                    value.as_object_mut().unwrap().insert(
-                        "function".into(),
-                        Value::object([
-                            ("name", name),
-                            ("arguments", &serde_json::to_string(arguments).unwrap()),
-                        ]),
-                    );
                     tool_calls.as_array_mut().unwrap().push(value);
                 }
                 Part::TextRefusal(s) => {
@@ -108,37 +107,73 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
         }
 
         // Parse contents
-        if let Some(parts_value) = root.get("content")
-            && !parts_value.is_null()
+        if let Some(contents) = root.get("content")
+            && !contents.is_null()
         {
-            if let Some(text_part) = parts_value.as_str() {
-                rv.parts.push(PartDelta::TextContent(text_part.into()));
-            } else if let Some(parts_value) = parts_value.as_array() {
-                for part_value in parts_value {
-                    let Some(part_value) = part_value.as_object() else {
+            if let Some(text) = contents.as_str() {
+                rv.parts.push(PartDelta::TextContent(text.into()));
+            } else if let Some(contents) = contents.as_array() {
+                for content in contents {
+                    let Some(content) = content.as_object() else {
                         return Err(String::from("Invalid part"));
                     };
-                    if let Some(text_value) = part_value.get("text") {
-                        let Some(text) = text_value.as_str() else {
-                            return Err(String::from("Invalid part"));
+                    if let Some(text) = content.get("text") {
+                        let Some(text) = text.as_str() else {
+                            return Err(String::from("Invalid content part"));
                         };
                         rv.parts.push(PartDelta::TextContent(text.into()));
-                    } else if let Some(func_value) = part_value.get("function") {
-                        let Some(func_value) = func_value.as_object() else {
-                            return Err(String::from("Invalid part"));
-                        };
-                        let name = match func_value.get("name") {
-                            Some(name) => name.as_str().unwrap().to_owned(),
-                            None => String::new(),
-                        };
-                        let arguments = match func_value.get("arguments") {
-                            Some(name) => name.as_str().unwrap().to_owned(),
-                            None => String::new(),
-                        };
-                        rv.parts
-                            .push(PartDelta::FunctionToolCall { name, arguments });
+                    } else {
+                        return Err(String::from("Invalid part"));
                     }
                 }
+            } else {
+                return Err(String::from("Invalid content"));
+            }
+        }
+
+        // Parse tool calls
+        if let Some(tool_calls) = root.get("tool_calls")
+            && !tool_calls.is_null()
+        {
+            if let Some(tool_calls) = tool_calls.as_array() {
+                for tool_call in tool_calls {
+                    let Some(tool_call) = tool_call.as_object() else {
+                        return Err(String::from("Invalid part"));
+                    };
+                    let id = match tool_call.get("id") {
+                        Some(id) if id.is_string() => Some(id.as_str().unwrap().to_owned()),
+                        _ => None,
+                    };
+                    if let Some(func) = tool_call.get("function") {
+                        let Some(func) = func.as_object() else {
+                            return Err(String::from("Invalid tool call part"));
+                        };
+                        let name = match func.get("name") {
+                            Some(name) if name.is_string() => name.as_str().unwrap().to_owned(),
+                            _ => String::new(),
+                        };
+                        let arguments = match func.get("arguments") {
+                            Some(args) if args.is_string() => args.as_str().unwrap().to_owned(),
+                            _ => String::new(),
+                        };
+                        rv.parts.push(PartDelta::FunctionToolCall {
+                            id,
+                            name,
+                            arguments,
+                        });
+                    }
+                }
+            } else {
+                return Err(String::from("Invalid tool calls"));
+            }
+        };
+
+        // Parse refusal
+        if let Some(refusal) = root.get("refusal")
+            && !refusal.is_null()
+        {
+            if let Some(text) = refusal.as_str() {
+                rv.parts.push(PartDelta::TextRefusal(text.into()));
             }
         };
         Ok(rv)
@@ -148,7 +183,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{Marshaled, Message, Role, Unmarshaled};
+    use crate::value::{Delta, Marshaled, Message, Role};
 
     #[test]
     pub fn serialize_text() {
@@ -185,6 +220,7 @@ mod tests {
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"assistant","content":[{"type":"text","text":"Calling the functions..."}],"tool_calls":[{"type":"function","function":{"name":"temperature","arguments":"{\"unit\": \"celcius\"}"},"id":"funcid_123456"},{"type":"function","function":{"name":"temperature","arguments":"{\"unit\": \"fernheit\"}"},"id":"funcid_7890ab"}]}"#
         );
+        // println!("{}", serde_json::to_string(&marshaled).unwrap());
     }
 
     #[test]
@@ -205,30 +241,93 @@ mod tests {
 
     #[test]
     pub fn deserialize_text() {
-        let delta1 = r#"{"role":"assistant","content":""}"#;
-        let delta2 = r#"{"content":"Hello"}"#;
-        let delta3 = r#"{"content":[{"type":"text","text":" world!"}]}"#;
+        let inputs = [
+            r#"{"index":0,"role":"assistant","content":null}"#,
+            r#"{"index":0,"content":"Hello"}"#,
+            r#"{"index":0,"content":[{"type":"text","text":" world!"}]}"#,
+        ];
         let mut u = OpenAIUnmarshal;
 
-        let delta = MessageDelta::new();
+        let mut delta = MessageDelta::new();
 
-        let val = serde_json::from_str::<Value>(delta1).unwrap();
-        let cur_delta = u.unmarshal(val).unwrap();
-        assert_eq!(cur_delta.role.clone().unwrap(), Role::Assistant);
-        let delta = delta.aggregate(cur_delta).unwrap();
-
-        let val = serde_json::from_str::<Value>(delta2).unwrap();
-        let cur_delta = u.unmarshal(val).unwrap();
-        assert_eq!(cur_delta.parts.len(), 1);
-        assert_eq!(cur_delta.parts[0].as_text().unwrap(), "Hello");
-        let delta = delta.aggregate(cur_delta).unwrap();
-
-        let val = serde_json::from_str::<Value>(delta3).unwrap();
-        let cur_delta = u.unmarshal(val).unwrap();
-        assert_eq!(cur_delta.parts.len(), 1);
-        assert_eq!(cur_delta.parts[0].as_text().unwrap(), " world!");
-        let delta = delta.aggregate(cur_delta).unwrap();
-
+        for input in inputs {
+            let val = serde_json::from_str::<Value>(input).unwrap();
+            let cur_delta = u.unmarshal(val).unwrap();
+            delta = delta.aggregate(cur_delta).unwrap();
+        }
+        assert_eq!(delta.parts.len(), 1);
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert!(delta.parts[0].is_text());
         assert_eq!(delta.parts[0].as_text().unwrap(), "Hello world!");
+    }
+
+    #[test]
+    pub fn deserialize_tool_call() {
+        let inputs = [
+            r#"{"tool_calls":[{"index":0,"id":"call_DdmO9pD3xa9XTPNJ32zg2hcA","function":{"arguments":"","name":"get_weather"},"type":"function"}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"{\"","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"location","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"\":\"","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"Paris","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":",","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":" France","name":null},"type": null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"\"}","name":null},"type":null}]}"#,
+        ];
+        let mut u = OpenAIUnmarshal;
+
+        let mut delta = MessageDelta::new();
+
+        for input in inputs {
+            let val = serde_json::from_str::<Value>(input).unwrap();
+            let cur_delta = u.unmarshal(val).unwrap();
+            delta = delta.aggregate(cur_delta).unwrap();
+        }
+        assert_eq!(delta.parts.len(), 1);
+        assert!(delta.parts[0].is_function());
+        let (id, name, args) = delta.parts[0].as_function().unwrap();
+        assert_eq!(id.unwrap(), "call_DdmO9pD3xa9XTPNJ32zg2hcA");
+        assert_eq!(name, "get_weather");
+        assert_eq!(args, "{\"location\":\"Paris, France\"}");
+    }
+
+    #[test]
+    pub fn deserialize_parallel_tool_call() {
+        let inputs = [
+            r#"{"tool_calls":[{"index":0,"id":"call_DdmO9pD3xa9XTPNJ32zg2hcA","function":{"arguments":"","name":"get_temperature"},"type":"function"}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"{\"","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"location","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"\":\"","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"Paris","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":",","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":" France","name":null},"type": null}]}"#,
+            r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"\"}","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":1,"id":"call_ABCDEF1234","function":{"arguments":"","name":"get_wind_speed"},"type":"function"}]}"#,
+            r#"{"tool_calls":[{"index":1,"id":null,"function":{"arguments":"{\"","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":1,"id":null,"function":{"arguments":"location","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":1,"id":null,"function":{"arguments":"\":\"","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":1,"id":null,"function":{"arguments":"Dubai","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":1,"id":null,"function":{"arguments":",","name":null},"type":null}]}"#,
+            r#"{"tool_calls":[{"index":1,"id":null,"function":{"arguments":" Qatar","name":null},"type": null}]}"#,
+            r#"{"tool_calls":[{"index":1,"id":null,"function":{"arguments":"\"}","name":null},"type":null}]}"#,
+        ];
+        let mut u = OpenAIUnmarshal;
+
+        let mut delta = MessageDelta::new();
+
+        for input in inputs {
+            let val = serde_json::from_str::<Value>(input).unwrap();
+            let cur_delta = u.unmarshal(val).unwrap();
+            delta = delta.aggregate(cur_delta).unwrap();
+        }
+        assert_eq!(delta.parts.len(), 2);
+        assert!(delta.parts[0].is_function());
+        let (id, name, args) = delta.parts[0].as_function().unwrap();
+        assert_eq!(id.unwrap(), "call_DdmO9pD3xa9XTPNJ32zg2hcA");
+        assert_eq!(name, "get_temperature");
+        assert_eq!(args, "{\"location\":\"Paris, France\"}");
+        let (id, name, args) = delta.parts[1].as_function().unwrap();
+        assert_eq!(id.unwrap(), "call_ABCDEF1234");
+        assert_eq!(name, "get_wind_speed");
+        assert_eq!(args, "{\"location\":\"Dubai, Qatar\"}");
     }
 }

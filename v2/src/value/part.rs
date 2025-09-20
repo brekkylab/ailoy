@@ -74,9 +74,11 @@ pub enum PartDelta {
     TextContent(String),
     TextToolCall(String),
     FunctionToolCall {
+        id: Option<String>,
         name: String,
         arguments: String,
     },
+    TextRefusal(String),
 }
 
 impl PartDelta {
@@ -135,18 +137,26 @@ impl PartDelta {
         }
     }
 
-    pub fn as_function(&self) -> Option<(&str, &str)> {
+    pub fn as_function(&self) -> Option<(Option<&str>, &str, &str)> {
         match self {
-            PartDelta::FunctionToolCall { name, arguments } => {
-                Some((name.as_str(), arguments.as_str()))
-            }
+            PartDelta::FunctionToolCall {
+                id,
+                name,
+                arguments,
+            } => Some((
+                id.as_ref().map(|x| x.as_str()),
+                name.as_str(),
+                arguments.as_str(),
+            )),
             _ => None,
         }
     }
 
     pub fn as_function_mut(&mut self) -> Option<(&mut String, &mut String)> {
         match self {
-            PartDelta::FunctionToolCall { name, arguments } => Some((name, arguments)),
+            PartDelta::FunctionToolCall {
+                name, arguments, ..
+            } => Some((name, arguments)),
             _ => None,
         }
     }
@@ -196,17 +206,27 @@ impl Delta for PartDelta {
             }
             (
                 PartDelta::FunctionToolCall {
+                    id: lid,
                     name: mut lname,
                     arguments: mut largs,
                 },
                 PartDelta::FunctionToolCall {
+                    id: rid,
                     name: rname,
                     arguments: rargs,
                 },
             ) => {
+                let id = match (lid, rid) {
+                    (None, None) => None,
+                    (None, Some(rid)) => Some(rid),
+                    (Some(lid), None) => Some(lid),
+                    (Some(lid), Some(rid)) if lid == rid => Some(lid),
+                    (Some(_), Some(_)) => return Err(()),
+                };
                 lname.push_str(&rname);
                 largs.push_str(&rargs);
                 Ok(PartDelta::FunctionToolCall {
+                    id,
                     name: lname,
                     arguments: largs,
                 })
@@ -234,9 +254,17 @@ impl Delta for PartDelta {
                 }
                 Err(_) => Err(String::from("Invalid JSON")),
             },
-            PartDelta::FunctionToolCall { name, arguments } => {
-                Ok(Part::function_tool_call(name, arguments))
-            }
+            PartDelta::FunctionToolCall {
+                id,
+                name,
+                arguments,
+            } => Ok(Part::FunctionToolCall {
+                id,
+                name,
+                arguments: serde_json::from_str::<Value>(&arguments)
+                    .map_err(|_| String::from("Invalid JSON"))?,
+            }),
+            PartDelta::TextRefusal(text) => Ok(Part::text_refusal(text)),
         }
     }
 }
