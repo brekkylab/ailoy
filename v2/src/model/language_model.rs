@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use downcast_rs::{Downcast, impl_downcast};
 use futures::lock::Mutex;
-// use dyn_clone::{DynClone, clone_trait_object};
 
 use crate::{
     utils::{BoxStream, MaybeSend, MaybeSync},
@@ -19,7 +18,6 @@ pub trait LanguageModel: Downcast + MaybeSend + MaybeSync {
     ) -> BoxStream<'a, Result<MessageOutput, String>>;
 }
 
-// clone_trait_object!(LanguageModel);
 impl_downcast!(LanguageModel);
 
 #[derive(Clone)]
