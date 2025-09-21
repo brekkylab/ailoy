@@ -20,7 +20,6 @@ base64 = "0.21"
 chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "master" }
 derive_builder = "0.20.2"
 downcast-rs = "2.0.2"
-dyn-clone = "1.0.20"
 futures = "0.3.31"
 gemini-rust = { git = "https://github.com/brekkylab/gemini-rust.git", branch = "main" }
 indexmap = { version = "2", features = ["serde"] }

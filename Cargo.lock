@@ -57,7 +57,6 @@ dependencies = [
  "derive_builder",
  "dotenvy",
  "downcast-rs",
- "dyn-clone",
  "env_logger",
  "futures",
  "gemini-rust",
