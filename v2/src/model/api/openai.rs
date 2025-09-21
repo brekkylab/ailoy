@@ -16,7 +16,12 @@ pub fn make_request(
     });
     if !tools.is_empty() {
         body["tool_choice"] = serde_json::json!("auto");
-        body["tools"] = serde_json::to_value(tools).unwrap();
+        body["tools"] = serde_json::json!(
+            tools
+                .iter()
+                .map(|v| Marshaled::<_, ChatCompletionMarshal>::new(v))
+                .collect::<Vec<_>>()
+        );
     }
 
     reqwest::Client::new()
@@ -81,53 +86,56 @@ mod tests {
         println!("{:?}", agg);
     }
 
-    // #[cfg(any(target_family = "unix", target_family = "windows"))]
-    // #[tokio::test]
-    // async fn infer_tool_call() {
-    //     use futures::StreamExt;
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_call() {
+        use futures::StreamExt;
 
-    //     use super::*;
-    //     use crate::value::{MessageAggregator, Part, Role, ToolDesc, ToolDescArg};
+        use super::*;
+        use crate::value::{Part, Role, ToolDesc, Value};
 
-    //     let model = Arc::new(APILanguageModel::new("gpt-4.1", OPENAI_API_KEY));
-    //     let tools = vec![ToolDesc::new(
-    //         "temperature",
-    //         "Get current temperature",
-    //         ToolDescArg::new_object().with_properties(
-    //             [
-    //                 (
-    //                     "location",
-    //                     ToolDescArg::new_string().with_desc("The city name"),
-    //                 ),
-    //                 (
-    //                     "unit",
-    //                     ToolDescArg::new_string()
-    //                         .with_enum(["Celcius", "Fernheit"])
-    //                         .with_desc("The unit of temperature"),
-    //                 ),
-    //             ],
-    //             ["location", "unit"],
-    //         ),
-    //         Some(
-    //             ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
-    //         ),
-    //     )];
-    //     let msgs = vec![
-    //         Message::with_role(Role::User)
-    //             .with_contents([Part::Text("How much hot currently in Dubai?".to_owned())]),
-    //     ];
-    //     let mut agg = MessageAggregator::new();
-    //     let mut strm = model.run(msgs, tools);
-    //     let mut assistant_msg: Option<Message> = None;
-    //     while let Some(delta_opt) = strm.next().await {
-    //         println!("{:?}", delta_opt);
-    //         let delta = delta_opt.unwrap();
-    //         if let Some(msg) = agg.update(delta) {
-    //             assistant_msg = Some(msg);
-    //         }
-    //     }
-    //     let assistant_msg = assistant_msg.unwrap();
-    //     let tc = assistant_msg.tool_calls.get(0).unwrap();
-    //     println!("Tool call: {:?}", tc);
-    // }
+        let mut model = SSELanguageModel::new("gpt-4.1", OPENAI_API_KEY);
+        let tools = vec![
+            ToolDesc::new(
+                "temperature",
+                "Get current temperature",
+                Value::object([
+                    ("type", Value::string("object")),
+                    (
+                        "properties",
+                        Value::object([
+                            (
+                                "location",
+                                Value::object([
+                                    ("type", "string"),
+                                    ("description", "The city name"),
+                                ]),
+                            ),
+                            (
+                                "unit",
+                                Value::object([
+                                    ("type", Value::string("string")),
+                                    ("description", Value::string("The unit of temperature")),
+                                    ("enum", Value::array(["celcius", "fahrenheit"])),
+                                ]),
+                            ),
+                        ]),
+                    ),
+                ]),
+            )
+            .unwrap(),
+        ];
+        let msgs = vec![Message::with_parts(
+            Role::User,
+            [Part::text_content("How much hot currently in Dubai?")],
+        )];
+        let mut strm = model.run(msgs, tools);
+        let mut assistant_msg = MessageDelta::default();
+        while let Some(delta_opt) = strm.next().await {
+            let delta = delta_opt.unwrap();
+            println!("{:?}", delta);
+            assistant_msg = assistant_msg.aggregate(delta).unwrap();
+        }
+        println!("{:?}", assistant_msg.finish());
+    }
 }

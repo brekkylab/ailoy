@@ -620,6 +620,56 @@ impl<'a> TryFrom<&'a mut Value> for &'a mut IndexMap<String, Value> {
     }
 }
 
+impl Into<serde_json::Value> for Value {
+    fn into(self) -> serde_json::Value {
+        match self {
+            Value::Null => serde_json::Value::Null,
+            Value::Bool(b) => serde_json::Value::Bool(b),
+            Value::Unsigned(u) => serde_json::Value::Number((u).into()),
+            Value::Integer(i) => serde_json::Value::Number((i).into()),
+            Value::Float(f) => serde_json::Number::from_f64(*f)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null),
+            Value::String(s) => serde_json::Value::String(s),
+            Value::Array(a) => serde_json::Value::Array(a.into_iter().map(|v| v.into()).collect()),
+            Value::Object(m) => {
+                let mut map = serde_json::Map::with_capacity(m.len());
+                for (k, v2) in m {
+                    map.insert(k.clone(), v2.into());
+                }
+                serde_json::Value::Object(map)
+            }
+        }
+    }
+}
+
+impl Into<Value> for serde_json::Value {
+    fn into(self) -> Value {
+        match self {
+            serde_json::Value::Null => Value::Null,
+            serde_json::Value::Bool(b) => Value::Bool(b),
+            serde_json::Value::Number(n) => {
+                if n.is_u64() {
+                    Value::Unsigned(n.as_u64().unwrap())
+                } else if n.is_i64() {
+                    Value::Integer(n.as_i64().unwrap())
+                } else {
+                    Value::Float(n.as_f64().unwrap().into())
+                }
+            }
+            serde_json::Value::String(s) => Value::String(s),
+            serde_json::Value::Array(a) => Value::Array(a.into_iter().map(|v| v.into()).collect()),
+            serde_json::Value::Object(m) => {
+                let mut map = indexmap::IndexMap::with_capacity(m.len());
+                for (k, v2) in m {
+                    map.insert(k.clone(), v2.into());
+                }
+                Value::Object(map)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ValueError {
     InvalidType,

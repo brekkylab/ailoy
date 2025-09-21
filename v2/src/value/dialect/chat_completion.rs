@@ -1,7 +1,9 @@
 /// Marshal and Unmarshal logic for OpenAI chat completion API (a.k.a. OpenAI-compatible API)
 use base64::Engine;
 
-use crate::value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, Unmarshal, Value};
+use crate::value::{
+    Marshal, Message, MessageDelta, Part, PartDelta, Role, ToolDesc, Unmarshal, Value,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct ChatCompletionMarshal;
@@ -80,6 +82,22 @@ impl Marshal<Message> for ChatCompletionMarshal {
                 .insert("refusal".into(), refusal);
         }
         rv
+    }
+}
+
+impl Marshal<ToolDesc> for ChatCompletionMarshal {
+    fn marshal(&mut self, item: &ToolDesc) -> Value {
+        Value::object([
+            ("type", Value::string("function")),
+            (
+                "function",
+                Value::object([
+                    ("name", Value::string(item.name.as_str())),
+                    ("description", Value::string(item.description.as_str())),
+                    ("parameters", item.parameters.clone()),
+                ]),
+            ),
+        ])
     }
 }
 

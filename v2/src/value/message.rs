@@ -51,17 +51,7 @@ impl MessageDelta {
     }
 
     pub fn to_message(self) -> Result<Message, String> {
-        let Some(role) = self.role else {
-            return Err("Role not specified".to_owned());
-        };
-        Ok(Message {
-            role,
-            parts: self
-                .parts
-                .into_iter()
-                .map(|v| v.finish().unwrap())
-                .collect(),
-        })
+        self.finish()
     }
 }
 
@@ -125,6 +115,16 @@ impl Delta for MessageDelta {
     }
 
     fn finish(self) -> Result<Self::Item, String> {
-        todo!()
+        let Some(role) = self.role else {
+            return Err("Role not specified".to_owned());
+        };
+        Ok(Message {
+            role,
+            parts: self
+                .parts
+                .into_iter()
+                .map(|v| v.finish().unwrap())
+                .collect(),
+        })
     }
 }
