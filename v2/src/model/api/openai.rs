@@ -1,235 +1,133 @@
-use openai_sdk_rs::OpenAI;
-
-use crate::model::api::openai_chat_completion::OpenAIChatCompletion;
-pub use crate::model::api::openai_chat_completion::{
-    OpenAIGenerationConfig, OpenAIGenerationConfigBuilder,
+use crate::{
+    model::sse::ServerSideEvent,
+    value::{ChatCompletionMarshal, Marshaled, Message, MessageDelta, ToolDesc},
 };
 
-#[derive(Clone)]
-pub struct OpenAILanguageModel {
-    model_name: String,
-    client: OpenAI,
-    config: OpenAIGenerationConfig,
+pub fn make_request(
+    model_name: &str,
+    api_key: &str,
+    msgs: Vec<Message>,
+    tools: Vec<ToolDesc>,
+) -> reqwest::RequestBuilder {
+    let mut body = serde_json::json!({
+        "model": model_name,
+        "messages": msgs.iter().map(|v| Marshaled::<_, ChatCompletionMarshal>::new(v)).collect::<Vec<_>>(),
+        "stream": true
+    });
+    if !tools.is_empty() {
+        body["tool_choice"] = serde_json::json!("auto");
+        body["tools"] = serde_json::to_value(tools).unwrap();
+    }
+
+    reqwest::Client::new()
+        .request(
+            reqwest::Method::POST,
+            "https://api.openai.com/v1/chat/completions",
+        )
+        .bearer_auth(api_key)
+        .header("Content-Type", "application/json")
+        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .body(body.to_string())
 }
 
-impl OpenAILanguageModel {
-    pub fn new(model_name: impl Into<String>, api_key: impl Into<String>) -> Self {
-        let client = OpenAI::builder()
-            .api_key(api_key.into())
-            .build()
-            .map_err(|e| format!("Failed to build OpenAI client: {}", e))
-            .unwrap();
-
-        Self {
-            model_name: model_name.into(),
-            client,
-            config: OpenAIGenerationConfig::default(),
-        }
-    }
-
-    pub fn with_config(mut self, config: OpenAIGenerationConfig) -> Self {
-        self.config = config;
-        self
-    }
-}
-
-impl OpenAIChatCompletion for OpenAILanguageModel {
-    fn model_name(&self) -> &str {
-        &self.model_name
-    }
-
-    fn client(&self) -> &OpenAI {
-        &self.client
-    }
-
-    fn config(&self) -> &OpenAIGenerationConfig {
-        &self.config
-    }
+pub fn handle_event(evt: ServerSideEvent) -> Vec<MessageDelta> {
+    let Ok(j) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
+        return Vec::new();
+    };
+    let Some(choice) = j.pointer("/choices/0/delta") else {
+        return Vec::new();
+    };
+    let Ok(decoded) = serde_json::from_value::<
+        crate::value::Unmarshaled<_, crate::value::ChatCompletionUnmarshal>,
+    >(choice.clone()) else {
+        return Vec::new();
+    };
+    let rv = decoded.get();
+    vec![rv]
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::model::LanguageModel;
-    use crate::utils::log;
-    use crate::value::{Message, MessageAggregator, Part, Role, ToolDesc};
-    use ailoy_macros::multi_platform_test;
-    use futures::StreamExt;
-    use std::sync::LazyLock;
+    use crate::{
+        model::{LanguageModel as _, sse::SSELanguageModel},
+        value::Delta,
+    };
 
-    static OPENAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
-        option_env!("OPENAI_API_KEY")
-            .expect("Environment variable 'OPENAI_API_KEY' is required for the tests.")
-    });
+    const OPENAI_API_KEY: &str = "";
 
-    #[multi_platform_test]
-    async fn openai_infer_with_thinking() {
-        let mut model = OpenAILanguageModel::new("o3-mini", *OPENAI_API_KEY);
+    #[tokio::test]
+    async fn infer_simple_chat() {
+        use futures::StreamExt;
 
-        let msgs = vec![
-            Message::with_role(Role::System).with_contents(vec![Part::Text(
-                "You are a helpful mathematics assistant.".to_owned(),
-            )]),
-            Message::with_role(Role::User).with_contents(vec![Part::Text(
-                "What is the sum of the first 50 prime numbers?".to_owned(),
-            )]),
-        ];
-        let mut agg = MessageAggregator::new();
-        let mut strm = model.run(msgs, Vec::new());
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log::debug(format!("{:?}", delta).as_str());
-            if let Some(msg) = agg.update(delta) {
-                log::info(format!("{:?}", msg).as_str());
-            }
-        }
-    }
-
-    #[multi_platform_test]
-    async fn openai_infer_tool_call() {
         use super::*;
-        use crate::value::{MessageAggregator, ToolDescArg};
+        use crate::value::{Part, Role};
 
-        let mut model = OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY);
-        let tools = vec![ToolDesc::new(
-            "temperature",
-            "Get current temperature",
-            ToolDescArg::new_object().with_properties(
-                [
-                    (
-                        "location",
-                        ToolDescArg::new_string().with_desc("The city name"),
-                    ),
-                    (
-                        "unit",
-                        ToolDescArg::new_string()
-                            .with_enum(["Celcius", "Fernheit"])
-                            .with_desc("The unit of temperature"),
-                    ),
-                ],
-                ["location", "unit"],
-            ),
-            Some(
-                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
-            ),
-        )];
-        let mut msgs = vec![Message::with_role(Role::User).with_contents([Part::Text(
-            "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
-        )])];
-        let mut agg = MessageAggregator::new();
-        let mut assistant_msg: Option<Message> = None;
-        {
-            let mut strm = model.run(msgs.clone(), tools.clone());
-            while let Some(delta_opt) = strm.next().await {
-                let delta = delta_opt.unwrap();
-                log::debug(format!("{:?}", delta).as_str());
-                if let Some(msg) = agg.update(delta) {
-                    log::info(format!("{:?}", msg).as_str());
-                    assistant_msg = Some(msg);
-                }
-            }
-        }
-        // This should be tool call message
-        let assistant_msg = assistant_msg.unwrap();
-        msgs.push(assistant_msg.clone());
+        let mut model = SSELanguageModel::new("gpt-4.1", OPENAI_API_KEY);
 
-        // Append a fake tool call result message
-        let tool_call_id = if let Part::Function { id, .. } = assistant_msg.tool_calls[0].clone() {
-            Some(id)
-        } else {
-            None
-        };
-        let tool_result_msg = Message::with_role(Role::Tool("temperature".into(), tool_call_id))
-            .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
-        msgs.push(tool_result_msg);
-
-        let mut strm = model.run(msgs, tools);
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log::debug(format!("{:?}", delta).as_str());
-            if let Some(msg) = agg.update(delta) {
-                // Final message shuold say something like "Dubai is 38.5°C"
-                log::info(format!("{:?}", msg).as_str());
-            }
-        }
-    }
-
-    #[multi_platform_test]
-    async fn openai_infer_with_image() {
-        use super::*;
-        use crate::value::MessageAggregator;
-
-        use base64::Engine;
-
-        let client = reqwest::Client::new();
-        let test_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Jensen_Huang_%28cropped%29.jpg/250px-Jensen_Huang_%28cropped%29.jpg";
-        let response = client.get(test_image_url).header(reqwest::header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36").send().await.unwrap();
-        let image_bytes = response.bytes().await.unwrap();
-        let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
-
-        let mut model = OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY);
         let msgs = vec![
-            Message::with_role(Role::User)
-                .with_contents(vec![Part::ImageData(image_base64, "image/jpeg".into())]),
-            Message::with_role(Role::User)
-                .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
+            Message::with_parts(
+                Role::System,
+                [Part::text_content("You are a helpful assistant.")],
+            ),
+            Message::with_parts(Role::User, [Part::text_content("Hi what's your name?")]),
         ];
-        let mut agg = MessageAggregator::new();
+        let mut agg = MessageDelta::new();
         let mut strm = model.run(msgs, Vec::new());
         while let Some(delta_opt) = strm.next().await {
             let delta = delta_opt.unwrap();
-            log::debug(format!("{:?}", delta));
-            if let Some(msg) = agg.update(delta) {
-                log::info(format!("{:?}", msg));
-            }
+            println!("{:?}", delta);
+            agg = agg.aggregate(delta).unwrap();
         }
+        println!("{:?}", agg);
     }
 
-    #[multi_platform_test]
-    async fn openai_infer_structured_output() {
-        use super::OpenAIGenerationConfigBuilder;
-        use crate::model::api::openai_chat_completion::{
-            OpenAIResponseFormat, OpenAIResponseFormatJSONSchema,
-        };
-        use crate::value::MessageAggregator;
-        use serde_json::json;
+    // #[cfg(any(target_family = "unix", target_family = "windows"))]
+    // #[tokio::test]
+    // async fn infer_tool_call() {
+    //     use futures::StreamExt;
 
-        let json_schema = serde_json::from_value::<OpenAIResponseFormatJSONSchema>(json!({
-            "name": "summarize-content",
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "summary": {
-                        "type": "string",
-                        "description": "A brief summary of the content."
-                    }
-                },
-                "required": [
-                    "summary"
-                ],
-                "additionalProperties": false
-            }
-        }))
-        .unwrap();
-        let config = OpenAIGenerationConfigBuilder::default()
-            .response_format(Some(OpenAIResponseFormat::JsonSchema { json_schema }))
-            .build()
-            .unwrap();
+    //     use super::*;
+    //     use crate::value::{MessageAggregator, Part, Role, ToolDesc, ToolDescArg};
 
-        let mut model = OpenAILanguageModel::new("gpt-4.1", *OPENAI_API_KEY).with_config(config);
-
-        let msgs = vec![
-            Message::with_role(Role::User)
-                .with_contents(vec![Part::Text("What is Artificial Intelligence?".into())]),
-        ];
-        let mut agg = MessageAggregator::new();
-        let mut strm = model.run(msgs, Vec::new());
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            log::debug(format!("{:?}", delta));
-            if let Some(msg) = agg.update(delta) {
-                log::info(format!("{:?}", msg));
-            }
-        }
-    }
+    //     let model = Arc::new(APILanguageModel::new("gpt-4.1", OPENAI_API_KEY));
+    //     let tools = vec![ToolDesc::new(
+    //         "temperature",
+    //         "Get current temperature",
+    //         ToolDescArg::new_object().with_properties(
+    //             [
+    //                 (
+    //                     "location",
+    //                     ToolDescArg::new_string().with_desc("The city name"),
+    //                 ),
+    //                 (
+    //                     "unit",
+    //                     ToolDescArg::new_string()
+    //                         .with_enum(["Celcius", "Fernheit"])
+    //                         .with_desc("The unit of temperature"),
+    //                 ),
+    //             ],
+    //             ["location", "unit"],
+    //         ),
+    //         Some(
+    //             ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
+    //         ),
+    //     )];
+    //     let msgs = vec![
+    //         Message::with_role(Role::User)
+    //             .with_contents([Part::Text("How much hot currently in Dubai?".to_owned())]),
+    //     ];
+    //     let mut agg = MessageAggregator::new();
+    //     let mut strm = model.run(msgs, tools);
+    //     let mut assistant_msg: Option<Message> = None;
+    //     while let Some(delta_opt) = strm.next().await {
+    //         println!("{:?}", delta_opt);
+    //         let delta = delta_opt.unwrap();
+    //         if let Some(msg) = agg.update(delta) {
+    //             assistant_msg = Some(msg);
+    //         }
+    //     }
+    //     let assistant_msg = assistant_msg.unwrap();
+    //     let tc = assistant_msg.tool_calls.get(0).unwrap();
+    //     println!("Tool call: {:?}", tc);
+    // }
 }

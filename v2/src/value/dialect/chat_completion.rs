@@ -1,3 +1,4 @@
+/// Marshal and Unmarshal logic for OpenAI chat completion API (a.k.a. OpenAI-compatible API)
 use base64::Engine;
 
 use crate::value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, Unmarshal, Value};
@@ -7,11 +8,12 @@ pub struct ChatCompletionMarshal;
 
 impl Marshal<Message> for ChatCompletionMarshal {
     fn marshal(&mut self, item: &Message) -> Value {
+        // Separate arrays for different categories of parts
         let mut contents = Value::array_empty();
         let mut tool_calls = Value::array_empty();
         let mut refusal = Value::array_empty();
 
-        // Encode each parts
+        // Encode each message part
         for part in &item.parts {
             match part {
                 Part::TextReasoning { .. } => {
@@ -60,7 +62,7 @@ impl Marshal<Message> for ChatCompletionMarshal {
             };
         }
 
-        // Encode whole message
+        // Final message object with role and collected parts
         let mut rv = Value::object([("role", item.role.to_string())]);
         if !contents.as_array().unwrap().is_empty() {
             rv.as_object_mut()
@@ -86,6 +88,7 @@ pub struct ChatCompletionUnmarshal;
 
 impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
     fn unmarshal(&mut self, val: Value) -> Result<MessageDelta, String> {
+        // Root must be an object
         let root = val
             .as_object()
             .ok_or_else(|| String::from("Root should be an object"))?;
@@ -106,15 +109,15 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
             rv.role = Some(v);
         }
 
-        // Parse contents
+        // Parse `content` field (can be null, string, or array of part objects)
         if let Some(contents) = root.get("content")
             && !contents.is_null()
         {
             if let Some(text) = contents.as_str() {
-                // Contents can be a single string
+                // Simple string case
                 rv.parts.push(PartDelta::TextContent(text.into()));
             } else if let Some(contents) = contents.as_array() {
-                // In case of part vector
+                // Multiple content parts
                 for content in contents {
                     let Some(content) = content.as_object() else {
                         return Err(String::from("Invalid part"));
@@ -133,7 +136,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
             }
         }
 
-        // Parse tool calls
+        // Parse `tool_calls` field (array of function calls)
         if let Some(tool_calls) = root.get("tool_calls")
             && !tool_calls.is_null()
         {
@@ -170,7 +173,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
             }
         };
 
-        // Parse refusal
+        // Parse `refusal` field (may be null or string)
         if let Some(refusal) = root.get("refusal")
             && !refusal.is_null()
         {
@@ -191,7 +194,7 @@ mod tests {
     pub fn serialize_text() {
         let mut msg = Message::new(Role::User);
         msg.parts
-            .push(Part::text_content("Explain me about Riemann hypothesis"));
+            .push(Part::text_content("Explain me about Riemann hypothesis."));
         msg.parts.push(Part::text_content(
             "How cold brew is different from the normal coffee?",
         ));
@@ -214,15 +217,14 @@ mod tests {
         ));
         msg.parts.push(Part::function_tool_call_with_id(
             "temperature",
-            Value::object([("unit", "fernheit")]),
+            Value::object([("unit", "fahrenheit")]),
             "funcid_7890ab",
         ));
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"assistant","content":[{"type":"text","text":"Calling the functions..."}],"tool_calls":[{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"celcius\"}"},"id":"funcid_123456"},{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"fernheit\"}"},"id":"funcid_7890ab"}]}"#
+            r#"{"role":"assistant","content":[{"type":"text","text":"Calling the functions..."}],"tool_calls":[{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"celcius\"}"},"id":"funcid_123456"},{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"fahrenheit\"}"},"id":"funcid_7890ab"}]}"#
         );
-        // println!("{}", serde_json::to_string(&marshaled).unwrap());
     }
 
     #[test]
@@ -266,7 +268,7 @@ mod tests {
     #[test]
     pub fn deserialize_tool_call() {
         let inputs = [
-            r#"{"tool_calls":[{"index":0,"id":"call_DdmO9pD3xa9XTPNJ32zg2hcA","function":{"arguments":"","name":"get_weather"},"type":"function"}]}"#,
+            r#"{"role":"assistant","tool_calls":[{"index":0,"id":"call_DdmO9pD3xa9XTPNJ32zg2hcA","function":{"arguments":"","name":"get_weather"},"type":"function"}]}"#,
             r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"{\"","name":null},"type":null}]}"#,
             r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"location","name":null},"type":null}]}"#,
             r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"\":\"","name":null},"type":null}]}"#,
@@ -295,7 +297,7 @@ mod tests {
     #[test]
     pub fn deserialize_parallel_tool_call() {
         let inputs = [
-            r#"{"tool_calls":[{"index":0,"id":"call_DdmO9pD3xa9XTPNJ32zg2hcA","function":{"arguments":"","name":"get_temperature"},"type":"function"}]}"#,
+            r#"{"role":"assistant","tool_calls":[{"index":0,"id":"call_DdmO9pD3xa9XTPNJ32zg2hcA","function":{"arguments":"","name":"get_temperature"},"type":"function"}]}"#,
             r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"{\"","name":null},"type":null}]}"#,
             r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"location","name":null},"type":null}]}"#,
             r#"{"tool_calls":[{"index":0,"id":null,"function":{"arguments":"\":\"","name":null},"type":null}]}"#,

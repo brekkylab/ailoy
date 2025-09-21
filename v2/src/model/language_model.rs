@@ -1,6 +1,6 @@
 use crate::{
     utils::{BoxStream, MaybeSend, MaybeSync},
-    value::{Message, MessageOutput, ToolDesc},
+    value::{Message, MessageDelta, ToolDesc},
 };
 
 pub trait LanguageModel: MaybeSend + MaybeSync {
@@ -9,5 +9,5 @@ pub trait LanguageModel: MaybeSend + MaybeSync {
         self: &'a mut Self,
         msg: Vec<Message>,
         tools: Vec<ToolDesc>,
-    ) -> BoxStream<'a, Result<MessageOutput, String>>;
+    ) -> BoxStream<'a, Result<MessageDelta, String>>;
 }

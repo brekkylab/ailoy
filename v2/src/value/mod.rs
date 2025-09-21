@@ -7,6 +7,7 @@ mod tool_desc;
 mod value;
 
 pub use delta::*;
+pub use dialect::*;
 pub use marshal::*;
 pub use message::*;
 pub use part::*;
