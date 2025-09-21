@@ -15,7 +15,7 @@ use crate::{
         ArcMutexLanguageModel, LocalLanguageModel, anthropic::AnthropicLanguageModel,
         gemini::GeminiLanguageModel, openai::OpenAILanguageModel, xai::XAILanguageModel,
     },
-    value::MessageOutput,
+    value::{MessageOutput, ToolDesc},
 };
 
 #[napi(object)]
@@ -80,6 +80,7 @@ pub trait LanguageModelMethods {
         &'a self,
         env: Env,
         messages: Vec<JsMessage>,
+        tools: Option<Vec<ToolDesc>>,
     ) -> napi::Result<Object<'a>> {
         let inner = self.get_inner()?;
         let (tx, rx) = mpsc::unbounded_channel::<std::result::Result<MessageOutput, String>>();
@@ -89,7 +90,10 @@ pub trait LanguageModelMethods {
         rt.spawn(async move {
             let mut model = inner.model.lock().await;
             let mut stream = model
-                .run(messages.into_iter().map(|msg| msg.into()).collect(), vec![])
+                .run(
+                    messages.into_iter().map(|msg| msg.into()).collect(),
+                    tools.unwrap_or(vec![]),
+                )
                 .boxed();
 
             while let Some(item) = stream.next().await {
@@ -144,8 +148,13 @@ impl JsLocalLanguageModel {
     }
 
     #[napi(ts_return_type = "LanguageModelRunIterator")]
-    pub fn run<'a>(&'a self, env: Env, messages: Vec<JsMessage>) -> Result<Object<'a>> {
-        self.create_iterator(env, messages)
+    pub fn run<'a>(
+        &'a self,
+        env: Env,
+        messages: Vec<JsMessage>,
+        tools: Option<Vec<ToolDesc>>,
+    ) -> Result<Object<'a>> {
+        self.create_iterator(env, messages, tools)
     }
 }
 
@@ -178,8 +187,13 @@ impl JsOpenAILanguageModel {
     }
 
     #[napi(ts_return_type = "LanguageModelRunIterator")]
-    pub fn run<'a>(&'a self, env: Env, messages: Vec<JsMessage>) -> Result<Object<'a>> {
-        self.create_iterator(env, messages)
+    pub fn run<'a>(
+        &'a self,
+        env: Env,
+        messages: Vec<JsMessage>,
+        tools: Option<Vec<ToolDesc>>,
+    ) -> Result<Object<'a>> {
+        self.create_iterator(env, messages, tools)
     }
 }
 
@@ -212,8 +226,13 @@ impl JsGeminiLanguageModel {
     }
 
     #[napi(ts_return_type = "LanguageModelRunIterator")]
-    pub fn run<'a>(&'a self, env: Env, messages: Vec<JsMessage>) -> Result<Object<'a>> {
-        self.create_iterator(env, messages)
+    pub fn run<'a>(
+        &'a self,
+        env: Env,
+        messages: Vec<JsMessage>,
+        tools: Option<Vec<ToolDesc>>,
+    ) -> Result<Object<'a>> {
+        self.create_iterator(env, messages, tools)
     }
 }
 
@@ -246,8 +265,13 @@ impl JsAnthropicLanguageModel {
     }
 
     #[napi(ts_return_type = "LanguageModelRunIterator")]
-    pub fn run<'a>(&'a self, env: Env, messages: Vec<JsMessage>) -> Result<Object<'a>> {
-        self.create_iterator(env, messages)
+    pub fn run<'a>(
+        &'a self,
+        env: Env,
+        messages: Vec<JsMessage>,
+        tools: Option<Vec<ToolDesc>>,
+    ) -> Result<Object<'a>> {
+        self.create_iterator(env, messages, tools)
     }
 }
 
@@ -280,7 +304,45 @@ impl JsXAILanguageModel {
     }
 
     #[napi(ts_return_type = "LanguageModelRunIterator")]
-    pub fn run<'a>(&'a self, env: Env, messages: Vec<JsMessage>) -> Result<Object<'a>> {
-        self.create_iterator(env, messages)
+    pub fn run<'a>(
+        &'a self,
+        env: Env,
+        messages: Vec<JsMessage>,
+        tools: Option<Vec<ToolDesc>>,
+    ) -> Result<Object<'a>> {
+        self.create_iterator(env, messages, tools)
+    }
+}
+
+impl TryFrom<Unknown<'_>> for ArcMutexLanguageModel {
+    type Error = napi::Error;
+
+    fn try_from(value: Unknown<'_>) -> std::result::Result<Self, Self::Error> {
+        if let Ok(model) =
+            unsafe { JsLocalLanguageModel::from_napi_value(value.env(), value.raw()) }
+        {
+            model.get_inner()
+        } else if let Ok(model) =
+            unsafe { JsOpenAILanguageModel::from_napi_value(value.env(), value.raw()) }
+        {
+            model.get_inner()
+        } else if let Ok(model) =
+            unsafe { JsGeminiLanguageModel::from_napi_value(value.env(), value.raw()) }
+        {
+            model.get_inner()
+        } else if let Ok(model) =
+            unsafe { JsAnthropicLanguageModel::from_napi_value(value.env(), value.raw()) }
+        {
+            model.get_inner()
+        } else if let Ok(model) =
+            unsafe { JsXAILanguageModel::from_napi_value(value.env(), value.raw()) }
+        {
+            model.get_inner()
+        } else {
+            Err(napi::Error::new(
+                Status::InvalidArg,
+                "Invalid language model object provided",
+            ))
+        }
     }
 }

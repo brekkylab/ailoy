@@ -43,6 +43,7 @@ export {
   LocalLanguageModel,
   MCPTransport,
   MCPTool,
+  MessageAggregator,
   OpenAILanguageModel,
   XAILanguageModel,
 } from "./ailoy_core";
@@ -53,6 +54,7 @@ export type {
   EmbeddingModel,
   LanguageModel,
   LanguageModelIteratorResult,
+  Tool,
   ToolDesc,
   VectorStore,
   VectorStoreAddInput,

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use futures::lock::Mutex;
 use napi::{Status, bindgen_prelude::*, threadsafe_function::ThreadsafeFunction};
 use napi_derive::napi;
 use serde_json::{Map, Value};
@@ -8,18 +7,18 @@ use serde_json::{Map, Value};
 use crate::{
     ffi::node::{common::await_future, value::JsPart},
     tool::{
-        BuiltinTool, MCPTransport, Tool, create_terminal_tool,
+        ArcTool, BuiltinTool, MCPTransport, Tool, create_terminal_tool,
         mcp::native::MCPTool,
         native::{mcp_tools_from_stdio, mcp_tools_from_streamable_http},
     },
-    value::{ToolCallArg, ToolDesc},
+    value::{Part, ToolCallArg, ToolDesc},
 };
 
 pub trait JsToolMethods<T: Tool + 'static> {
-    fn inner(&self) -> Arc<Mutex<T>>;
+    fn inner(&self) -> ArcTool;
 
     fn _description(&self) -> napi::Result<ToolDesc> {
-        await_future(async { Ok(self.inner().lock().await.get_description()) })
+        await_future(async { Ok(self.inner().inner.get_description()) })
     }
 
     async fn _call(&self, kwargs: Option<Map<String, Value>>) -> napi::Result<Vec<JsPart>> {
@@ -30,8 +29,8 @@ pub trait JsToolMethods<T: Tool + 'static> {
             ToolCallArg::new_null()
         };
 
-        let inner = self.inner();
-        let results = inner.lock().await.run(args).await;
+        let inner = self.inner().inner;
+        let results = inner.run(args).await;
         match results {
             Ok(parts) => Ok(parts.into_iter().map(|part| part.into()).collect()),
             Err(e) => Err(napi::Error::new(Status::GenericFailure, e)),
@@ -41,12 +40,26 @@ pub trait JsToolMethods<T: Tool + 'static> {
 
 #[napi(js_name = "BuiltinTool")]
 pub struct JsBuiltinTool {
-    inner: Arc<Mutex<BuiltinTool>>,
+    inner: ArcTool,
 }
 
 impl JsToolMethods<BuiltinTool> for JsBuiltinTool {
-    fn inner(&self) -> Arc<Mutex<BuiltinTool>> {
+    fn inner(&self) -> ArcTool {
         self.inner.clone()
+    }
+}
+
+impl FromNapiValue for JsBuiltinTool {
+    unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+        let ci = unsafe { ClassInstance::<Self>::from_napi_value(env, napi_val) }?;
+        let inner = ci
+            .as_ref()
+            .inner
+            .downcast::<BuiltinTool>()
+            .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
+        Ok(Self {
+            inner: ArcTool::new_from_arc(inner),
+        })
     }
 }
 
@@ -56,7 +69,7 @@ impl JsBuiltinTool {
     pub fn terminal() -> napi::Result<Self> {
         let inner = create_terminal_tool();
         Ok(Self {
-            inner: Arc::new(Mutex::new(inner)),
+            inner: ArcTool::new(inner),
         })
     }
 
@@ -73,12 +86,26 @@ impl JsBuiltinTool {
 
 #[napi(js_name = "MCPTool")]
 pub struct JsMCPTool {
-    inner: Arc<Mutex<MCPTool>>,
+    inner: ArcTool,
 }
 
 impl JsToolMethods<MCPTool> for JsMCPTool {
-    fn inner(&self) -> Arc<Mutex<MCPTool>> {
+    fn inner(&self) -> ArcTool {
         self.inner.clone()
+    }
+}
+
+impl FromNapiValue for JsMCPTool {
+    unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+        let ci = unsafe { ClassInstance::<Self>::from_napi_value(env, napi_val) }?;
+        let inner = ci
+            .as_ref()
+            .inner
+            .downcast::<MCPTool>()
+            .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
+        Ok(Self {
+            inner: ArcTool::new_from_arc(inner),
+        })
     }
 }
 
@@ -159,7 +186,7 @@ impl JsMCPTransport {
         .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?
         .into_iter()
         .map(|t| JsMCPTool {
-            inner: Arc::new(Mutex::new(t)),
+            inner: ArcTool::new(t),
         })
         .collect::<Vec<JsMCPTool>>())
     }
@@ -168,7 +195,47 @@ impl JsMCPTransport {
 #[napi]
 pub struct JsFunctionTool {
     desc: ToolDesc,
-    func: ThreadsafeFunction<Value, Promise<Value>, Value, Status, false, true>,
+    func: Arc<ThreadsafeFunction<Value, Promise<Value>, Value, Status, false, false>>,
+}
+
+impl std::fmt::Debug for JsFunctionTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "JsFunctionTool {{ ")?;
+        write!(f, "desc: {}", serde_json::to_string(&self.desc).unwrap())?;
+        write!(f, " }}")?;
+        Ok(())
+    }
+}
+
+impl FromNapiValue for JsFunctionTool {
+    unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+        let ci = unsafe { ClassInstance::<Self>::from_napi_value(env, napi_val) }?;
+        let desc = ci.as_ref().desc.clone();
+        let func = ci.as_ref().func.clone();
+        Ok(Self { desc, func })
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for JsFunctionTool {
+    fn get_description(&self) -> ToolDesc {
+        self.desc.clone()
+    }
+
+    async fn run(&self, args: ToolCallArg) -> std::result::Result<Vec<Part>, String> {
+        let kwargs = serde_json::to_value(args).unwrap();
+        let promise = self
+            .func
+            .call_async(kwargs)
+            .await
+            .map_err(|e| e.to_string())?;
+        let result = match promise.await {
+            Ok(result) => result.to_string(),
+            Err(e) => e.to_string(),
+        };
+        let part = Part::new_text(result);
+        Ok(vec![part])
+    }
 }
 
 #[napi]
@@ -176,9 +243,12 @@ impl JsFunctionTool {
     #[napi(constructor)]
     pub fn new(
         desc: ToolDesc,
-        func: ThreadsafeFunction<Value, Promise<Value>, Value, Status, false, true>,
+        func: ThreadsafeFunction<Value, Promise<Value>, Value, Status, false, false>,
     ) -> Self {
-        Self { desc, func }
+        Self {
+            desc,
+            func: Arc::new(func),
+        }
     }
 
     #[napi(getter)]
@@ -197,5 +267,26 @@ impl JsFunctionTool {
         };
         let part = JsPart::new_text(serde_json::to_string(&result)?);
         Ok(vec![part])
+    }
+}
+
+impl TryFrom<Unknown<'_>> for ArcTool {
+    type Error = napi::Error;
+
+    fn try_from(value: Unknown<'_>) -> napi::Result<Self> {
+        if let Ok(tool) = unsafe { JsBuiltinTool::from_napi_value(value.env(), value.raw()) } {
+            Ok(tool.inner())
+        } else if let Ok(tool) = unsafe { JsMCPTool::from_napi_value(value.env(), value.raw()) } {
+            Ok(tool.inner())
+        } else if let Ok(tool) =
+            unsafe { JsFunctionTool::from_napi_value(value.env(), value.raw()) }
+        {
+            Ok(ArcTool::new(tool))
+        } else {
+            Err(napi::Error::new(
+                Status::InvalidArg,
+                "Unknown tool object provided",
+            ))
+        }
     }
 }

@@ -3,7 +3,7 @@ use napi_derive::napi;
 
 use crate::{
     ffi::node::common::{get_property, json_parse, json_stringify},
-    value::{FinishReason, Message, MessageOutput, Part, Role},
+    value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role},
 };
 
 ////////////
@@ -48,6 +48,10 @@ impl FromNapiValue for JsPart {
                     arguments: json_stringify(env, arguments)?,
                 }
                 .into())
+            }
+            "FunctionString" => {
+                let func: String = get_property(obj, "function")?;
+                Ok(Part::FunctionString(func).into())
             }
             "ImageURL" => {
                 let url: String = get_property(obj, "url")?;
@@ -194,6 +198,28 @@ impl JsPart {
     }
 
     #[napi(getter)]
+    pub fn function(&self) -> Result<Option<String>> {
+        Ok(match &self.inner {
+            Part::FunctionString(func) => Some(func.clone()),
+            _ => None,
+        })
+    }
+
+    #[napi(setter)]
+    pub fn set_function(&mut self, func: String) -> Result<()> {
+        match &mut self.inner {
+            Part::FunctionString(func_) => {
+                *func_ = func;
+                Ok(())
+            }
+            _ => Err(Error::new(
+                Status::InvalidArg,
+                "This part is not a type of FunctionString",
+            )),
+        }
+    }
+
+    #[napi(getter)]
     pub fn url(&self) -> Result<Option<String>> {
         Ok(match &self.inner {
             Part::ImageURL(url) => Some(url.clone()),
@@ -275,15 +301,15 @@ impl JsPart {
                 obj.set("name", self.name())?;
                 obj.set("arguments", self.arguments(env))?;
             }
+            Part::FunctionString(..) => {
+                obj.set("function", self.function())?;
+            }
             Part::ImageURL(..) => {
                 obj.set("url", self.url())?;
             }
             Part::ImageData { .. } => {
                 obj.set("data", self.data())?;
                 obj.set("mimeType", self.mime_type())?;
-            }
-            _ => {
-                return Err(Error::new(Status::InvalidArg, "Unsupported part type"));
             }
         }
         Ok(obj)
@@ -323,7 +349,7 @@ impl FromNapiValue for JsMessage {
         let env = Env::from(env);
         let obj = unsafe { Object::from_napi_value(env.raw(), napi_val)? };
 
-        let role: Option<Role> = obj.get("role")?;
+        let role: Option<Role> = obj.get("role").unwrap_or(None);
 
         let contents_array: Array = get_property(obj, "contents")?;
         let contents_len = contents_array.get_array_length()?;
@@ -475,8 +501,7 @@ impl FromNapiValue for JsMessageOutput {
         let obj = unsafe { Object::from_napi_value(env.raw(), napi_val)? };
 
         let delta: JsMessage = get_property(obj, "delta")?;
-        let finish_reason: Option<FinishReason> = obj.get("finishReason")?;
-
+        let finish_reason = obj.get::<FinishReason>("finishReason").unwrap_or(None);
         Ok(MessageOutput {
             delta: delta.into(),
             finish_reason,
@@ -510,5 +535,25 @@ impl JsMessageOutput {
         let obj = self.to_json(env)?;
         let str = json_stringify(env, obj)?;
         Ok(str)
+    }
+}
+
+/////////////////////////
+/// MessageAggregator ///
+/////////////////////////
+
+#[napi(js_name = "MessageAggregator")]
+pub struct JsMessageAggregator(MessageAggregator);
+
+#[napi]
+impl JsMessageAggregator {
+    #[napi(constructor)]
+    pub fn new() -> Self {
+        Self(MessageAggregator::new())
+    }
+
+    #[napi]
+    pub fn update(&mut self, msg: JsMessageOutput) -> Option<JsMessage> {
+        self.0.update(msg.into()).map(|msg| msg.into())
     }
 }

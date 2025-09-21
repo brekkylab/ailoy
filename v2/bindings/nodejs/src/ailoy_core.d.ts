@@ -5,8 +5,10 @@ export type LanguageModel = LocalLanguageModel | OpenAILanguageModel | GeminiLan
 export type EmbeddingModel = LocalEmbeddingModel;
 /* @ts-ignore */
 export type VectorStore = FaissVectorStore | ChromaVectorStore;
+/* @ts-ignore */
+export type Tool = BuiltinTool | MCPTool | JsFunctionTool;
 export declare class Agent {
-  constructor(lm: LanguageModel);
+  constructor(lm: LanguageModel, tools?: Array<Tool>);
   run(parts: Array<JsPart>): AgentRunIterator;
 }
 export type JsAgent = Agent;
@@ -18,7 +20,10 @@ export declare class AgentRunIterator {
 
 export declare class AnthropicLanguageModel {
   constructor(modelName: string, apiKey: string);
-  run(messages: Array<JsMessage>): LanguageModelRunIterator;
+  run(
+    messages: Array<JsMessage>,
+    tools?: Array<ToolDesc> | undefined | null
+  ): LanguageModelRunIterator;
 }
 export type JsAnthropicLanguageModel = AnthropicLanguageModel;
 
@@ -76,7 +81,10 @@ export type JsFaissVectorStore = FaissVectorStore;
 
 export declare class GeminiLanguageModel {
   constructor(modelName: string, apiKey: string);
-  run(messages: Array<JsMessage>): LanguageModelRunIterator;
+  run(
+    messages: Array<JsMessage>,
+    tools?: Array<ToolDesc> | undefined | null
+  ): LanguageModelRunIterator;
 }
 export type JsGeminiLanguageModel = GeminiLanguageModel;
 
@@ -105,7 +113,10 @@ export declare class LocalLanguageModel {
     modelName: string,
     progressCallback?: ((arg: CacheProgress) => void) | undefined | null
   ): Promise<LocalLanguageModel>;
-  run(messages: Array<JsMessage>): LanguageModelRunIterator;
+  run(
+    messages: Array<JsMessage>,
+    tools?: Array<ToolDesc> | undefined | null
+  ): LanguageModelRunIterator;
 }
 export type JsLocalLanguageModel = LocalLanguageModel;
 
@@ -141,6 +152,13 @@ export declare class Message {
 }
 export type JsMessage = Message;
 
+/** MessageAggregator /// */
+export declare class MessageAggregator {
+  constructor();
+  update(msg: MessageOutput): Message | null;
+}
+export type JsMessageAggregator = MessageAggregator;
+
 /** MessageOutput /// */
 export declare class MessageOutput {
   get delta(): Message;
@@ -152,7 +170,10 @@ export type JsMessageOutput = MessageOutput;
 
 export declare class OpenAILanguageModel {
   constructor(modelName: string, apiKey: string);
-  run(messages: Array<JsMessage>): LanguageModelRunIterator;
+  run(
+    messages: Array<JsMessage>,
+    tools?: Array<ToolDesc> | undefined | null
+  ): LanguageModelRunIterator;
 }
 export type JsOpenAILanguageModel = OpenAILanguageModel;
 
@@ -171,6 +192,8 @@ export declare class Part {
   set name(name: string);
   get arguments(): object | null;
   set arguments(arguments: object);
+  get function(): string | null;
+  set function(func: string);
   get url(): string | null;
   set url(url: string);
   get data(): string | null;
@@ -184,7 +207,10 @@ export type JsPart = Part;
 
 export declare class XAILanguageModel {
   constructor(modelName: string, apiKey: string);
-  run(messages: Array<JsMessage>): LanguageModelRunIterator;
+  run(
+    messages: Array<JsMessage>,
+    tools?: Array<ToolDesc> | undefined | null
+  ): LanguageModelRunIterator;
 }
 export type JsXAILanguageModel = XAILanguageModel;
 

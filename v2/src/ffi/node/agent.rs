@@ -9,12 +9,10 @@ use crate::{
     agent::Agent,
     ffi::node::{
         common::get_or_create_runtime,
-        language_model::{
-            JsAnthropicLanguageModel, JsGeminiLanguageModel, JsLocalLanguageModel,
-            JsOpenAILanguageModel, JsXAILanguageModel, LanguageModelMethods,
-        },
         value::{JsMessageOutput, JsPart},
     },
+    model::ArcMutexLanguageModel,
+    tool::ArcTool,
     value::MessageOutput,
 };
 
@@ -80,33 +78,22 @@ pub struct JsAgent {
 
 #[napi]
 impl JsAgent {
-    #[napi(constructor, ts_args_type = "lm: LanguageModel")]
-    pub fn new(lm: Unknown<'_>) -> napi::Result<JsAgent> {
-        let agent = if let Ok(model) =
-            unsafe { JsLocalLanguageModel::from_napi_value(lm.env(), lm.raw()) }
-        {
-            Ok(Agent::new_from_arc(model.get_inner()?, vec![]))
-        } else if let Ok(model) =
-            unsafe { JsOpenAILanguageModel::from_napi_value(lm.env(), lm.raw()) }
-        {
-            Ok(Agent::new_from_arc(model.get_inner()?, vec![]))
-        } else if let Ok(model) =
-            unsafe { JsGeminiLanguageModel::from_napi_value(lm.env(), lm.raw()) }
-        {
-            Ok(Agent::new_from_arc(model.get_inner()?, vec![]))
-        } else if let Ok(model) =
-            unsafe { JsAnthropicLanguageModel::from_napi_value(lm.env(), lm.raw()) }
-        {
-            Ok(Agent::new_from_arc(model.get_inner()?, vec![]))
-        } else if let Ok(model) = unsafe { JsXAILanguageModel::from_napi_value(lm.env(), lm.raw()) }
-        {
-            Ok(Agent::new_from_arc(model.get_inner()?, vec![]))
+    #[napi(constructor, ts_args_type = "lm: LanguageModel, tools?: Array<Tool>")]
+    pub fn new(lm: Unknown<'_>, tools: Option<Vec<Unknown<'_>>>) -> napi::Result<JsAgent> {
+        let lm: ArcMutexLanguageModel = lm.try_into()?;
+        let tools = if let Some(tools) = tools {
+            tools
+                .into_iter()
+                .map(|tool| {
+                    let arc_tool: ArcTool = tool.try_into()?;
+                    Ok(arc_tool.inner)
+                })
+                .collect::<napi::Result<Vec<_>>>()
         } else {
-            Err(Error::new(Status::InvalidArg, "Invalid lm provided"))
+            Ok(vec![])
         }?;
-
         Ok(Self {
-            inner: Arc::new(Mutex::new(agent)),
+            inner: Arc::new(Mutex::new(Agent::new_from_arc(lm, tools))),
         })
     }
 
@@ -115,7 +102,6 @@ impl JsAgent {
         let (tx, rx) = mpsc::unbounded_channel::<std::result::Result<MessageOutput, String>>();
 
         let rt = get_or_create_runtime();
-
         rt.spawn(async move {
             let mut agent = inner.lock().await;
             let mut stream = agent
