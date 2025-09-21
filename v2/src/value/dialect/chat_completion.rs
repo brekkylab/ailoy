@@ -1,8 +1,9 @@
 /// Marshal and Unmarshal logic for OpenAI chat completion API (a.k.a. OpenAI-compatible API)
 use base64::Engine;
 
-use crate::value::{
-    Marshal, Message, MessageDelta, Part, PartDelta, Role, ToolDesc, Unmarshal, Value,
+use crate::{
+    to_value,
+    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, ToolDesc, Unmarshal, Value},
 };
 
 #[derive(Clone, Debug, Default)]
@@ -22,16 +23,13 @@ impl Marshal<Message> for ChatCompletionMarshal {
                     // ignore
                 }
                 Part::TextContent(s) => {
-                    let value = Value::object([("type", "text"), ("text", s.as_str())]);
+                    let value = to_value!({"type": "text", "text": s});
                     contents.as_array_mut().unwrap().push(value);
                 }
                 Part::ImageContent(b) => {
                     // base64 encoding
                     let encoded = base64::engine::general_purpose::STANDARD.encode(b);
-                    let value = Value::object([
-                        ("type", Value::string("image_url")),
-                        ("image_url", Value::object([("url", encoded)])),
-                    ]);
+                    let value = to_value!({"type": "image_url", "image_url": {"url": encoded}});
                     contents.as_array_mut().unwrap().push(value);
                 }
                 Part::FunctionToolCall {
@@ -39,16 +37,10 @@ impl Marshal<Message> for ChatCompletionMarshal {
                     name,
                     arguments,
                 } => {
-                    let arguments_str = serde_json::to_string(arguments)
+                    let arguments_string = serde_json::to_string(arguments)
                         .map_err(|_| String::from("Invald function"))
                         .unwrap();
-                    let mut value = Value::object([
-                        ("type", Value::string("function")),
-                        (
-                            "function",
-                            Value::object([("name", name), ("arguments", &arguments_str)]),
-                        ),
-                    ]);
+                    let mut value = to_value!({"type": "function", "function": {"name": name, "arguments": arguments_string}});
                     if let Some(id) = id {
                         value
                             .as_object_mut()
@@ -58,14 +50,14 @@ impl Marshal<Message> for ChatCompletionMarshal {
                     tool_calls.as_array_mut().unwrap().push(value);
                 }
                 Part::TextRefusal(s) => {
-                    let value = Value::object([("type", "text"), ("text", s.as_str())]);
+                    let value = to_value!({"type": "text", "text": s});
                     refusal.as_array_mut().unwrap().push(value);
                 }
             };
         }
 
         // Final message object with role and collected parts
-        let mut rv = Value::object([("role", item.role.to_string())]);
+        let mut rv = to_value!({"role": item.role.to_string()});
         if !contents.as_array().unwrap().is_empty() {
             rv.as_object_mut()
                 .unwrap()
@@ -219,7 +211,7 @@ mod tests {
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","content":[{"type":"text","text":"Explain me about Riemann hypothesis"},{"type":"text","text":"How cold brew is different from the normal coffee?"}]}"#
+            r#"{"role":"user","content":[{"type":"text","text":"Explain me about Riemann hypothesis."},{"type":"text","text":"How cold brew is different from the normal coffee?"}]}"#
         );
     }
 
