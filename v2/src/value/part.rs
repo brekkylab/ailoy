@@ -62,6 +62,79 @@ impl Part {
     pub fn text_refusal(v: impl Into<String>) -> Self {
         Self::TextRefusal(v.into())
     }
+
+    pub fn is_reasoning(&self) -> bool {
+        match self {
+            Self::TextReasoning { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_content(&self) -> bool {
+        match self {
+            Self::TextContent { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_tool_call(&self) -> bool {
+        match self {
+            Self::FunctionToolCall { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_text(&self) -> bool {
+        match self {
+            Self::TextReasoning { .. } | Self::TextContent(..) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_function(&self) -> bool {
+        match self {
+            Self::FunctionToolCall { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::TextReasoning { text, .. } => Some(text.as_str()),
+            Self::TextContent(text) => Some(text.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn as_text_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::TextReasoning { text, .. } => Some(text),
+            Self::TextContent(text) => Some(text),
+            _ => None,
+        }
+    }
+
+    pub fn as_function(&self) -> Option<(Option<&str>, &str, &Value)> {
+        match self {
+            Self::FunctionToolCall {
+                id,
+                name,
+                arguments,
+            } => Some((id.as_ref().map(|x| x.as_str()), name.as_str(), arguments)),
+            _ => None,
+        }
+    }
+
+    pub fn as_function_mut(&mut self) -> Option<(Option<&mut String>, &mut String, &mut Value)> {
+        match self {
+            Self::FunctionToolCall {
+                id,
+                name,
+                arguments,
+            } => Some((id.as_mut(), name, arguments)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,62 +157,60 @@ pub enum PartDelta {
 impl PartDelta {
     pub fn is_reasoning(&self) -> bool {
         match self {
-            PartDelta::TextReasoning { .. } => true,
+            Self::TextReasoning { .. } => true,
             _ => false,
         }
     }
 
     pub fn is_content(&self) -> bool {
         match self {
-            PartDelta::TextContent { .. } => true,
+            Self::TextContent { .. } => true,
             _ => false,
         }
     }
 
     pub fn is_tool_call(&self) -> bool {
         match self {
-            PartDelta::TextToolCall { .. } | PartDelta::FunctionToolCall { .. } => true,
+            Self::TextToolCall { .. } | Self::FunctionToolCall { .. } => true,
             _ => false,
         }
     }
 
     pub fn is_text(&self) -> bool {
         match self {
-            PartDelta::TextReasoning { .. }
-            | PartDelta::TextContent(..)
-            | PartDelta::TextToolCall(..) => true,
+            Self::TextReasoning { .. } | Self::TextContent(..) | Self::TextToolCall(..) => true,
             _ => false,
         }
     }
 
     pub fn is_function(&self) -> bool {
         match self {
-            PartDelta::FunctionToolCall { .. } => true,
+            Self::FunctionToolCall { .. } => true,
             _ => false,
         }
     }
 
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            PartDelta::TextReasoning { text, .. } => Some(text.as_str()),
-            PartDelta::TextContent(text) => Some(text.as_str()),
-            PartDelta::TextToolCall(text) => Some(text.as_str()),
+            Self::TextReasoning { text, .. } => Some(text.as_str()),
+            Self::TextContent(text) => Some(text.as_str()),
+            Self::TextToolCall(text) => Some(text.as_str()),
             _ => None,
         }
     }
 
     pub fn as_text_mut(&mut self) -> Option<&mut String> {
         match self {
-            PartDelta::TextReasoning { text, .. } => Some(text),
-            PartDelta::TextContent(text) => Some(text),
-            PartDelta::TextToolCall(text) => Some(text),
+            Self::TextReasoning { text, .. } => Some(text),
+            Self::TextContent(text) => Some(text),
+            Self::TextToolCall(text) => Some(text),
             _ => None,
         }
     }
 
     pub fn as_function(&self) -> Option<(Option<&str>, &str, &str)> {
         match self {
-            PartDelta::FunctionToolCall {
+            Self::FunctionToolCall {
                 id,
                 name,
                 arguments,
@@ -154,7 +225,7 @@ impl PartDelta {
 
     pub fn as_function_mut(&mut self) -> Option<(&mut String, &mut String)> {
         match self {
-            PartDelta::FunctionToolCall {
+            Self::FunctionToolCall {
                 name, arguments, ..
             } => Some((name, arguments)),
             _ => None,
@@ -248,7 +319,11 @@ impl Delta for PartDelta {
                         root.pointer_as::<str>("/name"),
                         root.pointer_as::<str>("/arguments"),
                     ) {
-                        (Some(name), Some(args)) => Ok(Part::function_tool_call(name, args)),
+                        (Some(name), Some(args)) => Ok(Part::function_tool_call(
+                            name,
+                            serde_json::from_str::<Value>(&args)
+                                .map_err(|_| String::from("Invalid JSON"))?,
+                        )),
                         _ => Err(String::from("Invalid function JSON")),
                     }
                 }
