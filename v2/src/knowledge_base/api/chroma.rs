@@ -1,15 +1,16 @@
-use super::super::{AddInput, Embedding, GetResult, RetrieveResult, VectorStore};
-
 use ailoy_macros::multi_platform_async_trait;
-use anyhow::{Result, bail};
-use chromadb::client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions};
-use chromadb::collection::{
-    ChromaCollection, CollectionEntries, GetOptions, QueryOptions, QueryResult,
+use anyhow::{Result, anyhow, bail};
+use chromadb::{
+    client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions},
+    collection::{ChromaCollection, CollectionEntries, GetOptions, QueryOptions, QueryResult},
 };
 use serde_json::{Map, Value as Json};
 use uuid::Uuid;
 
+use super::super::{AddInput, Embedding, GetResult, RetrieveResult, VectorStore};
+
 pub struct ChromaStore {
+    client: ChromaClient,
     collection: ChromaCollection,
 }
 
@@ -23,7 +24,7 @@ impl ChromaStore {
         let collection = client
             .get_or_create_collection(collection_name, None)
             .await?;
-        Ok(Self { collection })
+        Ok(Self { client, collection })
     }
 
     pub async fn with_auth(
@@ -40,7 +41,32 @@ impl ChromaStore {
         let collection = client
             .get_or_create_collection(collection_name, None)
             .await?;
-        Ok(Self { collection })
+        Ok(Self { client, collection })
+    }
+
+    pub async fn get_collection(&self, collection_name: &str) -> Result<Option<ChromaCollection>> {
+        match self.client.get_collection(collection_name).await {
+            Ok(col) => Ok(Some(col)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    pub async fn create_collection(
+        &self,
+        collection_name: &str,
+        metadata: Option<Map<String, Json>>,
+    ) -> Result<ChromaCollection> {
+        self.client
+            .create_collection(collection_name, metadata, true)
+            .await
+            .map_err(|e| anyhow!(e))
+    }
+
+    pub async fn delete_collection(&self, collection_name: &str) -> Result<()> {
+        self.client
+            .delete_collection(collection_name)
+            .await
+            .map_err(|e| anyhow!(e))
     }
 }
 
@@ -274,10 +300,10 @@ impl VectorStore for ChromaStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use ailoy_macros::multi_platform_test;
     use serde_json::json;
 
-    use ailoy_macros::multi_platform_test;
+    use super::*;
 
     async fn setup_test_store() -> Result<ChromaStore> {
         let client = ChromaClient::new(ChromaClientOptions::default()).await?;
@@ -285,7 +311,7 @@ mod tests {
         let collection = client
             .get_or_create_collection(&collection_name, None)
             .await?;
-        Ok(ChromaStore { collection })
+        Ok(ChromaStore { client, collection })
     }
 
     #[multi_platform_test]

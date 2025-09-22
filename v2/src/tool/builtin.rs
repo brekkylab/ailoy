@@ -47,6 +47,7 @@ impl Tool for BuiltinTool {
     }
 }
 
+///
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 pub fn create_terminal_tool() -> BuiltinTool {
     use std::{
@@ -146,7 +147,9 @@ pub fn create_terminal_tool() -> BuiltinTool {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         // Apply cwd
-        if let Some(dir) = cwd {
+        if let Some(dir) = cwd
+            && !dir.is_empty()
+        {
             command.current_dir(dir);
         }
 
@@ -195,5 +198,5 @@ pub fn create_terminal_tool() -> BuiltinTool {
         vec![Part::text_content(serde_json::to_string(&value).unwrap())]
     });
 
-    BuiltinTool { desc, f }
+    BuiltinTool::new(desc, f)
 }

@@ -35,6 +35,11 @@ impl TryFrom<String> for PartImageColorspace {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "python",
+    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
+)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum Part {
     TextReasoning {
         text: String,

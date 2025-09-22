@@ -2,7 +2,6 @@
 pub use tvm_runtime::EmbeddingModelInferencer;
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 pub use tvm_runtime::LanguageModelInferencer;
-
 #[cfg(any(target_family = "wasm"))]
 pub use tvmjs_runtime::EmbeddingModelInferencer;
 #[cfg(any(target_family = "wasm"))]
@@ -115,6 +114,7 @@ pub fn claim_files(
 mod tvm_runtime {
     use cxx::UniquePtr;
 
+    use super::*;
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
         ffi::cxx_bridge::{
@@ -123,8 +123,6 @@ mod tvm_runtime {
         },
         utils::BoxFuture,
     };
-
-    use super::*;
 
     pub fn get_device_type(accelerator: &str) -> i32 {
         if accelerator == "metal" {
@@ -218,14 +216,16 @@ mod tvm_runtime {
 mod tvmjs_runtime {
     use std::fmt;
 
-    use js_sys::{Float32Array, Uint32Array};
+    use js_sys::{Float32Array, Object, Reflect, Uint8Array, Uint32Array};
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
 
     use super::*;
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
-        ffi::js_bridge::{JSEmbeddingModel, JSLanguageModel},
+        ffi::js_bridge::{
+            JSEmbeddingModel, JSLanguageModel, init_embedding_model_js, init_language_model_js,
+        },
         utils::{BoxFuture, float16},
     };
 
@@ -268,9 +268,6 @@ mod tvmjs_runtime {
         fn try_from_contents(
             mut contents: CacheContents,
         ) -> BoxFuture<'static, Result<Self, String>> {
-            use crate::ffi::js_bridge::init_language_model_js;
-            use js_sys::{Object, Reflect, Uint8Array};
-
             Box::pin(async move {
                 let cache_contents = {
                     let obj = Object::new();
@@ -317,8 +314,6 @@ mod tvmjs_runtime {
 
     impl EmbeddingModelInferencer {
         pub async fn infer(&mut self, tokens: &[u32]) -> Vec<f32> {
-            use wasm_bindgen_futures::JsFuture;
-
             let arr = unsafe { js_sys::Uint32Array::view(tokens) };
             let res = self.inner.infer(arr);
             let result_vector = JsFuture::from(res).await.unwrap();
@@ -349,9 +344,6 @@ mod tvmjs_runtime {
         fn try_from_contents(
             mut contents: CacheContents,
         ) -> BoxFuture<'static, Result<Self, String>> {
-            use crate::ffi::js_bridge::init_embedding_model_js;
-            use js_sys::{Object, Reflect, Uint8Array};
-
             Box::pin(async move {
                 let cache_contents = {
                     let obj = Object::new();

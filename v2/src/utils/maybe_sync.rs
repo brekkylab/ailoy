@@ -1,11 +1,10 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod sync {
+    /// Reexports of the actual marker traits from core.
+    pub use core::marker::{Send as MaybeSend, Sync as MaybeSync};
     use core::{future::Future, pin::Pin};
 
     use futures::stream::Stream;
-
-    /// Reexports of the actual marker traits from core.
-    pub use core::marker::{Send as MaybeSend, Sync as MaybeSync};
 
     pub type BoxFuture<'a, T> = Pin<alloc::boxed::Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -143,9 +142,11 @@ mod sync {
 
 #[cfg(target_arch = "wasm32")]
 mod unsync {
-    use core::cell::{RefCell, RefMut};
-
-    use core::{future::Future, pin::Pin};
+    use core::{
+        cell::{RefCell, RefMut},
+        future::Future,
+        pin::Pin,
+    };
 
     use futures::stream::Stream;
 
@@ -397,7 +398,6 @@ mod unsync {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use sync::*;
-
 #[cfg(target_arch = "wasm32")]
 pub use unsync::*;
 

@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Item, ItemFn};
+use syn::{Item, ItemFn, parse_macro_input};
 
 #[proc_macro_attribute]
 pub fn multi_platform_test(_attr: TokenStream, item: TokenStream) -> TokenStream {

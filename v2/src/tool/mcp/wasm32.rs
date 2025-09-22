@@ -1,7 +1,4 @@
-use std::borrow::Cow;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::AtomicU32;
+use std::{borrow::Cow, rc::Rc, sync::atomic::AtomicU32};
 
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::anyhow;
@@ -317,7 +314,7 @@ impl StreamableHttpClient {
 }
 
 #[derive(Clone, Debug)]
-struct MCPTool {
+pub struct MCPTool {
     client: Rc<StreamableHttpClient>,
     name: String,
     pub desc: ToolDesc,
@@ -355,7 +352,7 @@ impl Tool for MCPTool {
 pub async fn mcp_tools_from_streamable_http(
     url: &str,
     tool_name_prefix: &str,
-) -> anyhow::Result<Vec<Arc<dyn Tool>>> {
+) -> anyhow::Result<Vec<MCPTool>> {
     let mut client = StreamableHttpClient::new(url, None, true);
     client.initialize().await?;
 
@@ -366,20 +363,21 @@ pub async fn mcp_tools_from_streamable_http(
         .map(|t| {
             let mut desc = map_mcp_tool_to_tool_description(&t);
             desc.name = format!("{}--{}", tool_name_prefix, desc.name);
-            Arc::new(MCPTool {
+            MCPTool {
                 client: Rc::new(client.clone()),
                 name: t.name.to_string(),
                 desc: desc,
-            }) as Arc<dyn Tool>
+            }
         })
         .collect())
 }
 
 #[cfg(test)]
 mod tests {
+    use wasm_bindgen_test::*;
+
     use super::*;
     use crate::utils::log;
-    use wasm_bindgen_test::*;
 
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
