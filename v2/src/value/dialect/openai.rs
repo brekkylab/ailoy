@@ -2,7 +2,7 @@ use base64::Engine;
 
 use crate::{
     to_value,
-    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, Unmarshal, Value},
+    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, ToolDesc, Unmarshal, Value},
 };
 
 #[derive(Clone, Debug, Default)]
@@ -85,6 +85,17 @@ impl Marshal<Message> for OpenAIMarshal {
             }
         }
         rv
+    }
+}
+
+impl Marshal<ToolDesc> for OpenAIMarshal {
+    fn marshal(&mut self, item: &ToolDesc) -> Value {
+        to_value!({
+            "type": "function",
+            "name": &item.name,
+            "description": &item.description,
+            "parameters": item.parameters.clone()
+        })
     }
 }
 

@@ -3,7 +3,7 @@ use indexmap::{IndexMap, indexmap};
 
 use crate::{
     to_value,
-    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, Unmarshal, Value},
+    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, ToolDesc, Unmarshal, Value},
 };
 
 #[derive(Clone, Debug, Default)]
@@ -94,6 +94,16 @@ impl Marshal<Message> for GeminiMarshal {
             .unwrap()
             .insert("contents".into(), Value::Array(contents_vec));
         rv
+    }
+}
+
+impl Marshal<ToolDesc> for GeminiMarshal {
+    fn marshal(&mut self, item: &ToolDesc) -> Value {
+        to_value!({
+            "name": &item.name,
+            "description": &item.description,
+            "parameters": item.parameters.clone()
+        })
     }
 }
 

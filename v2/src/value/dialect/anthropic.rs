@@ -2,7 +2,7 @@ use base64::Engine;
 
 use crate::{
     to_value,
-    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, Unmarshal, Value},
+    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, ToolDesc, Unmarshal, Value},
 };
 
 #[derive(Clone, Debug, Default)]
@@ -92,6 +92,16 @@ impl Marshal<Message> for AnthropicMarshal {
                 .insert("refusal".into(), refusal);
         }
         rv
+    }
+}
+
+impl Marshal<ToolDesc> for AnthropicMarshal {
+    fn marshal(&mut self, item: &ToolDesc) -> Value {
+        to_value!({
+            "name": &item.name,
+            "description": &item.description,
+            "input_schema": item.parameters.clone()
+        })
     }
 }
 
