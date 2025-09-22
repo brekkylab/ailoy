@@ -109,30 +109,6 @@ fn gemini_response_to_ailoy(response: &GeminiGenerationResponse) -> Result<Messa
             }
         }
     }
-    // for part in candidate.content.parts.iter() {
-    //     match part {
-    //         gemini_rust::Part::Text { text, thought } => {
-    //             if thought.is_some_and(|b| b) {
-    //                 message.reasoning = text.clone();
-    //             } else {
-    //                 message.contents.push(Part::Text(text.clone()));
-    //             }
-    //         }
-    //         gemini_rust::Part::FunctionCall { function_call } => {
-    //             message.tool_calls.push(Part::new_function(
-    //                 function_call.name.clone(), // Gemini does not return tool call id, so we use function name as id.
-    //                 function_call.name.clone(),
-    //                 function_call.args.to_string(),
-    //             ));
-    //         }
-    //         gemini_rust::Part::InlineData { .. } => {
-    //             todo!("Gemini outputs other than text is not supported")
-    //         }
-    //         gemini_rust::Part::FunctionResponse { .. } => {
-    //             panic!("Function Response cannot be returned from model")
-    //         }
-    //     }
-    // }
 
     let output = MessageOutput {
         delta: message,
