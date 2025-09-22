@@ -6,9 +6,9 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Default)]
-pub struct ClaudeMarshal;
+pub struct AnthropicMarshal;
 
-impl Marshal<Message> for ClaudeMarshal {
+impl Marshal<Message> for AnthropicMarshal {
     fn marshal(&mut self, item: &Message) -> Value {
         let mut contents = Value::array_empty();
         // In OpenAI Responses API, a message can contain only one tool call.
@@ -96,9 +96,9 @@ impl Marshal<Message> for ClaudeMarshal {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct ClaudeUnmarshal;
+pub struct AnthropicUnmarshal;
 
-impl Unmarshal<MessageDelta> for ClaudeUnmarshal {
+impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
     fn unmarshal(&mut self, val: Value) -> Result<MessageDelta, String> {
         const STREAM_TYPES: &[&str] = &[
             "ping",
@@ -319,7 +319,7 @@ mod tests {
         msg.parts.push(Part::text_content(
             "How cold brew is different from the normal coffee?",
         ));
-        let marshaled = Marshaled::<_, ClaudeMarshal>::new(&msg);
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"user","content":[{"type":"text","text":"Explain me about Riemann hypothesis"},{"type":"text","text":"How cold brew is different from the normal coffee?"}]}"#
@@ -339,7 +339,7 @@ mod tests {
             Value::object([("unit", "fahrenheit")]),
             "funcid_7890ab",
         ));
-        let marshaled = Marshaled::<_, ClaudeMarshal>::new(&msg);
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msg);
         // println!("{}", serde_json::to_string(&marshaled).unwrap());
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
@@ -359,7 +359,7 @@ mod tests {
         msg.parts
             .push(Part::text_content("What you can see in this image?"));
         msg.parts.push(Part::image_content(3, 3, 1, raw_pixels));
-        let marshaled = Marshaled::<_, ClaudeMarshal>::new(&msg);
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
@@ -371,7 +371,7 @@ mod tests {
         let inputs = [
             r#"{"type":"message","content":[{"type":"output_text","text":"Hello world!"}],"role": "assistant"}"#,
         ];
-        let mut u = ClaudeUnmarshal;
+        let mut u = AnthropicUnmarshal;
 
         let mut delta = MessageDelta::new();
 
@@ -397,7 +397,7 @@ mod tests {
             r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
             r#"{"type":"message_stop"}"#,
         ];
-        let mut u = ClaudeUnmarshal;
+        let mut u = AnthropicUnmarshal;
 
         let mut delta = MessageDelta::new();
 
@@ -417,7 +417,7 @@ mod tests {
         let inputs = [
             r#"{"role": "assistant","content":[{"type": "thinking","thinking":"**Answering a simple question**\n\nUser is saying hello.","signature":"Ev4MCkYIBxgCKkDl5A"},{"type":"text","text":"Hello world!"}]}"#,
         ];
-        let mut u = ClaudeUnmarshal;
+        let mut u = AnthropicUnmarshal;
 
         let mut delta = MessageDelta::new();
 
@@ -470,7 +470,7 @@ mod tests {
             r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
             r#"{"type":"message_stop"}"#,
         ];
-        let mut u = ClaudeUnmarshal;
+        let mut u = AnthropicUnmarshal;
 
         let mut delta = MessageDelta::new();
 
@@ -495,7 +495,7 @@ mod tests {
         let inputs = [
             r#"{"role": "assistant","content":[{"type":"tool_use","id":"call_DF3wZtLHv5eBNfURjvI8MULJ","name":"get_weather","input":{"location":"Paris, France"}}]}"#,
         ];
-        let mut u = ClaudeUnmarshal;
+        let mut u = AnthropicUnmarshal;
 
         let mut delta = MessageDelta::new();
 
@@ -529,7 +529,7 @@ mod tests {
             r#"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null}}"#,
             r#"{"type":"message_stop"}"#,
         ];
-        let mut u = ClaudeUnmarshal;
+        let mut u = AnthropicUnmarshal;
 
         let mut delta = MessageDelta::new();
 
