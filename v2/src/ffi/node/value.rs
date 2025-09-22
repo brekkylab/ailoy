@@ -2,7 +2,7 @@ use napi::{Env, Error as NapiError, Result, Status, bindgen_prelude::*};
 use napi_derive::napi;
 
 use crate::{
-    ffi::node::common::{get_property, json_parse, json_stringify},
+    ffi::node::common::{get_property, json_stringify},
     value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role},
 };
 
@@ -41,11 +41,11 @@ impl FromNapiValue for JsPart {
             "Function" => {
                 let id: String = get_property(obj, "id")?;
                 let name: String = get_property(obj, "name")?;
-                let arguments: Object = get_property(obj, "arguments")?;
+                let arguments: String = get_property(obj, "arguments")?;
                 Ok(Part::Function {
                     id,
                     name,
-                    arguments: json_stringify(env, arguments)?,
+                    arguments,
                 }
                 .into())
             }
@@ -67,6 +67,12 @@ impl FromNapiValue for JsPart {
                 format!("Unknown partType: {}", part_type),
             )),
         }
+    }
+}
+
+impl ValidateNapiValue for JsPart {
+    unsafe fn validate(_env: sys::napi_env, _napi_val: sys::napi_value) -> Result<sys::napi_value> {
+        Ok(std::ptr::null_mut())
     }
 }
 
@@ -173,9 +179,9 @@ impl JsPart {
     }
 
     #[napi(getter)]
-    pub fn arguments<'a>(&'a self, env: Env) -> Result<Option<Object<'a>>> {
+    pub fn arguments(&self) -> Result<Option<String>> {
         Ok(match &self.inner {
-            Part::Function { arguments, .. } => Some(json_parse(env, arguments.clone())?),
+            Part::Function { arguments, .. } => Some(arguments.clone()),
             _ => None,
         })
     }
@@ -299,7 +305,7 @@ impl JsPart {
             Part::Function { .. } => {
                 obj.set("id", self.id())?;
                 obj.set("name", self.name())?;
-                obj.set("arguments", self.arguments(env))?;
+                obj.set("arguments", self.arguments())?;
             }
             Part::FunctionString(..) => {
                 obj.set("function", self.function())?;

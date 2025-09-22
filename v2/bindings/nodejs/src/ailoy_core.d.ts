@@ -9,7 +9,11 @@ export type VectorStore = FaissVectorStore | ChromaVectorStore;
 export type Tool = BuiltinTool | MCPTool | JsFunctionTool;
 export declare class Agent {
   constructor(lm: LanguageModel, tools?: Array<Tool>);
-  run(parts: Array<JsPart>): AgentRunIterator;
+  run(message: Array<JsPart | string> | JsPart | string): AgentRunIterator;
+  addTool(tool: Tool): void;
+  addTools(tools: Array<Tool>): void;
+  removeTool(toolName: string): void;
+  removeTools(toolNames: Array<string>): void;
 }
 export type JsAgent = Agent;
 
@@ -117,6 +121,8 @@ export declare class LocalLanguageModel {
     messages: Array<JsMessage>,
     tools?: Array<ToolDesc> | undefined | null
   ): LanguageModelRunIterator;
+  enableReasoning(): void;
+  disableReasoning(): void;
 }
 export type JsLocalLanguageModel = LocalLanguageModel;
 
@@ -127,6 +133,8 @@ export declare class MCPTool {
 export type JsMCPTool = MCPTool;
 
 export declare class MCPTransport {
+  static newStdio(command: string, args: Array<string>): MCPTransport;
+  static newStreamableHttp(url: string): MCPTransport;
   get type(): string;
   get stdio(): { command: string; args: Array<string> };
   get streamableHttp(): { url: string };
@@ -190,7 +198,7 @@ export declare class Part {
   set id(id: string);
   get name(): string | null;
   set name(name: string);
-  get arguments(): object | null;
+  get arguments(): string | null;
   set arguments(arguments: object);
   get function(): string | null;
   set function(func: string);
@@ -215,7 +223,7 @@ export declare class XAILanguageModel {
 export type JsXAILanguageModel = XAILanguageModel;
 
 export interface AgentRunIteratorResult {
-  value?: JsMessageOutput;
+  value: JsMessageOutput;
   done: boolean;
 }
 
@@ -235,11 +243,11 @@ export declare const enum FinishReason {
 }
 
 export interface LanguageModelIteratorResult {
-  value?: JsMessageOutput;
+  value: JsMessageOutput;
   done: boolean;
 }
 
-export type Metadata = Record<string, any> | undefined | null;
+export type Metadata = Record<string, any>;
 
 /** The author of a message (or streaming delta) in a chat. */
 export declare const enum Role {
@@ -266,19 +274,19 @@ export interface ToolDesc {
 export interface VectorStoreAddInput {
   embedding: Embedding;
   document: string;
-  metadata: Metadata;
+  metadata?: Metadata;
 }
 
 export interface VectorStoreGetResult {
   id: string;
   document: string;
-  metadata: Metadata;
   embedding: Embedding;
+  metadata?: Metadata;
 }
 
 export interface VectorStoreRetrieveResult {
   id: string;
   document: string;
-  metadata: Metadata;
+  metadata?: Metadata;
   distance: number;
 }

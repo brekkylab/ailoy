@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use crate::{
     ffi::node::{
         cache::{JsCacheProgress, await_cache_result},
-        common::get_or_create_runtime,
+        common::{await_future, get_or_create_runtime},
         value::{JsMessage, JsMessageOutput},
     },
     model::{
@@ -20,7 +20,7 @@ use crate::{
 
 #[napi(object)]
 pub struct LanguageModelIteratorResult {
-    pub value: Option<JsMessageOutput>,
+    pub value: JsMessageOutput,
     pub done: bool,
 }
 
@@ -43,12 +43,12 @@ impl LanguageModelRunIterator {
         let mut rx = self.rx.lock().await;
         match rx.recv().await {
             Some(Ok(output)) => Ok(LanguageModelIteratorResult {
-                value: Some(output.into()),
+                value: output.into(),
                 done: false,
             }),
             Some(Err(e)) => Err(Error::new(Status::GenericFailure, e)),
             None => Ok(LanguageModelIteratorResult {
-                value: None,
+                value: MessageOutput::new().into(),
                 done: true,
             }),
         }
@@ -155,6 +155,18 @@ impl JsLocalLanguageModel {
         tools: Option<Vec<ToolDesc>>,
     ) -> Result<Object<'a>> {
         self.create_iterator(env, messages, tools)
+    }
+
+    #[napi]
+    pub fn enable_reasoning(&self) -> napi::Result<()> {
+        let inner = self.inner.into_inner::<LocalLanguageModel>().unwrap();
+        await_future(async { Ok::<_, napi::Error>(inner.lock().await.enable_reasoning()) })
+    }
+
+    #[napi]
+    pub fn disable_reasoning(&self) -> napi::Result<()> {
+        let inner = self.inner.into_inner::<LocalLanguageModel>().unwrap();
+        await_future(async { Ok::<_, napi::Error>(inner.lock().await.disable_reasoning()) })
     }
 }
 

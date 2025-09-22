@@ -16,16 +16,19 @@
         "build:ts": "vite build",
         "build": "npm run build:napi && npm run build:ts",
         "prepublishOnly": "napi prepublish -t npm",
-        "test": "node test.js",
-        "version": "napi version"
+        "test": "vitest",
+        "coverage": "vitest run --coverage"
     },
     "devDependencies": {
         "@napi-rs/cli": "^3.2.0",
         "@trivago/prettier-plugin-sort-imports": "^5.2.2",
+        "@types/node": "^24.5.2",
+        "dotenv": "^17.2.2",
         "prettier": "^3.6.2",
         "vite": "^7.1.5",
         "vite-plugin-dts": "^4.5.4",
-        "vite-plugin-static-copy": "^3.1.2"
+        "vite-plugin-static-copy": "^3.1.2",
+        "vitest": "^3.2.4"
     },
     "files": [
         "index.js",

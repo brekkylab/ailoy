@@ -18,7 +18,7 @@ pub trait JsToolMethods<T: Tool + 'static> {
     fn inner(&self) -> ArcTool;
 
     fn _description(&self) -> napi::Result<ToolDesc> {
-        await_future(async { Ok(self.inner().inner.get_description()) })
+        await_future(async { Ok::<_, napi::Error>(self.inner().inner.get_description()) })
     }
 
     async fn _call(&self, kwargs: Option<Map<String, Value>>) -> napi::Result<Vec<JsPart>> {
@@ -127,6 +127,16 @@ pub struct JsMCPTransport(MCPTransport);
 
 #[napi]
 impl JsMCPTransport {
+    #[napi(factory)]
+    pub fn new_stdio(command: String, args: Vec<String>) -> Self {
+        Self(MCPTransport::Stdio { command, args })
+    }
+
+    #[napi(factory)]
+    pub fn new_streamable_http(url: String) -> Self {
+        Self(MCPTransport::StreamableHttp { url })
+    }
+
     #[napi(js_name = "type", getter)]
     pub fn transport_type(&self) -> String {
         match &self.0 {

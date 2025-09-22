@@ -11,13 +11,13 @@ use crate::{
 };
 
 #[napi]
-pub type Metadata = Option<Map<String, Value>>;
+pub type Metadata = Map<String, Value>;
 
 #[napi(object, js_name = "VectorStoreAddInput")]
 pub struct JsAddInput {
     pub embedding: Embedding,
     pub document: String,
-    pub metadata: Metadata,
+    pub metadata: Option<Metadata>,
 }
 
 impl Into<AddInput> for JsAddInput {
@@ -34,8 +34,8 @@ impl Into<AddInput> for JsAddInput {
 pub struct JsGetResult {
     pub id: String,
     pub document: String,
-    pub metadata: Metadata,
     pub embedding: Embedding,
+    pub metadata: Option<Metadata>,
 }
 
 impl From<GetResult> for JsGetResult {
@@ -43,8 +43,8 @@ impl From<GetResult> for JsGetResult {
         Self {
             id: res.id,
             document: res.document,
-            metadata: res.metadata,
             embedding: res.embedding.into_iter().map(|f| f as f64).collect(),
+            metadata: res.metadata,
         }
     }
 }
@@ -53,7 +53,7 @@ impl From<GetResult> for JsGetResult {
 pub struct JsRetrieveResult {
     pub id: String,
     pub document: String,
-    pub metadata: Metadata,
+    pub metadata: Option<Metadata>,
     pub distance: f64,
 }
 
@@ -62,8 +62,8 @@ impl From<RetrieveResult> for JsRetrieveResult {
         Self {
             id: res.id,
             document: res.document,
-            metadata: res.metadata,
             distance: res.distance as f64,
+            metadata: res.metadata,
         }
     }
 }

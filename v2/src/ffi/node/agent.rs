@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use crate::{
     agent::Agent,
     ffi::node::{
-        common::get_or_create_runtime,
+        common::{await_future, get_or_create_runtime},
         value::{JsMessageOutput, JsPart},
     },
     model::ArcMutexLanguageModel,
@@ -18,7 +18,7 @@ use crate::{
 
 #[napi(object)]
 pub struct AgentRunIteratorResult {
-    pub value: Option<JsMessageOutput>,
+    pub value: JsMessageOutput,
     pub done: bool,
 }
 
@@ -41,12 +41,12 @@ impl AgentRunIterator {
         let mut rx = self.rx.lock().await;
         match rx.recv().await {
             Some(Ok(output)) => Ok(AgentRunIteratorResult {
-                value: Some(output.into()),
+                value: output.into(),
                 done: false,
             }),
             Some(Err(e)) => Err(Error::new(Status::GenericFailure, e)),
             None => Ok(AgentRunIteratorResult {
-                value: None,
+                value: MessageOutput::new().into(),
                 done: true,
             }),
         }
@@ -123,7 +123,55 @@ impl JsAgent {
     }
 
     #[napi(ts_return_type = "AgentRunIterator")]
-    pub fn run<'a>(&'a self, env: Env, parts: Vec<JsPart>) -> Result<Object<'a>> {
-        self.create_iterator(env, parts)
+    pub fn run<'a>(
+        &'a self,
+        env: Env,
+        message: Either3<Vec<Either<JsPart, String>>, JsPart, String>,
+    ) -> Result<Object<'a>> {
+        match message {
+            Either3::A(messages) => {
+                let parts: Vec<JsPart> = messages
+                    .into_iter()
+                    .map(|msg| match msg {
+                        Either::A(part) => part,
+                        Either::B(text) => JsPart::new_text(text.clone()),
+                    })
+                    .collect::<Vec<JsPart>>();
+                self.create_iterator(env, parts)
+            }
+            Either3::B(part) => self.create_iterator(env, vec![part]),
+            Either3::C(text) => {
+                println!("text received: {}", text);
+                self.create_iterator(env, vec![JsPart::new_text(text)])
+            }
+        }
+    }
+
+    #[napi(ts_args_type = "tool: Tool")]
+    pub fn add_tool(&mut self, tool: Unknown<'_>) -> napi::Result<()> {
+        let tool: ArcTool = tool.try_into()?;
+        await_future(async { self.inner.lock().await.add_tool(tool.inner).await })
+    }
+
+    #[napi(ts_args_type = "tools: Array<Tool>")]
+    pub fn add_tools(&mut self, tools: Vec<Unknown<'_>>) -> napi::Result<()> {
+        let tools = tools
+            .into_iter()
+            .map(|tool| {
+                let arc_tool: ArcTool = tool.try_into()?;
+                Ok(arc_tool.inner)
+            })
+            .collect::<napi::Result<Vec<_>>>()?;
+        await_future(async { self.inner.lock().await.add_tools(tools).await })
+    }
+
+    #[napi]
+    pub fn remove_tool(&self, tool_name: String) -> napi::Result<()> {
+        await_future(async { self.inner.lock().await.remove_tool(tool_name).await })
+    }
+
+    #[napi]
+    pub fn remove_tools(&self, tool_names: Vec<String>) -> napi::Result<()> {
+        await_future(async { self.inner.lock().await.remove_tools(tool_names).await })
     }
 }
