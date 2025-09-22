@@ -137,7 +137,6 @@ mod tests {
 
     #[tokio::test]
     async fn run_stdio() -> anyhow::Result<()> {
-        use super::*;
         use onig::Regex;
         use rmcp::transport::ConfigureCommandExt;
 
