@@ -1,6 +1,9 @@
 use base64::Engine;
 
-use crate::value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, Unmarshal, Value};
+use crate::{
+    to_value,
+    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, Unmarshal, Value},
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct OpenAIMarshal;
@@ -22,17 +25,19 @@ impl Marshal<Message> for OpenAIMarshal {
                     let value = Value::object([("type", "input_text"), ("text", s.as_str())]);
                     contents.as_array_mut().unwrap().push(value);
                 }
-                Part::ImageContent(b) => {
+                Part::ImageContent { .. } => {
+                    // Get image
+                    let img = part.as_image().unwrap();
+                    // Write PNG string
+                    let mut png_buf = Vec::new();
+                    img.write_to(
+                        &mut std::io::Cursor::new(&mut png_buf),
+                        image::ImageFormat::Png,
+                    )
+                    .unwrap();
                     // base64 encoding
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(b);
-                    let value = Value::object([
-                        ("type", Value::string("input_image")),
-                        (
-                            "image_url",
-                            // TODO: cover mimetypes othen than image/png
-                            Value::object([("url", format!("data:image/png;base64,{}", encoded))]),
-                        ),
-                    ]);
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
+                    let value = to_value!({"type": "input_image","image_url": {"url": format!("data:image/png;base64,{}", encoded)}});
                     contents.as_array_mut().unwrap().push(value);
                 }
                 Part::FunctionToolCall {
@@ -372,17 +377,20 @@ mod tests {
 
     #[test]
     pub fn serialize_image() {
+        let raw_pixels: Vec<u8> = vec![
+            10, 20, 30, // First row
+            40, 50, 60, // Second row
+            70, 80, 90, // Third row
+        ];
+
         let mut msg = Message::new(Role::User);
         msg.parts
             .push(Part::text_content("What you can see in this image?"));
-        let bytes: Vec<u8> = base64::engine::general_purpose::STANDARD
-            .decode(b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=")
-            .expect("invalid base64");
-        msg.parts.push(Part::image_content(bytes));
+        msg.parts.push(Part::image_content(3, 3, 1, raw_pixels));
         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","content":[{"type":"input_text","text":"What you can see in this image?"},{"type":"input_image","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="}}]}"#
+            r#"{"role":"user","content":[{"type":"input_text","text":"What you can see in this image?"},{"type":"input_image","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
         );
     }
 
