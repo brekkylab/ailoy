@@ -84,12 +84,16 @@ mod tests {
         let mut xai = XAILanguageModel::new("grok-3-mini", *XAI_API_KEY);
 
         let msgs = vec![
-            Message::with_role(Role::System).with_contents(vec![Part::Text(
-                "You are a helpful mathematics assistant.".to_owned(),
-            )]),
-            Message::with_role(Role::User).with_contents(vec![Part::Text(
-                "What is the sum of the first 50 prime numbers?".to_owned(),
-            )]),
+            Message::new()
+                .with_role(Role::System)
+                .with_contents(vec![Part::Text(
+                    "You are a helpful mathematics assistant.".to_owned(),
+                )]),
+            Message::new()
+                .with_role(Role::User)
+                .with_contents(vec![Part::Text(
+                    "What is the sum of the first 50 prime numbers?".to_owned(),
+                )]),
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = xai.run(msgs, Vec::new());
@@ -104,35 +108,44 @@ mod tests {
 
     #[multi_platform_test]
     async fn xai_infer_tool_call() {
-        use crate::value::ToolDescArg;
+        use serde_json::json;
 
         let mut xai = XAILanguageModel::new("grok-3", *XAI_API_KEY);
 
-        let tools = vec![ToolDesc::new(
-            "temperature",
-            "Get current temperature",
-            ToolDescArg::new_object().with_properties(
-                [
-                    (
-                        "location",
-                        ToolDescArg::new_string().with_desc("The city name"),
-                    ),
-                    (
-                        "unit",
-                        ToolDescArg::new_string()
-                            .with_enum(["Celcius", "Fernheit"])
-                            .with_desc("The unit of temperature"),
-                    ),
-                ],
-                ["location", "unit"],
-            ),
-            Some(
-                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
-            ),
-        )];
-        let mut msgs = vec![Message::with_role(Role::User).with_contents([Part::Text(
-            "How much hot currently in Dubai? Answer in Celcius.".to_owned(),
-        )])];
+        let tools = vec![
+            ToolDesc::new(
+                "temperature".into(),
+                "Get current temperature".into(),
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city name"
+                        },
+                        "unit": {
+                            "type": "string",
+                            "description": "The unit of temperature",
+                            "enum": ["Celsius", "Fahrenheit"]
+                        }
+                    },
+                    "required": ["location", "unit"]
+                }),
+                Some(json!({
+                    "type": "number",
+                    "description": "Null if the given city name is unavailable.",
+                    "nullable": true,
+                })),
+            )
+            .unwrap(),
+        ];
+        let mut msgs = vec![
+            Message::new()
+                .with_role(Role::User)
+                .with_contents([Part::Text(
+                    "How much hot currently in Dubai? Answer in Celsius.".to_owned(),
+                )]),
+        ];
         let mut agg = MessageAggregator::new();
         let mut assistant_msg: Option<Message> = None;
         {
@@ -151,13 +164,12 @@ mod tests {
         msgs.push(assistant_msg.clone());
 
         // Append a fake tool call result message
-        let tool_call_id = if let Part::Function { id, .. } = assistant_msg.tool_calls[0].clone() {
-            Some(id)
-        } else {
-            None
-        };
-        let tool_result_msg = Message::with_role(Role::Tool("temperature".into(), tool_call_id))
+        let mut tool_result_msg = Message::new()
+            .with_role(Role::Tool)
             .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
+        if let Part::Function { id, .. } = assistant_msg.tool_calls[0].clone() {
+            tool_result_msg = tool_result_msg.with_tool_call_id(id);
+        }
         msgs.push(tool_result_msg);
 
         let mut strm = xai.run(msgs, tools);
@@ -184,9 +196,14 @@ mod tests {
         let mut xai = XAILanguageModel::new("grok-4", *XAI_API_KEY);
 
         let msgs = vec![
-            Message::with_role(Role::User)
-                .with_contents(vec![Part::ImageData(image_base64, "image/jpeg".into())]),
-            Message::with_role(Role::User)
+            Message::new()
+                .with_role(Role::User)
+                .with_contents(vec![Part::ImageData {
+                    data: image_base64,
+                    mime_type: "image/jpeg".into(),
+                }]),
+            Message::new()
+                .with_role(Role::User)
                 .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
         ];
         let mut agg = MessageAggregator::new();

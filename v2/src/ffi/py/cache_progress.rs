@@ -1,15 +1,43 @@
-use futures::{StreamExt as _, stream::BoxStream};
-use pyo3::{
-    exceptions::{PyRuntimeError, PyStopAsyncIteration},
-    prelude::*,
-};
-use pyo3_stub_gen::derive::*;
-use tokio::runtime::Runtime;
+use std::collections::HashSet;
 
-use crate::{
-    cache::{Cache, CacheProgress, TryFromCache},
-    ffi::py::base::PyWrapper,
-};
+use futures::StreamExt;
+use pyo3::{exceptions::PyRuntimeError, prelude::*};
+use pyo3_stub_gen::{PyStubType, TypeInfo, derive::*};
+
+use crate::cache::{Cache, TryFromCache};
+
+#[pyclass(subclass)]
+pub struct GenericCacheResultT {}
+
+impl PyStubType for GenericCacheResultT {
+    fn type_output() -> TypeInfo {
+        TypeInfo {
+            name: format!("typing.Generic[CacheResultT]"),
+            import: HashSet::new(),
+        }
+    }
+}
+
+pub struct CacheResultT(pub Py<PyAny>);
+
+impl<'py> IntoPyObject<'py> for &CacheResultT {
+    type Target = PyAny;
+    type Output = Bound<'py, Self::Target>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        Ok(self.0.bind(py).clone())
+    }
+}
+
+impl PyStubType for CacheResultT {
+    fn type_output() -> TypeInfo {
+        TypeInfo {
+            name: format!("CacheResultT"),
+            import: HashSet::new(),
+        }
+    }
+}
 
 #[gen_stub_pyclass]
 #[pyclass(name = "CacheProgress")]
@@ -22,166 +50,65 @@ pub struct PyCacheProgress {
 
     #[pyo3(get)]
     pub total: usize,
-
-    #[pyo3(get)]
-    pub result: Option<Py<PyAny>>,
-}
-
-#[gen_stub_pyclass]
-#[pyclass(unsendable, name = "CacheProgressSyncIterator")]
-pub struct PyCacheProgressSyncIterator {
-    rt: Runtime,
-
-    strm: BoxStream<'static, Result<PyCacheProgress, String>>,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyCacheProgressSyncIterator {
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<PyCacheProgress>> {
-        let item = py.allow_threads(|| self.rt.block_on(async { self.strm.next().await }));
-        match item {
-            Some(Ok(evt)) => Ok(Some(evt)),
-            Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
-            None => Ok(None), // StopIteration
-        }
+impl PyCacheProgress {
+    fn __repr__(&self) -> String {
+        format!(
+            "CacheProgress(comment=\"{}\", current={}, total={})",
+            self.comment, self.current, self.total
+        )
     }
 }
 
-pub fn create_cache_progress_sync_iterator<T>(
-    model_key: impl Into<String>,
-) -> PyResult<PyCacheProgressSyncIterator>
+pub async fn await_cache_result<T>(
+    cache_key: impl Into<String>,
+    progress_callback: Option<Py<PyAny>>,
+) -> PyResult<T>
 where
-    T: PyWrapper,
-    T::Inner: TryFromCache,
+    T: TryFromCache + 'static,
 {
-    // attach current-thread runtime
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-
-    // Rust stream
-    let strm: BoxStream<'static, Result<CacheProgress<T::Inner>, String>> =
-        Box::pin(Cache::new().try_create::<T::Inner>(model_key));
-
-    // Map CacheProgress<T> -> PyCacheProgressIterator
-    let strm = strm
-        .then(|item| async move {
-            match item {
-                Ok(progress) => {
-                    let comment = progress.comment.to_string();
-                    let current = progress.current_task;
-                    let total = progress.total_task;
-                    let result = if current == total {
-                        let result_inner = progress.result.expect("last event must carry result");
-                        let obj: Py<PyAny> = Python::with_gil(|py| {
-                            Py::new(py, T::from_inner(result_inner)).map(|v| v.into_any())
-                        })
-                        .map_err(|e| e.to_string())?;
-                        Some(obj)
-                    } else {
-                        None
-                    };
-                    Ok(PyCacheProgress {
-                        comment,
-                        current,
-                        total,
-                        result,
-                    })
-                }
-                Err(e) => Err(e),
-            }
-        })
-        .boxed();
-
-    Ok(PyCacheProgressSyncIterator { rt, strm })
-}
-
-#[gen_stub_pyclass]
-#[pyclass(unsendable, name = "CacheProgressIterator")]
-pub struct PyCacheProgressIterator {
-    rx: async_channel::Receiver<Result<PyCacheProgress, String>>,
-}
-
-#[gen_stub_pymethods]
-#[pymethods]
-impl PyCacheProgressIterator {
-    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __anext__(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let rx = self.rx.clone();
-        let fut = async move {
-            match rx.recv().await {
-                Ok(Ok(evt)) => Ok(evt),
-                Ok(Err(e)) => Err(PyRuntimeError::new_err(e)),
-                Err(_) => Err(PyStopAsyncIteration::new_err(())),
-            }
-        };
-        pyo3_async_runtimes::tokio::future_into_py(py, fut).map(|a| a.unbind())
-    }
-}
-
-pub fn create_cache_progress_iterator<T>(cache_key: impl Into<String>) -> PyCacheProgressIterator
-where
-    T: PyWrapper,
-    T::Inner: TryFromCache,
-{
-    let rt = pyo3_async_runtimes::tokio::get_runtime();
-    let (tx, rx) = async_channel::unbounded::<Result<PyCacheProgress, String>>();
     let cache_key = cache_key.into();
+    let mut strm = Box::pin(Cache::new().try_create::<T>(cache_key));
+    while let Some(item) = strm.next().await {
+        if item.is_err() {
+            // Exit the loop and return the error
+            return item.err().map(|e| Err(PyRuntimeError::new_err(e))).unwrap();
+        }
 
-    rt.spawn(async move {
-        let mut strm: BoxStream<'static, Result<CacheProgress<T::Inner>, String>> =
-            Box::pin(Cache::new().try_create::<T::Inner>(cache_key));
+        let progress = item.unwrap();
 
-        while let Some(item) = strm.next().await {
-            let out = match item {
-                Ok(mut progress) => {
-                    let comment = progress.comment.to_string();
-                    let current = progress.current_task;
-                    let total = progress.total_task;
-                    let result = if current == total {
-                        match progress.result.take() {
-                            Some(inner) => {
-                                // T::Inner -> Py<PyAny>
-                                match Python::with_gil(|py| {
-                                    Py::new(py, T::from_inner(inner)).map(|o| o.into_any())
-                                }) {
-                                    Ok(obj) => Some(obj),
-                                    Err(e) => {
-                                        let _ = tx.send(Err(e.to_string())).await;
-                                        continue;
-                                    }
-                                }
-                            }
-                            None => None,
-                        }
-                    } else {
-                        None
-                    };
+        // Call progress_callback if exists
+        if let Some(callback) = &progress_callback {
+            Python::attach(|py| {
+                let py_obj = Py::new(
+                    py,
+                    PyCacheProgress {
+                        comment: progress.comment.clone(),
+                        current: progress.current_task,
+                        total: progress.total_task,
+                    },
+                )?;
+                callback.call1(py, (py_obj,))
+            })?;
+        }
 
-                    Ok(PyCacheProgress {
-                        comment,
-                        current,
-                        total,
-                        result,
-                    })
-                }
-                Err(e) => Err(e),
-            };
+        if progress.current_task < progress.total_task {
+            // Continue if progress is not completed
+            continue;
+        }
 
-            if tx.send(out).await.is_err() {
-                break; // Exit if consumer vanished
+        match progress.result {
+            Some(inner) => return Ok(inner),
+            None => {
+                return Err(PyRuntimeError::new_err(
+                    "CacheProgress didn't return anything",
+                ));
             }
         }
-    });
+    }
 
-    PyCacheProgressIterator { rx }
+    Err(PyRuntimeError::new_err("Unreachable"))
 }

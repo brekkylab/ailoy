@@ -57,6 +57,7 @@ impl Tool for BuiltinTool {
     }
 }
 
+/// 
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 pub fn create_terminal_tool() -> BuiltinTool {
     use std::{
@@ -64,7 +65,7 @@ pub fn create_terminal_tool() -> BuiltinTool {
         process::{Command, Stdio},
     };
 
-    use crate::value::ToolDescArg;
+    use serde_json::json;
 
     let current_shell = {
         #[cfg(target_family = "unix")]
@@ -78,52 +79,54 @@ pub fn create_terminal_tool() -> BuiltinTool {
     };
 
     let desc = ToolDesc::new(
-        "execute_command",
+        "execute_command".into(),
         format!(
             "Executes a command on the current system using the default shell. Current shell: {}. \
             Optional fields: cwd (string), env (object), stdin (string)",
             current_shell
         ),
-        ToolDescArg::new_object().with_properties(
-            [
-                (
-                    "command",
-                    ToolDescArg::new_string().with_desc("The command to execute."),
-                ),
-                (
-                    "cwd",
-                    ToolDescArg::new_string().with_desc("Optional working directory."),
-                ),
-                (
-                    "env",
-                    ToolDescArg::new_object()
-                        .with_desc("Optional environment variables as key-value pairs."),
-                ),
-                (
-                    "stdin",
-                    ToolDescArg::new_string().with_desc("Optional string to send to STDIN."),
-                ),
-            ],
-            ["command"],
-        ),
-        Some(ToolDescArg::new_object().with_properties(
-            [
-                (
-                    "stdout",
-                    ToolDescArg::new_string().with_desc("Captured STDOUT"),
-                ),
-                (
-                    "stderr",
-                    ToolDescArg::new_string().with_desc("Captured STDERR"),
-                ),
-                (
-                    "exit_code",
-                    ToolDescArg::new_number().with_desc("Process exit code"),
-                ),
-            ],
-            ["stdout", "stderr", "exit_code"],
-        )),
-    );
+        json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The command to execute."
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Optional working directory."
+                },
+                "env": {
+                    "type": "object",
+                    "description": "Optional environment variables as key-value pairs."
+                },
+                "stdin": {
+                    "type": "string",
+                    "description": "Optional string to send to STDIN."
+                }
+            },
+            "required": ["command"]
+        }),
+        Some(json!({
+            "type": "object",
+            "properties": {
+                "stdout": {
+                    "type": "string",
+                    "description": "Captured STDOUT"
+                },
+                "stderr": {
+                    "type": "string",
+                    "description": "Captured STDERR"
+                },
+                "exit_code": {
+                    "type": "number",
+                    "description": "Process exit code"
+                }
+            },
+            "required": ["stdout", "stderr", "exit_code"]
+        })),
+    )
+    .unwrap();
 
     let f = Arc::new(|args: ToolCallArg| {
         let args = match args.as_object() {
@@ -184,7 +187,9 @@ pub fn create_terminal_tool() -> BuiltinTool {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         // Apply cwd
-        if let Some(dir) = cwd {
+        if let Some(dir) = cwd
+            && !dir.is_empty()
+        {
             command.current_dir(dir);
         }
 
@@ -233,5 +238,5 @@ pub fn create_terminal_tool() -> BuiltinTool {
         Part::Text(output.to_string())
     });
 
-    BuiltinTool { desc, f }
+    BuiltinTool::new(desc, f)
 }

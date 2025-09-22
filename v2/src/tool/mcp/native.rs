@@ -52,10 +52,10 @@ impl MCPClient {
 }
 
 #[derive(Clone, Debug)]
-struct MCPTool {
+pub struct MCPTool {
     client: Arc<MCPClient>,
     name: String,
-    pub desc: ToolDesc,
+    desc: ToolDesc,
 }
 
 #[multi_platform_async_trait]
@@ -90,9 +90,19 @@ impl Tool for MCPTool {
 }
 
 pub async fn mcp_tools_from_stdio(
-    command: tokio::process::Command,
+    // command: tokio::process::Command,
+    command: String,
+    args: Vec<String>,
     tool_name_prefix: &str,
-) -> anyhow::Result<Vec<Arc<dyn Tool>>> {
+) -> anyhow::Result<Vec<MCPTool>> {
+    use rmcp::transport::child_process::ConfigureCommandExt;
+    use tokio::process::Command;
+
+    let command = Command::new(command).configure(|cmd| {
+        for arg in args.iter() {
+            cmd.arg(arg);
+        }
+    });
     let client = MCPClient::from_stdio(command).await?;
     Ok(client
         .list_tools()
@@ -100,7 +110,7 @@ pub async fn mcp_tools_from_stdio(
         .into_iter()
         .map(|mut t| {
             t.desc.name = format!("{}--{}", tool_name_prefix, t.desc.name);
-            Arc::new(t.clone()) as Arc<dyn Tool>
+            t
         })
         .collect())
 }
@@ -108,7 +118,7 @@ pub async fn mcp_tools_from_stdio(
 pub async fn mcp_tools_from_streamable_http(
     url: &str,
     tool_name_prefix: &str,
-) -> anyhow::Result<Vec<Arc<dyn Tool>>> {
+) -> anyhow::Result<Vec<MCPTool>> {
     let client = MCPClient::from_streamable_http(url).await?;
     Ok(client
         .list_tools()
@@ -116,7 +126,7 @@ pub async fn mcp_tools_from_streamable_http(
         .into_iter()
         .map(|mut t| {
             t.desc.name = format!("{}--{}", tool_name_prefix, t.desc.name);
-            Arc::new(t.clone()) as Arc<dyn Tool>
+            t
         })
         .collect())
 }
@@ -155,8 +165,7 @@ mod tests {
         let part = parts[0].clone();
         assert_eq!(part.is_text(), true);
 
-        let parsed_part: serde_json::Value =
-            serde_json::from_str(&part.to_string().unwrap()).unwrap();
+        let parsed_part: serde_json::Value = serde_json::from_str(&part.to_string()).unwrap();
         assert_eq!(parsed_part["timezone"].as_str(), Some("Asia/Seoul"));
         assert_eq!(parsed_part["is_dst"].as_bool(), Some(false));
         assert_eq!(

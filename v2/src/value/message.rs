@@ -13,6 +13,8 @@ use crate::value::{Part, PartStyle, StyledPart};
 #[derive(Clone, Debug, Display, Serialize, Deserialize, PartialEq, Eq, EnumString)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "snake_case")]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum Role {
     /// System instructions and constraints provided to the assistant.
     System,
@@ -22,7 +24,7 @@ pub enum Role {
     Assistant,
     /// Outputs produced by external tools/functions, typically in
     /// response to an assistant tool call (and often correlated via `tool_call_id`).
-    Tool(String, Option<String>),
+    Tool,
 }
 
 /// Represents a complete chat message composed of multiple parts (multi-modal).
@@ -37,8 +39,8 @@ pub enum Role {
 ///   each element mirrors OpenAI’s `tool_calls[]` item. In this implementation
 ///   each `tool_calls` entry is stored as a `Part` (commonly `Part::Json`) containing the
 ///   raw JSON payload (`{"type":"function","id":"...","function":{"name":"...","arguments":"..."}}`).
-/// - `reasoning` is optional and is used to carry model reasoning parts when available
-///   from reasoning-capable models. Treat it as **auxiliary** content; if your target API
+/// - `reasoning` is optional and is used to carry model reasoning parts when available from
+///   reasoning-capable models. Treat it as **auxiliary** content; if your target API
 ///   does not accept a `reasoning` field, omit/strip it before sending.
 ///
 /// Because this type supports multi-modal content, exact `Part` variants (text, image, JSON, …)
@@ -97,12 +99,15 @@ pub enum Role {
 ///   "reasoning": [ { "type": "text", "text": "(model reasoning tokens, if exposed)" } ]
 /// }
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct Message {
     pub role: Option<Role>,
     pub reasoning: String,
     pub contents: Vec<Part>,
     pub tool_calls: Vec<Part>,
+    pub tool_call_id: Option<String>,
 }
 
 impl Message {
@@ -110,51 +115,39 @@ impl Message {
         Self::default()
     }
 
-    pub fn with_role(role: Role) -> Self {
-        Message {
-            role: Some(role),
-            reasoning: String::new(),
-            contents: Vec::new(),
-            tool_calls: Vec::new(),
-        }
+    pub fn with_role(mut self, role: Role) -> Self {
+        self.role = Some(role);
+        self
     }
 
-    pub fn with_reasoning(self, reasoning: impl Into<String>) -> Self {
-        Message {
-            role: self.role,
-            reasoning: reasoning.into(),
-            contents: self.contents,
-            tool_calls: self.tool_calls,
-        }
+    pub fn with_reasoning(mut self, reasoning: impl Into<String>) -> Self {
+        self.reasoning = reasoning.into();
+        self
     }
 
-    pub fn with_contents(self, contents: impl IntoIterator<Item = Part>) -> Self {
-        Message {
-            role: self.role,
-            reasoning: self.reasoning,
-            contents: contents.into_iter().collect(),
-            tool_calls: self.tool_calls,
-        }
+    pub fn with_contents(mut self, contents: impl IntoIterator<Item = Part>) -> Self {
+        self.contents = contents.into_iter().collect();
+        self
     }
 
-    pub fn with_tool_calls(self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
-        Message {
-            role: self.role,
-            reasoning: self.reasoning,
-            contents: self.contents,
-            tool_calls: tool_calls.into_iter().collect(),
-        }
+    pub fn with_tool_calls(mut self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
+        self.tool_calls = tool_calls.into_iter().collect();
+        self
+    }
+
+    pub fn with_tool_call_id(mut self, tool_call_id: impl Into<String>) -> Self {
+        self.tool_call_id = Some(tool_call_id.into());
+        self
     }
 }
 
-impl Default for Message {
-    fn default() -> Self {
-        Self {
-            role: None,
-            reasoning: String::new(),
-            contents: Vec::new(),
-            tool_calls: Vec::new(),
+impl Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        StyledMessage {
+            data: self.clone(),
+            style: MessageStyle::new(),
         }
+        .fmt(f)
     }
 }
 
@@ -179,6 +172,8 @@ pub struct MessageStyle {
     /// {"reasoning": "...", "content": [...], "||HERE||": [...]}
     /// default: "tool_calls"
     pub tool_calls_field: String,
+
+    pub tool_call_id_field: String,
 }
 
 impl MessageStyle {
@@ -195,6 +190,7 @@ impl Default for MessageStyle {
             contents_field: String::from("content"),
             contents_textonly: false,
             tool_calls_field: String::from("tool_calls"),
+            tool_call_id_field: String::from("tool_call_id"),
         }
     }
 }
@@ -213,64 +209,39 @@ pub struct StyledMessage {
 }
 
 impl StyledMessage {
-    /// Create an empty message
+    /// Create an empty message with default style
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn with_role(role: Role) -> Self {
-        Self {
-            data: Message {
-                role: Some(role),
-                reasoning: String::new(),
-                contents: Vec::new(),
-                tool_calls: Vec::new(),
-            },
-            style: MessageStyle::new(),
-        }
+    pub fn with_role(mut self, role: Role) -> Self {
+        self.data.role = Some(role);
+        self
     }
 
-    pub fn with_reasoning(self, reasoning: impl Into<String>) -> Self {
-        Self {
-            data: Message {
-                role: self.data.role,
-                reasoning: reasoning.into(),
-                contents: self.data.contents,
-                tool_calls: self.data.tool_calls,
-            },
-            style: self.style,
-        }
+    pub fn with_reasoning(mut self, reasoning: impl Into<String>) -> Self {
+        self.data.reasoning = reasoning.into();
+        self
     }
 
-    pub fn with_contents(self, contents: impl IntoIterator<Item = Part>) -> Self {
-        Self {
-            data: Message {
-                role: self.data.role,
-                reasoning: self.data.reasoning,
-                contents: contents.into_iter().collect(),
-                tool_calls: self.data.tool_calls,
-            },
-            style: self.style,
-        }
+    pub fn with_contents(mut self, contents: impl IntoIterator<Item = Part>) -> Self {
+        self.data.contents = contents.into_iter().collect();
+        self
     }
 
-    pub fn with_tool_calls(self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
-        Self {
-            data: Message {
-                role: self.data.role,
-                reasoning: self.data.reasoning,
-                contents: self.data.contents,
-                tool_calls: tool_calls.into_iter().collect(),
-            },
-            style: self.style,
-        }
+    pub fn with_tool_calls(mut self, tool_calls: impl IntoIterator<Item = Part>) -> Self {
+        self.data.tool_calls = tool_calls.into_iter().collect();
+        self
     }
 
-    pub fn with_style(self, style: MessageStyle) -> Self {
-        Self {
-            data: self.data,
-            style,
-        }
+    pub fn with_tool_call_id(mut self, tool_call_id: impl Into<String>) -> Self {
+        self.data.tool_call_id = Some(tool_call_id.into());
+        self
+    }
+
+    pub fn with_style(mut self, style: MessageStyle) -> Self {
+        self.style = style;
+        self
     }
 }
 
@@ -313,7 +284,7 @@ impl Display for StyledMessage {
                 f.write_fmt(format_args!(
                     "\"{}\": \"{}\"",
                     self.style.contents_field,
-                    self.data.contents[0].to_string().unwrap()
+                    self.data.contents[0].to_string()
                 ))?;
             } else {
                 f.write_fmt(format_args!(
@@ -455,6 +426,7 @@ impl<'de> Deserialize<'de> for StyledMessage {
                 let mut reasoning: Option<String> = None;
                 let mut contents: Option<Vec<Part>> = None;
                 let mut tool_calls: Option<Vec<Part>> = None;
+                let mut tool_call_id: Option<String> = None;
 
                 let mut style = MessageStyle::default();
 
@@ -513,6 +485,11 @@ impl<'de> Deserialize<'de> for StyledMessage {
                             tool_calls = Some(out);
                         }
 
+                        key if key == style.tool_call_id_field => {
+                            style.tool_call_id_field = key.to_string();
+                            tool_call_id = Some(map.next_value()?);
+                        }
+
                         // Unknown: skip
                         _ => {
                             let _ = map.next_value::<de::IgnoredAny>()?;
@@ -525,6 +502,7 @@ impl<'de> Deserialize<'de> for StyledMessage {
                     reasoning: reasoning.unwrap_or_default(),
                     contents: contents.unwrap_or_default(),
                     tool_calls: tool_calls.unwrap_or_default(),
+                    tool_call_id: tool_call_id,
                 };
 
                 Ok(StyledMessage { data, style })
@@ -538,6 +516,8 @@ impl<'de> Deserialize<'de> for StyledMessage {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, EnumString, Display)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 pub enum FinishReason {
     Stop,
     Length,
@@ -546,6 +526,8 @@ pub enum FinishReason {
 }
 
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct MessageOutput {
     pub delta: Message,
     pub finish_reason: Option<FinishReason>,
@@ -735,9 +717,11 @@ impl<'de> de::Visitor<'de> for MessageOutputVisitor {
 /// // ... use m2
 /// ```
 #[derive(Debug)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct MessageAggregator {
     /// Last unflushed delta; candidate for coalescing.
-    buffer: Option<Message>,
+    pub buffer: Option<Message>,
 }
 
 impl MessageAggregator {
