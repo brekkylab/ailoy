@@ -31,8 +31,8 @@
         "vitest": "^3.2.4"
     },
     "files": [
-        "index.js",
-        "index.d.ts"
+        "README.md",
+        "dist/"
     ],
     "publishConfig": {
         "registry": "https://registry.npmjs.org/",

@@ -140,10 +140,7 @@ impl JsAgent {
                 self.create_iterator(env, parts)
             }
             Either3::B(part) => self.create_iterator(env, vec![part]),
-            Either3::C(text) => {
-                println!("text received: {}", text);
-                self.create_iterator(env, vec![JsPart::new_text(text)])
-            }
+            Either3::C(text) => self.create_iterator(env, vec![JsPart::new_text(text)]),
         }
     }
 
