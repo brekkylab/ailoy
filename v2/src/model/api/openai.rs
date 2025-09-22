@@ -1,5 +1,5 @@
 use crate::{
-    model::sse::ServerSideEvent,
+    model::sse::ServerSentEvent,
     value::{ChatCompletionMarshal, Marshaled, Message, MessageDelta, ToolDesc},
 };
 
@@ -35,7 +35,7 @@ pub fn make_request(
         .body(body.to_string())
 }
 
-pub fn handle_event(evt: ServerSideEvent) -> Vec<MessageDelta> {
+pub fn handle_event(evt: ServerSentEvent) -> Vec<MessageDelta> {
     let Ok(j) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
         return Vec::new();
     };

@@ -9,12 +9,12 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct ServerSideEvent {
+pub struct ServerSentEvent {
     pub event: String,
     pub data: String,
 }
 
-fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSideEvent> {
+fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSentEvent> {
     let mut i = 0;
     while i + 1 < buf.len() {
         if let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
@@ -29,7 +29,7 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSideEvent> {
                     data_lines.push(rest.trim().to_string());
                 }
             }
-            return Some(ServerSideEvent {
+            return Some(ServerSentEvent {
                 event,
                 data: if data_lines.is_empty() {
                     String::new()
@@ -47,7 +47,7 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSideEvent> {
 pub struct SSELanguageModel {
     make_request:
         Arc<dyn Fn(Vec<Message>, Vec<ToolDesc>) -> reqwest::RequestBuilder + MaybeSend + MaybeSync>,
-    handle_event: Arc<dyn Fn(ServerSideEvent) -> Vec<MessageDelta> + MaybeSend + MaybeSync>,
+    handle_event: Arc<dyn Fn(ServerSentEvent) -> Vec<MessageDelta> + MaybeSend + MaybeSync>,
 }
 
 impl SSELanguageModel {
