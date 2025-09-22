@@ -38,8 +38,8 @@ impl Marshal<Message> for ChatCompletionMarshal {
                     .unwrap();
                     // base64 encoding
                     let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
-                    // To value
-                    let value = to_value!({"type": "image_url", "image_url": {"url": encoded}});
+                    // TODO: cover mimetypes othen than image/png
+                    let value = to_value!({"type": "image_url","image_url": {"url": format!("data:image/png;base64,{}", encoded)}});
                     contents.as_array_mut().unwrap().push(value);
                 }
                 Part::FunctionToolCall {
@@ -270,7 +270,7 @@ mod tests {
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image_url","image_url":{"url":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
+            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
         );
     }
 
