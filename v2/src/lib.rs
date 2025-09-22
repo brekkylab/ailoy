@@ -1,8 +1,8 @@
 extern crate alloc;
 
 // pub mod agent;
-// pub mod cache;
-// pub mod ffi;
+pub mod cache;
+pub mod ffi;
 // pub mod knowledge_base;
 pub mod model;
 // pub mod tool;
