@@ -239,7 +239,7 @@ mod tests {
             .push(Part::text_content("Calling the functions..."));
         msg.parts.push(Part::function_tool_call_with_id(
             "temperature",
-            Value::object([("unit", "celcius")]),
+            Value::object([("unit", "celsius")]),
             "funcid_123456",
         ));
         msg.parts.push(Part::function_tool_call_with_id(
@@ -250,7 +250,7 @@ mod tests {
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"assistant","content":[{"type":"text","text":"Calling the functions..."}],"tool_calls":[{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"celcius\"}"},"id":"funcid_123456"},{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"fahrenheit\"}"},"id":"funcid_7890ab"}]}"#
+            r#"{"role":"assistant","content":[{"type":"text","text":"Calling the functions..."}],"tool_calls":[{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"celsius\"}"},"id":"funcid_123456"},{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"fahrenheit\"}"},"id":"funcid_7890ab"}]}"#
         );
     }
 
