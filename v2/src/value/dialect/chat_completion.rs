@@ -26,9 +26,19 @@ impl Marshal<Message> for ChatCompletionMarshal {
                     let value = to_value!({"type": "text", "text": s});
                     contents.as_array_mut().unwrap().push(value);
                 }
-                Part::ImageContent(b) => {
+                Part::ImageContent { .. } => {
+                    // Get image
+                    let img = part.as_image().unwrap();
+                    // Write PNG string
+                    let mut png_buf = Vec::new();
+                    img.write_to(
+                        &mut std::io::Cursor::new(&mut png_buf),
+                        image::ImageFormat::Png,
+                    )
+                    .unwrap();
                     // base64 encoding
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(b);
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
+                    // To value
                     let value = to_value!({"type": "image_url", "image_url": {"url": encoded}});
                     contents.as_array_mut().unwrap().push(value);
                 }
@@ -79,17 +89,14 @@ impl Marshal<Message> for ChatCompletionMarshal {
 
 impl Marshal<ToolDesc> for ChatCompletionMarshal {
     fn marshal(&mut self, item: &ToolDesc) -> Value {
-        Value::object([
-            ("type", Value::string("function")),
-            (
-                "function",
-                Value::object([
-                    ("name", Value::string(item.name.as_str())),
-                    ("description", Value::string(item.description.as_str())),
-                    ("parameters", item.parameters.clone()),
-                ]),
-            ),
-        ])
+        to_value!({
+            "type": "function",
+            "function": {
+                "name": &item.name,
+                "description": &item.description,
+                "parameters": item.parameters.clone()
+            }
+        })
     }
 }
 
@@ -239,17 +246,20 @@ mod tests {
 
     #[test]
     pub fn serialize_image() {
+        let raw_pixels: Vec<u8> = vec![
+            10, 20, 30, // First row
+            40, 50, 60, // Second row
+            70, 80, 90, // Third row
+        ];
+
         let mut msg = Message::new(Role::User);
         msg.parts
             .push(Part::text_content("What you can see in this image?"));
-        let bytes: Vec<u8> = base64::engine::general_purpose::STANDARD
-            .decode(b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=")
-            .expect("invalid base64");
-        msg.parts.push(Part::image_content(bytes));
+        msg.parts.push(Part::image_content(3, 3, 1, raw_pixels));
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image_url","image_url":{"url":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="}}]}"#
+            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image_url","image_url":{"url":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
         );
     }
 

@@ -7,7 +7,14 @@ pub enum Part {
         signature: Option<String>,
     },
     TextContent(String),
-    ImageContent(Vec<u8>),
+    ImageContent {
+        h: usize,
+        w: usize,
+        // c == 1 (grayscale), c == 2 (grayscale + alpha), c == 3 (RGB), c == 4 (RGBA)
+        c: usize,
+        nbytes: usize,
+        buf: Vec<u8>,
+    },
     FunctionToolCall {
         id: Option<String>,
         name: String,
@@ -35,8 +42,24 @@ impl Part {
         Self::TextContent(v.into())
     }
 
-    pub fn image_content(v: impl IntoIterator<Item = u8>) -> Self {
-        Self::ImageContent(v.into_iter().collect())
+    pub fn image_content(
+        height: usize,
+        width: usize,
+        channel: usize,
+        buf: impl IntoIterator<Item = u8>,
+    ) -> Self {
+        let buf = buf.into_iter().collect::<Vec<_>>();
+        let nbytes = buf.len() / height / width / channel;
+        if !(nbytes == 1 || nbytes == 2 || nbytes == 3 || nbytes == 4) {
+            panic!("Invalid buffer length");
+        }
+        Self::ImageContent {
+            h: height,
+            w: width,
+            c: channel,
+            nbytes,
+            buf,
+        }
     }
 
     pub fn function_tool_call(name: impl Into<String>, args: impl Into<Value>) -> Self {
@@ -98,6 +121,13 @@ impl Part {
         }
     }
 
+    pub fn is_image(&self) -> bool {
+        match self {
+            Self::ImageContent { .. } => true,
+            _ => false,
+        }
+    }
+
     pub fn as_text(&self) -> Option<&str> {
         match self {
             Self::TextReasoning { text, .. } => Some(text.as_str()),
@@ -132,6 +162,82 @@ impl Part {
                 name,
                 arguments,
             } => Some((id.as_mut(), name, arguments)),
+            _ => None,
+        }
+    }
+
+    pub fn as_image(&self) -> Option<image::DynamicImage> {
+        fn bytes_to_u16_ne(b: &[u8]) -> Option<Vec<u16>> {
+            if b.len() % 2 != 0 {
+                return None;
+            }
+            let mut v = Vec::with_capacity(b.len() / 2);
+            for ch in b.chunks_exact(2) {
+                v.push(u16::from_ne_bytes([ch[0], ch[1]]));
+            }
+            Some(v)
+        }
+
+        match self {
+            Self::ImageContent {
+                h,
+                w,
+                c,
+                nbytes,
+                buf,
+            } => {
+                let (h, w) = (*h as u32, *w as u32);
+                match (*c, *nbytes) {
+                    // Grayscale 8-bit
+                    (1, 1) => {
+                        let buf = image::GrayImage::from_raw(w, h, buf.clone())?;
+                        Some(image::DynamicImage::ImageLuma8(buf))
+                    }
+                    // Grayscale 16-bit
+                    (1, 2) => {
+                        let buf = image::ImageBuffer::<image::Luma<u16>, _>::from_raw(
+                            w,
+                            h,
+                            bytes_to_u16_ne(buf)?,
+                        )?;
+                        Some(image::DynamicImage::ImageLuma16(buf))
+                    }
+                    // Grayscale + Alpha (8-bit each)
+                    (2, 1) => {
+                        let buf = image::GrayAlphaImage::from_raw(w, h, buf.clone())?;
+                        Some(image::DynamicImage::ImageLumaA8(buf))
+                    }
+                    // RGB 8-bit
+                    (3, 1) => {
+                        let buf = image::RgbImage::from_raw(w, h, buf.clone())?;
+                        Some(image::DynamicImage::ImageRgb8(buf))
+                    }
+                    // RGBA 8-bit
+                    (4, 1) => {
+                        let buf = image::RgbaImage::from_raw(w, h, buf.clone())?;
+                        Some(image::DynamicImage::ImageRgba8(buf))
+                    }
+                    // RGB 16-bit
+                    (3, 2) => {
+                        let buf = image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(
+                            w,
+                            h,
+                            bytes_to_u16_ne(buf)?,
+                        )?;
+                        Some(image::DynamicImage::ImageRgb16(buf))
+                    }
+                    // RGBA 16-bit
+                    (4, 2) => {
+                        let buf = image::ImageBuffer::<image::Rgba<u16>, _>::from_raw(
+                            w,
+                            h,
+                            bytes_to_u16_ne(buf)?,
+                        )?;
+                        Some(image::DynamicImage::ImageRgba16(buf))
+                    }
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }
