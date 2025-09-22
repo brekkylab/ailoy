@@ -17,7 +17,7 @@ pub enum Role {
     Tool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
     pub parts: Vec<Part>,

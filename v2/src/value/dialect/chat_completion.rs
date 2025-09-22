@@ -255,7 +255,8 @@ mod tests {
         let mut msg = Message::new(Role::User);
         msg.parts
             .push(Part::text_content("What you can see in this image?"));
-        msg.parts.push(Part::image_content(3, 3, 1, raw_pixels));
+        msg.parts
+            .push(Part::image_content(3, 3, "grayscale", raw_pixels).unwrap());
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),

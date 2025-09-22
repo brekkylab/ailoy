@@ -1,4 +1,38 @@
+use base64::Engine;
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeMap as _};
+
 use crate::value::{Value, delta::Delta};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, strum::EnumString, strum::Display)]
+pub enum PartImageColorspace {
+    #[strum(serialize = "grayscale")]
+    #[serde(rename = "grayscale")]
+    Grayscale,
+    #[strum(serialize = "rgb")]
+    #[serde(rename = "rgb")]
+    RGB,
+    #[strum(serialize = "rgba")]
+    #[serde(rename = "rgba")]
+    RGBA,
+}
+
+impl PartImageColorspace {
+    pub fn channel(&self) -> usize {
+        match self {
+            PartImageColorspace::Grayscale => 1,
+            PartImageColorspace::RGB => 3,
+            PartImageColorspace::RGBA => 4,
+        }
+    }
+}
+
+impl TryFrom<String> for PartImageColorspace {
+    type Error = strum::ParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Part {
@@ -10,8 +44,7 @@ pub enum Part {
     ImageContent {
         h: usize,
         w: usize,
-        // c == 1 (grayscale), c == 2 (grayscale + alpha), c == 3 (RGB), c == 4 (RGBA)
-        c: usize,
+        c: PartImageColorspace,
         nbytes: usize,
         buf: Vec<u8>,
     },
@@ -45,21 +78,24 @@ impl Part {
     pub fn image_content(
         height: usize,
         width: usize,
-        channel: usize,
+        colorspace: impl TryInto<PartImageColorspace>,
         buf: impl IntoIterator<Item = u8>,
-    ) -> Self {
+    ) -> Result<Self, String> {
+        let colorspace: PartImageColorspace = colorspace
+            .try_into()
+            .map_err(|_| String::from("Colorspace parsing failed"))?;
         let buf = buf.into_iter().collect::<Vec<_>>();
-        let nbytes = buf.len() / height / width / channel;
+        let nbytes = buf.len() / height / width / colorspace.channel();
         if !(nbytes == 1 || nbytes == 2 || nbytes == 3 || nbytes == 4) {
             panic!("Invalid buffer length");
         }
-        Self::ImageContent {
+        Ok(Self::ImageContent {
             h: height,
             w: width,
-            c: channel,
+            c: colorspace,
             nbytes,
             buf,
-        }
+        })
     }
 
     pub fn function_tool_call(name: impl Into<String>, args: impl Into<Value>) -> Self {
@@ -187,14 +223,14 @@ impl Part {
                 buf,
             } => {
                 let (h, w) = (*h as u32, *w as u32);
-                match (*c, *nbytes) {
+                match (c, *nbytes) {
                     // Grayscale 8-bit
-                    (1, 1) => {
+                    (&PartImageColorspace::Grayscale, 1) => {
                         let buf = image::GrayImage::from_raw(w, h, buf.clone())?;
                         Some(image::DynamicImage::ImageLuma8(buf))
                     }
                     // Grayscale 16-bit
-                    (1, 2) => {
+                    (&PartImageColorspace::Grayscale, 2) => {
                         let buf = image::ImageBuffer::<image::Luma<u16>, _>::from_raw(
                             w,
                             h,
@@ -202,23 +238,18 @@ impl Part {
                         )?;
                         Some(image::DynamicImage::ImageLuma16(buf))
                     }
-                    // Grayscale + Alpha (8-bit each)
-                    (2, 1) => {
-                        let buf = image::GrayAlphaImage::from_raw(w, h, buf.clone())?;
-                        Some(image::DynamicImage::ImageLumaA8(buf))
-                    }
                     // RGB 8-bit
-                    (3, 1) => {
+                    (&PartImageColorspace::RGB, 1) => {
                         let buf = image::RgbImage::from_raw(w, h, buf.clone())?;
                         Some(image::DynamicImage::ImageRgb8(buf))
                     }
                     // RGBA 8-bit
-                    (4, 1) => {
+                    (&PartImageColorspace::RGBA, 1) => {
                         let buf = image::RgbaImage::from_raw(w, h, buf.clone())?;
                         Some(image::DynamicImage::ImageRgba8(buf))
                     }
                     // RGB 16-bit
-                    (3, 2) => {
+                    (&PartImageColorspace::RGB, 2) => {
                         let buf = image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(
                             w,
                             h,
@@ -227,7 +258,7 @@ impl Part {
                         Some(image::DynamicImage::ImageRgb16(buf))
                     }
                     // RGBA 16-bit
-                    (4, 2) => {
+                    (&PartImageColorspace::RGBA, 2) => {
                         let buf = image::ImageBuffer::<image::Rgba<u16>, _>::from_raw(
                             w,
                             h,
@@ -240,6 +271,115 @@ impl Part {
             }
             _ => None,
         }
+    }
+}
+
+impl Serialize for Part {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Part::TextReasoning { text, signature } => {
+                let n = if signature.is_some() { 4 } else { 3 };
+                let mut s = serializer.serialize_map(Some(n))?;
+                s.serialize_entry("type", "text")?;
+                s.serialize_entry("mode", "reasoning")?;
+                s.serialize_entry("text", text)?;
+                if let Some(sig) = signature {
+                    s.serialize_entry("signature", sig)?;
+                }
+                s
+            }
+            Part::TextContent(text) => {
+                let mut s = serializer.serialize_map(Some(2))?;
+                s.serialize_entry("type", "text")?;
+                s.serialize_entry("text", text)?;
+                s
+            }
+            Part::ImageContent {
+                h,
+                w,
+                c,
+                nbytes: _,
+                buf,
+            } => {
+                #[derive(Serialize)]
+                struct ImgBase64<'a> {
+                    height: &'a usize,
+                    width: &'a usize,
+                    colorspace: &'a PartImageColorspace,
+                    data: &'a str, // base64
+                }
+
+                #[derive(Serialize)]
+                struct ImgBin<'a> {
+                    height: &'a usize,
+                    width: &'a usize,
+                    colorspace: &'a PartImageColorspace,
+                    #[serde(with = "serde_bytes")]
+                    data: &'a [u8], // raw bytes
+                }
+
+                let human_readable = serializer.is_human_readable();
+                let mut s = serializer.serialize_map(Some(2))?;
+                s.serialize_entry("type", "image")?;
+
+                if human_readable {
+                    s.serialize_entry(
+                        "image",
+                        &ImgBase64 {
+                            height: h,
+                            width: w,
+                            colorspace: c,
+                            data: &base64::engine::general_purpose::STANDARD.encode(buf),
+                        },
+                    )?;
+                } else {
+                    s.serialize_entry(
+                        "image",
+                        &ImgBin {
+                            height: h,
+                            width: w,
+                            colorspace: c,
+                            data: &buf[..],
+                        },
+                    )?;
+                }
+                s
+            }
+            Part::FunctionToolCall {
+                id,
+                name,
+                arguments,
+            } => {
+                #[derive(Serialize)]
+                struct Inner<'a> {
+                    name: &'a String,
+                    arguments: &'a Value,
+                }
+
+                let n = if id.is_some() { 3 } else { 2 };
+                let mut s = serializer.serialize_map(Some(n))?;
+                s.serialize_entry("type", "function")?;
+                s.serialize_entry("function", &Inner { name, arguments })?;
+                if let Some(id) = id {
+                    s.serialize_entry("id", id)?;
+                }
+                s
+            }
+            Part::TextRefusal(_) => todo!(),
+        }
+        .end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Part {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        todo!()
     }
 }
 

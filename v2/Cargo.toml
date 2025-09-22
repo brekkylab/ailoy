@@ -20,7 +20,7 @@ chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "mas
 derive_builder = "0.20.2"
 futures = "0.3.31"
 indexmap = { version = "2", features = ["serde"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 jsonschema = "0.33.0"
 mime-infer = "4.0.0"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
@@ -35,6 +35,7 @@ pyo3-stub-gen-derive = { version = "0.12.2", optional = true }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 rmcp = { version = "0.5.0", features = ["default"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 sha1 = "0.10"
 strum = { version = "0.27", features = ["derive"] }

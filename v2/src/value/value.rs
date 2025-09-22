@@ -680,7 +680,7 @@ macro_rules! __value_obj_kvs {
     // ---------- STRING LITERAL KEY ----------
     // value is nested object
     ($map:ident, $key:literal : { $($inner:tt)* } , $($rest:tt)*) => {{
-        let v = $crate::value!({ $($inner)* });
+        let v = $crate::to_value!({ $($inner)* });
         $map.insert($key.to_string(), v);
         $crate::__value_obj_kvs!($map, $($rest)*);
     }};
@@ -690,12 +690,12 @@ macro_rules! __value_obj_kvs {
     }};
     // value is array
     ($map:ident, $key:literal : [ $($inner:tt)* ] , $($rest:tt)*) => {{
-        let v = $crate::value!([ $($inner:tt)* ]);
+        let v = $crate::to_value!([ $($inner)* ]);
         $map.insert($key.to_string(), v);
         $crate::__value_obj_kvs!($map, $($rest)*);
     }};
     ($map:ident, $key:literal : [ $($inner:tt)* ]) => {{
-        let v = $crate::value!([ $($inner:tt)* ]);
+        let v = $crate::to_value!([ $($inner)* ]);
         $map.insert($key.to_string(), v);
     }};
     // value is a general expression
@@ -711,89 +711,88 @@ macro_rules! __value_obj_kvs {
 
     // ---------- IDENTIFIER KEY ----------
     ($map:ident, $ident:ident : { $($inner:tt)* } , $($rest:tt)*) => {{
-        let v = $crate::value!({ $($inner)* });
+        let v = $crate::to_value!({ $($inner)* });
         $map.insert(::std::stringify!($ident).to_string(), v);
         $crate::__value_obj_kvs!($map, $($rest)*);
     }};
     ($map:ident, $ident:ident : { $($inner:tt)* }) => {{
-        let v = $crate::value!({ $($inner)* });
+        let v = $crate::to_value!({ $($inner)* });
         $map.insert(::std::stringify!($ident).to_string(), v);
     }};
     ($map:ident, $ident:ident : [ $($inner:tt)* ] , $($rest:tt)*) => {{
-        let v = $crate::value!([ $($inner:tt)* ]);
+        let v = $crate::to_value!([ $($inner)* ]);
         $map.insert(::std::stringify!($ident).to_string(), v);
         $crate::__value_obj_kvs!($map, $($rest)*);
     }};
     ($map:ident, $ident:ident : [ $($inner:tt)* ]) => {{
-        let v = $crate::value!([ $($inner:tt)* ]);
+        let v = $crate::to_value!([ $($inner)* ]);
         $map.insert(::std::stringify!($ident).to_string(), v);
     }};
     ($map:ident, $ident:ident : $val:expr , $($rest:tt)*) => {{
-        let v = $crate::value!($val);
+        let v = $crate::to_value!($val);
         $map.insert(::std::stringify!($ident).to_string(), v);
         $crate::__value_obj_kvs!($map, $($rest)*);
     }};
     ($map:ident, $ident:ident : $val:expr) => {{
-        let v = $crate::value!($val);
+        let v = $crate::to_value!($val);
         $map.insert(::std::stringify!($ident).to_string(), v);
     }};
 
     // ---------- COMPUTED KEY (expr) ----------
     ($map:ident, ( $key:expr ) : { $($inner:tt)* } , $($rest:tt)*) => {{
         let k: String = ::std::convert::Into::into($key);
-        let v = $crate::value!({ $($inner)* });
+        let v = $crate::to_value!({ $($inner)* });
         $map.insert(k, v);
         $crate::__value_obj_kvs!($map, $($rest)*);
     }};
     ($map:ident, ( $key:expr ) : { $($inner:tt)* }) => {{
         let k: String = ::std::convert::Into::into($key);
-        let v = $crate::value!({ $($inner)* });
+        let v = $crate::to_value!({ $($inner)* });
         $map.insert(k, v);
     }};
     ($map:ident, ( $key:expr ) : [ $($inner:tt)* ] , $($rest:tt)*) => {{
         let k: String = ::std::convert::Into::into($key);
-        let v = $crate::value!([ $($inner:tt)* ]);
+        let v = $crate::to_value!([ $($inner)* ]);
         $map.insert(k, v);
         $crate::__value_obj_kvs!($map, $($rest)*);
     }};
     ($map:ident, ( $key:expr ) : [ $($inner:tt)* ]) => {{
         let k: String = ::std::convert::Into::into($key);
-        let v = $crate::value!([ $($inner:tt)* ]);
+        let v = $crate::to_value!([ $($inner)* ]);
         $map.insert(k, v);
     }};
     ($map:ident, ( $key:expr ) : $val:expr , $($rest:tt)*) => {{
         let k: String = ::std::convert::Into::into($key);
-        let v = $crate::value!($val);
+        let v = $crate::to_value!($val);
         $map.insert(k, v);
         $crate::__value_obj_kvs!($map, $($rest)*);
     }};
     ($map:ident, ( $key:expr ) : $val:expr) => {{
         let k: String = ::std::convert::Into::into($key);
-        let v = $crate::value!($val);
+        let v = $crate::to_value!($val);
         $map.insert(k, v);
     }};
 }
 
 #[macro_export]
 macro_rules! to_value {
-    // Shortcuts for null / true / false
     (null) => { $crate::value::Value::Null };
     (true) => { $crate::value::Value::Bool(true) };
     (false) => { $crate::value::Value::Bool(false) };
 
-    // Array: [ ... ]
+    // Array
     ([ $($elem:tt),* $(,)? ]) => {
         $crate::value::Value::Array(vec![ $( $crate::to_value!($elem) ),* ])
     };
 
-    // Object: { "key": val, (expr): val, ... }
+    // Object
     ({ $($rest:tt)* }) => {{
         let mut __map: indexmap::IndexMap<String, $crate::value::Value> = indexmap::IndexMap::new();
-        crate::__value_obj_kvs!(__map, $($rest)*);
+        $crate::__value_obj_kvs!(__map, $($rest)*);
         $crate::value::Value::Object(__map)
     }};
 
-    // Fallback: any expression convertible into Value
+    // Fallback
     ($other:expr) => { $crate::value::Value::from($other) };
 }
 
