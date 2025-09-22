@@ -11,7 +11,7 @@ use pyo3_stub_gen::derive::*;
 use crate::{
     ffi::py::base::{PyWrapper, json_to_pydict, pydict_to_json},
     tool::{
-        BuiltinTool, MCPTransport, Tool, create_terminal_tool,
+        ArcTool, BuiltinTool, MCPTransport, Tool, create_terminal_tool,
         mcp::native::{MCPTool, mcp_tools_from_stdio, mcp_tools_from_streamable_http},
     },
     value::{Part, ToolCallArg, ToolDesc},
@@ -383,21 +383,19 @@ impl PythonAsyncFunctionTool {
     }
 }
 
-pub struct ArcTool(pub Arc<dyn Tool>);
-
 impl<'py> IntoPyObject<'py> for ArcTool {
     type Target = PyAny;
     type Output = Bound<'py, Self::Target>;
     type Error = PyErr;
 
     fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
-        let py_any = if let Some(tool) = self.0.downcast_ref::<BuiltinTool>() {
+        let py_any = if let Some(tool) = self.inner.downcast_ref::<BuiltinTool>() {
             Ok(PyBuiltinTool::into_py_obj(tool.clone(), py)?.into_any())
-        } else if let Some(tool) = self.0.downcast_ref::<MCPTool>() {
+        } else if let Some(tool) = self.inner.downcast_ref::<MCPTool>() {
             Ok(PyMCPTool::into_py_obj(tool.clone(), py)?.into_any())
-        } else if let Some(tool) = self.0.downcast_ref::<PythonFunctionTool>() {
+        } else if let Some(tool) = self.inner.downcast_ref::<PythonFunctionTool>() {
             Ok(Py::new(py, (tool.clone(), PyBaseTool {}))?.into_any())
-        } else if let Some(tool) = self.0.downcast_ref::<PythonAsyncFunctionTool>() {
+        } else if let Some(tool) = self.inner.downcast_ref::<PythonAsyncFunctionTool>() {
             Ok(Py::new(py, (tool.clone(), PyBaseTool {}))?.into_any())
         } else {
             Err(PyRuntimeError::new_err("Failed to downcast BaseTool"))
@@ -410,21 +408,13 @@ impl<'py> FromPyObject<'py> for ArcTool {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
         Python::attach(|py| {
             if let Ok(tool) = ob.downcast::<PyBuiltinTool>() {
-                Ok(ArcTool(
-                    Arc::new(tool.as_unbound().borrow(py).inner().clone()) as Arc<dyn Tool>,
-                ))
+                Ok(ArcTool::new(tool.as_unbound().borrow(py).inner().clone()))
             } else if let Ok(tool) = ob.downcast::<PyMCPTool>() {
-                Ok(ArcTool(
-                    Arc::new(tool.as_unbound().borrow(py).inner().clone()) as Arc<dyn Tool>,
-                ))
+                Ok(ArcTool::new(tool.as_unbound().borrow(py).inner().clone()))
             } else if let Ok(tool) = ob.downcast::<PythonFunctionTool>() {
-                Ok(ArcTool(
-                    Arc::new(tool.as_unbound().borrow(py).clone()) as Arc<dyn Tool>
-                ))
+                Ok(ArcTool::new(tool.as_unbound().borrow(py).clone()))
             } else if let Ok(tool) = ob.downcast::<PythonAsyncFunctionTool>() {
-                Ok(ArcTool(
-                    Arc::new(tool.as_unbound().borrow(py).clone()) as Arc<dyn Tool>
-                ))
+                Ok(ArcTool::new(tool.as_unbound().borrow(py).clone()))
             } else {
                 Err(PyTypeError::new_err("Unknown tool object provided"))
             }

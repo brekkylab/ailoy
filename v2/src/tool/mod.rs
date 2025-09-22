@@ -43,6 +43,13 @@ impl ArcTool {
         }
     }
 
+    pub fn new_from_arc_any(tool: Arc<dyn Tool>) -> Self {
+        Self {
+            inner: tool.clone(),
+            type_id: tool.type_id(),
+        }
+    }
+
     pub fn type_of<T: Tool + 'static>(&self) -> bool {
         TypeId::of::<T>() == self.type_id
     }
