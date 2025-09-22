@@ -1,7 +1,7 @@
-use futures::stream::StreamExt;
+use futures::stream::TryStreamExt;
 use gemini_rust::{
-    Content as GeminiContent, FunctionCall as GeminiFunctionCall,
-    FunctionDeclaration as GeminiFunctionDeclaration,
+    Content as GeminiContent, FinishReason as GeminiFinishReason,
+    FunctionCall as GeminiFunctionCall, FunctionDeclaration as GeminiFunctionDeclaration,
     FunctionParameters as GeminiFunctionParameters, Gemini,
     GenerationResponse as GeminiGenerationResponse, Message as GeminiMessage, Role as GeminiRole,
     Tool as GeminiTool,
@@ -26,7 +26,8 @@ pub struct GeminiLanguageModel {
 impl GeminiLanguageModel {
     pub fn new(model_name: impl Into<String>, api_key: impl Into<String>) -> Self {
         let model_name: String = model_name.into();
-        let inner = Gemini::with_model(api_key.into(), format!("models/{}", model_name.clone()));
+        let inner =
+            Gemini::with_model(api_key.into(), format!("models/{}", model_name.clone())).unwrap();
         Self {
             model_name,
             inner,
@@ -45,12 +46,12 @@ fn gemini_response_to_ailoy(response: &GeminiGenerationResponse) -> Result<Messa
 
     // https://ai.google.dev/api/generate-content#FinishReason
     let finish_reason = match candidate.finish_reason {
-        Some(finish_reason) => match finish_reason.as_str() {
-            "STOP" => {
-                if candidate.content.parts.len() > 0 {
-                    // Gemini does not provide "ToolCalls" finish reason explicitly,
-                    // so we infer it by checking if there's FunctionCall part.
-                    let part = candidate.content.parts[0].clone();
+        Some(finish_reason) => match finish_reason {
+            GeminiFinishReason::Stop => {
+                if let Some(parts) = candidate.content.parts.clone()
+                    && parts.len() > 0
+                {
+                    let part = parts[0].clone();
                     match part {
                         gemini_rust::Part::FunctionCall { .. } => Some(FinishReason::ToolCalls),
                         _ => Some(FinishReason::Stop),
@@ -59,7 +60,7 @@ fn gemini_response_to_ailoy(response: &GeminiGenerationResponse) -> Result<Messa
                     Some(FinishReason::Stop)
                 }
             }
-            "MAX_TOKENS" => {
+            GeminiFinishReason::MaxTokens => {
                 if !response.thoughts().is_empty() {
                     // Gemini can return MAX_TOKENS finish reason if it was thinking and it has been finished.
                     // In this case, the finish reason should not be set, and the generation should be continued.
@@ -68,8 +69,13 @@ fn gemini_response_to_ailoy(response: &GeminiGenerationResponse) -> Result<Messa
                     Some(FinishReason::Length)
                 }
             }
-            "SAFETY" | "RECITATION" | "LANGUAGE" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "SPII"
-            | "IMAGE_SAFETY" => Some(FinishReason::ContentFilter),
+            GeminiFinishReason::Safety
+            | GeminiFinishReason::Recitation
+            | GeminiFinishReason::Language
+            | GeminiFinishReason::Blocklist
+            | GeminiFinishReason::ProhibitedContent
+            | GeminiFinishReason::Spii
+            | GeminiFinishReason::ImageSafety => Some(FinishReason::ContentFilter),
             _ => Some(FinishReason::Stop),
         },
         None => None,
@@ -77,30 +83,56 @@ fn gemini_response_to_ailoy(response: &GeminiGenerationResponse) -> Result<Messa
 
     let mut message = Message::new();
     message.role = Some(Role::Assistant);
-    for part in candidate.content.parts.iter() {
-        match part {
-            gemini_rust::Part::Text { text, thought } => {
-                if thought.is_some_and(|b| b) {
-                    message.reasoning = text.clone();
-                } else {
-                    message.contents.push(Part::Text(text.clone()));
+    if let Some(parts) = candidate.content.parts {
+        for part in parts.into_iter() {
+            match part {
+                gemini_rust::Part::Text { text, thought, .. } => {
+                    if thought.is_some_and(|b| b) {
+                        message.reasoning = text.clone();
+                    } else {
+                        message.contents.push(Part::Text(text.clone()));
+                    }
                 }
-            }
-            gemini_rust::Part::FunctionCall { function_call } => {
-                message.tool_calls.push(Part::new_function(
-                    "", // Gemini does not return tool call id
-                    function_call.name.clone(),
-                    function_call.args.to_string(),
-                ));
-            }
-            gemini_rust::Part::InlineData { .. } => {
-                todo!("Gemini outputs other than text is not supported")
-            }
-            gemini_rust::Part::FunctionResponse { .. } => {
-                panic!("Function Response cannot be returned from model")
+                gemini_rust::Part::FunctionCall { function_call, .. } => {
+                    message.tool_calls.push(Part::new_function(
+                        function_call.name.clone(), // Gemini does not return tool call id, so we use function name as id.
+                        function_call.name.clone(),
+                        function_call.args.to_string(),
+                    ));
+                }
+                gemini_rust::Part::InlineData { .. } => {
+                    todo!("Gemini outputs other than text is not supported")
+                }
+                gemini_rust::Part::FunctionResponse { .. } => {
+                    panic!("Function Response cannot be returned from model")
+                }
             }
         }
     }
+    // for part in candidate.content.parts.iter() {
+    //     match part {
+    //         gemini_rust::Part::Text { text, thought } => {
+    //             if thought.is_some_and(|b| b) {
+    //                 message.reasoning = text.clone();
+    //             } else {
+    //                 message.contents.push(Part::Text(text.clone()));
+    //             }
+    //         }
+    //         gemini_rust::Part::FunctionCall { function_call } => {
+    //             message.tool_calls.push(Part::new_function(
+    //                 function_call.name.clone(), // Gemini does not return tool call id, so we use function name as id.
+    //                 function_call.name.clone(),
+    //                 function_call.args.to_string(),
+    //             ));
+    //         }
+    //         gemini_rust::Part::InlineData { .. } => {
+    //             todo!("Gemini outputs other than text is not supported")
+    //         }
+    //         gemini_rust::Part::FunctionResponse { .. } => {
+    //             panic!("Function Response cannot be returned from model")
+    //         }
+    //     }
+    // }
 
     let output = MessageOutput {
         delta: message,
@@ -162,6 +194,7 @@ impl LanguageModel for GeminiLanguageModel {
                                         GeminiContent::function_call(GeminiFunctionCall {
                                             name: name,
                                             args: serde_json::from_str(arguments.as_str()).unwrap(),
+                                            thought_signature: None,
                                         });
                                     content = content.with_message(GeminiMessage {
                                         content: function_call,
@@ -181,10 +214,9 @@ impl LanguageModel for GeminiLanguageModel {
                         let tool_name = msg.tool_call_id.clone().expect(
                             "Gemini Tool message should have the tool name as tool_call_id",
                         );
-                        content = content.with_function_response(
-                            tool_name,
-                            serde_json::from_str(&msg.contents[0].to_string()).unwrap(),
-                        );
+                        content = content
+                            .with_function_response_str(tool_name, msg.contents[0].to_string())
+                            .unwrap();
                     }
                 },
                 None => {
@@ -218,8 +250,7 @@ impl LanguageModel for GeminiLanguageModel {
 
         let strm = async_stream::try_stream! {
             let mut stream = content.execute_stream().await.unwrap();
-            while let Some(resp) = stream.next().await {
-                let resp = resp.map_err(|e| e.to_string()).unwrap();
+            while let Some(resp) = stream.try_next().await.unwrap() {
                 let output = gemini_response_to_ailoy(&resp)?;
                 yield output;
             }
@@ -233,6 +264,7 @@ mod tests {
     use std::sync::LazyLock;
 
     use ailoy_macros::multi_platform_test;
+    use futures::stream::StreamExt;
 
     use crate::utils::log;
 

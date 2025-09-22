@@ -1212,17 +1212,24 @@ dependencies = [
 
 [[package]]
 name = "gemini-rust"
-version = "1.1.0"
-source = "git+https://github.com/brekkylab/gemini-rust.git?branch=main#f49284ee87a8fcee4c7d62bbb29c003b325e3a5d"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b09f22c73a82c5e03dfe4b234ea44139f47af5d47bc282573e4bf34de6603fb"
 dependencies = [
+ "async-stream",
  "async-trait",
  "base64 0.22.1",
+ "eventsource-stream",
  "futures",
  "futures-util",
+ "mime",
+ "mime_guess",
  "reqwest 0.12.23",
  "serde",
  "serde_json",
- "thiserror 2.0.16",
+ "snafu",
+ "time",
+ "tokio",
  "url",
 ]
 
@@ -3250,6 +3257,28 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "snafu"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e84b3f4eacbf3a1ce05eac6763b4d629d60cbc94d632e4092c54ade71f1e1a2"
+dependencies = [
+ "backtrace",
+ "snafu-derive",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "socket2"

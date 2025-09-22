@@ -21,7 +21,7 @@ chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "mas
 derive_builder = "0.20.2"
 downcast-rs = "2.0.2"
 futures = "0.3.31"
-gemini-rust = { git = "https://github.com/brekkylab/gemini-rust.git", branch = "main" }
+gemini-rust = "1.4.0"
 indexmap = { version = "2", features = ["serde"] }
 jsonschema = "0.33.0"
 mime-infer = "4.0.0"

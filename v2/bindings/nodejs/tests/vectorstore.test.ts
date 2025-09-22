@@ -129,7 +129,7 @@ for (const cfg of configs) {
       );
     });
 
-    test.sequential("Retrieve results for a batch query", async () => {
+    test.sequential("Retrieve batch results for multiple queries", async () => {
       const doc0 =
         "BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.";
       const emb0 = await model.run(doc0);

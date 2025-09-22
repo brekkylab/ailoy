@@ -66,6 +66,15 @@ const modelConfigs = [
   },
 ];
 
+const testImageUrl =
+  "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
+const testImageBase64 = await (async () => {
+  const resp = await fetch(testImageUrl);
+  const arrayBuffer = await resp.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  return buffer.toString("base64");
+})();
+
 for (const cfg of modelConfigs) {
   describe.skipIf(cfg.skip).concurrent(`Agent test: ${cfg.name}`, () => {
     let agent: ailoy.Agent;
@@ -84,92 +93,105 @@ for (const cfg of modelConfigs) {
       }
     });
 
-    test.sequential("Tool Calling: Builtin Tool (terminal)", async () => {
-      const tool = ailoy.BuiltinTool.terminal();
-      agent.addTool(tool);
+    test.sequential(
+      "Tool Calling: Builtin Tool (terminal)",
+      async () => {
+        const tool = ailoy.BuiltinTool.terminal();
+        agent.addTool(tool);
 
-      const agg = new ailoy.MessageAggregator();
-      for await (const resp of agent.run(
-        "List the files in the current directory."
-      )) {
-        const msg = agg.update(resp);
-        if (msg !== null) {
-          console.log(msg);
+        const agg = new ailoy.MessageAggregator();
+        for await (const resp of agent.run(
+          "List the files in the current directory."
+        )) {
+          const msg = agg.update(resp);
+          if (msg !== null) {
+            console.log(msg);
+          }
         }
-      }
 
-      agent.removeTool(tool.description.name);
-    });
+        agent.removeTool(tool.description.name);
+      },
+      10000
+    );
 
-    test.sequential("Tool Calling: MCP Tools (time)", async () => {
-      const transport = ailoy.MCPTransport.newStdio("uvx", ["mcp-server-time"]);
-      const tools = await transport.tools("time");
-      agent.addTools(tools);
+    test.sequential(
+      "Tool Calling: MCP Tools (time)",
+      async () => {
+        const transport = ailoy.MCPTransport.newStdio("uvx", [
+          "mcp-server-time",
+        ]);
+        const tools = await transport.tools("time");
+        agent.addTools(tools);
 
-      const agg = new ailoy.MessageAggregator();
-      for await (const resp of agent.run(
-        "What time is it now in Asia/Seoul? Answer in local timezone."
-      )) {
-        const msg = agg.update(resp);
-        if (msg !== null) {
-          console.log(msg);
+        const agg = new ailoy.MessageAggregator();
+        for await (const resp of agent.run(
+          "What time is it now in Asia/Seoul? Answer in local timezone."
+        )) {
+          const msg = agg.update(resp);
+          if (msg !== null) {
+            console.log(msg);
+          }
         }
-      }
 
-      agent.removeTools(tools.map((t) => t.description.name));
-    });
+        agent.removeTools(tools.map((t) => t.description.name));
+      },
+      10000
+    );
 
-    test.sequential("Tool Calling: JsFunctionTool (temperature)", async () => {
-      const tool = new ailoy.JsFunctionTool(
-        {
-          name: "temperature",
-          description: "Get temperature of the provided location",
-          parameters: {
-            type: "object",
-            properties: {
-              location: {
-                type: "string",
-                description: "The city name",
+    test.sequential(
+      "Tool Calling: JsFunctionTool (temperature)",
+      async () => {
+        const tool = new ailoy.JsFunctionTool(
+          {
+            name: "temperature",
+            description: "Get temperature of the provided location",
+            parameters: {
+              type: "object",
+              properties: {
+                location: {
+                  type: "string",
+                  description: "The city name",
+                },
+                unit: {
+                  type: "string",
+                  description: "temperature unit",
+                  enum: ["Celsius", "Fahrenheit"],
+                },
               },
-              unit: {
-                type: "string",
-                enum: ["Celsius", "Fahrenheit"],
-              },
+              required: ["location", "unit"],
             },
-            required: ["location", "unit"],
           },
-        },
-        async (args) => {
-          return {
-            location: args.location,
-            unit: args.unit,
-            temp: 38,
-          };
+          async (args) => {
+            return {
+              location: args.location,
+              unit: args.unit,
+              temp: 38,
+            };
+          }
+        );
+
+        agent.addTool(tool);
+
+        const agg = new ailoy.MessageAggregator();
+        for await (const resp of agent.run(
+          "What is the temperature in Seoul now? Answer in Celsius."
+        )) {
+          const msg = agg.update(resp);
+          if (msg !== null) {
+            console.log(msg);
+          }
         }
-      );
 
-      agent.addTool(tool);
-
-      const agg = new ailoy.MessageAggregator();
-      for await (const resp of agent.run(
-        "What is the temperature in Seoul now?"
-      )) {
-        const msg = agg.update(resp);
-        if (msg !== null) {
-          console.log(msg);
-        }
-      }
-
-      agent.removeTool(tool.description.name);
-    });
+        agent.removeTool(tool.description.name);
+      },
+      10000
+    );
 
     if (cfg.runImageUrl) {
       test.sequential(
         "Multimodal: Image URL",
         async () => {
-          const imageUrl =
-            "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
-          const imgPart = ailoy.Part.newImageUrl(imageUrl);
+          const imgPart = ailoy.Part.newImageUrl(testImageUrl);
           const agg = new ailoy.MessageAggregator();
           for await (const resp of agent.run([
             imgPart,
@@ -189,13 +211,8 @@ for (const cfg of modelConfigs) {
       test.sequential(
         "Multimodal: Image Base64",
         async () => {
-          const imageUrl =
-            "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
-          const resp = await fetch(imageUrl);
-          const arrayBuffer = await resp.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
           const imgPart = ailoy.Part.newImageData(
-            buffer.toString("base64"),
+            testImageBase64,
             "image/jpeg"
           );
 
