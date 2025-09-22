@@ -127,15 +127,15 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         rv.role = Some(v);
                     } else if let Some(ty) = val.pointer_as::<String>("/item/type")
                         && ty.as_str() == "function_call"
+                        && let call_id = val.pointer_as::<String>("/item/call_id")
                         && let Some(name) = val.pointer_as::<String>("/item/name")
                         && let Some(arguments) = val.pointer_as::<String>("/item/arguments")
                     {
                         // tool call message
                         // r#"{"type":"response.output_item.added","item":{"type":"function_call","arguments":"","call_id":"call_DF3wZtLHv5eBNfURjvI8MULJ","name":"get_weather"}}"#
-                        let call_id = val.pointer_as::<String>("/item/call_id").cloned();
                         rv.role = Some(Role::Assistant);
                         rv.parts.push(PartDelta::FunctionToolCall {
-                            id: call_id,
+                            id: call_id.cloned(),
                             name: name.clone(),
                             arguments: arguments.clone(),
                         });
