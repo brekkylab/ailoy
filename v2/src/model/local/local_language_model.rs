@@ -1,7 +1,7 @@
-use std::{any::Any, collections::BTreeMap};
+use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use async_stream::try_stream;
-use futures::stream::Stream;
+use futures::{lock::Mutex, stream::Stream};
 
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
@@ -21,7 +21,7 @@ pub struct LocalLanguageModel {
     tokenizer: Tokenizer,
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
-    inferencer: LanguageModelInferencer,
+    inferencer: Arc<Mutex<LanguageModelInferencer>>,
 }
 
 impl LocalLanguageModel {
@@ -50,17 +50,22 @@ impl LanguageModel for LocalLanguageModel {
         let strm = try_stream! {
             let prompt = self.chat_template.apply(msgs, tools, true)?;
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
-            #[cfg(target_family = "wasm")]
-            self.inferencer.prefill(&input_tokens).await;
-            #[cfg(not(target_family = "wasm"))]
-            self.inferencer.prefill(&input_tokens);
+
+            {
+                let mut inferencer = self.inferencer.lock().await;
+                #[cfg(target_family = "wasm")]
+                inferencer.prefill(&input_tokens).await;
+                #[cfg(not(target_family = "wasm"))]
+                inferencer.prefill(&input_tokens);
+            }
+
             let mut last_token = *input_tokens.last().unwrap();
             let mut agg_tokens = Vec::<u32>::new();
             let mut count = 0;
             let mut mode = "content".to_owned();
             let mut finish_reason = FinishReason::Stop;
 
-            yield MessageOutput::new().with_delta(Message::with_role(Role::Assistant));
+            yield MessageOutput::new().with_delta(Message::new().with_role(Role::Assistant));
 
             // @jhlee: TODO remove hard-coded token names
             loop {
@@ -68,12 +73,18 @@ impl LanguageModel for LocalLanguageModel {
                 if count > 16384 {
                     Err("Too long assistant message. It may be infinite loop".to_owned())?;
                 }
-                #[cfg(target_family = "wasm")]
-                let new_token = self.inferencer.decode(last_token).await;
-                #[cfg(not(target_family = "wasm"))]
-                let new_token = self.inferencer.decode(last_token);
-                agg_tokens.push(new_token);
-                last_token = new_token;
+
+                {
+                    let mut inferencer = self.inferencer.lock().await;
+                    #[cfg(target_family = "wasm")]
+                    let new_token = inferencer.decode(last_token).await;
+                    #[cfg(not(target_family = "wasm"))]
+                    let new_token = inferencer.decode(last_token);
+
+                    agg_tokens.push(new_token);
+                    last_token = new_token;
+                }
+
                 let s = self.tokenizer.decode(agg_tokens.as_slice(), false)?;
                 if s.ends_with("�") {
                     continue;
@@ -209,7 +220,7 @@ impl TryFromCache for LocalLanguageModel {
             Ok(LocalLanguageModel {
                 chat_template,
                 tokenizer,
-                inferencer,
+                inferencer: Arc::new(Mutex::new(inferencer)),
             })
         })
     }
@@ -218,6 +229,8 @@ impl TryFromCache for LocalLanguageModel {
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     #[tokio::test]
     async fn infer_simple_chat() {
         use futures::StreamExt;
@@ -243,9 +256,11 @@ mod tests {
         let mut model = model.unwrap();
         model.enable_reasoning();
         let msgs = vec![
-            Message::with_role(Role::System)
+            Message::new()
+                .with_role(Role::System)
                 .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
-            Message::with_role(Role::User)
+            Message::new()
+                .with_role(Role::User)
                 .with_contents(vec![Part::Text("Hi what's your name?".to_owned())]),
             // Message::with_role(Role::Assistant)
             //     .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
@@ -271,7 +286,7 @@ mod tests {
         use futures::StreamExt;
 
         use super::*;
-        use crate::value::{MessageAggregator, Role, ToolDesc, ToolDescArg};
+        use crate::value::{MessageAggregator, Role, ToolDesc};
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
@@ -289,30 +304,38 @@ mod tests {
         }
         let mut model = model.unwrap();
         model.disable_reasoning();
-        let tools = vec![ToolDesc::new(
-            "temperature",
-            "Get current temperature",
-            ToolDescArg::new_object().with_properties(
-                [
-                    (
-                        "location",
-                        ToolDescArg::new_string().with_desc("The city name"),
-                    ),
-                    (
-                        "unit",
-                        ToolDescArg::new_string().with_enum(["Celcius", "Fernheit"]),
-                    ),
-                ],
-                ["location", "unit"],
-            ),
-            Some(
-                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
-            ),
-        )];
+        let tools = vec![
+            ToolDesc::new(
+                "temperature".into(),
+                "Get current temperature".into(),
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city name"
+                        },
+                        "unit": {
+                            "type": "string",
+                            "enum": ["Celsius", "Fahrenheit"]
+                        }
+                    },
+                    "required": ["location", "unit"]
+                }),
+                Some(json!({
+                    "type": "number",
+                    "description": "Null if the given city name is unavailable.",
+                    "nullable": true,
+                })),
+            )
+            .unwrap(),
+        ];
         let msgs = vec![
-            Message::with_role(Role::User).with_contents(vec![Part::Text(
-                "How much hot currently in Dubai?".to_owned(),
-            )]),
+            Message::new()
+                .with_role(Role::User)
+                .with_contents(vec![Part::Text(
+                    "How much hot currently in Dubai?".to_owned(),
+                )]),
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, tools);
@@ -335,7 +358,7 @@ mod tests {
         use futures::StreamExt;
 
         use super::*;
-        use crate::value::{MessageAggregator, Role, ToolDesc, ToolDescArg};
+        use crate::value::{MessageAggregator, Role, ToolDesc};
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
@@ -353,33 +376,40 @@ mod tests {
         }
         let mut model = model.unwrap();
         model.disable_reasoning();
-        let tools = vec![ToolDesc::new(
-            "temperature",
-            "Get current temperature",
-            ToolDescArg::new_object().with_properties(
-                [
-                    (
-                        "location",
-                        ToolDescArg::new_string().with_desc("The city name"),
-                    ),
-                    (
-                        "unit",
-                        ToolDescArg::new_string().with_enum(["Celcius", "Fernheit"]),
-                    ),
-                ],
-                ["location", "unit"],
-            ),
-            Some(
-                ToolDescArg::new_number().with_desc("Null if the given city name is unavailable."),
-            ),
-        )];
+        let tools = vec![
+            ToolDesc::new(
+                "temperature".into(),
+                "Get current temperature".into(),
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city name"
+                        },
+                        "unit": {
+                            "type": "string",
+                            "description": "The unit of temperature",
+                            "enum": ["Celsius", "Fahrenheit"]
+                        }
+                    },
+                    "required": ["location", "unit"]
+                }),
+                Some(json!({
+                    "type": "number",
+                    "description": "Null if the given city name is unavailable.",
+                    "nullable": true,
+                })),
+            )
+            .unwrap(),
+        ];
         let msgs = vec![
-            Message::with_role(Role::User)
+            Message::new().with_role(Role::User)
                 .with_contents([Part::new_text("How much hot currently in Dubai?".to_owned())]),
-            Message::with_role(Role::Assistant)
+            Message::new().with_role(Role::Assistant)
                 .with_contents([Part::new_text("\n\n")])
-                .with_tool_calls([Part::new_function_string("\n{\"name\": \"temperature\", \"arguments\": {\"location\": \"Dubai\", \"unit\": \"Celcius\"}}\n")]),
-            Message::with_role(Role::Tool("temperature".into(), None)).with_contents([Part::new_text("40")])
+                .with_tool_calls([Part::new_function_string("\n{\"name\": \"temperature\", \"arguments\": {\"location\": \"Dubai\", \"unit\": \"Celsius\"}}\n")]),
+            Message::new().with_role(Role::Tool).with_tool_call_id("temperature").with_contents([Part::new_text("40")])
         ];
         let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, tools);

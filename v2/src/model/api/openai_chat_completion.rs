@@ -83,9 +83,7 @@ pub trait OpenAIChatCompletion: LanguageModel {
         match &msg.role {
             Some(role) => match role {
                 Role::System => {
-                    let content = msg.contents[0]
-                        .to_string()
-                        .expect("The system message should be exist in contents");
+                    let content = msg.contents[0].to_string();
                     Ok(OpenAIChatMessage::system(content))
                 }
                 Role::User => {
@@ -96,7 +94,7 @@ pub trait OpenAIChatCompletion: LanguageModel {
                     ))
                 }
                 Role::Assistant => self.build_assistant_message(msg),
-                Role::Tool(_, tool_call_id) => self.build_tool_message(msg.clone(), tool_call_id),
+                Role::Tool => self.build_tool_message(msg.clone(), &msg.tool_call_id),
             },
             None => Err("Message role cannot be None".to_string()),
         }
@@ -114,10 +112,8 @@ pub trait OpenAIChatCompletion: LanguageModel {
                 Part::ImageURL(url) => {
                     blocks.push(OpenAIContentBlock::image(url, None));
                 }
-                Part::ImageData(_, _) => {
-                    let base64_url = part
-                        .to_string()
-                        .expect("The base64 data url should not be None");
+                Part::ImageData { .. } => {
+                    let base64_url = part.to_string();
                     blocks.push(OpenAIContentBlock::image(base64_url, None));
                 }
                 _ => return Err("Invalid content type for user message".to_string()),

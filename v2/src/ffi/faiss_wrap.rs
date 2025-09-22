@@ -139,7 +139,7 @@ impl FaissIndexBuilder {
         FaissIndexBuilder {
             dimension,
             description: "IDMap2,Flat".to_owned(),
-            metric: FaissMetricType::InnerProduct,
+            metric: FaissMetricType::L2,
         }
     }
 

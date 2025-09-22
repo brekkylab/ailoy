@@ -19,9 +19,11 @@ async-trait = "0.1.89"
 base64 = "0.21"
 chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "master" }
 derive_builder = "0.20.2"
+downcast-rs = "2.0.2"
 futures = "0.3.31"
 gemini-rust = { git = "https://github.com/brekkylab/gemini-rust.git", branch = "main" }
 indexmap = { version = "2", features = ["serde"] }
+jsonschema = "0.33.0"
 mime-infer = "4.0.0"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
@@ -29,8 +31,8 @@ napi = { version = "3", features = ["tokio_rt"], optional = true }
 napi-derive = { version = "3", optional = true }
 openai-sdk-rs = { git = "https://github.com/brekkylab/openai-sdk-rs.git", rev = "1ff5111c25dfd89992f2de5990a67c869a092397" }
 ordered-float = { version = "5.0.0", features = ["serde"] }
-pyo3 = { version = "0.25", optional = true }
-pyo3-async-runtimes = { version = "0.25", features = ["attributes", "tokio-runtime"], optional = true }
+pyo3 = { version = "0.26", features = ["experimental-async"], optional = true }
+pyo3-async-runtimes = { version = "0.26", features = ["attributes", "tokio-runtime"], optional = true }
 pyo3-stub-gen = { version = "0.12.2", optional = true }
 pyo3-stub-gen-derive = { version = "0.12.2", optional = true }
 reqwest = { version = "0.12", features = ["json", "stream"] }
@@ -39,6 +41,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 sha1 = "0.10"
 strum = { version = "0.27", features = ["derive"] }
+strum_macros = "0.27.2"
 thiserror = "2.0.15"
 url = "2.5.4"
 

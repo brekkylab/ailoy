@@ -3,307 +3,270 @@ use std::str::FromStr;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyList, PyString},
+    types::{PyDict, PyString},
 };
 use pyo3_stub_gen::derive::*;
 
 use crate::{
-    ffi::py::base::PyWrapper,
-    value::{Message, MessageAggregator, MessageOutput, Part, Role},
+    ffi::py::base::{json_to_pydict, pydict_to_json},
+    value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc},
 };
-
-#[derive(Clone)]
-#[gen_stub_pyclass]
-#[pyclass(name = "Part")]
-pub struct PyPart {
-    inner: Part,
-}
-
-impl PyWrapper for PyPart {
-    type Inner = Part;
-
-    fn from_inner(inner: Self::Inner) -> Self {
-        Self { inner }
-    }
-}
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyPart {
-    /// Part(part_type, *, id=None, text=None, url=None, data=None, function=None)
-    ///
-    /// Examples:
-    /// - Part(part_type="text", text="hello")
-    /// - Part(part_type="image", url="https://example.com/cat.png")
-    /// - Part(part_type="image", data="<base64>", mime_type="image/jpeg")  # 'base64=' alias also accepted
-    /// - Part(part_type="function", function='{"name":"foo","arguments":"{}"}')
-    #[new]
-    #[pyo3(signature = (part_type, *, text=None, url=None, data=None, mime_type=None, function=None, id=None, name=None, arguments=None))]
-    fn new(
-        part_type: &str,
-        text: Option<String>,
-        url: Option<String>,
-        data: Option<String>,
-        mime_type: Option<String>,
-        function: Option<String>,
-        id: Option<String>,
-        name: Option<String>,
-        arguments: Option<String>,
-    ) -> PyResult<Self> {
-        let inner = match part_type {
-            "text" => Part::Text(text.ok_or_else(|| PyTypeError::new_err("text= required"))?),
-            "function" => {
-                if function.is_some() {
-                    Part::new_function_string(function.unwrap())
-                } else if name.is_some() || arguments.is_some() {
-                    Part::new_function(
-                        id.unwrap_or_default(),
-                        name.unwrap_or_default(),
-                        arguments.unwrap_or_default(),
-                    )
-                } else {
-                    Err(PyTypeError::new_err(
-                        "function= or name= or arguments= required",
-                    ))?
-                }
+impl Part {
+    fn __repr__(&self) -> String {
+        let s = match &self {
+            Part::Text(text) => format!("Text(\"{}\")", text),
+            Part::FunctionString(_) | Part::Function { .. } => {
+                format!("Function({})", self.to_string())
             }
-            "image" => {
-                if let Some(u) = url {
-                    Part::ImageURL(u)
-                } else if let Some(data) = data
-                    && let Some(mime_type) = mime_type
-                {
-                    Part::ImageData(data, mime_type)
-                } else {
-                    return Err(PyTypeError::new_err(
-                        "image needs url= or data= with mime_type=",
-                    ));
+            Part::ImageURL(url) => format!("ImageURL(\"{}\")", url),
+            Part::ImageData { .. } => {
+                let mut s = self.to_string();
+                if s.len() > 30 {
+                    s.truncate(30);
+                    s += "...";
                 }
+                format!("ImageData(\"{}\")", s)
             }
-            other => return Err(PyValueError::new_err(format!("unknown type: {other}"))),
         };
-        Ok(Self { inner })
+        format!("Part.{}", s)
     }
 
     #[getter]
     fn part_type(&self) -> &'static str {
-        match &self.inner {
+        match &self {
             Part::Text(_) => "text",
-            Part::FunctionString(_) => "function",
-            Part::Function { .. } => "function",
-            Part::ImageURL(_) | Part::ImageData(_, _) => "image",
-            // Part::AudioURL(_) | Part::AudioData(_) => "audio",
-            // Part::Audio { .. } => "audio",
+            Part::FunctionString(_) | Part::Function { .. } => "function",
+            Part::ImageURL(_) => "image_url",
+            Part::ImageData { .. } => "image_data",
         }
     }
 
     #[getter]
-    fn text(&self) -> Option<&str> {
-        match &self.inner {
-            Part::Text(s) => Some(s.as_str()),
+    fn text(&self) -> Option<String> {
+        match &self {
+            Part::Text(..) => Some(self.to_string()),
             _ => None,
         }
     }
 
     #[getter]
-    fn function(&self) -> Option<&str> {
-        match &self.inner {
-            Part::FunctionString(s) => Some(s.as_str()),
+    fn function(&self) -> Option<String> {
+        match &self {
+            Part::Function { .. } | Part::FunctionString(..) => Some(self.to_string()),
             _ => None,
         }
     }
 
     #[getter]
-    fn url(&self) -> Option<&str> {
-        match &self.inner {
-            Part::ImageURL(u) => Some(u.as_str()),
+    fn url(&self) -> Option<String> {
+        match &self {
+            Part::ImageURL(..) => Some(self.to_string()),
             _ => None,
         }
     }
 
     #[getter]
-    fn data(&self) -> Option<&str> {
-        match &self.inner {
-            Part::ImageData(b, _) => Some(b.as_str()),
+    fn data(&self) -> Option<String> {
+        match &self {
+            Part::ImageData { data, .. } => Some(data.clone()),
             _ => None,
         }
     }
 
     #[getter]
-    fn mime_type(&self) -> Option<&str> {
-        match &self.inner {
-            Part::ImageData(_, mime_type) => Some(mime_type.as_str()),
+    fn mime_type(&self) -> Option<String> {
+        match &self {
+            Part::ImageData { mime_type, .. } => Some(mime_type.clone()),
             _ => None,
         }
-    }
-
-    // #[staticmethod]
-    // fn from_json(s: &str) -> PyResult<Self> {
-    //     Ok(PyPart {
-    //         inner: serde_json::from_str::<Part>(s)
-    //             .map_err(|e| PyValueError::new_err(e.to_string()))?,
-    //     })
-    // }
-
-    // fn to_json(&self) -> PyResult<String> {
-    //     serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
-    // }
-
-    // fn __repr__(&self) -> PyResult<String> {
-    //     Ok(self.inner.to_string())
-    // }
-}
-
-#[derive(Clone)]
-#[gen_stub_pyclass]
-#[pyclass(name = "Message")]
-pub struct PyMessage {
-    pub inner: Message,
-}
-
-impl PyWrapper for PyMessage {
-    type Inner = Message;
-
-    fn from_inner(inner: Self::Inner) -> Self {
-        Self { inner }
     }
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyMessage {
-    /// Message(role: str)
-    /// role is one of: "system" | "user" | "assistant" | "tool"
+impl Message {
     #[new]
-    fn new(role: &str) -> PyResult<Self> {
-        let role = Role::from_str(role).map_err(|_| PyValueError::new_err(role.to_owned()))?;
-        Ok(Self {
-            inner: Message::with_role(role),
+    fn __new__() -> PyResult<Self> {
+        Ok(Self::default())
+    }
+
+    fn __repr__(&self) -> String {
+        self.to_string()
+    }
+
+    #[getter]
+    fn role(&self) -> Option<Role> {
+        self.role.clone()
+    }
+
+    #[setter]
+    fn set_role(
+        &mut self,
+        #[gen_stub(override_type(
+            type_repr = "Role | typing.Literal[\"system\",\"user\",\"assistant\",\"tool\"]"
+        ))]
+        role: Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        Python::attach(|py| {
+            if let Ok(role) = role.downcast::<PyString>() {
+                self.role = Some(
+                    Role::from_str(&role.to_string())
+                        .map_err(|e| PyValueError::new_err(e.to_string()))?,
+                );
+                Ok(())
+            } else if let Ok(role) = role.downcast::<Role>() {
+                self.role = Some(role.clone().unbind().borrow(py).clone());
+                Ok(())
+            } else {
+                return Err(PyTypeError::new_err("role should be either Role or str"));
+            }
         })
     }
 
     #[getter]
-    fn role(&self) -> PyResult<Option<String>> {
-        Ok(self.inner.role.as_ref().map(|r| r.to_string()))
-    }
-
-    #[getter]
-    fn content<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
-        PyList::new(
-            py,
-            self.inner
-                .contents
-                .clone()
-                .into_iter()
-                .map(|inner| PyPart { inner }),
-        )
+    fn contents(&self) -> Vec<Part> {
+        self.contents.clone()
     }
 
     #[setter]
-    fn set_content(&mut self, contents: Vec<PyPart>) {
-        self.inner.contents = contents.into_iter().map(|v| v.inner).collect();
+    fn set_contents(&mut self, contents: Vec<Part>) {
+        self.contents = contents;
     }
 
-    fn append_content(&mut self, part: PyPart) {
-        self.inner.contents.push(part.inner);
+    fn append_contents(&mut self, part: Part) {
+        self.contents.push(part);
     }
 
     #[getter]
-    fn reasoning<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
-        Ok(PyString::new(py, &self.inner.reasoning))
+    fn reasoning(&self) -> String {
+        self.reasoning.clone()
     }
 
     #[setter]
     fn set_reasoning(&mut self, reasoning: String) {
-        self.inner.reasoning = reasoning;
+        self.reasoning = reasoning;
     }
 
     #[getter]
-    fn tool_calls<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
-        PyList::new(
-            py,
-            self.inner
-                .tool_calls
-                .clone()
-                .into_iter()
-                .map(|inner| PyPart { inner }),
-        )
+    fn tool_calls(&self) -> Vec<Part> {
+        self.tool_calls.clone()
     }
 
     #[setter]
-    fn set_tool_calls(&mut self, tool_calls: Vec<PyPart>) {
-        self.inner.tool_calls = tool_calls.into_iter().map(|v| v.inner).collect();
+    fn set_tool_calls(&mut self, tool_calls: Vec<Part>) {
+        self.tool_calls = tool_calls;
     }
 
-    fn append_tool_call(&mut self, part: PyPart) {
-        self.inner.tool_calls.push(part.inner);
+    fn append_tool_call(&mut self, part: Part) {
+        self.tool_calls.push(part);
     }
 
-    // #[staticmethod]
-    // fn from_json(s: &str) -> PyResult<Self> {
-    //     Ok(PyMessage {
-    //         inner: serde_json::from_str::<Message>(s)
-    //             .map_err(|e| PyValueError::new_err(e.to_string()))?,
-    //     })
-    // }
-
-    // fn to_json(&self) -> PyResult<String> {
-    //     serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
-    // }
-
-    // fn __repr__(&self) -> PyResult<String> {
-    //     Ok(self.inner.to_string())
-    // }
-}
-
-#[derive(Clone)]
-#[gen_stub_pyclass]
-#[pyclass(name = "MessageOutput")]
-pub struct PyMessageOutput {
-    inner: MessageOutput,
-}
-
-impl PyWrapper for PyMessageOutput {
-    type Inner = MessageOutput;
-
-    fn from_inner(inner: Self::Inner) -> Self {
-        Self { inner }
+    #[getter]
+    fn tool_call_id(&self) -> Option<String> {
+        self.tool_call_id.clone()
     }
-}
 
-#[pymethods]
-impl PyMessageOutput {
-    // #[staticmethod]
-    // fn from_json(s: &str) -> PyResult<Self> {
-    //     Ok(PyMessageOutput {
-    //         inner: serde_json::from_str::<MessageOutput>(s)
-    //             .map_err(|e| PyValueError::new_err(e.to_string()))?,
-    //     })
-    // }
-
-    // fn to_json(&self) -> PyResult<String> {
-    //     serde_json::to_string(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
-    // }
-
-    fn __repr__(&self) -> PyResult<String> {
-        Ok(self.inner.to_string())
-    }
-}
-
-#[gen_stub_pyclass]
-#[pyclass(name = "MessageAggregator")]
-pub struct PyMessageAggregator {
-    inner: MessageAggregator,
-}
-
-impl PyWrapper for PyMessageAggregator {
-    type Inner = MessageAggregator;
-
-    fn from_inner(inner: Self::Inner) -> Self {
-        Self { inner }
+    #[setter]
+    fn set_tool_call_id(&mut self, tool_call_id: Option<String>) {
+        self.tool_call_id = tool_call_id;
     }
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyMessageAggregator {}
+impl MessageOutput {
+    fn __repr__(&self) -> String {
+        self.to_string()
+    }
+
+    #[getter]
+    fn delta(&self) -> Message {
+        self.delta.clone()
+    }
+
+    #[getter]
+    fn finish_reason(&self) -> Option<FinishReason> {
+        self.finish_reason.clone()
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl MessageAggregator {
+    #[new]
+    fn __new__() -> Self {
+        Self::new()
+    }
+
+    #[getter]
+    fn buffer(&self) -> Option<Message> {
+        self.buffer.clone()
+    }
+
+    #[pyo3(name = "update")]
+    fn update_(&mut self, msg_out: MessageOutput) -> Option<Message> {
+        self.update(msg_out)
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl ToolDesc {
+    #[new]
+    #[pyo3(signature = (name, description, parameters, *, returns=None))]
+    fn __new__(
+        py: Python<'_>,
+        name: String,
+        description: String,
+        parameters: Py<PyDict>,
+        returns: Option<Py<PyDict>>,
+    ) -> PyResult<Self> {
+        let parameters = serde_json::Value::Object(pydict_to_json(py, parameters.bind(py))?);
+        let returns = if let Some(returns) = returns {
+            Some(serde_json::Value::Object(pydict_to_json(
+                py,
+                returns.bind(py),
+            )?))
+        } else {
+            None
+        };
+        Self::new(name, description, parameters, returns).map_err(|e| PyValueError::new_err(e))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ToolDesc(name=\"{}\", description=\"{}\")",
+            self.name, self.description
+        )
+    }
+
+    #[getter]
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    #[getter]
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+
+    #[getter]
+    fn parameters<'py>(&self, py: Python<'py>) -> Bound<'py, PyDict> {
+        let json_value = serde_json::to_value(self.parameters.clone()).unwrap();
+        json_to_pydict(py, &json_value).unwrap().unwrap()
+    }
+
+    #[getter]
+    fn returns<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyDict>> {
+        match &self.returns {
+            Some(returns) => {
+                let json_value = serde_json::to_value(returns).unwrap();
+                Some(json_to_pydict(py, &json_value).unwrap().unwrap())
+            }
+            None => None,
+        }
+    }
+}
