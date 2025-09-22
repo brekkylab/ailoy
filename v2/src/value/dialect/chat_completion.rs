@@ -89,14 +89,24 @@ impl Marshal<Message> for ChatCompletionMarshal {
 
 impl Marshal<ToolDesc> for ChatCompletionMarshal {
     fn marshal(&mut self, item: &ToolDesc) -> Value {
-        to_value!({
-            "type": "function",
-            "function": {
-                "name": &item.name,
-                "description": &item.description,
-                "parameters": item.parameters.clone()
-            }
-        })
+        if let Some(desc) = &item.description {
+            to_value!({
+                "type": "function",
+                "function": {
+                    "name": &item.name,
+                    "description": desc,
+                    "parameters": item.parameters.clone()
+                }
+            })
+        } else {
+            to_value!({
+                "type": "function",
+                "function": {
+                    "name": &item.name,
+                    "parameters": item.parameters.clone()
+                }
+            })
+        }
     }
 }
 

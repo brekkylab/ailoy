@@ -92,38 +92,22 @@ mod tests {
         use futures::StreamExt;
 
         use super::*;
-        use crate::value::{Part, Role, ToolDesc, Value};
+        use crate::{
+            to_value,
+            value::{Part, Role, ToolDescBuilder},
+        };
 
         let mut model = SSELanguageModel::new("gpt-4.1", OPENAI_API_KEY);
         let tools = vec![
-            ToolDesc::new(
-                "temperature",
-                "Get current temperature",
-                Value::object([
-                    ("type", Value::string("object")),
-                    (
-                        "properties",
-                        Value::object([
-                            (
-                                "location",
-                                Value::object([
-                                    ("type", "string"),
-                                    ("description", "The city name"),
-                                ]),
-                            ),
-                            (
-                                "unit",
-                                Value::object([
-                                    ("type", Value::string("string")),
-                                    ("description", Value::string("The unit of temperature")),
-                                    ("enum", Value::array(["celcius", "fahrenheit"])),
-                                ]),
-                            ),
-                        ]),
-                    ),
-                ]),
-            )
-            .unwrap(),
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celcius", "farenheit"]}
+                    }
+                })).build(),
         ];
         let msgs = vec![Message::with_parts(
             Role::User,

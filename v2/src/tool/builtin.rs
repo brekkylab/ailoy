@@ -7,18 +7,15 @@ use ailoy_macros::multi_platform_async_trait;
 
 use crate::{
     tool::Tool,
-    value::{Part, ToolCallArg, ToolDesc},
+    utils::{MaybeSend, MaybeSync},
+    value::{Part, ToolDesc, Value},
 };
 
 #[derive(Clone)]
 pub struct BuiltinTool {
     desc: ToolDesc,
 
-    #[cfg(not(target_arch = "wasm32"))]
-    f: Arc<dyn Fn(ToolCallArg) -> Part + Send + Sync + 'static>,
-
-    #[cfg(target_arch = "wasm32")]
-    f: Arc<dyn Fn(ToolCallArg) -> Part + 'static>,
+    f: Arc<dyn Fn(Value) -> Vec<Part> + MaybeSend + MaybeSync + 'static>,
 }
 
 impl Debug for BuiltinTool {
@@ -31,16 +28,10 @@ impl Debug for BuiltinTool {
 }
 
 impl BuiltinTool {
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(
         desc: ToolDesc,
-        f: Arc<dyn Fn(ToolCallArg) -> Part + Send + Sync + 'static>,
+        f: Arc<dyn Fn(Value) -> Vec<Part> + MaybeSend + MaybeSync + 'static>,
     ) -> Self {
-        BuiltinTool { desc, f }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn new(desc: ToolDesc, f: Arc<dyn Fn(ToolCallArg) -> Part + 'static>) -> Self {
         BuiltinTool { desc, f }
     }
 }
@@ -51,9 +42,8 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    async fn run(&self, args: ToolCallArg) -> Result<Vec<Part>, String> {
-        let tool_func = self.f.clone();
-        Ok(vec![tool_func(args)])
+    async fn run(&self, args: Value) -> Result<Vec<Part>, String> {
+        Ok(self.f.clone()(args))
     }
 }
 
@@ -64,7 +54,10 @@ pub fn create_terminal_tool() -> BuiltinTool {
         process::{Command, Stdio},
     };
 
-    use crate::value::ToolDescArg;
+    use crate::{
+        to_value,
+        value::{ToolDescBuilder, Value},
+    };
 
     let current_shell = {
         #[cfg(target_family = "unix")]
@@ -76,81 +69,50 @@ pub fn create_terminal_tool() -> BuiltinTool {
             "powershell"
         }
     };
-
-    let desc = ToolDesc::new(
-        "execute_command",
-        format!(
+    let desc = ToolDescBuilder::new("execute_command")
+        .description(format!(
             "Executes a command on the current system using the default shell. Current shell: {}. \
             Optional fields: cwd (string), env (object), stdin (string)",
             current_shell
-        ),
-        ToolDescArg::new_object().with_properties(
-            [
-                (
-                    "command",
-                    ToolDescArg::new_string().with_desc("The command to execute."),
-                ),
-                (
-                    "cwd",
-                    ToolDescArg::new_string().with_desc("Optional working directory."),
-                ),
-                (
-                    "env",
-                    ToolDescArg::new_object()
-                        .with_desc("Optional environment variables as key-value pairs."),
-                ),
-                (
-                    "stdin",
-                    ToolDescArg::new_string().with_desc("Optional string to send to STDIN."),
-                ),
-            ],
-            ["command"],
-        ),
-        Some(ToolDescArg::new_object().with_properties(
-            [
-                (
-                    "stdout",
-                    ToolDescArg::new_string().with_desc("Captured STDOUT"),
-                ),
-                (
-                    "stderr",
-                    ToolDescArg::new_string().with_desc("Captured STDERR"),
-                ),
-                (
-                    "exit_code",
-                    ToolDescArg::new_number().with_desc("Process exit code"),
-                ),
-            ],
-            ["stdout", "stderr", "exit_code"],
-        )),
-    );
+        ))
+        .parameters(to_value!({
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The command to execute."},
+                "cwd": {"type": "string", "description": "Optional working directory."},
+                "env": {"type": "object", "description": "Optional environment variables as key-value pairs."},
+                "stdin": {"type": "string", "description": "Optional string to send to STDIN."},
+            },
+            "required": ["command"]
+        }))
+        .build();
 
-    let f = Arc::new(|args: ToolCallArg| {
+    let f = Arc::new(|args: Value| -> Vec<Part> {
         let args = match args.as_object() {
             Some(a) => a,
             None => {
-                return Part::Text(
-                    serde_json::json!({
+                return vec![Part::text_content(
+                    serde_json::to_string(&to_value!({
                         "stdout": "",
                         "stderr": "Invalid arguments: expected object",
-                        "exit_code": -1
-                    })
-                    .to_string(),
-                );
+                        "exit_code": -1 as i64
+                    }))
+                    .unwrap(),
+                )];
             }
         };
 
         let cmd_str = match args.get("command").and_then(|v| v.as_str()) {
             Some(s) => s,
             None => {
-                return Part::Text(
-                    serde_json::json!({
+                return vec![Part::text_content(
+                    serde_json::to_string(&to_value!({
                         "stdout": "",
                         "stderr": "Missing required 'command' string",
-                        "exit_code": -1
-                    })
-                    .to_string(),
-                );
+                        "exit_code": -1 as i64
+                    }))
+                    .unwrap(),
+                )];
             }
         };
 
@@ -201,7 +163,7 @@ pub fn create_terminal_tool() -> BuiltinTool {
         }
 
         // Run
-        let output = match command.spawn().and_then(|mut child| {
+        let value = match command.spawn().and_then(|mut child| {
             if let Some(input) = stdin_data {
                 if let Some(mut stdin) = child.stdin.take() {
                     use std::io::Write;
@@ -214,23 +176,23 @@ pub fn create_terminal_tool() -> BuiltinTool {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&out.stderr).to_string();
                 let code = out.status.code().unwrap_or(-1);
-                serde_json::json!({
+                to_value!({
                     "stdout": stdout,
                     "stderr": stderr,
-                    "exit_code": code
+                    "exit_code": code as i64
                 })
             }
             Err(e) => {
-                serde_json::json!({
+                to_value!({
                     "stdout": "",
                     "stderr": format!("failed to run command: {}", e),
-                    "exit_code": -1
+                    "exit_code": -1 as i64
                 })
             }
         };
 
         // Return
-        Part::Text(output.to_string())
+        vec![Part::text_content(serde_json::to_string(&value).unwrap())]
     });
 
     BuiltinTool { desc, f }

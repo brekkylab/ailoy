@@ -12,7 +12,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::{
     tool::{Tool, mcp::common::*},
-    value::{Part, ToolCallArg, ToolDesc},
+    value::{Part, ToolDesc, Value},
 };
 
 #[derive(Clone, Debug)]
@@ -45,7 +45,7 @@ impl MCPClient {
             .map(|t| MCPTool {
                 client: Arc::new(self.clone()),
                 name: t.name.to_string(),
-                desc: map_mcp_tool_to_tool_description(&t),
+                desc: map_mcp_tool_to_tool_description(t.clone()),
             })
             .collect())
     }
@@ -64,7 +64,7 @@ impl Tool for MCPTool {
         self.desc.clone()
     }
 
-    async fn run(&self, args: ToolCallArg) -> Result<Vec<Part>, String> {
+    async fn run(&self, args: Value) -> Result<Vec<Part>, String> {
         let tool_name = self.name.clone();
         let peer = self.client.service.clone();
 
@@ -83,7 +83,7 @@ impl Tool for MCPTool {
             .await
             .map_err(|e| format!("mcp call_tool failed: {e}"))?;
 
-        let parts = call_tool_result_to_parts(&result)
+        let parts = call_tool_result_to_parts(result)
             .map_err(|e| format!("call_tool_result_to_parts failed: {e}"))?;
         Ok(parts)
     }
@@ -123,10 +123,10 @@ pub async fn mcp_tools_from_streamable_http(
 
 #[cfg(test)]
 mod tests {
+    use crate::to_value;
+
     #[tokio::test]
     async fn run_stdio() -> anyhow::Result<()> {
-        use indexmap::IndexMap;
-
         use super::*;
         use onig::Regex;
         use rmcp::transport::ConfigureCommandExt;
@@ -143,20 +143,17 @@ mod tests {
         let tool_name = tool.desc.name.clone();
         assert_eq!(tool_name, "get_current_time");
 
-        let mut tool_call_args: IndexMap<String, Box<ToolCallArg>> = IndexMap::new();
-        tool_call_args.insert(
-            "timezone".into(),
-            Box::new(ToolCallArg::String("Asia/Seoul".into())),
-        );
-
-        let parts = tool.run(ToolCallArg::Object(tool_call_args)).await.unwrap();
+        let args = to_value!({
+            "timezone": "Asia/Seoul"
+        });
+        let parts = tool.run(args).await.unwrap();
         assert_eq!(parts.len(), 1);
 
         let part = parts[0].clone();
         assert_eq!(part.is_text(), true);
 
         let parsed_part: serde_json::Value =
-            serde_json::from_str(&part.to_string().unwrap()).unwrap();
+            serde_json::from_str(&part.as_text().unwrap()).unwrap();
         assert_eq!(parsed_part["timezone"].as_str(), Some("Asia/Seoul"));
         assert_eq!(parsed_part["is_dst"].as_bool(), Some(false));
         assert_eq!(
