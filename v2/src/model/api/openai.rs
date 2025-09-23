@@ -105,7 +105,7 @@ mod tests {
                     "type": "object",
                     "properties": {
                         "location": {"type": "string", "description": "The city name"},
-                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celcius", "farenheit"]}
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
                     }
                 })).build(),
         ];

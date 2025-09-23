@@ -9,81 +9,95 @@ use crate::{
 #[derive(Clone, Debug, Default)]
 pub struct ChatCompletionMarshal;
 
-impl Marshal<Message> for ChatCompletionMarshal {
-    fn marshal(&mut self, item: &Message) -> Value {
-        // Separate arrays for different categories of parts
-        let mut contents = Value::array_empty();
-        let mut tool_calls = Value::array_empty();
-        let mut refusal = Value::array_empty();
+fn marshal_message(item: &Message) -> Value {
+    // Separate arrays for different categories of parts
+    let mut contents = Value::array_empty();
+    let mut tool_calls = Value::array_empty();
+    let mut refusal = Value::array_empty();
 
-        // Encode each message part
-        for part in &item.parts {
-            match part {
-                Part::TextReasoning { .. } => {
-                    // ignore
-                }
-                Part::TextContent(s) => {
-                    let value = to_value!({"type": "text", "text": s});
-                    contents.as_array_mut().unwrap().push(value);
-                }
-                Part::ImageContent { .. } => {
-                    // Get image
-                    let img = part.as_image().unwrap();
-                    // Write PNG string
-                    let mut png_buf = Vec::new();
-                    img.write_to(
-                        &mut std::io::Cursor::new(&mut png_buf),
-                        image::ImageFormat::Png,
-                    )
+    // Encode each message part
+    for part in &item.parts {
+        match part {
+            Part::TextReasoning { .. } => {
+                // ignore
+            }
+            Part::TextContent(s) => {
+                let value = to_value!({"type": "text", "text": s});
+                contents.as_array_mut().unwrap().push(value);
+            }
+            Part::ImageContent { .. } => {
+                // Get image
+                let img = part.as_image().unwrap();
+                // Write PNG string
+                let mut png_buf = Vec::new();
+                img.write_to(
+                    &mut std::io::Cursor::new(&mut png_buf),
+                    image::ImageFormat::Png,
+                )
+                .unwrap();
+                // base64 encoding
+                let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
+                // TODO: cover mimetypes othen than image/png
+                let value = to_value!({"type": "image_url","image_url": {"url": format!("data:image/png;base64,{}", encoded)}});
+                contents.as_array_mut().unwrap().push(value);
+            }
+            Part::FunctionToolCall {
+                id,
+                name,
+                arguments,
+            } => {
+                let arguments_string = serde_json::to_string(arguments)
+                    .map_err(|_| String::from("Invald function"))
                     .unwrap();
-                    // base64 encoding
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
-                    // To value
-                    let value = to_value!({"type": "image_url", "image_url": {"url": encoded}});
-                    contents.as_array_mut().unwrap().push(value);
-                }
-                Part::FunctionToolCall {
-                    id,
-                    name,
-                    arguments,
-                } => {
-                    let arguments_string = serde_json::to_string(arguments)
-                        .map_err(|_| String::from("Invald function"))
-                        .unwrap();
-                    let mut value = to_value!({"type": "function", "function": {"name": name, "arguments": arguments_string}});
-                    if let Some(id) = id {
-                        value
-                            .as_object_mut()
-                            .unwrap()
-                            .insert("id".into(), id.into());
-                    };
-                    tool_calls.as_array_mut().unwrap().push(value);
-                }
-                Part::TextRefusal(s) => {
-                    let value = to_value!({"type": "text", "text": s});
-                    refusal.as_array_mut().unwrap().push(value);
-                }
-            };
-        }
+                let mut value = to_value!({"type": "function", "function": {"name": name, "arguments": arguments_string}});
+                if let Some(id) = id {
+                    value
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("id".into(), id.into());
+                };
+                tool_calls.as_array_mut().unwrap().push(value);
+            }
+            Part::TextRefusal(s) => {
+                let value = to_value!({"type": "text", "text": s});
+                refusal.as_array_mut().unwrap().push(value);
+            }
+        };
+    }
 
-        // Final message object with role and collected parts
-        let mut rv = to_value!({"role": item.role.to_string()});
-        if !contents.as_array().unwrap().is_empty() {
-            rv.as_object_mut()
-                .unwrap()
-                .insert("content".into(), contents);
-        }
-        if !tool_calls.as_array().unwrap().is_empty() {
-            rv.as_object_mut()
-                .unwrap()
-                .insert("tool_calls".into(), tool_calls);
-        }
-        if !refusal.as_array().unwrap().is_empty() {
-            rv.as_object_mut()
-                .unwrap()
-                .insert("refusal".into(), refusal);
-        }
-        rv
+    // Final message object with role and collected parts
+    let mut rv = to_value!({"role": item.role.to_string()});
+    if !contents.as_array().unwrap().is_empty() {
+        rv.as_object_mut()
+            .unwrap()
+            .insert("content".into(), contents);
+    }
+    if !tool_calls.as_array().unwrap().is_empty() {
+        rv.as_object_mut()
+            .unwrap()
+            .insert("tool_calls".into(), tool_calls);
+    }
+    if !refusal.as_array().unwrap().is_empty() {
+        rv.as_object_mut()
+            .unwrap()
+            .insert("refusal".into(), refusal);
+    }
+    rv
+}
+
+impl Marshal<Message> for ChatCompletionMarshal {
+    fn marshal(&mut self, msg: &Message) -> Value {
+        marshal_message(msg)
+    }
+}
+
+impl Marshal<Vec<Message>> for ChatCompletionMarshal {
+    fn marshal(&mut self, msgs: &Vec<Message>) -> Value {
+        Value::array(
+            msgs.iter()
+                .map(|msg| marshal_message(msg))
+                .collect::<Vec<_>>(),
+        )
     }
 }
 
@@ -233,13 +247,47 @@ mod tests {
     }
 
     #[test]
+    pub fn serialize_messages_with_reasonings() {
+        let mut msgs = vec![
+            Message::new(Role::User),
+            Message::new(Role::Assistant),
+            Message::new(Role::User),
+            Message::new(Role::Assistant),
+        ];
+        msgs[0].parts.push(Part::text_content("Hello there."));
+        msgs[0].parts.push(Part::text_content("How are you?"));
+
+        msgs[1].parts.push(Part::text_reasoning(
+            "This is reasoning text would be vanished.",
+        ));
+        msgs[1]
+            .parts
+            .push(Part::text_content("I'm fine, thank you. And you?"));
+
+        msgs[2].parts.push(Part::text_content("I'm okay."));
+
+        msgs[3].parts.push(Part::text_reasoning(
+            "This is reasoning text would be remaining.",
+        ));
+        msgs[3]
+            .parts
+            .push(Part::text_content("Is there anything I can help with?"));
+
+        let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","content":[{"type":"text","text":"Hello there."},{"type":"text","text":"How are you?"}]},{"role":"assistant","content":[{"type":"text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"text","text":"I'm okay."}]},{"role":"assistant","content":[{"type":"text","text":"Is there anything I can help with?"}]}]"#
+        );
+    }
+
+    #[test]
     pub fn serialize_function() {
         let mut msg = Message::new(Role::Assistant);
         msg.parts
             .push(Part::text_content("Calling the functions..."));
         msg.parts.push(Part::function_tool_call_with_id(
             "temperature",
-            Value::object([("unit", "celcius")]),
+            Value::object([("unit", "celsius")]),
             "funcid_123456",
         ));
         msg.parts.push(Part::function_tool_call_with_id(
@@ -250,7 +298,7 @@ mod tests {
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"assistant","content":[{"type":"text","text":"Calling the functions..."}],"tool_calls":[{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"celcius\"}"},"id":"funcid_123456"},{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"fahrenheit\"}"},"id":"funcid_7890ab"}]}"#
+            r#"{"role":"assistant","content":[{"type":"text","text":"Calling the functions..."}],"tool_calls":[{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"celsius\"}"},"id":"funcid_123456"},{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"fahrenheit\"}"},"id":"funcid_7890ab"}]}"#
         );
     }
 
@@ -270,7 +318,7 @@ mod tests {
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image_url","image_url":{"url":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
+            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
         );
     }
 
