@@ -9,101 +9,135 @@ use crate::{
 #[derive(Clone, Debug, Default)]
 pub struct GeminiMarshal;
 
+fn marshal_message(msg: &Message, include_reasoning: bool) -> Value {
+    let mut contents = Value::array_empty();
+    let mut tool_calls = Value::array_empty();
+    // let mut refusal = Value::array_empty();
+
+    // Encode each parts
+    for part in &msg.parts {
+        match part {
+            Part::TextReasoning { text, .. } => {
+                if include_reasoning {
+                    let value = to_value!({"text": text, "thought": true});
+                    contents.as_array_mut().unwrap().push(value);
+                }
+            }
+            Part::TextContent(s) => {
+                let value = to_value!({"text": s});
+                contents.as_array_mut().unwrap().push(value);
+            }
+            Part::ImageContent { .. } => {
+                // Get image
+                let img = part.as_image().unwrap();
+                // Write PNG string
+                let mut png_buf = Vec::new();
+                img.write_to(
+                    &mut std::io::Cursor::new(&mut png_buf),
+                    image::ImageFormat::Png,
+                )
+                .unwrap();
+                // base64 encoding
+                let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
+                let value = to_value!({"inline_data":{"mime_type": "image/png", "data": encoded}});
+                contents.as_array_mut().unwrap().push(value);
+            }
+            Part::FunctionToolCall {
+                id,
+                name,
+                arguments,
+            } => {
+                let mut call_obj_map: IndexMap<String, Value> = IndexMap::new();
+                call_obj_map.insert("name".to_owned(), name.into());
+                call_obj_map.insert("args".to_owned(), arguments.clone());
+                let mut value = Value::object([("functionCall", Value::object(call_obj_map))]);
+                if let Some(id) = id {
+                    value
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("id".into(), id.into());
+                };
+                tool_calls.as_array_mut().unwrap().push(value);
+            }
+            Part::TextRefusal(_s) => {
+                // let value = Value::object([("type", "text"), ("text", s.as_str())]);
+                // refusal.as_array_mut().unwrap().push(value);
+            }
+        };
+    }
+
+    // Final message object with role and collected parts
+    let mut rv = to_value!({"role": msg.role.to_string()});
+    let mut contents_vec: Vec<Value> = vec![];
+    if !contents.as_array().unwrap().is_empty() {
+        let parts_map: IndexMap<String, Value> = indexmap! {
+            "parts".to_owned() => contents,
+        };
+        contents_vec.push(Value::Object(parts_map));
+        // rv.as_object_mut().unwrap().insert(
+        //     "contents".into(),
+        //     Value::Array(vec![Value::Object(parts_map)]),
+        // );
+    }
+    if !tool_calls.as_array().unwrap().is_empty() {
+        let parts_map: IndexMap<String, Value> = indexmap! {
+            "parts".to_owned() => tool_calls,
+        };
+        contents_vec.push(Value::Object(parts_map));
+        // rv.as_object_mut().unwrap().insert(
+        //     "contents".into(),
+        //     Value::Array(vec![Value::Object(parts_map)]),
+        // );
+    }
+    // if !refusal.as_array().unwrap().is_empty() {
+    // }
+    rv.as_object_mut()
+        .unwrap()
+        .insert("contents".into(), Value::Array(contents_vec));
+    rv
+}
+
 impl Marshal<Message> for GeminiMarshal {
-    fn marshal(&mut self, item: &Message) -> Value {
-        let mut contents = Value::array_empty();
-        let mut tool_calls = Value::array_empty();
-        // let mut refusal = Value::array_empty();
+    fn marshal(&mut self, msg: &Message) -> Value {
+        marshal_message(msg, true)
+    }
+}
 
-        // Encode each parts
-        for part in &item.parts {
-            match part {
-                Part::TextReasoning { .. } => {
-                    // ignore
-                }
-                Part::TextContent(s) => {
-                    let value = to_value!({"text": s});
-                    contents.as_array_mut().unwrap().push(value);
-                }
-                Part::ImageContent { .. } => {
-                    // Get image
-                    let img = part.as_image().unwrap();
-                    // Write PNG string
-                    let mut png_buf = Vec::new();
-                    img.write_to(
-                        &mut std::io::Cursor::new(&mut png_buf),
-                        image::ImageFormat::Png,
-                    )
-                    .unwrap();
-                    // base64 encoding
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
-                    let value =
-                        to_value!({"inline_data":{"mime_type": "image/png", "data": encoded}});
-                    contents.as_array_mut().unwrap().push(value);
-                }
-                Part::FunctionToolCall {
-                    id,
-                    name,
-                    arguments,
-                } => {
-                    let mut call_obj_map: IndexMap<String, Value> = IndexMap::new();
-                    call_obj_map.insert("name".to_owned(), name.into());
-                    call_obj_map.insert("args".to_owned(), arguments.clone());
-                    let mut value = Value::object([("functionCall", Value::object(call_obj_map))]);
-                    if let Some(id) = id {
-                        value
-                            .as_object_mut()
-                            .unwrap()
-                            .insert("id".into(), id.into());
-                    };
-                    tool_calls.as_array_mut().unwrap().push(value);
-                }
-                Part::TextRefusal(_s) => {
-                    // let value = Value::object([("type", "text"), ("text", s.as_str())]);
-                    // refusal.as_array_mut().unwrap().push(value);
-                }
-            };
-        }
-
-        // Final message object with role and collected parts
-        let mut rv = to_value!({"role": item.role.to_string()});
-        let mut contents_vec: Vec<Value> = vec![];
-        if !contents.as_array().unwrap().is_empty() {
-            let parts_map: IndexMap<String, Value> = indexmap! {
-                "parts".to_owned() => contents,
-            };
-            contents_vec.push(Value::Object(parts_map));
-            // rv.as_object_mut().unwrap().insert(
-            //     "contents".into(),
-            //     Value::Array(vec![Value::Object(parts_map)]),
-            // );
-        }
-        if !tool_calls.as_array().unwrap().is_empty() {
-            let parts_map: IndexMap<String, Value> = indexmap! {
-                "parts".to_owned() => tool_calls,
-            };
-            contents_vec.push(Value::Object(parts_map));
-            // rv.as_object_mut().unwrap().insert(
-            //     "contents".into(),
-            //     Value::Array(vec![Value::Object(parts_map)]),
-            // );
-        }
-        // if !refusal.as_array().unwrap().is_empty() {
-        // }
-        rv.as_object_mut()
-            .unwrap()
-            .insert("contents".into(), Value::Array(contents_vec));
-        rv
+impl Marshal<Vec<Message>> for GeminiMarshal {
+    fn marshal(&mut self, msgs: &Vec<Message>) -> Value {
+        let last_user_index = msgs
+            .iter()
+            .rposition(|m| m.role == Role::User)
+            .unwrap_or_else(|| msgs.len());
+        Value::array(
+            msgs.iter()
+                .enumerate()
+                .map(|(i, msg)| marshal_message(msg, i > last_user_index))
+                .collect::<Vec<_>>(),
+        )
     }
 }
 
 impl Marshal<ToolDesc> for GeminiMarshal {
     fn marshal(&mut self, item: &ToolDesc) -> Value {
-        to_value!({
-            "name": &item.name,
-            "description": &item.description,
-            "parameters": item.parameters.clone()
-        })
+        if let Some(desc) = &item.description {
+            to_value!({
+                "type": "function",
+                "function": {
+                    "name": &item.name,
+                    "description": desc,
+                    "parameters": item.parameters.clone()
+                }
+            })
+        } else {
+            to_value!({
+                "type": "function",
+                "function": {
+                    "name": &item.name,
+                    "parameters": item.parameters.clone()
+                }
+            })
+        }
     }
 }
 
@@ -224,6 +258,41 @@ mod tests {
     }
 
     #[test]
+    pub fn serialize_messages_with_reasonings() {
+        let mut msgs = vec![
+            Message::new(Role::User),
+            Message::new(Role::Assistant),
+            Message::new(Role::User),
+            Message::new(Role::Assistant),
+        ];
+        msgs[0].parts.push(Part::text_content("Hello there."));
+        msgs[0].parts.push(Part::text_content("How are you?"));
+
+        msgs[1].parts.push(Part::text_reasoning(
+            "This is reasoning text would be vanished.",
+        ));
+        msgs[1]
+            .parts
+            .push(Part::text_content("I'm fine, thank you. And you?"));
+
+        msgs[2].parts.push(Part::text_content("I'm okay."));
+
+        msgs[3].parts.push(Part::text_reasoning(
+            "This is reasoning text would be remaining.",
+        ));
+        msgs[3]
+            .parts
+            .push(Part::text_content("Is there anything I can help with?"));
+
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&msgs);
+        println!("{}", serde_json::to_string(&marshaled).unwrap());
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","contents":[{"parts":[{"text":"Hello there."},{"text":"How are you?"}]}]},{"role":"assistant","contents":[{"parts":[{"text":"I'm fine, thank you. And you?"}]}]},{"role":"user","contents":[{"parts":[{"text":"I'm okay."}]}]},{"role":"assistant","contents":[{"parts":[{"text":"This is reasoning text would be remaining.","thought":true},{"text":"Is there anything I can help with?"}]}]}]"#
+        );
+    }
+
+    #[test]
     pub fn serialize_function() {
         let mut msg = Message::new(Role::Assistant);
         msg.parts.push(Part::function_tool_call(
@@ -252,7 +321,8 @@ mod tests {
         let mut msg = Message::new(Role::User);
         msg.parts
             .push(Part::text_content("What you can see in this image?"));
-        msg.parts.push(Part::image_content(3, 3, 1, raw_pixels));
+        msg.parts
+            .push(Part::image_content(3, 3, "grayscale", raw_pixels).unwrap());
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
