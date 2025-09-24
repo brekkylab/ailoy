@@ -21,15 +21,17 @@ tvm_embedding_model_t::tvm_embedding_model_t(CacheContents &contents,
     throw std::runtime_error("Cannot find embed function");
 }
 
-void tvm_embedding_model_t::postprocess_embedding_ndarray(
+void tvm_embedding_model_t::extract_ndarray_part(
     const tvm::runtime::NDArray &from, tvm::runtime::NDArray &to) {
   // from: F16 or F32 NDArray
   if (!(from.DataType().code() == kDLFloat &&
         (from.DataType().bits() == 16 || from.DataType().bits() == 32))) {
     throw std::runtime_error("Datatype of 'from' array is invalid.");
   }
-  // to: 1D F32 NDArray
-  if (!(to.DataType().code() == kDLFloat && to.DataType().bits() == 32 &&
+
+  // to: 1D NDArray with the same data type with 'from' array
+  if (!(to.DataType().code() == kDLFloat &&
+        (to.DataType().bits() == from.DataType().bits()) &&
         to.Shape().size() == 1)) {
     throw std::runtime_error("Datatype of 'to' array is invalid.");
   }
@@ -47,10 +49,18 @@ void tvm_embedding_model_t::postprocess_embedding_ndarray(
   }
 
   // process
-  auto to_data = static_cast<float *>(to.ToDLPack()->dl_tensor.data);
-  auto from_data = static_cast<float *>(from.ToDLPack()->dl_tensor.data);
-  for (size_t i = 0; i < to_size; i++) {
-    to_data[i] = from_data[i];
+  if (to.DataType().bits() == 16) {
+    auto to_data = static_cast<uint16_t *>(to.ToDLPack()->dl_tensor.data);
+    auto from_data = static_cast<uint16_t *>(from.ToDLPack()->dl_tensor.data);
+    for (size_t i = 0; i < to_size; i++) {
+      to_data[i] = from_data[i];
+    }
+  } else { // to.DataType().bits() == 32
+    auto to_data = static_cast<float *>(to.ToDLPack()->dl_tensor.data);
+    auto from_data = static_cast<float *>(from.ToDLPack()->dl_tensor.data);
+    for (size_t i = 0; i < to_size; i++) {
+      to_data[i] = from_data[i];
+    }
   }
 }
 
@@ -85,9 +95,10 @@ tvm_embedding_model_t::infer(std::vector<int> tokens) {
       logitsCurBatchOnGPU.Shape(), logitsCurBatchOnGPU.DataType(), cpu);
   logitsCurBatchOnCPU.CopyFrom(logitsCurBatchOnGPU);
 
-  NDArray processed_embedding = NDArray::Empty(
-      tvm::ffi::Shape{logitsCurBatchOnCPU.Shape().back()}, F32, cpu);
-  postprocess_embedding_ndarray(logitsCurBatchOnCPU, processed_embedding);
+  NDArray processed_embedding =
+      NDArray::Empty(tvm::ffi::Shape{logitsCurBatchOnCPU.Shape().back()},
+                     logitsCurBatchOnCPU.DataType(), cpu);
+  extract_ndarray_part(logitsCurBatchOnCPU, processed_embedding);
 
   return processed_embedding;
 }
