@@ -21,8 +21,8 @@ class tvm_embedding_model_t {
 public:
   tvm_embedding_model_t(CacheContents &contents, DLDevice device);
 
-  void postprocess_embedding_ndarray(const tvm::runtime::NDArray &from,
-                                     tvm::runtime::NDArray &to);
+  void extract_ndarray_part(const tvm::runtime::NDArray &from,
+                            tvm::runtime::NDArray &to);
 
   const tvm::runtime::NDArray infer(std::vector<int> tokens);
 
