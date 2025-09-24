@@ -8,25 +8,26 @@ use crate::{
 #[derive(Clone, Debug, Default)]
 pub struct OpenAIMarshal;
 
-fn marshal_message(msg: &Message, include_reasoning: bool) -> Value {
-    let mut contents = Value::array_empty();
-    let mut tool_calls = Value::array_empty();
-    let mut refusal = Value::array_empty();
-
-    // Encode each parts
-    for part in &msg.parts {
+fn marshal_message(msg: &Message, include_reasoning: bool) -> Vec<Value> {
+    let part_to_value = |part: &Part| -> Value {
         match part {
-            Part::TextReasoning { text, .. } => {
-                if include_reasoning {
-                    let value = to_value!({"type": "reasoning", "summary": [{"type": "summary_text","text": text}]});
-                    contents.as_array_mut().unwrap().push(value);
+            Part::Text(text) => to_value!({"type": "input_text", "text": text}),
+            Part::Function {
+                id,
+                name,
+                arguments,
+            } => {
+                let arguments_string = serde_json::to_string(arguments).unwrap();
+                if let Some(id) = id {
+                    to_value!({"type": "function_call", "call_id":id, "name": name, "arguments": arguments_string})
+                } else {
+                    to_value!({"type": "function_call", "name": name, "arguments": arguments_string})
                 }
             }
-            Part::TextContent(text) => {
-                let value = Value::object([("type", "input_text"), ("text", text.as_str())]);
-                contents.as_array_mut().unwrap().push(value);
+            Part::Value(value) => {
+                to_value!({"type": "input_text", "text": serde_json::to_string(value).unwrap()})
             }
-            Part::ImageContent { .. } => {
+            Part::Image { .. } => {
                 // Get image
                 let img = part.as_image().unwrap();
                 // Write PNG string
@@ -38,57 +39,25 @@ fn marshal_message(msg: &Message, include_reasoning: bool) -> Value {
                 .unwrap();
                 // base64 encoding
                 let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
-                let value = to_value!({"type": "input_image","image_url": {"url": format!("data:image/png;base64,{}", encoded)}});
-                contents.as_array_mut().unwrap().push(value);
+                // Final value
+                to_value!({"type": "input_image","image_url": {"url": format!("data:image/png;base64,{}", encoded)}})
             }
-            Part::FunctionToolCall {
-                id,
-                name,
-                arguments,
-            } => {
-                let arguments_string = serde_json::to_string(arguments)
-                    .map_err(|_| String::from("Invald function"))
-                    .unwrap();
-                let value = if let Some(id) = id {
-                    to_value!({"type": "function_call", "call_id":id, "name": name, "arguments": arguments_string})
-                } else {
-                    to_value!({"type": "function_call", "name": name, "arguments": arguments_string})
-                };
-                tool_calls.as_array_mut().unwrap().push(value);
-            }
-            Part::TextRefusal(s) => {
-                let value = Value::object([("type", "text"), ("text", s.as_str())]);
-                refusal.as_array_mut().unwrap().push(value);
-            }
-        };
-    }
-
-    let mut rv = Value::object_empty();
-
-    if !tool_calls.as_array().unwrap().is_empty() {
-        rv = tool_calls;
-    } else {
-        rv.as_object_mut()
-            .unwrap()
-            .insert("role".into(), msg.role.to_string().into());
-
-        if !contents.as_array().unwrap().is_empty() {
-            rv.as_object_mut()
-                .unwrap()
-                .insert("content".into(), contents);
         }
-        if !refusal.as_array().unwrap().is_empty() {
-            rv.as_object_mut()
-                .unwrap()
-                .insert("refusal".into(), refusal);
-        }
+    };
+    let mut rv = Vec::<Value>::new();
+    if !msg.think.is_empty() && include_reasoning {
+        rv.push(to_value!({"type": "reasoning", "summary": [{"type": "summary_text", "text": &msg.think}]}));
     }
+    if !msg.contents.is_empty() {
+        rv.push(to_value!({"role": msg.role.to_string(), "content": msg.contents.iter().map(part_to_value).collect::<Vec<_>>()}));
+    }
+    rv.extend(msg.tool_calls.iter().map(part_to_value));
     rv
 }
 
 impl Marshal<Message> for OpenAIMarshal {
     fn marshal(&mut self, msg: &Message) -> Value {
-        marshal_message(msg, true)
+        to_value!(marshal_message(msg, true))
     }
 }
 
@@ -102,6 +71,7 @@ impl Marshal<Vec<Message>> for OpenAIMarshal {
             msgs.iter()
                 .enumerate()
                 .map(|(i, msg)| marshal_message(msg, i > last_user_index))
+                .flatten()
                 .collect::<Vec<_>>(),
         )
     }
@@ -164,17 +134,21 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         rv.role = Some(v);
                     } else if let Some(ty) = val.pointer_as::<String>("/item/type")
                         && ty.as_str() == "function_call"
-                        && let call_id = val.pointer_as::<String>("/item/call_id")
+                        && let id = if let Some(id) = val.pointer_as::<String>("/item/call_id") {
+                            Some(id.to_owned())
+                        } else {
+                            None
+                        }
                         && let Some(name) = val.pointer_as::<String>("/item/name")
                         && let Some(arguments) = val.pointer_as::<String>("/item/arguments")
                     {
                         // tool call message
                         // r#"{"type":"response.output_item.added","item":{"type":"function_call","arguments":"","call_id":"call_DF3wZtLHv5eBNfURjvI8MULJ","name":"get_weather"}}"#
                         rv.role = Some(Role::Assistant);
-                        rv.parts.push(PartDelta::FunctionToolCall {
-                            id: call_id.cloned(),
-                            name: name.clone(),
-                            arguments: arguments.clone(),
+                        rv.tool_calls.push(PartDelta::Function {
+                            id,
+                            name: name.to_owned(),
+                            arguments: arguments.to_owned(),
                         });
                     }
                 }
@@ -193,7 +167,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                     let s = val
                         .pointer_as::<String>("/delta")
                         .ok_or_else(|| String::from("Output text delta should be a string"))?;
-                    rv.parts.push(PartDelta::TextContent(s.into()));
+                    rv.contents.push(PartDelta::Text(s.into()));
                 }
                 "response.output_text.done" => {
                     // r#"{"type":"response.output_text.done","text":"Hello world!"}"#,
@@ -209,10 +183,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                     let s = val.pointer_as::<String>("/delta").ok_or_else(|| {
                         String::from("Reasoning summary text delta should be a string")
                     })?;
-                    rv.parts.push(PartDelta::TextReasoning {
-                        text: s.into(),
-                        signature: None,
-                    });
+                    rv.think.push_str(s.as_str());
                 }
                 "response.reasoning_summary_text.done" => {
                     // r#"{"type":"response.reasoning_summary_text.done","text":"**Responding to a greeting**\n\nThe user just said, \"Hello!\" So, it seems I need to engage. I'll greet them back and offer help since they're looking to chat. I could say something like, \"Hello! How can I assist you today?\" That feels friendly and open. They didn't ask a specific question, so this approach will work well for starting a conversation. Let's see where it goes from there!"}"#
@@ -228,7 +199,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                     let s = val.pointer_as::<String>("/delta").ok_or_else(|| {
                         String::from("Function call argument delta should be a string")
                     })?;
-                    rv.parts.push(PartDelta::FunctionToolCall {
+                    rv.tool_calls.push(PartDelta::Function {
                         id: None,
                         name: "".to_owned(),
                         arguments: s.into(),
@@ -271,7 +242,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
         {
             if let Some(text) = contents.as_str() {
                 // Contents can be a single string
-                rv.parts.push(PartDelta::TextContent(text.into()));
+                rv.contents.push(PartDelta::Text(text.into()));
             } else if let Some(contents) = contents.as_array() {
                 // In case of part vector
                 for content in contents {
@@ -282,15 +253,17 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         let Some(text) = text.as_str() else {
                             return Err(String::from("Invalid content part"));
                         };
-                        rv.parts.push(PartDelta::TextContent(text.into()));
-                    } else if let Some(refusal) = content.get("refusal")
-                        && !refusal.is_null()
-                    {
-                        let Some(text) = refusal.as_str() else {
-                            return Err(String::from("Invalid refusal content"));
-                        };
-                        rv.parts.push(PartDelta::TextRefusal(text.into()));
-                    } else {
+                        rv.contents.push(PartDelta::Text(text.into()));
+                    }
+                    // else if let Some(refusal) = content.get("refusal")
+                    //     && !refusal.is_null()
+                    // {
+                    //     let Some(text) = refusal.as_str() else {
+                    //         return Err(String::from("Invalid refusal content"));
+                    //     };
+                    //     rv.parts.push(PartDelta::TextRefusal(text.into()));
+                    // }
+                    else {
                         return Err(String::from("Invalid part"));
                     }
                 }
@@ -305,10 +278,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
         {
             if let Some(text) = summary.as_str() {
                 // Can summary be a single string?
-                rv.parts.push(PartDelta::TextReasoning {
-                    text: text.into(),
-                    signature: None,
-                });
+                rv.think.push_str(text);
             } else if let Some(summary) = summary.as_array() {
                 // In case of part vector
                 for content in summary {
@@ -319,10 +289,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         let Some(text) = text.as_str() else {
                             return Err(String::from("Invalid content part"));
                         };
-                        rv.parts.push(PartDelta::TextReasoning {
-                            text: text.into(),
-                            signature: None,
-                        });
+                        rv.think.push_str(text);
                     } else {
                         return Err(String::from("Invalid part"));
                     }
@@ -348,7 +315,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                 Some(args) if args.is_string() => args.as_str().unwrap().to_owned(),
                 _ => String::new(),
             };
-            rv.parts.push(PartDelta::FunctionToolCall {
+            rv.tool_calls.push(PartDelta::Function {
                 id,
                 name,
                 arguments,
@@ -366,86 +333,56 @@ mod tests {
 
     #[test]
     pub fn serialize_text() {
-        let mut msg = Message::new(Role::User);
-        msg.parts
-            .push(Part::text_content("Explain me about Riemann hypothesis"));
-        msg.parts.push(Part::text_content(
-            "How cold brew is different from the normal coffee?",
-        ));
+        let msg = Message::new(Role::User)
+            .with_contents([Part::text("Explain me about Riemann hypothesis.")]);
         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","content":[{"type":"input_text","text":"Explain me about Riemann hypothesis"},{"type":"input_text","text":"How cold brew is different from the normal coffee?"}]}"#
+            r#"[{"role":"user","content":[{"type":"input_text","text":"Explain me about Riemann hypothesis."}]}]"#
         );
     }
 
     #[test]
     pub fn serialize_messages_with_reasonings() {
-        let mut msgs = vec![
-            Message::new(Role::User),
-            Message::new(Role::Assistant),
-            Message::new(Role::User),
-            Message::new(Role::Assistant),
+        let msgs = vec![
+            Message::new(Role::User).with_contents([Part::text("Hello there.")]),
+            Message::new(Role::Assistant)
+                .with_think_signature("This is reasoning text would be vanished.", "")
+                .with_contents([Part::text("I'm fine, thank you. And you?")]),
+            Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
+            Message::new(Role::Assistant)
+                .with_think_signature(
+                    "This is reasoning text would be remaining.",
+                    "Ev4MCkYIBxgCKkDl5A",
+                )
+                .with_contents([Part::text("Is there anything I can help with?")]),
         ];
-        msgs[0].parts.push(Part::text_content("Hello there."));
-        msgs[0].parts.push(Part::text_content("How are you?"));
-
-        msgs[1].parts.push(Part::text_reasoning(
-            "This is reasoning text would be vanished.",
-        ));
-        msgs[1]
-            .parts
-            .push(Part::text_content("I'm fine, thank you. And you?"));
-
-        msgs[2].parts.push(Part::text_content("I'm okay."));
-
-        msgs[3].parts.push(Part::text_reasoning(
-            "This is reasoning text would be remaining.",
-        ));
-        msgs[3]
-            .parts
-            .push(Part::text_content("Is there anything I can help with?"));
-
         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msgs);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"[{"role":"user","content":[{"type":"input_text","text":"Hello there."},{"type":"input_text","text":"How are you?"}]},{"role":"assistant","content":[{"type":"input_text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"input_text","text":"I'm okay."}]},{"role":"assistant","content":[{"type":"reasoning","summary":[{"type":"summary_text","text":"This is reasoning text would be remaining."}]},{"type":"input_text","text":"Is there anything I can help with?"}]}]"#
+            r#"[{"role":"user","content":[{"type":"input_text","text":"Hello there."}]},{"role":"assistant","content":[{"type":"input_text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"input_text","text":"I'm okay."}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"This is reasoning text would be remaining."}]},{"role":"assistant","content":[{"type":"input_text","text":"Is there anything I can help with?"}]}]"#
         );
     }
 
     #[test]
     pub fn serialize_function() {
-        let mut msg = Message::new(Role::Assistant);
-        msg.parts.push(Part::function_tool_call_with_id(
-            "temperature",
-            Value::object([("unit", "celsius")]),
-            "funcid_123456",
-        ));
-        msg.parts.push(Part::function_tool_call_with_id(
-            "temperature",
-            Value::object([("unit", "fahrenheit")]),
-            "funcid_7890ab",
-        ));
+        let msg = Message::new(Role::Assistant).with_tool_calls([
+            Part::function_with_id(
+                "funcid_123456",
+                "temperature",
+                Value::object([("unit", "celsius")]),
+            ),
+            Part::function_with_id(
+                "funcid_7890ab",
+                "temperature",
+                Value::object([("unit", "fahrenheit")]),
+            ),
+        ]);
         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
-        println!("{}", serde_json::to_string(&marshaled).unwrap());
-        println!(
-            "{}",
-            r#"[{"type":"function_call","call_id":"funcid_123456","name":"temperature","arguments":"{\"unit\":\"celsius\"}"},{"type":"function_call","call_id":"funcid_7890ab","name":"temperature","arguments":"{\"unit\":\"fahrenheit\"}"}]"#,
-        );
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"[{"type":"function_call","call_id":"funcid_123456","name":"temperature","arguments":"{\"unit\":\"celsius\"}"},{"type":"function_call","call_id":"funcid_7890ab","name":"temperature","arguments":"{\"unit\":\"fahrenheit\"}"}]"#
         );
-
-        // let mut msg = Message::new(Role::Assistant);
-
-        // let msgs = vec![msg];
-        // let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msgs);
-        // assert_eq!(
-        //     serde_json::to_string(&marshaled).unwrap(),
-        //     r#"[]"#
-        // );
-        // println!("{}", serde_json::to_string(&marshaled).unwrap());
     }
 
     #[test]
@@ -455,16 +392,14 @@ mod tests {
             40, 50, 60, // Second row
             70, 80, 90, // Third row
         ];
-
-        let mut msg = Message::new(Role::User);
-        msg.parts
-            .push(Part::text_content("What you can see in this image?"));
-        msg.parts
-            .push(Part::image_content(3, 3, "grayscale", raw_pixels).unwrap());
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("What you can see in this image?"),
+            Part::image(3, 3, "grayscale", raw_pixels).unwrap(),
+        ]);
         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","content":[{"type":"input_text","text":"What you can see in this image?"},{"type":"input_image","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
+            r#"[{"role":"user","content":[{"type":"input_text","text":"What you can see in this image?"},{"type":"input_image","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}]"#
         );
     }
 
@@ -482,10 +417,10 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 1);
         assert_eq!(delta.role, Some(Role::Assistant));
-        assert!(delta.parts[0].is_text());
-        assert_eq!(delta.parts[0].as_text().unwrap(), "Hello world!");
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
     }
 
     #[test]
@@ -508,10 +443,10 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 1);
         assert_eq!(delta.role, Some(Role::Assistant));
-        assert!(delta.parts[0].is_text());
-        assert_eq!(delta.parts[0].as_text().unwrap(), "Hello world!");
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
     }
 
     #[test]
@@ -529,15 +464,14 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 2);
         assert_eq!(delta.role, Some(Role::Assistant));
-        assert!(delta.parts[0].is_text());
         assert_eq!(
-            delta.parts[0].as_text().unwrap(),
+            delta.think,
             "**Answering a simple question**\n\nUser is saying hello."
         );
-        assert!(delta.parts[1].is_text());
-        assert_eq!(delta.parts[1].as_text().unwrap(), "Hello world!");
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
     }
 
     #[test]
@@ -565,15 +499,14 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 2);
         assert_eq!(delta.role, Some(Role::Assistant));
-        assert!(delta.parts[0].is_text());
         assert_eq!(
-            delta.parts[0].as_text().unwrap(),
+            delta.think,
             "**Answering a simple question**\n\nUser is saying hello."
         );
-        assert!(delta.parts[1].is_text());
-        assert_eq!(delta.parts[1].as_text().unwrap(), "Hello world!");
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
     }
 
     #[test]
@@ -590,9 +523,9 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 1);
-        assert!(delta.parts[0].is_function());
-        let (id, name, args) = delta.parts[0].as_function().unwrap();
+        assert_eq!(delta.tool_calls.len(), 1);
+        let tool_call = delta.tool_calls.pop().unwrap();
+        let (id, name, args) = tool_call.to_function().unwrap();
         assert_eq!(id.unwrap(), "call_DF3wZtLHv5eBNfURjvI8MULJ");
         assert_eq!(name, "get_weather");
         assert_eq!(args, "{\"location\":\"Paris, France\"}");
@@ -621,9 +554,9 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 1);
-        assert!(delta.parts[0].is_function());
-        let (id, name, args) = delta.parts[0].as_function().unwrap();
+        assert_eq!(delta.tool_calls.len(), 1);
+        let tool_call = delta.tool_calls.pop().unwrap();
+        let (id, name, args) = tool_call.to_function().unwrap();
         assert_eq!(id.unwrap(), "call_DF3wZtLHv5eBNfURjvI8MULJ");
         assert_eq!(name, "get_weather");
         assert_eq!(args, "{\"location\":\"Paris, France\"}");

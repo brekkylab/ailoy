@@ -20,21 +20,125 @@ pub enum Role {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    pub parts: Vec<Part>,
+    pub id: Option<String>,
+    pub think: String,
+    pub contents: Vec<Part>,
+    pub tool_calls: Vec<Part>,
+    pub signature: Option<String>,
 }
 
 impl Message {
     pub fn new(role: Role) -> Self {
         Self {
             role,
-            parts: Vec::new(),
+            id: None,
+            think: String::new(),
+            contents: Vec::new(),
+            tool_calls: Vec::new(),
+            signature: None,
         }
     }
 
-    pub fn with_parts(role: Role, parts: impl IntoIterator<Item = impl Into<Part>>) -> Self {
+    pub fn with_id(self, id: impl Into<String>) -> Self {
+        let id = Some(id.into());
+        let Self {
+            role,
+            think,
+            contents,
+            tool_calls,
+            signature,
+            ..
+        } = self;
         Self {
             role,
-            parts: parts.into_iter().map(|v| v.into()).collect(),
+            id,
+            think,
+            contents,
+            tool_calls,
+            signature,
+        }
+    }
+
+    pub fn with_think(self, think: impl Into<String>) -> Self {
+        let think = think.into();
+        let Self {
+            role,
+            id,
+            contents,
+            tool_calls,
+            signature,
+            ..
+        } = self;
+        Self {
+            role,
+            id,
+            think,
+            contents,
+            tool_calls,
+            signature,
+        }
+    }
+
+    pub fn with_think_signature(
+        self,
+        think: impl Into<String>,
+        signature: impl Into<String>,
+    ) -> Self {
+        let think = think.into();
+        let Self {
+            role,
+            id,
+            contents,
+            tool_calls,
+            ..
+        } = self;
+        Self {
+            role,
+            id,
+            think,
+            contents,
+            tool_calls,
+            signature: Some(signature.into()),
+        }
+    }
+
+    pub fn with_contents(self, contents: impl IntoIterator<Item = impl Into<Part>>) -> Self {
+        let contents = contents.into_iter().map(|v| v.into()).collect();
+        let Self {
+            role,
+            id,
+            think,
+            tool_calls,
+            signature,
+            ..
+        } = self;
+        Self {
+            role,
+            id,
+            think,
+            contents,
+            tool_calls,
+            signature,
+        }
+    }
+
+    pub fn with_tool_calls(self, tool_calls: impl IntoIterator<Item = impl Into<Part>>) -> Self {
+        let tool_calls = tool_calls.into_iter().map(|v| v.into()).collect();
+        let Self {
+            role,
+            id,
+            think,
+            contents,
+            signature,
+            ..
+        } = self;
+        Self {
+            role,
+            id,
+            think,
+            contents,
+            tool_calls,
+            signature,
         }
     }
 }
@@ -42,7 +146,11 @@ impl Message {
 #[derive(Clone, Debug, Default)]
 pub struct MessageDelta {
     pub role: Option<Role>,
-    pub parts: Vec<PartDelta>,
+    pub id: Option<String>,
+    pub think: String,
+    pub contents: Vec<PartDelta>,
+    pub tool_calls: Vec<PartDelta>,
+    pub signature: Option<String>,
 }
 
 impl MessageDelta {
@@ -61,7 +169,11 @@ impl Delta for MessageDelta {
     fn aggregate(self, other: Self) -> Result<Self, ()> {
         let Self {
             mut role,
-            mut parts,
+            mut id,
+            mut think,
+            mut contents,
+            mut tool_calls,
+            mut signature,
         } = self;
 
         // Merge role
@@ -75,56 +187,110 @@ impl Delta for MessageDelta {
             role = Some(rhs);
         };
 
-        // Merge parts
-        for part_new in other.parts {
-            if let Some(last) = parts.last() {
-                // Aggregate parts if same type
-                match (last, &part_new) {
-                    (PartDelta::TextReasoning { .. }, PartDelta::TextReasoning { .. })
-                    | (PartDelta::TextContent { .. }, PartDelta::TextContent { .. }) => {
-                        let part_updated = parts.pop().unwrap().aggregate(part_new)?;
-                        parts.push(part_updated);
+        // Merge ID
+        if let Some(id_incoming) = other.id {
+            id = Some(id_incoming);
+        }
+
+        // Merge think
+        if !other.think.is_empty() {
+            think.push_str(&other.think);
+        }
+
+        // Merge content
+        for part_incoming in other.contents {
+            if let Some(part_last) = contents.last() {
+                match (part_last, &part_incoming) {
+                    (PartDelta::Text(..), PartDelta::Text(..))
+                    | (PartDelta::VerbatimFunction(..), PartDelta::VerbatimFunction(..))
+                    | (PartDelta::Function { .. }, PartDelta::Function { .. }) => {
+                        let v = contents.pop().unwrap().aggregate(part_incoming)?;
+                        contents.push(v);
                     }
-                    (
-                        PartDelta::FunctionToolCall { id: id1, .. },
-                        PartDelta::FunctionToolCall { id: id2, .. },
-                    ) => {
-                        match (id1, id2) {
-                            // If ID is different, push as a new pert
-                            (Some(lhs), Some(rhs)) if lhs != rhs => {
-                                parts.push(part_new);
-                            }
-                            // Otherwise aggregate
-                            _ => {
-                                let part_updated = parts.pop().unwrap().aggregate(part_new)?;
-                                parts.push(part_updated);
-                            }
-                        };
-                    }
-                    _ => {
-                        parts.push(part_new);
-                    }
+                    _ => contents.push(part_incoming),
                 }
             } else {
-                parts.push(part_new);
+                contents.push(part_incoming);
             }
         }
 
+        // Merge tool calls
+        for part_incoming in other.tool_calls {
+            if let Some(part_last) = tool_calls.last() {
+                match (part_last, &part_incoming) {
+                    (PartDelta::Text(..), PartDelta::Text(..))
+                    | (PartDelta::VerbatimFunction(..), PartDelta::VerbatimFunction(..)) => {
+                        let v = tool_calls.pop().unwrap().aggregate(part_incoming)?;
+                        tool_calls.push(v);
+                    }
+                    (PartDelta::Function { id: id1, .. }, PartDelta::Function { id: id2, .. }) => {
+                        if let Some(id1) = id1
+                            && let Some(id2) = id2
+                            && id1 != id2
+                        {
+                            tool_calls.push(part_incoming);
+                        } else {
+                            let v = tool_calls.pop().unwrap().aggregate(part_incoming)?;
+                            tool_calls.push(v);
+                        }
+                    }
+                    _ => tool_calls.push(part_incoming),
+                }
+            } else {
+                tool_calls.push(part_incoming);
+            }
+        }
+
+        // Merge signature
+        if let Some(sig_incoming) = other.signature {
+            signature = Some(sig_incoming);
+        }
+
         // Return
-        Ok(Self { role, parts })
+        Ok(Self {
+            role,
+            think,
+            id,
+            contents,
+            tool_calls,
+            signature,
+        })
     }
 
     fn finish(self) -> Result<Self::Item, String> {
-        let Some(role) = self.role else {
+        let Self {
+            role,
+            id,
+            think,
+            mut contents,
+            mut tool_calls,
+            signature,
+        } = self;
+
+        let Some(role) = role else {
             return Err("Role not specified".to_owned());
+        };
+        let contents = {
+            let mut contents_new = Vec::with_capacity(contents.len());
+            for v in contents.drain(..) {
+                contents_new.push(v.finish()?);
+            }
+            contents_new
+        };
+        let tool_calls = {
+            let mut tool_calls_new = Vec::with_capacity(tool_calls.len());
+            for v in tool_calls.drain(..) {
+                tool_calls_new.push(v.finish()?);
+            }
+            tool_calls_new
         };
         Ok(Message {
             role,
-            parts: self
-                .parts
-                .into_iter()
-                .map(|v| v.finish().unwrap())
-                .collect(),
+            id,
+            think,
+            contents,
+            tool_calls,
+            signature,
         })
     }
 }

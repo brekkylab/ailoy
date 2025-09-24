@@ -10,22 +10,27 @@ use crate::{
 pub struct ChatCompletionMarshal;
 
 fn marshal_message(item: &Message) -> Value {
-    // Separate arrays for different categories of parts
-    let mut contents = Value::array_empty();
-    let mut tool_calls = Value::array_empty();
-    let mut refusal = Value::array_empty();
-
-    // Encode each message part
-    for part in &item.parts {
+    let part_to_value = |part: &Part| -> Value {
         match part {
-            Part::TextReasoning { .. } => {
-                // ignore
+            Part::Text(v) => to_value!({"type": "text", "text": v}),
+            Part::Function {
+                id,
+                name,
+                arguments,
+            } => {
+                let mut value = to_value!({"type": "function", "function": {"name": name, "arguments": serde_json::to_string(&arguments).unwrap()}});
+                if let Some(id) = &id {
+                    value
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("id".into(), id.into());
+                }
+                value
             }
-            Part::TextContent(s) => {
-                let value = to_value!({"type": "text", "text": s});
-                contents.as_array_mut().unwrap().push(value);
+            Part::Value(v) => {
+                to_value!({"type": "text", "text": serde_json::to_string(&v).unwrap()})
             }
-            Part::ImageContent { .. } => {
+            Part::Image { .. } => {
                 // Get image
                 let img = part.as_image().unwrap();
                 // Write PNG string
@@ -37,50 +42,39 @@ fn marshal_message(item: &Message) -> Value {
                 .unwrap();
                 // base64 encoding
                 let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
-                // TODO: cover mimetypes othen than image/png
-                let value = to_value!({"type": "image_url","image_url": {"url": format!("data:image/png;base64,{}", encoded)}});
-                contents.as_array_mut().unwrap().push(value);
+                // To value
+                to_value!({"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{}", encoded)}})
             }
-            Part::FunctionToolCall {
-                id,
-                name,
-                arguments,
-            } => {
-                let arguments_string = serde_json::to_string(arguments)
-                    .map_err(|_| String::from("Invald function"))
-                    .unwrap();
-                let mut value = to_value!({"type": "function", "function": {"name": name, "arguments": arguments_string}});
-                if let Some(id) = id {
-                    value
-                        .as_object_mut()
-                        .unwrap()
-                        .insert("id".into(), id.into());
-                };
-                tool_calls.as_array_mut().unwrap().push(value);
-            }
-            Part::TextRefusal(s) => {
-                let value = to_value!({"type": "text", "text": s});
-                refusal.as_array_mut().unwrap().push(value);
-            }
-        };
-    }
+        }
+    };
 
-    // Final message object with role and collected parts
     let mut rv = to_value!({"role": item.role.to_string()});
-    if !contents.as_array().unwrap().is_empty() {
+    if item.role == Role::Tool
+        && let Some(id) = &item.id
+    {
         rv.as_object_mut()
             .unwrap()
-            .insert("content".into(), contents);
+            .insert("tool_call_id".into(), id.into());
     }
-    if !tool_calls.as_array().unwrap().is_empty() {
-        rv.as_object_mut()
-            .unwrap()
-            .insert("tool_calls".into(), tool_calls);
+    if !item.contents.is_empty() {
+        rv.as_object_mut().unwrap().insert(
+            "content".into(),
+            item.contents
+                .iter()
+                .map(part_to_value)
+                .collect::<Vec<_>>()
+                .into(),
+        );
     }
-    if !refusal.as_array().unwrap().is_empty() {
-        rv.as_object_mut()
-            .unwrap()
-            .insert("refusal".into(), refusal);
+    if !item.tool_calls.is_empty() {
+        rv.as_object_mut().unwrap().insert(
+            "tool_calls".into(),
+            item.tool_calls
+                .iter()
+                .map(part_to_value)
+                .collect::<Vec<_>>()
+                .into(),
+        );
     }
     rv
 }
@@ -156,7 +150,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
         {
             if let Some(text) = contents.as_str() {
                 // Simple string case
-                rv.parts.push(PartDelta::TextContent(text.into()));
+                rv.contents.push(PartDelta::Text(text.into()));
             } else if let Some(contents) = contents.as_array() {
                 // Multiple content parts
                 for content in contents {
@@ -167,7 +161,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
                         let Some(text) = text.as_str() else {
                             return Err(String::from("Invalid content part"));
                         };
-                        rv.parts.push(PartDelta::TextContent(text.into()));
+                        rv.contents.push(PartDelta::Text(text.into()));
                     } else {
                         return Err(String::from("Invalid part"));
                     }
@@ -202,7 +196,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
                             Some(args) if args.is_string() => args.as_str().unwrap().to_owned(),
                             _ => String::new(),
                         };
-                        rv.parts.push(PartDelta::FunctionToolCall {
+                        rv.tool_calls.push(PartDelta::Function {
                             id,
                             name,
                             arguments,
@@ -214,14 +208,6 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
             }
         };
 
-        // Parse `refusal` field (may be null or string)
-        if let Some(refusal) = root.get("refusal")
-            && !refusal.is_null()
-        {
-            if let Some(text) = refusal.as_str() {
-                rv.parts.push(PartDelta::TextRefusal(text.into()));
-            }
-        };
         Ok(rv)
     }
 }
@@ -233,12 +219,10 @@ mod tests {
 
     #[test]
     pub fn serialize_text() {
-        let mut msg = Message::new(Role::User);
-        msg.parts
-            .push(Part::text_content("Explain me about Riemann hypothesis."));
-        msg.parts.push(Part::text_content(
-            "How cold brew is different from the normal coffee?",
-        ));
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("Explain me about Riemann hypothesis."),
+            Part::text("How cold brew is different from the normal coffee?"),
+        ]);
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
@@ -248,31 +232,17 @@ mod tests {
 
     #[test]
     pub fn serialize_messages_with_reasonings() {
-        let mut msgs = vec![
-            Message::new(Role::User),
-            Message::new(Role::Assistant),
-            Message::new(Role::User),
-            Message::new(Role::Assistant),
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("Hello there."), Part::text("How are you?")]),
+            Message::new(Role::Assistant)
+                .with_think("This is reasoning text would be vanished.")
+                .with_contents([Part::text("I'm fine, thank you. And you?")]),
+            Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
+            Message::new(Role::Assistant)
+                .with_think("This is reasoning text would be remaining.")
+                .with_contents([Part::text("Is there anything I can help with?")]),
         ];
-        msgs[0].parts.push(Part::text_content("Hello there."));
-        msgs[0].parts.push(Part::text_content("How are you?"));
-
-        msgs[1].parts.push(Part::text_reasoning(
-            "This is reasoning text would be vanished.",
-        ));
-        msgs[1]
-            .parts
-            .push(Part::text_content("I'm fine, thank you. And you?"));
-
-        msgs[2].parts.push(Part::text_content("I'm okay."));
-
-        msgs[3].parts.push(Part::text_reasoning(
-            "This is reasoning text would be remaining.",
-        ));
-        msgs[3]
-            .parts
-            .push(Part::text_content("Is there anything I can help with?"));
-
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msgs);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
@@ -282,19 +252,20 @@ mod tests {
 
     #[test]
     pub fn serialize_function() {
-        let mut msg = Message::new(Role::Assistant);
-        msg.parts
-            .push(Part::text_content("Calling the functions..."));
-        msg.parts.push(Part::function_tool_call_with_id(
-            "temperature",
-            Value::object([("unit", "celsius")]),
-            "funcid_123456",
-        ));
-        msg.parts.push(Part::function_tool_call_with_id(
-            "temperature",
-            Value::object([("unit", "fahrenheit")]),
-            "funcid_7890ab",
-        ));
+        let msg = Message::new(Role::Assistant)
+            .with_contents([Part::text("Calling the functions...")])
+            .with_tool_calls([
+                Part::function_with_id(
+                    "funcid_123456",
+                    "temperature",
+                    Value::object([("unit", "celsius")]),
+                ),
+                Part::function_with_id(
+                    "funcid_7890ab",
+                    "temperature",
+                    Value::object([("unit", "fahrenheit")]),
+                ),
+            ]);
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
@@ -309,12 +280,10 @@ mod tests {
             40, 50, 60, // Second row
             70, 80, 90, // Third row
         ];
-
-        let mut msg = Message::new(Role::User);
-        msg.parts
-            .push(Part::text_content("What you can see in this image?"));
-        msg.parts
-            .push(Part::image_content(3, 3, "grayscale", raw_pixels).unwrap());
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("What you can see in this image?"),
+            Part::image(3, 3, "grayscale", raw_pixels).unwrap(),
+        ]);
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
@@ -338,10 +307,10 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 1);
         assert_eq!(delta.role, Some(Role::Assistant));
-        assert!(delta.parts[0].is_text());
-        assert_eq!(delta.parts[0].as_text().unwrap(), "Hello world!");
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
     }
 
     #[test]
@@ -365,9 +334,10 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 1);
-        assert!(delta.parts[0].is_function());
-        let (id, name, args) = delta.parts[0].as_function().unwrap();
+        assert_eq!(delta.tool_calls.len(), 1);
+        let tool_call = delta.tool_calls.pop().unwrap();
+        assert!(tool_call.is_function());
+        let (id, name, args) = tool_call.to_function().unwrap();
         assert_eq!(id.unwrap(), "call_DdmO9pD3xa9XTPNJ32zg2hcA");
         assert_eq!(name, "get_weather");
         assert_eq!(args, "{\"location\":\"Paris, France\"}");
@@ -400,15 +370,16 @@ mod tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
+            println!("{:?}", cur_delta);
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 2);
-        assert!(delta.parts[0].is_function());
-        let (id, name, args) = delta.parts[0].as_function().unwrap();
+        assert_eq!(delta.tool_calls.len(), 2);
+        assert!(delta.tool_calls[0].is_function());
+        let (id, name, args) = delta.tool_calls[0].clone().to_function().unwrap();
         assert_eq!(id.unwrap(), "call_DdmO9pD3xa9XTPNJ32zg2hcA");
         assert_eq!(name, "get_temperature");
         assert_eq!(args, "{\"location\":\"Paris, France\"}");
-        let (id, name, args) = delta.parts[1].as_function().unwrap();
+        let (id, name, args) = delta.tool_calls[1].clone().to_function().unwrap();
         assert_eq!(id.unwrap(), "call_ABCDEF1234");
         assert_eq!(name, "get_wind_speed");
         assert_eq!(args, "{\"location\":\"Dubai, Qatar\"}");

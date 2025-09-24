@@ -1,5 +1,5 @@
 use base64::Engine;
-use indexmap::{IndexMap, indexmap};
+use indexmap::IndexMap;
 
 use crate::{
     to_value,
@@ -9,25 +9,28 @@ use crate::{
 #[derive(Clone, Debug, Default)]
 pub struct GeminiMarshal;
 
-fn marshal_message(msg: &Message, include_reasoning: bool) -> Value {
-    let mut contents = Value::array_empty();
-    let mut tool_calls = Value::array_empty();
-    // let mut refusal = Value::array_empty();
-
-    // Encode each parts
-    for part in &msg.parts {
+fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
+    let part_to_value = |part: &Part| -> Value {
         match part {
-            Part::TextReasoning { text, .. } => {
-                if include_reasoning {
-                    let value = to_value!({"text": text, "thought": true});
-                    contents.as_array_mut().unwrap().push(value);
+            Part::Text(s) => {
+                to_value!({"text": s})
+            }
+            Part::Function {
+                id,
+                name,
+                arguments,
+            } => {
+                let mut value =
+                    to_value!({"functionCall": {"name": name, "args": arguments.clone()}});
+                if let Some(id) = id {
+                    value
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("id".into(), id.into());
                 }
+                value
             }
-            Part::TextContent(s) => {
-                let value = to_value!({"text": s});
-                contents.as_array_mut().unwrap().push(value);
-            }
-            Part::ImageContent { .. } => {
+            Part::Image { .. } => {
                 // Get image
                 let img = part.as_image().unwrap();
                 // Write PNG string
@@ -39,62 +42,23 @@ fn marshal_message(msg: &Message, include_reasoning: bool) -> Value {
                 .unwrap();
                 // base64 encoding
                 let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
-                let value = to_value!({"inline_data":{"mime_type": "image/png", "data": encoded}});
-                contents.as_array_mut().unwrap().push(value);
+                // Final value
+                to_value!({"inline_data": {"mime_type": "image/png", "data": encoded}})
             }
-            Part::FunctionToolCall {
-                id,
-                name,
-                arguments,
-            } => {
-                let mut call_obj_map: IndexMap<String, Value> = IndexMap::new();
-                call_obj_map.insert("name".to_owned(), name.into());
-                call_obj_map.insert("args".to_owned(), arguments.clone());
-                let mut value = Value::object([("functionCall", Value::object(call_obj_map))]);
-                if let Some(id) = id {
-                    value
-                        .as_object_mut()
-                        .unwrap()
-                        .insert("id".into(), id.into());
-                };
-                tool_calls.as_array_mut().unwrap().push(value);
-            }
-            Part::TextRefusal(_s) => {
-                // let value = Value::object([("type", "text"), ("text", s.as_str())]);
-                // refusal.as_array_mut().unwrap().push(value);
-            }
-        };
+            Part::Value(v) => v.to_owned(),
+        }
+    };
+
+    // Collecting contents
+    let mut parts = Vec::<Value>::new();
+    if !msg.think.is_empty() && include_thinking {
+        parts.push(to_value!({"text": msg.think.clone(), "thought": true}));
     }
+    parts.extend(msg.contents.iter().map(part_to_value));
+    parts.extend(msg.tool_calls.iter().map(part_to_value));
 
     // Final message object with role and collected parts
-    let mut rv = to_value!({"role": msg.role.to_string()});
-    let mut contents_vec: Vec<Value> = vec![];
-    if !contents.as_array().unwrap().is_empty() {
-        let parts_map: IndexMap<String, Value> = indexmap! {
-            "parts".to_owned() => contents,
-        };
-        contents_vec.push(Value::Object(parts_map));
-        // rv.as_object_mut().unwrap().insert(
-        //     "contents".into(),
-        //     Value::Array(vec![Value::Object(parts_map)]),
-        // );
-    }
-    if !tool_calls.as_array().unwrap().is_empty() {
-        let parts_map: IndexMap<String, Value> = indexmap! {
-            "parts".to_owned() => tool_calls,
-        };
-        contents_vec.push(Value::Object(parts_map));
-        // rv.as_object_mut().unwrap().insert(
-        //     "contents".into(),
-        //     Value::Array(vec![Value::Object(parts_map)]),
-        // );
-    }
-    // if !refusal.as_array().unwrap().is_empty() {
-    // }
-    rv.as_object_mut()
-        .unwrap()
-        .insert("contents".into(), Value::Array(contents_vec));
-    rv
+    to_value!({"role": msg.role.to_string(), "contents": [{"parts": parts}]})
 }
 
 impl Marshal<Message> for GeminiMarshal {
@@ -189,12 +153,9 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                             return Err(String::from("Invalid content part"));
                         };
                         if thought {
-                            rv.parts.push(PartDelta::TextReasoning {
-                                text: text.into(),
-                                signature: None,
-                            });
+                            rv.think = text.into();
                         } else {
-                            rv.parts.push(PartDelta::TextContent(text.into()));
+                            rv.contents.push(PartDelta::Text(text.into()));
                         }
                     } else if let Some(tool_call_obj) = part.get("functionCall") {
                         let Some(tool_call_obj) = tool_call_obj.as_object() else {
@@ -205,26 +166,16 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                             .and_then(|name| name.as_str())
                             .map(|name| name.to_owned())
                             .unwrap_or_default();
-                        let arguments = tool_call_obj
-                            .get("args")
-                            .and_then(|args| args.as_object())
-                            .map(|args| serde_json::to_string(args).unwrap())
-                            .unwrap_or_default();
-                        rv.parts.push(PartDelta::FunctionToolCall {
+                        let arguments = match tool_call_obj.get("args") {
+                            Some(args) => args.to_owned(),
+                            None => Value::Null,
+                        };
+                        rv.tool_calls.push(PartDelta::ParsedFunction {
                             id: None,
                             name,
                             arguments,
                         });
-                    }
-                    // else if let Some(refusal) = part.get("refusal")
-                    //     && !refusal.is_null()
-                    // {
-                    //     let Some(text) = refusal.as_str() else {
-                    //         return Err(String::from("Invalid refusal content"));
-                    //     };
-                    //     rv.parts.push(PartDelta::TextRefusal(text.into()));
-                    // }
-                    else {
+                    } else {
                         return Err(String::from("Invalid part"));
                     }
                 }
@@ -244,46 +195,33 @@ mod tests {
 
     #[test]
     pub fn serialize_text() {
-        let mut msg = Message::new(Role::User);
-        msg.parts
-            .push(Part::text_content("Explain me about Riemann hypothesis"));
-        msg.parts.push(Part::text_content(
-            "How cold brew is different from the normal coffee?",
-        ));
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("Explain me about Riemann hypothesis."),
+            Part::text("How cold brew is different from the normal coffee?"),
+        ]);
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","contents":[{"parts":[{"text":"Explain me about Riemann hypothesis"},{"text":"How cold brew is different from the normal coffee?"}]}]}"#
+            r#"{"role":"user","contents":[{"parts":[{"text":"Explain me about Riemann hypothesis."},{"text":"How cold brew is different from the normal coffee?"}]}]}"#
         );
     }
 
     #[test]
     pub fn serialize_messages_with_reasonings() {
-        let mut msgs = vec![
-            Message::new(Role::User),
-            Message::new(Role::Assistant),
-            Message::new(Role::User),
-            Message::new(Role::Assistant),
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("Hello there."), Part::text("How are you?")]),
+            Message::new(Role::Assistant)
+                .with_think_signature("This is reasoning text would be vanished.", "")
+                .with_contents([Part::text("I'm fine, thank you. And you?")]),
+            Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
+            Message::new(Role::Assistant)
+                .with_think_signature(
+                    "This is reasoning text would be remaining.",
+                    "Ev4MCkYIBxgCKkDl5A",
+                )
+                .with_contents([Part::text("Is there anything I can help with?")]),
         ];
-        msgs[0].parts.push(Part::text_content("Hello there."));
-        msgs[0].parts.push(Part::text_content("How are you?"));
-
-        msgs[1].parts.push(Part::text_reasoning(
-            "This is reasoning text would be vanished.",
-        ));
-        msgs[1]
-            .parts
-            .push(Part::text_content("I'm fine, thank you. And you?"));
-
-        msgs[2].parts.push(Part::text_content("I'm okay."));
-
-        msgs[3].parts.push(Part::text_reasoning(
-            "This is reasoning text would be remaining.",
-        ));
-        msgs[3]
-            .parts
-            .push(Part::text_content("Is there anything I can help with?"));
-
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msgs);
         println!("{}", serde_json::to_string(&marshaled).unwrap());
         assert_eq!(
@@ -294,15 +232,10 @@ mod tests {
 
     #[test]
     pub fn serialize_function() {
-        let mut msg = Message::new(Role::Assistant);
-        msg.parts.push(Part::function_tool_call(
-            "temperature",
-            Value::object([("unit", "celsius")]),
-        ));
-        msg.parts.push(Part::function_tool_call(
-            "temperature",
-            Value::object([("unit", "fahrenheit")]),
-        ));
+        let msg = Message::new(Role::Assistant).with_tool_calls([
+            Part::function("temperature", Value::object([("unit", "celsius")])),
+            Part::function("temperature", Value::object([("unit", "fahrenheit")])),
+        ]);
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
@@ -317,12 +250,10 @@ mod tests {
             40, 50, 60, // Second row
             70, 80, 90, // Third row
         ];
-
-        let mut msg = Message::new(Role::User);
-        msg.parts
-            .push(Part::text_content("What you can see in this image?"));
-        msg.parts
-            .push(Part::image_content(3, 3, "grayscale", raw_pixels).unwrap());
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("What you can see in this image?"),
+            Part::image(3, 3, "grayscale", raw_pixels).unwrap(),
+        ]);
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
@@ -343,10 +274,10 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 1);
         assert_eq!(delta.role, Some(Role::Assistant));
-        assert!(delta.parts[0].is_text());
-        assert_eq!(delta.parts[0].as_text().unwrap(), "Hello world!");
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
     }
 
     #[test]
@@ -364,10 +295,10 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 1);
         assert_eq!(delta.role, Some(Role::Assistant));
-        assert!(delta.parts[0].is_text());
-        assert_eq!(delta.parts[0].as_text().unwrap(), "Hello world!");
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
     }
 
     #[test]
@@ -384,15 +315,14 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 2);
         assert_eq!(delta.role, Some(Role::Assistant));
-        assert!(delta.parts[0].is_text());
         assert_eq!(
-            delta.parts[0].as_text().unwrap(),
+            delta.think,
             "**Answering a simple question**\n\nUser is saying hello."
         );
-        assert!(delta.parts[1].is_text());
-        assert_eq!(delta.parts[1].as_text().unwrap(), "Hello world!");
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
     }
 
     #[test]
@@ -412,15 +342,14 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 2);
         assert_eq!(delta.role, Some(Role::Assistant));
-        assert!(delta.parts[0].is_text());
         assert_eq!(
-            delta.parts[0].as_text().unwrap(),
+            delta.think,
             "**Answering a simple question**\n\nUser is saying hello."
         );
-        assert!(delta.parts[1].is_text());
-        assert_eq!(delta.parts[1].as_text().unwrap(), "Hello world!");
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
     }
 
     #[test]
@@ -437,10 +366,13 @@ mod tests {
             let cur_delta = u.unmarshal(val).unwrap();
             delta = delta.aggregate(cur_delta).unwrap();
         }
-        assert_eq!(delta.parts.len(), 1);
-        assert!(delta.parts[0].is_function());
-        let (_id, name, args) = delta.parts[0].as_function().unwrap();
+        assert_eq!(delta.tool_calls.len(), 1);
+        let tool_call = delta.tool_calls.pop().unwrap();
+        let (id, name, args) = tool_call.to_parsed_function().unwrap();
         assert_eq!(name, "get_weather");
-        assert_eq!(args, "{\"location\":\"Paris, France\"}");
+        assert_eq!(
+            serde_json::to_string(&args).unwrap(),
+            "{\"location\":\"Paris, France\"}"
+        );
     }
 }

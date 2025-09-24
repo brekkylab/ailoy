@@ -70,11 +70,8 @@ mod tests {
         let mut model = SSELanguageModel::new("gpt-4.1", OPENAI_API_KEY);
 
         let msgs = vec![
-            Message::with_parts(
-                Role::System,
-                [Part::text_content("You are a helpful assistant.")],
-            ),
-            Message::with_parts(Role::User, [Part::text_content("Hi what's your name?")]),
+            Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
+            Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
         ];
         let mut agg = MessageDelta::new();
         let mut strm = model.run(msgs, Vec::new());
@@ -109,10 +106,10 @@ mod tests {
                     }
                 })).build(),
         ];
-        let msgs = vec![Message::with_parts(
-            Role::User,
-            [Part::text_content("How much hot currently in Dubai?")],
-        )];
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?")]),
+        ];
         let mut strm = model.run(msgs, tools);
         let mut assistant_msg = MessageDelta::default();
         while let Some(delta_opt) = strm.next().await {
