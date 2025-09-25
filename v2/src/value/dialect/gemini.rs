@@ -4,11 +4,8 @@ use indexmap::IndexMap;
 use crate::{
     to_value,
     value::{
-        Config, 
-        Marshal, Message, MessageDelta, Part, PartDelta, ReasoningOption, PartDeltaFunction, PartFunction, Role,
-        ToolDesc,
-        Unmarshal, Value,
-    ,
+        Config, Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction,
+        ReasoningOption, Role, ToolDesc, Unmarshal, Value,
     },
 };
 

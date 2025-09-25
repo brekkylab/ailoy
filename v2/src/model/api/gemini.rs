@@ -1,6 +1,6 @@
 use crate::{
     model::sse::ServerSentEvent,
-    value::{ChatCompletionMarshal, Config, Marshaled, Message, MessageDelta, ToolDesc},
+    value::{Config, GeminiMarshal, Marshaled, Message, MessageDelta, ToolDesc},
 };
 
 pub fn make_request(
@@ -10,28 +10,38 @@ pub fn make_request(
     tools: Vec<ToolDesc>,
     config: Config,
 ) -> reqwest::RequestBuilder {
-    let model_name = config.model.unwrap_or_default();
-    let mut body = serde_json::json!({
-        "model": model_name,
-        "messages": Marshaled::<_, ChatCompletionMarshal>::new(&msgs),
-        "stream": true
-    });
+    let mut body = serde_json::json!(&Marshaled::<_, GeminiMarshal>::new(&config));
+
+    body["contents"] = serde_json::json!(&Marshaled::<_, GeminiMarshal>::new(&msgs));
     if !tools.is_empty() {
-        body["tool_choice"] = serde_json::json!("auto");
         body["tools"] = serde_json::json!(
-            tools
-                .iter()
-                .map(|v| Marshaled::<_, ChatCompletionMarshal>::new(v))
-                .collect::<Vec<_>>()
+            {
+                "functionDeclarations": tools
+                    .iter()
+                    .map(|v| Marshaled::<_, GeminiMarshal>::new(v))
+                    .collect::<Vec<_>>()
+            }
         );
-    }
+    };
+
+    // let model = model_name;
+    let model = config.model.unwrap();
+    let generate_method = if config.stream {
+        "streamGenerateContent?alt=sse"
+    } else {
+        "generateContent"
+    };
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:{}",
+        model, generate_method
+    );
+
+    println!("{:?}", url);
+    println!("{}", body.to_string());
 
     reqwest::Client::new()
-        .request(
-            reqwest::Method::POST,
-            "https://api.openai.com/v1/chat/completions",
-        )
-        .bearer_auth(api_key)
+        .request(reqwest::Method::POST, url)
+        .header("x-goog-api-key", api_key)
         .header("Content-Type", "application/json")
         .header(reqwest::header::ACCEPT, "text/event-stream")
         .body(body.to_string())
@@ -41,12 +51,17 @@ pub fn handle_event(evt: ServerSentEvent) -> Vec<MessageDelta> {
     let Ok(j) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
         return Vec::new();
     };
-    let Some(choice) = j.pointer("/choices/0/delta") else {
+    println!("j: {:?}", j);
+
+    let Some(candidate) = j.pointer("/candidates/0") else {
         return Vec::new();
     };
+
+    println!("candidate: {:?}", candidate);
+
     let Ok(decoded) = serde_json::from_value::<
-        crate::value::Unmarshaled<_, crate::value::ChatCompletionUnmarshal>,
-    >(choice.clone()) else {
+        crate::value::Unmarshaled<_, crate::value::GeminiUnmarshal>,
+    >(candidate.clone()) else {
         return Vec::new();
     };
     let rv = decoded.get();
@@ -55,12 +70,18 @@ pub fn handle_event(evt: ServerSentEvent) -> Vec<MessageDelta> {
 
 #[cfg(test)]
 mod tests {
+    // use std::sync::LazyLock;
+
     use crate::{
         model::{LanguageModel as _, sse::SSELanguageModel},
         value::{ConfigBuilder, Delta},
     };
 
-    const OPENAI_API_KEY: &str = "";
+    // static GEMINI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+    //     option_env!("GEMINI_API_KEY")
+    //         .expect("Environment variable 'GEMINI_API_KEY' is required for the tests.")
+    // });
+    const GEMINI_API_KEY: &str = "";
 
     #[tokio::test]
     async fn infer_simple_chat() {
@@ -69,13 +90,14 @@ mod tests {
         use super::*;
         use crate::value::{Part, Role};
 
-        let mut model = SSELanguageModel::new("gpt-4.1", OPENAI_API_KEY);
+        let mut model = SSELanguageModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
 
-        let msgs = vec![
-            Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
-            Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
-        ];
-        let config = ConfigBuilder::new().build();
+        let msgs =
+            vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
+        let config = ConfigBuilder::new()
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .build();
         let mut agg = MessageDelta::new();
         let mut strm = model.run(msgs, Vec::new(), config);
         while let Some(delta_opt) = strm.next().await {
@@ -95,7 +117,7 @@ mod tests {
             value::{Part, Role, ToolDescBuilder},
         };
 
-        let mut model = SSELanguageModel::new("gpt-4.1", OPENAI_API_KEY);
+        let mut model = SSELanguageModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -107,11 +129,14 @@ mod tests {
                     }
                 })).build(),
         ];
+        let config = ConfigBuilder::new()
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .build();
         let msgs = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let config = ConfigBuilder::new().build();
         let mut strm = model.run(msgs, tools, config);
         let mut assistant_msg = MessageDelta::default();
         while let Some(delta_opt) = strm.next().await {
