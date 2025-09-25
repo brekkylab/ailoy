@@ -39,107 +39,37 @@ impl Message {
         }
     }
 
-    pub fn with_id(self, id: impl Into<String>) -> Self {
-        let id = Some(id.into());
-        let Self {
-            role,
-            think,
-            contents,
-            tool_calls,
-            signature,
-            ..
-        } = self;
-        Self {
-            role,
-            id,
-            think,
-            contents,
-            tool_calls,
-            signature,
-        }
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
-    pub fn with_think(self, think: impl Into<String>) -> Self {
-        let think = think.into();
-        let Self {
-            role,
-            id,
-            contents,
-            tool_calls,
-            signature,
-            ..
-        } = self;
-        Self {
-            role,
-            id,
-            think,
-            contents,
-            tool_calls,
-            signature,
-        }
+    pub fn with_think(mut self, think: impl Into<String>) -> Self {
+        self.think = think.into();
+        self
     }
 
     pub fn with_think_signature(
-        self,
+        mut self,
         think: impl Into<String>,
         signature: impl Into<String>,
     ) -> Self {
-        let think = think.into();
-        let Self {
-            role,
-            id,
-            contents,
-            tool_calls,
-            ..
-        } = self;
-        Self {
-            role,
-            id,
-            think,
-            contents,
-            tool_calls,
-            signature: Some(signature.into()),
-        }
+        self.think = think.into();
+        self.signature = Some(signature.into());
+        self
     }
 
-    pub fn with_contents(self, contents: impl IntoIterator<Item = impl Into<Part>>) -> Self {
-        let contents = contents.into_iter().map(|v| v.into()).collect();
-        let Self {
-            role,
-            id,
-            think,
-            tool_calls,
-            signature,
-            ..
-        } = self;
-        Self {
-            role,
-            id,
-            think,
-            contents,
-            tool_calls,
-            signature,
-        }
+    pub fn with_contents(mut self, contents: impl IntoIterator<Item = impl Into<Part>>) -> Self {
+        self.contents = contents.into_iter().map(|v| v.into()).collect();
+        self
     }
 
-    pub fn with_tool_calls(self, tool_calls: impl IntoIterator<Item = impl Into<Part>>) -> Self {
-        let tool_calls = tool_calls.into_iter().map(|v| v.into()).collect();
-        let Self {
-            role,
-            id,
-            think,
-            contents,
-            signature,
-            ..
-        } = self;
-        Self {
-            role,
-            id,
-            think,
-            contents,
-            tool_calls,
-            signature,
-        }
+    pub fn with_tool_calls(
+        mut self,
+        tool_calls: impl IntoIterator<Item = impl Into<Part>>,
+    ) -> Self {
+        self.tool_calls = tool_calls.into_iter().map(|v| v.into()).collect();
+        self
     }
 }
 
