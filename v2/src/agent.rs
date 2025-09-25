@@ -16,7 +16,7 @@ pub struct Agent {
     lm: ArcMutexLanguageModel,
     tools: Vec<Arc<dyn Tool>>,
     messages: Arc<Mutex<Vec<Message>>>,
-    knowledges: Vec<Arc<Mutex<dyn Knowledge>>>,
+    knowledges: Vec<Arc<dyn Knowledge>>,
     system_message_renderer: Arc<SystemMessageRenderer>,
 }
 
@@ -62,7 +62,7 @@ impl Agent {
         self.tools.clone()
     }
 
-    pub fn get_knowledges(&self) -> Vec<Arc<Mutex<dyn Knowledge>>> {
+    pub fn get_knowledges(&self) -> Vec<Arc<dyn Knowledge>> {
         self.knowledges.clone()
     }
 
@@ -145,14 +145,13 @@ impl Agent {
         &mut self,
         knowledge: impl Knowledge + 'static,
     ) -> anyhow::Result<()> {
-        self.knowledges.push(Arc::new(Mutex::new(knowledge)));
+        self.knowledges.push(Arc::new(knowledge));
         Ok(())
     }
 
     pub async fn remove_knowledge(&mut self, knowledge_name: String) -> anyhow::Result<()> {
         let mut indices_to_remove = Vec::new();
         for (index, knowledge) in self.knowledges.iter().enumerate() {
-            let knowledge = knowledge.lock().await;
             if knowledge.name() == knowledge_name {
                 indices_to_remove.push(index);
             }
@@ -179,7 +178,6 @@ impl Agent {
             let knowledge_results = if !self.knowledges.is_empty() {
                 let query = contents.iter().filter(|&c| matches!(c, Part::Text(_))).map(|c| c.to_string()).collect::<Vec<_>>().join("\n");
                 let futures = self.knowledges.iter().map(async |knowledge| {
-                    let knowledge = knowledge.lock().await;
                     let retrieved = match knowledge.retrieve(query.clone()).await {
                         Ok(retrieved) => retrieved,
                         Err(e) => {
