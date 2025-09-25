@@ -106,6 +106,75 @@ impl Marshal<ToolDesc> for GeminiMarshal {
     }
 }
 
+impl Marshal<Config> for GeminiMarshal {
+    fn marshal(&mut self, config: &Config) -> Value {
+        let (include_thoughts, thinking_budget) = if let Some(model) = &config.model
+            && matches!(
+                model.as_str(),
+                "gemini-2.5-pro" | "gemini-2.5-flash" | "gemini-2.5-flash-lite"
+            ) {
+            match &config.reasoning_option {
+                ReasoningOption::Disable => match model.as_str() {
+                    "gemini-2.5-pro" => (false, 128),
+                    "gemini-2.5-flash" => (false, 0),
+                    "gemini-2.5-flash-lite" => (false, 0),
+                    _ => unreachable!(""),
+                },
+                ReasoningOption::Enable => (true, -1),
+                ReasoningOption::Low => match model.as_str() {
+                    "gemini-2.5-pro" => (true, 1024),
+                    "gemini-2.5-flash" => (true, 1024),
+                    "gemini-2.5-flash-lite" => (true, 1024),
+                    _ => unreachable!(""),
+                },
+                ReasoningOption::Medium => match model.as_str() {
+                    "gemini-2.5-pro" => (true, 8192),
+                    "gemini-2.5-flash" => (true, 8192),
+                    "gemini-2.5-flash-lite" => (true, 8192),
+                    _ => unreachable!(""),
+                },
+                ReasoningOption::High => match model.as_str() {
+                    "gemini-2.5-pro" => (true, 24576),
+                    "gemini-2.5-flash" => (true, 24576),
+                    "gemini-2.5-flash-lite" => (true, 24576),
+                    _ => unreachable!(""),
+                },
+            }
+        } else {
+            (false, 0)
+        };
+
+        let system_instruction = if let Some(system_message) = &config.system_message {
+            to_value!({
+                "parts": [{"text": system_message}]
+            })
+        } else {
+            Value::Null
+        };
+
+        let thinking_config = to_value!({"includeThoughts": include_thoughts, "thinkingBudget": thinking_budget as i64});
+
+        let mut generation_config = to_value!({
+            "thinkingConfig": thinking_config,
+        });
+
+        if let Some(max_tokens) = config.max_tokens {
+            generation_config.as_object_mut().unwrap().insert(
+                "max_output_tokens".into(),
+                Value::Integer(max_tokens.into()),
+            );
+        }
+        if let Some(temperature) = config.temperature {
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("temperature".into(), Value::Float(temperature.into()));
+        }
+
+        to_value!({"system_instruction": system_instruction, "generationConfig": generation_config})
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct GeminiUnmarshal;
 
