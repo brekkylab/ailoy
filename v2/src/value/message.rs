@@ -3,7 +3,7 @@ use std::fmt::{self, Display};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, MapAccess},
-    ser::{self, SerializeMap as _},
+    ser::SerializeMap as _,
 };
 use strum::{Display, EnumString};
 
@@ -356,15 +356,15 @@ impl Serialize for StyledMessage {
 
         // content: string vs array
         if self.style.contents_textonly {
-            match self.data.contents.as_slice() {
-                [] => map.serialize_entry(&self.style.contents_field, "")?,
-                [Part::Text(s)] => map.serialize_entry(&self.style.contents_field, s)?,
-                _ => {
-                    return Err(ser::Error::custom(
-                        "contents_textonly=true requires exactly one Text part",
-                    ));
-                }
-            }
+            let text_parts_joined = self
+                .data
+                .contents
+                .iter()
+                .filter(|&c| matches!(c, Part::Text(_)))
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            map.serialize_entry(&self.style.contents_field, &text_parts_joined)?;
         } else {
             let parts: Vec<StyledPart> = self
                 .data

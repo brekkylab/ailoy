@@ -1,7 +1,7 @@
 use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use async_stream::try_stream;
-use futures::{lock::Mutex, stream::Stream};
+use futures::{StreamExt, lock::Mutex, stream::Stream};
 
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
@@ -30,6 +30,19 @@ impl LocalLanguageModel {
     ) -> impl Stream<Item = Result<CacheProgress<Self>, String>> + 'static {
         let model_name = model_name.into();
         Cache::new().try_create::<LocalLanguageModel>(model_name)
+    }
+
+    pub async fn new(model_name: impl Into<String>) -> anyhow::Result<Self> {
+        let cache = crate::cache::Cache::new();
+        let mut model_strm = Box::pin(cache.try_create::<Self>(model_name));
+        let mut model: Option<Self> = None;
+        while let Some(progress) = model_strm.next().await {
+            let mut progress = progress.unwrap();
+            if progress.current_task == progress.total_task {
+                model = progress.result.take();
+            }
+        }
+        Ok(model.unwrap())
     }
 
     pub fn enable_reasoning(&self) {

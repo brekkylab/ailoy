@@ -2,7 +2,7 @@ use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::Result;
-use futures::{lock::Mutex, stream::Stream};
+use futures::{StreamExt, lock::Mutex, stream::Stream};
 
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
@@ -12,7 +12,7 @@ use crate::{
         EmbeddingModel,
         local::{EmbeddingModelInferencer, Tokenizer},
     },
-    utils::BoxFuture,
+    utils::{BoxFuture, Normalize},
 };
 
 #[derive(Debug)]
@@ -32,6 +32,19 @@ impl LocalEmbeddingModel {
         let model_name = model_name.into();
         Cache::new().try_create::<LocalEmbeddingModel>(model_name)
     }
+
+    pub async fn new(model_name: impl Into<String>) -> Result<Self> {
+        let cache = crate::cache::Cache::new();
+        let mut model_strm = Box::pin(cache.try_create::<Self>(model_name));
+        let mut model: Option<Self> = None;
+        while let Some(progress) = model_strm.next().await {
+            let mut progress = progress.unwrap();
+            if progress.current_task == progress.total_task {
+                model = progress.result.take();
+            }
+        }
+        Ok(model.unwrap())
+    }
 }
 
 #[multi_platform_async_trait]
@@ -46,12 +59,7 @@ impl EmbeddingModel for LocalEmbeddingModel {
         let mut embedding = inferencer.infer(&input_tokens).to_vec_f32()?;
 
         if self.do_normalize {
-            let norm = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-            embedding = if norm > 0.0 {
-                embedding.iter().map(|x| x / norm).collect()
-            } else {
-                embedding
-            }
+            embedding = embedding.normalized();
         }
 
         Ok(embedding)
@@ -144,7 +152,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::utils::{Normalize, log};
+    use crate::utils::log;
 
     fn dot(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {
@@ -201,27 +209,19 @@ mod tests {
         }
         let mut model = model.unwrap();
 
-        let query_embedding1 = model
-            .run("What is BGE M3?".to_owned())
-            .await
-            .unwrap()
-            .normalized();
-        let query_embedding2 = model
-            .run("Defination of BM25".to_owned())
-            .await
-            .unwrap()
-            .normalized();
-        let answer_embedding1 = model.run("BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.".to_owned()).await.unwrap().normalized();
-        let answer_embedding2 = model.run("BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document".to_owned()).await.unwrap().normalized();
+        let query_embedding1 = model.run("BGE-M3".to_owned()).await.unwrap();
+        let query_embedding2 = model.run("BM25".to_owned()).await.unwrap();
+        let answer_embedding1 = model.run("BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.".to_owned()).await.unwrap();
+        let answer_embedding2 = model.run("BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document".to_owned()).await.unwrap();
+        log::debug(format!("{:?}", dot(&query_embedding1, &answer_embedding1)));
+        log::debug(format!("{:?}", dot(&query_embedding1, &answer_embedding2)));
+        log::debug(format!("{:?}", dot(&query_embedding2, &answer_embedding1)));
+        log::debug(format!("{:?}", dot(&query_embedding2, &answer_embedding2)));
         assert!(
             dot(&query_embedding1, &answer_embedding1) > dot(&query_embedding1, &answer_embedding2)
         );
         assert!(
             dot(&query_embedding2, &answer_embedding1) < dot(&query_embedding2, &answer_embedding2)
         );
-        log::debug(format!("{:?}", dot(&query_embedding1, &answer_embedding1)));
-        log::debug(format!("{:?}", dot(&query_embedding1, &answer_embedding2)));
-        log::debug(format!("{:?}", dot(&query_embedding2, &answer_embedding1)));
-        log::debug(format!("{:?}", dot(&query_embedding2, &answer_embedding2)));
     }
 }
