@@ -4,8 +4,11 @@ use indexmap::IndexMap;
 use crate::{
     to_value,
     value::{
-        Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction, Role,
-        ToolDesc, Unmarshal, Value,
+        Config, 
+        Marshal, Message, MessageDelta, Part, PartDelta, ReasoningOption, PartDeltaFunction, PartFunction, Role,
+        ToolDesc,
+        Unmarshal, Value,
+    ,
     },
 };
 
@@ -59,7 +62,7 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
     parts.extend(msg.tool_calls.iter().map(part_to_value));
 
     // Final message object with role and collected parts
-    to_value!({"role": msg.role.to_string(), "contents": [{"parts": parts}]})
+    to_value!({"role": msg.role.to_string(), "parts": parts})
 }
 
 impl Marshal<Message> for GeminiMarshal {
@@ -87,20 +90,14 @@ impl Marshal<ToolDesc> for GeminiMarshal {
     fn marshal(&mut self, item: &ToolDesc) -> Value {
         if let Some(desc) = &item.description {
             to_value!({
-                "type": "function",
-                "function": {
-                    "name": &item.name,
-                    "description": desc,
-                    "parameters": item.parameters.clone()
-                }
+                "name": &item.name,
+                "description": desc,
+                "parameters": item.parameters.clone()
             })
         } else {
             to_value!({
-                "type": "function",
-                "function": {
-                    "name": &item.name,
-                    "parameters": item.parameters.clone()
-                }
+                "name": &item.name,
+                "parameters": item.parameters.clone()
             })
         }
     }
@@ -185,7 +182,7 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
         // r#"{"candidates":[{"content":{"parts":[{"text":"Hello world!"}],"role":"model"}}]}"#,
 
         let content: &IndexMap<String, Value> = val
-            .pointer_as::<IndexMap<String, Value>>("/candidates/0/content")
+            .pointer_as::<IndexMap<String, Value>>("/content")
             .ok_or_else(|| String::from("Content should be an object"))?;
 
         // Parse role
@@ -271,7 +268,7 @@ mod tests {
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","contents":[{"parts":[{"text":"Explain me about Riemann hypothesis."},{"text":"How cold brew is different from the normal coffee?"}]}]}"#
+            r#"{"role":"user","parts":[{"text":"Explain me about Riemann hypothesis."},{"text":"How cold brew is different from the normal coffee?"}]}"#
         );
     }
 
@@ -292,10 +289,9 @@ mod tests {
                 .with_contents([Part::text("Is there anything I can help with?")]),
         ];
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msgs);
-        println!("{}", serde_json::to_string(&marshaled).unwrap());
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"[{"role":"user","contents":[{"parts":[{"text":"Hello there."},{"text":"How are you?"}]}]},{"role":"assistant","contents":[{"parts":[{"text":"I'm fine, thank you. And you?"}]}]},{"role":"user","contents":[{"parts":[{"text":"I'm okay."}]}]},{"role":"assistant","contents":[{"parts":[{"text":"This is reasoning text would be remaining.","thought":true},{"text":"Is there anything I can help with?"}]}]}]"#
+            r#"[{"role":"user","parts":[{"text":"Hello there."},{"text":"How are you?"}]},{"role":"assistant","parts":[{"text":"I'm fine, thank you. And you?"}]},{"role":"user","parts":[{"text":"I'm okay."}]},{"role":"assistant","parts":[{"text":"This is reasoning text would be remaining.","thought":true},{"text":"Is there anything I can help with?"}]}]"#
         );
     }
 
@@ -308,7 +304,7 @@ mod tests {
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"assistant","contents":[{"parts":[{"functionCall":{"name":"temperature","args":{"unit":"celsius"}}},{"functionCall":{"name":"temperature","args":{"unit":"fahrenheit"}}}]}]}"#
+            r#"{"role":"assistant","parts":[{"functionCall":{"name":"temperature","args":{"unit":"celsius"}}},{"functionCall":{"name":"temperature","args":{"unit":"fahrenheit"}}}]}"#
         );
     }
 
@@ -326,14 +322,13 @@ mod tests {
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","contents":[{"parts":[{"text":"What you can see in this image?"},{"inline_data":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}]}"#,
+            r#"{"role":"user","parts":[{"text":"What you can see in this image?"},{"inline_data":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#,
         );
     }
 
     #[test]
     pub fn deserialize_text() {
-        let inputs =
-            [r#"{"candidates":[{"content":{"parts":[{"text":"Hello world!"}],"role":"model"}}]}"#];
+        let inputs = [r#"{"content":{"parts":[{"text":"Hello world!"}],"role":"model"}}"#];
         let mut u = GeminiUnmarshal;
 
         let mut delta = MessageDelta::new();
@@ -352,8 +347,8 @@ mod tests {
     #[test]
     pub fn deserialize_text_stream() {
         let inputs = [
-            r#"{"candidates": [{"content": {"parts": [{"text": "Hello"}],"role": "model"}}]}"#,
-            r#"{"candidates": [{"content": {"parts": [{"text": " world!"}],"role": "model"}}]}"#,
+            r#"{"content": {"parts": [{"text": "Hello"}],"role": "model"}}"#,
+            r#"{"content": {"parts": [{"text": " world!"}],"role": "model"}}"#,
         ];
         let mut u = GeminiUnmarshal;
 
@@ -373,7 +368,7 @@ mod tests {
     #[test]
     pub fn deserialize_text_with_reasoning() {
         let inputs = [
-            r#"{"candidates":[{"content":{"parts":[{"text":"**Answering a simple question**\n\nUser is saying hello.","thought":true},{"text":"Hello world!"}],"role":"model"}}]}"#,
+            r#"{"content":{"parts":[{"text":"**Answering a simple question**\n\nUser is saying hello.","thought":true},{"text":"Hello world!"}],"role":"model"}}"#,
         ];
         let mut u = GeminiUnmarshal;
 
@@ -397,10 +392,10 @@ mod tests {
     #[test]
     pub fn deserialize_text_with_reasoning_stream() {
         let inputs = [
-            r#"{"candidates":[{"content":{"parts":[{"text":"**Answering a simple question**\n\n","thought": true}],"role": "model"}}]}"#,
-            r#"{"candidates":[{"content":{"parts":[{"text":"User is saying hello.","thought": true}],"role": "model"}}]}"#,
-            r#"{"candidates": [{"content": {"parts": [{"text": "Hello"}],"role": "model"}}]}"#,
-            r#"{"candidates": [{"content": {"parts": [{"text": " world!"}],"role": "model"}}]}"#,
+            r#"{"content":{"parts":[{"text":"**Answering a simple question**\n\n","thought": true}],"role": "model"}}"#,
+            r#"{"content":{"parts":[{"text":"User is saying hello.","thought": true}],"role": "model"}}"#,
+            r#"{"content": {"parts": [{"text": "Hello"}],"role": "model"}}"#,
+            r#"{"content": {"parts": [{"text": " world!"}],"role": "model"}}"#,
         ];
         let mut u = GeminiUnmarshal;
 
@@ -424,7 +419,7 @@ mod tests {
     #[test]
     pub fn deserialize_tool_call() {
         let inputs = [
-            r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris, France"}}}],"role":"model"}}]}"#,
+            r#"{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris, France"}}}],"role":"model"}}"#,
         ];
         let mut u = GeminiUnmarshal;
 
