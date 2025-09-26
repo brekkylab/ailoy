@@ -2,7 +2,10 @@ use base64::Engine;
 
 use crate::{
     to_value,
-    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, ToolDesc, Unmarshal, Value},
+    value::{
+        Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction, Role,
+        ToolDesc, Unmarshal, Value,
+    },
 };
 
 #[derive(Clone, Debug, Default)]
@@ -11,13 +14,12 @@ pub struct AnthropicMarshal;
 fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
     let part_to_value = |part: &Part| -> Value {
         match part {
-            Part::Text(s) => to_value!({"type": "text", "text": s}),
+            Part::Text { text } => to_value!({"type": "text", "text": text}),
             Part::Function {
                 id,
-                name,
-                arguments,
+                f: PartFunction { name, args },
             } => {
-                let arguments_string = serde_json::to_string(arguments)
+                let arguments_string = serde_json::to_string(args)
                     .map_err(|_| String::from("Invald function"))
                     .unwrap();
                 let mut value =
@@ -30,8 +32,8 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
                 };
                 value
             }
-            Part::Value(v) => {
-                to_value!({"type": "text", "text": serde_json::to_string(&v).unwrap()})
+            Part::Value { value } => {
+                to_value!({"type": "text", "text": serde_json::to_string(&value).unwrap()})
             }
             Part::Image { .. } => {
                 // Get image
@@ -59,8 +61,8 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
 
     // Collecting contents
     let mut contents = Vec::<Value>::new();
-    if !msg.think.is_empty() && include_thinking {
-        let mut part = to_value!({"type": "thinking", "thinking": &msg.think});
+    if !msg.thinking.is_empty() && include_thinking {
+        let mut part = to_value!({"type": "thinking", "thinking": &msg.thinking});
         if let Some(sig) = &msg.signature {
             part.as_object_mut()
                 .unwrap()
@@ -175,7 +177,9 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                     };
                     match ty.as_str() {
                         "text" => {
-                            rv.contents.push(PartDelta::Text("".to_owned()));
+                            rv.contents.push(PartDelta::Text {
+                                text: String::default(),
+                            });
                         }
                         "thinking" => {}
                         "tool_use" => {
@@ -184,7 +188,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                                 .pointer_as::<String>("/content_block/name")
                                 .cloned()
                                 .unwrap_or_default();
-                            let arguments = if let Some(input) =
+                            let args = if let Some(input) =
                                 val.pointer_as::<String>("/content_block/input")
                             {
                                 input.clone()
@@ -193,8 +197,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                             };
                             rv.tool_calls.push(PartDelta::Function {
                                 id,
-                                name,
-                                arguments,
+                                f: PartDeltaFunction::WithStringArgs { name, args },
                             });
                         }
                         _ => {}
@@ -202,10 +205,10 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                 }
                 "content_block_delta" => {
                     if let Some(text) = val.pointer_as::<String>("/delta/text") {
-                        rv.contents.push(PartDelta::Text(text.into()));
+                        rv.contents.push(PartDelta::Text { text: text.into() });
                     }
                     if let Some(text) = val.pointer_as::<String>("/delta/thinking") {
-                        rv.think.push_str(text.as_str());
+                        rv.thinking.push_str(text.as_str());
                     }
                     if let Some(text) = val.pointer_as::<String>("/delta/signature") {
                         rv.signature = Some(text.to_owned());
@@ -213,8 +216,10 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                     if let Some(args) = val.pointer_as::<String>("/delta/partial_json") {
                         rv.tool_calls.push(PartDelta::Function {
                             id: None,
-                            name: String::new(),
-                            arguments: args.to_owned(),
+                            f: PartDeltaFunction::WithStringArgs {
+                                name: String::new(),
+                                args: args.to_owned(),
+                            },
                         });
                     }
                 }
@@ -256,7 +261,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
         {
             if let Some(text) = contents.as_str() {
                 // Contents can be a single string
-                rv.contents.push(PartDelta::Text(text.into()));
+                rv.contents.push(PartDelta::Text { text: text.into() });
             } else if let Some(contents) = contents.as_array() {
                 // In case of part vector
                 for content in contents {
@@ -267,7 +272,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                         let Some(text) = text.as_str() else {
                             return Err(String::from("Invalid content part"));
                         };
-                        rv.contents.push(PartDelta::Text(text.into()));
+                        rv.contents.push(PartDelta::Text { text: text.into() });
                     } else if let Some(thinking) = content.get("thinking")
                         && let Some(signature) = content.get("signature")
                     {
@@ -278,7 +283,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                             return Err(String::from("Invalid signature content"));
                         };
                         rv.signature = Some(signature.to_owned());
-                        rv.think = thinking.into();
+                        rv.thinking = thinking.into();
                     } else if let Some(ty) = content.get("type")
                         && ty.as_str() == Some("tool_use")
                         && let Some(id) = content.get("id")
@@ -287,8 +292,10 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                     {
                         rv.tool_calls.push(PartDelta::Function {
                             id: id.as_str().and_then(|id| Some(id.to_owned())),
-                            name: name.as_str().unwrap_or_default().to_owned(),
-                            arguments: serde_json::to_string(input).unwrap_or_default(),
+                            f: PartDeltaFunction::WithStringArgs {
+                                name: name.as_str().unwrap_or_default().to_owned(),
+                                args: serde_json::to_string(input).unwrap_or_default(),
+                            },
                         });
                     }
                     // else if let Some(refusal) = content.get("refusal")
@@ -336,11 +343,11 @@ mod tests {
             Message::new(Role::User)
                 .with_contents([Part::text("Hello there."), Part::text("How are you?")]),
             Message::new(Role::Assistant)
-                .with_think_signature("This is reasoning text would be vanished.", "")
+                .with_thinking_signature("This is reasoning text would be vanished.", "")
                 .with_contents([Part::text("I'm fine, thank you. And you?")]),
             Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
             Message::new(Role::Assistant)
-                .with_think_signature(
+                .with_thinking_signature(
                     "This is reasoning text would be remaining.",
                     "Ev4MCkYIBxgCKkDl5A",
                 )
@@ -384,7 +391,7 @@ mod tests {
         ];
         let msg = Message::new(Role::User).with_contents([
             Part::text("What you can see in this image?"),
-            Part::image(3, 3, "grayscale", raw_pixels).unwrap(),
+            Part::image_binary(3, 3, "grayscale", raw_pixels).unwrap(),
         ]);
         let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msg);
         assert_eq!(
@@ -455,7 +462,7 @@ mod tests {
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
-            delta.think,
+            delta.thinking,
             "**Answering a simple question**\n\nUser is saying hello."
         );
         assert_eq!(delta.signature.unwrap(), "Ev4MCkYIBxgCKkDl5A");
@@ -491,7 +498,7 @@ mod tests {
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
-            delta.think,
+            delta.thinking,
             "**Answering a simple question**\n\nUser is saying hello."
         );
         assert_eq!(delta.contents.len(), 1);

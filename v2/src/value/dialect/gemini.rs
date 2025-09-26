@@ -3,7 +3,10 @@ use indexmap::IndexMap;
 
 use crate::{
     to_value,
-    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, ToolDesc, Unmarshal, Value},
+    value::{
+        Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction, Role,
+        ToolDesc, Unmarshal, Value,
+    },
 };
 
 #[derive(Clone, Debug, Default)]
@@ -12,16 +15,14 @@ pub struct GeminiMarshal;
 fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
     let part_to_value = |part: &Part| -> Value {
         match part {
-            Part::Text(s) => {
-                to_value!({"text": s})
+            Part::Text { text } => {
+                to_value!({"text": text})
             }
             Part::Function {
                 id,
-                name,
-                arguments,
+                f: PartFunction { name, args },
             } => {
-                let mut value =
-                    to_value!({"functionCall": {"name": name, "args": arguments.clone()}});
+                let mut value = to_value!({"functionCall": {"name": name, "args": args.clone()}});
                 if let Some(id) = id {
                     value
                         .as_object_mut()
@@ -45,14 +46,14 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
                 // Final value
                 to_value!({"inline_data": {"mime_type": "image/png", "data": encoded}})
             }
-            Part::Value(v) => v.to_owned(),
+            Part::Value { value } => value.to_owned(),
         }
     };
 
     // Collecting contents
     let mut parts = Vec::<Value>::new();
-    if !msg.think.is_empty() && include_thinking {
-        parts.push(to_value!({"text": msg.think.clone(), "thought": true}));
+    if !msg.thinking.is_empty() && include_thinking {
+        parts.push(to_value!({"text": msg.thinking.clone(), "thought": true}));
     }
     parts.extend(msg.contents.iter().map(part_to_value));
     parts.extend(msg.tool_calls.iter().map(part_to_value));
@@ -153,9 +154,9 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                             return Err(String::from("Invalid content part"));
                         };
                         if thought {
-                            rv.think = text.into();
+                            rv.thinking = text.into();
                         } else {
-                            rv.contents.push(PartDelta::Text(text.into()));
+                            rv.contents.push(PartDelta::Text { text: text.into() });
                         }
                     } else if let Some(tool_call_obj) = part.get("functionCall") {
                         let Some(tool_call_obj) = tool_call_obj.as_object() else {
@@ -166,14 +167,13 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                             .and_then(|name| name.as_str())
                             .map(|name| name.to_owned())
                             .unwrap_or_default();
-                        let arguments = match tool_call_obj.get("args") {
+                        let args = match tool_call_obj.get("args") {
                             Some(args) => args.to_owned(),
                             None => Value::Null,
                         };
-                        rv.tool_calls.push(PartDelta::ParsedFunction {
+                        rv.tool_calls.push(PartDelta::Function {
                             id: None,
-                            name,
-                            arguments,
+                            f: PartDeltaFunction::WithParsedArgs { name, args },
                         });
                     } else {
                         return Err(String::from("Invalid part"));
@@ -212,11 +212,11 @@ mod tests {
             Message::new(Role::User)
                 .with_contents([Part::text("Hello there."), Part::text("How are you?")]),
             Message::new(Role::Assistant)
-                .with_think_signature("This is reasoning text would be vanished.", "")
+                .with_thinking_signature("This is reasoning text would be vanished.", "")
                 .with_contents([Part::text("I'm fine, thank you. And you?")]),
             Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
             Message::new(Role::Assistant)
-                .with_think_signature(
+                .with_thinking_signature(
                     "This is reasoning text would be remaining.",
                     "Ev4MCkYIBxgCKkDl5A",
                 )
@@ -252,7 +252,7 @@ mod tests {
         ];
         let msg = Message::new(Role::User).with_contents([
             Part::text("What you can see in this image?"),
-            Part::image(3, 3, "grayscale", raw_pixels).unwrap(),
+            Part::image_binary(3, 3, "grayscale", raw_pixels).unwrap(),
         ]);
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
         assert_eq!(
@@ -317,7 +317,7 @@ mod tests {
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
-            delta.think,
+            delta.thinking,
             "**Answering a simple question**\n\nUser is saying hello."
         );
         assert_eq!(delta.contents.len(), 1);
@@ -344,7 +344,7 @@ mod tests {
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
-            delta.think,
+            delta.thinking,
             "**Answering a simple question**\n\nUser is saying hello."
         );
         assert_eq!(delta.contents.len(), 1);
@@ -368,7 +368,7 @@ mod tests {
         }
         assert_eq!(delta.tool_calls.len(), 1);
         let tool_call = delta.tool_calls.pop().unwrap();
-        let (id, name, args) = tool_call.to_parsed_function().unwrap();
+        let (_, name, args) = tool_call.to_parsed_function().unwrap();
         assert_eq!(name, "get_weather");
         assert_eq!(
             serde_json::to_string(&args).unwrap(),

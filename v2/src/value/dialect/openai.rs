@@ -2,7 +2,10 @@ use base64::Engine;
 
 use crate::{
     to_value,
-    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, ToolDesc, Unmarshal, Value},
+    value::{
+        Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction, Role,
+        ToolDesc, Unmarshal, Value,
+    },
 };
 
 #[derive(Clone, Debug, Default)]
@@ -11,20 +14,19 @@ pub struct OpenAIMarshal;
 fn marshal_message(msg: &Message, include_reasoning: bool) -> Vec<Value> {
     let part_to_value = |part: &Part| -> Value {
         match part {
-            Part::Text(text) => to_value!({"type": "input_text", "text": text}),
+            Part::Text { text } => to_value!({"type": "input_text", "text": text}),
             Part::Function {
                 id,
-                name,
-                arguments,
+                f: PartFunction { name, args },
             } => {
-                let arguments_string = serde_json::to_string(arguments).unwrap();
+                let arguments_string = serde_json::to_string(args).unwrap();
                 if let Some(id) = id {
                     to_value!({"type": "function_call", "call_id":id, "name": name, "arguments": arguments_string})
                 } else {
                     to_value!({"type": "function_call", "name": name, "arguments": arguments_string})
                 }
             }
-            Part::Value(value) => {
+            Part::Value { value } => {
                 to_value!({"type": "input_text", "text": serde_json::to_string(value).unwrap()})
             }
             Part::Image { .. } => {
@@ -45,8 +47,8 @@ fn marshal_message(msg: &Message, include_reasoning: bool) -> Vec<Value> {
         }
     };
     let mut rv = Vec::<Value>::new();
-    if !msg.think.is_empty() && include_reasoning {
-        rv.push(to_value!({"type": "reasoning", "summary": [{"type": "summary_text", "text": &msg.think}]}));
+    if !msg.thinking.is_empty() && include_reasoning {
+        rv.push(to_value!({"type": "reasoning", "summary": [{"type": "summary_text", "text": &msg.thinking}]}));
     }
     if !msg.contents.is_empty() {
         rv.push(to_value!({"role": msg.role.to_string(), "content": msg.contents.iter().map(part_to_value).collect::<Vec<_>>()}));
@@ -140,15 +142,17 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                             None
                         }
                         && let Some(name) = val.pointer_as::<String>("/item/name")
-                        && let Some(arguments) = val.pointer_as::<String>("/item/arguments")
+                        && let Some(args) = val.pointer_as::<String>("/item/arguments")
                     {
                         // tool call message
                         // r#"{"type":"response.output_item.added","item":{"type":"function_call","arguments":"","call_id":"call_DF3wZtLHv5eBNfURjvI8MULJ","name":"get_weather"}}"#
                         rv.role = Some(Role::Assistant);
                         rv.tool_calls.push(PartDelta::Function {
                             id,
-                            name: name.to_owned(),
-                            arguments: arguments.to_owned(),
+                            f: PartDeltaFunction::WithStringArgs {
+                                name: name.to_owned(),
+                                args: args.to_owned(),
+                            },
                         });
                     }
                 }
@@ -164,10 +168,11 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                 "response.output_text.delta" => {
                     // r#"{"type":"response.output_text.delta","delta":"Hello"}"#,
                     // r#"{"type":"response.output_text.delta","delta":" world!"}"#,
-                    let s = val
+                    let text = val
                         .pointer_as::<String>("/delta")
-                        .ok_or_else(|| String::from("Output text delta should be a string"))?;
-                    rv.contents.push(PartDelta::Text(s.into()));
+                        .ok_or_else(|| String::from("Output text delta should be a string"))?
+                        .to_owned();
+                    rv.contents.push(PartDelta::Text { text });
                 }
                 "response.output_text.done" => {
                     // r#"{"type":"response.output_text.done","text":"Hello world!"}"#,
@@ -183,7 +188,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                     let s = val.pointer_as::<String>("/delta").ok_or_else(|| {
                         String::from("Reasoning summary text delta should be a string")
                     })?;
-                    rv.think.push_str(s.as_str());
+                    rv.thinking.push_str(s.as_str());
                 }
                 "response.reasoning_summary_text.done" => {
                     // r#"{"type":"response.reasoning_summary_text.done","text":"**Responding to a greeting**\n\nThe user just said, \"Hello!\" So, it seems I need to engage. I'll greet them back and offer help since they're looking to chat. I could say something like, \"Hello! How can I assist you today?\" That feels friendly and open. They didn't ask a specific question, so this approach will work well for starting a conversation. Let's see where it goes from there!"}"#
@@ -196,13 +201,18 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                     // r#"{"type":"response.function_call_arguments.delta","delta":","}"#,
                     // r#"{"type":"response.function_call_arguments.delta","delta":" France"}"#,
                     // r#"{"type":"response.function_call_arguments.delta","delta":"\"}"}"#,
-                    let s = val.pointer_as::<String>("/delta").ok_or_else(|| {
-                        String::from("Function call argument delta should be a string")
-                    })?;
+                    let args = val
+                        .pointer_as::<String>("/delta")
+                        .ok_or_else(|| {
+                            String::from("Function call argument delta should be a string")
+                        })?
+                        .to_owned();
                     rv.tool_calls.push(PartDelta::Function {
                         id: None,
-                        name: "".to_owned(),
-                        arguments: s.into(),
+                        f: PartDeltaFunction::WithStringArgs {
+                            name: String::new(),
+                            args,
+                        },
                     });
                 }
                 "response.function_call_arguments.done" => {
@@ -242,7 +252,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
         {
             if let Some(text) = contents.as_str() {
                 // Contents can be a single string
-                rv.contents.push(PartDelta::Text(text.into()));
+                rv.contents.push(PartDelta::Text { text: text.into() });
             } else if let Some(contents) = contents.as_array() {
                 // In case of part vector
                 for content in contents {
@@ -253,7 +263,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         let Some(text) = text.as_str() else {
                             return Err(String::from("Invalid content part"));
                         };
-                        rv.contents.push(PartDelta::Text(text.into()));
+                        rv.contents.push(PartDelta::Text { text: text.into() });
                     }
                     // else if let Some(refusal) = content.get("refusal")
                     //     && !refusal.is_null()
@@ -278,7 +288,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
         {
             if let Some(text) = summary.as_str() {
                 // Can summary be a single string?
-                rv.think.push_str(text);
+                rv.thinking.push_str(text);
             } else if let Some(summary) = summary.as_array() {
                 // In case of part vector
                 for content in summary {
@@ -289,7 +299,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         let Some(text) = text.as_str() else {
                             return Err(String::from("Invalid content part"));
                         };
-                        rv.think.push_str(text);
+                        rv.thinking.push_str(text);
                     } else {
                         return Err(String::from("Invalid part"));
                     }
@@ -311,14 +321,13 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                 Some(name) if name.is_string() => name.as_str().unwrap().to_owned(),
                 _ => String::new(),
             };
-            let arguments = match root.get("arguments") {
+            let args = match root.get("arguments") {
                 Some(args) if args.is_string() => args.as_str().unwrap().to_owned(),
                 _ => String::new(),
             };
             rv.tool_calls.push(PartDelta::Function {
                 id,
-                name,
-                arguments,
+                f: PartDeltaFunction::WithStringArgs { name, args },
             });
         };
 
@@ -347,11 +356,11 @@ mod tests {
         let msgs = vec![
             Message::new(Role::User).with_contents([Part::text("Hello there.")]),
             Message::new(Role::Assistant)
-                .with_think_signature("This is reasoning text would be vanished.", "")
+                .with_thinking_signature("This is reasoning text would be vanished.", "")
                 .with_contents([Part::text("I'm fine, thank you. And you?")]),
             Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
             Message::new(Role::Assistant)
-                .with_think_signature(
+                .with_thinking_signature(
                     "This is reasoning text would be remaining.",
                     "Ev4MCkYIBxgCKkDl5A",
                 )
@@ -394,7 +403,7 @@ mod tests {
         ];
         let msg = Message::new(Role::User).with_contents([
             Part::text("What you can see in this image?"),
-            Part::image(3, 3, "grayscale", raw_pixels).unwrap(),
+            Part::image_binary(3, 3, "grayscale", raw_pixels).unwrap(),
         ]);
         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
         assert_eq!(
@@ -466,7 +475,7 @@ mod tests {
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
-            delta.think,
+            delta.thinking,
             "**Answering a simple question**\n\nUser is saying hello."
         );
         assert_eq!(delta.contents.len(), 1);
@@ -501,7 +510,7 @@ mod tests {
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
-            delta.think,
+            delta.thinking,
             "**Answering a simple question**\n\nUser is saying hello."
         );
         assert_eq!(delta.contents.len(), 1);

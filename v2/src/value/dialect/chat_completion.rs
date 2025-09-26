@@ -3,7 +3,10 @@ use base64::Engine;
 
 use crate::{
     to_value,
-    value::{Marshal, Message, MessageDelta, Part, PartDelta, Role, ToolDesc, Unmarshal, Value},
+    value::{
+        Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction, Role,
+        ToolDesc, Unmarshal, Value,
+    },
 };
 
 #[derive(Clone, Debug, Default)]
@@ -12,13 +15,12 @@ pub struct ChatCompletionMarshal;
 fn marshal_message(item: &Message) -> Value {
     let part_to_value = |part: &Part| -> Value {
         match part {
-            Part::Text(v) => to_value!({"type": "text", "text": v}),
+            Part::Text { text } => to_value!({"type": "text", "text": text}),
             Part::Function {
                 id,
-                name,
-                arguments,
+                f: PartFunction { name, args },
             } => {
-                let mut value = to_value!({"type": "function", "function": {"name": name, "arguments": serde_json::to_string(&arguments).unwrap()}});
+                let mut value = to_value!({"type": "function", "function": {"name": name, "arguments": serde_json::to_string(&args).unwrap()}});
                 if let Some(id) = &id {
                     value
                         .as_object_mut()
@@ -27,8 +29,8 @@ fn marshal_message(item: &Message) -> Value {
                 }
                 value
             }
-            Part::Value(v) => {
-                to_value!({"type": "text", "text": serde_json::to_string(&v).unwrap()})
+            Part::Value { value } => {
+                to_value!({"type": "text", "text": serde_json::to_string(&value).unwrap()})
             }
             Part::Image { .. } => {
                 // Get image
@@ -150,7 +152,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
         {
             if let Some(text) = contents.as_str() {
                 // Simple string case
-                rv.contents.push(PartDelta::Text(text.into()));
+                rv.contents.push(PartDelta::Text { text: text.into() });
             } else if let Some(contents) = contents.as_array() {
                 // Multiple content parts
                 for content in contents {
@@ -161,7 +163,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
                         let Some(text) = text.as_str() else {
                             return Err(String::from("Invalid content part"));
                         };
-                        rv.contents.push(PartDelta::Text(text.into()));
+                        rv.contents.push(PartDelta::Text { text: text.into() });
                     } else {
                         return Err(String::from("Invalid part"));
                     }
@@ -192,14 +194,13 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
                             Some(name) if name.is_string() => name.as_str().unwrap().to_owned(),
                             _ => String::new(),
                         };
-                        let arguments = match func.get("arguments") {
+                        let args = match func.get("arguments") {
                             Some(args) if args.is_string() => args.as_str().unwrap().to_owned(),
                             _ => String::new(),
                         };
                         rv.tool_calls.push(PartDelta::Function {
                             id,
-                            name,
-                            arguments,
+                            f: PartDeltaFunction::WithStringArgs { name, args },
                         });
                     }
                 }
@@ -236,11 +237,11 @@ mod tests {
             Message::new(Role::User)
                 .with_contents([Part::text("Hello there."), Part::text("How are you?")]),
             Message::new(Role::Assistant)
-                .with_think("This is reasoning text would be vanished.")
+                .with_thinking("This is reasoning text would be vanished.")
                 .with_contents([Part::text("I'm fine, thank you. And you?")]),
             Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
             Message::new(Role::Assistant)
-                .with_think("This is reasoning text would be remaining.")
+                .with_thinking("This is reasoning text would be remaining.")
                 .with_contents([Part::text("Is there anything I can help with?")]),
         ];
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msgs);
@@ -282,7 +283,7 @@ mod tests {
         ];
         let msg = Message::new(Role::User).with_contents([
             Part::text("What you can see in this image?"),
-            Part::image(3, 3, "grayscale", raw_pixels).unwrap(),
+            Part::image_binary(3, 3, "grayscale", raw_pixels).unwrap(),
         ]);
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
