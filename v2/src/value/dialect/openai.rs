@@ -3,8 +3,8 @@ use base64::Engine;
 use crate::{
     to_value,
     value::{
-        Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction, Role,
-        ToolDesc, Unmarshal, Value,
+        Config, Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction,
+        Role, ThinkingOption, ToolDesc, Unmarshal, Value,
     },
 };
 
@@ -81,14 +81,104 @@ impl Marshal<Vec<Message>> for OpenAIMarshal {
 
 impl Marshal<ToolDesc> for OpenAIMarshal {
     fn marshal(&mut self, item: &ToolDesc) -> Value {
-        let mut value = to_value!({"type": "function","function": {"name": &item.name,"parameters": item.parameters.clone()}});
         if let Some(desc) = &item.description {
-            value
-                .as_object_mut()
-                .unwrap()
-                .insert("description".into(), desc.into());
+            to_value!({
+                "type": "function",
+                "name": &item.name,
+                "description": desc,
+                "parameters": item.parameters.clone()
+            })
+        } else {
+            to_value!({
+                "type": "function",
+                "name": &item.name,
+                "parameters": item.parameters.clone()
+            })
         }
-        value
+    }
+}
+
+impl Marshal<Config> for OpenAIMarshal {
+    fn marshal(&mut self, config: &Config) -> Value {
+        let Some(model) = &config.model else {
+            panic!("Cannot marshal `Config` without `model`.");
+        };
+
+        let is_reasoning_model = if model.starts_with("o") || model.starts_with("gpt-5") {
+            true
+        } else {
+            false
+        };
+
+        let (reasoning_effort, reasoning_summary) = if is_reasoning_model {
+            match &config.thinking_option {
+                ThinkingOption::Disable => {
+                    if model.starts_with("gpt-5") {
+                        (Some("minimal"), None)
+                    } else {
+                        (Some("low"), None)
+                    }
+                }
+                ThinkingOption::Enable | ThinkingOption::Medium => (Some("medium"), Some("auto")),
+                ThinkingOption::Low => (Some("low"), Some("auto")),
+                ThinkingOption::High => (Some("high"), Some("auto")),
+            }
+        } else {
+            (None, None)
+        };
+        let reasoning = match (reasoning_effort, reasoning_summary) {
+            (Some(effort), Some(summary)) => {
+                to_value!({"effort": effort, "summary": summary})
+            }
+            (Some(effort), None) => {
+                to_value!({"effort": effort})
+            }
+            (None, _) => Value::Null,
+        };
+
+        let instruction = if let Some(system_message) = &config.system_message {
+            to_value!(system_message)
+        } else {
+            Value::Null
+        };
+
+        let max_output_tokens = if let Some(max_tokens) = &config.max_tokens {
+            to_value!(*max_tokens as i64)
+        } else {
+            Value::Null
+        };
+
+        let temperature = if let Some(temperature) = &config.temperature
+            && !is_reasoning_model
+        {
+            to_value!(*temperature)
+        } else {
+            Value::Null
+        };
+
+        let top_p = if let Some(top_p) = &config.top_p
+            && !is_reasoning_model
+        {
+            to_value!(*top_p)
+        } else {
+            Value::Null
+        };
+
+        let stream = config.stream;
+
+        let mut body = to_value!({
+            "model": model,
+            "instructions": instruction,
+            "reasoning": reasoning,
+            "stream": stream,
+            "max_output_tokens": max_output_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+        });
+        body.as_object_mut()
+            .unwrap()
+            .retain(|_key, value| !value.is_null());
+        body
     }
 }
 
