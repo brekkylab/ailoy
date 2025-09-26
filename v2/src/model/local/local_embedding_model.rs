@@ -21,6 +21,8 @@ pub struct LocalEmbeddingModel {
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
     inferencer: Arc<Mutex<EmbeddingModelInferencer>>,
+
+    do_normalize: bool,
 }
 
 impl LocalEmbeddingModel {
@@ -39,11 +41,20 @@ impl EmbeddingModel for LocalEmbeddingModel {
         let mut inferencer = self.inferencer.lock().await;
 
         #[cfg(target_family = "wasm")]
-        let embedding = Ok(inferencer.infer(&input_tokens).await);
+        let mut embedding = inferencer.infer(&input_tokens).await;
         #[cfg(not(target_family = "wasm"))]
-        let embedding = inferencer.infer(&input_tokens).to_vec_f32();
+        let mut embedding = inferencer.infer(&input_tokens).to_vec_f32()?;
 
-        embedding
+        if self.do_normalize {
+            let norm = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+            embedding = if norm > 0.0 {
+                embedding.iter().map(|x| x / norm).collect()
+            } else {
+                embedding
+            }
+        }
+
+        Ok(embedding)
     }
 }
 
@@ -121,6 +132,7 @@ impl TryFromCache for LocalEmbeddingModel {
             Ok(LocalEmbeddingModel {
                 tokenizer,
                 inferencer: Arc::new(Mutex::new(inferencer)),
+                do_normalize: true,
             })
         })
     }
