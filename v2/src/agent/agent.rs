@@ -3,7 +3,8 @@ use std::sync::Arc;
 use futures::{Stream, StreamExt, lock::Mutex};
 
 use crate::{
-    knowledge_base::{Knowledge, SystemMessageRenderer},
+    agent::SystemMessageRenderer,
+    knowledge::Knowledge,
     model::{ArcMutexLanguageModel, LanguageModel},
     tool::{MCPTransport, Tool},
     utils::log,

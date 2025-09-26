@@ -7,9 +7,9 @@ use futures::{StreamExt, lock::Mutex, stream::Stream};
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
     dyn_maybe_send,
-    knowledge_base::Embedding,
     model::{
         EmbeddingModel,
+        embedding_model::Embedding,
         local::{EmbeddingModelInferencer, Tokenizer},
     },
     utils::{BoxFuture, Normalize},
