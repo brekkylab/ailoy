@@ -293,6 +293,41 @@ mod tests {
     }
 
     #[test]
+    pub fn serialize_config() {
+        let config = LMConfigBuilder::new()
+            .max_tokens(1024)
+            .thinking_option(ThinkingOption::Enable)
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .temperature(0.6)
+            .top_p(0.9)
+            .build()
+            .with_model("gpt-5");
+        let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&config);
+        println!("{}", serde_json::to_string(&marshaled).unwrap());
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-5","messages":[{"role":"system","content":"You are a helpful assistant."}],"reasoning_effort":"medium","stream":true,"max_output_tokens":1024}"#
+        );
+
+        let config = LMConfigBuilder::new()
+            .max_tokens(1024)
+            .thinking_option(ThinkingOption::Enable)
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .temperature(0.6)
+            .top_p(0.9)
+            .build()
+            .with_model("gpt-4o");
+        let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&config);
+        println!("{}", serde_json::to_string(&marshaled).unwrap());
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-4o","messages":[{"role":"system","content":"You are a helpful assistant."}],"stream":true,"max_completion_tokens":1024,"temperature":0.6,"top_p":0.9}"#
+        );
+    }
+
+    #[test]
     pub fn deserialize_text() {
         let inputs = [
             r#"{"index":0,"role":"assistant","content":null}"#,
@@ -371,7 +406,6 @@ mod tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            println!("{:?}", cur_delta);
             delta = delta.aggregate(cur_delta).unwrap();
         }
         assert_eq!(delta.tool_calls.len(), 2);

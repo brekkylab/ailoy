@@ -74,7 +74,10 @@ mod tests {
             Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
             Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
         ];
-        let config = LMConfigBuilder::new().build();
+        let config = LMConfigBuilder::new()
+            .system_message("You are a helpful assistant.")
+            .stream(true)
+            .build();
         let mut agg = MessageDelta::new();
         let mut strm = model.run(msgs, Vec::new(), config);
         while let Some(output_opt) = strm.next().await {
@@ -110,7 +113,7 @@ mod tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let config = LMConfigBuilder::new().build();
+        let config = LMConfigBuilder::new().stream(true).build();
         let mut strm = model.run(msgs, tools, config);
         let mut assistant_msg = MessageDelta::default();
         while let Some(output_opt) = strm.next().await {
