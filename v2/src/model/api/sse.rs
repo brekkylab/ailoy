@@ -5,7 +5,7 @@ use futures::StreamExt as _;
 use crate::{
     model::LanguageModel,
     utils::{BoxStream, MaybeSend, MaybeSync},
-    value::{Config, FinishReason, Message, MessageOutput, ToolDesc},
+    value::{LMConfig, FinishReason, Message, MessageOutput, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
@@ -50,7 +50,7 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSentEvent> {
 #[derive(Clone)]
 pub struct SSELanguageModel {
     make_request: Arc<
-        dyn Fn(Vec<Message>, Vec<ToolDesc>, Config) -> reqwest::RequestBuilder
+        dyn Fn(Vec<Message>, Vec<ToolDesc>, LMConfig) -> reqwest::RequestBuilder
             + MaybeSend
             + MaybeSync,
     >,
@@ -66,7 +66,7 @@ impl SSELanguageModel {
             // OpenAI models
             SSELanguageModel {
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: Config| {
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
                         super::openai::make_request(
                             &api_key,
                             msgs,
@@ -85,7 +85,7 @@ impl SSELanguageModel {
             // Gemini models
             SSELanguageModel {
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: Config| {
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
                         super::gemini::make_request(
                             &api_key,
                             msgs,
@@ -111,7 +111,7 @@ impl LanguageModel for SSELanguageModel {
         self: &'a mut Self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
-        config: Config,
+        config: LMConfig,
     ) -> BoxStream<'a, Result<MessageOutput, String>> {
         // Initialize buffer
         let mut buf: Vec<u8> = Vec::with_capacity(8192);

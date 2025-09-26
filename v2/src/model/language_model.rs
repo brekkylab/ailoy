@@ -5,7 +5,7 @@ use futures::lock::Mutex;
 
 use crate::{
     utils::{BoxStream, MaybeSend, MaybeSync},
-    value::{Config, Message, MessageOutput, ToolDesc},
+    value::{LMConfig, Message, MessageOutput, ToolDesc},
 };
 
 pub trait LanguageModel: Downcast + MaybeSend + MaybeSync {
@@ -14,7 +14,7 @@ pub trait LanguageModel: Downcast + MaybeSend + MaybeSync {
         self: &'a mut Self,
         msg: Vec<Message>,
         tools: Vec<ToolDesc>,
-        config: Config,
+        config: LMConfig,
     ) -> BoxStream<'a, Result<MessageOutput, String>>;
 }
 

@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 use crate::{
     to_value,
     value::{
-        Config, Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction,
+        LMConfig, Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction,
         Role, ThinkingOption, ToolDesc, Unmarshal, Value,
     },
 };
@@ -100,8 +100,8 @@ impl Marshal<ToolDesc> for GeminiMarshal {
     }
 }
 
-impl Marshal<Config> for GeminiMarshal {
-    fn marshal(&mut self, config: &Config) -> Value {
+impl Marshal<LMConfig> for GeminiMarshal {
+    fn marshal(&mut self, config: &LMConfig) -> Value {
         let (include_thoughts, thinking_budget) = if let Some(model) = &config.model
             && matches!(
                 model.as_str(),

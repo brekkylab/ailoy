@@ -3,7 +3,7 @@ use base64::Engine;
 use crate::{
     to_value,
     value::{
-        Config, Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction,
+        LMConfig, Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction,
         Role, ThinkingOption, ToolDesc, Unmarshal, Value,
     },
 };
@@ -98,8 +98,8 @@ impl Marshal<ToolDesc> for OpenAIMarshal {
     }
 }
 
-impl Marshal<Config> for OpenAIMarshal {
-    fn marshal(&mut self, config: &Config) -> Value {
+impl Marshal<LMConfig> for OpenAIMarshal {
+    fn marshal(&mut self, config: &LMConfig) -> Value {
         let Some(model) = &config.model else {
             panic!("Cannot marshal `Config` without `model`.");
         };
@@ -428,7 +428,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{ConfigBuilder, Delta, Marshaled, Message, Role};
+    use crate::value::{LMConfigBuilder, Delta, Marshaled, Message, Role};
 
     #[test]
     pub fn serialize_text() {
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     pub fn serialize_config() {
-        let config = ConfigBuilder::new()
+        let config = LMConfigBuilder::new()
             .max_tokens(1024)
             .thinking_option(ThinkingOption::Enable)
             .stream(true)
@@ -520,7 +520,7 @@ mod tests {
             r#"{"model":"gpt-5","instructions":"You are a helpful assistant.","reasoning":{"effort":"medium","summary":"auto"},"stream":true,"max_output_tokens":1024}"#
         );
 
-        let config = ConfigBuilder::new()
+        let config = LMConfigBuilder::new()
             .max_tokens(1024)
             .thinking_option(ThinkingOption::Enable)
             .stream(true)

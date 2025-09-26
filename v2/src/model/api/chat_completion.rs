@@ -1,6 +1,6 @@
 use crate::{
     model::sse::ServerSentEvent,
-    value::{ChatCompletionMarshal, Config, Marshaled, Message, MessageDelta, ToolDesc},
+    value::{ChatCompletionMarshal, LMConfig, Marshaled, Message, MessageDelta, ToolDesc},
 };
 
 pub fn make_request(
@@ -8,7 +8,7 @@ pub fn make_request(
     api_key: &str,
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
-    config: Config,
+    config: LMConfig,
 ) -> reqwest::RequestBuilder {
     let model_name = config.model.unwrap_or_default();
     let mut body = serde_json::json!({
@@ -57,7 +57,7 @@ pub fn handle_event(evt: ServerSentEvent) -> Vec<MessageDelta> {
 mod tests {
     use crate::{
         model::{LanguageModel as _, sse::SSELanguageModel},
-        value::{ConfigBuilder, Delta},
+        value::{LMConfigBuilder, Delta},
     };
 
     const OPENAI_API_KEY: &str = "";
@@ -75,7 +75,7 @@ mod tests {
             Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
             Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
         ];
-        let config = ConfigBuilder::new().build();
+        let config = LMConfigBuilder::new().build();
         let mut agg = MessageDelta::new();
         let mut strm = model.run(msgs, Vec::new(), config);
         while let Some(output_opt) = strm.next().await {
@@ -111,7 +111,7 @@ mod tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let config = ConfigBuilder::new().build();
+        let config = LMConfigBuilder::new().build();
         let mut strm = model.run(msgs, tools, config);
         let mut assistant_msg = MessageDelta::default();
         while let Some(output_opt) = strm.next().await {

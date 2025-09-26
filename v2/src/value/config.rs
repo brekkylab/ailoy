@@ -30,7 +30,7 @@ pub enum OutputSchema {
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-pub struct Config {
+pub struct LMConfig {
     pub model: Option<String>,
     pub system_message: Option<String>,
     pub stream: bool,
@@ -43,7 +43,7 @@ pub struct Config {
     // pub output_schema: OutputSchema,
 }
 
-impl Config {
+impl LMConfig {
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
         self
@@ -51,7 +51,7 @@ impl Config {
 }
 
 #[derive(Default, Debug)]
-pub struct ConfigBuilder {
+pub struct LMConfigBuilder {
     system_message: Option<String>,
     stream: bool,
     thinking_option: ThinkingOption,
@@ -61,7 +61,7 @@ pub struct ConfigBuilder {
     // output_schema: OutputSchema,
 }
 
-impl ConfigBuilder {
+impl LMConfigBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -101,8 +101,8 @@ impl ConfigBuilder {
     //     self
     // }
 
-    pub fn build(self) -> Config {
-        Config {
+    pub fn build(self) -> LMConfig {
+        LMConfig {
             system_message: self.system_message,
             stream: self.stream,
             thinking_option: self.thinking_option,
@@ -115,7 +115,7 @@ impl ConfigBuilder {
     }
 }
 
-impl Serialize for Config {
+impl Serialize for LMConfig {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -158,7 +158,7 @@ impl Serialize for Config {
     }
 }
 
-impl<'de> Deserialize<'de> for Config {
+impl<'de> Deserialize<'de> for LMConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,

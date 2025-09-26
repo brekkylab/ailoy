@@ -1,7 +1,7 @@
 use crate::{
     model::sse::ServerSentEvent,
     value::{
-        Config, FinishReason, Marshaled, Message, MessageDelta, MessageOutput, OpenAIMarshal,
+        LMConfig, FinishReason, Marshaled, Message, MessageDelta, MessageOutput, OpenAIMarshal,
         OpenAIUnmarshal, ToolDesc, Unmarshaled,
     },
 };
@@ -11,7 +11,7 @@ pub fn make_request(
     api_key: &str,
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
-    config: Config,
+    config: LMConfig,
 ) -> reqwest::RequestBuilder {
     let mut body = serde_json::json!(&Marshaled::<_, OpenAIMarshal>::new(&config));
 
@@ -94,7 +94,7 @@ pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
 mod tests {
     use crate::{
         model::{LanguageModel as _, sse::SSELanguageModel},
-        value::{ConfigBuilder, Delta},
+        value::{LMConfigBuilder, Delta},
     };
 
     const OPENAI_API_KEY: &str = "";
@@ -110,7 +110,7 @@ mod tests {
 
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
-        let config = ConfigBuilder::new()
+        let config = LMConfigBuilder::new()
             .system_message("You are a helpful assistant.")
             .stream(true)
             .build();
@@ -150,7 +150,7 @@ mod tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let config = ConfigBuilder::new().stream(true).build();
+        let config = LMConfigBuilder::new().stream(true).build();
         let mut strm = model.run(msgs, tools, config);
         let mut assistant_msg = MessageDelta::default();
         while let Some(output_opt) = strm.next().await {

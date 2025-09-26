@@ -1,7 +1,7 @@
 use crate::{
     model::sse::ServerSentEvent,
     value::{
-        Config, FinishReason, GeminiMarshal, GeminiUnmarshal, Marshaled, Message, MessageDelta,
+        FinishReason, GeminiMarshal, GeminiUnmarshal, LMConfig, Marshaled, Message, MessageDelta,
         MessageOutput, ToolDesc, Unmarshaled,
     },
 };
@@ -11,7 +11,7 @@ pub fn make_request(
     api_key: &str,
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
-    config: Config,
+    config: LMConfig,
 ) -> reqwest::RequestBuilder {
     let mut body = serde_json::json!(&Marshaled::<_, GeminiMarshal>::new(&config));
 
@@ -88,7 +88,7 @@ mod tests {
     use crate::{
         debug,
         model::{LanguageModel as _, sse::SSELanguageModel},
-        value::{ConfigBuilder, Delta},
+        value::{Delta, LMConfigBuilder},
     };
 
     // static GEMINI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
@@ -108,7 +108,7 @@ mod tests {
 
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
-        let config = ConfigBuilder::new()
+        let config = LMConfigBuilder::new()
             .stream(true)
             .system_message("You are a helpful assistant.")
             .build();
@@ -152,7 +152,7 @@ mod tests {
                     }
                 })).build(),
         ];
-        let config = ConfigBuilder::new()
+        let config = LMConfigBuilder::new()
             .stream(true)
             .system_message("You are a helpful assistant.")
             .build();
