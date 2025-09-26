@@ -8,14 +8,14 @@ use ailoy_macros::multi_platform_async_trait;
 use crate::{
     tool::Tool,
     utils::{MaybeSend, MaybeSync},
-    value::{Part, ToolDesc, Value},
+    value::{ToolDesc, Value},
 };
 
 #[derive(Clone)]
 pub struct BuiltinTool {
     desc: ToolDesc,
 
-    f: Arc<dyn Fn(Value) -> Vec<Part> + MaybeSend + MaybeSync + 'static>,
+    f: Arc<dyn Fn(Value) -> Value + MaybeSend + MaybeSync + 'static>,
 }
 
 impl Debug for BuiltinTool {
@@ -30,7 +30,7 @@ impl Debug for BuiltinTool {
 impl BuiltinTool {
     pub fn new(
         desc: ToolDesc,
-        f: Arc<dyn Fn(Value) -> Vec<Part> + MaybeSend + MaybeSync + 'static>,
+        f: Arc<dyn Fn(Value) -> Value + MaybeSend + MaybeSync + 'static>,
     ) -> Self {
         BuiltinTool { desc, f }
     }
@@ -42,7 +42,7 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    async fn run(&self, args: Value) -> Result<Vec<Part>, String> {
+    async fn run(&self, args: Value) -> Result<Value, String> {
         Ok(self.f.clone()(args))
     }
 }
@@ -88,32 +88,26 @@ pub fn create_terminal_tool() -> BuiltinTool {
         }))
         .build();
 
-    let f = Arc::new(|args: Value| -> Vec<Part> {
+    let f = Arc::new(|args: Value| -> Value {
         let args = match args.as_object() {
             Some(a) => a,
             None => {
-                return vec![Part::text_content(
-                    serde_json::to_string(&to_value!({
-                        "stdout": "",
-                        "stderr": "Invalid arguments: expected object",
-                        "exit_code": -1 as i64
-                    }))
-                    .unwrap(),
-                )];
+                return to_value!({
+                    "stdout": "",
+                    "stderr": "Invalid arguments: expected object",
+                    "exit_code": -1 as i64
+                });
             }
         };
 
         let cmd_str = match args.get("command").and_then(|v| v.as_str()) {
             Some(s) => s,
             None => {
-                return vec![Part::text_content(
-                    serde_json::to_string(&to_value!({
-                        "stdout": "",
-                        "stderr": "Missing required 'command' string",
-                        "exit_code": -1 as i64
-                    }))
-                    .unwrap(),
-                )];
+                return to_value!({
+                    "stdout": "",
+                    "stderr": "Missing required 'command' string",
+                    "exit_code": -1 as i64
+                });
             }
         };
 
@@ -195,7 +189,7 @@ pub fn create_terminal_tool() -> BuiltinTool {
         };
 
         // Return
-        vec![Part::text_content(serde_json::to_string(&value).unwrap())]
+        value
     });
 
     BuiltinTool::new(desc, f)

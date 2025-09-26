@@ -12,7 +12,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::{
     tool::{Tool, mcp::common::*},
-    value::{Part, ToolDesc, Value},
+    value::{ToolDesc, Value},
 };
 
 #[derive(Clone, Debug)]
@@ -64,7 +64,7 @@ impl Tool for MCPTool {
         self.desc.clone()
     }
 
-    async fn run(&self, args: Value) -> Result<Vec<Part>, String> {
+    async fn run(&self, args: Value) -> Result<Value, String> {
         let tool_name = self.name.clone();
         let peer = self.client.service.clone();
 
@@ -157,19 +157,13 @@ mod tests {
         let args = to_value!({
             "timezone": "Asia/Seoul"
         });
-        let parts = tool.run(args).await.unwrap();
-        assert_eq!(parts.len(), 1);
-
-        let part = parts[0].clone();
-        assert_eq!(part.is_text(), true);
-
-        let parsed_part: serde_json::Value =
-            serde_json::from_str(&part.as_text().unwrap()).unwrap();
-        assert_eq!(parsed_part["timezone"].as_str(), Some("Asia/Seoul"));
-        assert_eq!(parsed_part["is_dst"].as_bool(), Some(false));
+        let value = tool.run(args).await.unwrap();
+        let value = value.as_object().unwrap();
+        assert_eq!(value["timezone"].as_str(), Some("Asia/Seoul"));
+        assert_eq!(value["is_dst"].as_bool(), Some(false));
         assert_eq!(
             Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$")?
-                .is_match(parsed_part["datetime"].as_str().unwrap()),
+                .is_match(value["datetime"].as_str().unwrap()),
             true
         );
 

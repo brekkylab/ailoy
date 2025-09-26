@@ -1,6 +1,7 @@
-use base64::Engine;
-
-use crate::value::{Part, PartImageColorspace, ToolDesc, Value};
+use crate::{
+    to_value,
+    value::{ToolDesc, Value},
+};
 
 /// Convert MCP tool description to ToolDesc
 pub(super) fn map_mcp_tool_to_tool_description(value: rmcp::model::Tool) -> ToolDesc {
@@ -33,67 +34,33 @@ pub(super) fn map_mcp_tool_to_tool_description(value: rmcp::model::Tool) -> Tool
 /// Convert MCP result to parts
 pub(super) fn call_tool_result_to_parts(
     value: rmcp::model::CallToolResult,
-) -> Result<Vec<Part>, String> {
-    use image::{ColorType, DynamicImage};
-
-    fn detect_colorspace(img: &DynamicImage) -> Result<PartImageColorspace, String> {
-        match img.color() {
-            ColorType::L8 | ColorType::L16 => Ok(PartImageColorspace::Grayscale),
-            ColorType::Rgb8 | ColorType::Rgb16 => Ok(PartImageColorspace::RGB),
-            ColorType::Rgba8 | ColorType::Rgba16 => Ok(PartImageColorspace::RGBA),
-            other => Err(format!("Unsupported color type: {:?}", other)),
-        }
-    }
-
+) -> Result<Value, String> {
     if let Some(result) = value.structured_content {
-        Ok(vec![Part::TextContent(
-            serde_json::to_string(&result).unwrap(),
-        )])
+        Ok(result.into())
     } else if let Some(content) = value.content {
         let mut rv = Vec::with_capacity(content.len());
         for raw_content in content {
             let v = match raw_content.raw {
                 rmcp::model::RawContent::Text(raw_text_content) => {
-                    Part::TextContent(raw_text_content.text)
+                    Value::String(raw_text_content.text)
                 }
-                rmcp::model::RawContent::Image(raw_image_content) => {
-                    let buf = base64::engine::general_purpose::STANDARD
-                        .decode(raw_image_content.data)
-                        .map_err(|e| format!("Invalid base64: {}", e.to_string()))?;
-                    let img = match raw_image_content.mime_type.as_str() {
-                        "image/png" => {
-                            image::load_from_memory_with_format(&buf, image::ImageFormat::Png)
-                        }
-                        "image/jpeg" => {
-                            image::load_from_memory_with_format(&buf, image::ImageFormat::Jpeg)
-                        }
-                        "image/webp" => {
-                            image::load_from_memory_with_format(&buf, image::ImageFormat::WebP)
-                        }
-                        media_type => {
-                            panic!("Unsupported media type: {}", media_type)
-                        }
-                    }
-                    .map_err(|e| format!("Invalid image: {}", e.to_string()))?;
-                    let h = img.height() as usize;
-                    let w = img.width() as usize;
-                    let color_space = detect_colorspace(&img)?;
-                    let nbytes = buf.len() / h / w / color_space.channel();
-                    Part::ImageContent {
-                        h,
-                        w,
-                        c: color_space,
-                        nbytes,
-                        buf,
-                    }
+                rmcp::model::RawContent::Image(_) => {
+                    // @jhlee: Currently, it ignores
+                    Value::Null
                 }
-                rmcp::model::RawContent::Resource(_) => todo!(),
-                rmcp::model::RawContent::Audio(_) => todo!(),
+                rmcp::model::RawContent::Resource(_) => Value::Null,
+                rmcp::model::RawContent::Audio(_) => Value::Null,
             };
             rv.push(v);
         }
-        Ok(rv)
+        if rv.len() == 0 {
+            Ok(Value::Null)
+        } else if rv.len() == 1 {
+            Ok(rv.pop().unwrap())
+        } else {
+            Ok(to_value!(rv))
+        }
     } else {
-        Ok(vec![Part::text_content("null")])
+        Ok(Value::Null)
     }
 }
