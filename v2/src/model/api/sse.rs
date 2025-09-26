@@ -5,7 +5,7 @@ use futures::StreamExt as _;
 use crate::{
     model::LanguageModel,
     utils::{BoxStream, MaybeSend, MaybeSync},
-    value::{Config, FinishReason, Message, MessageDelta, MessageOutput, ToolDesc},
+    value::{Config, FinishReason, Message, MessageOutput, ToolDesc},
 };
 
 #[derive(Clone, Debug)]

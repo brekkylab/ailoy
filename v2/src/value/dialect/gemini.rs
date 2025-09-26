@@ -176,8 +176,6 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
     fn unmarshal(&mut self, val: Value) -> Result<MessageDelta, String> {
         let mut rv = MessageDelta::default();
 
-        // r#"{"candidates":[{"content":{"parts":[{"text":"Hello world!"}],"role":"model"}}]}"#,
-
         let content: &IndexMap<String, Value> = val
             .pointer_as::<IndexMap<String, Value>>("/content")
             .ok_or_else(|| String::from("Content should be an object"))?;

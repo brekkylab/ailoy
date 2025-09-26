@@ -1,8 +1,8 @@
 use crate::{
     model::sse::ServerSentEvent,
     value::{
-        Config, FinishReason, GeminiMarshal, Marshaled, Message, MessageDelta, MessageOutput,
-        ToolDesc,
+        Config, FinishReason, GeminiMarshal, GeminiUnmarshal, Marshaled, Message, MessageDelta,
+        MessageOutput, ToolDesc, Unmarshaled,
     },
 };
 
@@ -39,8 +39,6 @@ pub fn make_request(
         model, generate_method
     );
 
-    println!("{:?}", url);
-    println!("{}", body.to_string());
 
     reqwest::Client::new()
         .request(reqwest::Method::POST, url)
@@ -54,24 +52,32 @@ pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
     let Ok(j) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
         return MessageOutput::default();
     };
-    println!("j: {:?}", j);
+    // println!("j: {:?}", j);
 
     let Some(candidate) = j.pointer("/candidates/0") else {
         return MessageOutput::default();
     };
 
-    println!("candidate: {:?}", candidate);
+    let finish_reason = candidate
+        .pointer("/finishReason")
+        .and_then(|v| v.as_str())
+        .map(|reason| match reason {
+            "STOP" => FinishReason::Stop,
+            "MAX_TOKENS" => FinishReason::Length,
+            reason => FinishReason::Refusal(reason.to_owned()),
+        });
 
-    let Ok(decoded) = serde_json::from_value::<
-        crate::value::Unmarshaled<_, crate::value::GeminiUnmarshal>,
-    >(candidate.clone()) else {
-        return MessageOutput::default();
+    let delta = match finish_reason {
+        Some(FinishReason::Refusal(_)) => MessageDelta::default(),
+        _ => serde_json::from_value::<Unmarshaled<_, GeminiUnmarshal>>(candidate.clone())
+            .ok()
+            .map(|decoded| decoded.get())
+            .unwrap_or_default(),
     };
-    let rv = decoded.get();
-    // FIXME
+
     MessageOutput {
-        delta: rv,
-        finish_reason: None,
+        delta,
+        finish_reason,
     }
 }
 
@@ -80,6 +86,7 @@ mod tests {
     // use std::sync::LazyLock;
 
     use crate::{
+        debug,
         model::{LanguageModel as _, sse::SSELanguageModel},
         value::{ConfigBuilder, Delta},
     };
@@ -105,12 +112,21 @@ mod tests {
             .stream(true)
             .system_message("You are a helpful assistant.")
             .build();
-        let mut agg = MessageDelta::new();
+        let mut assistant_msg = MessageDelta::new();
         let mut strm = model.run(msgs, Vec::new(), config);
+        let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
-            agg = agg.aggregate(output.delta).unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            if let Some(reason) = output.finish_reason {
+                finish_reason = reason;
+            }
         }
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
+        assert_eq!(finish_reason, FinishReason::Stop);
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
@@ -146,11 +162,22 @@ mod tests {
         ];
         let mut strm = model.run(msgs, tools, config);
         let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
-            println!("{:?}", output);
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            if let Some(reason) = output.finish_reason {
+                finish_reason = reason;
+            }
         }
-        println!("{:?}", assistant_msg.finish());
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!(
+                "{:?}",
+                message.tool_calls.first().and_then(|f| f.as_function())
+            );
+            message.tool_calls.len() > 0
+                && message.tool_calls[0].as_function().unwrap().1 == "temperature"
+        }));
+        assert_eq!(finish_reason, FinishReason::Stop);
     }
 }
