@@ -1,44 +1,10 @@
-use base64::Engine;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeError};
+use serde::{Deserialize, Serialize};
 
 use crate::value::{Value, delta::Delta};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PartBytes(Vec<u8>);
-
-impl Serialize for PartBytes {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        if serializer.is_human_readable() {
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&self.0);
-            serializer.serialize_str(&b64)
-        } else {
-            serializer.serialize_bytes(&self.0)
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for PartBytes {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        if deserializer.is_human_readable() {
-            let s = String::deserialize(deserializer)?;
-            let data = base64::engine::general_purpose::STANDARD
-                .decode(s.as_bytes())
-                .map_err(D::Error::custom)?;
-            Ok(PartBytes(data))
-        } else {
-            let b = <Vec<u8>>::deserialize(deserializer)?;
-            Ok(PartBytes(b))
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq, get_all, set_all))]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 pub struct PartFunction {
     pub name: String,
     #[serde(rename = "arguments")]
@@ -48,6 +14,9 @@ pub struct PartFunction {
 #[derive(
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
 )]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
+#[serde(tag = "media-type")]
 pub enum PartImageColorspace {
     #[strum(serialize = "grayscale")]
     #[serde(rename = "grayscale")]
@@ -79,6 +48,11 @@ impl TryFrom<String> for PartImageColorspace {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "python",
+    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
+)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[serde(tag = "media-type")]
 pub enum PartImage {
     #[serde(rename = "image/x-binary")]
@@ -90,7 +64,7 @@ pub enum PartImage {
         #[serde(rename = "colorspace")]
         c: PartImageColorspace,
         nbytes: usize,
-        data: PartBytes,
+        data: super::bytes::Bytes,
     },
 }
 
@@ -141,7 +115,7 @@ impl Part {
                 w: width,
                 c: colorspace,
                 nbytes,
-                data: PartBytes(data),
+                data: super::bytes::Bytes(data),
             },
         })
     }
@@ -266,7 +240,7 @@ impl Part {
                         w,
                         c,
                         nbytes,
-                        data: PartBytes(buf),
+                        data: super::bytes::Bytes(buf),
                     },
             } => {
                 let (h, w) = (*h as u32, *w as u32);

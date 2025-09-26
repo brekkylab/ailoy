@@ -1,3 +1,4 @@
+mod bytes;
 mod config;
 mod delta;
 mod dialect;

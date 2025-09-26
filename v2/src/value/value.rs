@@ -816,3 +816,131 @@ pub enum ValueError {
     InvalidValue,
     MissingField,
 }
+
+#[cfg(feature = "python")]
+mod py {
+    use super::Value;
+    use indexmap::IndexMap;
+    use ordered_float::OrderedFloat;
+    use pyo3::{
+        IntoPyObjectExt,
+        exceptions::PyTypeError,
+        prelude::*,
+        types::{PyAny, PyBool, PyDict, PyFloat, PyList, PySequence, PyString, PyTuple},
+    };
+    use pyo3_stub_gen::{PyStubType, TypeInfo};
+
+    fn py_any_to_indexmap<'py>(obj: &Bound<'py, PyAny>) -> PyResult<IndexMap<String, Value>> {
+        let dict: &Bound<'py, PyDict> = obj.downcast()?;
+        let mut out = IndexMap::with_capacity(dict.len());
+        for (k, v) in dict.iter() {
+            let key = if let Ok(s) = k.downcast::<PyString>() {
+                s.to_str()?.to_owned()
+            } else {
+                return Err(PyTypeError::new_err("dict key must be str"));
+            };
+            let val: Value = v.extract()?;
+            out.insert(key, val);
+        }
+        Ok(out)
+    }
+
+    fn py_any_to_vec<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Vec<Value>> {
+        if let Ok(list) = obj.downcast::<PyList>() {
+            return list.iter().map(|it| it.extract::<Value>()).collect();
+        }
+        if let Ok(tup) = obj.downcast::<PyTuple>() {
+            return tup.iter().map(|it| it.extract::<Value>()).collect();
+        }
+        if let Ok(seq) = obj.downcast::<PySequence>() {
+            let mut out = Vec::with_capacity(seq.len()? as usize);
+            for item in seq.try_iter()? {
+                out.push(item?.extract::<Value>()?);
+            }
+            return Ok(out);
+        }
+        Err(PyTypeError::new_err("expected a sequence (list/tuple)"))
+    }
+
+    impl<'py> FromPyObject<'py> for Value {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+            if ob.is_none() {
+                return Ok(Value::Null);
+            }
+            if ob.is_instance_of::<PyBool>() {
+                return Ok(Value::Bool(ob.extract::<bool>()?));
+            }
+            if let Ok(int_val) = ob.extract::<i128>() {
+                if let Ok(i) = i64::try_from(int_val) {
+                    return Ok(Value::Integer(i));
+                }
+                if int_val >= 0 {
+                    if let Ok(u) = u64::try_from(int_val) {
+                        return Ok(Value::Unsigned(u));
+                    }
+                }
+                return Err(PyTypeError::new_err("int out of supported range (i64/u64)"));
+            }
+            if ob.is_instance_of::<PyFloat>() {
+                let f = ob.extract::<f64>()?;
+                return Ok(Value::Float(OrderedFloat(f)));
+            }
+            if ob.is_instance_of::<PyString>() {
+                return Ok(Value::String(ob.extract::<String>()?));
+            }
+            if ob.is_instance_of::<PyDict>() {
+                let m = py_any_to_indexmap(ob)?;
+                return Ok(Value::Object(m));
+            }
+            if ob.downcast::<PyList>().is_ok()
+                || ob.downcast::<PyTuple>().is_ok()
+                || ob.downcast::<PySequence>().is_ok()
+            {
+                let v = py_any_to_vec(ob)?;
+                return Ok(Value::Array(v));
+            }
+            Err(PyTypeError::new_err("unsupported Python type for Value"))
+        }
+    }
+
+    impl<'py> IntoPyObject<'py> for Value {
+        type Target = PyAny;
+        type Output = Bound<'py, PyAny>;
+        type Error = PyErr;
+
+        fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+            match self {
+                // None
+                Value::Null => Ok(py.None().bind(py).clone()),
+                Value::Bool(b) => Ok(b.into_bound_py_any(py)?),
+                Value::Unsigned(u) => Ok(u.into_bound_py_any(py)?),
+                Value::Integer(i) => Ok(i.into_bound_py_any(py)?),
+                Value::Float(f) => Ok(f.into_inner().into_bound_py_any(py)?),
+                Value::String(s) => Ok(s.into_bound_py_any(py)?),
+                Value::Object(m) => {
+                    let dict = PyDict::new(py);
+                    for (k, v) in m {
+                        // v: Value -> Bound<PyAny>
+                        let vb = v.into_pyobject(py)?;
+                        dict.set_item(k, vb)?;
+                    }
+                    Ok(dict.into_any())
+                }
+                Value::Array(v) => {
+                    let list = PyList::empty(py);
+                    for it in v {
+                        let ib = it.into_pyobject(py)?;
+                        list.append(ib)?;
+                    }
+                    Ok(list.into_any())
+                }
+            }
+        }
+    }
+
+    impl PyStubType for Value {
+        fn type_output() -> TypeInfo {
+            TypeInfo::any()
+        }
+    }
+}
