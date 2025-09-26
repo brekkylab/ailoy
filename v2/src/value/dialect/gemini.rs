@@ -5,7 +5,7 @@ use crate::{
     to_value,
     value::{
         Config, Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction,
-        ReasoningOption, Role, ToolDesc, Unmarshal, Value,
+        Role, ThinkingOption, ToolDesc, Unmarshal, Value,
     },
 };
 
@@ -107,27 +107,27 @@ impl Marshal<Config> for GeminiMarshal {
                 model.as_str(),
                 "gemini-2.5-pro" | "gemini-2.5-flash" | "gemini-2.5-flash-lite"
             ) {
-            match &config.reasoning_option {
-                ReasoningOption::Disable => match model.as_str() {
+            match &config.thinking_option {
+                ThinkingOption::Disable => match model.as_str() {
                     "gemini-2.5-pro" => (false, 128),
                     "gemini-2.5-flash" => (false, 0),
                     "gemini-2.5-flash-lite" => (false, 0),
                     _ => unreachable!(""),
                 },
-                ReasoningOption::Enable => (true, -1),
-                ReasoningOption::Low => match model.as_str() {
+                ThinkingOption::Enable => (true, -1),
+                ThinkingOption::Low => match model.as_str() {
                     "gemini-2.5-pro" => (true, 1024),
                     "gemini-2.5-flash" => (true, 1024),
                     "gemini-2.5-flash-lite" => (true, 1024),
                     _ => unreachable!(""),
                 },
-                ReasoningOption::Medium => match model.as_str() {
+                ThinkingOption::Medium => match model.as_str() {
                     "gemini-2.5-pro" => (true, 8192),
                     "gemini-2.5-flash" => (true, 8192),
                     "gemini-2.5-flash-lite" => (true, 8192),
                     _ => unreachable!(""),
                 },
-                ReasoningOption::High => match model.as_str() {
+                ThinkingOption::High => match model.as_str() {
                     "gemini-2.5-pro" => (true, 24576),
                     "gemini-2.5-flash" => (true, 24576),
                     "gemini-2.5-flash-lite" => (true, 24576),
@@ -270,17 +270,17 @@ mod tests {
     }
 
     #[test]
-    pub fn serialize_messages_with_reasonings() {
+    pub fn serialize_messages_with_thinkings() {
         let msgs = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("Hello there."), Part::text("How are you?")]),
             Message::new(Role::Assistant)
-                .with_thinking_signature("This is reasoning text would be vanished.", "")
+                .with_thinking_signature("This is thinking text would be vanished.", "")
                 .with_contents([Part::text("I'm fine, thank you. And you?")]),
             Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
             Message::new(Role::Assistant)
                 .with_thinking_signature(
-                    "This is reasoning text would be remaining.",
+                    "This is thinking text would be remaining.",
                     "Ev4MCkYIBxgCKkDl5A",
                 )
                 .with_contents([Part::text("Is there anything I can help with?")]),
@@ -288,7 +288,7 @@ mod tests {
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msgs);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"[{"role":"user","parts":[{"text":"Hello there."},{"text":"How are you?"}]},{"role":"assistant","parts":[{"text":"I'm fine, thank you. And you?"}]},{"role":"user","parts":[{"text":"I'm okay."}]},{"role":"assistant","parts":[{"text":"This is reasoning text would be remaining.","thought":true},{"text":"Is there anything I can help with?"}]}]"#
+            r#"[{"role":"user","parts":[{"text":"Hello there."},{"text":"How are you?"}]},{"role":"assistant","parts":[{"text":"I'm fine, thank you. And you?"}]},{"role":"user","parts":[{"text":"I'm okay."}]},{"role":"assistant","parts":[{"text":"This is thinking text would be remaining.","thought":true},{"text":"Is there anything I can help with?"}]}]"#
         );
     }
 
@@ -363,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    pub fn deserialize_text_with_reasoning() {
+    pub fn deserialize_text_with_thinking() {
         let inputs = [
             r#"{"content":{"parts":[{"text":"**Answering a simple question**\n\nUser is saying hello.","thought":true},{"text":"Hello world!"}],"role":"model"}}"#,
         ];
@@ -387,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    pub fn deserialize_text_with_reasoning_stream() {
+    pub fn deserialize_text_with_thinking_stream() {
         let inputs = [
             r#"{"content":{"parts":[{"text":"**Answering a simple question**\n\n","thought": true}],"role": "model"}}"#,
             r#"{"content":{"parts":[{"text":"User is saying hello.","thought": true}],"role": "model"}}"#,

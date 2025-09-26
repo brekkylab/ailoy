@@ -4,7 +4,7 @@ use serde::{
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub enum ReasoningOption {
+pub enum ThinkingOption {
     #[default]
     Disable,
     Enable,
@@ -34,7 +34,7 @@ pub struct Config {
     pub model: Option<String>,
     pub system_message: Option<String>,
     pub stream: bool,
-    pub reasoning_option: ReasoningOption,
+    pub thinking_option: ThinkingOption,
 
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
@@ -54,7 +54,7 @@ impl Config {
 pub struct ConfigBuilder {
     system_message: Option<String>,
     stream: bool,
-    reasoning_option: ReasoningOption,
+    thinking_option: ThinkingOption,
     temperature: Option<f64>,
     top_p: Option<f64>,
     max_tokens: Option<i32>,
@@ -76,8 +76,8 @@ impl ConfigBuilder {
         self
     }
 
-    pub fn reasoning_option(mut self, reasoning_option: ReasoningOption) -> Self {
-        self.reasoning_option = reasoning_option;
+    pub fn thinking_option(mut self, thinking_option: ThinkingOption) -> Self {
+        self.thinking_option = thinking_option;
         self
     }
 
@@ -105,7 +105,7 @@ impl ConfigBuilder {
         Config {
             system_message: self.system_message,
             stream: self.stream,
-            reasoning_option: self.reasoning_option,
+            thinking_option: self.thinking_option,
             temperature: self.temperature,
             top_p: self.top_p,
             max_tokens: self.max_tokens,
@@ -140,7 +140,7 @@ impl Serialize for Config {
             state.serialize_field("system_message", val)?;
         }
         state.serialize_field("stream", &self.stream)?;
-        state.serialize_field("reasoning_option", &self.reasoning_option)?;
+        state.serialize_field("thinking_option", &self.thinking_option)?;
 
         if let Some(ref val) = self.temperature {
             state.serialize_field("temperature", val)?;

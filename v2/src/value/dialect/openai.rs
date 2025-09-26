@@ -11,7 +11,7 @@ use crate::{
 #[derive(Clone, Debug, Default)]
 pub struct OpenAIMarshal;
 
-fn marshal_message(msg: &Message, include_reasoning: bool) -> Vec<Value> {
+fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
     let part_to_value = |part: &Part| -> Value {
         match part {
             Part::Text { text } => to_value!({"type": "input_text", "text": text}),
@@ -47,7 +47,7 @@ fn marshal_message(msg: &Message, include_reasoning: bool) -> Vec<Value> {
         }
     };
     let mut rv = Vec::<Value>::new();
-    if !msg.thinking.is_empty() && include_reasoning {
+    if !msg.thinking.is_empty() && include_thinking {
         rv.push(to_value!({"type": "reasoning", "summary": [{"type": "summary_text", "text": &msg.thinking}]}));
     }
     if !msg.contents.is_empty() {
@@ -352,16 +352,16 @@ mod tests {
     }
 
     #[test]
-    pub fn serialize_messages_with_reasonings() {
+    pub fn serialize_messages_with_thinkings() {
         let msgs = vec![
             Message::new(Role::User).with_contents([Part::text("Hello there.")]),
             Message::new(Role::Assistant)
-                .with_thinking_signature("This is reasoning text would be vanished.", "")
+                .with_thinking_signature("This is thinking text would be vanished.", "")
                 .with_contents([Part::text("I'm fine, thank you. And you?")]),
             Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
             Message::new(Role::Assistant)
                 .with_thinking_signature(
-                    "This is reasoning text would be remaining.",
+                    "This is thinking text would be remaining.",
                     "Ev4MCkYIBxgCKkDl5A",
                 )
                 .with_contents([Part::text("Is there anything I can help with?")]),
@@ -369,7 +369,7 @@ mod tests {
         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msgs);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"[{"role":"user","content":[{"type":"input_text","text":"Hello there."}]},{"role":"assistant","content":[{"type":"input_text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"input_text","text":"I'm okay."}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"This is reasoning text would be remaining."}]},{"role":"assistant","content":[{"type":"input_text","text":"Is there anything I can help with?"}]}]"#
+            r#"[{"role":"user","content":[{"type":"input_text","text":"Hello there."}]},{"role":"assistant","content":[{"type":"input_text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"input_text","text":"I'm okay."}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"This is thinking text would be remaining."}]},{"role":"assistant","content":[{"type":"input_text","text":"Is there anything I can help with?"}]}]"#
         );
     }
 
