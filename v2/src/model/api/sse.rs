@@ -5,7 +5,7 @@ use futures::StreamExt as _;
 use crate::{
     model::LanguageModel,
     utils::{BoxStream, MaybeSend, MaybeSync},
-    value::{Message, MessageDelta, ToolDesc},
+    value::{FinishReason, LMConfig, Message, MessageOutput, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
@@ -17,7 +17,11 @@ pub struct ServerSentEvent {
 fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSentEvent> {
     let mut i = 0;
     while i + 1 < buf.len() {
-        if let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+        if let Some(pos) = buf
+            .windows(2)
+            .position(|w| w == b"\n\n")
+            .or_else(|| buf.windows(4).position(|w| w == b"\r\n\r\n"))
+        {
             let raw = buf.drain(..pos + 2).collect::<Vec<u8>>();
             let text = String::from_utf8_lossy(&raw);
             let mut event: String = String::new();
@@ -45,40 +49,59 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSentEvent> {
 
 #[derive(Clone)]
 pub struct SSELanguageModel {
-    make_request:
-        Arc<dyn Fn(Vec<Message>, Vec<ToolDesc>) -> reqwest::RequestBuilder + MaybeSend + MaybeSync>,
-    handle_event: Arc<dyn Fn(ServerSentEvent) -> Vec<MessageDelta> + MaybeSend + MaybeSync>,
+    make_request: Arc<
+        dyn Fn(Vec<Message>, Vec<ToolDesc>, LMConfig) -> reqwest::RequestBuilder
+            + MaybeSend
+            + MaybeSync,
+    >,
+    handle_event: Arc<dyn Fn(ServerSentEvent) -> MessageOutput + MaybeSend + MaybeSync>,
 }
 
 impl SSELanguageModel {
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         let model = model.into();
         let api_key = api_key.into();
-        let (make_request, handle_event) = if model.starts_with("gpt") || model.starts_with("o") {
+
+        let ret = if model.starts_with("gpt") || model.starts_with("o") {
             // OpenAI models
-            let model = model.clone();
-            (
-                Arc::new(move |msgs: Vec<Message>, tools: Vec<ToolDesc>| {
-                    super::openai::make_request(&model, &api_key, msgs, tools)
-                }),
-                Arc::new(super::openai::handle_event),
-            )
+            SSELanguageModel {
+                make_request: Arc::new(
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
+                        super::openai::make_request(
+                            &api_key,
+                            msgs,
+                            tools,
+                            config.with_model(model.as_str()),
+                        )
+                    },
+                ),
+                handle_event: Arc::new(super::openai::handle_event),
+            }
         } else if model.starts_with("claude") {
             // Anthropic models
             todo!()
         } else if model.starts_with("gemini") {
             // Gemini models
-            todo!()
+            SSELanguageModel {
+                make_request: Arc::new(
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
+                        super::gemini::make_request(
+                            &api_key,
+                            msgs,
+                            tools,
+                            config.with_model(model.as_str()),
+                        )
+                    },
+                ),
+                handle_event: Arc::new(super::gemini::handle_event),
+            }
         } else if model.starts_with("grok") {
             todo!()
         } else {
             panic!()
         };
 
-        SSELanguageModel {
-            make_request,
-            handle_event,
-        }
+        ret
     }
 }
 
@@ -87,26 +110,34 @@ impl LanguageModel for SSELanguageModel {
         self: &'a mut Self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
-    ) -> BoxStream<'a, Result<MessageDelta, String>> {
+        config: LMConfig,
+    ) -> BoxStream<'a, Result<MessageOutput, String>> {
         // Initialize buffer
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
         // Send request
-        let resp = (self.make_request)(msgs, tools).send();
+        let resp = (self.make_request)(msgs, tools, config).send();
 
         let strm = async_stream::try_stream! {
             // Await response
             let resp = resp.await.map_err(|e| e.to_string())?;
 
             if resp.status().is_success() {
+                // println!("{:?}", resp.text().await);
                 // On success - read stream
                 let mut strm = resp.bytes_stream();
-                while let Some(chunk_res) = strm.next().await {
+                'outer: while let Some(chunk_res) = strm.next().await {
                     let chunk = chunk_res.map_err(|e| e.to_string())?;
                     buf.extend_from_slice(&chunk);
                     while let Some(evt) = drain_next_event(&mut buf) {
-                        for delta in (self.handle_event)(evt) {
-                            yield delta;
+                        let message_output = (self.handle_event)(evt);
+                        match message_output.finish_reason {
+                            None | Some(FinishReason::Stop) => {
+                                yield message_output;
+                            }
+                            Some(_) => {
+                                break 'outer;
+                            }
                         }
                     };
                 }
@@ -116,7 +147,6 @@ impl LanguageModel for SSELanguageModel {
                 let text = resp.text().await.unwrap_or_default();
                 Err(format!("Request failed: {} - {}", status, text))?;
             }
-            yield MessageDelta::default();
         };
         Box::pin(strm)
     }

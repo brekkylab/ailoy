@@ -3,15 +3,15 @@ use base64::Engine;
 use crate::{
     to_value,
     value::{
-        Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction, Role,
-        ToolDesc, Unmarshal, Value,
+        LMConfig, Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction,
+        Role, ThinkingOption, ToolDesc, Unmarshal, Value,
     },
 };
 
 #[derive(Clone, Debug, Default)]
 pub struct OpenAIMarshal;
 
-fn marshal_message(msg: &Message, include_reasoning: bool) -> Vec<Value> {
+fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
     let part_to_value = |part: &Part| -> Value {
         match part {
             Part::Text { text } => to_value!({"type": "input_text", "text": text}),
@@ -47,7 +47,7 @@ fn marshal_message(msg: &Message, include_reasoning: bool) -> Vec<Value> {
         }
     };
     let mut rv = Vec::<Value>::new();
-    if !msg.thinking.is_empty() && include_reasoning {
+    if !msg.thinking.is_empty() && include_thinking {
         rv.push(to_value!({"type": "reasoning", "summary": [{"type": "summary_text", "text": &msg.thinking}]}));
     }
     if !msg.contents.is_empty() {
@@ -81,14 +81,104 @@ impl Marshal<Vec<Message>> for OpenAIMarshal {
 
 impl Marshal<ToolDesc> for OpenAIMarshal {
     fn marshal(&mut self, item: &ToolDesc) -> Value {
-        let mut value = to_value!({"type": "function","function": {"name": &item.name,"parameters": item.parameters.clone()}});
         if let Some(desc) = &item.description {
-            value
-                .as_object_mut()
-                .unwrap()
-                .insert("description".into(), desc.into());
+            to_value!({
+                "type": "function",
+                "name": &item.name,
+                "description": desc,
+                "parameters": item.parameters.clone()
+            })
+        } else {
+            to_value!({
+                "type": "function",
+                "name": &item.name,
+                "parameters": item.parameters.clone()
+            })
         }
-        value
+    }
+}
+
+impl Marshal<LMConfig> for OpenAIMarshal {
+    fn marshal(&mut self, config: &LMConfig) -> Value {
+        let Some(model) = &config.model else {
+            panic!("Cannot marshal `Config` without `model`.");
+        };
+
+        let is_reasoning_model = if model.starts_with("o") || model.starts_with("gpt-5") {
+            true
+        } else {
+            false
+        };
+
+        let (reasoning_effort, reasoning_summary) = if is_reasoning_model {
+            match &config.thinking_option {
+                ThinkingOption::Disable => {
+                    if model.starts_with("gpt-5") {
+                        (Some("minimal"), None)
+                    } else {
+                        (Some("low"), None)
+                    }
+                }
+                ThinkingOption::Enable | ThinkingOption::Medium => (Some("medium"), Some("auto")),
+                ThinkingOption::Low => (Some("low"), Some("auto")),
+                ThinkingOption::High => (Some("high"), Some("auto")),
+            }
+        } else {
+            (None, None)
+        };
+        let reasoning = match (reasoning_effort, reasoning_summary) {
+            (Some(effort), Some(summary)) => {
+                to_value!({"effort": effort, "summary": summary})
+            }
+            (Some(effort), None) => {
+                to_value!({"effort": effort})
+            }
+            (None, _) => Value::Null,
+        };
+
+        let instruction = if let Some(system_message) = &config.system_message {
+            to_value!(system_message)
+        } else {
+            Value::Null
+        };
+
+        let max_output_tokens = if let Some(max_tokens) = &config.max_tokens {
+            to_value!(*max_tokens as i64)
+        } else {
+            Value::Null
+        };
+
+        let temperature = if let Some(temperature) = &config.temperature
+            && !is_reasoning_model
+        {
+            to_value!(*temperature)
+        } else {
+            Value::Null
+        };
+
+        let top_p = if let Some(top_p) = &config.top_p
+            && !is_reasoning_model
+        {
+            to_value!(*top_p)
+        } else {
+            Value::Null
+        };
+
+        let stream = config.stream;
+
+        let mut body = to_value!({
+            "model": model,
+            "instructions": instruction,
+            "reasoning": reasoning,
+            "stream": stream,
+            "max_output_tokens": max_output_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+        });
+        body.as_object_mut()
+            .unwrap()
+            .retain(|_key, value| !value.is_null());
+        body
     }
 }
 
@@ -338,7 +428,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{Delta, Marshaled, Message, Role};
+    use crate::value::{LMConfigBuilder, Delta, Marshaled, Message, Role};
 
     #[test]
     pub fn serialize_text() {
@@ -352,16 +442,16 @@ mod tests {
     }
 
     #[test]
-    pub fn serialize_messages_with_reasonings() {
+    pub fn serialize_messages_with_thinkings() {
         let msgs = vec![
             Message::new(Role::User).with_contents([Part::text("Hello there.")]),
             Message::new(Role::Assistant)
-                .with_thinking_signature("This is reasoning text would be vanished.", "")
+                .with_thinking_signature("This is thinking text would be vanished.", "")
                 .with_contents([Part::text("I'm fine, thank you. And you?")]),
             Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
             Message::new(Role::Assistant)
                 .with_thinking_signature(
-                    "This is reasoning text would be remaining.",
+                    "This is thinking text would be remaining.",
                     "Ev4MCkYIBxgCKkDl5A",
                 )
                 .with_contents([Part::text("Is there anything I can help with?")]),
@@ -369,7 +459,7 @@ mod tests {
         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msgs);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"[{"role":"user","content":[{"type":"input_text","text":"Hello there."}]},{"role":"assistant","content":[{"type":"input_text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"input_text","text":"I'm okay."}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"This is reasoning text would be remaining."}]},{"role":"assistant","content":[{"type":"input_text","text":"Is there anything I can help with?"}]}]"#
+            r#"[{"role":"user","content":[{"type":"input_text","text":"Hello there."}]},{"role":"assistant","content":[{"type":"input_text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"input_text","text":"I'm okay."}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"This is thinking text would be remaining."}]},{"role":"assistant","content":[{"type":"input_text","text":"Is there anything I can help with?"}]}]"#
         );
     }
 
@@ -409,6 +499,41 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"[{"role":"user","content":[{"type":"input_text","text":"What you can see in this image?"},{"type":"input_image","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}]"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_config() {
+        let config = LMConfigBuilder::new()
+            .max_tokens(1024)
+            .thinking_option(ThinkingOption::Enable)
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .temperature(0.6)
+            .top_p(0.9)
+            .build()
+            .with_model("gpt-5");
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        println!("{}", serde_json::to_string(&marshaled).unwrap());
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-5","instructions":"You are a helpful assistant.","reasoning":{"effort":"medium","summary":"auto"},"stream":true,"max_output_tokens":1024}"#
+        );
+
+        let config = LMConfigBuilder::new()
+            .max_tokens(1024)
+            .thinking_option(ThinkingOption::Enable)
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .temperature(0.6)
+            .top_p(0.9)
+            .build()
+            .with_model("gpt-4o");
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        println!("{}", serde_json::to_string(&marshaled).unwrap());
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-4o","instructions":"You are a helpful assistant.","stream":true,"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}"#
         );
     }
 

@@ -1,3 +1,4 @@
+mod config;
 mod delta;
 mod dialect;
 mod marshal;
@@ -6,6 +7,7 @@ mod part;
 mod tool_desc;
 mod value;
 
+pub use config::*;
 pub use delta::*;
 pub use dialect::*;
 pub use marshal::*;

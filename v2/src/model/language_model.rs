@@ -1,12 +1,11 @@
-use std::any::TypeId;
-use std::sync::Arc;
+use std::{any::TypeId, sync::Arc};
 
 use downcast_rs::{Downcast, impl_downcast};
 use futures::lock::Mutex;
 
 use crate::{
     utils::{BoxStream, MaybeSend, MaybeSync},
-    value::{Message, MessageDelta, ToolDesc},
+    value::{LMConfig, Message, MessageOutput, ToolDesc},
 };
 
 pub trait LanguageModel: Downcast + MaybeSend + MaybeSync {
@@ -15,7 +14,8 @@ pub trait LanguageModel: Downcast + MaybeSend + MaybeSync {
         self: &'a mut Self,
         msg: Vec<Message>,
         tools: Vec<ToolDesc>,
-    ) -> BoxStream<'a, Result<MessageDelta, String>>;
+        config: LMConfig,
+    ) -> BoxStream<'a, Result<MessageOutput, String>>;
 }
 
 impl_downcast!(LanguageModel);
