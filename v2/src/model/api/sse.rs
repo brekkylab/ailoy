@@ -5,7 +5,7 @@ use futures::StreamExt as _;
 use crate::{
     model::LanguageModel,
     utils::{BoxStream, MaybeSend, MaybeSync},
-    value::{Config, Message, MessageDelta, ToolDesc},
+    value::{Config, FinishReason, Message, MessageDelta, MessageOutput, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
@@ -54,7 +54,7 @@ pub struct SSELanguageModel {
             + MaybeSend
             + MaybeSync,
     >,
-    handle_event: Arc<dyn Fn(ServerSentEvent) -> Vec<MessageDelta> + MaybeSend + MaybeSync>,
+    handle_event: Arc<dyn Fn(ServerSentEvent) -> MessageOutput + MaybeSend + MaybeSync>,
 }
 
 impl SSELanguageModel {
@@ -112,7 +112,7 @@ impl LanguageModel for SSELanguageModel {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: Config,
-    ) -> BoxStream<'a, Result<MessageDelta, String>> {
+    ) -> BoxStream<'a, Result<MessageOutput, String>> {
         // Initialize buffer
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
@@ -123,17 +123,22 @@ impl LanguageModel for SSELanguageModel {
             // Await response
             let resp = resp.await.map_err(|e| e.to_string())?;
 
-
             if resp.status().is_success() {
                 // println!("{:?}", resp.text().await);
                 // On success - read stream
                 let mut strm = resp.bytes_stream();
-                while let Some(chunk_res) = strm.next().await {
+                'outer: while let Some(chunk_res) = strm.next().await {
                     let chunk = chunk_res.map_err(|e| e.to_string())?;
                     buf.extend_from_slice(&chunk);
                     while let Some(evt) = drain_next_event(&mut buf) {
-                        for delta in (self.handle_event)(evt) {
-                            yield delta;
+                        let message_output = (self.handle_event)(evt);
+                        match message_output.finish_reason {
+                            None | Some(FinishReason::Stop) => {
+                                yield message_output;
+                            }
+                            Some(_) => {
+                                break 'outer;
+                            }
                         }
                     };
                 }
@@ -143,7 +148,6 @@ impl LanguageModel for SSELanguageModel {
                 let text = resp.text().await.unwrap_or_default();
                 Err(format!("Request failed: {} - {}", status, text))?;
             }
-            yield MessageDelta::default();
         };
         Box::pin(strm)
     }

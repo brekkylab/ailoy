@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::value::{Delta, Part, PartDelta};
+use crate::value::{Delta, FinishReason, Part, PartDelta};
 
 /// The author of a message (or streaming delta) in a chat.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display)]
@@ -222,3 +222,11 @@ impl Delta for MessageDelta {
         })
     }
 }
+
+#[derive(Clone, Debug, Default)]
+pub struct MessageOutput {
+    pub delta: MessageDelta,
+    pub finish_reason: Option<FinishReason>,
+}
+
+impl MessageOutput {}

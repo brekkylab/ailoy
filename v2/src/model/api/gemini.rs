@@ -1,6 +1,9 @@
 use crate::{
     model::sse::ServerSentEvent,
-    value::{Config, GeminiMarshal, Marshaled, Message, MessageDelta, ToolDesc},
+    value::{
+        Config, FinishReason, GeminiMarshal, Marshaled, Message, MessageDelta, MessageOutput,
+        ToolDesc,
+    },
 };
 
 pub fn make_request(
@@ -42,19 +45,19 @@ pub fn make_request(
     reqwest::Client::new()
         .request(reqwest::Method::POST, url)
         .header("x-goog-api-key", api_key)
-        .header("Content-Type", "application/json")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::ACCEPT, "text/event-stream")
         .body(body.to_string())
 }
 
-pub fn handle_event(evt: ServerSentEvent) -> Vec<MessageDelta> {
+pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
     let Ok(j) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
-        return Vec::new();
+        return MessageOutput::default();
     };
     println!("j: {:?}", j);
 
     let Some(candidate) = j.pointer("/candidates/0") else {
-        return Vec::new();
+        return MessageOutput::default();
     };
 
     println!("candidate: {:?}", candidate);
@@ -62,10 +65,14 @@ pub fn handle_event(evt: ServerSentEvent) -> Vec<MessageDelta> {
     let Ok(decoded) = serde_json::from_value::<
         crate::value::Unmarshaled<_, crate::value::GeminiUnmarshal>,
     >(candidate.clone()) else {
-        return Vec::new();
+        return MessageOutput::default();
     };
     let rv = decoded.get();
-    vec![rv]
+    // FIXME
+    MessageOutput {
+        delta: rv,
+        finish_reason: None,
+    }
 }
 
 #[cfg(test)]
@@ -100,9 +107,9 @@ mod tests {
             .build();
         let mut agg = MessageDelta::new();
         let mut strm = model.run(msgs, Vec::new(), config);
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            agg = agg.aggregate(delta).unwrap();
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            agg = agg.aggregate(output.delta).unwrap();
         }
     }
 
@@ -139,10 +146,10 @@ mod tests {
         ];
         let mut strm = model.run(msgs, tools, config);
         let mut assistant_msg = MessageDelta::default();
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            println!("{:?}", delta);
-            assistant_msg = assistant_msg.aggregate(delta).unwrap();
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            println!("{:?}", output);
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
         }
         println!("{:?}", assistant_msg.finish());
     }

@@ -1,6 +1,9 @@
 use crate::{
     model::sse::ServerSentEvent,
-    value::{ChatCompletionMarshal, Config, Marshaled, Message, MessageDelta, ToolDesc},
+    value::{
+        Config, FinishReason, Marshaled, Message, MessageDelta, MessageOutput, OpenAIMarshal,
+        OpenAIUnmarshal, ToolDesc, Unmarshaled,
+    },
 };
 
 pub fn make_request(
@@ -10,47 +13,44 @@ pub fn make_request(
     tools: Vec<ToolDesc>,
     config: Config,
 ) -> reqwest::RequestBuilder {
-    let model_name = config.model.unwrap_or_default();
-    let mut body = serde_json::json!({
-        "model": model_name,
-        "messages": Marshaled::<_, ChatCompletionMarshal>::new(&msgs),
-        "stream": true
-    });
+    let mut body = serde_json::json!(&Marshaled::<_, OpenAIMarshal>::new(&config));
+
+    body["input"] = serde_json::json!(&Marshaled::<_, OpenAIMarshal>::new(&msgs));
     if !tools.is_empty() {
         body["tool_choice"] = serde_json::json!("auto");
         body["tools"] = serde_json::json!(
             tools
                 .iter()
-                .map(|v| Marshaled::<_, ChatCompletionMarshal>::new(v))
+                .map(|v| Marshaled::<_, OpenAIMarshal>::new(v))
                 .collect::<Vec<_>>()
         );
     }
 
     reqwest::Client::new()
-        .request(
-            reqwest::Method::POST,
-            "https://api.openai.com/v1/chat/completions",
-        )
+        .request(reqwest::Method::POST, "https://api.openai.com/v1/responses")
         .bearer_auth(api_key)
-        .header("Content-Type", "application/json")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::ACCEPT, "text/event-stream")
         .body(body.to_string())
 }
 
-pub fn handle_event(evt: ServerSentEvent) -> Vec<MessageDelta> {
+pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
     let Ok(j) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
-        return Vec::new();
+        return MessageOutput::default();
     };
     let Some(choice) = j.pointer("/choices/0/delta") else {
-        return Vec::new();
+        return MessageOutput::default();
     };
     let Ok(decoded) = serde_json::from_value::<
         crate::value::Unmarshaled<_, crate::value::ChatCompletionUnmarshal>,
     >(choice.clone()) else {
-        return Vec::new();
+        return MessageOutput::default();
     };
     let rv = decoded.get();
-    vec![rv]
+    MessageOutput {
+        delta: rv,
+        finish_reason: None,
+    }
 }
 
 #[cfg(test)]
@@ -71,17 +71,19 @@ mod tests {
 
         let mut model = SSELanguageModel::new("gpt-4.1", OPENAI_API_KEY);
 
-        let msgs = vec![
-            Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
-            Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
-        ];
-        let config = ConfigBuilder::new().build();
-        let mut agg = MessageDelta::new();
+        let msgs =
+            vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
+        let config = ConfigBuilder::new()
+            .system_message("You are a helpful assistant.")
+            .stream(true)
+            .build();
+        let mut assistant_msg = MessageDelta::new();
         let mut strm = model.run(msgs, Vec::new(), config);
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            agg = agg.aggregate(delta).unwrap();
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
         }
+        println!("{:?}", assistant_msg.finish());
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
@@ -111,13 +113,12 @@ mod tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let config = ConfigBuilder::new().build();
+        let config = ConfigBuilder::new().stream(true).build();
         let mut strm = model.run(msgs, tools, config);
         let mut assistant_msg = MessageDelta::default();
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            println!("{:?}", delta);
-            assistant_msg = assistant_msg.aggregate(delta).unwrap();
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
         }
         println!("{:?}", assistant_msg.finish());
     }
