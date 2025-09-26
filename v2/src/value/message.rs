@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::value::{Delta, FinishReason, Part, PartDelta};
+use crate::value::{Delta, Part, PartDelta};
 
 /// The author of a message (or streaming delta) in a chat.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum Role {
     /// System instructions and constraints provided to the assistant.
     System,
@@ -232,6 +232,16 @@ impl Delta for MessageDelta {
             signature,
         })
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+pub enum FinishReason {
+    Stop(),
+    Length(), // max_output_tokens
+    ToolCall(),
+    Refusal(String), // content_filter, refusal
 }
 
 #[derive(Clone, Debug, Default)]

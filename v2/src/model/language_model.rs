@@ -2,19 +2,54 @@ use std::{any::TypeId, sync::Arc};
 
 use downcast_rs::{Downcast, impl_downcast};
 use futures::lock::Mutex;
+use serde::Serialize;
 
 use crate::{
     utils::{BoxStream, MaybeSend, MaybeSync},
-    value::{LMConfig, Message, MessageOutput, ToolDesc},
+    value::{Message, MessageOutput, ToolDesc},
 };
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub enum ThinkEffort {
+    #[default]
+    Disable,
+    Enable,
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub enum Grammar {
+    #[default]
+    Plain,
+    JSON,
+    JSONSchema(String),
+    Regex(String),
+    CFG(String),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InferenceConfig {
+    pub think_effort: Option<ThinkEffort>,
+
+    pub temperature: Option<ordered_float::OrderedFloat<f64>>,
+
+    pub top_p: Option<ordered_float::OrderedFloat<f64>>,
+
+    pub max_tokens: Option<i32>,
+
+    pub grammar: Option<Grammar>,
+}
+
 pub trait LanguageModel: Downcast + MaybeSend + MaybeSync {
+    fn update_config(&mut self, config: InferenceConfig) -> Result<(), ()>;
+
     /// Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
     fn run<'a>(
-        self: &'a mut Self,
+        &'a mut self,
         msg: Vec<Message>,
         tools: Vec<ToolDesc>,
-        config: LMConfig,
     ) -> BoxStream<'a, Result<MessageOutput, String>>;
 }
 

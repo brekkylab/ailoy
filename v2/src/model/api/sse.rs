@@ -3,18 +3,18 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 
 use crate::{
-    model::LanguageModel,
+    model::{InferenceConfig, LanguageModel, ThinkEffort, api::RequestInfo},
     utils::{BoxStream, MaybeSend, MaybeSync},
-    value::{FinishReason, LMConfig, Message, MessageOutput, ToolDesc},
+    value::{FinishReason, Message, MessageOutput, Role, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
-pub struct ServerSentEvent {
+pub struct ServerEvent {
     pub event: String,
     pub data: String,
 }
 
-fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSentEvent> {
+fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerEvent> {
     let mut i = 0;
     while i + 1 < buf.len() {
         if let Some(pos) = buf
@@ -33,7 +33,7 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSentEvent> {
                     data_lines.push(rest.trim().to_string());
                 }
             }
-            return Some(ServerSentEvent {
+            return Some(ServerEvent {
                 event,
                 data: if data_lines.is_empty() {
                     String::new()
@@ -49,30 +49,58 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSentEvent> {
 
 #[derive(Clone)]
 pub struct SSELanguageModel {
+    name: String,
+    config: InferenceConfig,
     make_request: Arc<
-        dyn Fn(Vec<Message>, Vec<ToolDesc>, LMConfig) -> reqwest::RequestBuilder
+        dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestInfo) -> reqwest::RequestBuilder
             + MaybeSend
             + MaybeSync,
     >,
-    handle_event: Arc<dyn Fn(ServerSentEvent) -> MessageOutput + MaybeSend + MaybeSync>,
+    handle_event: Arc<dyn Fn(ServerEvent) -> MessageOutput + MaybeSend + MaybeSync>,
 }
 
 impl SSELanguageModel {
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         let model = model.into();
+        let ret = if model.starts_with("gpt") || model.starts_with("o") {
+            // OpenAI models
+            SSELanguageModel::with_url(model, api_key, "https://api.openai.com/v1/responses")
+        } else if model.starts_with("claude") {
+            // Anthropic models
+            todo!()
+        } else if model.starts_with("gemini") {
+            // Gemini models
+            SSELanguageModel::with_url(
+                model,
+                api_key,
+                "https://generativelanguage.googleapis.com/v1beta/models",
+            )
+        } else if model.starts_with("grok") {
+            todo!()
+        } else {
+            panic!()
+        };
+
+        ret
+    }
+
+    pub fn with_url(
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+        url: impl Into<String>,
+    ) -> Self {
+        let model = model.into();
         let api_key = api_key.into();
+        let url = url.into();
 
         let ret = if model.starts_with("gpt") || model.starts_with("o") {
             // OpenAI models
             SSELanguageModel {
+                name: model.into(),
+                config: InferenceConfig::default(),
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
-                        super::openai::make_request(
-                            &api_key,
-                            msgs,
-                            tools,
-                            config.with_model(model.as_str()),
-                        )
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
+                        super::openai::make_request(&url, &api_key, msgs, tools, req)
                     },
                 ),
                 handle_event: Arc::new(super::openai::handle_event),
@@ -83,14 +111,11 @@ impl SSELanguageModel {
         } else if model.starts_with("gemini") {
             // Gemini models
             SSELanguageModel {
+                name: model.into(),
+                config: InferenceConfig::default(),
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
-                        super::gemini::make_request(
-                            &api_key,
-                            msgs,
-                            tools,
-                            config.with_model(model.as_str()),
-                        )
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
+                        super::gemini::make_request(&url, &api_key, msgs, tools, req)
                     },
                 ),
                 handle_event: Arc::new(super::gemini::handle_event),
@@ -106,17 +131,50 @@ impl SSELanguageModel {
 }
 
 impl LanguageModel for SSELanguageModel {
+    fn update_config(&mut self, config: InferenceConfig) -> Result<(), ()> {
+        self.config = config;
+        Ok(())
+    }
+
     fn run<'a>(
         self: &'a mut Self,
-        msgs: Vec<Message>,
+        mut msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
-        config: LMConfig,
     ) -> BoxStream<'a, Result<MessageOutput, String>> {
         // Initialize buffer
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
+        // Build requestinfo
+        let req = RequestInfo {
+            model: Some(self.name.clone()),
+            system_message: if let Some(msg) = msgs.get(0)
+                && msg.role == Role::System
+            {
+                Some(
+                    msgs.remove(0)
+                        .contents
+                        .get(0)
+                        .unwrap()
+                        .as_text()
+                        .unwrap()
+                        .to_owned(),
+                )
+            } else {
+                None
+            },
+            stream: true,
+            think_effort: if let Some(think_effort) = self.config.think_effort.clone() {
+                think_effort
+            } else {
+                ThinkEffort::default()
+            },
+            temperature: self.config.temperature.clone().map(|v| *v),
+            top_p: self.config.top_p.clone().map(|v| *v),
+            max_tokens: self.config.max_tokens.clone(),
+        };
+
         // Send request
-        let resp = (self.make_request)(msgs, tools, config).send();
+        let resp = (self.make_request)(msgs, tools, req).send();
 
         let strm = async_stream::try_stream! {
             // Await response
