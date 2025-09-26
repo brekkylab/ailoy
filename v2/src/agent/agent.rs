@@ -17,7 +17,7 @@ pub struct Agent {
     lm: ArcMutexLanguageModel,
     tools: Vec<Arc<dyn Tool>>,
     messages: Arc<Mutex<Vec<Message>>>,
-    knowledges: Vec<Arc<dyn Knowledge>>,
+    knowledge: Option<Arc<dyn Knowledge>>,
     system_message_renderer: Arc<SystemMessageRenderer>,
 }
 
@@ -30,7 +30,7 @@ impl Agent {
             lm: ArcMutexLanguageModel::new(lm),
             tools: tools.into_iter().collect(),
             messages: Arc::new(Mutex::new(Vec::new())),
-            knowledges: Vec::new(),
+            knowledge: None,
             system_message_renderer: Arc::new(SystemMessageRenderer::new()),
         }
     }
@@ -43,7 +43,7 @@ impl Agent {
             lm,
             tools: tools.into_iter().collect(),
             messages: Arc::new(Mutex::new(Vec::new())),
-            knowledges: Vec::new(),
+            knowledge: None,
             system_message_renderer: Arc::new(SystemMessageRenderer::new()),
         }
     }
@@ -63,8 +63,8 @@ impl Agent {
         self.tools.clone()
     }
 
-    pub fn get_knowledges(&self) -> Vec<Arc<dyn Knowledge>> {
-        self.knowledges.clone()
+    pub fn knowledge(&self) -> Option<Arc<dyn Knowledge>> {
+        self.knowledge.clone()
     }
 
     pub async fn clear_messages(&mut self) -> anyhow::Result<()> {
@@ -142,25 +142,12 @@ impl Agent {
         Ok(())
     }
 
-    pub async fn add_knowledge(
-        &mut self,
-        knowledge: impl Knowledge + 'static,
-    ) -> anyhow::Result<()> {
-        self.knowledges.push(Arc::new(knowledge));
-        Ok(())
+    pub fn set_knowledge(&mut self, knowledge: impl Knowledge + 'static) {
+        self.knowledge = Some(Arc::new(knowledge));
     }
 
-    pub async fn remove_knowledge(&mut self, knowledge_name: String) -> anyhow::Result<()> {
-        let mut indices_to_remove = Vec::new();
-        for (index, knowledge) in self.knowledges.iter().enumerate() {
-            if knowledge.name() == knowledge_name {
-                indices_to_remove.push(index);
-            }
-        }
-        for &index in indices_to_remove.iter().rev() {
-            self.knowledges.remove(index);
-        }
-        Ok(())
+    pub fn remove_knowledge(&mut self) {
+        self.knowledge = None;
     }
 
     pub fn run<'a>(
@@ -176,20 +163,16 @@ impl Agent {
 
         async_stream::try_stream! {
             let system_message_content = "You are helpful assistant.".to_string();
-            let knowledge_results = if !self.knowledges.is_empty() {
+            let knowledge_results = if let Some(knowledge) = &self.knowledge {
                 let query = contents.iter().filter(|&c| matches!(c, Part::Text(_))).map(|c| c.to_string()).collect::<Vec<_>>().join("\n");
-                let futures = self.knowledges.iter().map(async |knowledge| {
-                    let retrieved = match knowledge.retrieve(query.clone()).await {
-                        Ok(retrieved) => retrieved,
-                        Err(e) => {
-                            log::warn(format!("Failed to retrieve from knowledge {}: {}", knowledge.name(), e.to_string()));
-                            vec![]
-                        }
-                    };
-                    retrieved
-                }).collect::<Vec<_>>();
-                let retrieved_results = futures::future::join_all(futures).await.into_iter().flatten().collect::<Vec<_>>();
-                Some(retrieved_results)
+                let retrieved = match knowledge.retrieve(query.clone()).await {
+                    Ok(retrieved) => retrieved,
+                    Err(e) => {
+                        log::warn(format!("Failed to retrieve from knowledge {}: {}", knowledge.name(), e.to_string()));
+                        vec![]
+                    }
+                };
+                Some(retrieved)
             } else {
                 None
             };

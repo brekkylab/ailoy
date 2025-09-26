@@ -179,7 +179,7 @@ mod tests {
         let mut agent = Agent::new(model, vec![]);
         let mut agg = MessageAggregator::new();
 
-        agent.add_knowledge(knowledge).await?;
+        agent.set_knowledge(knowledge);
 
         let mut strm = Box::pin(agent.run(vec![Part::Text("What is Ailoy?".into())]));
         while let Some(delta_opt) = strm.next().await {

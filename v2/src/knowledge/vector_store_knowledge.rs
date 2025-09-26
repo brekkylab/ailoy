@@ -148,7 +148,7 @@ mod tests {
         // Testing as knowledge
         {
             let mut agent_guard = agent.lock().await;
-            agent_guard.add_knowledge(knowledge.clone()).await?;
+            agent_guard.set_knowledge(knowledge.clone());
 
             let mut strm = Box::pin(agent_guard.run(vec![Part::Text("What is Ailoy?".into())]));
             while let Some(delta_opt) = strm.next().await {
@@ -161,7 +161,7 @@ mod tests {
         // Remove knowledge
         {
             let mut agent_guard = agent.lock().await;
-            agent_guard.remove_knowledge(knowledge.name()).await?;
+            agent_guard.remove_knowledge();
             agent_guard.clear_messages().await?;
         }
 
