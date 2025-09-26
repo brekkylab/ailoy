@@ -66,12 +66,13 @@ mod py {
         type Error = PyErr;
 
         fn into_pyobject(self, py: pyo3::Python<'py>) -> Result<Self::Output, Self::Error> {
-            todo!()
+            Ok(PyBytes::new(py, &self.0))
         }
     }
 
     impl PyStubType for Bytes {
         fn type_output() -> TypeInfo {
+            // @jhlee: Add proper stub
             TypeInfo::any()
         }
     }
