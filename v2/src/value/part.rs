@@ -41,46 +41,28 @@ impl TryFrom<String> for PartImageColorspace {
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum Part {
-    TextReasoning {
-        text: String,
-        signature: Option<String>,
+    Text(String),
+    Function {
+        id: Option<String>,
+        name: String,
+        arguments: Value,
     },
-    TextContent(String),
-    ImageContent {
+    Value(Value),
+    Image {
         h: usize,
         w: usize,
         c: PartImageColorspace,
         nbytes: usize,
         buf: Vec<u8>,
     },
-    FunctionToolCall {
-        id: Option<String>,
-        name: String,
-        arguments: Value,
-    },
-    TextRefusal(String),
 }
 
 impl Part {
-    pub fn text_reasoning(v: impl Into<String>) -> Self {
-        Self::TextReasoning {
-            text: v.into(),
-            signature: None,
-        }
+    pub fn text(v: impl Into<String>) -> Self {
+        Self::Text(v.into())
     }
 
-    pub fn text_reasoning_with_signature(v: impl Into<String>, sig: impl Into<String>) -> Self {
-        Self::TextReasoning {
-            text: v.into(),
-            signature: Some(sig.into()),
-        }
-    }
-
-    pub fn text_content(v: impl Into<String>) -> Self {
-        Self::TextContent(v.into())
-    }
-
-    pub fn image_content(
+    pub fn image(
         height: usize,
         width: usize,
         colorspace: impl TryInto<PartImageColorspace>,
@@ -94,7 +76,7 @@ impl Part {
         if !(nbytes == 1 || nbytes == 2 || nbytes == 3 || nbytes == 4) {
             panic!("Invalid buffer length");
         }
-        Ok(Self::ImageContent {
+        Ok(Self::Image {
             h: height,
             w: width,
             c: colorspace,
@@ -103,106 +85,100 @@ impl Part {
         })
     }
 
-    pub fn function_tool_call(name: impl Into<String>, args: impl Into<Value>) -> Self {
-        Self::FunctionToolCall {
+    pub fn function(name: impl Into<String>, args: impl Into<Value>) -> Self {
+        Self::Function {
             id: None,
             name: name.into(),
             arguments: args.into(),
         }
     }
 
-    pub fn function_tool_call_with_id(
+    pub fn function_with_id(
+        id: impl Into<String>,
         name: impl Into<String>,
         args: impl Into<Value>,
-        id: impl Into<String>,
     ) -> Self {
-        Self::FunctionToolCall {
+        Self::Function {
             id: Some(id.into()),
             name: name.into(),
             arguments: args.into(),
         }
     }
 
-    pub fn text_refusal(v: impl Into<String>) -> Self {
-        Self::TextRefusal(v.into())
-    }
-
-    pub fn is_reasoning(&self) -> bool {
-        match self {
-            Self::TextReasoning { .. } => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_content(&self) -> bool {
-        match self {
-            Self::TextContent { .. } => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_tool_call(&self) -> bool {
-        match self {
-            Self::FunctionToolCall { .. } => true,
-            _ => false,
-        }
-    }
-
     pub fn is_text(&self) -> bool {
         match self {
-            Self::TextReasoning { .. } | Self::TextContent(..) => true,
+            Self::Text(..) => true,
             _ => false,
         }
     }
 
     pub fn is_function(&self) -> bool {
         match self {
-            Self::FunctionToolCall { .. } => true,
+            Self::Function { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_value(&self) -> bool {
+        match self {
+            Self::Value(..) => true,
             _ => false,
         }
     }
 
     pub fn is_image(&self) -> bool {
         match self {
-            Self::ImageContent { .. } => true,
+            Self::Image { .. } => true,
             _ => false,
         }
     }
 
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            Self::TextReasoning { text, .. } => Some(text.as_str()),
-            Self::TextContent(text) => Some(text.as_str()),
+            Self::Text(text) => Some(text.as_str()),
             _ => None,
         }
     }
 
     pub fn as_text_mut(&mut self) -> Option<&mut String> {
         match self {
-            Self::TextReasoning { text, .. } => Some(text),
-            Self::TextContent(text) => Some(text),
+            Self::Text(text) => Some(text),
             _ => None,
         }
     }
 
     pub fn as_function(&self) -> Option<(Option<&str>, &str, &Value)> {
         match self {
-            Self::FunctionToolCall {
+            Self::Function {
                 id,
                 name,
                 arguments,
-            } => Some((id.as_ref().map(|x| x.as_str()), name.as_str(), arguments)),
+            } => Some((id.as_deref(), name.as_str(), arguments)),
             _ => None,
         }
     }
 
     pub fn as_function_mut(&mut self) -> Option<(Option<&mut String>, &mut String, &mut Value)> {
         match self {
-            Self::FunctionToolCall {
+            Self::Function {
                 id,
                 name,
                 arguments,
             } => Some((id.as_mut(), name, arguments)),
+            _ => None,
+        }
+    }
+
+    pub fn as_value(&self) -> Option<&Value> {
+        match self {
+            Self::Value(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn as_value_mut(&mut self) -> Option<&mut Value> {
+        match self {
+            Self::Value(value) => Some(value),
             _ => None,
         }
     }
@@ -220,7 +196,7 @@ impl Part {
         }
 
         match self {
-            Self::ImageContent {
+            Self::Image {
                 h,
                 w,
                 c,
@@ -285,95 +261,56 @@ impl Serialize for Part {
         S: Serializer,
     {
         match self {
-            Part::TextReasoning { text, signature } => {
-                let n = if signature.is_some() { 4 } else { 3 };
-                let mut s = serializer.serialize_map(Some(n))?;
-                s.serialize_entry("type", "text")?;
-                s.serialize_entry("mode", "reasoning")?;
-                s.serialize_entry("text", text)?;
-                if let Some(sig) = signature {
-                    s.serialize_entry("signature", sig)?;
-                }
-                s
-            }
-            Part::TextContent(text) => {
+            Self::Text(text) => {
                 let mut s = serializer.serialize_map(Some(2))?;
                 s.serialize_entry("type", "text")?;
                 s.serialize_entry("text", text)?;
                 s
             }
-            Part::ImageContent {
+            Self::Function {
+                id,
+                name,
+                arguments,
+            } => {
+                let mut s = serializer.serialize_map(Some(3))?;
+                s.serialize_entry("type", "function")?;
+                if let Some(id) = id {
+                    s.serialize_entry("id", id)?;
+                }
+                s.serialize_entry("name", name)?;
+                s.serialize_entry("arguments", arguments)?;
+                s
+            }
+            Self::Image {
                 h,
                 w,
                 c,
                 nbytes: _,
                 buf,
             } => {
-                #[derive(Serialize)]
-                struct ImgBase64<'a> {
-                    height: &'a usize,
-                    width: &'a usize,
-                    colorspace: &'a PartImageColorspace,
-                    data: &'a str, // base64
-                }
-
-                #[derive(Serialize)]
-                struct ImgBin<'a> {
-                    height: &'a usize,
-                    width: &'a usize,
-                    colorspace: &'a PartImageColorspace,
-                    #[serde(with = "serde_bytes")]
-                    data: &'a [u8], // raw bytes
-                }
-
                 let human_readable = serializer.is_human_readable();
-                let mut s = serializer.serialize_map(Some(2))?;
+                let mut s = serializer.serialize_map(Some(6))?;
                 s.serialize_entry("type", "image")?;
-
+                s.serialize_entry("media-type", "image/x-binary")?;
+                s.serialize_entry("height", h)?;
+                s.serialize_entry("width", w)?;
+                s.serialize_entry("colorspace", c)?;
                 if human_readable {
                     s.serialize_entry(
-                        "image",
-                        &ImgBase64 {
-                            height: h,
-                            width: w,
-                            colorspace: c,
-                            data: &base64::engine::general_purpose::STANDARD.encode(buf),
-                        },
+                        "data",
+                        &base64::engine::general_purpose::STANDARD.encode(buf),
                     )?;
                 } else {
-                    s.serialize_entry(
-                        "image",
-                        &ImgBin {
-                            height: h,
-                            width: w,
-                            colorspace: c,
-                            data: &buf[..],
-                        },
-                    )?;
+                    s.serialize_entry("data", &buf[..])?;
                 }
                 s
             }
-            Part::FunctionToolCall {
-                id,
-                name,
-                arguments,
-            } => {
-                #[derive(Serialize)]
-                struct Inner<'a> {
-                    name: &'a String,
-                    arguments: &'a Value,
-                }
-
-                let n = if id.is_some() { 3 } else { 2 };
-                let mut s = serializer.serialize_map(Some(n))?;
-                s.serialize_entry("type", "function")?;
-                s.serialize_entry("function", &Inner { name, arguments })?;
-                if let Some(id) = id {
-                    s.serialize_entry("id", id)?;
-                }
+            Self::Value(value) => {
+                let mut s = serializer.serialize_map(Some(2))?;
+                s.serialize_entry("type", "value")?;
+                s.serialize_entry("value", value)?;
                 s
             }
-            Part::TextRefusal(_) => todo!(),
         }
         .end()
     }
@@ -391,94 +328,73 @@ impl<'de> Deserialize<'de> for Part {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PartDelta {
     Null,
-    TextReasoning {
-        text: String,
-        signature: Option<String>,
-    },
-    TextContent(String),
-    TextToolCall(String),
-    FunctionToolCall {
+    Text(String),
+    VerbatimFunction(String),
+    Function {
         id: Option<String>,
         name: String,
         arguments: String,
     },
-    TextRefusal(String),
+    ParsedFunction {
+        id: Option<String>,
+        name: String,
+        arguments: Value,
+    },
 }
 
 impl PartDelta {
-    pub fn is_reasoning(&self) -> bool {
-        match self {
-            Self::TextReasoning { .. } => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_content(&self) -> bool {
-        match self {
-            Self::TextContent { .. } => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_tool_call(&self) -> bool {
-        match self {
-            Self::TextToolCall { .. } | Self::FunctionToolCall { .. } => true,
-            _ => false,
-        }
-    }
-
     pub fn is_text(&self) -> bool {
         match self {
-            Self::TextReasoning { .. } | Self::TextContent(..) | Self::TextToolCall(..) => true,
+            Self::Text(..) => true,
+            _ => false,
+        }
+    }
+    pub fn is_verbatim_function(&self) -> bool {
+        match self {
+            Self::VerbatimFunction(..) => true,
             _ => false,
         }
     }
 
     pub fn is_function(&self) -> bool {
         match self {
-            Self::FunctionToolCall { .. } => true,
+            Self::Function { .. } => true,
             _ => false,
         }
     }
 
-    pub fn as_text(&self) -> Option<&str> {
+    pub fn is_parsed_function(&self) -> bool {
         match self {
-            Self::TextReasoning { text, .. } => Some(text.as_str()),
-            Self::TextContent(text) => Some(text.as_str()),
-            Self::TextToolCall(text) => Some(text.as_str()),
+            Self::ParsedFunction { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn to_text(self) -> Option<String> {
+        match self {
+            Self::Text(text) | Self::VerbatimFunction(text) => Some(text),
             _ => None,
         }
     }
 
-    pub fn as_text_mut(&mut self) -> Option<&mut String> {
+    pub fn to_function(self) -> Option<(Option<String>, String, String)> {
         match self {
-            Self::TextReasoning { text, .. } => Some(text),
-            Self::TextContent(text) => Some(text),
-            Self::TextToolCall(text) => Some(text),
-            _ => None,
-        }
-    }
-
-    pub fn as_function(&self) -> Option<(Option<&str>, &str, &str)> {
-        match self {
-            Self::FunctionToolCall {
+            Self::Function {
                 id,
                 name,
                 arguments,
-            } => Some((
-                id.as_ref().map(|x| x.as_str()),
-                name.as_str(),
-                arguments.as_str(),
-            )),
+            } => Some((id, name, arguments)),
             _ => None,
         }
     }
 
-    pub fn as_function_mut(&mut self) -> Option<(&mut String, &mut String)> {
+    pub fn to_parsed_function(self) -> Option<(Option<String>, String, Value)> {
         match self {
-            Self::FunctionToolCall {
-                name, arguments, ..
-            } => Some((name, arguments)),
+            Self::ParsedFunction {
+                id,
+                name,
+                arguments,
+            } => Some((id, name, arguments)),
             _ => None,
         }
     }
@@ -496,43 +412,21 @@ impl Delta for PartDelta {
     fn aggregate(self, other: Self) -> Result<Self, ()> {
         match (self, other) {
             (PartDelta::Null, other) => Ok(other),
-            (
-                PartDelta::TextReasoning {
-                    text: mut ltext,
-                    signature: lsig,
-                },
-                PartDelta::TextReasoning {
-                    text: rtext,
-                    signature: rsig,
-                },
-            ) => {
-                ltext.push_str(&rtext);
-                let sig = match (lsig, rsig) {
-                    (None, None) => None,
-                    (None, Some(rsig)) => Some(rsig),
-                    (Some(lsig), None) => Some(lsig),
-                    (Some(_), Some(rsig)) => Some(rsig),
-                };
-                Ok(PartDelta::TextReasoning {
-                    text: ltext,
-                    signature: sig,
-                })
-            }
-            (PartDelta::TextContent(mut lhs), PartDelta::TextContent(rhs)) => {
+            (PartDelta::Text(mut lhs), PartDelta::Text(rhs)) => {
                 lhs.push_str(&rhs);
-                Ok(PartDelta::TextContent(lhs))
+                Ok(PartDelta::Text(lhs))
             }
-            (PartDelta::TextToolCall(mut lhs), PartDelta::TextToolCall(rhs)) => {
+            (PartDelta::VerbatimFunction(mut lhs), PartDelta::VerbatimFunction(rhs)) => {
                 lhs.push_str(&rhs);
-                Ok(PartDelta::TextToolCall(lhs))
+                Ok(PartDelta::VerbatimFunction(lhs))
             }
             (
-                PartDelta::FunctionToolCall {
+                PartDelta::Function {
                     id: lid,
                     name: mut lname,
                     arguments: mut largs,
                 },
-                PartDelta::FunctionToolCall {
+                PartDelta::Function {
                     id: rid,
                     name: rname,
                     arguments: rargs,
@@ -547,11 +441,25 @@ impl Delta for PartDelta {
                 };
                 lname.push_str(&rname);
                 largs.push_str(&rargs);
-                Ok(PartDelta::FunctionToolCall {
+                Ok(PartDelta::Function {
                     id,
                     name: lname,
                     arguments: largs,
                 })
+            }
+            (
+                PartDelta::ParsedFunction {
+                    id: lid,
+                    name: mut lname,
+                    arguments: mut largs,
+                },
+                PartDelta::ParsedFunction {
+                    id: rid,
+                    name: rname,
+                    arguments: rargs,
+                },
+            ) => {
+                todo!()
             }
             _ => Err(()),
         }
@@ -559,38 +467,38 @@ impl Delta for PartDelta {
 
     fn finish(self) -> Result<Self::Item, String> {
         match self {
-            PartDelta::Null => Ok(Part::text_content(String::new())),
-            PartDelta::TextReasoning { text, signature } => {
-                Ok(Part::TextReasoning { text, signature })
-            }
-            PartDelta::TextContent(s) => Ok(Part::text_content(s)),
-            PartDelta::TextToolCall(s) => match serde_json::from_str::<Value>(&s) {
-                Ok(root) => {
-                    match (
-                        root.pointer_as::<str>("/name"),
-                        root.pointer_as::<str>("/arguments"),
-                    ) {
-                        (Some(name), Some(args)) => Ok(Part::function_tool_call(
-                            name,
-                            serde_json::from_str::<Value>(&args)
-                                .map_err(|_| String::from("Invalid JSON"))?,
-                        )),
-                        _ => Err(String::from("Invalid function JSON")),
-                    }
-                }
+            PartDelta::Null => Ok(Part::Text(String::new())),
+            PartDelta::Text(s) => Ok(Part::Text(s)),
+            PartDelta::VerbatimFunction(s) => match serde_json::from_str::<Value>(&s) {
+                Ok(root) => match (root.pointer_as::<str>("/name"), root.pointer("/arguments")) {
+                    (Some(name), Some(args)) => Ok(Part::Function {
+                        id: None,
+                        name: name.into(),
+                        arguments: args.clone(),
+                    }),
+                    _ => Err(String::from("Invalid function JSON")),
+                },
                 Err(_) => Err(String::from("Invalid JSON")),
             },
-            PartDelta::FunctionToolCall {
+            PartDelta::Function {
                 id,
                 name,
                 arguments,
-            } => Ok(Part::FunctionToolCall {
+            } => Ok(Part::Function {
                 id,
                 name,
                 arguments: serde_json::from_str::<Value>(&arguments)
                     .map_err(|_| String::from("Invalid JSON"))?,
             }),
-            PartDelta::TextRefusal(text) => Ok(Part::text_refusal(text)),
+            PartDelta::ParsedFunction {
+                id,
+                name,
+                arguments,
+            } => Ok(Part::Function {
+                id,
+                name,
+                arguments,
+            }),
         }
     }
 }

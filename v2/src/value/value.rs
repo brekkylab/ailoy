@@ -531,6 +531,20 @@ impl<'a> TryFrom<&'a mut Value> for &'a mut String {
     }
 }
 
+impl From<Vec<Value>> for Value {
+    #[inline]
+    fn from(v: Vec<Value>) -> Self {
+        Value::Array(v)
+    }
+}
+
+impl From<IndexMap<String, Value>> for Value {
+    #[inline]
+    fn from(m: IndexMap<String, Value>) -> Self {
+        Value::Object(m)
+    }
+}
+
 impl<T> FromIterator<T> for Value
 where
     T: Into<Value>,
