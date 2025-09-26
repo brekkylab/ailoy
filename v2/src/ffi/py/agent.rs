@@ -11,16 +11,9 @@ use pyo3_stub_gen::derive::*;
 
 use crate::{
     agent::Agent,
-    ffi::py::{
-        base::await_future,
-        language_model::{
-            PyAnthropicLanguageModel, PyBaseLanguageModel, PyGeminiLanguageModel,
-            PyLanguageModelMethods, PyLocalLanguageModel, PyOpenAILanguageModel,
-            PyXAILanguageModel,
-        },
-        tool::ArcTool,
-    },
-    tool::Tool,
+    ffi::py::{base::await_future, language_model::PyBaseLanguageModel},
+    model::ArcMutexLanguageModel,
+    tool::{ArcTool, Tool},
     value::{MessageOutput, Part},
 };
 
@@ -35,7 +28,7 @@ fn pylist_to_tools(tools: Py<PyList>) -> PyResult<Vec<Arc<dyn Tool>>> {
         tools
             .bind(py)
             .into_iter()
-            .map(|tool| tool.extract::<ArcTool>().map(|arc| arc.0))
+            .map(|tool| tool.extract::<ArcTool>().map(|arc| arc.inner))
             .collect::<PyResult<Vec<Arc<dyn Tool>>>>()
     })
 }
@@ -110,25 +103,8 @@ impl PyAgent {
         }
 
         let tools = tools.map_or_else(|| Ok(vec![]), |tools| pylist_to_tools(tools))?;
-
-        let agent: Agent = if let Ok(lm) = lm.downcast::<PyLocalLanguageModel>() {
-            let model = lm.borrow().into_inner();
-            Agent::new_from_arc(model, tools)
-        } else if let Ok(lm) = lm.downcast::<PyOpenAILanguageModel>() {
-            let model = lm.borrow().into_inner();
-            Agent::new_from_arc(model, tools)
-        } else if let Ok(lm) = lm.downcast::<PyGeminiLanguageModel>() {
-            let model = lm.borrow().into_inner();
-            Agent::new_from_arc(model, tools)
-        } else if let Ok(lm) = lm.downcast::<PyAnthropicLanguageModel>() {
-            let model = lm.borrow().into_inner();
-            Agent::new_from_arc(model, tools)
-        } else if let Ok(lm) = lm.downcast::<PyXAILanguageModel>() {
-            let model = lm.borrow().into_inner();
-            Agent::new_from_arc(model, tools)
-        } else {
-            return Err(PyTypeError::new_err("Unknown language model provided"));
-        };
+        let model: ArcMutexLanguageModel = lm.try_into()?;
+        let agent = Agent::new_from_arc(model, tools);
 
         Py::new(
             py,
@@ -155,7 +131,7 @@ impl PyAgent {
                 .await
                 .get_tools()
                 .into_iter()
-                .map(|t| ArcTool(t).into_pyobject(py))
+                .map(|t| ArcTool::new_from_arc_any(t).into_pyobject(py))
                 .collect::<PyResult<Vec<_>>>()
         })?;
         Ok(PyList::new(py, tools)?.unbind())
@@ -173,7 +149,7 @@ impl PyAgent {
         &mut self,
         #[gen_stub(override_type(type_repr = "BaseTool"))] tool: Py<PyAny>,
     ) -> PyResult<()> {
-        let tool = Python::attach(|py| tool.extract::<ArcTool>(py).map(|arc| arc.0))?;
+        let tool = Python::attach(|py| tool.extract::<ArcTool>(py).map(|arc| arc.inner))?;
         await_future(async { self.inner.lock().await.add_tool(tool).await })
     }
 

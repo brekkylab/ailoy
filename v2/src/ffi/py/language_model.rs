@@ -3,7 +3,9 @@ use std::any::TypeId;
 use futures::StreamExt;
 use pyo3::{
     IntoPyObjectExt, PyClass,
-    exceptions::{PyNotImplementedError, PyRuntimeError, PyStopAsyncIteration, PyStopIteration},
+    exceptions::{
+        PyNotImplementedError, PyRuntimeError, PyStopAsyncIteration, PyStopIteration, PyTypeError,
+    },
     prelude::*,
     types::PyType,
 };
@@ -458,6 +460,26 @@ impl PyXAILanguageModel {
         tools: Option<Vec<ToolDesc>>,
     ) -> PyResult<PyLanguageModelRunSyncIterator> {
         self._run_sync(messages, tools)
+    }
+}
+
+impl<'py> TryFrom<Bound<'py, PyAny>> for ArcMutexLanguageModel {
+    type Error = PyErr;
+
+    fn try_from(any: Bound<'py, PyAny>) -> Result<Self, Self::Error> {
+        if let Ok(lm) = any.downcast::<PyLocalLanguageModel>() {
+            Ok(lm.borrow().into_inner())
+        } else if let Ok(lm) = any.downcast::<PyOpenAILanguageModel>() {
+            Ok(lm.borrow().into_inner())
+        } else if let Ok(lm) = any.downcast::<PyGeminiLanguageModel>() {
+            Ok(lm.borrow().into_inner())
+        } else if let Ok(lm) = any.downcast::<PyAnthropicLanguageModel>() {
+            Ok(lm.borrow().into_inner())
+        } else if let Ok(lm) = any.downcast::<PyXAILanguageModel>() {
+            Ok(lm.borrow().into_inner())
+        } else {
+            Err(PyTypeError::new_err("Unknown language model provided"))
+        }
     }
 }
 

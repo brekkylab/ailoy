@@ -15,6 +15,7 @@ use crate::value::{Part, PartStyle, StyledPart};
 #[strum(serialize_all = "snake_case")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
 pub enum Role {
     /// System instructions and constraints provided to the assistant.
     System,
@@ -518,6 +519,7 @@ impl<'de> Deserialize<'de> for StyledMessage {
 #[strum(serialize_all = "snake_case")]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
 pub enum FinishReason {
     Stop,
     Length,
