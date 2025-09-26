@@ -38,7 +38,6 @@ pub fn make_request(
         model, generate_method
     );
 
-
     reqwest::Client::new()
         .request(reqwest::Method::POST, url)
         .header("x-goog-api-key", api_key)
@@ -60,8 +59,8 @@ pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
         .pointer("/finishReason")
         .and_then(|v| v.as_str())
         .map(|reason| match reason {
-            "STOP" => FinishReason::Stop,
-            "MAX_TOKENS" => FinishReason::Length,
+            "STOP" => FinishReason::Stop(),
+            "MAX_TOKENS" => FinishReason::Length(),
             reason => FinishReason::Refusal(reason.to_owned()),
         });
 
@@ -124,7 +123,7 @@ mod tests {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
-        assert_eq!(finish_reason, FinishReason::Stop);
+        assert_eq!(finish_reason, FinishReason::Stop());
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
@@ -176,6 +175,6 @@ mod tests {
             message.tool_calls.len() > 0
                 && message.tool_calls[0].as_function().unwrap().1 == "temperature"
         }));
-        assert_eq!(finish_reason, FinishReason::Stop);
+        assert_eq!(finish_reason, FinishReason::Stop());
     }
 }

@@ -6,6 +6,8 @@ use crate::value::{Delta, FinishReason, Part, PartDelta};
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 pub enum Role {
     /// System instructions and constraints provided to the assistant.
     System,
@@ -18,12 +20,19 @@ pub enum Role {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 pub struct Message {
     pub role: Role,
+
     pub id: Option<String>,
+
     pub thinking: String,
+
     pub contents: Vec<Part>,
+
     pub tool_calls: Vec<Part>,
+
     pub signature: Option<String>,
 }
 
@@ -74,6 +83,8 @@ impl Message {
 }
 
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 pub struct MessageDelta {
     pub role: Option<Role>,
     pub id: Option<String>,
@@ -224,6 +235,8 @@ impl Delta for MessageDelta {
 }
 
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 pub struct MessageOutput {
     pub delta: MessageDelta,
     pub finish_reason: Option<FinishReason>,

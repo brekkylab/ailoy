@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::value::{Value, delta::Delta};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq, get_all, set_all))]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq, get_all, set_all))]
 pub struct PartFunction {
     pub name: String,
     #[serde(rename = "arguments")]
@@ -14,9 +14,9 @@ pub struct PartFunction {
 #[derive(
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
 )]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 #[serde(tag = "media-type")]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum PartImageColorspace {
     #[strum(serialize = "grayscale")]
     #[serde(rename = "grayscale")]
@@ -48,12 +48,12 @@ impl TryFrom<String> for PartImageColorspace {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "media-type")]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[serde(tag = "media-type")]
 pub enum PartImage {
     #[serde(rename = "image/x-binary")]
     Binary {
@@ -69,12 +69,12 @@ pub enum PartImage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[serde(tag = "type")]
 pub enum Part {
     #[serde(rename = "text")]
     Text { text: String },
@@ -297,6 +297,11 @@ impl Part {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(
+    feature = "python",
+    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
+)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum PartDeltaFunction {
     Verbatim(String),
     WithStringArgs {
@@ -313,6 +318,11 @@ pub enum PartDeltaFunction {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(
+    feature = "python",
+    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
+)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum PartDelta {
     Text {
         text: String,
@@ -322,7 +332,7 @@ pub enum PartDelta {
         #[serde(rename = "function")]
         f: PartDeltaFunction,
     },
-    Null,
+    Null(),
 }
 
 impl PartDelta {
@@ -396,7 +406,7 @@ impl PartDelta {
 
 impl Default for PartDelta {
     fn default() -> Self {
-        Self::Null
+        Self::Null()
     }
 }
 
@@ -405,7 +415,7 @@ impl Delta for PartDelta {
 
     fn aggregate(self, other: Self) -> Result<Self, ()> {
         match (self, other) {
-            (PartDelta::Null, other) => Ok(other),
+            (PartDelta::Null(), other) => Ok(other),
             (PartDelta::Text { text: mut t1 }, PartDelta::Text { text: t2 }) => {
                 t1.push_str(&t2);
                 Ok(PartDelta::Text { text: t1 })
@@ -455,7 +465,7 @@ impl Delta for PartDelta {
 
     fn finish(self) -> Result<Self::Item, String> {
         match self {
-            PartDelta::Null => Ok(Part::Text {
+            PartDelta::Null() => Ok(Part::Text {
                 text: String::new(),
             }),
             PartDelta::Text { text } => Ok(Part::Text { text }),

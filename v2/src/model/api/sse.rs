@@ -132,7 +132,7 @@ impl LanguageModel for SSELanguageModel {
                     while let Some(evt) = drain_next_event(&mut buf) {
                         let message_output = (self.handle_event)(evt);
                         match message_output.finish_reason {
-                            None | Some(FinishReason::Stop) => {
+                            None | Some(FinishReason::Stop()) => {
                                 yield message_output;
                             }
                             Some(_) => {

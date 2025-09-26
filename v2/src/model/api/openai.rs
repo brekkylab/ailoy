@@ -34,7 +34,6 @@ pub fn make_request(
 }
 
 pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
-
     let Ok(val) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
         return MessageOutput::default();
     };
@@ -44,7 +43,7 @@ pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
             // Valid termination of stream
             return MessageOutput {
                 delta: MessageDelta::default(),
-                finish_reason: Some(FinishReason::Stop),
+                finish_reason: Some(FinishReason::Stop()),
             };
         }
         "response.refusal.done" => {
@@ -65,7 +64,7 @@ pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
                 .and_then(|v| v.as_str())
                 .unwrap_or_else(|| "unknown");
             let finish_reason = match reason {
-                "max_output_tokens" => FinishReason::Length,
+                "max_output_tokens" => FinishReason::Length(),
                 "content_filter" => FinishReason::Refusal(
                     "Model output violated OpenAI's safety policy.".to_owned(),
                 ),

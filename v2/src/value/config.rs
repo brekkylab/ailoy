@@ -165,9 +165,11 @@ impl<'de> Deserialize<'de> for LMConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum FinishReason {
-    Stop,
-    Length, // max_output_tokens
-    ToolCall,
+    Stop(),
+    Length(), // max_output_tokens
+    ToolCall(),
     Refusal(String), // content_filter, refusal
 }
