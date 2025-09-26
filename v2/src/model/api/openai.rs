@@ -35,21 +35,58 @@ pub fn make_request(
 }
 
 pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
-    let Ok(j) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
+
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
         return MessageOutput::default();
     };
-    let Some(choice) = j.pointer("/choices/0/delta") else {
-        return MessageOutput::default();
-    };
-    let Ok(decoded) = serde_json::from_value::<
-        crate::value::Unmarshaled<_, crate::value::ChatCompletionUnmarshal>,
-    >(choice.clone()) else {
-        return MessageOutput::default();
-    };
-    let rv = decoded.get();
-    MessageOutput {
-        delta: rv,
-        finish_reason: None,
+
+    match evt.event.as_str() {
+        "response.completed" => {
+            // Valid termination of stream
+            return MessageOutput {
+                delta: MessageDelta::default(),
+                finish_reason: Some(FinishReason::Stop),
+            };
+        }
+        "response.refusal.done" => {
+            // Refusal message retrieved
+            let refusal_text = val
+                .pointer("/refusal")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| "reason: unknown");
+            return MessageOutput {
+                delta: MessageDelta::default(),
+                finish_reason: Some(FinishReason::Refusal(refusal_text.to_owned())),
+            };
+        }
+        "response.incomplete" => {
+            // Incomplete termination of stream
+            let reason = val
+                .pointer("/response.incomplete/reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| "unknown");
+            let finish_reason = match reason {
+                "max_output_tokens" => FinishReason::Length,
+                "content_filter" => FinishReason::Refusal(
+                    "Model output violated OpenAI's safety policy.".to_owned(),
+                ),
+                reason => FinishReason::Refusal(format!("reason: {}", reason)),
+            };
+            return MessageOutput {
+                delta: MessageDelta::default(),
+                finish_reason: Some(finish_reason),
+            };
+        }
+        _ => {
+            // Ongoing stream
+            let Ok(decoded) = serde_json::from_value::<Unmarshaled<_, OpenAIUnmarshal>>(val) else {
+                return MessageOutput::default();
+            };
+            MessageOutput {
+                delta: decoded.get(),
+                finish_reason: None,
+            }
+        }
     }
 }
 
