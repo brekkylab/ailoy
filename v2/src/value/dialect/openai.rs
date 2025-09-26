@@ -428,7 +428,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{Delta, Marshaled, Message, Role};
+    use crate::value::{ConfigBuilder, Delta, Marshaled, Message, Role};
 
     #[test]
     pub fn serialize_text() {
@@ -499,6 +499,41 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"[{"role":"user","content":[{"type":"input_text","text":"What you can see in this image?"},{"type":"input_image","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}]"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_config() {
+        let config = ConfigBuilder::new()
+            .max_tokens(1024)
+            .thinking_option(ThinkingOption::Enable)
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .temperature(0.6)
+            .top_p(0.9)
+            .build()
+            .with_model("gpt-5");
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        println!("{}", serde_json::to_string(&marshaled).unwrap());
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-5","instructions":"You are a helpful assistant.","reasoning":{"effort":"medium","summary":"auto"},"stream":true,"max_output_tokens":1024}"#
+        );
+
+        let config = ConfigBuilder::new()
+            .max_tokens(1024)
+            .thinking_option(ThinkingOption::Enable)
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .temperature(0.6)
+            .top_p(0.9)
+            .build()
+            .with_model("gpt-4o");
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        println!("{}", serde_json::to_string(&marshaled).unwrap());
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-4o","instructions":"You are a helpful assistant.","stream":true,"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}"#
         );
     }
 
