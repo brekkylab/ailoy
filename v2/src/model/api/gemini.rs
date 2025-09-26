@@ -7,7 +7,6 @@ use crate::{
 };
 
 pub fn make_request(
-    // model_name: &str,
     api_key: &str,
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
@@ -52,7 +51,6 @@ pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
     let Ok(j) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
         return MessageOutput::default();
     };
-    // println!("j: {:?}", j);
 
     let Some(candidate) = j.pointer("/candidates/0") else {
         return MessageOutput::default();

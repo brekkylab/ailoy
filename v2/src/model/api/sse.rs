@@ -5,7 +5,7 @@ use futures::StreamExt as _;
 use crate::{
     model::LanguageModel,
     utils::{BoxStream, MaybeSend, MaybeSync},
-    value::{LMConfig, FinishReason, Message, MessageOutput, ToolDesc},
+    value::{FinishReason, LMConfig, Message, MessageOutput, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
@@ -81,7 +81,6 @@ impl SSELanguageModel {
             // Anthropic models
             todo!()
         } else if model.starts_with("gemini") {
-            // todo!()
             // Gemini models
             SSELanguageModel {
                 make_request: Arc::new(

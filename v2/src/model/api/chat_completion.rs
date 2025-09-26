@@ -4,7 +4,6 @@ use crate::{
 };
 
 pub fn make_request(
-    // model_name: &str,
     api_key: &str,
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
@@ -57,7 +56,7 @@ pub fn handle_event(evt: ServerSentEvent) -> Vec<MessageDelta> {
 mod tests {
     use crate::{
         model::{LanguageModel as _, sse::SSELanguageModel},
-        value::{LMConfigBuilder, Delta},
+        value::{Delta, LMConfigBuilder},
     };
 
     const OPENAI_API_KEY: &str = "";
