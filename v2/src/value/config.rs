@@ -14,9 +14,9 @@ pub enum ThinkingOption {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub enum OutputSchema {
+pub enum Grammar {
     #[default]
-    Text,
+    Plain,
     JSON,
     JSONSchema(String),
     Regex(String),
@@ -40,7 +40,7 @@ pub struct LMConfig {
     pub top_p: Option<f64>,
 
     pub max_tokens: Option<i32>,
-    // pub output_schema: OutputSchema,
+    // pub output_schema: Grammar,
 }
 
 impl LMConfig {
@@ -58,7 +58,7 @@ pub struct LMConfigBuilder {
     temperature: Option<f64>,
     top_p: Option<f64>,
     max_tokens: Option<i32>,
-    // output_schema: OutputSchema,
+    // output_schema: Grammar,
 }
 
 impl LMConfigBuilder {
@@ -96,8 +96,8 @@ impl LMConfigBuilder {
         self
     }
 
-    // pub fn output_schema(mut self, output_schema: OutputSchema) -> Self {
-    //     self.output_schema = output_schema;
+    // pub fn grammar(mut self, grammar: Grammar) -> Self {
+    //     self.grammar = grammar;
     //     self
     // }
 
