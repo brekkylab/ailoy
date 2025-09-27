@@ -6,7 +6,6 @@ pub mod gemini;
 pub mod openai;
 pub mod sse;
 // pub mod xai;
-// mod request;
 
 #[derive(Clone, Debug, PartialEq)]
 struct RequestInfo {
