@@ -99,6 +99,42 @@ impl MessageDelta {
         Self::default()
     }
 
+    pub fn with_role(mut self, role: impl Into<Role>) -> Self {
+        self.role = Some(role.into());
+        self
+    }
+
+    pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
+        self.thinking = thinking.into();
+        self
+    }
+
+    pub fn with_thinking_signature(
+        mut self,
+        thinking: impl Into<String>,
+        signature: impl Into<String>,
+    ) -> Self {
+        self.thinking = thinking.into();
+        self.signature = Some(signature.into());
+        self
+    }
+
+    pub fn with_contents(
+        mut self,
+        contents: impl IntoIterator<Item = impl Into<PartDelta>>,
+    ) -> Self {
+        self.contents = contents.into_iter().map(|v| v.into()).collect();
+        self
+    }
+
+    pub fn with_tool_calls(
+        mut self,
+        tool_calls: impl IntoIterator<Item = impl Into<PartDelta>>,
+    ) -> Self {
+        self.tool_calls = tool_calls.into_iter().map(|v| v.into()).collect();
+        self
+    }
+
     pub fn to_message(self) -> Result<Message, String> {
         self.finish()
     }

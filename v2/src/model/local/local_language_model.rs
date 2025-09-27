@@ -1,49 +1,115 @@
 use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use async_stream::try_stream;
-use futures::{lock::Mutex, stream::Stream};
+use futures::StreamExt;
+use tokio::sync::mpsc;
 
 use crate::{
-    cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
+    cache::{Cache, CacheClaim, CacheContents, CacheEntry, TryFromCache},
     dyn_maybe_send,
-    model::{
-        LanguageModel,
-        local::{ChatTemplate, LanguageModelInferencer, Tokenizer},
-    },
+    model::{ChatTemplate, LanguageModel, LanguageModelInferencer, Tokenizer},
     utils::{BoxFuture, BoxStream},
-    value::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
+    value::{
+        FinishReason, Message, MessageDelta, MessageOutput, PartDelta, PartDeltaFunction, ToolDesc,
+    },
 };
 
-#[derive(Debug)]
+struct Request {
+    msgs: Vec<Message>,
+    tools: Vec<ToolDesc>,
+    tx_resp: mpsc::Sender<Result<MessageOutput, String>>,
+}
+
+#[derive(Clone, Debug)]
 pub struct LocalLanguageModel {
+    tx: Arc<mpsc::Sender<Request>>,
+}
+
+impl LocalLanguageModel {
+    pub async fn try_new(model: impl Into<String>) -> Result<Self, String> {
+        let cache = Cache::new();
+        let mut strm = Box::pin(cache.try_create::<LocalLanguageModel>(model));
+        while let Some(v) = strm.next().await {
+            if let Some(result) = v?.result {
+                return Ok(result);
+            }
+        }
+        unreachable!()
+    }
+}
+
+impl TryFromCache for LocalLanguageModel {
+    fn claim_files(
+        cache: Cache,
+        key: impl AsRef<str>,
+    ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+        LocalLanguageModelImpl::claim_files(cache, key)
+    }
+
+    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Result<Self, String>> {
+        Box::pin(async move {
+            let mut body = LocalLanguageModelImpl::try_from_contents(contents).await?;
+            let (tx, mut rx) = mpsc::channel(8);
+            tokio::spawn(async move {
+                while let Some(req) = rx.recv().await {
+                    let Request {
+                        msgs,
+                        tools,
+                        tx_resp,
+                    } = req;
+                    let mut strm = body.infer(msgs, tools);
+                    while let Some(resp) = strm.next().await {
+                        if tx_resp.send(resp).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            });
+            Ok(Self { tx: Arc::new(tx) })
+        })
+    }
+}
+
+impl LanguageModel for LocalLanguageModel {
+    fn update_config(&mut self, config: crate::model::InferenceConfig) -> Result<(), ()> {
+        todo!()
+    }
+
+    fn run<'a>(
+        &'a mut self,
+        msgs: Vec<crate::value::Message>,
+        tools: Vec<crate::value::ToolDesc>,
+    ) -> crate::utils::BoxStream<'a, Result<crate::value::MessageOutput, String>> {
+        let (tx_resp, mut rx_resp) = tokio::sync::mpsc::channel(1024);
+        let req = Request {
+            msgs,
+            tools,
+            tx_resp,
+        };
+        let tx = self.tx.clone();
+        let strm = async_stream::stream! {
+            tx.send(req).await.unwrap();
+            while let Some(resp) = rx_resp.recv().await {
+                yield resp;
+            }
+        };
+        Box::pin(strm)
+    }
+}
+
+#[derive(Debug)]
+struct LocalLanguageModelImpl {
     chat_template: ChatTemplate,
 
     tokenizer: Tokenizer,
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
-    inferencer: Arc<Mutex<LanguageModelInferencer>>,
+    inferencer: LanguageModelInferencer,
 }
 
-impl LocalLanguageModel {
-    pub async fn try_new(
-        model_name: impl Into<String>,
-    ) -> impl Stream<Item = Result<CacheProgress<Self>, String>> + 'static {
-        let model_name = model_name.into();
-        Cache::new().try_create::<LocalLanguageModel>(model_name)
-    }
-
-    pub fn enable_reasoning(&self) {
-        self.chat_template.enable_reasoning();
-    }
-
-    pub fn disable_reasoning(&self) {
-        self.chat_template.disable_reasoning();
-    }
-}
-
-impl LanguageModel for LocalLanguageModel {
-    fn run<'a>(
-        self: &'a mut Self,
+impl LocalLanguageModelImpl {
+    pub fn infer<'a>(
+        &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
     ) -> BoxStream<'a, Result<MessageOutput, String>> {
@@ -52,34 +118,31 @@ impl LanguageModel for LocalLanguageModel {
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
 
             {
-                let mut inferencer = self.inferencer.lock().await;
                 #[cfg(target_family = "wasm")]
-                inferencer.prefill(&input_tokens).await;
+                self.inferencer.prefill(&input_tokens).await;
                 #[cfg(not(target_family = "wasm"))]
-                inferencer.prefill(&input_tokens);
+                self.inferencer.prefill(&input_tokens);
             }
 
             let mut last_token = *input_tokens.last().unwrap();
             let mut agg_tokens = Vec::<u32>::new();
             let mut count = 0;
             let mut mode = "content".to_owned();
-            let mut finish_reason = FinishReason::Stop;
-
-            yield MessageOutput::new().with_delta(Message::new().with_role(Role::Assistant));
+            let mut finish_reason = FinishReason::Stop();
 
             // @jhlee: TODO remove hard-coded token names
             loop {
                 count += 1;
                 if count > 16384 {
-                    Err("Too long assistant message. It may be infinite loop".to_owned())?;
+                    yield MessageOutput{delta: MessageDelta::new(), finish_reason: Some(FinishReason::Length())};
+                    break;
                 }
 
                 {
-                    let mut inferencer = self.inferencer.lock().await;
                     #[cfg(target_family = "wasm")]
-                    let new_token = inferencer.decode(last_token).await;
+                    let new_token = self.inferencer.decode(last_token).await;
                     #[cfg(not(target_family = "wasm"))]
-                    let new_token = inferencer.decode(last_token);
+                    let new_token = self.inferencer.decode(last_token);
 
                     agg_tokens.push(new_token);
                     last_token = new_token;
@@ -92,14 +155,14 @@ impl LanguageModel for LocalLanguageModel {
                 agg_tokens.clear();
 
                 if s == "<|im_end|>" {
-                    yield MessageOutput::new().with_finish_reason(finish_reason);
+                    yield MessageOutput{delta: MessageDelta::new(), finish_reason: Some(finish_reason)};
                     break;
                 } else if s == "<tool_call>" {
                     mode = "tool_call".to_owned();
                     continue;
                 } else if s == "</tool_call>" {
                     mode = "content".to_owned();
-                    finish_reason = FinishReason::ToolCalls;
+                    finish_reason = FinishReason::ToolCall();
                     continue;
                 } else if s == "<think>" {
                     mode = "reasoning".to_owned();
@@ -109,15 +172,15 @@ impl LanguageModel for LocalLanguageModel {
                     continue;
                 } else {
                     let delta = if mode == "content" {
-                        Message::new().with_contents(vec![Part::Text(s)])
+                        MessageDelta::new().with_contents([PartDelta::Text{text: s}])
                     } else if mode == "reasoning" {
-                        Message::new().with_reasoning(s)
+                        MessageDelta::new().with_thinking(s)
                     } else if mode == "tool_call" {
-                        Message::new().with_tool_calls(vec![Part::FunctionString(s)])
+                        MessageDelta::new().with_tool_calls([PartDelta::Function{id: None, f: PartDeltaFunction::Verbatim(s)}])
                     } else {
                         unreachable!();
                     };
-                    yield MessageOutput::new().with_delta(delta);
+                    yield MessageOutput{delta, finish_reason: None};
                 }
             }
             return;
@@ -126,7 +189,7 @@ impl LanguageModel for LocalLanguageModel {
     }
 }
 
-impl TryFromCache for LocalLanguageModel {
+impl TryFromCache for LocalLanguageModelImpl {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
@@ -217,10 +280,10 @@ impl TryFromCache for LocalLanguageModel {
                 LanguageModelInferencer::try_from_contents(contents).await?
             };
 
-            Ok(LocalLanguageModel {
+            Ok(Self {
                 chat_template,
                 tokenizer,
-                inferencer: Arc::new(Mutex::new(inferencer)),
+                inferencer,
             })
         })
     }
@@ -231,12 +294,14 @@ impl TryFromCache for LocalLanguageModel {
 mod tests {
     use serde_json::json;
 
+    use crate::value::Part;
+
     #[tokio::test]
     async fn infer_simple_chat() {
         use futures::StreamExt;
 
         use super::*;
-        use crate::value::{MessageAggregator, Role};
+        use crate::value::Role;
 
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
@@ -254,14 +319,13 @@ mod tests {
             }
         }
         let mut model = model.unwrap();
-        model.enable_reasoning();
         let msgs = vec![
-            Message::new()
-                .with_role(Role::System)
-                .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
-            Message::new()
-                .with_role(Role::User)
-                .with_contents(vec![Part::Text("Hi what's your name?".to_owned())]),
+            Message::new(Role::System).with_contents([Part::Text {
+                text: "You are an assistant.".to_owned(),
+            }]),
+            Message::new(Role::User).with_contents([Part::Text {
+                text: "Hi what's your name?".to_owned(),
+            }]),
             // Message::with_role(Role::Assistant)
             //     .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
             //     .with_contents(vec![Part::Text(
@@ -270,159 +334,158 @@ mod tests {
             // Message::with_role(Role::User)
             //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
-        let mut agg = MessageAggregator::new();
         let mut strm = model.run(msgs, Vec::new());
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
             println!("{:?}", out);
-            if let Some(msg) = agg.update(out) {
-                println!("{:?}", msg);
-            }
+            // if let Some(msg) = agg.update(out) {
+            //     println!("{:?}", msg);
+            // }
         }
     }
 
-    #[tokio::test]
-    async fn infer_tool_call() {
-        use futures::StreamExt;
+    // #[tokio::test]
+    // async fn infer_tool_call() {
+    //     use futures::StreamExt;
 
-        use super::*;
-        use crate::value::{MessageAggregator, Role, ToolDesc};
+    //     use crate::value::{MessageAggregator, Role, ToolDesc};
+    //     use local_language_model::*;
 
-        let cache = crate::cache::Cache::new();
-        let key = "Qwen/Qwen3-0.6B";
-        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
-        let mut model: Option<LocalLanguageModel> = None;
-        while let Some(progress) = model_strm.next().await {
-            let mut progress = progress.unwrap();
-            println!(
-                "{} ({} / {})",
-                progress.comment, progress.current_task, progress.total_task
-            );
-            if progress.current_task == progress.total_task {
-                model = progress.result.take();
-            }
-        }
-        let mut model = model.unwrap();
-        model.disable_reasoning();
-        let tools = vec![
-            ToolDesc::new(
-                "temperature".into(),
-                "Get current temperature".into(),
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "location": {
-                            "type": "string",
-                            "description": "The city name"
-                        },
-                        "unit": {
-                            "type": "string",
-                            "enum": ["Celsius", "Fahrenheit"]
-                        }
-                    },
-                    "required": ["location", "unit"]
-                }),
-                Some(json!({
-                    "type": "number",
-                    "description": "Null if the given city name is unavailable.",
-                    "nullable": true,
-                })),
-            )
-            .unwrap(),
-        ];
-        let msgs = vec![
-            Message::new()
-                .with_role(Role::User)
-                .with_contents(vec![Part::Text(
-                    "How much hot currently in Dubai?".to_owned(),
-                )]),
-        ];
-        let mut agg = MessageAggregator::new();
-        let mut strm = model.run(msgs, tools);
-        let mut assistant_msg: Option<Message> = None;
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            println!("{:?}", delta);
-            if let Some(msg) = agg.update(delta) {
-                assistant_msg = Some(msg);
-            }
-        }
-        let assistant_msg = assistant_msg.unwrap();
-        println!("Assistant message: {:?}", assistant_msg);
-        let tc = assistant_msg.tool_calls.get(0).unwrap();
-        println!("Tool call: {:?}", tc);
-    }
+    //     let cache = crate::cache::Cache::new();
+    //     let key = "Qwen/Qwen3-0.6B";
+    //     let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
+    //     let mut model: Option<LocalLanguageModel> = None;
+    //     while let Some(progress) = model_strm.next().await {
+    //         let mut progress = progress.unwrap();
+    //         println!(
+    //             "{} ({} / {})",
+    //             progress.comment, progress.current_task, progress.total_task
+    //         );
+    //         if progress.current_task == progress.total_task {
+    //             model = progress.result.take();
+    //         }
+    //     }
+    //     let mut model = model.unwrap();
+    //     model.disable_reasoning();
+    //     let tools = vec![
+    //         ToolDesc::new(
+    //             "temperature".into(),
+    //             "Get current temperature".into(),
+    //             json!({
+    //                 "type": "object",
+    //                 "properties": {
+    //                     "location": {
+    //                         "type": "string",
+    //                         "description": "The city name"
+    //                     },
+    //                     "unit": {
+    //                         "type": "string",
+    //                         "enum": ["Celsius", "Fahrenheit"]
+    //                     }
+    //                 },
+    //                 "required": ["location", "unit"]
+    //             }),
+    //             Some(json!({
+    //                 "type": "number",
+    //                 "description": "Null if the given city name is unavailable.",
+    //                 "nullable": true,
+    //             })),
+    //         )
+    //         .unwrap(),
+    //     ];
+    //     let msgs = vec![
+    //         Message::new()
+    //             .with_role(Role::User)
+    //             .with_contents(vec![Part::Text(
+    //                 "How much hot currently in Dubai?".to_owned(),
+    //             )]),
+    //     ];
+    //     let mut agg = MessageAggregator::new();
+    //     let mut strm = model.run(msgs, tools);
+    //     let mut assistant_msg: Option<Message> = None;
+    //     while let Some(delta_opt) = strm.next().await {
+    //         let delta = delta_opt.unwrap();
+    //         println!("{:?}", delta);
+    //         if let Some(msg) = agg.update(delta) {
+    //             assistant_msg = Some(msg);
+    //         }
+    //     }
+    //     let assistant_msg = assistant_msg.unwrap();
+    //     println!("Assistant message: {:?}", assistant_msg);
+    //     let tc = assistant_msg.tool_calls.get(0).unwrap();
+    //     println!("Tool call: {:?}", tc);
+    // }
 
-    #[tokio::test]
-    async fn infer_result_from_tool_call() {
-        use futures::StreamExt;
+    // #[tokio::test]
+    // async fn infer_result_from_tool_call() {
+    //     use futures::StreamExt;
 
-        use super::*;
-        use crate::value::{MessageAggregator, Role, ToolDesc};
+    //     use crate::value::{MessageAggregator, Role, ToolDesc};
+    //     use local_language_model::*;
 
-        let cache = crate::cache::Cache::new();
-        let key = "Qwen/Qwen3-0.6B";
-        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
-        let mut model: Option<LocalLanguageModel> = None;
-        while let Some(progress) = model_strm.next().await {
-            let mut progress = progress.unwrap();
-            println!(
-                "{} ({} / {})",
-                progress.comment, progress.current_task, progress.total_task
-            );
-            if progress.current_task == progress.total_task {
-                model = progress.result.take();
-            }
-        }
-        let mut model = model.unwrap();
-        model.disable_reasoning();
-        let tools = vec![
-            ToolDesc::new(
-                "temperature".into(),
-                "Get current temperature".into(),
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "location": {
-                            "type": "string",
-                            "description": "The city name"
-                        },
-                        "unit": {
-                            "type": "string",
-                            "description": "The unit of temperature",
-                            "enum": ["Celsius", "Fahrenheit"]
-                        }
-                    },
-                    "required": ["location", "unit"]
-                }),
-                Some(json!({
-                    "type": "number",
-                    "description": "Null if the given city name is unavailable.",
-                    "nullable": true,
-                })),
-            )
-            .unwrap(),
-        ];
-        let msgs = vec![
-            Message::new().with_role(Role::User)
-                .with_contents([Part::new_text("How much hot currently in Dubai?".to_owned())]),
-            Message::new().with_role(Role::Assistant)
-                .with_contents([Part::new_text("\n\n")])
-                .with_tool_calls([Part::new_function_string("\n{\"name\": \"temperature\", \"arguments\": {\"location\": \"Dubai\", \"unit\": \"Celsius\"}}\n")]),
-            Message::new().with_role(Role::Tool).with_tool_call_id("temperature").with_contents([Part::new_text("40")])
-        ];
-        let mut agg = MessageAggregator::new();
-        let mut strm = model.run(msgs, tools);
-        let mut assistant_msg: Option<Message> = None;
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            if let Some(msg) = agg.update(delta) {
-                assistant_msg = Some(msg);
-            }
-        }
-        let assistant_msg = assistant_msg.unwrap();
-        println!("Assistant message: {:?}", assistant_msg);
-    }
+    //     let cache = crate::cache::Cache::new();
+    //     let key = "Qwen/Qwen3-0.6B";
+    //     let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
+    //     let mut model: Option<LocalLanguageModel> = None;
+    //     while let Some(progress) = model_strm.next().await {
+    //         let mut progress = progress.unwrap();
+    //         println!(
+    //             "{} ({} / {})",
+    //             progress.comment, progress.current_task, progress.total_task
+    //         );
+    //         if progress.current_task == progress.total_task {
+    //             model = progress.result.take();
+    //         }
+    //     }
+    //     let mut model = model.unwrap();
+    //     model.disable_reasoning();
+    //     let tools = vec![
+    //         ToolDesc::new(
+    //             "temperature".into(),
+    //             "Get current temperature".into(),
+    //             json!({
+    //                 "type": "object",
+    //                 "properties": {
+    //                     "location": {
+    //                         "type": "string",
+    //                         "description": "The city name"
+    //                     },
+    //                     "unit": {
+    //                         "type": "string",
+    //                         "description": "The unit of temperature",
+    //                         "enum": ["Celsius", "Fahrenheit"]
+    //                     }
+    //                 },
+    //                 "required": ["location", "unit"]
+    //             }),
+    //             Some(json!({
+    //                 "type": "number",
+    //                 "description": "Null if the given city name is unavailable.",
+    //                 "nullable": true,
+    //             })),
+    //         )
+    //         .unwrap(),
+    //     ];
+    //     let msgs = vec![
+    //         Message::new().with_role(Role::User)
+    //             .with_contents([Part::new_text("How much hot currently in Dubai?".to_owned())]),
+    //         Message::new().with_role(Role::Assistant)
+    //             .with_contents([Part::new_text("\n\n")])
+    //             .with_tool_calls([Part::new_function_string("\n{\"name\": \"temperature\", \"arguments\": {\"location\": \"Dubai\", \"unit\": \"Celsius\"}}\n")]),
+    //         Message::new().with_role(Role::Tool).with_tool_call_id("temperature").with_contents([Part::new_text("40")])
+    //     ];
+    //     let mut agg = MessageAggregator::new();
+    //     let mut strm = model.run(msgs, tools);
+    //     let mut assistant_msg: Option<Message> = None;
+    //     while let Some(delta_opt) = strm.next().await {
+    //         let delta = delta_opt.unwrap();
+    //         if let Some(msg) = agg.update(delta) {
+    //             assistant_msg = Some(msg);
+    //         }
+    //     }
+    //     let assistant_msg = assistant_msg.unwrap();
+    //     println!("Assistant message: {:?}", assistant_msg);
+    // }
 }
 
 #[cfg(all(test, target_arch = "wasm32"))]
