@@ -513,7 +513,7 @@ mod sse_tests {
 
     use crate::{
         debug,
-        model::{LanguageModel as _, sse::SSELanguageModel},
+        model::{InferenceConfig, LanguageModel as _, sse::SSELanguageModel},
         value::Delta,
     };
 
@@ -537,7 +537,7 @@ mod sse_tests {
             Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
         ];
         let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.run(msgs, Vec::new());
+        let mut strm = model.run(msgs, Vec::new(), InferenceConfig::default());
         let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -581,7 +581,7 @@ mod sse_tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let mut strm = model.run(msgs, tools);
+        let mut strm = model.run(msgs, tools, InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
         while let Some(output_opt) = strm.next().await {

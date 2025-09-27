@@ -43,13 +43,12 @@ pub struct InferenceConfig {
 }
 
 pub trait LanguageModel: Downcast + MaybeSend + MaybeSync {
-    fn update_config(&mut self, config: InferenceConfig) -> Result<(), ()>;
-
     /// Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
     fn run<'a>(
         &'a mut self,
         msg: Vec<Message>,
         tools: Vec<ToolDesc>,
+        config: InferenceConfig,
     ) -> BoxStream<'a, Result<MessageOutput, String>>;
 }
 

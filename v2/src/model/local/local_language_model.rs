@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, TryFromCache},
     dyn_maybe_send,
-    model::{ChatTemplate, LanguageModel, LanguageModelInferencer, Tokenizer},
+    model::{ChatTemplate, InferenceConfig, LanguageModel, LanguageModelInferencer, Tokenizer},
     utils::{BoxFuture, BoxStream},
     value::{
         FinishReason, Message, MessageDelta, MessageOutput, PartDelta, PartDeltaFunction, ToolDesc,
@@ -17,6 +17,7 @@ use crate::{
 struct Request {
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
+    config: InferenceConfig,
     tx_resp: mpsc::Sender<Result<MessageOutput, String>>,
 }
 
@@ -55,9 +56,10 @@ impl TryFromCache for LocalLanguageModel {
                     let Request {
                         msgs,
                         tools,
+                        config,
                         tx_resp,
                     } = req;
-                    let mut strm = body.infer(msgs, tools);
+                    let mut strm = body.infer(msgs, tools, config);
                     while let Some(resp) = strm.next().await {
                         if tx_resp.send(resp).await.is_err() {
                             break;
@@ -71,19 +73,17 @@ impl TryFromCache for LocalLanguageModel {
 }
 
 impl LanguageModel for LocalLanguageModel {
-    fn update_config(&mut self, config: crate::model::InferenceConfig) -> Result<(), ()> {
-        todo!()
-    }
-
     fn run<'a>(
         &'a mut self,
-        msgs: Vec<crate::value::Message>,
-        tools: Vec<crate::value::ToolDesc>,
-    ) -> crate::utils::BoxStream<'a, Result<crate::value::MessageOutput, String>> {
+        msgs: Vec<Message>,
+        tools: Vec<ToolDesc>,
+        config: InferenceConfig,
+    ) -> crate::utils::BoxStream<'a, Result<MessageOutput, String>> {
         let (tx_resp, mut rx_resp) = tokio::sync::mpsc::channel(1024);
         let req = Request {
             msgs,
             tools,
+            config,
             tx_resp,
         };
         let tx = self.tx.clone();
@@ -112,6 +112,7 @@ impl LocalLanguageModelImpl {
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        config: InferenceConfig,
     ) -> BoxStream<'a, Result<MessageOutput, String>> {
         let strm = try_stream! {
             let prompt = self.chat_template.apply(msgs, tools, true)?;
@@ -133,7 +134,7 @@ impl LocalLanguageModelImpl {
             // @jhlee: TODO remove hard-coded token names
             loop {
                 count += 1;
-                if count > 16384 {
+                if count > config.max_tokens.unwrap_or(16384) {
                     yield MessageOutput{delta: MessageDelta::new(), finish_reason: Some(FinishReason::Length())};
                     break;
                 }
@@ -292,8 +293,6 @@ impl TryFromCache for LocalLanguageModelImpl {
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use crate::value::Part;
 
     #[tokio::test]
@@ -334,7 +333,7 @@ mod tests {
             // Message::with_role(Role::User)
             //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
-        let mut strm = model.run(msgs, Vec::new());
+        let mut strm = model.run(msgs, Vec::new(), InferenceConfig::default());
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
             println!("{:?}", out);

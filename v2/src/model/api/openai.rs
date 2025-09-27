@@ -784,7 +784,7 @@ mod dialect_tests {
 #[cfg(test)]
 mod sse_tests {
     use crate::{
-        model::{LanguageModel as _, sse::SSELanguageModel},
+        model::{InferenceConfig, LanguageModel as _, sse::SSELanguageModel},
         value::Delta,
     };
 
@@ -804,7 +804,7 @@ mod sse_tests {
             Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
         ];
         let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.run(msgs, Vec::new());
+        let mut strm = model.run(msgs, Vec::new(), InferenceConfig::default());
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
@@ -840,7 +840,7 @@ mod sse_tests {
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
         // let config = LMConfigBuilder::new().stream(true).build();
-        let mut strm = model.run(msgs, tools);
+        let mut strm = model.run(msgs, tools, InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();

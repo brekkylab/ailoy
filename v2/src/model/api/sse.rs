@@ -50,7 +50,6 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerEvent> {
 #[derive(Clone)]
 pub struct SSELanguageModel {
     name: String,
-    config: InferenceConfig,
     make_request: Arc<
         dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestInfo) -> reqwest::RequestBuilder
             + MaybeSend
@@ -97,7 +96,6 @@ impl SSELanguageModel {
             // OpenAI models
             SSELanguageModel {
                 name: model.into(),
-                config: InferenceConfig::default(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
                         super::openai::make_request(&url, &api_key, msgs, tools, req)
@@ -112,7 +110,6 @@ impl SSELanguageModel {
             // Gemini models
             SSELanguageModel {
                 name: model.into(),
-                config: InferenceConfig::default(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
                         super::gemini::make_request(&url, &api_key, msgs, tools, req)
@@ -131,15 +128,11 @@ impl SSELanguageModel {
 }
 
 impl LanguageModel for SSELanguageModel {
-    fn update_config(&mut self, config: InferenceConfig) -> Result<(), ()> {
-        self.config = config;
-        Ok(())
-    }
-
     fn run<'a>(
         self: &'a mut Self,
         mut msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        config: InferenceConfig,
     ) -> BoxStream<'a, Result<MessageOutput, String>> {
         // Initialize buffer
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
@@ -163,14 +156,14 @@ impl LanguageModel for SSELanguageModel {
                 None
             },
             stream: true,
-            think_effort: if let Some(think_effort) = self.config.think_effort.clone() {
+            think_effort: if let Some(think_effort) = config.think_effort.clone() {
                 think_effort
             } else {
                 ThinkEffort::default()
             },
-            temperature: self.config.temperature.clone().map(|v| *v),
-            top_p: self.config.top_p.clone().map(|v| *v),
-            max_tokens: self.config.max_tokens.clone(),
+            temperature: config.temperature.clone().map(|v| *v),
+            top_p: config.top_p.clone().map(|v| *v),
+            max_tokens: config.max_tokens.clone(),
         };
 
         // Send request
