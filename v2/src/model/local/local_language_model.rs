@@ -5,7 +5,7 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::{
-    cache::{Cache, CacheClaim, CacheContents, CacheEntry, TryFromCache},
+    cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
     dyn_maybe_send,
     model::{ChatTemplate, InferenceConfig, LanguageModel, LanguageModelInferencer, Tokenizer},
     utils::{BoxFuture, BoxStream},
@@ -36,6 +36,13 @@ impl LocalLanguageModel {
             }
         }
         unreachable!()
+    }
+
+    pub fn try_new_stream<'a>(
+        model: impl Into<String>,
+    ) -> BoxStream<'a, Result<CacheProgress<Self>, String>> {
+        let cache = Cache::new();
+        Box::pin(cache.try_create::<Self>(model))
     }
 }
 
