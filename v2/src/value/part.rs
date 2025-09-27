@@ -332,6 +332,9 @@ pub enum PartDelta {
         #[serde(rename = "function")]
         f: PartDeltaFunction,
     },
+    Value {
+        value: Value,
+    },
     Null(),
 }
 
@@ -372,6 +375,13 @@ impl PartDelta {
         }
     }
 
+    pub fn is_value(&self) -> bool {
+        match self {
+            Self::Value { .. } => true,
+            _ => false,
+        }
+    }
+
     pub fn to_text(self) -> Option<String> {
         match self {
             Self::Text { text } => Some(text),
@@ -399,6 +409,13 @@ impl PartDelta {
                 id,
                 f: PartDeltaFunction::WithParsedArgs { name, args },
             } => Some((id, name, args)),
+            _ => None,
+        }
+    }
+
+    pub fn to_value(self) -> Option<Value> {
+        match self {
+            Self::Value { value } => Some(value),
             _ => None,
         }
     }
@@ -498,6 +515,7 @@ impl Delta for PartDelta {
                 }?;
                 Ok(Part::Function { id, f })
             }
+            PartDelta::Value { value } => Ok(Part::Value { value }),
         }
     }
 }

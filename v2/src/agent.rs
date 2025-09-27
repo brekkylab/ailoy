@@ -121,9 +121,8 @@ impl Agent {
                         let Some((id, name, args)) = part.as_function() else { continue };
                         let tool = tools.iter().find(|v| v.get_description().name == name).unwrap().clone();
                         let resp = tool.run(args.to_owned()).await?;
-                        let text = serde_json::to_string(&resp).unwrap();
-                        let mut msg = Message::new(Role::Tool).with_contents([Part::Value { value: resp }]);
-                        let mut delta = MessageDelta::new().with_role(Role::Tool).with_contents([PartDelta::Text { text }]);
+                        let mut msg = Message::new(Role::Tool).with_contents([Part::Value { value: resp.clone() }]);
+                        let mut delta = MessageDelta::new().with_role(Role::Tool).with_contents([PartDelta::Value { value: resp }]);
                         if let Some(id) = id {
                             msg = msg.with_id(id);
                             delta = delta.with_id(id);
