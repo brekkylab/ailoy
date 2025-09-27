@@ -104,6 +104,11 @@ impl MessageDelta {
         self
     }
 
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
     pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
         self.thinking = thinking.into();
         self

@@ -22,6 +22,8 @@ struct Request {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct LocalLanguageModel {
     tx: Arc<mpsc::Sender<Request>>,
 }
