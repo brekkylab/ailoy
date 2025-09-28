@@ -61,7 +61,7 @@ pub trait LangModelInference: MaybeSend + MaybeSync {
     /// Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
     fn infer<'a>(
         &'a mut self,
-        msg: Vec<Message>,
+        msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: InferenceConfig,
     ) -> BoxStream<'a, Result<MessageOutput, String>>;
@@ -132,14 +132,14 @@ impl LangModel {
 impl LangModelInference for LangModel {
     fn infer<'a>(
         &'a mut self,
-        msg: Vec<Message>,
+        msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: InferenceConfig,
     ) -> BoxStream<'a, Result<MessageOutput, String>> {
         match &mut self.inner {
-            LangModelInner::Local(model) => model.infer(msg, tools, config),
-            LangModelInner::SSE(model) => model.infer(msg, tools, config),
-            LangModelInner::Custom(model) => model.infer(msg, tools, config),
+            LangModelInner::Local(model) => model.infer(msgs, tools, config),
+            LangModelInner::SSE(model) => model.infer(msgs, tools, config),
+            LangModelInner::Custom(model) => model.infer(msgs, tools, config),
         }
     }
 }
