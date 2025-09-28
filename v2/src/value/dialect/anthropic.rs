@@ -115,6 +115,103 @@ impl Marshal<ToolDesc> for AnthropicMarshal {
     }
 }
 
+enum AnthropicModelType {
+    Opus,
+    Sonnet,
+    Haiku,
+    Haiku3,
+}
+
+impl Marshal<LMConfig> for AnthropicMarshal {
+    fn marshal(&mut self, config: &LMConfig) -> Value {
+        let Some(model) = &config.model else {
+            panic!("Cannot marshal `Config` without `model`.");
+        };
+
+        let model_type = if model.contains("opus") {
+            AnthropicModelType::Opus
+        } else if model.contains("sonnet") {
+            AnthropicModelType::Sonnet
+        } else if model.starts_with("claude-3-5-haiku") {
+            AnthropicModelType::Haiku
+        } else if model.starts_with("claude-3-haiku") {
+            AnthropicModelType::Haiku3
+        } else {
+            panic!("Unsupported model.");
+        };
+
+        let is_reasoning_model = match model_type {
+            AnthropicModelType::Opus | AnthropicModelType::Sonnet => true,
+            AnthropicModelType::Haiku | AnthropicModelType::Haiku3 => false,
+        };
+
+        let budget_tokens = match (&config.thinking_option, &model_type) {
+            (_, AnthropicModelType::Haiku) => 0,
+            (_, AnthropicModelType::Haiku3) => 0,
+            (ThinkingOption::Disable, _) => 0,
+            (ThinkingOption::Enable, _) => 8192,
+            (ThinkingOption::Low, _) => 1024,
+            (ThinkingOption::Medium, _) => 8192,
+            (ThinkingOption::High, _) => 24576,
+        };
+
+        let reasoning = if budget_tokens != 0 {
+            to_value!({"type": "enabled", "budget_tokens": budget_tokens as i64})
+        } else {
+            Value::Null
+        };
+
+        let system = if let Some(system_message) = &config.system_message {
+            to_value!(system_message)
+        } else {
+            Value::Null
+        };
+
+        let max_tokens = if let Some(max_tokens) = &config.max_tokens {
+            Value::integer(*max_tokens as i64)
+        } else {
+            Value::integer(match &model_type {
+                AnthropicModelType::Opus => 32000,
+                AnthropicModelType::Sonnet => 64000,
+                AnthropicModelType::Haiku => 8192,
+                AnthropicModelType::Haiku3 => 4096,
+            })
+        };
+
+        let temperature = if let Some(temperature) = &config.temperature
+            && !is_reasoning_model
+        {
+            to_value!(*temperature)
+        } else {
+            Value::Null
+        };
+
+        let top_p = if let Some(top_p) = &config.top_p
+            && !is_reasoning_model
+        {
+            to_value!(*top_p)
+        } else {
+            Value::Null
+        };
+
+        let stream = config.stream;
+
+        let mut body = to_value!({
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "reasoning": reasoning,
+            "stream": stream,
+            "temperature": temperature,
+            "top_p": top_p,
+        });
+        body.as_object_mut()
+            .unwrap()
+            .retain(|_key, value| !value.is_null());
+        body
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AnthropicUnmarshal;
 
