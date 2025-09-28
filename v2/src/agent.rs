@@ -3,35 +3,21 @@ use std::sync::Arc;
 use futures::{Stream, StreamExt, lock::Mutex};
 
 use crate::{
-    model::{ArcMutexLanguageModel, InferenceConfig, LanguageModel},
+    model::{InferenceConfig, LangModel, LangModelInference as _},
     tool::Tool,
     utils::log,
     value::{Delta, FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta, Role},
 };
 
-// #[derive(Clone)]
+#[derive(Clone)]
 pub struct Agent {
-    lm: ArcMutexLanguageModel,
+    lm: LangModel,
     tools: Vec<Arc<dyn Tool>>,
     messages: Arc<Mutex<Vec<Message>>>,
 }
 
 impl Agent {
-    pub fn new(
-        lm: impl LanguageModel + 'static,
-        tools: impl IntoIterator<Item = Arc<dyn Tool>>,
-    ) -> Self {
-        Self {
-            lm: ArcMutexLanguageModel::new(lm),
-            tools: tools.into_iter().collect(),
-            messages: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    pub fn new_from_arc(
-        lm: ArcMutexLanguageModel,
-        tools: impl IntoIterator<Item = Arc<dyn Tool>>,
-    ) -> Self {
+    pub fn new(lm: LangModel, tools: impl IntoIterator<Item = Arc<dyn Tool>>) -> Self {
         Self {
             lm,
             tools: tools.into_iter().collect(),
@@ -39,7 +25,7 @@ impl Agent {
         }
     }
 
-    pub fn get_lm(&self) -> ArcMutexLanguageModel {
+    pub fn get_lm(&self) -> LangModel {
         self.lm.clone()
     }
 
@@ -105,8 +91,7 @@ impl Agent {
             loop {
                 let mut assistant_msg = MessageDelta::new().with_role(Role::Assistant);
                 {
-                    let mut model = self.lm.model.lock().await;
-                    let mut strm = model.run(msgs.lock().await.clone(), td.clone(), InferenceConfig::default());
+                    let mut strm = self.lm.infer(msgs.lock().await.clone(), td.clone(), InferenceConfig::default());
                     while let Some(output_opt) = strm.next().await {
                         let output = output_opt?;
                         yield output.clone();

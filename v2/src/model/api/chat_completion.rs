@@ -1,7 +1,7 @@
 use base64::Engine as _;
 
 use crate::{
-    model::{api::RequestInfo, sse::ServerEvent},
+    model::{ServerEvent, api::RequestInfo},
     to_value,
     value::{
         Marshal, Marshaled, Message, MessageDelta, Part, PartDelta, PartDeltaFunction,
@@ -439,7 +439,7 @@ mod dialect_tests {
 #[cfg(test)]
 mod sse_tests {
     use crate::{
-        model::{InferenceConfig, LanguageModel as _, sse::SSELanguageModel},
+        model::{InferenceConfig, LangModelInference as _, SSELangModel},
         value::Delta,
     };
 
@@ -452,7 +452,7 @@ mod sse_tests {
         use super::*;
         use crate::value::{Part, Role};
 
-        let mut model = SSELanguageModel::new("gpt-4.1", OPENAI_API_KEY);
+        let mut model = SSELangModel::new("gpt-4.1", OPENAI_API_KEY);
 
         let msgs = vec![
             Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
@@ -460,7 +460,7 @@ mod sse_tests {
         ];
         // let config = LMConfigBuilder::new().build();
         let mut agg = MessageDelta::new();
-        let mut strm = model.run(msgs, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
             agg = agg.aggregate(output.delta).unwrap();
@@ -478,7 +478,7 @@ mod sse_tests {
             value::{Part, Role, ToolDescBuilder},
         };
 
-        let mut model = SSELanguageModel::new("gpt-4.1", OPENAI_API_KEY);
+        let mut model = SSELangModel::new("gpt-4.1", OPENAI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -494,7 +494,7 @@ mod sse_tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let mut strm = model.run(msgs, tools, InferenceConfig::default());
+        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();

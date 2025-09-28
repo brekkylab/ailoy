@@ -3,13 +3,13 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 
 use crate::{
-    model::{InferenceConfig, LanguageModel, ThinkEffort, api::RequestInfo},
+    model::{InferenceConfig, LangModelInference, ThinkEffort, api::RequestInfo},
     utils::{BoxStream, MaybeSend, MaybeSync},
     value::{FinishReason, Message, MessageOutput, Role, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
-pub struct ServerEvent {
+pub(crate) struct ServerEvent {
     pub event: String,
     pub data: String,
 }
@@ -48,7 +48,7 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerEvent> {
 }
 
 #[derive(Clone)]
-pub struct SSELanguageModel {
+pub(crate) struct SSELangModel {
     name: String,
     make_request: Arc<
         dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestInfo) -> reqwest::RequestBuilder
@@ -58,18 +58,18 @@ pub struct SSELanguageModel {
     handle_event: Arc<dyn Fn(ServerEvent) -> MessageOutput + MaybeSend + MaybeSync>,
 }
 
-impl SSELanguageModel {
+impl SSELangModel {
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         let model = model.into();
         let ret = if model.starts_with("gpt") || model.starts_with("o") {
             // OpenAI models
-            SSELanguageModel::with_url(model, api_key, "https://api.openai.com/v1/responses")
+            SSELangModel::with_url(model, api_key, "https://api.openai.com/v1/responses")
         } else if model.starts_with("claude") {
             // Anthropic models
             todo!()
         } else if model.starts_with("gemini") {
             // Gemini models
-            SSELanguageModel::with_url(
+            SSELangModel::with_url(
                 model,
                 api_key,
                 "https://generativelanguage.googleapis.com/v1beta/models",
@@ -94,7 +94,7 @@ impl SSELanguageModel {
 
         let ret = if model.starts_with("gpt") || model.starts_with("o") {
             // OpenAI models
-            SSELanguageModel {
+            SSELangModel {
                 name: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
@@ -108,7 +108,7 @@ impl SSELanguageModel {
             todo!()
         } else if model.starts_with("gemini") {
             // Gemini models
-            SSELanguageModel {
+            SSELangModel {
                 name: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
@@ -127,8 +127,8 @@ impl SSELanguageModel {
     }
 }
 
-impl LanguageModel for SSELanguageModel {
-    fn run<'a>(
+impl LangModelInference for SSELangModel {
+    fn infer<'a>(
         self: &'a mut Self,
         mut msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
@@ -161,8 +161,8 @@ impl LanguageModel for SSELanguageModel {
             } else {
                 ThinkEffort::default()
             },
-            temperature: config.temperature.clone().map(|v| *v),
-            top_p: config.top_p.clone().map(|v| *v),
+            temperature: config.temperature.clone(),
+            top_p: config.top_p.clone(),
             max_tokens: config.max_tokens.clone(),
         };
 

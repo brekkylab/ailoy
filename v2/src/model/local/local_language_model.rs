@@ -7,7 +7,9 @@ use tokio::sync::mpsc;
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
     dyn_maybe_send,
-    model::{ChatTemplate, InferenceConfig, LanguageModel, LanguageModelInferencer, Tokenizer},
+    model::{
+        ChatTemplate, InferenceConfig, LangModelInference, LanguageModelInferencer, Tokenizer,
+    },
     utils::{BoxFuture, BoxStream},
     value::{
         FinishReason, Message, MessageDelta, MessageOutput, PartDelta, PartDeltaFunction, ToolDesc,
@@ -22,16 +24,14 @@ struct Request {
 }
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
-pub struct LocalLanguageModel {
+pub struct LocalLangModel {
     tx: Arc<mpsc::Sender<Request>>,
 }
 
-impl LocalLanguageModel {
+impl LocalLangModel {
     pub async fn try_new(model: impl Into<String>) -> Result<Self, String> {
         let cache = Cache::new();
-        let mut strm = Box::pin(cache.try_create::<LocalLanguageModel>(model));
+        let mut strm = Box::pin(cache.try_create::<LocalLangModel>(model));
         while let Some(v) = strm.next().await {
             if let Some(result) = v?.result {
                 return Ok(result);
@@ -48,17 +48,17 @@ impl LocalLanguageModel {
     }
 }
 
-impl TryFromCache for LocalLanguageModel {
+impl TryFromCache for LocalLangModel {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
     ) -> BoxFuture<'static, Result<CacheClaim, String>> {
-        LocalLanguageModelImpl::claim_files(cache, key)
+        LocalLangModelImpl::claim_files(cache, key)
     }
 
     fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Result<Self, String>> {
         Box::pin(async move {
-            let mut body = LocalLanguageModelImpl::try_from_contents(contents).await?;
+            let mut body = LocalLangModelImpl::try_from_contents(contents).await?;
             let (tx, mut rx) = mpsc::channel(8);
             tokio::spawn(async move {
                 while let Some(req) = rx.recv().await {
@@ -81,8 +81,8 @@ impl TryFromCache for LocalLanguageModel {
     }
 }
 
-impl LanguageModel for LocalLanguageModel {
-    fn run<'a>(
+impl LangModelInference for LocalLangModel {
+    fn infer<'a>(
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
@@ -107,16 +107,15 @@ impl LanguageModel for LocalLanguageModel {
 }
 
 #[derive(Debug)]
-struct LocalLanguageModelImpl {
+struct LocalLangModelImpl {
     chat_template: ChatTemplate,
 
     tokenizer: Tokenizer,
 
-    // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
     inferencer: LanguageModelInferencer,
 }
 
-impl LocalLanguageModelImpl {
+impl LocalLangModelImpl {
     pub fn infer<'a>(
         &'a mut self,
         msgs: Vec<Message>,
@@ -199,7 +198,7 @@ impl LocalLanguageModelImpl {
     }
 }
 
-impl TryFromCache for LocalLanguageModelImpl {
+impl TryFromCache for LocalLangModelImpl {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
@@ -314,8 +313,8 @@ mod tests {
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
 
-        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
-        let mut model: Option<LocalLanguageModel> = None;
+        let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key));
+        let mut model: Option<LocalLangModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
             println!(
@@ -342,7 +341,7 @@ mod tests {
             // Message::with_role(Role::User)
             //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
-        let mut strm = model.run(msgs, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
             println!("{:?}", out);
@@ -361,8 +360,8 @@ mod tests {
 
     //     let cache = crate::cache::Cache::new();
     //     let key = "Qwen/Qwen3-0.6B";
-    //     let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
-    //     let mut model: Option<LocalLanguageModel> = None;
+    //     let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key));
+    //     let mut model: Option<LocalLangModel> = None;
     //     while let Some(progress) = model_strm.next().await {
     //         let mut progress = progress.unwrap();
     //         println!(
@@ -433,8 +432,8 @@ mod tests {
 
     //     let cache = crate::cache::Cache::new();
     //     let key = "Qwen/Qwen3-0.6B";
-    //     let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
-    //     let mut model: Option<LocalLanguageModel> = None;
+    //     let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key));
+    //     let mut model: Option<LocalLangModel> = None;
     //     while let Some(progress) = model_strm.next().await {
     //         let mut progress = progress.unwrap();
     //         println!(
@@ -511,8 +510,8 @@ mod tests {
     async fn infer_simple_chat() {
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
-        let mut model: Option<LocalLanguageModel> = None;
+        let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key));
+        let mut model: Option<LocalLangModel> = None;
 
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
