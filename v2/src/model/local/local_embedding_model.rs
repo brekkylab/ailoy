@@ -2,10 +2,10 @@ use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::Result;
-use futures::{lock::Mutex, stream::Stream};
+use futures::lock::Mutex;
 
 use crate::{
-    cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
+    cache::{Cache, CacheClaim, CacheContents, CacheEntry, TryFromCache},
     dyn_maybe_send,
     knowledge_base::Embedding,
     model::{
