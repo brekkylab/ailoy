@@ -120,6 +120,66 @@ impl Marshal<ToolDesc> for ChatCompletionMarshal {
     }
 }
 
+impl Marshal<LMConfig> for ChatCompletionMarshal {
+    fn marshal(&mut self, config: &LMConfig) -> Value {
+        let Some(model) = &config.model else {
+            panic!("Cannot marshal `Config` without `model`.");
+        };
+
+        // "grok-4", "grok-code-fast-1" are reasoning models, but only treating reasoning internally.
+        let is_reasoning_model = model.starts_with("grok-3-mini");
+
+        let reasoning_effort = is_reasoning_model
+            .then(|| {
+                let effort = match &config.thinking_option {
+                    ThinkingOption::Disable => return Value::Null,
+                    // grok doesn't have 'medium', setting default option as 'low'.
+                    ThinkingOption::Enable | ThinkingOption::Medium | ThinkingOption::Low => "low",
+                    ThinkingOption::High => "high",
+                };
+                Value::String(effort.to_owned())
+            })
+            .unwrap_or(Value::Null);
+
+        let max_completion_tokens = if let Some(max_tokens) = &config.max_tokens {
+            to_value!(*max_tokens as i64)
+        } else {
+            Value::Null
+        };
+
+        let temperature = if let Some(temperature) = &config.temperature
+            && !is_reasoning_model
+        {
+            to_value!(*temperature)
+        } else {
+            Value::Null
+        };
+
+        let top_p = if let Some(top_p) = &config.top_p
+            && !is_reasoning_model
+        {
+            to_value!(*top_p)
+        } else {
+            Value::Null
+        };
+
+        let stream = config.stream;
+
+        let mut body = to_value!({
+            "model": model,
+            "reasoning_effort": reasoning_effort,
+            "stream": stream,
+            "max_completion_tokens": max_completion_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+        });
+        body.as_object_mut()
+            .unwrap()
+            .retain(|_key, value| !value.is_null());
+        body
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ChatCompletionUnmarshal;
 
