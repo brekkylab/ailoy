@@ -8,7 +8,8 @@ use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
     dyn_maybe_send,
     model::{
-        ChatTemplate, InferenceConfig, LangModelInference, LanguageModelInferencer, Tokenizer,
+        ChatTemplate, InferenceConfig, LangModelInference, LanguageModelInferencer, ThinkEffort,
+        Tokenizer,
     },
     utils::{BoxFuture, BoxStream},
     value::{
@@ -123,6 +124,14 @@ impl LocalLangModelImpl {
         config: InferenceConfig,
     ) -> BoxStream<'a, Result<MessageOutput, String>> {
         let strm = try_stream! {
+            match config.think_effort.unwrap_or_default() {
+                ThinkEffort::Disable => {
+                    self.chat_template.disable_reasoning();
+                },
+                ThinkEffort::Enable | ThinkEffort::Low | ThinkEffort::Medium | ThinkEffort::High => {
+                    self.chat_template.enable_reasoning();
+                },
+            }
             let prompt = self.chat_template.apply(msgs, tools, true)?;
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
 
