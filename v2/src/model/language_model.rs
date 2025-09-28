@@ -82,13 +82,13 @@ pub struct LangModel {
 }
 
 impl LangModel {
-    pub async fn new_local(model_name: impl Into<String>) -> Result<Self, String> {
+    pub async fn try_new_local(model_name: impl Into<String>) -> Result<Self, String> {
         Ok(Self {
             inner: LangModelInner::Local(LocalLangModel::try_new(model_name).await?),
         })
     }
 
-    pub fn new_local_stream<'a>(
+    pub fn try_new_local_stream<'a>(
         model_name: impl Into<String>,
     ) -> BoxStream<'a, Result<CacheProgress<Self>, String>> {
         let model_name = model_name.into();
