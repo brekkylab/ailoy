@@ -14,6 +14,7 @@ pub trait EmbeddingModelInference: MaybeSend + MaybeSync {
     async fn infer(self: &mut Self, text: String) -> Result<Embedding>;
 }
 
+#[derive(Debug, Clone)]
 pub struct EmbeddingModel {
     inner: LocalEmbeddingModel,
 }
