@@ -327,6 +327,41 @@ mod tests {
     }
 
     #[test]
+    pub fn serialize_config() {
+        let config = LMConfigBuilder::new()
+            .max_tokens(1024)
+            .thinking_option(ThinkingOption::Enable)
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .temperature(0.6)
+            .top_p(0.9)
+            .build()
+            .with_model("gemini-2.5-pro");
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&config);
+        println!("{}", serde_json::to_string(&marshaled).unwrap());
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"system_instruction":{"parts":[{"text":"You are a helpful assistant."}]},"generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingBudget":-1},"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}}"#
+        );
+
+        let config = LMConfigBuilder::new()
+            .max_tokens(1024)
+            .thinking_option(ThinkingOption::Enable)
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .temperature(0.6)
+            .top_p(0.9)
+            .build()
+            .with_model("gemini-2.0-flash");
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&config);
+        println!("{}", serde_json::to_string(&marshaled).unwrap());
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"system_instruction":{"parts":[{"text":"You are a helpful assistant."}]},"generationConfig":{"thinkingConfig":{"includeThoughts":false,"thinkingBudget":0},"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}}"#
+        );
+    }
+
+    #[test]
     pub fn deserialize_text() {
         let inputs = [r#"{"content":{"parts":[{"text":"Hello world!"}],"role":"model"}}"#];
         let mut u = GeminiUnmarshal;
