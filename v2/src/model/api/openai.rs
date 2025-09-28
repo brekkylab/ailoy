@@ -1,5 +1,5 @@
 use crate::{
-    model::sse::ServerSentEvent,
+    model::{APIModel, sse::ServerSentEvent},
     value::{
         FinishReason, LMConfig, Marshaled, Message, MessageDelta, MessageOutput, OpenAIMarshal,
         OpenAIUnmarshal, ToolDesc, Unmarshaled,
@@ -7,7 +7,7 @@ use crate::{
 };
 
 pub fn make_request(
-    api_key: &str,
+    api_model: &APIModel,
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
     config: LMConfig,
@@ -26,8 +26,8 @@ pub fn make_request(
     }
 
     reqwest::Client::new()
-        .request(reqwest::Method::POST, "https://api.openai.com/v1/responses")
-        .bearer_auth(api_key)
+        .request(reqwest::Method::POST, api_model.endpoint())
+        .bearer_auth(api_model.api_key.clone())
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::ACCEPT, "text/event-stream")
         .body(body.to_string())
@@ -105,7 +105,11 @@ mod tests {
         use super::*;
         use crate::value::{Part, Role};
 
-        let mut model = SSELanguageModel::new("gpt-4.1", OPENAI_API_KEY);
+        let model = SSELanguageModel::new(APIModel::new(
+            crate::model::APIProvider::OpenAI,
+            "gpt-4.1",
+            OPENAI_API_KEY,
+        ));
 
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
@@ -129,11 +133,16 @@ mod tests {
 
         use super::*;
         use crate::{
+            model::APIProvider,
             to_value,
             value::{Part, Role, ToolDescBuilder},
         };
 
-        let mut model = SSELanguageModel::new("gpt-4.1", OPENAI_API_KEY);
+        let model = SSELanguageModel::new(APIModel::new(
+            APIProvider::OpenAI,
+            "gpt-4.1",
+            OPENAI_API_KEY,
+        ));
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")

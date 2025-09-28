@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 
 use crate::{
-    model::LanguageModel,
+    model::{APIModel, APIProvider, LanguageModel},
     utils::{BoxStream, MaybeSend, MaybeSync},
     value::{FinishReason, LMConfig, Message, MessageOutput, ToolDesc},
 };
@@ -58,56 +58,67 @@ pub struct SSELanguageModel {
 }
 
 impl SSELanguageModel {
-    pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
-        let model = model.into();
-        let api_key = api_key.into();
-
-        let ret = if model.starts_with("gpt") || model.starts_with("o") {
-            // OpenAI models
-            SSELanguageModel {
+    pub fn new(api_model: APIModel) -> Self {
+        match api_model.provider {
+            APIProvider::OpenAI => SSELanguageModel {
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
                         super::openai::make_request(
-                            &api_key,
+                            &api_model,
                             msgs,
                             tools,
-                            config.with_model(model.as_str()),
+                            config.with_model(api_model.model.as_str()),
                         )
                     },
                 ),
                 handle_event: Arc::new(super::openai::handle_event),
-            }
-        } else if model.starts_with("claude") {
-            // Anthropic models
-            todo!()
-        } else if model.starts_with("gemini") {
-            // Gemini models
-            SSELanguageModel {
+            },
+            APIProvider::Google => SSELanguageModel {
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
                         super::gemini::make_request(
-                            &api_key,
+                            &api_model,
                             msgs,
                             tools,
-                            config.with_model(model.as_str()),
+                            config.with_model(api_model.model.as_str()),
                         )
                     },
                 ),
                 handle_event: Arc::new(super::gemini::handle_event),
-            }
-        } else if model.starts_with("grok") {
-            todo!()
-        } else {
-            panic!()
-        };
-
-        ret
+            },
+            APIProvider::Anthropic => SSELanguageModel {
+                make_request: Arc::new(
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
+                        super::anthropic::make_request(
+                            &api_model,
+                            msgs,
+                            tools,
+                            config.with_model(api_model.model.as_str()),
+                        )
+                    },
+                ),
+                handle_event: Arc::new(super::anthropic::handle_event),
+            },
+            APIProvider::XAI => SSELanguageModel {
+                make_request: Arc::new(
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
+                        super::chat_completion::make_request(
+                            &api_model,
+                            msgs,
+                            tools,
+                            config.with_model(api_model.model.as_str()),
+                        )
+                    },
+                ),
+                handle_event: Arc::new(super::chat_completion::handle_event),
+            },
+        }
     }
 }
 
 impl LanguageModel for SSELanguageModel {
     fn run<'a>(
-        self: &'a mut Self,
+        self: &'a Self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: LMConfig,

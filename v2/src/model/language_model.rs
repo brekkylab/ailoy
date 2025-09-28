@@ -11,7 +11,7 @@ use crate::{
 pub trait LanguageModel: Downcast + MaybeSend + MaybeSync {
     /// Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
     fn run<'a>(
-        self: &'a mut Self,
+        self: &'a Self,
         msg: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: LMConfig,

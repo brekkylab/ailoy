@@ -1,5 +1,5 @@
 use crate::{
-    model::sse::ServerSentEvent,
+    model::{APIModel, sse::ServerSentEvent},
     value::{
         FinishReason, GeminiMarshal, GeminiUnmarshal, LMConfig, Marshaled, Message, MessageDelta,
         MessageOutput, ToolDesc, Unmarshaled,
@@ -7,7 +7,7 @@ use crate::{
 };
 
 pub fn make_request(
-    api_key: &str,
+    api_model: &APIModel,
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
     config: LMConfig,
@@ -33,15 +33,12 @@ pub fn make_request(
     } else {
         "generateContent"
     };
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:{}",
-        model, generate_method
-    );
+    let url = format!("{}/{}:{}", api_model.endpoint(), model, generate_method);
 
 
     reqwest::Client::new()
         .request(reqwest::Method::POST, url)
-        .header("x-goog-api-key", api_key)
+        .header("x-goog-api-key", api_model.api_key.clone())
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::ACCEPT, "text/event-stream")
         .body(body.to_string())
@@ -85,7 +82,7 @@ mod tests {
 
     use crate::{
         debug,
-        model::{LanguageModel as _, sse::SSELanguageModel},
+        model::{APIModel, LanguageModel as _, APIProvider, sse::SSELanguageModel},
         value::{Delta, LMConfigBuilder},
     };
 
@@ -102,7 +99,11 @@ mod tests {
         use super::*;
         use crate::value::{Part, Role};
 
-        let mut model = SSELanguageModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
+        let model = SSELanguageModel::new(APIModel::new(
+            APIProvider::Google,
+            "gemini-2.5-flash-lite",
+            GEMINI_API_KEY,
+        ));
 
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
@@ -138,7 +139,11 @@ mod tests {
             value::{Part, Role, ToolDescBuilder},
         };
 
-        let mut model = SSELanguageModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
+        let model = SSELanguageModel::new(APIModel::new(
+            APIProvider::Google,
+            "gemini-2.5-flash-lite",
+            GEMINI_API_KEY,
+        ));
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
