@@ -316,7 +316,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{Delta, Marshaled, Message, Role};
+    use crate::value::{Delta, LMConfigBuilder, Marshaled, Message, Role};
 
     #[test]
     pub fn serialize_text() {
@@ -391,6 +391,39 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_config() {
+        let config = LMConfigBuilder::new()
+            .max_tokens(1024)
+            .thinking_option(ThinkingOption::Enable)
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .temperature(0.6)
+            .top_p(0.9)
+            .build()
+            .with_model("claude-sonnet-4-20250514");
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"claude-sonnet-4-20250514","max_tokens":64000,"system":"You are a helpful assistant.","reasoning":{"type":"enabled","budget_tokens":8192},"stream":true}"#
+        );
+
+        let config = LMConfigBuilder::new()
+            .max_tokens(1024)
+            .thinking_option(ThinkingOption::Enable)
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .temperature(0.6)
+            .top_p(0.9)
+            .build()
+            .with_model("claude-3-haiku-20240307");
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"claude-3-haiku-20240307","max_tokens":4096,"system":"You are a helpful assistant.","stream":true,"temperature":0.6,"top_p":0.9}"#
         );
     }
 
