@@ -25,6 +25,7 @@ use cache_progress::PyCacheProgress as CacheProgress;
 // };
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
+
 // use tool::{
 //     PyBaseTool as BaseTool, PyBuiltinTool as BuiltinTool, PyMCPTool as MCPTool,
 //     PythonAsyncFunctionTool, PythonFunctionTool,
@@ -49,7 +50,7 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // m.add_class::<BaseVectorStore>()?;
     // m.add_class::<BaseTool>()?;
     // m.add_class::<BuiltinTool>()?;
-    m.add_class::<CacheProgress>()?;
+    // m.add_class::<CacheProgress>()?;
     // m.add_class::<ChromaVectorStore>()?;
     // m.add_class::<FaissVectorStore>()?;
     // m.add_class::<FinishReason>()?;
@@ -73,6 +74,16 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // m.add_class::<VectorStoreGetResult>()?;
     // m.add_class::<VectorStoreRetrieveResult>()?;
     // m.add_class::<XAILanguageModel>()?;
+    m.add_class::<crate::value::FinishReason>()?;
+    m.add_class::<crate::value::Message>()?;
+    m.add_class::<crate::value::MessageDelta>()?;
+    m.add_class::<crate::value::MessageOutput>()?;
+    m.add_class::<crate::value::Part>()?;
+    m.add_class::<crate::value::PartDelta>()?;
+    m.add_class::<crate::value::PartDeltaFunction>()?;
+    m.add_class::<crate::value::PartImage>()?;
+    m.add_class::<crate::value::Role>()?;
+    m.add_class::<crate::value::ToolDesc>()?;
     Ok(())
 }
 
