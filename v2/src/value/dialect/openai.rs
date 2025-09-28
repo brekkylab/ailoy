@@ -104,11 +104,7 @@ impl Marshal<LMConfig> for OpenAIMarshal {
             panic!("Cannot marshal `Config` without `model`.");
         };
 
-        let is_reasoning_model = if model.starts_with("o") || model.starts_with("gpt-5") {
-            true
-        } else {
-            false
-        };
+        let is_reasoning_model = model.starts_with("o") || model.starts_with("gpt-5");
 
         let (reasoning_effort, reasoning_summary) = if is_reasoning_model {
             match &config.thinking_option {
@@ -428,7 +424,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{LMConfigBuilder, Delta, Marshaled, Message, Role};
+    use crate::value::{Delta, LMConfigBuilder, Marshaled, Message, Role};
 
     #[test]
     pub fn serialize_text() {

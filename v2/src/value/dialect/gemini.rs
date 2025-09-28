@@ -151,7 +151,6 @@ impl Marshal<LMConfig> for GeminiMarshal {
         let mut generation_config = to_value!({
             "thinkingConfig": thinking_config,
         });
-
         if let Some(max_tokens) = config.max_tokens {
             generation_config.as_object_mut().unwrap().insert(
                 "max_output_tokens".into(),
@@ -163,6 +162,12 @@ impl Marshal<LMConfig> for GeminiMarshal {
                 .as_object_mut()
                 .unwrap()
                 .insert("temperature".into(), Value::Float(temperature.into()));
+        }
+        if let Some(top_p) = config.top_p {
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("top_p".into(), Value::Float(top_p.into()));
         }
 
         to_value!({"system_instruction": system_instruction, "generationConfig": generation_config})
@@ -252,7 +257,7 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{Delta, Marshaled, Message, Role};
+    use crate::value::{Delta, LMConfigBuilder, Marshaled, Message, Role};
 
     #[test]
     pub fn serialize_text() {

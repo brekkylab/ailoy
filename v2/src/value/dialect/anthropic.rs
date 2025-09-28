@@ -3,8 +3,8 @@ use base64::Engine;
 use crate::{
     to_value,
     value::{
-        Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction, Role,
-        ToolDesc, Unmarshal, Value,
+        LMConfig, Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction,
+        Role, ThinkingOption, ToolDesc, Unmarshal, Value,
     },
 };
 
@@ -102,20 +102,14 @@ impl Marshal<ToolDesc> for AnthropicMarshal {
     fn marshal(&mut self, item: &ToolDesc) -> Value {
         if let Some(desc) = &item.description {
             to_value!({
-                "type": "function",
-                "function": {
-                    "name": &item.name,
-                    "description": desc,
-                    "parameters": item.parameters.clone()
-                }
+                "name": &item.name,
+                "description": desc,
+                "input_schema": item.parameters.clone()
             })
         } else {
             to_value!({
-                "type": "function",
-                "function": {
-                    "name": &item.name,
-                    "parameters": item.parameters.clone()
-                }
+                "name": &item.name,
+                "input_schema": item.parameters.clone()
             })
         }
     }

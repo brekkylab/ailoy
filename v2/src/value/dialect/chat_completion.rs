@@ -4,8 +4,8 @@ use base64::Engine;
 use crate::{
     to_value,
     value::{
-        Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction, Role,
-        ToolDesc, Unmarshal, Value,
+        LMConfig, Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction,
+        Role, ThinkingOption, ToolDesc, Unmarshal, Value,
     },
 };
 
@@ -216,7 +216,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{Delta, Marshaled, Message, Role};
+    use crate::value::{Delta, LMConfigBuilder, Marshaled};
 
     #[test]
     pub fn serialize_text() {
@@ -302,12 +302,11 @@ mod tests {
             .temperature(0.6)
             .top_p(0.9)
             .build()
-            .with_model("gpt-5");
+            .with_model("grok-3-mini");
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&config);
-        println!("{}", serde_json::to_string(&marshaled).unwrap());
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"model":"gpt-5","messages":[{"role":"system","content":"You are a helpful assistant."}],"reasoning_effort":"medium","stream":true,"max_output_tokens":1024}"#
+            r#"{"model":"grok-3-mini","reasoning_effort":"low","stream":true,"max_completion_tokens":1024}"#
         );
 
         let config = LMConfigBuilder::new()
@@ -318,12 +317,11 @@ mod tests {
             .temperature(0.6)
             .top_p(0.9)
             .build()
-            .with_model("gpt-4o");
+            .with_model("grok-4-fast");
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&config);
-        println!("{}", serde_json::to_string(&marshaled).unwrap());
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"model":"gpt-4o","messages":[{"role":"system","content":"You are a helpful assistant."}],"stream":true,"max_completion_tokens":1024,"temperature":0.6,"top_p":0.9}"#
+            r#"{"model":"grok-4-fast","stream":true,"max_completion_tokens":1024,"temperature":0.6,"top_p":0.9}"#
         );
     }
 
