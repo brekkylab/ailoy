@@ -80,10 +80,13 @@ pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
 mod tests {
     // use std::sync::LazyLock;
 
+    use futures::StreamExt;
+
+    use super::*;
     use crate::{
         debug,
-        model::{APIModel, LanguageModel as _, APIProvider, sse::SSELanguageModel},
-        value::{Delta, LMConfigBuilder},
+        model::{APIModel, APIProvider, LanguageModel as _, sse::SSELanguageModel},
+        value::{Delta, LMConfigBuilder, Part, Role},
     };
 
     // static GEMINI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
@@ -94,11 +97,6 @@ mod tests {
 
     #[tokio::test]
     async fn infer_simple_chat() {
-        use futures::StreamExt;
-
-        use super::*;
-        use crate::value::{Part, Role};
-
         let model = SSELanguageModel::new(APIModel::new(
             APIProvider::Google,
             "gemini-2.5-flash-lite",
@@ -131,13 +129,7 @@ mod tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_call() {
-        use futures::StreamExt;
-
-        use super::*;
-        use crate::{
-            to_value,
-            value::{Part, Role, ToolDescBuilder},
-        };
+        use crate::{to_value, value::ToolDescBuilder};
 
         let model = SSELanguageModel::new(APIModel::new(
             APIProvider::Google,

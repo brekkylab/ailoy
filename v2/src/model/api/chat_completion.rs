@@ -80,20 +80,18 @@ pub fn handle_event(evt: ServerSentEvent) -> MessageOutput {
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt;
+
+    use super::*;
     use crate::{
         model::{APIProvider, LanguageModel as _, sse::SSELanguageModel},
-        value::{Delta, LMConfigBuilder},
+        value::{Delta, LMConfigBuilder, Part, Role},
     };
 
     const XAI_API_KEY: &str = "";
 
     #[tokio::test]
     async fn infer_simple_chat() {
-        use futures::StreamExt;
-
-        use super::*;
-        use crate::value::{Part, Role};
-
         let model =
             SSELanguageModel::new(APIModel::new(APIProvider::XAI, "grok-4-0709", XAI_API_KEY));
 
@@ -116,14 +114,7 @@ mod tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_call() {
-        use futures::StreamExt;
-
-        use super::*;
-        use crate::{
-            model::{APIModel, APIProvider},
-            to_value,
-            value::{MessageDelta, Part, Role, ToolDescBuilder},
-        };
+        use crate::{to_value, value::ToolDescBuilder};
 
         let model =
             SSELanguageModel::new(APIModel::new(APIProvider::XAI, "grok-4-0709", XAI_API_KEY));
