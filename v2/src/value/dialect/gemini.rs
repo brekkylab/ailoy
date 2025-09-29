@@ -50,6 +50,24 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         }
     };
 
+    if msg.role == Role::Tool {
+        return to_value!(
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "name": msg.id.clone().expect("Tool call id must exist."),
+                            "response": {
+                                "result": part_to_value(&msg.contents[0])
+                            }
+                        }
+                    }
+                ]
+            }
+        );
+    }
+
     // Collecting contents
     let mut parts = Vec::<Value>::new();
     if !msg.thinking.is_empty() && include_thinking {
@@ -305,6 +323,27 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"assistant","parts":[{"functionCall":{"name":"temperature","args":{"unit":"celsius"}}},{"functionCall":{"name":"temperature","args":{"unit":"fahrenheit"}}}]}"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_tool_response() {
+        let msgs = vec![
+            Message::new(Role::Tool)
+                .with_id("temperature")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("temperature")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+        ];
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":30,"unit":"celsius"}}}}]},{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":86,"unit":"fahrenheit"}}}}]}]"#
         );
     }
 

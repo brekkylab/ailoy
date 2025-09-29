@@ -133,7 +133,7 @@ mod tests {
 
         let model = SSELanguageModel::new(APIModel::new(
             APIProvider::Google,
-            "gemini-2.5-flash-lite",
+            "gemini-2.5-flash",
             GEMINI_API_KEY,
         ));
         let tools = vec![
@@ -172,6 +172,71 @@ mod tests {
             );
             message.tool_calls.len() > 0
                 && message.tool_calls[0].as_function().unwrap().1 == "temperature"
+        }));
+        assert_eq!(finish_reason, FinishReason::Stop);
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_response() {
+        use crate::{to_value, value::ToolDescBuilder};
+
+        let model = SSELanguageModel::new(APIModel::new(
+            APIProvider::Google,
+            "gemini-2.5-flash",
+            GEMINI_API_KEY,
+        ));
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
+        ];
+        let config = LMConfigBuilder::new()
+            .stream(true)
+            .system_message("You are a helpful assistant.")
+            .build();
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?")]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "fahrenheit"}),
+            )]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "celsius"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("temperature")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("temperature")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+        ];
+        let mut strm = model.run(msgs, tools, config);
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            if let Some(reason) = output.finish_reason {
+                finish_reason = reason;
+            }
+        }
+
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
         }));
         assert_eq!(finish_reason, FinishReason::Stop);
     }
