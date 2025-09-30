@@ -120,6 +120,66 @@ impl Marshal<ToolDesc> for ChatCompletionMarshal {
     }
 }
 
+impl Marshal<RequestConfig> for ChatCompletionMarshal {
+    fn marshal(&mut self, config: &RequestConfig) -> Value {
+        let Some(model) = &config.model else {
+            panic!("Cannot marshal `Config` without `model`.");
+        };
+
+        // "grok-4", "grok-code-fast-1" are reasoning models, but only treating reasoning internally.
+        let is_reasoning_model = model.starts_with("grok-3-mini");
+
+        let reasoning_effort = is_reasoning_model
+            .then(|| {
+                let effort = match &config.think_effort {
+                    ThinkEffort::Disable => return Value::Null,
+                    // grok doesn't have 'medium', setting default option as 'low'.
+                    ThinkEffort::Enable | ThinkEffort::Medium | ThinkEffort::Low => "low",
+                    ThinkEffort::High => "high",
+                };
+                Value::String(effort.to_owned())
+            })
+            .unwrap_or(Value::Null);
+
+        let max_completion_tokens = if let Some(max_tokens) = &config.max_tokens {
+            to_value!(*max_tokens as i64)
+        } else {
+            Value::Null
+        };
+
+        let temperature = if let Some(temperature) = &config.temperature
+            && !is_reasoning_model
+        {
+            to_value!(*temperature)
+        } else {
+            Value::Null
+        };
+
+        let top_p = if let Some(top_p) = &config.top_p
+            && !is_reasoning_model
+        {
+            to_value!(*top_p)
+        } else {
+            Value::Null
+        };
+
+        let stream = config.stream;
+
+        let mut body = to_value!({
+            "model": model,
+            "reasoning_effort": reasoning_effort,
+            "stream": stream,
+            "max_completion_tokens": max_completion_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+        });
+        body.as_object_mut()
+            .unwrap()
+            .retain(|_key, value| !value.is_null());
+        body
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct ChatCompletionUnmarshal;
 
@@ -359,6 +419,39 @@ mod dialect_tests {
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_config() {
+        let config = RequestConfig {
+            model: Some("grok-3-mini".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"grok-3-mini","reasoning_effort":"low","stream":true,"max_completion_tokens":1024}"#
+        );
+
+        let config = RequestConfig {
+            model: Some("grok-4-fast".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"grok-4-fast","stream":true,"max_completion_tokens":1024,"temperature":0.6,"top_p":0.9}"#
         );
     }
 

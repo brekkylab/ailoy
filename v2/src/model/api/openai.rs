@@ -595,37 +595,35 @@ mod dialect_tests {
 
     #[test]
     pub fn serialize_config() {
-        // let config = RequestConfigBuilder::new()
-        //     .max_tokens(1024)
-        //     .thinking_option(ThinkEffort::Enable)
-        //     .stream(true)
-        //     .system_message("You are a helpful assistant.")
-        //     .temperature(0.6)
-        //     .top_p(0.9)
-        //     .build()
-        //     .with_model("gpt-5");
-        // let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
-        // println!("{}", serde_json::to_string(&marshaled).unwrap());
-        // assert_eq!(
-        //     serde_json::to_string(&marshaled).unwrap(),
-        //     r#"{"model":"gpt-5","instructions":"You are a helpful assistant.","reasoning":{"effort":"medium","summary":"auto"},"stream":true,"max_output_tokens":1024}"#
-        // );
+        let config = RequestConfig {
+            model: Some("gpt-5".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-5","instructions":"You are a helpful assistant.","reasoning":{"effort":"medium","summary":"auto"},"stream":true,"max_output_tokens":1024}"#
+        );
 
-        // let config = RequestConfigBuilder::new()
-        //     .max_tokens(1024)
-        //     .thinking_option(ThinkEffort::Enable)
-        //     .stream(true)
-        //     .system_message("You are a helpful assistant.")
-        //     .temperature(0.6)
-        //     .top_p(0.9)
-        //     .build()
-        //     .with_model("gpt-4o");
-        // let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
-        // println!("{}", serde_json::to_string(&marshaled).unwrap());
-        // assert_eq!(
-        //     serde_json::to_string(&marshaled).unwrap(),
-        //     r#"{"model":"gpt-4o","instructions":"You are a helpful assistant.","stream":true,"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}"#
-        // );
+        let config = RequestConfig {
+            model: Some("gpt-4o".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-4o","instructions":"You are a helpful assistant.","stream":true,"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}"#
+        );
     }
 
     #[test]

@@ -128,6 +128,103 @@ impl Marshal<ToolDesc> for AnthropicMarshal {
     }
 }
 
+enum AnthropicModelType {
+    Opus,
+    Sonnet,
+    Haiku,
+    Haiku3,
+}
+
+impl Marshal<RequestConfig> for AnthropicMarshal {
+    fn marshal(&mut self, config: &RequestConfig) -> Value {
+        let Some(model) = &config.model else {
+            panic!("Cannot marshal `Config` without `model`.");
+        };
+
+        let model_type = if model.contains("opus") {
+            AnthropicModelType::Opus
+        } else if model.contains("sonnet") {
+            AnthropicModelType::Sonnet
+        } else if model.starts_with("claude-3-5-haiku") {
+            AnthropicModelType::Haiku
+        } else if model.starts_with("claude-3-haiku") {
+            AnthropicModelType::Haiku3
+        } else {
+            panic!("Unsupported model.");
+        };
+
+        let is_reasoning_model = match model_type {
+            AnthropicModelType::Opus | AnthropicModelType::Sonnet => true,
+            AnthropicModelType::Haiku | AnthropicModelType::Haiku3 => false,
+        };
+
+        let budget_tokens = match (&config.think_effort, &model_type) {
+            (_, AnthropicModelType::Haiku) => 0,
+            (_, AnthropicModelType::Haiku3) => 0,
+            (ThinkEffort::Disable, _) => 0,
+            (ThinkEffort::Enable, _) => 8192,
+            (ThinkEffort::Low, _) => 1024,
+            (ThinkEffort::Medium, _) => 8192,
+            (ThinkEffort::High, _) => 24576,
+        };
+
+        let reasoning = if budget_tokens != 0 {
+            to_value!({"type": "enabled", "budget_tokens": budget_tokens as i64})
+        } else {
+            Value::Null
+        };
+
+        let system = if let Some(system_message) = &config.system_message {
+            to_value!(system_message)
+        } else {
+            Value::Null
+        };
+
+        let max_tokens = if let Some(max_tokens) = &config.max_tokens {
+            Value::integer(*max_tokens as i64)
+        } else {
+            Value::integer(match &model_type {
+                AnthropicModelType::Opus => 32000,
+                AnthropicModelType::Sonnet => 64000,
+                AnthropicModelType::Haiku => 8192,
+                AnthropicModelType::Haiku3 => 4096,
+            })
+        };
+
+        let temperature = if let Some(temperature) = &config.temperature
+            && !is_reasoning_model
+        {
+            to_value!(*temperature)
+        } else {
+            Value::Null
+        };
+
+        let top_p = if let Some(top_p) = &config.top_p
+            && !is_reasoning_model
+        {
+            to_value!(*top_p)
+        } else {
+            Value::Null
+        };
+
+        let stream = config.stream;
+
+        let mut body = to_value!({
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "reasoning": reasoning,
+            "stream": stream,
+            "temperature": temperature,
+            "top_p": top_p,
+        });
+        body.as_object_mut()
+            .unwrap()
+            .retain(|_key, value| !value.is_null());
+        body
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AnthropicUnmarshal;
 
@@ -456,6 +553,39 @@ mod dialect_tests {
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_config() {
+        let config = RequestConfig {
+            model: Some("claude-sonnet-4-5".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"claude-sonnet-4-5","max_tokens":1024,"system":"You are a helpful assistant.","reasoning":{"type":"enabled","budget_tokens":8192},"stream":true}"#
+        );
+
+        let config = RequestConfig {
+            model: Some("claude-3-haiku-20240307".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"claude-3-haiku-20240307","max_tokens":1024,"system":"You are a helpful assistant.","stream":true,"temperature":0.6,"top_p":0.9}"#
         );
     }
 

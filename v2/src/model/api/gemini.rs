@@ -417,6 +417,39 @@ mod dialect_tests {
     }
 
     #[test]
+    pub fn serialize_config() {
+        let config = RequestConfig {
+            model: Some("gemini-2.5-pro".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"system_instruction":{"parts":[{"text":"You are a helpful assistant."}]},"generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingBudget":-1},"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}}"#
+        );
+
+        let config = RequestConfig {
+            model: Some("gemini-2.0-flash".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"system_instruction":{"parts":[{"text":"You are a helpful assistant."}]},"generationConfig":{"thinkingConfig":{"includeThoughts":false,"thinkingBudget":0},"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}}"#
+        );
+    }
+
+    #[test]
     pub fn deserialize_text() {
         let inputs = [r#"{"content":{"parts":[{"text":"Hello world!"}],"role":"model"}}"#];
         let mut u = GeminiUnmarshal;
