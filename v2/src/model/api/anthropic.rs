@@ -438,6 +438,7 @@ pub(super) fn make_request(
         .request(reqwest::Method::POST, url)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
+        .header("anthropic-dangerous-direct-browser-access", "true")
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::ACCEPT, "text/event-stream")
         .body(body.to_string())
