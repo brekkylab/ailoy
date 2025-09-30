@@ -8,7 +8,6 @@ node = ["dep:napi", "dep:napi-derive"]
 python = ["dep:pyo3", "dep:pyo3-async-runtimes", "dep:pyo3-stub-gen", "dep:pyo3-stub-gen-derive"]
 default = []
 
-
 [dependencies]
 ailoy-macros = { path = "./macros" }
 anyhow = "1"
@@ -29,7 +28,7 @@ minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { version = "3", features = ["tokio_rt"], optional = true }
 napi-derive = { version = "3", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
-pyo3 = { version = "0.26", features = ["experimental-async"], optional = true }
+pyo3 = { version = "0.26", features = ["experimental-async", "macros"], optional = true }
 pyo3-async-runtimes = { version = "0.26", features = ["attributes", "tokio-runtime"], optional = true }
 pyo3-stub-gen = { version = "0.12.2", optional = true }
 pyo3-stub-gen-derive = { version = "0.12.2", optional = true }

@@ -1,42 +1,6 @@
-use base64::Engine;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeError};
+use serde::{Deserialize, Serialize};
 
 use crate::value::{Value, delta::Delta};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PartBytes(Vec<u8>);
-
-impl Serialize for PartBytes {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        if serializer.is_human_readable() {
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&self.0);
-            serializer.serialize_str(&b64)
-        } else {
-            serializer.serialize_bytes(&self.0)
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for PartBytes {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        if deserializer.is_human_readable() {
-            let s = String::deserialize(deserializer)?;
-            let data = base64::engine::general_purpose::STANDARD
-                .decode(s.as_bytes())
-                .map_err(D::Error::custom)?;
-            Ok(PartBytes(data))
-        } else {
-            let b = <Vec<u8>>::deserialize(deserializer)?;
-            Ok(PartBytes(b))
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PartFunction {
@@ -48,6 +12,7 @@ pub struct PartFunction {
 #[derive(
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
 )]
+#[serde(untagged)]
 pub enum PartImageColorspace {
     #[strum(serialize = "grayscale")]
     #[serde(rename = "grayscale")]
@@ -80,6 +45,11 @@ impl TryFrom<String> for PartImageColorspace {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "media-type")]
+#[cfg_attr(
+    feature = "python",
+    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
+)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum PartImage {
     #[serde(rename = "image/x-binary")]
     Binary {
@@ -89,18 +59,17 @@ pub enum PartImage {
         w: usize,
         #[serde(rename = "colorspace")]
         c: PartImageColorspace,
-        nbytes: usize,
-        data: PartBytes,
+        data: super::bytes::Bytes,
     },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[serde(tag = "type")]
 pub enum Part {
     #[serde(rename = "text")]
     Text { text: String },
@@ -140,8 +109,7 @@ impl Part {
                 h: height,
                 w: width,
                 c: colorspace,
-                nbytes,
-                data: PartBytes(data),
+                data: super::bytes::Bytes(data),
             },
         })
     }
@@ -265,12 +233,12 @@ impl Part {
                         h,
                         w,
                         c,
-                        nbytes,
-                        data: PartBytes(buf),
+                        data: super::bytes::Bytes(buf),
                     },
             } => {
                 let (h, w) = (*h as u32, *w as u32);
-                match (c, *nbytes) {
+                let nbytes = buf.len() / h as usize / w as usize / c.channel();
+                match (c, nbytes) {
                     // Grayscale 8-bit
                     (&PartImageColorspace::Grayscale, 1) => {
                         let buf = image::GrayImage::from_raw(w, h, buf.clone())?;
@@ -323,6 +291,11 @@ impl Part {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(
+    feature = "python",
+    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
+)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum PartDeltaFunction {
     Verbatim(String),
     WithStringArgs {
@@ -339,6 +312,11 @@ pub enum PartDeltaFunction {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(
+    feature = "python",
+    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
+)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum PartDelta {
     Text {
         text: String,
@@ -348,7 +326,10 @@ pub enum PartDelta {
         #[serde(rename = "function")]
         f: PartDeltaFunction,
     },
-    Null,
+    Value {
+        value: Value,
+    },
+    Null(),
 }
 
 impl PartDelta {
@@ -388,6 +369,13 @@ impl PartDelta {
         }
     }
 
+    pub fn is_value(&self) -> bool {
+        match self {
+            Self::Value { .. } => true,
+            _ => false,
+        }
+    }
+
     pub fn to_text(self) -> Option<String> {
         match self {
             Self::Text { text } => Some(text),
@@ -418,11 +406,18 @@ impl PartDelta {
             _ => None,
         }
     }
+
+    pub fn to_value(self) -> Option<Value> {
+        match self {
+            Self::Value { value } => Some(value),
+            _ => None,
+        }
+    }
 }
 
 impl Default for PartDelta {
     fn default() -> Self {
-        Self::Null
+        Self::Null()
     }
 }
 
@@ -431,7 +426,7 @@ impl Delta for PartDelta {
 
     fn aggregate(self, other: Self) -> Result<Self, ()> {
         match (self, other) {
-            (PartDelta::Null, other) => Ok(other),
+            (PartDelta::Null(), other) => Ok(other),
             (PartDelta::Text { text: mut t1 }, PartDelta::Text { text: t2 }) => {
                 t1.push_str(&t2);
                 Ok(PartDelta::Text { text: t1 })
@@ -481,7 +476,7 @@ impl Delta for PartDelta {
 
     fn finish(self) -> Result<Self::Item, String> {
         match self {
-            PartDelta::Null => Ok(Part::Text {
+            PartDelta::Null() => Ok(Part::Text {
                 text: String::new(),
             }),
             PartDelta::Text { text } => Ok(Part::Text { text }),
@@ -513,6 +508,100 @@ impl Delta for PartDelta {
                     }
                 }?;
                 Ok(Part::Function { id, f })
+            }
+            PartDelta::Value { value } => Ok(Part::Value { value }),
+        }
+    }
+}
+
+#[cfg(feature = "python")]
+mod py {
+    use pyo3::{
+        Bound, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult, Python,
+        exceptions::{PyTypeError, PyValueError},
+        types::{PyAnyMethods, PyDict, PyString},
+    };
+    use pyo3_stub_gen::{PyStubType, TypeInfo};
+
+    use super::*;
+
+    impl<'py> FromPyObject<'py> for PartFunction {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+            if let Ok(pydict) = ob.downcast::<PyDict>() {
+                let name_any = pydict.get_item("name")?;
+                let name: String = name_any.extract()?;
+                let args_any = pydict.get_item("args")?;
+                let args: Value = args_any.extract()?;
+                Ok(Self { name, args })
+            } else {
+                Err(PyTypeError::new_err(
+                    "PartFunction must be a dict with keys 'name' and 'args'",
+                ))
+            }
+        }
+    }
+
+    impl<'py> IntoPyObject<'py> for PartFunction {
+        type Target = PyDict;
+
+        type Output = Bound<'py, PyDict>;
+
+        type Error = PyErr;
+
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            let d = PyDict::new(py);
+            d.set_item("name", self.name)?;
+            let py_args = self.args.into_pyobject(py)?;
+            d.set_item("args", py_args)?;
+            Ok(d)
+        }
+    }
+
+    impl PyStubType for PartFunction {
+        fn type_output() -> TypeInfo {
+            let TypeInfo {
+                name: value_name,
+                import: mut imports,
+            } = Value::type_output();
+            imports.insert("builtins".into());
+            imports.insert("typing".into());
+
+            TypeInfo {
+                name: format!(
+                    "dict[typing.Literal[\"name\", \"args\"], typing.Union[str, {}]]",
+                    value_name
+                ),
+                import: imports,
+            }
+        }
+    }
+
+    impl<'py> IntoPyObject<'py> for PartImageColorspace {
+        type Target = PyString;
+        type Output = Bound<'py, PyString>;
+        type Error = PyErr;
+
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            Ok(PyString::new(py, &self.to_string()))
+        }
+    }
+
+    impl<'py> FromPyObject<'py> for PartImageColorspace {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+            let s: &str = ob.extract()?;
+            s.parse::<PartImageColorspace>()
+                .map_err(|_| PyValueError::new_err(format!("Invalid colorspace: {s}")))
+        }
+    }
+
+    impl PyStubType for PartImageColorspace {
+        fn type_output() -> TypeInfo {
+            let mut import = std::collections::HashSet::new();
+            import.insert("typing".into());
+
+            TypeInfo {
+                name: r#"typing.Literal["grayscale", "rgb", "rgba"]"#.into(),
+                import,
             }
         }
     }

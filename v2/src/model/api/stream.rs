@@ -3,18 +3,21 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 
 use crate::{
-    model::{APIModel, APIProvider, LanguageModel},
+    model::{
+        InferenceConfig, LangModelInference,
+        api::{APIProvider, APIUsage, RequestConfig},
+    },
     utils::{BoxStream, MaybeSend, MaybeSync},
-    value::{FinishReason, LMConfig, Message, MessageOutput, ToolDesc},
+    value::{Message, MessageOutput, Role, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
-pub struct ServerSentEvent {
+pub(crate) struct ServerEvent {
     pub event: String,
     pub data: String,
 }
 
-fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSentEvent> {
+fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerEvent> {
     let mut i = 0;
     while i + 1 < buf.len() {
         if let Some(pos) = buf
@@ -33,7 +36,7 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSentEvent> {
                     data_lines.push(rest.trim().to_string());
                 }
             }
-            return Some(ServerSentEvent {
+            return Some(ServerEvent {
                 event,
                 data: if data_lines.is_empty() {
                     String::new()
@@ -48,66 +51,60 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerSentEvent> {
 }
 
 #[derive(Clone)]
-pub struct SSELanguageModel {
+pub(crate) struct StreamAPILangModel {
+    name: String,
     make_request: Arc<
-        dyn Fn(Vec<Message>, Vec<ToolDesc>, LMConfig) -> reqwest::RequestBuilder
+        dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestConfig) -> reqwest::RequestBuilder
             + MaybeSend
             + MaybeSync,
     >,
-    handle_event: Arc<dyn Fn(ServerSentEvent) -> MessageOutput + MaybeSend + MaybeSync>,
+    handle_event: Arc<dyn Fn(ServerEvent) -> MessageOutput + MaybeSend + MaybeSync>,
 }
 
-impl SSELanguageModel {
-    pub fn new(api_model: APIModel) -> Self {
-        match api_model.provider {
-            APIProvider::OpenAI => SSELanguageModel {
+impl StreamAPILangModel {
+    pub fn new(api_usage: APIUsage) -> Self {
+        let url = api_usage.default_url();
+        Self::with_url(api_usage, url)
+    }
+
+    pub fn with_url(api_usage: APIUsage, url: impl Into<String>) -> Self {
+        let model = api_usage.model;
+        let api_key = api_usage.api_key;
+        let url = url.into();
+
+        match api_usage.provider {
+            APIProvider::OpenAI => StreamAPILangModel {
+                name: model.into(),
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
-                        super::openai::make_request(
-                            &api_model,
-                            msgs,
-                            tools,
-                            config.with_model(api_model.model.as_str()),
-                        )
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
+                        super::openai::make_request(&url, &api_key, msgs, tools, req)
                     },
                 ),
                 handle_event: Arc::new(super::openai::handle_event),
             },
-            APIProvider::Google => SSELanguageModel {
+            APIProvider::Google => StreamAPILangModel {
+                name: model.into(),
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
-                        super::gemini::make_request(
-                            &api_model,
-                            msgs,
-                            tools,
-                            config.with_model(api_model.model.as_str()),
-                        )
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
+                        super::gemini::make_request(&url, &api_key, msgs, tools, req)
                     },
                 ),
                 handle_event: Arc::new(super::gemini::handle_event),
             },
-            APIProvider::Anthropic => SSELanguageModel {
+            APIProvider::Anthropic => StreamAPILangModel {
+                name: model.into(),
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
-                        super::anthropic::make_request(
-                            &api_model,
-                            msgs,
-                            tools,
-                            config.with_model(api_model.model.as_str()),
-                        )
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
+                        super::anthropic::make_request(&url, &api_key, msgs, tools, req)
                     },
                 ),
                 handle_event: Arc::new(super::anthropic::handle_event),
             },
-            APIProvider::XAI => SSELanguageModel {
+            APIProvider::XAI => StreamAPILangModel {
+                name: model.into(),
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, config: LMConfig| {
-                        super::chat_completion::make_request(
-                            &api_model,
-                            msgs,
-                            tools,
-                            config.with_model(api_model.model.as_str()),
-                        )
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
+                        super::chat_completion::make_request(&url, &api_key, msgs, tools, req)
                     },
                 ),
                 handle_event: Arc::new(super::chat_completion::handle_event),
@@ -116,18 +113,43 @@ impl SSELanguageModel {
     }
 }
 
-impl LanguageModel for SSELanguageModel {
-    fn run<'a>(
-        self: &'a Self,
-        msgs: Vec<Message>,
+impl LangModelInference for StreamAPILangModel {
+    fn infer<'a>(
+        self: &'a mut Self,
+        mut msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
-        config: LMConfig,
+        config: InferenceConfig,
     ) -> BoxStream<'a, Result<MessageOutput, String>> {
         // Initialize buffer
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
+        // Build RequestConfig
+        let req = RequestConfig {
+            model: Some(self.name.clone()),
+            system_message: if let Some(msg) = msgs.get(0)
+                && msg.role == Role::System
+            {
+                Some(
+                    msgs.remove(0)
+                        .contents
+                        .get(0)
+                        .unwrap()
+                        .as_text()
+                        .unwrap()
+                        .to_owned(),
+                )
+            } else {
+                None
+            },
+            stream: true,
+            think_effort: config.think_effort,
+            temperature: config.temperature,
+            top_p: config.top_p,
+            max_tokens: config.max_tokens,
+        };
+
         // Send request
-        let resp = (self.make_request)(msgs, tools, config).send();
+        let resp = (self.make_request)(msgs, tools, req).send();
 
         let strm = async_stream::try_stream! {
             // Await response

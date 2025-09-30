@@ -14,7 +14,7 @@ use crate::{
 };
 
 #[multi_platform_async_trait]
-pub trait Tool: Debug + Downcast + MaybeSend + MaybeSync + 'static {
+pub trait Tool: Debug + Downcast + MaybeSend + MaybeSync {
     fn get_description(&self) -> ToolDesc;
 
     async fn run(&self, args: Value) -> Result<Value, String>;

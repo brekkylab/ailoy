@@ -114,8 +114,6 @@ private:
   tvm::ffi::Function fapply_bitmask_inplace_;
 
   tvm::ffi::Function fsample_top_p_from_logits_;
-
-  mutable std::mutex m_;
 };
 
 std::unique_ptr<tvm_language_model_t>

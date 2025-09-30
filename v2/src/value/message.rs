@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::value::{Delta, FinishReason, Part, PartDelta};
+use crate::value::{Delta, Part, PartDelta};
 
 /// The author of a message (or streaming delta) in a chat.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum Role {
     /// System instructions and constraints provided to the assistant.
     System,
@@ -18,12 +20,19 @@ pub enum Role {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 pub struct Message {
     pub role: Role,
+
     pub id: Option<String>,
+
     pub thinking: String,
+
     pub contents: Vec<Part>,
+
     pub tool_calls: Vec<Part>,
+
     pub signature: Option<String>,
 }
 
@@ -74,6 +83,8 @@ impl Message {
 }
 
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 pub struct MessageDelta {
     pub role: Option<Role>,
     pub id: Option<String>,
@@ -86,6 +97,47 @@ pub struct MessageDelta {
 impl MessageDelta {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_role(mut self, role: impl Into<Role>) -> Self {
+        self.role = Some(role.into());
+        self
+    }
+
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
+        self.thinking = thinking.into();
+        self
+    }
+
+    pub fn with_thinking_signature(
+        mut self,
+        thinking: impl Into<String>,
+        signature: impl Into<String>,
+    ) -> Self {
+        self.thinking = thinking.into();
+        self.signature = Some(signature.into());
+        self
+    }
+
+    pub fn with_contents(
+        mut self,
+        contents: impl IntoIterator<Item = impl Into<PartDelta>>,
+    ) -> Self {
+        self.contents = contents.into_iter().map(|v| v.into()).collect();
+        self
+    }
+
+    pub fn with_tool_calls(
+        mut self,
+        tool_calls: impl IntoIterator<Item = impl Into<PartDelta>>,
+    ) -> Self {
+        self.tool_calls = tool_calls.into_iter().map(|v| v.into()).collect();
+        self
     }
 
     pub fn to_message(self) -> Result<Message, String> {
@@ -223,7 +275,19 @@ impl Delta for MessageDelta {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+pub enum FinishReason {
+    Stop(),
+    Length(), // max_output_tokens
+    ToolCall(),
+    Refusal(String), // content_filter, refusal
+}
+
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 pub struct MessageOutput {
     pub delta: MessageDelta,
     pub finish_reason: Option<FinishReason>,
