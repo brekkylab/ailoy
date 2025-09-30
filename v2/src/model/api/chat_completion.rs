@@ -458,7 +458,6 @@ mod sse_tests {
             Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
             Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
         ];
-        // let config = LMConfigBuilder::new().build();
         let mut agg = MessageDelta::new();
         let mut strm = model.run(msgs, Vec::new(), InferenceConfig::default());
         while let Some(output_opt) = strm.next().await {
