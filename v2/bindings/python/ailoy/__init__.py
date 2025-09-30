@@ -1,6 +1,6 @@
 # ruff: noqa: F401
 
-from ._core import *;
+from ._core import *
 # from ailoy._core import (
 #     # Agent,
 #     # AgentRunIterator,
