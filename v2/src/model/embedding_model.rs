@@ -4,9 +4,9 @@ use futures::{Stream, StreamExt as _};
 
 use crate::{
     cache::{Cache, CacheProgress},
-    knowledge_base::Embedding,
     model::local::LocalEmbeddingModel,
     utils::{MaybeSend, MaybeSync},
+    vector_store::Embedding,
 };
 
 #[multi_platform_async_trait]

@@ -7,12 +7,12 @@ use futures::lock::Mutex;
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, TryFromCache},
     dyn_maybe_send,
-    knowledge_base::Embedding,
     model::{
         EmbeddingModelInference,
         local::{EmbeddingModelInferencer, Tokenizer},
     },
-    utils::BoxFuture,
+    utils::{BoxFuture, Normalize},
+    vector_store::Embedding,
 };
 
 #[derive(Debug, Clone)]
@@ -21,6 +21,8 @@ pub(crate) struct LocalEmbeddingModel {
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
     inferencer: Arc<Mutex<EmbeddingModelInferencer>>,
+
+    do_normalize: bool,
 }
 
 #[multi_platform_async_trait]
@@ -30,11 +32,15 @@ impl EmbeddingModelInference for LocalEmbeddingModel {
         let mut inferencer = self.inferencer.lock().await;
 
         #[cfg(target_family = "wasm")]
-        let embedding = Ok(inferencer.infer(&input_tokens).await);
+        let mut embedding = inferencer.infer(&input_tokens).await;
         #[cfg(not(target_family = "wasm"))]
-        let embedding = inferencer.infer(&input_tokens).to_vec_f32();
+        let mut embedding = inferencer.infer(&input_tokens).to_vec_f32()?;
 
-        embedding
+        if self.do_normalize {
+            embedding = embedding.normalized();
+        }
+
+        Ok(embedding)
     }
 }
 
@@ -112,6 +118,7 @@ impl TryFromCache for LocalEmbeddingModel {
             Ok(LocalEmbeddingModel {
                 tokenizer,
                 inferencer: Arc::new(Mutex::new(inferencer)),
+                do_normalize: true,
             })
         })
     }
@@ -123,7 +130,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::utils::{Normalize, log};
+    use crate::utils::log;
 
     fn dot(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {
@@ -198,9 +205,5 @@ mod tests {
         assert!(
             dot(&query_embedding2, &answer_embedding1) < dot(&query_embedding2, &answer_embedding2)
         );
-        log::debug(format!("{:?}", dot(&query_embedding1, &answer_embedding1)));
-        log::debug(format!("{:?}", dot(&query_embedding1, &answer_embedding2)));
-        log::debug(format!("{:?}", dot(&query_embedding2, &answer_embedding1)));
-        log::debug(format!("{:?}", dot(&query_embedding2, &answer_embedding2)));
     }
 }

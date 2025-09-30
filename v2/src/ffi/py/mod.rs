@@ -28,14 +28,12 @@ pub(crate) mod cache_progress;
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
 
-// use tool::{
-//     PyBaseTool as BaseTool, PyBuiltinTool as BuiltinTool, PyMCPTool as MCPTool,
-//     PythonAsyncFunctionTool, PythonFunctionTool,
-// };
-// use vector_store::{BaseVectorStore, ChromaVectorStore, FaissVectorStore};
-
 // use crate::{
-//     ffi::py::vector_store::{VectorStoreAddInput, VectorStoreGetResult, VectorStoreRetrieveResult},
+//     ffi::py::vector_store::{
+//         PyVectorStoreAddInput as VectorStoreAddInput,
+//         PyVectorStoreGetResult as VectorStoreGetResult,
+//         PyVectorStoreRetrieveResult as VectorStoreRetrieveResult,
+//     },
 //     tool::mcp::MCPTransport,
 //     value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc},
 // };

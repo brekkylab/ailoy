@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-node = ["dep:napi", "dep:napi-derive"]
 python = ["dep:pyo3", "dep:pyo3-async-runtimes", "dep:pyo3-stub-gen", "dep:pyo3-stub-gen-derive"]
+nodejs = ["dep:napi", "dep:napi-derive"]
 default = []
 
 [dependencies]
@@ -16,6 +16,7 @@ async-stream = "0.3"
 async-trait = "0.1.89"
 base64 = "0.21"
 chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "master" }
+dedent = "0.1.1"
 derive_builder = "0.20.2"
 downcast-rs = "2.0.2"
 futures = "0.3.31"
@@ -25,7 +26,7 @@ jsonschema = "0.33.0"
 mime-infer = "4.0.0"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
-napi = { version = "3", features = ["tokio_rt"], optional = true }
+napi = { version = "3", features = ["tokio_rt", "napi5", "serde-json"], optional = true }
 napi-derive = { version = "3", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 pyo3 = { version = "0.26", features = ["experimental-async", "macros"], optional = true }

@@ -2,7 +2,7 @@
 pub mod cxx_bridge;
 #[cfg(target_family = "wasm")]
 pub mod js_bridge;
-#[cfg(feature = "node")]
+#[cfg(feature = "nodejs")]
 mod node;
 #[cfg(feature = "python")]
 pub mod py;
