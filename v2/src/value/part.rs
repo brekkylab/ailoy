@@ -12,7 +12,7 @@ pub struct PartFunction {
 #[derive(
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
 )]
-#[serde(tag = "media-type")]
+#[serde(untagged)]
 pub enum PartImageColorspace {
     #[strum(serialize = "grayscale")]
     #[serde(rename = "grayscale")]

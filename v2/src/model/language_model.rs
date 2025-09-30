@@ -46,7 +46,7 @@ impl Default for Grammar {
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 pub struct InferenceConfig {
-    pub think_effort: Option<ThinkEffort>,
+    pub think_effort: ThinkEffort,
 
     pub temperature: Option<f64>,
 
@@ -54,7 +54,7 @@ pub struct InferenceConfig {
 
     pub max_tokens: Option<i32>,
 
-    pub grammar: Option<Grammar>,
+    pub grammar: Grammar,
 }
 
 pub trait LangModelInference: MaybeSend + MaybeSync {

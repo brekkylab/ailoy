@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 
 use crate::{
-    model::{InferenceConfig, LangModelInference, ThinkEffort, api::RequestConfig},
+    model::{InferenceConfig, LangModelInference, api::RequestConfig},
     utils::{BoxStream, MaybeSend, MaybeSync},
     value::{FinishReason, Message, MessageOutput, Role, ToolDesc},
 };
@@ -156,14 +156,10 @@ impl LangModelInference for StreamAPILangModel {
                 None
             },
             stream: true,
-            think_effort: if let Some(think_effort) = config.think_effort.clone() {
-                think_effort
-            } else {
-                ThinkEffort::default()
-            },
-            temperature: config.temperature.clone(),
-            top_p: config.top_p.clone(),
-            max_tokens: config.max_tokens.clone(),
+            think_effort: config.think_effort,
+            temperature: config.temperature,
+            top_p: config.top_p,
+            max_tokens: config.max_tokens,
         };
 
         // Send request
