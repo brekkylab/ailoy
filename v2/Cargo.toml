@@ -18,6 +18,7 @@ async-stream = "0.3"
 async-trait = "0.1.89"
 base64 = "0.21"
 chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "master" }
+dedent = "0.1.1"
 derive_builder = "0.20.2"
 downcast-rs = "2.0.2"
 futures = "0.3.31"

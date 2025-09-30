@@ -7,7 +7,9 @@ use chromadb::{
 use serde_json::{Map, Value as Json};
 use uuid::Uuid;
 
-use super::super::{AddInput, Embedding, GetResult, RetrieveResult, VectorStore};
+use crate::vector_store::{
+    Embedding, VectorStore, VectorStoreAddInput, VectorStoreGetResult, VectorStoreRetrieveResult,
+};
 
 pub struct ChromaStore {
     client: ChromaClient,
@@ -72,7 +74,7 @@ impl ChromaStore {
 
 #[multi_platform_async_trait]
 impl VectorStore for ChromaStore {
-    async fn add_vector(&mut self, input: AddInput) -> Result<String> {
+    async fn add_vector(&mut self, input: VectorStoreAddInput) -> Result<String> {
         let id = Uuid::new_v4().to_string();
 
         let metadatas = input.metadata.as_ref().map(|map| vec![map.clone()]);
@@ -87,7 +89,7 @@ impl VectorStore for ChromaStore {
         Ok(id)
     }
 
-    async fn add_vectors(&mut self, inputs: Vec<AddInput>) -> Result<Vec<String>> {
+    async fn add_vectors(&mut self, inputs: Vec<VectorStoreAddInput>) -> Result<Vec<String>> {
         let ids: Vec<String> = (0..inputs.len())
             .map(|_| Uuid::new_v4().to_string())
             .collect();
@@ -117,12 +119,12 @@ impl VectorStore for ChromaStore {
         Ok(ids)
     }
 
-    async fn get_by_id(&self, id: &str) -> Result<Option<GetResult>> {
-        let results: Vec<GetResult> = self.get_by_ids(&[id]).await?;
+    async fn get_by_id(&self, id: &str) -> Result<Option<VectorStoreGetResult>> {
+        let results: Vec<VectorStoreGetResult> = self.get_by_ids(&[id]).await?;
         Ok(results.into_iter().next())
     }
 
-    async fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<GetResult>> {
+    async fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<VectorStoreGetResult>> {
         let opts = GetOptions {
             ids: ids.iter().map(|s| s.to_string()).collect(),
             include: Some(vec![
@@ -150,8 +152,8 @@ impl VectorStore for ChromaStore {
                 .zip(embeddings.into_iter())
                 .map(|(((id, d), m), e)| (id, d.unwrap(), m, e.unwrap())); // 튜플을 평탄화하여 가독성 개선
 
-            let results: Vec<GetResult> = zipped_iter
-                .map(|(id, document, metadata, embedding)| GetResult {
+            let results: Vec<VectorStoreGetResult> = zipped_iter
+                .map(|(id, document, metadata, embedding)| VectorStoreGetResult {
                     id,
                     document,
                     metadata,
@@ -164,7 +166,11 @@ impl VectorStore for ChromaStore {
         }
     }
 
-    async fn retrieve(&self, query: Embedding, top_k: usize) -> Result<Vec<RetrieveResult>> {
+    async fn retrieve(
+        &self,
+        query: Embedding,
+        top_k: usize,
+    ) -> Result<Vec<VectorStoreRetrieveResult>> {
         let opts = QueryOptions {
             query_embeddings: Some(vec![query.to_vec()]),
             n_results: Some(top_k),
@@ -178,7 +184,7 @@ impl VectorStore for ChromaStore {
             embeddings: _,
             ..
         } = self.collection.query(opts, None).await?;
-        let out: Vec<RetrieveResult> = ids
+        let out: Vec<VectorStoreRetrieveResult> = ids
             .get(0)
             .and_then(|ids_vec| {
                 distances
@@ -198,7 +204,7 @@ impl VectorStore for ChromaStore {
                         .and_then(|m| m.get(0)?.get(i))
                         .and_then(|inner_opt| inner_opt.clone());
 
-                    Some(RetrieveResult {
+                    Some(VectorStoreRetrieveResult {
                         id,
                         document,
                         metadata,
@@ -216,7 +222,7 @@ impl VectorStore for ChromaStore {
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
-    ) -> Result<Vec<Vec<RetrieveResult>>> {
+    ) -> Result<Vec<Vec<VectorStoreRetrieveResult>>> {
         let opts = QueryOptions {
             query_embeddings: Some(query_embeddings),
             n_results: Some(top_k),
@@ -230,7 +236,7 @@ impl VectorStore for ChromaStore {
             embeddings: _,
             ..
         } = self.collection.query(opts, None).await?;
-        let out: Vec<Vec<RetrieveResult>> = ids
+        let out: Vec<Vec<VectorStoreRetrieveResult>> = ids
             .iter()
             .enumerate()
             .filter_map(|(outer_index, ids_vec)| {
@@ -252,7 +258,7 @@ impl VectorStore for ChromaStore {
                                     .and_then(|m| m.get(outer_index)?.get(inner_index))
                                     .and_then(|inner_opt| inner_opt.clone());
 
-                                Some(RetrieveResult {
+                                Some(VectorStoreRetrieveResult {
                                     id: id_ref.clone(),
                                     document,
                                     metadata,
@@ -324,7 +330,7 @@ mod tests {
             .unwrap()
             .clone();
 
-        let input = AddInput {
+        let input = VectorStoreAddInput {
             embedding: test_embedding.clone(),
             document: test_document.clone(),
             metadata: Some(test_metadata.clone()),
@@ -350,12 +356,12 @@ mod tests {
 
         let added_ids = store
             .add_vectors(vec![
-                AddInput {
+                VectorStoreAddInput {
                     embedding: vec![1.0, 1.0, 1.0],
                     document: "doc1".to_owned(),
                     metadata: Some(json!({"id": 1}).as_object().unwrap().clone()),
                 },
-                AddInput {
+                VectorStoreAddInput {
                     embedding: vec![2.0, 2.0, 2.0],
                     document: "doc2".to_owned(),
                     metadata: Some(json!({"id": 2}).as_object().unwrap().clone()),
@@ -389,22 +395,22 @@ mod tests {
     async fn test_retrieve_similar_vectors() -> Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![1.0, 0.0, 0.0],
                 document: "vector one".to_owned(),
                 metadata: None,
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![0.0, 1.0, 0.0],
                 document: "vector two".to_owned(),
                 metadata: None,
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![0.9, 0.1, 0.0],
                 document: "vector one-ish".to_owned(),
                 metadata: None,
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![0.0, 0.9, 0.1],
                 document: "vector two-ish".to_owned(),
                 metadata: None,
@@ -459,17 +465,17 @@ mod tests {
     async fn test_remove_vector() -> Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![5.5, 6.6, 3.3],
                 document: "to be deleted1".to_owned(),
                 metadata: None,
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![4.4, 6.6, 5.5],
                 document: "to be deleted2".to_owned(),
                 metadata: None,
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![3.3, 2.2, 6.6],
                 document: "to be deleted3".to_owned(),
                 metadata: None,
@@ -519,12 +525,12 @@ mod tests {
     async fn test_clear_collection() -> Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![1.0, 1.1, 1.2],
                 document: "doc1".to_owned(),
                 metadata: Some(json!({"id": 1}).as_object().unwrap().clone()),
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![2.0, 2.1, 2.2],
                 document: "doc2".to_owned(),
                 metadata: None,

@@ -3,8 +3,13 @@ use std::collections::HashMap;
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::Result;
 
-use super::super::{AddInput, Embedding, GetResult, Metadata, RetrieveResult, VectorStore};
-use crate::ffi;
+use crate::{
+    ffi,
+    vector_store::{
+        Embedding, Metadata, VectorStore, VectorStoreAddInput, VectorStoreGetResult,
+        VectorStoreRetrieveResult,
+    },
+};
 
 pub struct DocEntry {
     pub document: String,
@@ -30,7 +35,7 @@ impl FaissStore {
 
 #[multi_platform_async_trait]
 impl VectorStore for FaissStore {
-    async fn add_vector(&mut self, input: AddInput) -> Result<String> {
+    async fn add_vector(&mut self, input: VectorStoreAddInput) -> Result<String> {
         let ids: Vec<String> = self.index.add_vectors(&[input.embedding]).unwrap();
         let id = ids.iter().next().unwrap().clone();
         self.doc_store.insert(
@@ -43,7 +48,7 @@ impl VectorStore for FaissStore {
         Ok(id)
     }
 
-    async fn add_vectors(&mut self, inputs: Vec<AddInput>) -> Result<Vec<String>> {
+    async fn add_vectors(&mut self, inputs: Vec<VectorStoreAddInput>) -> Result<Vec<String>> {
         let (embeddings, entries): (Vec<Embedding>, Vec<DocEntry>) = inputs
             .into_iter()
             .map(|input| {
@@ -62,7 +67,7 @@ impl VectorStore for FaissStore {
         Ok(ids)
     }
 
-    async fn get_by_id(&self, id: &str) -> Result<Option<GetResult>> {
+    async fn get_by_id(&self, id: &str) -> Result<Option<VectorStoreGetResult>> {
         if !self.doc_store.contains_key(&id.to_string()) {
             return Ok(None);
         }
@@ -70,7 +75,7 @@ impl VectorStore for FaissStore {
         let embeddings: Vec<Vec<f32>> = self.index.get_by_ids(&[id]).unwrap();
         let embedding = embeddings.into_iter().next().unwrap();
         let doc_entry = self.doc_store.get(&id.to_string()).unwrap();
-        Ok(Some(GetResult {
+        Ok(Some(VectorStoreGetResult {
             id: id.to_string(),
             document: doc_entry.document.clone(),
             metadata: doc_entry.metadata.clone(),
@@ -78,7 +83,7 @@ impl VectorStore for FaissStore {
         }))
     }
 
-    async fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<GetResult>> {
+    async fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<VectorStoreGetResult>> {
         // filter ids to only those that exist in doc_store
         let filtered_ids: Vec<_> = ids
             .iter()
@@ -94,7 +99,7 @@ impl VectorStore for FaissStore {
             .filter_map(|(id, embedding)| {
                 self.doc_store
                     .get(&id.to_string())
-                    .map(|doc_entry| GetResult {
+                    .map(|doc_entry| VectorStoreGetResult {
                         id: id.to_string(),
                         document: doc_entry.document.clone(),
                         metadata: doc_entry.metadata.clone(),
@@ -108,7 +113,7 @@ impl VectorStore for FaissStore {
         &self,
         query_embedding: Embedding,
         top_k: usize,
-    ) -> Result<Vec<RetrieveResult>> {
+    ) -> Result<Vec<VectorStoreRetrieveResult>> {
         let index_results = self.index.search(&[query_embedding], top_k).unwrap();
         let index_result = index_results.into_iter().next().unwrap();
 
@@ -118,12 +123,14 @@ impl VectorStore for FaissStore {
             .zip(index_result.distances.into_iter())
             .filter_map(|(id_i64, distance)| {
                 let id = id_i64.to_string();
-                self.doc_store.get(&id).map(|doc_entry| RetrieveResult {
-                    id,
-                    document: doc_entry.document.clone(),
-                    metadata: doc_entry.metadata.clone(),
-                    distance,
-                })
+                self.doc_store
+                    .get(&id)
+                    .map(|doc_entry| VectorStoreRetrieveResult {
+                        id,
+                        document: doc_entry.document.clone(),
+                        metadata: doc_entry.metadata.clone(),
+                        distance,
+                    })
             })
             .collect::<Vec<_>>())
     }
@@ -132,7 +139,7 @@ impl VectorStore for FaissStore {
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
-    ) -> Result<Vec<Vec<RetrieveResult>>> {
+    ) -> Result<Vec<Vec<VectorStoreRetrieveResult>>> {
         let index_results = self.index.search(&query_embeddings, top_k).unwrap();
 
         Ok(index_results
@@ -144,12 +151,14 @@ impl VectorStore for FaissStore {
                     .zip(index_result.distances.into_iter())
                     .filter_map(|(id_i64, distance)| {
                         let id = id_i64.to_string();
-                        self.doc_store.get(&id).map(|doc_entry| RetrieveResult {
-                            id,
-                            document: doc_entry.document.clone(),
-                            metadata: doc_entry.metadata.clone(),
-                            distance,
-                        })
+                        self.doc_store
+                            .get(&id)
+                            .map(|doc_entry| VectorStoreRetrieveResult {
+                                id,
+                                document: doc_entry.document.clone(),
+                                metadata: doc_entry.metadata.clone(),
+                                distance,
+                            })
                     })
                     .collect::<Vec<_>>()
             })
@@ -215,7 +224,7 @@ mod tests {
             .unwrap()
             .clone();
 
-        let input = AddInput {
+        let input = VectorStoreAddInput {
             embedding: test_embedding.clone(),
             document: test_document.clone(),
             metadata: Some(test_metadata.clone()),
@@ -241,12 +250,12 @@ mod tests {
 
         let added_ids = store
             .add_vectors(vec![
-                AddInput {
+                VectorStoreAddInput {
                     embedding: vec![1.0, 1.0, 1.0],
                     document: "doc1".to_owned(),
                     metadata: Some(json!({"id": 1}).as_object().unwrap().clone()),
                 },
-                AddInput {
+                VectorStoreAddInput {
                     embedding: vec![2.0, 2.0, 2.0],
                     document: "doc2".to_owned(),
                     metadata: Some(json!({"id": 2}).as_object().unwrap().clone()),
@@ -280,22 +289,22 @@ mod tests {
     async fn faiss_retrieve_similar_vectors() -> Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![1.0, 0.0, 0.0],
                 document: "vector one".to_owned(),
                 metadata: None,
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![0.0, 1.0, 0.0],
                 document: "vector two".to_owned(),
                 metadata: None,
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![0.9, 0.1, 0.0],
                 document: "vector one-ish".to_owned(),
                 metadata: None,
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![0.0, 0.9, 0.1],
                 document: "vector two-ish".to_owned(),
                 metadata: None,
@@ -350,17 +359,17 @@ mod tests {
     async fn faiss_remove_vector() -> Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![5.5, 6.6, 3.3],
                 document: "to be deleted1".to_owned(),
                 metadata: None,
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![4.4, 6.6, 5.5],
                 document: "to be deleted2".to_owned(),
                 metadata: None,
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![3.3, 2.2, 6.6],
                 document: "to be deleted3".to_owned(),
                 metadata: None,
@@ -411,12 +420,12 @@ mod tests {
     async fn faiss_clear_collection() -> Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![1.0, 1.1, 1.2],
                 document: "doc1".to_owned(),
                 metadata: None,
             },
-            AddInput {
+            VectorStoreAddInput {
                 embedding: vec![2.0, 2.1, 2.2],
                 document: "doc2".to_owned(),
                 metadata: None,

@@ -32,7 +32,11 @@ use tool::{
 use vector_store::{BaseVectorStore, ChromaVectorStore, FaissVectorStore};
 
 use crate::{
-    ffi::py::vector_store::{VectorStoreAddInput, VectorStoreGetResult, VectorStoreRetrieveResult},
+    ffi::py::vector_store::{
+        PyVectorStoreAddInput as VectorStoreAddInput,
+        PyVectorStoreGetResult as VectorStoreGetResult,
+        PyVectorStoreRetrieveResult as VectorStoreRetrieveResult,
+    },
     tool::mcp::MCPTransport,
     value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc},
 };
