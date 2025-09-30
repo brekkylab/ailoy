@@ -126,7 +126,7 @@ impl Agent {
         async_stream::try_stream! {
             let system_message_content = "You are helpful assistant.".to_string();
             let knowledge_results = if let Some(knowledge) = &self.knowledge {
-                let query = contents.iter().filter(|&c| matches!(c, Part::Text(_))).map(|c| c.to_string()).collect::<Vec<_>>().join("\n");
+                let query = contents.iter().filter(|&c| matches!(c, Part::Text{..})).map(|c| c.as_text().unwrap()).collect::<Vec<_>>().join("\n");
                 let retrieved = match knowledge.retrieve(query.clone()).await {
                     Ok(retrieved) => retrieved,
                     Err(e) => {
@@ -139,7 +139,7 @@ impl Agent {
                 None
             };
 
-            let system_message = Message::new(Role::System).with_contents(vec![Part::Text(
+            let system_message = Message::new(Role::System).with_contents(vec![Part::text(
                 self.system_message_renderer.render(system_message_content, knowledge_results).unwrap()
             )]);
             // Add system message to messages
@@ -164,7 +164,7 @@ impl Agent {
             loop {
                 let mut assistant_msg_delta = MessageDelta::new().with_role(Role::Assistant);
                 {
-                    let mut model = self.lm;
+                    let mut model = self.lm.clone();
                     let mut strm = model.infer(messages.clone(), tool_descs.clone(), InferenceConfig::default());
                     while let Some(out) = strm.next().await {
                         let out = out?;
@@ -209,34 +209,25 @@ impl Agent {
 mod tests {
     // #[cfg(any(target_family = "unix", target_family = "windows"))]
     // #[tokio::test]
-    // async fn run_simple_chat() {
+    // async fn run_simple_chat() -> anyhow::Result<()> {
     //     use futures::StreamExt;
 
     //     use super::*;
-    //     use crate::model::LocalLanguageModel;
+    //     use crate::model::LangModel;
 
-    //     let cache = crate::cache::Cache::new();
-    //     let key = "Qwen/Qwen3-0.6B";
-    //     let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
-    //     let mut model: Option<LocalLanguageModel> = None;
-    //     while let Some(progress) = model_strm.next().await {
-    //         let mut progress = progress.unwrap();
-    //         println!("{} / {}", progress.current_task, progress.total_task);
-    //         if progress.current_task == progress.total_task {
-    //             model = progress.result.take();
-    //         }
-    //     }
-    //     let model = model.unwrap();
+    //     let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
     //     let mut agent = Agent::new(model, Vec::new());
 
-    //     let mut agg = MessageAggregator::new();
-    //     let mut strm = Box::pin(agent.run(vec![Part::Text("Hi what's your name?".into())]));
-    //     while let Some(delta_opt) = strm.next().await {
-    //         let delta = delta_opt.unwrap();
-    //         if let Some(msg) = agg.update(delta) {
-    //             println!("{:?}", msg);
-    //         }
+    //     let mut strm = Box::pin(agent.run(vec![Part::text("Hi what's your name?")]));
+    //     let mut delta = MessageDelta::new();
+    //     while let Some(output) = strm.next().await {
+    //         let output = output.unwrap();
+    //         delta = delta.aggregate(output.delta).unwrap();
     //     }
+    //     let output = delta.finish().unwrap();
+    //     println!("{:?}", output);
+
+    //     Ok(())
     // }
 
     // #[cfg(any(target_family = "unix", target_family = "windows"))]

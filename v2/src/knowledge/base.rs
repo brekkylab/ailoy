@@ -3,13 +3,13 @@ use std::sync::Arc;
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-// use serde_json::{Map, Value, json};
 
+// use serde_json::{Map, Value, json};
 use crate::{
     to_value,
     tool::Tool,
     utils::{MaybeSend, MaybeSync},
-    value::{Part, ToolDesc, Value},
+    value::{ToolDesc, Value},
 };
 
 type Metadata = serde_json::Map<String, serde_json::Value>;

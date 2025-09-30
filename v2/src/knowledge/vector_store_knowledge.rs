@@ -6,7 +6,7 @@ use futures::lock::Mutex;
 
 use crate::{
     knowledge::base::{Knowledge, KnowledgeRetrieveResult},
-    model::EmbeddingModel,
+    model::{EmbeddingModel, EmbeddingModelInference},
     vector_store::{VectorStore, VectorStoreRetrieveResult},
 };
 
@@ -39,7 +39,7 @@ impl VectorStoreKnowledge {
         Self {
             name: name,
             store: Arc::new(Mutex::new(store)),
-            embedding_model: Arc::new(Mutex::new(embedding_model)),
+            embedding_model: embedding_model,
             top_k: default_top_k,
         }
     }
@@ -56,11 +56,7 @@ impl Knowledge for VectorStoreKnowledge {
     }
 
     async fn retrieve(&self, query: String) -> Result<Vec<KnowledgeRetrieveResult>> {
-        let query_embedding = {
-            let mut model = self.embedding_model.lock().await;
-            model.run(query.into()).await
-        }?;
-
+        let query_embedding = self.embedding_model.infer(query.into()).await?;
         let results = {
             let store = self.store.lock().await;
             store.retrieve(query_embedding, self.top_k).await
@@ -92,12 +88,12 @@ mod tests {
 
     async fn prepare_knowledge() -> Result<VectorStoreKnowledge> {
         let mut store = FaissStore::new(1024).await.unwrap();
-        let mut embedding_model = EmbeddingModel::new("BAAI/bge-m3").await.unwrap();
+        let embedding_model = EmbeddingModel::new_local("BAAI/bge-m3").await.unwrap();
 
         let doc0: String = "Ailoy is an awesome AI agent framework.".into();
         store
             .add_vector(VectorStoreAddInput {
-                embedding: embedding_model.run(doc0.clone()).await.unwrap(),
+                embedding: embedding_model.infer(doc0.clone()).await.unwrap(),
                 document: doc0,
                 metadata: None,
             })
@@ -105,7 +101,7 @@ mod tests {
         let doc1: String = "Langchain is a library".into();
         store
             .add_vector(VectorStoreAddInput {
-                embedding: embedding_model.run(doc1.clone()).await.unwrap(),
+                embedding: embedding_model.infer(doc1.clone()).await.unwrap(),
                 document: doc1,
                 metadata: None,
             })
@@ -143,20 +139,17 @@ mod tests {
         let knowledge = prepare_knowledge().await?;
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
         let agent = Arc::new(Mutex::new(Agent::new(model, vec![])));
-        let mut delta = MessageDelta::new();
 
         // Testing as knowledge
         {
             let mut agent_guard = agent.lock().await;
             agent_guard.set_knowledge(knowledge.clone());
 
-            let mut strm = Box::pin(agent_guard.run(vec![Part::Text("What is Ailoy?".into())]));
+            let mut strm = Box::pin(agent_guard.run(vec![Part::text("What is Ailoy?")]));
+            let mut delta = MessageDelta::new();
             while let Some(out_opt) = strm.next().await {
                 let out = out_opt.unwrap();
                 delta = delta.aggregate(out.delta).unwrap();
-                // if let Some(msg) = agg.update(delta) {
-                //     println!("{:?}", msg);
-                // }
             }
             let output = delta.finish().unwrap();
             println!("{:?}", output);
@@ -184,14 +177,14 @@ mod tests {
             }));
             agent_guard.add_tool(Arc::new(tool.clone())).await?;
 
-            let mut strm = Box::pin(agent_guard.run(vec![Part::Text(format!(
+            let mut strm = Box::pin(agent_guard.run(vec![Part::text(format!(
                 "What is Ailoy? Answer by calling tool '{}'",
                 tool.get_description().name
             ))]));
             let mut delta = MessageDelta::new();
             while let Some(output) = strm.next().await {
                 let output = output.unwrap();
-                delta = delta.aggregate(output.delta);
+                delta = delta.aggregate(output.delta).unwrap();
             }
             let output = delta.finish().unwrap();
             println!("{:?}", output);

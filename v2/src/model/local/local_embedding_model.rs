@@ -27,7 +27,7 @@ pub(crate) struct LocalEmbeddingModel {
 
 #[multi_platform_async_trait]
 impl EmbeddingModelInference for LocalEmbeddingModel {
-    async fn infer(self: &mut Self, text: String) -> Result<Embedding> {
+    async fn infer(&self, text: String) -> Result<Embedding> {
         let input_tokens = self.tokenizer.encode(&text, true).unwrap();
         let mut inferencer = self.inferencer.lock().await;
 
@@ -157,7 +157,7 @@ mod tests {
                 model = progress.result.take();
             }
         }
-        let mut model = model.unwrap();
+        let model = model.unwrap();
 
         let embedding = model.infer("What is BGE M3?".to_owned()).await.unwrap();
         assert_eq!(embedding.len(), 1024);
@@ -185,7 +185,7 @@ mod tests {
                 model = progress.result.take();
             }
         }
-        let mut model = model.unwrap();
+        let model = model.unwrap();
 
         let query_embedding1 = model
             .infer("What is BGE M3?".to_owned())

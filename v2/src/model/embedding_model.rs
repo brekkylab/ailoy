@@ -11,18 +11,38 @@ use crate::{
 
 #[multi_platform_async_trait]
 pub trait EmbeddingModelInference: MaybeSend + MaybeSync {
-    async fn infer(self: &mut Self, text: String) -> Result<Embedding>;
+    async fn infer(self: &Self, text: String) -> Result<Embedding>;
+}
+
+#[derive(Debug, Clone)]
+enum EmbeddingModelInner {
+    Local(LocalEmbeddingModel),
 }
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct EmbeddingModel {
-    inner: LocalEmbeddingModel,
+    inner: EmbeddingModelInner,
 }
 
 impl EmbeddingModel {
-    pub async fn try_new(
+    pub async fn new_local(model_name: impl Into<String>) -> Result<Self> {
+        let cache = crate::cache::Cache::new();
+        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(model_name));
+        let mut model: Option<LocalEmbeddingModel> = None;
+        while let Some(progress) = model_strm.next().await {
+            let mut progress = progress.unwrap();
+            if progress.current_task == progress.total_task {
+                model = progress.result.take();
+            }
+        }
+        Ok(Self {
+            inner: EmbeddingModelInner::Local(model.unwrap()),
+        })
+    }
+
+    pub async fn try_new_local(
         model_name: impl Into<String>,
     ) -> impl Stream<Item = Result<CacheProgress<Self>, String>> + 'static {
         let model_name = model_name.into();
@@ -34,7 +54,7 @@ impl EmbeddingModel {
                     comment: result.comment,
                     current_task: result.current_task,
                     total_task: result.current_task,
-                    result: result.result.map(|v| EmbeddingModel{inner: v}),
+                    result: result.result.map(|v| EmbeddingModel{inner: EmbeddingModelInner::Local(v)}),
                 };
             }
         }
@@ -43,8 +63,10 @@ impl EmbeddingModel {
 
 #[multi_platform_async_trait]
 impl EmbeddingModelInference for EmbeddingModel {
-    async fn infer(self: &mut Self, text: String) -> Result<Embedding> {
-        self.inner.infer(text).await
+    async fn infer(&self, text: String) -> Result<Embedding> {
+        match &self.inner {
+            EmbeddingModelInner::Local(model) => model.infer(text).await,
+        }
     }
 }
 
@@ -55,9 +77,8 @@ mod py {
     };
     use pyo3_stub_gen_derive::*;
 
-    use crate::ffi::py::{base::await_future, cache_progress::await_cache_result};
-
     use super::*;
+    use crate::ffi::py::{base::await_future, cache_progress::await_cache_result};
 
     #[gen_stub_pymethods]
     #[pymethods]
@@ -76,7 +97,14 @@ mod py {
                 let inner =
                     await_cache_result::<LocalEmbeddingModel>(model_name, progress_callback)
                         .await?;
-                Python::attach(|py| Py::new(py, EmbeddingModel { inner }))
+                Python::attach(|py| {
+                    Py::new(
+                        py,
+                        EmbeddingModel {
+                            inner: EmbeddingModelInner::Local(inner),
+                        },
+                    )
+                })
             };
             pyo3_async_runtimes::tokio::future_into_py(py, fut)
         }
@@ -94,20 +122,28 @@ mod py {
                 model_name,
                 progress_callback,
             ))?;
-            Py::new(py, EmbeddingModel { inner })
+            Py::new(
+                py,
+                EmbeddingModel {
+                    inner: EmbeddingModelInner::Local(inner),
+                },
+            )
         }
 
         #[pyo3(signature = (text))]
         async fn run(&mut self, text: String) -> PyResult<Embedding> {
-            self.inner
-                .infer(text)
-                .await
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            match &mut self.inner {
+                EmbeddingModelInner::Local(model) => model.infer(text).await,
+            }
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
         }
 
         #[pyo3(signature = (text))]
         fn run_sync(&mut self, text: String) -> PyResult<Embedding> {
-            await_future(self.inner.infer(text)).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            let fut = match &mut self.inner {
+                EmbeddingModelInner::Local(model) => model.infer(text),
+            };
+            await_future(fut).map_err(|e| PyRuntimeError::new_err(e.to_string()))
         }
     }
 }
