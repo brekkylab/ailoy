@@ -33,7 +33,7 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
                 value
             }
             Part::Value { value } => {
-                to_value!({"type": "text", "text": serde_json::to_string(&value).unwrap()})
+                to_value!(serde_json::to_string(&value).unwrap())
             }
             Part::Image { .. } => {
                 // Get image
@@ -58,6 +58,21 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             }
         }
     };
+
+    if msg.role == Role::Tool {
+        return to_value!(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": msg.id.clone().expect("Tool call id must exist."),
+                        "content": part_to_value(&msg.contents[0])
+                    }
+                ]
+            }
+        );
+    }
 
     // Collecting contents
     let mut contents = Vec::<Value>::new();
@@ -470,6 +485,27 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"assistant","content":[{"type":"tool_use","name":"temperature","input":"{\"unit\":\"celsius\"}","id":"funcid_123456"},{"type":"tool_use","name":"temperature","input":"{\"unit\":\"fahrenheit\"}","id":"funcid_7890ab"}]}"#,
+        );
+    }
+
+    #[test]
+    pub fn serialize_tool_response() {
+        let msgs = vec![
+            Message::new(Role::Tool)
+                .with_id("funcid_123456")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("funcid_7890ab")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+        ];
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","content":[{"type":"tool_result","tool_use_id":"funcid_123456","content":"{\"temperature\":30,\"unit\":\"celsius\"}"}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"funcid_7890ab","content":"{\"temperature\":86,\"unit\":\"fahrenheit\"}"}]}]"#
         );
     }
 
