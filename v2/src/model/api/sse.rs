@@ -49,7 +49,7 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerEvent> {
 
 #[derive(Clone)]
 pub struct SSELanguageModel {
-    name: String,
+    model: String,
     make_request: Arc<
         dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestInfo) -> reqwest::RequestBuilder
             + MaybeSend
@@ -95,7 +95,7 @@ impl SSELanguageModel {
         let ret = if model.starts_with("gpt") || model.starts_with("o") {
             // OpenAI models
             SSELanguageModel {
-                name: model.into(),
+                model: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
                         super::openai::make_request(&url, &api_key, msgs, tools, req)
@@ -109,7 +109,7 @@ impl SSELanguageModel {
         } else if model.starts_with("gemini") {
             // Gemini models
             SSELanguageModel {
-                name: model.into(),
+                model: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
                         super::gemini::make_request(&url, &api_key, msgs, tools, req)
@@ -139,7 +139,7 @@ impl LanguageModel for SSELanguageModel {
 
         // Build requestinfo
         let req = RequestInfo {
-            model: Some(self.name.clone()),
+            model: Some(self.model.clone()),
             system_message: if let Some(msg) = msgs.get(0)
                 && msg.role == Role::System
             {
