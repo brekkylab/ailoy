@@ -86,7 +86,8 @@ mod tests {
     use crate::{
         debug,
         model::{APIModel, APIProvider, LanguageModel as _, sse::SSELanguageModel},
-        value::{Delta, LMConfigBuilder, Part, Role},
+        to_value,
+        value::{Delta, LMConfigBuilder, Part, Role, ToolDescBuilder},
     };
 
     // static GEMINI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
@@ -111,26 +112,22 @@ mod tests {
             .build();
         let mut assistant_msg = MessageDelta::new();
         let mut strm = model.run(msgs, Vec::new(), config);
-        let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
+        let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
-            if let Some(reason) = output.finish_reason {
-                finish_reason = reason;
-            }
+            finish_reason = output.finish_reason;
         }
+        assert_eq!(finish_reason, Some(FinishReason::Stop));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
-        assert_eq!(finish_reason, FinishReason::Stop);
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_call() {
-        use crate::{to_value, value::ToolDescBuilder};
-
         let model = SSELanguageModel::new(APIModel::new(
             APIProvider::Google,
             "gemini-2.5-flash",
@@ -157,30 +154,31 @@ mod tests {
         ];
         let mut strm = model.run(msgs, tools, config);
         let mut assistant_msg = MessageDelta::default();
-        let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
+        let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
-            if let Some(reason) = output.finish_reason {
-                finish_reason = reason;
-            }
+            finish_reason = output.finish_reason;
         }
+        assert_eq!(finish_reason, Some(FinishReason::Stop));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!(
                 "{:?}",
                 message.tool_calls.first().and_then(|f| f.as_function())
             );
             message.tool_calls.len() > 0
-                && message.tool_calls[0].as_function().unwrap().1 == "temperature"
+                && message
+                    .tool_calls
+                    .first()
+                    .and_then(|f| f.as_function())
+                    .map(|f| f.1 == "temperature")
+                    .unwrap_or(false)
         }));
-        assert_eq!(finish_reason, FinishReason::Stop);
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_response() {
-        use crate::{to_value, value::ToolDescBuilder};
-
         let model = SSELanguageModel::new(APIModel::new(
             APIProvider::Google,
             "gemini-2.5-flash",
@@ -225,19 +223,16 @@ mod tests {
         ];
         let mut strm = model.run(msgs, tools, config);
         let mut assistant_msg = MessageDelta::default();
-        let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
+        let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
-            if let Some(reason) = output.finish_reason {
-                finish_reason = reason;
-            }
+            finish_reason = output.finish_reason;
         }
-
+        assert_eq!(finish_reason, Some(FinishReason::Stop));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
-        assert_eq!(finish_reason, FinishReason::Stop);
     }
 }

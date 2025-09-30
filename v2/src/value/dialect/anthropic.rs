@@ -19,11 +19,8 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
                 id,
                 f: PartFunction { name, args },
             } => {
-                let arguments_string = serde_json::to_string(args)
-                    .map_err(|_| String::from("Invald function"))
-                    .unwrap();
                 let mut value =
-                    to_value!({"type": "tool_use", "name": name, "input": arguments_string});
+                    to_value!({"type": "tool_use", "name": name, "input": args.clone()});
                 if let Some(id) = id {
                     value
                         .as_object_mut()
@@ -484,7 +481,7 @@ mod tests {
         // println!("{}", serde_json::to_string(&marshaled).unwrap());
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"assistant","content":[{"type":"tool_use","name":"temperature","input":"{\"unit\":\"celsius\"}","id":"funcid_123456"},{"type":"tool_use","name":"temperature","input":"{\"unit\":\"fahrenheit\"}","id":"funcid_7890ab"}]}"#,
+            r#"{"role":"assistant","content":[{"type":"tool_use","name":"temperature","input":{"unit":"celsius"},"id":"funcid_123456"},{"type":"tool_use","name":"temperature","input":{"unit":"fahrenheit"},"id":"funcid_7890ab"}]}"#,
         );
     }
 
