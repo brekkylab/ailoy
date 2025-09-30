@@ -74,6 +74,7 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // m.add_class::<VectorStoreGetResult>()?;
     // m.add_class::<VectorStoreRetrieveResult>()?;
     // m.add_class::<XAILanguageModel>()?;
+    m.add_class::<crate::model::EmbeddingModel>()?;
     m.add_class::<crate::model::LangModel>()?;
     m.add_class::<crate::value::FinishReason>()?;
     m.add_class::<crate::value::Message>()?;
