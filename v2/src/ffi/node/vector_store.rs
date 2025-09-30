@@ -7,22 +7,25 @@ use serde_json::{Map, Value};
 
 use crate::{
     ffi::node::embedding_model::Embedding,
-    knowledge_base::{AddInput, ChromaStore, FaissStore, GetResult, RetrieveResult, VectorStore},
+    vector_store::{
+        ChromaStore, FaissStore, VectorStore, VectorStoreAddInput, VectorStoreGetResult,
+        VectorStoreRetrieveResult,
+    },
 };
 
 #[napi]
 pub type Metadata = Map<String, Value>;
 
 #[napi(object, js_name = "VectorStoreAddInput")]
-pub struct JsAddInput {
+pub struct JsVectorStoreAddInput {
     pub embedding: Embedding,
     pub document: String,
     pub metadata: Option<Metadata>,
 }
 
-impl Into<AddInput> for JsAddInput {
-    fn into(self) -> AddInput {
-        AddInput {
+impl Into<VectorStoreAddInput> for JsVectorStoreAddInput {
+    fn into(self) -> VectorStoreAddInput {
+        VectorStoreAddInput {
             embedding: self.embedding.into_iter().map(|f| f as f32).collect(),
             document: self.document,
             metadata: self.metadata,
@@ -31,15 +34,15 @@ impl Into<AddInput> for JsAddInput {
 }
 
 #[napi(object, js_name = "VectorStoreGetResult")]
-pub struct JsGetResult {
+pub struct JsVectorStoreGetResult {
     pub id: String,
     pub document: String,
     pub embedding: Embedding,
     pub metadata: Option<Metadata>,
 }
 
-impl From<GetResult> for JsGetResult {
-    fn from(res: GetResult) -> Self {
+impl From<VectorStoreGetResult> for JsVectorStoreGetResult {
+    fn from(res: VectorStoreGetResult) -> Self {
         Self {
             id: res.id,
             document: res.document,
@@ -50,15 +53,15 @@ impl From<GetResult> for JsGetResult {
 }
 
 #[napi(object, js_name = "VectorStoreRetrieveResult")]
-pub struct JsRetrieveResult {
+pub struct JsVectorStoreRetrieveResult {
     pub id: String,
     pub document: String,
     pub metadata: Option<Metadata>,
     pub distance: f64,
 }
 
-impl From<RetrieveResult> for JsRetrieveResult {
-    fn from(res: RetrieveResult) -> Self {
+impl From<VectorStoreRetrieveResult> for JsVectorStoreRetrieveResult {
+    fn from(res: VectorStoreRetrieveResult) -> Self {
         Self {
             id: res.id,
             document: res.document,
@@ -75,11 +78,11 @@ pub trait VectorStoreMethods<T: VectorStore + 'static> {
         res.map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
     }
 
-    async fn _add_vector(&self, input: JsAddInput) -> napi::Result<String> {
+    async fn _add_vector(&self, input: JsVectorStoreAddInput) -> napi::Result<String> {
         Self::handle_error(self.inner().lock().await.add_vector(input.into()).await)
     }
 
-    async fn _add_vectors(&self, inputs: Vec<JsAddInput>) -> napi::Result<Vec<String>> {
+    async fn _add_vectors(&self, inputs: Vec<JsVectorStoreAddInput>) -> napi::Result<Vec<String>> {
         Self::handle_error(
             self.inner()
                 .lock()
@@ -89,7 +92,7 @@ pub trait VectorStoreMethods<T: VectorStore + 'static> {
         )
     }
 
-    async fn _get_by_id(&self, id: String) -> napi::Result<Option<JsGetResult>> {
+    async fn _get_by_id(&self, id: String) -> napi::Result<Option<JsVectorStoreGetResult>> {
         let result = Self::handle_error(self.inner().lock().await.get_by_id(id.as_str()).await)?;
         match result {
             Some(result) => Ok(Some(result.into())),
@@ -97,7 +100,7 @@ pub trait VectorStoreMethods<T: VectorStore + 'static> {
         }
     }
 
-    async fn _get_by_ids(&self, ids: Vec<String>) -> napi::Result<Vec<JsGetResult>> {
+    async fn _get_by_ids(&self, ids: Vec<String>) -> napi::Result<Vec<JsVectorStoreGetResult>> {
         Ok(Self::handle_error(
             self.inner()
                 .lock()
@@ -114,7 +117,7 @@ pub trait VectorStoreMethods<T: VectorStore + 'static> {
         &self,
         query_embedding: Embedding,
         top_k: u32,
-    ) -> napi::Result<Vec<JsRetrieveResult>> {
+    ) -> napi::Result<Vec<JsVectorStoreRetrieveResult>> {
         Ok(Self::handle_error(
             self.inner()
                 .lock()
@@ -134,7 +137,7 @@ pub trait VectorStoreMethods<T: VectorStore + 'static> {
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: u32,
-    ) -> napi::Result<Vec<Vec<JsRetrieveResult>>> {
+    ) -> napi::Result<Vec<Vec<JsVectorStoreRetrieveResult>>> {
         let query_embeddings = query_embeddings
             .into_iter()
             .map(|query_embedding| query_embedding.into_iter().map(|f| f as f32).collect())
@@ -198,22 +201,25 @@ impl JsFaissVectorStore {
     }
 
     #[napi]
-    pub async fn add_vector(&self, input: JsAddInput) -> napi::Result<String> {
+    pub async fn add_vector(&self, input: JsVectorStoreAddInput) -> napi::Result<String> {
         self._add_vector(input).await
     }
 
     #[napi]
-    pub async fn add_vectors(&self, inputs: Vec<JsAddInput>) -> napi::Result<Vec<String>> {
+    pub async fn add_vectors(
+        &self,
+        inputs: Vec<JsVectorStoreAddInput>,
+    ) -> napi::Result<Vec<String>> {
         self._add_vectors(inputs).await
     }
 
     #[napi]
-    pub async fn get_by_id(&self, id: String) -> napi::Result<Option<JsGetResult>> {
+    pub async fn get_by_id(&self, id: String) -> napi::Result<Option<JsVectorStoreGetResult>> {
         self._get_by_id(id).await
     }
 
     #[napi]
-    pub async fn get_by_ids(&self, ids: Vec<String>) -> napi::Result<Vec<JsGetResult>> {
+    pub async fn get_by_ids(&self, ids: Vec<String>) -> napi::Result<Vec<JsVectorStoreGetResult>> {
         self._get_by_ids(ids).await
     }
 
@@ -222,7 +228,7 @@ impl JsFaissVectorStore {
         &self,
         query_embedding: Embedding,
         top_k: u32,
-    ) -> napi::Result<Vec<JsRetrieveResult>> {
+    ) -> napi::Result<Vec<JsVectorStoreRetrieveResult>> {
         self._retrieve(query_embedding, top_k).await
     }
 
@@ -231,7 +237,7 @@ impl JsFaissVectorStore {
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: u32,
-    ) -> napi::Result<Vec<Vec<JsRetrieveResult>>> {
+    ) -> napi::Result<Vec<Vec<JsVectorStoreRetrieveResult>>> {
         self._batch_retrieve(query_embeddings, top_k).await
     }
 
@@ -280,22 +286,25 @@ impl JsChromaVectorStore {
     }
 
     #[napi]
-    pub async fn add_vector(&self, input: JsAddInput) -> napi::Result<String> {
+    pub async fn add_vector(&self, input: JsVectorStoreAddInput) -> napi::Result<String> {
         self._add_vector(input).await
     }
 
     #[napi]
-    pub async fn add_vectors(&self, inputs: Vec<JsAddInput>) -> napi::Result<Vec<String>> {
+    pub async fn add_vectors(
+        &self,
+        inputs: Vec<JsVectorStoreAddInput>,
+    ) -> napi::Result<Vec<String>> {
         self._add_vectors(inputs).await
     }
 
     #[napi]
-    pub async fn get_by_id(&self, id: String) -> napi::Result<Option<JsGetResult>> {
+    pub async fn get_by_id(&self, id: String) -> napi::Result<Option<JsVectorStoreGetResult>> {
         self._get_by_id(id).await
     }
 
     #[napi]
-    pub async fn get_by_ids(&self, ids: Vec<String>) -> napi::Result<Vec<JsGetResult>> {
+    pub async fn get_by_ids(&self, ids: Vec<String>) -> napi::Result<Vec<JsVectorStoreGetResult>> {
         self._get_by_ids(ids).await
     }
 
@@ -304,7 +313,7 @@ impl JsChromaVectorStore {
         &self,
         query_embedding: Embedding,
         top_k: u32,
-    ) -> napi::Result<Vec<JsRetrieveResult>> {
+    ) -> napi::Result<Vec<JsVectorStoreRetrieveResult>> {
         self._retrieve(query_embedding, top_k).await
     }
 
@@ -313,7 +322,7 @@ impl JsChromaVectorStore {
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: u32,
-    ) -> napi::Result<Vec<Vec<JsRetrieveResult>>> {
+    ) -> napi::Result<Vec<Vec<JsVectorStoreRetrieveResult>>> {
         self._batch_retrieve(query_embeddings, top_k).await
     }
 

@@ -54,6 +54,7 @@ dependencies = [
  "chromadb",
  "cmake",
  "cxx",
+ "dedent",
  "derive_builder",
  "dotenvy",
  "downcast-rs",
@@ -809,6 +810,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04d2cd9c18b9f454ed67da600630b021a8a80bf33f8c95896ab33aaf1c26b728"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "dedent"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8a3dee4e932355439992a45dc631b0979abf9c677958674bd94298bf9002870"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

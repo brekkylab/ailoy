@@ -1,5 +1,4 @@
-use std::any::TypeId;
-use std::sync::Arc;
+use std::{any::TypeId, sync::Arc};
 
 use downcast_rs::{Downcast, impl_downcast};
 use futures::lock::Mutex;

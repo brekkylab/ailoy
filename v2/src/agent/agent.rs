@@ -3,6 +3,8 @@ use std::sync::Arc;
 use futures::{Stream, StreamExt, lock::Mutex};
 
 use crate::{
+    agent::SystemMessageRenderer,
+    knowledge::Knowledge,
     model::{ArcMutexLanguageModel, LanguageModel},
     tool::{MCPTransport, Tool},
     utils::log,
@@ -11,11 +13,12 @@ use crate::{
     },
 };
 
-// #[derive(Clone)]
 pub struct Agent {
     lm: ArcMutexLanguageModel,
     tools: Vec<Arc<dyn Tool>>,
     messages: Arc<Mutex<Vec<Message>>>,
+    knowledge: Option<Arc<dyn Knowledge>>,
+    system_message_renderer: Arc<SystemMessageRenderer>,
 }
 
 impl Agent {
@@ -27,6 +30,8 @@ impl Agent {
             lm: ArcMutexLanguageModel::new(lm),
             tools: tools.into_iter().collect(),
             messages: Arc::new(Mutex::new(Vec::new())),
+            knowledge: None,
+            system_message_renderer: Arc::new(SystemMessageRenderer::new()),
         }
     }
 
@@ -38,6 +43,15 @@ impl Agent {
             lm,
             tools: tools.into_iter().collect(),
             messages: Arc::new(Mutex::new(Vec::new())),
+            knowledge: None,
+            system_message_renderer: Arc::new(SystemMessageRenderer::new()),
+        }
+    }
+
+    pub fn with_system_message_renderer(self, renderer: SystemMessageRenderer) -> Self {
+        Self {
+            system_message_renderer: Arc::new(renderer),
+            ..self
         }
     }
 
@@ -47,6 +61,15 @@ impl Agent {
 
     pub fn get_tools(&self) -> Vec<Arc<dyn Tool>> {
         self.tools.clone()
+    }
+
+    pub fn knowledge(&self) -> Option<Arc<dyn Knowledge>> {
+        self.knowledge.clone()
+    }
+
+    pub async fn clear_messages(&mut self) -> anyhow::Result<()> {
+        self.messages.lock().await.clear();
+        Ok(())
     }
 
     pub async fn add_tools(&mut self, tools: Vec<Arc<dyn Tool>>) -> anyhow::Result<()> {
@@ -119,16 +142,59 @@ impl Agent {
         Ok(())
     }
 
+    pub fn set_knowledge(&mut self, knowledge: impl Knowledge + 'static) {
+        self.knowledge = Some(Arc::new(knowledge));
+    }
+
+    pub fn remove_knowledge(&mut self) {
+        self.knowledge = None;
+    }
+
     pub fn run<'a>(
         &'a mut self,
         contents: Vec<Part>,
     ) -> impl Stream<Item = Result<MessageOutput, String>> {
+        // Messages used for the current run round
+        let mut messages: Vec<Message> = vec![];
+        // For storing message history except system message
+        let messages_history = self.messages.clone();
+
         let tools = self.tools.clone();
-        let msgs = self.messages.clone();
-        let user_message = Message::new().with_role(Role::User).with_contents(contents);
+
         async_stream::try_stream! {
-            msgs.lock().await.push(user_message);
-            let td = self
+            let system_message_content = "You are helpful assistant.".to_string();
+            let knowledge_results = if let Some(knowledge) = &self.knowledge {
+                let query = contents.iter().filter(|&c| matches!(c, Part::Text(_))).map(|c| c.to_string()).collect::<Vec<_>>().join("\n");
+                let retrieved = match knowledge.retrieve(query.clone()).await {
+                    Ok(retrieved) => retrieved,
+                    Err(e) => {
+                        log::warn(format!("Failed to retrieve from knowledge {}: {}", knowledge.name(), e.to_string()));
+                        vec![]
+                    }
+                };
+                Some(retrieved)
+            } else {
+                None
+            };
+
+            let system_message = Message::new().with_role(Role::System).with_contents(vec![Part::Text(
+                self.system_message_renderer.render(system_message_content, knowledge_results).unwrap()
+            )]);
+            // Add system message to messages
+            messages.push(system_message);
+
+            // Add message histories to messages
+            for msg in messages_history.lock().await.iter() {
+                messages.push(msg.clone());
+            }
+
+            let user_message = Message::new().with_role(Role::User).with_contents(contents);
+            // Add user message to messages
+            messages.push(user_message.clone());
+            // Add user message to histories
+            messages_history.lock().await.push(user_message);
+
+            let tool_descs = self
                 .tools
                 .iter()
                 .map(|v| v.get_description())
@@ -137,7 +203,7 @@ impl Agent {
                 let mut assistant_msg = Message::new().with_role(Role::Assistant);
                 {
                     let mut model = self.lm.model.lock().await;
-                    let mut strm = model.run(msgs.lock().await.clone(), td.clone());
+                    let mut strm = model.run(messages.clone(), tool_descs.clone());
                     let mut aggregator = MessageAggregator::new();
                     while let Some(delta) = strm.next().await {
                         let delta = delta?;
@@ -147,8 +213,12 @@ impl Agent {
                         }
                     }
                 }
+                // Add assistant message to messages
+                messages.push(assistant_msg.clone());
+                // Add assistant message to histories
+                messages_history.lock().await.push(assistant_msg.clone());
 
-                msgs.lock().await.push(assistant_msg.clone());
+                // Handling tool calls if exist
                 if !assistant_msg.tool_calls.is_empty() {
                     for part in &assistant_msg.tool_calls {
                         let (tc, tool_call_id) = match part {
@@ -162,16 +232,20 @@ impl Agent {
                                 };
                                 (ToolCall{name: name.to_owned(), arguments}, Some(id.clone()))
                             },
-                            _ => {continue;},
+                            _ => { continue; },
                         };
                         let tool = tools.iter().find(|v| v.get_description().name == tc.name).unwrap().clone();
                         let resp = tool.run(tc.arguments).await?;
-                        let mut delta = Message::new().with_role(Role::Tool).with_contents(resp.clone());
+                        let mut tool_msg = Message::new().with_role(Role::Tool).with_contents(resp.clone());
                         if let Some(tool_call_id) = tool_call_id {
-                            delta = delta.with_tool_call_id(tool_call_id);
+                            tool_msg = tool_msg.with_tool_call_id(tool_call_id);
                         }
-                        yield MessageOutput::new().with_delta(delta.clone()).with_finish_reason(FinishReason::Stop);
-                        msgs.lock().await.push(delta);
+                        yield MessageOutput::new().with_delta(tool_msg.clone()).with_finish_reason(FinishReason::Stop);
+
+                        // Add tool message to messages
+                        messages.push(tool_msg.clone());
+                        // Add tool message to histories
+                        messages_history.lock().await.push(tool_msg);
                     }
                 }
                 // msgs.lock().await.push(assistant_msg.clone());

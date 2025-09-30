@@ -3,14 +3,17 @@ use pyo3_stub_gen::derive::*;
 
 use crate::{
     ffi::py::base::{await_future, json_to_pydict, pydict_to_json},
-    knowledge_base::{AddInput, ChromaStore, FaissStore, GetResult, RetrieveResult, VectorStore},
+    vector_store::{
+        ChromaStore, FaissStore, VectorStore, VectorStoreAddInput, VectorStoreGetResult,
+        VectorStoreRetrieveResult,
+    },
 };
 
 pub type Embedding = Vec<f32>;
 
 #[gen_stub_pyclass]
-#[pyclass(get_all, set_all)]
-pub struct VectorStoreAddInput {
+#[pyclass(name = "VectorStoreAddInput", get_all, set_all)]
+pub struct PyVectorStoreAddInput {
     pub embedding: Embedding,
     pub document: String,
     pub metadata: Option<Py<PyDict>>,
@@ -18,7 +21,7 @@ pub struct VectorStoreAddInput {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl VectorStoreAddInput {
+impl PyVectorStoreAddInput {
     #[new]
     #[pyo3(signature = (embedding, document, metadata = None))]
     fn __new__(embedding: Embedding, document: String, metadata: Option<Py<PyDict>>) -> Self {
@@ -40,8 +43,8 @@ impl VectorStoreAddInput {
     }
 }
 
-impl Into<AddInput> for Py<VectorStoreAddInput> {
-    fn into(self) -> AddInput {
+impl Into<VectorStoreAddInput> for Py<PyVectorStoreAddInput> {
+    fn into(self) -> VectorStoreAddInput {
         Python::attach(|py| {
             let input = self.borrow(py);
             let metadata = match &input.metadata {
@@ -51,7 +54,7 @@ impl Into<AddInput> for Py<VectorStoreAddInput> {
                 }
                 None => None,
             };
-            AddInput {
+            VectorStoreAddInput {
                 embedding: input.embedding.clone(),
                 document: input.document.clone(),
                 metadata: metadata,
@@ -61,16 +64,16 @@ impl Into<AddInput> for Py<VectorStoreAddInput> {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(dict, get_all)]
-pub struct VectorStoreGetResult {
+#[pyclass(name = "VectorStoreGetResult", dict, get_all)]
+pub struct PyVectorStoreGetResult {
     pub id: String,
     pub document: String,
     pub metadata: Option<Py<PyDict>>,
     pub embedding: Embedding,
 }
 
-impl From<GetResult> for VectorStoreGetResult {
-    fn from(value: GetResult) -> Self {
+impl From<VectorStoreGetResult> for PyVectorStoreGetResult {
+    fn from(value: VectorStoreGetResult) -> Self {
         Python::attach(|py| {
             let metadata = match value.metadata {
                 Some(metadata) => {
@@ -93,7 +96,7 @@ impl From<GetResult> for VectorStoreGetResult {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl VectorStoreGetResult {
+impl PyVectorStoreGetResult {
     fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         let dict = PyDict::new(py);
         let _ = dict.set_item("id", &self.id);
@@ -111,16 +114,16 @@ impl VectorStoreGetResult {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(dict, get_all)]
-pub struct VectorStoreRetrieveResult {
+#[pyclass(name = "VectorStoreRetrieveResult", dict, get_all)]
+pub struct PyVectorStoreRetrieveResult {
     pub id: String,
     pub document: String,
     pub metadata: Option<Py<PyDict>>,
     pub distance: f32,
 }
 
-impl From<RetrieveResult> for VectorStoreRetrieveResult {
-    fn from(value: RetrieveResult) -> Self {
+impl From<VectorStoreRetrieveResult> for PyVectorStoreRetrieveResult {
+    fn from(value: VectorStoreRetrieveResult) -> Self {
         Python::attach(|py| {
             let metadata = match value.metadata {
                 Some(metadata) => {
@@ -143,7 +146,7 @@ impl From<RetrieveResult> for VectorStoreRetrieveResult {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl VectorStoreRetrieveResult {
+impl PyVectorStoreRetrieveResult {
     fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         let dict = PyDict::new(py);
         let _ = dict.set_item("id", &self.id);
@@ -172,32 +175,32 @@ pub trait VectorStoreMethods<T: VectorStore + 'static> {
 
     fn inner_mut(&mut self) -> &mut T;
 
-    fn _add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
+    fn _add_vector(&mut self, input: Py<PyVectorStoreAddInput>) -> PyResult<String> {
         await_future(self.inner_mut().add_vector(input.into()))
     }
 
-    fn _add_vectors(&mut self, inputs: Vec<Py<VectorStoreAddInput>>) -> PyResult<Vec<String>> {
+    fn _add_vectors(&mut self, inputs: Vec<Py<PyVectorStoreAddInput>>) -> PyResult<Vec<String>> {
         await_future(
             self.inner_mut()
                 .add_vectors(inputs.into_iter().map(|input| input.into()).collect()),
         )
     }
 
-    fn _get_by_id(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
+    fn _get_by_id(&self, id: String) -> PyResult<Option<PyVectorStoreGetResult>> {
         let result = await_future(self.inner().get_by_id(id.as_str()))?;
         match result {
-            Some(result) => Ok(Some(VectorStoreGetResult::from(result))),
+            Some(result) => Ok(Some(result.into())),
             None => Ok(None),
         }
     }
 
-    fn _get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
+    fn _get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<PyVectorStoreGetResult>> {
         Ok(await_future(
             self.inner()
                 .get_by_ids(&ids.iter().map(|id| id.as_str()).collect::<Vec<_>>()),
         )?
         .into_iter()
-        .map(|result| VectorStoreGetResult::from(result))
+        .map(|result| result.into())
         .collect::<Vec<_>>())
     }
 
@@ -205,10 +208,10 @@ pub trait VectorStoreMethods<T: VectorStore + 'static> {
         &self,
         query_embedding: Embedding,
         top_k: usize,
-    ) -> PyResult<Vec<VectorStoreRetrieveResult>> {
+    ) -> PyResult<Vec<PyVectorStoreRetrieveResult>> {
         Ok(await_future(self.inner().retrieve(query_embedding, top_k))?
             .into_iter()
-            .map(|result| VectorStoreRetrieveResult::from(result))
+            .map(|result| result.into())
             .collect::<Vec<_>>())
     }
 
@@ -216,16 +219,11 @@ pub trait VectorStoreMethods<T: VectorStore + 'static> {
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
-    ) -> PyResult<Vec<Vec<VectorStoreRetrieveResult>>> {
+    ) -> PyResult<Vec<Vec<PyVectorStoreRetrieveResult>>> {
         Ok(
             await_future(self.inner().batch_retrieve(query_embeddings, top_k))?
                 .into_iter()
-                .map(|batch| {
-                    batch
-                        .into_iter()
-                        .map(|item| VectorStoreRetrieveResult::from(item))
-                        .collect()
-                })
+                .map(|batch| batch.into_iter().map(|item| item.into()).collect())
                 .collect(),
         )
     }
@@ -254,28 +252,28 @@ pub trait VectorStoreMethods<T: VectorStore + 'static> {
 #[pymethods]
 impl BaseVectorStore {
     #[allow(unused_variables)]
-    fn add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
+    fn add_vector(&mut self, input: Py<PyVectorStoreAddInput>) -> PyResult<String> {
         Err(PyNotImplementedError::new_err(
             "Subclass of BaseVectorStore must implement 'add_vector'",
         ))
     }
 
     #[allow(unused_variables)]
-    fn add_vectors(&mut self, inputs: Vec<Py<VectorStoreAddInput>>) -> PyResult<Vec<String>> {
+    fn add_vectors(&mut self, inputs: Vec<Py<PyVectorStoreAddInput>>) -> PyResult<Vec<String>> {
         Err(PyNotImplementedError::new_err(
             "Subclass of BaseVectorStore must implement 'add_vectors'",
         ))
     }
 
     #[allow(unused_variables)]
-    fn get_by_id(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
+    fn get_by_id(&self, id: String) -> PyResult<Option<PyVectorStoreGetResult>> {
         Err(PyNotImplementedError::new_err(
             "Subclass of BaseVectorStore must implement 'get_by_id'",
         ))
     }
 
     #[allow(unused_variables)]
-    fn get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
+    fn get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<PyVectorStoreGetResult>> {
         Err(PyNotImplementedError::new_err(
             "Subclass of BaseVectorStore must implement 'get_by_ids'",
         ))
@@ -286,7 +284,7 @@ impl BaseVectorStore {
         &self,
         query_embedding: Embedding,
         top_k: usize,
-    ) -> PyResult<Vec<VectorStoreRetrieveResult>> {
+    ) -> PyResult<Vec<PyVectorStoreRetrieveResult>> {
         Err(PyNotImplementedError::new_err(
             "Subclass of BaseVectorStore must implement 'retrieve'",
         ))
@@ -297,7 +295,7 @@ impl BaseVectorStore {
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
-    ) -> PyResult<Vec<Vec<VectorStoreRetrieveResult>>> {
+    ) -> PyResult<Vec<Vec<PyVectorStoreRetrieveResult>>> {
         Err(PyNotImplementedError::new_err(
             "Subclass of BaseVectorStore must implement 'batch_retrieve'",
         ))
@@ -357,19 +355,19 @@ impl FaissVectorStore {
         Py::new(py, (FaissVectorStore { inner }, BaseVectorStore {}))
     }
 
-    fn add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
+    fn add_vector(&mut self, input: Py<PyVectorStoreAddInput>) -> PyResult<String> {
         self._add_vector(input)
     }
 
-    fn add_vectors(&mut self, inputs: Vec<Py<VectorStoreAddInput>>) -> PyResult<Vec<String>> {
+    fn add_vectors(&mut self, inputs: Vec<Py<PyVectorStoreAddInput>>) -> PyResult<Vec<String>> {
         self._add_vectors(inputs)
     }
 
-    fn get_by_id(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
+    fn get_by_id(&self, id: String) -> PyResult<Option<PyVectorStoreGetResult>> {
         self._get_by_id(id)
     }
 
-    fn get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
+    fn get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<PyVectorStoreGetResult>> {
         self._get_by_ids(ids)
     }
 
@@ -377,7 +375,7 @@ impl FaissVectorStore {
         &self,
         query_embedding: Embedding,
         top_k: usize,
-    ) -> PyResult<Vec<VectorStoreRetrieveResult>> {
+    ) -> PyResult<Vec<PyVectorStoreRetrieveResult>> {
         self._retrieve(query_embedding, top_k)
     }
 
@@ -385,7 +383,7 @@ impl FaissVectorStore {
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
-    ) -> PyResult<Vec<Vec<VectorStoreRetrieveResult>>> {
+    ) -> PyResult<Vec<Vec<PyVectorStoreRetrieveResult>>> {
         self._batch_retrieve(query_embeddings, top_k)
     }
 
@@ -467,19 +465,19 @@ impl ChromaVectorStore {
         await_future(self.inner.delete_collection(collection_name.as_str()))
     }
 
-    fn add_vector(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
+    fn add_vector(&mut self, input: Py<PyVectorStoreAddInput>) -> PyResult<String> {
         self._add_vector(input)
     }
 
-    fn add_vectors(&mut self, inputs: Vec<Py<VectorStoreAddInput>>) -> PyResult<Vec<String>> {
+    fn add_vectors(&mut self, inputs: Vec<Py<PyVectorStoreAddInput>>) -> PyResult<Vec<String>> {
         self._add_vectors(inputs)
     }
 
-    fn get_by_id(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
+    fn get_by_id(&self, id: String) -> PyResult<Option<PyVectorStoreGetResult>> {
         self._get_by_id(id)
     }
 
-    fn get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
+    fn get_by_ids(&self, ids: Vec<String>) -> PyResult<Vec<PyVectorStoreGetResult>> {
         self._get_by_ids(ids)
     }
 
@@ -487,7 +485,7 @@ impl ChromaVectorStore {
         &self,
         query_embedding: Embedding,
         top_k: usize,
-    ) -> PyResult<Vec<VectorStoreRetrieveResult>> {
+    ) -> PyResult<Vec<PyVectorStoreRetrieveResult>> {
         self._retrieve(query_embedding, top_k)
     }
 
@@ -495,7 +493,7 @@ impl ChromaVectorStore {
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
-    ) -> PyResult<Vec<Vec<VectorStoreRetrieveResult>>> {
+    ) -> PyResult<Vec<Vec<PyVectorStoreRetrieveResult>>> {
         self._batch_retrieve(query_embeddings, top_k)
     }
 
