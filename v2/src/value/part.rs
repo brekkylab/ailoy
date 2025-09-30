@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 use crate::value::{Value, delta::Delta};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq, get_all, set_all))]
 pub struct PartFunction {
     pub name: String,
     #[serde(rename = "arguments")]
@@ -63,7 +61,6 @@ pub enum PartImage {
         w: usize,
         #[serde(rename = "colorspace")]
         c: PartImageColorspace,
-        nbytes: usize,
         data: super::bytes::Bytes,
     },
 }
@@ -114,7 +111,6 @@ impl Part {
                 h: height,
                 w: width,
                 c: colorspace,
-                nbytes,
                 data: super::bytes::Bytes(data),
             },
         })
@@ -239,12 +235,12 @@ impl Part {
                         h,
                         w,
                         c,
-                        nbytes,
                         data: super::bytes::Bytes(buf),
                     },
             } => {
                 let (h, w) = (*h as u32, *w as u32);
-                match (c, *nbytes) {
+                let nbytes = buf.len() / h as usize / w as usize / c.channel();
+                match (c, nbytes) {
                     // Grayscale 8-bit
                     (&PartImageColorspace::Grayscale, 1) => {
                         let buf = image::GrayImage::from_raw(w, h, buf.clone())?;
@@ -332,6 +328,9 @@ pub enum PartDelta {
         #[serde(rename = "function")]
         f: PartDeltaFunction,
     },
+    Value {
+        value: Value,
+    },
     Null(),
 }
 
@@ -372,6 +371,13 @@ impl PartDelta {
         }
     }
 
+    pub fn is_value(&self) -> bool {
+        match self {
+            Self::Value { .. } => true,
+            _ => false,
+        }
+    }
+
     pub fn to_text(self) -> Option<String> {
         match self {
             Self::Text { text } => Some(text),
@@ -399,6 +405,13 @@ impl PartDelta {
                 id,
                 f: PartDeltaFunction::WithParsedArgs { name, args },
             } => Some((id, name, args)),
+            _ => None,
+        }
+    }
+
+    pub fn to_value(self) -> Option<Value> {
+        match self {
+            Self::Value { value } => Some(value),
             _ => None,
         }
     }
@@ -497,6 +510,100 @@ impl Delta for PartDelta {
                     }
                 }?;
                 Ok(Part::Function { id, f })
+            }
+            PartDelta::Value { value } => Ok(Part::Value { value }),
+        }
+    }
+}
+
+#[cfg(feature = "python")]
+mod py {
+    use pyo3::{
+        Bound, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult, Python,
+        exceptions::{PyTypeError, PyValueError},
+        types::{PyAnyMethods, PyDict, PyString},
+    };
+    use pyo3_stub_gen::{PyStubType, TypeInfo};
+
+    use super::*;
+
+    impl<'py> FromPyObject<'py> for PartFunction {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+            if let Ok(pydict) = ob.downcast::<PyDict>() {
+                let name_any = pydict.get_item("name")?;
+                let name: String = name_any.extract()?;
+                let args_any = pydict.get_item("args")?;
+                let args: Value = args_any.extract()?;
+                Ok(Self { name, args })
+            } else {
+                Err(PyTypeError::new_err(
+                    "PartFunction must be a dict with keys 'name' and 'args'",
+                ))
+            }
+        }
+    }
+
+    impl<'py> IntoPyObject<'py> for PartFunction {
+        type Target = PyDict;
+
+        type Output = Bound<'py, PyDict>;
+
+        type Error = PyErr;
+
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            let d = PyDict::new(py);
+            d.set_item("name", self.name)?;
+            let py_args = self.args.into_pyobject(py)?;
+            d.set_item("args", py_args)?;
+            Ok(d)
+        }
+    }
+
+    impl PyStubType for PartFunction {
+        fn type_output() -> TypeInfo {
+            let TypeInfo {
+                name: value_name,
+                import: mut imports,
+            } = Value::type_output();
+            imports.insert("builtins".into());
+            imports.insert("typing".into());
+
+            TypeInfo {
+                name: format!(
+                    "dict[typing.Literal[\"name\", \"args\"], typing.Union[str, {}]]",
+                    value_name
+                ),
+                import: imports,
+            }
+        }
+    }
+
+    impl<'py> IntoPyObject<'py> for PartImageColorspace {
+        type Target = PyString;
+        type Output = Bound<'py, PyString>;
+        type Error = PyErr;
+
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            Ok(PyString::new(py, &self.to_string()))
+        }
+    }
+
+    impl<'py> FromPyObject<'py> for PartImageColorspace {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+            let s: &str = ob.extract()?;
+            s.parse::<PartImageColorspace>()
+                .map_err(|_| PyValueError::new_err(format!("Invalid colorspace: {s}")))
+        }
+    }
+
+    impl PyStubType for PartImageColorspace {
+        fn type_output() -> TypeInfo {
+            let mut import = std::collections::HashSet::new();
+            import.insert("typing".into());
+
+            TypeInfo {
+                name: r#"typing.Literal["grayscale", "rgb", "rgba"]"#.into(),
+                import,
             }
         }
     }

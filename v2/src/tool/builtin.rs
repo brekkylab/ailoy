@@ -15,7 +15,7 @@ use crate::{
 pub struct BuiltinTool {
     desc: ToolDesc,
 
-    f: Arc<dyn Fn(Value) -> Value + MaybeSend + MaybeSync + 'static>,
+    f: Arc<dyn Fn(Value) -> Value + MaybeSend + MaybeSync>,
 }
 
 impl Debug for BuiltinTool {
@@ -28,10 +28,7 @@ impl Debug for BuiltinTool {
 }
 
 impl BuiltinTool {
-    pub fn new(
-        desc: ToolDesc,
-        f: Arc<dyn Fn(Value) -> Value + MaybeSend + MaybeSync + 'static>,
-    ) -> Self {
+    pub fn new(desc: ToolDesc, f: Arc<dyn Fn(Value) -> Value + MaybeSend + MaybeSync>) -> Self {
         BuiltinTool { desc, f }
     }
 }

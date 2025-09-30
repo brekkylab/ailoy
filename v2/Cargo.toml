@@ -8,7 +8,6 @@ node = ["dep:napi", "dep:napi-derive"]
 python = ["dep:pyo3", "dep:pyo3-async-runtimes", "dep:pyo3-stub-gen", "dep:pyo3-stub-gen-derive"]
 default = []
 
-
 [dependencies]
 ailoy-macros = { path = "./macros" }
 anyhow = "1"
