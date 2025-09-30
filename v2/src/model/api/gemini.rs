@@ -513,7 +513,7 @@ mod sse_tests {
 
     use crate::{
         debug,
-        model::{InferenceConfig, LangModelInference as _, SSELangModel},
+        model::{InferenceConfig, LangModelInference as _, StreamAPILangModel},
         value::Delta,
     };
 
@@ -530,7 +530,7 @@ mod sse_tests {
         use super::*;
         use crate::value::{Part, Role};
 
-        let mut model = SSELangModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
+        let mut model = StreamAPILangModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
 
         let msgs = vec![
             Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
@@ -564,7 +564,7 @@ mod sse_tests {
             value::{Part, Role, ToolDescBuilder},
         };
 
-        let mut model = SSELangModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
+        let mut model = StreamAPILangModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")

@@ -48,7 +48,7 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerEvent> {
 }
 
 #[derive(Clone)]
-pub(crate) struct SSELangModel {
+pub(crate) struct StreamAPILangModel {
     name: String,
     make_request: Arc<
         dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestConfig) -> reqwest::RequestBuilder
@@ -58,18 +58,18 @@ pub(crate) struct SSELangModel {
     handle_event: Arc<dyn Fn(ServerEvent) -> MessageOutput + MaybeSend + MaybeSync>,
 }
 
-impl SSELangModel {
+impl StreamAPILangModel {
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         let model = model.into();
         let ret = if model.starts_with("gpt") || model.starts_with("o") {
             // OpenAI models
-            SSELangModel::with_url(model, api_key, "https://api.openai.com/v1/responses")
+            StreamAPILangModel::with_url(model, api_key, "https://api.openai.com/v1/responses")
         } else if model.starts_with("claude") {
             // Anthropic models
             todo!()
         } else if model.starts_with("gemini") {
             // Gemini models
-            SSELangModel::with_url(
+            StreamAPILangModel::with_url(
                 model,
                 api_key,
                 "https://generativelanguage.googleapis.com/v1beta/models",
@@ -94,7 +94,7 @@ impl SSELangModel {
 
         let ret = if model.starts_with("gpt") || model.starts_with("o") {
             // OpenAI models
-            SSELangModel {
+            StreamAPILangModel {
                 name: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
@@ -108,7 +108,7 @@ impl SSELangModel {
             todo!()
         } else if model.starts_with("gemini") {
             // Gemini models
-            SSELangModel {
+            StreamAPILangModel {
                 name: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
@@ -127,7 +127,7 @@ impl SSELangModel {
     }
 }
 
-impl LangModelInference for SSELangModel {
+impl LangModelInference for StreamAPILangModel {
     fn infer<'a>(
         self: &'a mut Self,
         mut msgs: Vec<Message>,

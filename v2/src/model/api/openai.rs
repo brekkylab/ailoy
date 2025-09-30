@@ -784,7 +784,7 @@ mod dialect_tests {
 #[cfg(test)]
 mod sse_tests {
     use crate::{
-        model::{InferenceConfig, LangModelInference as _, api::SSELangModel},
+        model::{InferenceConfig, LangModelInference as _, api::StreamAPILangModel},
         value::Delta,
     };
 
@@ -797,7 +797,7 @@ mod sse_tests {
         use super::*;
         use crate::value::{Part, Role};
 
-        let mut model = SSELangModel::new("gpt-4.1", OPENAI_API_KEY);
+        let mut model = StreamAPILangModel::new("gpt-4.1", OPENAI_API_KEY);
 
         let msgs = vec![
             Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
@@ -823,7 +823,7 @@ mod sse_tests {
             value::{Part, Role, ToolDescBuilder},
         };
 
-        let mut model = SSELangModel::new("gpt-4.1", OPENAI_API_KEY);
+        let mut model = StreamAPILangModel::new("gpt-4.1", OPENAI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")

@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::{
     cache::CacheProgress,
-    model::{CustomLangModel, LocalLangModel, SSELangModel},
+    model::{CustomLangModel, LocalLangModel, StreamAPILangModel},
     utils::{BoxStream, MaybeSend, MaybeSync},
     value::{Message, MessageOutput, ToolDesc},
 };
@@ -70,7 +70,7 @@ pub trait LangModelInference: MaybeSend + MaybeSync {
 #[derive(Clone)]
 enum LangModelInner {
     Local(LocalLangModel),
-    SSE(SSELangModel),
+    StreamAPI(StreamAPILangModel),
     Custom(CustomLangModel),
 }
 
@@ -106,9 +106,9 @@ impl LangModel {
         })
     }
 
-    pub fn new_sse(model_name: impl Into<String>, api_key: impl Into<String>) -> Self {
+    pub fn new_stream_api(model_name: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            inner: LangModelInner::SSE(SSELangModel::new(model_name, api_key)),
+            inner: LangModelInner::StreamAPI(StreamAPILangModel::new(model_name, api_key)),
         }
     }
 
@@ -138,7 +138,7 @@ impl LangModelInference for LangModel {
     ) -> BoxStream<'a, Result<MessageOutput, String>> {
         match &mut self.inner {
             LangModelInner::Local(model) => model.infer(msgs, tools, config),
-            LangModelInner::SSE(model) => model.infer(msgs, tools, config),
+            LangModelInner::StreamAPI(model) => model.infer(msgs, tools, config),
             LangModelInner::Custom(model) => model.infer(msgs, tools, config),
         }
     }
@@ -283,14 +283,14 @@ mod py {
         }
 
         #[classmethod]
-        #[pyo3(name = "CreateSSE", signature = (model_name, api_key))]
-        fn create_sse<'a>(
+        #[pyo3(name = "CreateStreamAPI", signature = (model_name, api_key))]
+        fn create_stream_api<'a>(
             _cls: &Bound<'a, PyType>,
             model_name: String,
             api_key: String,
         ) -> LangModel {
             LangModel {
-                inner: LangModelInner::SSE(SSELangModel::new(model_name, api_key)),
+                inner: LangModelInner::StreamAPI(StreamAPILangModel::new(model_name, api_key)),
             }
         }
 

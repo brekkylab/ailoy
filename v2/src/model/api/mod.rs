@@ -4,10 +4,10 @@ pub mod anthropic;
 pub mod chat_completion;
 pub mod gemini;
 pub mod openai;
-mod sse;
+mod stream;
 // pub mod xai;
 
-pub(super) use sse::*;
+pub(super) use stream::*;
 
 #[derive(Clone, Debug, PartialEq)]
 struct RequestConfig {
