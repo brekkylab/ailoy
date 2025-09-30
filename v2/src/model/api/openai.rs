@@ -788,6 +788,8 @@ mod dialect_tests {
 
 #[cfg(test)]
 mod api_tests {
+    use std::sync::LazyLock;
+
     use futures::StreamExt as _;
 
     use crate::{
@@ -800,14 +802,17 @@ mod api_tests {
         value::{Delta, FinishReason, Message, MessageDelta, Part, Role, ToolDescBuilder},
     };
 
-    const OPENAI_API_KEY: &str = "";
+    static OPENAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("OPENAI_API_KEY")
+            .expect("Environment variable 'OPENAI_API_KEY' is required for the tests.")
+    });
 
     #[tokio::test]
     async fn infer_simple_chat() {
         let mut model = StreamAPILangModel::new(APIUsage::new(
             APIProvider::OpenAI,
             "gpt-4.1",
-            OPENAI_API_KEY,
+            *OPENAI_API_KEY,
         ));
 
         let msgs =
@@ -833,7 +838,7 @@ mod api_tests {
         let mut model = StreamAPILangModel::new(APIUsage::new(
             APIProvider::OpenAI,
             "gpt-4.1",
-            OPENAI_API_KEY,
+            *OPENAI_API_KEY,
         ));
         let tools = vec![
             ToolDescBuilder::new("temperature")

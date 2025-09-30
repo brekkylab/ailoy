@@ -551,6 +551,8 @@ mod dialect_tests {
 
 #[cfg(test)]
 mod api_tests {
+    use std::sync::LazyLock;
+
     use futures::StreamExt;
 
     use crate::{
@@ -563,12 +565,15 @@ mod api_tests {
         value::{Delta, FinishReason, Message, MessageDelta, Part, Role, ToolDescBuilder},
     };
 
-    const XAI_API_KEY: &str = "";
+    static XAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("XAI_API_KEY")
+            .expect("Environment variable 'XAI_API_KEY' is required for the tests.")
+    });
 
     #[tokio::test]
     async fn infer_simple_chat() {
         let mut model =
-            StreamAPILangModel::new(APIUsage::new(APIProvider::XAI, "grok-4-0709", XAI_API_KEY));
+            StreamAPILangModel::new(APIUsage::new(APIProvider::XAI, "grok-4-0709", *XAI_API_KEY));
 
         let msgs = vec![
             Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
@@ -593,7 +598,7 @@ mod api_tests {
     #[tokio::test]
     async fn infer_tool_call() {
         let mut model =
-            StreamAPILangModel::new(APIUsage::new(APIProvider::XAI, "grok-4-0709", XAI_API_KEY));
+            StreamAPILangModel::new(APIUsage::new(APIProvider::XAI, "grok-4-0709", *XAI_API_KEY));
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -637,7 +642,7 @@ mod api_tests {
     #[tokio::test]
     async fn infer_tool_response() {
         let mut model =
-            StreamAPILangModel::new(APIUsage::new(APIProvider::XAI, "grok-4-0709", XAI_API_KEY));
+            StreamAPILangModel::new(APIUsage::new(APIProvider::XAI, "grok-4-0709", *XAI_API_KEY));
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")

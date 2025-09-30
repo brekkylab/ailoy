@@ -566,7 +566,7 @@ mod dialect_tests {
 
 #[cfg(test)]
 mod api_tests {
-    // use std::sync::LazyLock;
+    use std::sync::LazyLock;
 
     use futures::StreamExt;
 
@@ -580,18 +580,17 @@ mod api_tests {
         value::{Delta, ToolDescBuilder},
     };
 
-    // static GEMINI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
-    //     option_env!("GEMINI_API_KEY")
-    //         .expect("Environment variable 'GEMINI_API_KEY' is required for the tests.")
-    // });
-    const GEMINI_API_KEY: &str = "";
+    static GEMINI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("GEMINI_API_KEY")
+            .expect("Environment variable 'GEMINI_API_KEY' is required for the tests.")
+    });
 
     #[tokio::test]
     async fn infer_simple_chat() {
         let mut model = StreamAPILangModel::new(APIUsage::new(
             APIProvider::Google,
             "gemini-2.5-flash-lite",
-            GEMINI_API_KEY,
+            *GEMINI_API_KEY,
         ));
 
         let msgs = vec![
@@ -620,7 +619,7 @@ mod api_tests {
         let mut model = StreamAPILangModel::new(APIUsage::new(
             APIProvider::Google,
             "gemini-2.5-flash",
-            GEMINI_API_KEY,
+            *GEMINI_API_KEY,
         ));
         let tools = vec![
             ToolDescBuilder::new("temperature")
@@ -668,7 +667,7 @@ mod api_tests {
         let mut model = StreamAPILangModel::new(APIUsage::new(
             APIProvider::Google,
             "gemini-2.5-flash",
-            GEMINI_API_KEY,
+            *GEMINI_API_KEY,
         ));
         let tools = vec![
             ToolDescBuilder::new("temperature")
