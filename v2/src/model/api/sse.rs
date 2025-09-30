@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 
 use crate::{
-    model::{InferenceConfig, LangModelInference, ThinkEffort, api::RequestInfo},
+    model::{InferenceConfig, LangModelInference, ThinkEffort, api::RequestConfig},
     utils::{BoxStream, MaybeSend, MaybeSync},
     value::{FinishReason, Message, MessageOutput, Role, ToolDesc},
 };
@@ -51,7 +51,7 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerEvent> {
 pub(crate) struct SSELangModel {
     name: String,
     make_request: Arc<
-        dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestInfo) -> reqwest::RequestBuilder
+        dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestConfig) -> reqwest::RequestBuilder
             + MaybeSend
             + MaybeSync,
     >,
@@ -97,7 +97,7 @@ impl SSELangModel {
             SSELangModel {
                 name: model.into(),
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
                         super::openai::make_request(&url, &api_key, msgs, tools, req)
                     },
                 ),
@@ -111,7 +111,7 @@ impl SSELangModel {
             SSELangModel {
                 name: model.into(),
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
                         super::gemini::make_request(&url, &api_key, msgs, tools, req)
                     },
                 ),
@@ -137,8 +137,8 @@ impl LangModelInference for SSELangModel {
         // Initialize buffer
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
-        // Build requestinfo
-        let req = RequestInfo {
+        // Build RequestConfig
+        let req = RequestConfig {
             model: Some(self.name.clone()),
             system_message: if let Some(msg) = msgs.get(0)
                 && msg.role == Role::System

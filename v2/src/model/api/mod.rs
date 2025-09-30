@@ -10,7 +10,7 @@ mod sse;
 pub(super) use sse::*;
 
 #[derive(Clone, Debug, PartialEq)]
-struct RequestInfo {
+struct RequestConfig {
     pub model: Option<String>,
 
     pub system_message: Option<String>,

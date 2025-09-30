@@ -1,7 +1,7 @@
 use base64::Engine as _;
 
 use crate::{
-    model::{ServerEvent, api::RequestInfo},
+    model::{ServerEvent, api::RequestConfig},
     to_value,
     value::{
         Marshal, Marshaled, Message, MessageDelta, Part, PartDelta, PartDeltaFunction,
@@ -217,7 +217,7 @@ pub(super) fn make_request(
     api_key: &str,
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
-    config: RequestInfo,
+    config: RequestConfig,
 ) -> reqwest::RequestBuilder {
     let model_name = config.model.unwrap_or_default();
     let mut body = serde_json::json!({

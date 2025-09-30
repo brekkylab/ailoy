@@ -2,7 +2,7 @@ use base64::Engine;
 use indexmap::IndexMap;
 
 use crate::{
-    model::{ServerEvent, ThinkEffort, api::RequestInfo},
+    model::{ServerEvent, ThinkEffort, api::RequestConfig},
     to_value,
     value::{
         FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageOutput, Part, PartDelta,
@@ -101,8 +101,8 @@ impl Marshal<ToolDesc> for GeminiMarshal {
     }
 }
 
-impl Marshal<RequestInfo> for GeminiMarshal {
-    fn marshal(&mut self, req: &RequestInfo) -> Value {
+impl Marshal<RequestConfig> for GeminiMarshal {
+    fn marshal(&mut self, req: &RequestConfig) -> Value {
         let (include_thoughts, thinking_budget) = if let Some(model) = &req.model
             && matches!(
                 model.as_str(),
@@ -255,7 +255,7 @@ pub(super) fn make_request(
     api_key: &str,
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
-    req: RequestInfo,
+    req: RequestConfig,
 ) -> reqwest::RequestBuilder {
     let mut body = serde_json::json!(&Marshaled::<_, GeminiMarshal>::new(&req));
 
