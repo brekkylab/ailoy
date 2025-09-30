@@ -21,7 +21,7 @@ struct Request {
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
     config: InferenceConfig,
-    tx_resp: mpsc::Sender<Result<MessageOutput, String>>,
+    tx_resp: mpsc::UnboundedSender<Result<MessageOutput, String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -62,7 +62,7 @@ impl TryFromCache for LocalLanguageModel {
     fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Result<Self, String>> {
         Box::pin(async move {
             let mut body = LocalLanguageModelImpl::try_from_contents(contents).await?;
-            let (tx, mut rx) = mpsc::channel(8);
+            let (tx, mut rx) = mpsc::channel(1);
             tokio::spawn(async move {
                 while let Some(req) = rx.recv().await {
                     let Request {
@@ -73,7 +73,7 @@ impl TryFromCache for LocalLanguageModel {
                     } = req;
                     let mut strm = body.infer(msgs, tools, config);
                     while let Some(resp) = strm.next().await {
-                        if tx_resp.send(resp).await.is_err() {
+                        if tx_resp.send(resp).is_err() {
                             break;
                         }
                     }
@@ -91,7 +91,7 @@ impl LanguageModel for LocalLanguageModel {
         tools: Vec<ToolDesc>,
         config: InferenceConfig,
     ) -> crate::utils::BoxStream<'a, Result<MessageOutput, String>> {
-        let (tx_resp, mut rx_resp) = tokio::sync::mpsc::channel(1024);
+        let (tx_resp, mut rx_resp) = tokio::sync::mpsc::unbounded_channel();
         let req = Request {
             msgs,
             tools,
