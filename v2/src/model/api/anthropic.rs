@@ -539,6 +539,27 @@ mod dialect_tests {
     }
 
     #[test]
+    pub fn serialize_tool_response() {
+        let msgs = vec![
+            Message::new(Role::Tool)
+                .with_id("funcid_123456")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("funcid_7890ab")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+        ];
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","content":[{"type":"tool_result","tool_use_id":"funcid_123456","content":"{\"temperature\":30,\"unit\":\"celsius\"}"}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"funcid_7890ab","content":"{\"temperature\":86,\"unit\":\"fahrenheit\"}"}]}]"#
+        );
+    }
+
+    #[test]
     pub fn serialize_image() {
         let raw_pixels: Vec<u8> = vec![
             10, 20, 30, // First row
