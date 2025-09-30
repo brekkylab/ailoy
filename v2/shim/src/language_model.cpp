@@ -185,7 +185,6 @@ void tvm_language_model_t::prefill(const std::vector<uint32_t> &tokens) {
 }
 
 void tvm_language_model_t::prefill_from_rs(rust::Slice<const uint32_t> tokens) {
-  std::lock_guard<std::mutex> lk(m_);
   std::vector<uint32_t> converted(tokens.begin(), tokens.end());
   return prefill(converted);
 }
@@ -226,7 +225,6 @@ NDArray tvm_language_model_t::decode(uint32_t last_token) {
 }
 
 DLPackTensor tvm_language_model_t::decode_from_rs(uint32_t last_token) {
-  std::lock_guard<std::mutex> lk(m_);
   auto raw_dlpack_ptr = std::move(decode(last_token)).ToDLPackVersioned();
   auto safe_managed_tensor =
       dlpack_bridge::create_managed_tensor(raw_dlpack_ptr);
@@ -247,7 +245,6 @@ uint32_t tvm_language_model_t::sample(NDArray logits) {
 }
 
 uint32_t tvm_language_model_t::sample_from_rs(DLPackTensor logits) {
-  std::lock_guard<std::mutex> lk(m_);
   auto raw_dlpack_ptr = std::move(logits.inner)->release_tensor();
   auto v = tvm::runtime::NDArray::FromDLPackVersioned(raw_dlpack_ptr);
   return sample(v);

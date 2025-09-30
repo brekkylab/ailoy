@@ -1,6 +1,8 @@
 // mod agent;
+pub(crate) mod base;
+pub(crate) mod cache_progress;
 // mod base;
-mod cache_progress;
+// mod cache_progress;
 // mod embedding_model;
 // mod language_model;
 // mod tool;
@@ -11,7 +13,7 @@ mod cache_progress;
 //     PyAgent as Agent, PyAgentRunIterator as AgentRunIterator,
 //     PyAgentRunSyncIterator as AgentRunSyncIterator,
 // };
-use cache_progress::PyCacheProgress as CacheProgress;
+// use cache_progress::PyCacheProgress as CacheProgress;
 // use embedding_model::{
 //     PyBaseEmbeddingModel as BaseEmbeddingModel, PyLocalEmbeddingModel as LocalEmbeddingModel,
 // };
@@ -74,6 +76,8 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // m.add_class::<VectorStoreGetResult>()?;
     // m.add_class::<VectorStoreRetrieveResult>()?;
     // m.add_class::<XAILanguageModel>()?;
+    m.add_class::<crate::model::EmbeddingModel>()?;
+    m.add_class::<crate::model::LangModel>()?;
     m.add_class::<crate::value::FinishReason>()?;
     m.add_class::<crate::value::Message>()?;
     m.add_class::<crate::value::MessageDelta>()?;

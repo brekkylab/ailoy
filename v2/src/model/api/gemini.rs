@@ -2,7 +2,7 @@ use base64::Engine;
 use indexmap::IndexMap;
 
 use crate::{
-    model::{ThinkEffort, api::RequestInfo, sse::ServerEvent},
+    model::{ServerEvent, ThinkEffort, api::RequestConfig},
     to_value,
     value::{
         FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageOutput, Part, PartDelta,
@@ -101,8 +101,8 @@ impl Marshal<ToolDesc> for GeminiMarshal {
     }
 }
 
-impl Marshal<RequestInfo> for GeminiMarshal {
-    fn marshal(&mut self, req: &RequestInfo) -> Value {
+impl Marshal<RequestConfig> for GeminiMarshal {
+    fn marshal(&mut self, req: &RequestConfig) -> Value {
         let (include_thoughts, thinking_budget) = if let Some(model) = &req.model
             && matches!(
                 model.as_str(),
@@ -255,7 +255,7 @@ pub(super) fn make_request(
     api_key: &str,
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
-    req: RequestInfo,
+    req: RequestConfig,
 ) -> reqwest::RequestBuilder {
     let mut body = serde_json::json!(&Marshaled::<_, GeminiMarshal>::new(&req));
 
@@ -513,7 +513,7 @@ mod sse_tests {
 
     use crate::{
         debug,
-        model::{InferenceConfig, LanguageModel as _, sse::SSELanguageModel},
+        model::{InferenceConfig, LangModelInference as _, StreamAPILangModel},
         value::Delta,
     };
 
@@ -530,14 +530,14 @@ mod sse_tests {
         use super::*;
         use crate::value::{Part, Role};
 
-        let mut model = SSELanguageModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
+        let mut model = StreamAPILangModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
 
         let msgs = vec![
             Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
             Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
         ];
         let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.run(msgs, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
         let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -564,7 +564,7 @@ mod sse_tests {
             value::{Part, Role, ToolDescBuilder},
         };
 
-        let mut model = SSELanguageModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
+        let mut model = StreamAPILangModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -581,7 +581,7 @@ mod sse_tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let mut strm = model.run(msgs, tools, InferenceConfig::default());
+        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
         while let Some(output_opt) = strm.next().await {

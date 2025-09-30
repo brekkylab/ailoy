@@ -4,11 +4,13 @@ pub mod anthropic;
 pub mod chat_completion;
 pub mod gemini;
 pub mod openai;
-pub mod sse;
+mod stream;
 // pub mod xai;
 
+pub(super) use stream::*;
+
 #[derive(Clone, Debug, PartialEq)]
-struct RequestInfo {
+struct RequestConfig {
     pub model: Option<String>,
 
     pub system_message: Option<String>,

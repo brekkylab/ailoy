@@ -3,13 +3,13 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 
 use crate::{
-    model::{InferenceConfig, LanguageModel, ThinkEffort, api::RequestInfo},
+    model::{InferenceConfig, LangModelInference, api::RequestConfig},
     utils::{BoxStream, MaybeSend, MaybeSync},
     value::{FinishReason, Message, MessageOutput, Role, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
-pub struct ServerEvent {
+pub(crate) struct ServerEvent {
     pub event: String,
     pub data: String,
 }
@@ -48,28 +48,28 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerEvent> {
 }
 
 #[derive(Clone)]
-pub struct SSELanguageModel {
-    model: String,
+pub(crate) struct StreamAPILangModel {
+    name: String,
     make_request: Arc<
-        dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestInfo) -> reqwest::RequestBuilder
+        dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestConfig) -> reqwest::RequestBuilder
             + MaybeSend
             + MaybeSync,
     >,
     handle_event: Arc<dyn Fn(ServerEvent) -> MessageOutput + MaybeSend + MaybeSync>,
 }
 
-impl SSELanguageModel {
+impl StreamAPILangModel {
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         let model = model.into();
         let ret = if model.starts_with("gpt") || model.starts_with("o") {
             // OpenAI models
-            SSELanguageModel::with_url(model, api_key, "https://api.openai.com/v1/responses")
+            StreamAPILangModel::with_url(model, api_key, "https://api.openai.com/v1/responses")
         } else if model.starts_with("claude") {
             // Anthropic models
             todo!()
         } else if model.starts_with("gemini") {
             // Gemini models
-            SSELanguageModel::with_url(
+            StreamAPILangModel::with_url(
                 model,
                 api_key,
                 "https://generativelanguage.googleapis.com/v1beta/models",
@@ -94,10 +94,10 @@ impl SSELanguageModel {
 
         let ret = if model.starts_with("gpt") || model.starts_with("o") {
             // OpenAI models
-            SSELanguageModel {
-                model: model.into(),
+            StreamAPILangModel {
+                name: model.into(),
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
                         super::openai::make_request(&url, &api_key, msgs, tools, req)
                     },
                 ),
@@ -108,10 +108,10 @@ impl SSELanguageModel {
             todo!()
         } else if model.starts_with("gemini") {
             // Gemini models
-            SSELanguageModel {
-                model: model.into(),
+            StreamAPILangModel {
+                name: model.into(),
                 make_request: Arc::new(
-                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestInfo| {
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
                         super::gemini::make_request(&url, &api_key, msgs, tools, req)
                     },
                 ),
@@ -127,8 +127,8 @@ impl SSELanguageModel {
     }
 }
 
-impl LanguageModel for SSELanguageModel {
-    fn run<'a>(
+impl LangModelInference for StreamAPILangModel {
+    fn infer<'a>(
         self: &'a mut Self,
         mut msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
@@ -137,9 +137,9 @@ impl LanguageModel for SSELanguageModel {
         // Initialize buffer
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
-        // Build requestinfo
-        let req = RequestInfo {
-            model: Some(self.model.clone()),
+        // Build RequestConfig
+        let req = RequestConfig {
+            model: Some(self.name.clone()),
             system_message: if let Some(msg) = msgs.get(0)
                 && msg.role == Role::System
             {
@@ -156,14 +156,10 @@ impl LanguageModel for SSELanguageModel {
                 None
             },
             stream: true,
-            think_effort: if let Some(think_effort) = config.think_effort.clone() {
-                think_effort
-            } else {
-                ThinkEffort::default()
-            },
-            temperature: config.temperature.clone().map(|v| *v),
-            top_p: config.top_p.clone().map(|v| *v),
-            max_tokens: config.max_tokens.clone(),
+            think_effort: config.think_effort,
+            temperature: config.temperature,
+            top_p: config.top_p,
+            max_tokens: config.max_tokens,
         };
 
         // Send request

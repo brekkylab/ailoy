@@ -13,8 +13,6 @@ pub struct PartFunction {
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
 )]
 #[serde(untagged)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 pub enum PartImageColorspace {
     #[strum(serialize = "grayscale")]
     #[serde(rename = "grayscale")]
