@@ -12,10 +12,6 @@ use crate::utils::{MaybeSend, MaybeSync};
 pub type Embedding = Vec<f32>;
 pub type Metadata = Map<String, Json>;
 
-pub struct VectorStoreKey {
-    id: String,
-}
-
 #[derive(Debug)]
 pub struct VectorStoreAddInput {
     pub embedding: Embedding,
