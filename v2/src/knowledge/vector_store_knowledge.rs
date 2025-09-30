@@ -82,7 +82,7 @@ mod tests {
         knowledge::KnowledgeTool,
         model::{EmbeddingModel, LangModel},
         tool::Tool,
-        value::{Delta, MessageDelta, Part, Value},
+        value::{Part, Value},
         vector_store::{FaissStore, VectorStoreAddInput},
     };
 
@@ -146,13 +146,12 @@ mod tests {
             agent_guard.set_knowledge(knowledge.clone());
 
             let mut strm = Box::pin(agent_guard.run(vec![Part::text("What is Ailoy?")]));
-            let mut delta = MessageDelta::new();
             while let Some(out_opt) = strm.next().await {
                 let out = out_opt.unwrap();
-                delta = delta.aggregate(out.delta).unwrap();
+                if out.aggregated.is_some() {
+                    println!("{:?}", out.aggregated.unwrap());
+                }
             }
-            let output = delta.finish().unwrap();
-            println!("{:?}", output);
         }
         // Remove knowledge
         {
@@ -181,13 +180,12 @@ mod tests {
                 "What is Ailoy? Answer by calling tool '{}'",
                 tool.get_description().name
             ))]));
-            let mut delta = MessageDelta::new();
             while let Some(output) = strm.next().await {
                 let output = output.unwrap();
-                delta = delta.aggregate(output.delta).unwrap();
+                if output.aggregated.is_some() {
+                    println!("{:?}", output.aggregated.unwrap());
+                }
             }
-            let output = delta.finish().unwrap();
-            println!("{:?}", output);
         }
 
         Ok(())

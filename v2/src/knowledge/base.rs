@@ -137,11 +137,7 @@ mod tests {
     use futures::stream::StreamExt;
 
     use super::*;
-    use crate::{
-        agent::Agent,
-        model::LangModel,
-        value::{Delta, MessageDelta, Part},
-    };
+    use crate::{agent::Agent, model::LangModel, value::Part};
 
     #[derive(Debug)]
     struct CustomKnowledge {}
@@ -176,7 +172,6 @@ mod tests {
         let knowledge = CustomKnowledge {};
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
         let mut agent = Agent::new(model, vec![]);
-        let mut delta = MessageDelta::new();
 
         agent.set_knowledge(knowledge);
 
@@ -185,7 +180,7 @@ mod tests {
         }]));
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
-            delta = delta.aggregate(out.delta).unwrap();
+            println!("{:?}", out);
         }
 
         Ok(())

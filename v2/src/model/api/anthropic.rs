@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Default)]
-pub struct AnthropicMarshal;
+struct AnthropicMarshal;
 
 fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
     let part_to_value = |part: &Part| -> Value {

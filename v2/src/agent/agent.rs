@@ -8,7 +8,7 @@ use crate::{
     model::{InferenceConfig, LangModel, LangModelInference as _},
     tool::Tool,
     utils::log,
-    value::{Delta, FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta, Role},
+    value::{Delta, FinishReason, Message, MessageDelta, Part, PartDelta, Role},
 };
 
 #[derive(Clone)]
@@ -18,6 +18,17 @@ pub struct Agent {
     messages: Arc<Mutex<Vec<Message>>>,
     knowledge: Option<Arc<dyn Knowledge>>,
     system_message_renderer: Arc<SystemMessageRenderer>,
+}
+
+/// The yielded value from agent.run().
+#[derive(Debug, Clone)]
+pub struct AgentResponse {
+    /// The message delta per iteration.
+    pub delta: MessageDelta,
+    /// Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
+    pub finish_reason: Option<FinishReason>,
+    /// Optional aggregated message.
+    pub aggregated: Option<Message>,
 }
 
 impl Agent {
@@ -116,7 +127,7 @@ impl Agent {
     pub fn run<'a>(
         &'a mut self,
         contents: Vec<Part>,
-    ) -> impl Stream<Item = Result<MessageOutput, String>> {
+    ) -> impl Stream<Item = Result<AgentResponse, String>> {
         // Messages used for the current run round
         let mut messages: Vec<Message> = vec![];
         // For storing message history except system message
@@ -163,16 +174,26 @@ impl Agent {
                 .collect::<Vec<_>>();
             loop {
                 let mut assistant_msg_delta = MessageDelta::new().with_role(Role::Assistant);
+                let mut assistant_msg: Option<Message> = None;
                 {
                     let mut model = self.lm.clone();
                     let mut strm = model.infer(messages.clone(), tool_descs.clone(), InferenceConfig::default());
                     while let Some(out) = strm.next().await {
                         let out = out?;
-                        yield out.clone();
-                        assistant_msg_delta = assistant_msg_delta.aggregate(out.delta).map_err(|_| String::from("Aggregation failed"))?;
+                        assistant_msg_delta = assistant_msg_delta.aggregate(out.clone().delta).map_err(|_| String::from("Aggregation failed"))?;
+
+                        // Message aggregation is finalized if finish_reason does exist
+                        if out.finish_reason.is_some() {
+                            assistant_msg = Some(assistant_msg_delta.clone().finish()?);
+                        }
+                        yield AgentResponse {
+                            delta: out.delta.clone(),
+                            finish_reason: out.finish_reason.clone(),
+                            aggregated: assistant_msg.clone(),
+                        };
                     }
                 }
-                let assistant_msg = assistant_msg_delta.finish()?;
+                let assistant_msg = assistant_msg.unwrap();
                 // Add assistant message to messages
                 messages.push(assistant_msg.clone());
                 // Add assistant message to histories
@@ -190,7 +211,11 @@ impl Agent {
                             tool_msg_delta = tool_msg_delta.with_id(id);
                             tool_msg = tool_msg.with_id(id);
                         }
-                        yield MessageOutput{delta: tool_msg_delta, finish_reason: Some(FinishReason::Stop())};
+                        yield AgentResponse {
+                            delta: tool_msg_delta,
+                            finish_reason: Some(FinishReason::Stop()),
+                            aggregated: Some(tool_msg.clone()),
+                        };
 
                         // Add tool message to messages
                         messages.push(tool_msg.clone());
@@ -207,28 +232,28 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
-    // #[cfg(any(target_family = "unix", target_family = "windows"))]
-    // #[tokio::test]
-    // async fn run_simple_chat() -> anyhow::Result<()> {
-    //     use futures::StreamExt;
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn run_simple_chat() -> anyhow::Result<()> {
+        use futures::StreamExt;
 
-    //     use super::*;
-    //     use crate::model::LangModel;
+        use super::*;
+        use crate::model::LangModel;
 
-    //     let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
-    //     let mut agent = Agent::new(model, Vec::new());
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
+        let mut agent = Agent::new(model, Vec::new());
 
-    //     let mut strm = Box::pin(agent.run(vec![Part::text("Hi what's your name?")]));
-    //     let mut delta = MessageDelta::new();
-    //     while let Some(output) = strm.next().await {
-    //         let output = output.unwrap();
-    //         delta = delta.aggregate(output.delta).unwrap();
-    //     }
-    //     let output = delta.finish().unwrap();
-    //     println!("{:?}", output);
+        let mut strm = Box::pin(agent.run(vec![Part::text("Hi what's your name?")]));
+        while let Some(output) = strm.next().await {
+            let output = output.unwrap();
+            println!("delta: {:?}", output.delta);
+            if output.aggregated.is_some() {
+                println!("message: {:?}", output.aggregated.unwrap());
+            }
+        }
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
     // #[cfg(any(target_family = "unix", target_family = "windows"))]
     // #[tokio::test]
