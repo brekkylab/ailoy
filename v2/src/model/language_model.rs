@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+use ailoy_macros::maybe_send_sync;
 use futures::StreamExt as _;
 use serde::Serialize;
 
 use crate::{
     cache::CacheProgress,
     model::{CustomLangModel, CustomLangModelInferFunc, LocalLangModel, StreamAPILangModel},
-    utils::{BoxStream, MaybeSend, MaybeSync},
+    utils::BoxStream,
     value::{Message, MessageOutput, ToolDesc},
 };
 
@@ -57,7 +58,8 @@ pub struct InferenceConfig {
     pub grammar: Grammar,
 }
 
-pub trait LangModelInference: MaybeSend + MaybeSync {
+#[maybe_send_sync]
+pub trait LangModelInference {
     /// Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
     fn infer<'a>(
         &'a mut self,

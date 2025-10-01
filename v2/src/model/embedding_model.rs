@@ -1,16 +1,16 @@
-use ailoy_macros::multi_platform_async_trait;
+use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 use anyhow::Result;
 use futures::{Stream, StreamExt as _};
 
 use crate::{
     cache::{Cache, CacheProgress},
     model::local::LocalEmbeddingModel,
-    utils::{MaybeSend, MaybeSync},
     vector_store::Embedding,
 };
 
+#[maybe_send_sync]
 #[multi_platform_async_trait]
-pub trait EmbeddingModelInference: MaybeSend + MaybeSync {
+pub trait EmbeddingModelInference {
     async fn infer(self: &Self, text: String) -> Result<Embedding>;
 }
 

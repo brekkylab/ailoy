@@ -3,18 +3,16 @@ pub mod mcp;
 
 use std::{any::TypeId, fmt::Debug, sync::Arc};
 
-use ailoy_macros::multi_platform_async_trait;
+use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 pub use builtin::*;
 use downcast_rs::{Downcast, impl_downcast};
 pub use mcp::*;
 
-use crate::{
-    utils::{MaybeSend, MaybeSync},
-    value::{ToolDesc, Value},
-};
+use crate::value::{ToolDesc, Value};
 
+#[maybe_send_sync]
 #[multi_platform_async_trait]
-pub trait Tool: Debug + Downcast + MaybeSend + MaybeSync {
+pub trait Tool: Debug + Downcast {
     fn get_description(&self) -> ToolDesc;
 
     async fn run(&self, args: Value) -> Result<Value, String>;

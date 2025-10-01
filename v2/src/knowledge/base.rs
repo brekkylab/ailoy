@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
-use ailoy_macros::multi_platform_async_trait;
+use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-// use serde_json::{Map, Value, json};
 use crate::{
     to_value,
     tool::Tool,
-    utils::{MaybeSend, MaybeSync},
     value::{ToolDesc, Value},
 };
 
@@ -20,8 +18,9 @@ pub struct KnowledgeRetrieveResult {
     pub metadata: Option<Metadata>,
 }
 
+#[maybe_send_sync]
 #[multi_platform_async_trait]
-pub trait Knowledge: std::fmt::Debug + MaybeSend + MaybeSync {
+pub trait Knowledge: std::fmt::Debug {
     fn name(&self) -> String;
 
     async fn retrieve(&self, query: String) -> Result<Vec<KnowledgeRetrieveResult>>;
