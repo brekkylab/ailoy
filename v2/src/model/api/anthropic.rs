@@ -434,14 +434,18 @@ pub(super) fn make_request(
         );
     }
 
-    reqwest::Client::new()
+    let builder = reqwest::Client::new()
         .request(reqwest::Method::POST, url)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
-        .header("anthropic-dangerous-direct-browser-access", "true")
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::ACCEPT, "text/event-stream")
-        .body(body.to_string())
+        .body(body.to_string());
+
+    #[cfg(target_arch = "wasm32")]
+    let builder = builder.header("anthropic-dangerous-direct-browser-access", "true");
+
+    builder
 }
 
 pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
