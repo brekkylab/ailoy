@@ -1,5 +1,3 @@
-use crate::model::ThinkEffort;
-
 pub mod anthropic;
 pub mod chat_completion;
 pub mod gemini;
@@ -17,7 +15,7 @@ struct RequestConfig {
 
     pub stream: bool,
 
-    pub think_effort: ThinkEffort,
+    pub think_effort: crate::model::ThinkEffort,
 
     pub temperature: Option<f64>,
 
@@ -27,20 +25,27 @@ struct RequestConfig {
 }
 
 #[derive(Debug, Clone)]
-pub enum APIProvider {
+pub enum APISpecification {
+    ChatCompletion,
     OpenAI,
-    Google,
-    Anthropic,
-    XAI,
+    Gemini,
+    Claude,
+
+    // these variants exist as alias of an existing variant.
+    Responses, // alias of OpenAI
+    Grok,      // alias of ChatCompletion with custom url
 }
 
-impl APIProvider {
+impl APISpecification {
     pub fn default_url(&self) -> &'static str {
         match self {
-            APIProvider::OpenAI => "https://api.openai.com/v1/responses",
-            APIProvider::Google => "https://generativelanguage.googleapis.com/v1beta/models",
-            APIProvider::Anthropic => "https://api.anthropic.com/v1/messages",
-            APIProvider::XAI => "https://api.x.ai/v1/chat/completions",
+            APISpecification::ChatCompletion => "https://api.openai.com/v1/chat/completions",
+            APISpecification::OpenAI | APISpecification::Responses => {
+                "https://api.openai.com/v1/responses"
+            }
+            APISpecification::Gemini => "https://generativelanguage.googleapis.com/v1beta/models",
+            APISpecification::Claude => "https://api.anthropic.com/v1/messages",
+            APISpecification::Grok => "https://api.x.ai/v1/chat/completions",
         }
     }
 }

@@ -594,7 +594,9 @@ mod api_tests {
     use super::*;
     use crate::{
         debug,
-        model::{InferenceConfig, LangModelInference as _, StreamAPILangModel, api::APIProvider},
+        model::{
+            InferenceConfig, LangModelInference as _, StreamAPILangModel, api::APISpecification,
+        },
         value::{Delta, ToolDescBuilder},
     };
 
@@ -606,7 +608,7 @@ mod api_tests {
     #[tokio::test]
     async fn infer_simple_chat() {
         let mut model = StreamAPILangModel::new(
-            APIProvider::Google,
+            APISpecification::Gemini,
             "gemini-2.5-flash-lite",
             *GEMINI_API_KEY,
         );
@@ -634,8 +636,11 @@ mod api_tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_call() {
-        let mut model =
-            StreamAPILangModel::new(APIProvider::Google, "gemini-2.5-flash", *GEMINI_API_KEY);
+        let mut model = StreamAPILangModel::new(
+            APISpecification::Gemini,
+            "gemini-2.5-flash",
+            *GEMINI_API_KEY,
+        );
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -679,8 +684,11 @@ mod api_tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_response() {
-        let mut model =
-            StreamAPILangModel::new(APIProvider::Google, "gemini-2.5-flash", *GEMINI_API_KEY);
+        let mut model = StreamAPILangModel::new(
+            APISpecification::Gemini,
+            "gemini-2.5-flash",
+            *GEMINI_API_KEY,
+        );
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")

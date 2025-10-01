@@ -5,7 +5,7 @@ use futures::StreamExt as _;
 use crate::{
     model::{
         InferenceConfig, LangModelInference,
-        api::{APIProvider, RequestConfig},
+        api::{APISpecification, RequestConfig},
     },
     utils::{BoxStream, MaybeSend, MaybeSync},
     value::{Message, MessageOutput, Role, ToolDesc},
@@ -63,16 +63,16 @@ pub(crate) struct StreamAPILangModel {
 
 impl StreamAPILangModel {
     pub fn new(
-        provider: APIProvider,
+        spec: APISpecification,
         model: impl Into<String>,
         api_key: impl Into<String>,
     ) -> Self {
-        let url = provider.default_url();
-        Self::with_url(provider, model, api_key, url)
+        let url = spec.default_url();
+        Self::with_url(spec, model, api_key, url)
     }
 
     pub fn with_url(
-        provider: APIProvider,
+        spec: APISpecification,
         model: impl Into<String>,
         api_key: impl Into<String>,
         url: impl Into<String>,
@@ -81,8 +81,8 @@ impl StreamAPILangModel {
         let api_key = api_key.into();
         let url = url.into();
 
-        match provider {
-            APIProvider::OpenAI => StreamAPILangModel {
+        match spec {
+            APISpecification::OpenAI | APISpecification::Responses => StreamAPILangModel {
                 name: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
@@ -91,7 +91,7 @@ impl StreamAPILangModel {
                 ),
                 handle_event: Arc::new(super::openai::handle_event),
             },
-            APIProvider::Google => StreamAPILangModel {
+            APISpecification::Gemini => StreamAPILangModel {
                 name: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
@@ -100,7 +100,7 @@ impl StreamAPILangModel {
                 ),
                 handle_event: Arc::new(super::gemini::handle_event),
             },
-            APIProvider::Anthropic => StreamAPILangModel {
+            APISpecification::Claude => StreamAPILangModel {
                 name: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
@@ -109,7 +109,7 @@ impl StreamAPILangModel {
                 ),
                 handle_event: Arc::new(super::anthropic::handle_event),
             },
-            APIProvider::XAI => StreamAPILangModel {
+            APISpecification::ChatCompletion | APISpecification::Grok => StreamAPILangModel {
                 name: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {

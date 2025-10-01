@@ -1,6 +1,7 @@
 use base64::Engine;
 
 use crate::{
+    debug,
     model::{ServerEvent, ThinkEffort, api::RequestConfig},
     to_value,
     value::{
@@ -127,14 +128,19 @@ impl Marshal<RequestConfig> for ChatCompletionMarshal {
         };
 
         // "grok-4", "grok-code-fast-1" are reasoning models, but only treating reasoning internally.
-        let is_reasoning_model = model.starts_with("grok-3-mini");
+        let is_reasoning_model = model.starts_with("o")
+            || model.starts_with("gpt-5")
+            || model.starts_with("grok-3-mini");
 
         let reasoning_effort = is_reasoning_model
             .then(|| {
                 let effort = match &config.think_effort {
-                    ThinkEffort::Disable => return Value::Null,
-                    // grok doesn't have 'medium', setting default option as 'low'.
-                    ThinkEffort::Enable | ThinkEffort::Medium | ThinkEffort::Low => "low",
+                    ThinkEffort::Disable => {
+                        debug!("Cannot disable thinking with this model \"{}\"", model);
+                        return Value::Null;
+                    }
+                    ThinkEffort::Enable | ThinkEffort::Medium => return Value::Null,
+                    ThinkEffort::Low => "low",
                     ThinkEffort::High => "high",
                 };
                 Value::String(effort.to_owned())
@@ -321,10 +327,11 @@ pub(super) fn handle_event(evt: ServerEvent) -> MessageOutput {
         .and_then(|v| v.as_str())
         .map(|reason| match reason {
             "stop" => FinishReason::Stop(),
+            "end_turn" => FinishReason::Stop(),
             "length" => FinishReason::Length(),
             "tool_calls" => FinishReason::ToolCall(),
             "content_filter" => {
-                FinishReason::Refusal("Model output violated XAI's safety policy.".to_owned())
+                FinishReason::Refusal("Model output violated Provider's safety policy.".to_owned())
             }
             reason => FinishReason::Refusal(format!("reason: {}", reason)),
         });
@@ -401,6 +408,27 @@ mod dialect_tests {
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"assistant","content":[{"type":"text","text":"Calling the functions..."}],"tool_calls":[{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"celsius\"}"},"id":"funcid_123456"},{"type":"function","function":{"name":"temperature","arguments":"{\"unit\":\"fahrenheit\"}"},"id":"funcid_7890ab"}]}"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_tool_response() {
+        let msgs = vec![
+            Message::new(Role::Tool)
+                .with_id("funcid_123456")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("funcid_7890ab")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+        ];
+        let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"tool","tool_call_id":"funcid_123456","content":[{"type":"text","text":"{\"temperature\":30,\"unit\":\"celsius\"}"}]},{"role":"tool","tool_call_id":"funcid_7890ab","content":[{"type":"text","text":"{\"temperature\":86,\"unit\":\"fahrenheit\"}"}]}]"#
         );
     }
 
@@ -550,26 +578,29 @@ mod dialect_tests {
 }
 
 #[cfg(test)]
-mod api_tests {
+mod openai_chatcompletion_api_tests {
     use std::sync::LazyLock;
 
     use futures::StreamExt;
 
     use crate::{
         debug,
-        model::{InferenceConfig, LangModelInference as _, StreamAPILangModel, api::APIProvider},
+        model::{
+            InferenceConfig, LangModelInference as _, StreamAPILangModel, api::APISpecification,
+        },
         to_value,
         value::{Delta, FinishReason, Message, MessageDelta, Part, Role, ToolDescBuilder},
     };
 
-    static XAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
-        option_env!("XAI_API_KEY")
-            .expect("Environment variable 'XAI_API_KEY' is required for the tests.")
+    static OPENAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("OPENAI_API_KEY")
+            .expect("Environment variable 'OPENAI_API_KEY' is required for the tests.")
     });
 
     #[tokio::test]
     async fn infer_simple_chat() {
-        let mut model = StreamAPILangModel::new(APIProvider::XAI, "grok-4-0709", *XAI_API_KEY);
+        let mut model =
+            StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
 
         let msgs = vec![
             Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
@@ -593,7 +624,8 @@ mod api_tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_call() {
-        let mut model = StreamAPILangModel::new(APIProvider::XAI, "grok-4-0709", *XAI_API_KEY);
+        let mut model =
+            StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -636,7 +668,152 @@ mod api_tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_response() {
-        let mut model = StreamAPILangModel::new(APIProvider::XAI, "grok-4-0709", *XAI_API_KEY);
+        let mut model =
+            StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
+        ];
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?")]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "call_DF3wZtLHv5eBNfURjvI8MULJ",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "fahrenheit"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("call_DF3wZtLHv5eBNfURjvI8MULJ")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "call_sSoeWuqaIeAww669Wf7W48rk",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "celsius"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("call_sSoeWuqaIeAww669Wf7W48rk")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+        ];
+        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
+        }
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
+    }
+}
+
+#[cfg(test)]
+mod grok_api_tests {
+    use std::sync::LazyLock;
+
+    use futures::StreamExt;
+
+    use crate::{
+        debug,
+        model::{
+            InferenceConfig, LangModelInference as _, StreamAPILangModel, api::APISpecification,
+        },
+        to_value,
+        value::{Delta, FinishReason, Message, MessageDelta, Part, Role, ToolDescBuilder},
+    };
+
+    static XAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("XAI_API_KEY")
+            .expect("Environment variable 'XAI_API_KEY' is required for the tests.")
+    });
+
+    #[tokio::test]
+    async fn infer_simple_chat() {
+        let mut model =
+            StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
+
+        let msgs = vec![
+            Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
+            Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
+        ];
+        let mut assistant_msg = MessageDelta::new();
+        let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
+        }
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_call() {
+        let mut model =
+            StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
+        ];
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?")]),
+        ];
+        let mut assistant_msg = MessageDelta::default();
+        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
+        }
+        assert_eq!(finish_reason, Some(FinishReason::ToolCall()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!(
+                "{:?}",
+                message.tool_calls.first().and_then(|f| f.as_function())
+            );
+            message.tool_calls.len() > 0
+                && message
+                    .tool_calls
+                    .first()
+                    .and_then(|f| f.as_function())
+                    .map(|f| f.1 == "temperature")
+                    .unwrap_or(false)
+        }));
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_response() {
+        let mut model =
+            StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")

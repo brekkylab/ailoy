@@ -787,7 +787,9 @@ mod api_tests {
     use super::*;
     use crate::{
         debug,
-        model::{APIProvider, InferenceConfig, LangModelInference as _, api::StreamAPILangModel},
+        model::{
+            APISpecification, InferenceConfig, LangModelInference as _, api::StreamAPILangModel,
+        },
         to_value,
         value::{Delta, Part, Role, ToolDescBuilder},
     };
@@ -800,7 +802,7 @@ mod api_tests {
     #[tokio::test]
     async fn infer_simple_chat() {
         let mut model = StreamAPILangModel::new(
-            APIProvider::Anthropic,
+            APISpecification::Claude,
             "claude-3-haiku-20240307",
             *ANTHROPIC_API_KEY,
         );
@@ -828,7 +830,7 @@ mod api_tests {
         use crate::model::InferenceConfig;
 
         let mut model = StreamAPILangModel::new(
-            APIProvider::Anthropic,
+            APISpecification::Claude,
             "claude-3-haiku-20240307",
             *ANTHROPIC_API_KEY,
         );
@@ -878,7 +880,7 @@ mod api_tests {
         use crate::model::InferenceConfig;
 
         let mut model = StreamAPILangModel::new(
-            APIProvider::Anthropic,
+            APISpecification::Claude,
             "claude-3-haiku-20240307",
             *ANTHROPIC_API_KEY,
         );
