@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use ailoy_macros::maybe_send_sync;
 use futures::StreamExt as _;
 
 use crate::{
     model::{InferenceConfig, LangModelInference, api::RequestConfig},
-    utils::{BoxStream, MaybeSend, MaybeSync},
+    utils::BoxStream,
     value::{FinishReason, Message, MessageOutput, Role, ToolDesc},
 };
 
@@ -47,15 +48,18 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<ServerEvent> {
     None
 }
 
+#[maybe_send_sync]
+type MakeRequestFunc =
+    dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestConfig) -> reqwest::RequestBuilder;
+
+#[maybe_send_sync]
+type HandleRequestFunc = dyn Fn(ServerEvent) -> MessageOutput;
+
 #[derive(Clone)]
 pub(crate) struct StreamAPILangModel {
     name: String,
-    make_request: Arc<
-        dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestConfig) -> reqwest::RequestBuilder
-            + MaybeSend
-            + MaybeSync,
-    >,
-    handle_event: Arc<dyn Fn(ServerEvent) -> MessageOutput + MaybeSend + MaybeSync>,
+    make_request: Arc<MakeRequestFunc>,
+    handle_event: Arc<HandleRequestFunc>,
 }
 
 impl StreamAPILangModel {

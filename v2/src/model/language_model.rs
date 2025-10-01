@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::{
     cache::CacheProgress,
-    model::{CustomLangModel, LocalLangModel, StreamAPILangModel},
+    model::{CustomLangModel, CustomLangModelInferFunc, LocalLangModel, StreamAPILangModel},
     utils::{BoxStream, MaybeSend, MaybeSync},
     value::{Message, MessageOutput, ToolDesc},
 };
@@ -112,19 +112,9 @@ impl LangModel {
         }
     }
 
-    pub fn new_custom(
-        f: Arc<
-            dyn Fn(
-                    Vec<Message>,
-                    Vec<ToolDesc>,
-                    InferenceConfig,
-                ) -> BoxStream<'static, Result<MessageOutput, String>>
-                + MaybeSend
-                + MaybeSync,
-        >,
-    ) -> Self {
+    pub fn new_custom(f: Arc<CustomLangModelInferFunc>) -> Self {
         Self {
-            inner: LangModelInner::Custom(CustomLangModel { run: f }),
+            inner: LangModelInner::Custom(CustomLangModel { infer_func: f }),
         }
     }
 }
@@ -154,9 +144,8 @@ mod py {
     };
     use pyo3_stub_gen_derive::*;
 
-    use crate::ffi::py::{base::await_future, cache_progress::await_cache_result};
-
     use super::*;
+    use crate::ffi::py::{base::await_future, cache_progress::await_cache_result};
 
     fn spawn<'a>(
         mut model: LangModel,

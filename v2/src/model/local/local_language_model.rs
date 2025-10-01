@@ -61,7 +61,8 @@ impl TryFromCache for LocalLangModel {
         Box::pin(async move {
             let mut body = LocalLangModelImpl::try_from_contents(contents).await?;
             let (tx, mut rx) = mpsc::channel(1);
-            tokio::spawn(async move {
+
+            let fut = async move {
                 while let Some(req) = rx.recv().await {
                     let Request {
                         msgs,
@@ -76,7 +77,12 @@ impl TryFromCache for LocalLangModel {
                         }
                     }
                 }
-            });
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::spawn(fut);
+            #[cfg(target_arch = "wasm32")]
+            wasm_bindgen_futures::spawn_local(fut);
+
             Ok(Self { tx: Arc::new(tx) })
         })
     }
@@ -511,7 +517,7 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::value::MessageAggregator;
+    use crate::value::{Delta, Part, Role};
 
     wasm_bindgen_test_configure!(run_in_browser);
 
@@ -536,12 +542,9 @@ mod tests {
             }
         }
         let mut model = model.unwrap();
-        model.enable_reasoning();
         let msgs = vec![
-            Message::with_role(Role::System)
-                .with_contents(vec![Part::Text("You are an assistant.".to_owned())]),
-            Message::with_role(Role::User)
-                .with_contents(vec![Part::Text("Hi what's your name?".to_owned())]),
+            Message::new(Role::System).with_contents(vec![Part::text("You are an assistant.")]),
+            Message::new(Role::User).with_contents(vec![Part::text("Hi what's your name?")]),
             // Message::with_role(Role::Assistant)
             //     .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
             //     .with_contents(vec![Part::Text(
@@ -550,14 +553,13 @@ mod tests {
             // Message::with_role(Role::User)
             //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
-        let mut agg = MessageAggregator::new();
-        let mut strm = model.run(msgs, Vec::new());
+        let mut delta = MessageDelta::new();
+        let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
-            web_sys::console::log_1(&format!("{:?}", out).into());
-            if let Some(msg) = agg.update(out) {
-                web_sys::console::log_1(&format!("{:?}", msg).into());
-            }
+            crate::utils::log::debug(format!("{:?}", out));
+            delta = delta.aggregate(out.delta).unwrap();
         }
+        crate::utils::log::info(format!("{:?}", delta.finish().unwrap()));
     }
 }

@@ -819,7 +819,6 @@ pub enum ValueError {
 
 #[cfg(feature = "python")]
 mod py {
-    use super::Value;
     use indexmap::IndexMap;
     use ordered_float::OrderedFloat;
     use pyo3::{
@@ -829,6 +828,8 @@ mod py {
         types::{PyAny, PyBool, PyDict, PyFloat, PyList, PySequence, PyString, PyTuple},
     };
     use pyo3_stub_gen::{PyStubType, TypeInfo};
+
+    use super::Value;
 
     fn py_any_to_indexmap<'py>(obj: &Bound<'py, PyAny>) -> PyResult<IndexMap<String, Value>> {
         let dict: &Bound<'py, PyDict> = obj.downcast()?;

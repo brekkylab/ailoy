@@ -3,19 +3,20 @@ use std::{
     sync::Arc,
 };
 
-use ailoy_macros::multi_platform_async_trait;
+use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 
 use crate::{
     tool::Tool,
-    utils::{MaybeSend, MaybeSync},
     value::{ToolDesc, Value},
 };
+
+#[maybe_send_sync]
+type ToolFunc = dyn Fn(Value) -> Value;
 
 #[derive(Clone)]
 pub struct BuiltinTool {
     desc: ToolDesc,
-
-    f: Arc<dyn Fn(Value) -> Value + MaybeSend + MaybeSync>,
+    f: Arc<ToolFunc>,
 }
 
 impl Debug for BuiltinTool {
@@ -28,7 +29,7 @@ impl Debug for BuiltinTool {
 }
 
 impl BuiltinTool {
-    pub fn new(desc: ToolDesc, f: Arc<dyn Fn(Value) -> Value + MaybeSend + MaybeSync>) -> Self {
+    pub fn new(desc: ToolDesc, f: Arc<ToolFunc>) -> Self {
         BuiltinTool { desc, f }
     }
 }

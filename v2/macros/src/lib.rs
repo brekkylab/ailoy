@@ -1,6 +1,26 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Item, ItemFn, parse_macro_input};
+use syn::{Item, ItemFn, ItemType, parse_macro_input};
+
+#[proc_macro_attribute]
+pub fn maybe_send_sync(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemType);
+
+    let vis = &input.vis;
+    let ident = &input.ident;
+    let generics = &input.generics;
+    let ty = &input.ty;
+
+    let output = quote! {
+        #[cfg(not(target_arch = "wasm32"))]
+        #vis type #ident #generics = #ty + Send + Sync;
+
+        #[cfg(target_arch = "wasm32")]
+        #vis type #ident #generics = #ty;
+    };
+
+    output.into()
+}
 
 #[proc_macro_attribute]
 pub fn multi_platform_test(_attr: TokenStream, item: TokenStream) -> TokenStream {

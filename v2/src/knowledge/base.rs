@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ailoy_macros::multi_platform_async_trait;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 // use serde_json::{Map, Value, json};
@@ -31,7 +31,6 @@ pub trait Knowledge: std::fmt::Debug + MaybeSend + MaybeSync {
 pub struct KnowledgeTool {
     inner: Arc<dyn Knowledge>,
     desc: ToolDesc,
-    stringify: Arc<dyn Fn(Vec<KnowledgeRetrieveResult>) -> Result<String> + MaybeSend + MaybeSync>,
 }
 
 impl std::fmt::Debug for KnowledgeTool {
@@ -62,30 +61,14 @@ impl KnowledgeTool {
             returns: None,
         };
 
-        let default_stringify = Arc::new(|results: Vec<KnowledgeRetrieveResult>| {
-            Ok(serde_json::to_value(results)
-                .map_err(|e| anyhow!(e.to_string()))?
-                .to_string())
-        });
-
         Self {
             desc: default_desc,
             inner: Arc::new(knowledge),
-            stringify: default_stringify,
         }
     }
 
     pub fn with_description(self, desc: ToolDesc) -> Self {
         Self { desc, ..self }
-    }
-
-    pub fn with_stringify(
-        self,
-        stringify: Arc<
-            dyn Fn(Vec<KnowledgeRetrieveResult>) -> Result<String> + MaybeSend + MaybeSync,
-        >,
-    ) -> Self {
-        Self { stringify, ..self }
     }
 }
 
@@ -120,14 +103,8 @@ impl Tool for KnowledgeTool {
             }
         };
 
-        let rendered = match (self.stringify)(results) {
-            Ok(text) => text,
-            Err(e) => {
-                return Ok(e.to_string().into());
-            }
-        };
-
-        Ok(rendered.into())
+        let val = serde_json::to_value(results).unwrap();
+        Ok(val.into())
     }
 }
 
