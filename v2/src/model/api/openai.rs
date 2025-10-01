@@ -817,7 +817,7 @@ mod api_tests {
         debug,
         model::{
             InferenceConfig, LangModelInference as _,
-            api::{APIProvider, APIUsage, StreamAPILangModel},
+            api::{APIProvider, StreamAPILangModel},
         },
         to_value,
         value::{Delta, FinishReason, Message, MessageDelta, Part, Role, ToolDescBuilder},
@@ -830,11 +830,7 @@ mod api_tests {
 
     #[tokio::test]
     async fn infer_simple_chat() {
-        let mut model = StreamAPILangModel::new(APIUsage::new(
-            APIProvider::OpenAI,
-            "gpt-4.1",
-            *OPENAI_API_KEY,
-        ));
+        let mut model = StreamAPILangModel::new(APIProvider::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
 
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
@@ -856,11 +852,7 @@ mod api_tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_call() {
-        let mut model = StreamAPILangModel::new(APIUsage::new(
-            APIProvider::OpenAI,
-            "gpt-4.1",
-            *OPENAI_API_KEY,
-        ));
+        let mut model = StreamAPILangModel::new(APIProvider::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -903,11 +895,7 @@ mod api_tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_response() {
-        let mut model = StreamAPILangModel::new(APIUsage::new(
-            APIProvider::OpenAI,
-            "gpt-4.1",
-            *OPENAI_API_KEY,
-        ));
+        let mut model = StreamAPILangModel::new(APIProvider::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")

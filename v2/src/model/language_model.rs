@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::{
     cache::CacheProgress,
-    model::{CustomLangModel, LocalLangModel, StreamAPILangModel, api::APIUsage},
+    model::{CustomLangModel, LocalLangModel, StreamAPILangModel, api::APIProvider},
     utils::{BoxStream, MaybeSend, MaybeSync},
     value::{Message, MessageOutput, ToolDesc},
 };
@@ -106,9 +106,13 @@ impl LangModel {
         })
     }
 
-    pub fn new_stream_api(api_usage: APIUsage) -> Self {
+    pub fn new_stream_api(
+        provider: APIProvider,
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Self {
         Self {
-            inner: LangModelInner::StreamAPI(StreamAPILangModel::new(api_usage)),
+            inner: LangModelInner::StreamAPI(StreamAPILangModel::new(provider, model, api_key)),
         }
     }
 

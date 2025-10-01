@@ -783,10 +783,7 @@ mod api_tests {
     use super::*;
     use crate::{
         debug,
-        model::{
-            APIProvider, InferenceConfig, LangModelInference as _,
-            api::{APIUsage, StreamAPILangModel},
-        },
+        model::{APIProvider, InferenceConfig, LangModelInference as _, api::StreamAPILangModel},
         to_value,
         value::{Delta, Part, Role, ToolDescBuilder},
     };
@@ -798,11 +795,11 @@ mod api_tests {
 
     #[tokio::test]
     async fn infer_simple_chat() {
-        let mut model = StreamAPILangModel::new(APIUsage::new(
+        let mut model = StreamAPILangModel::new(
             APIProvider::Anthropic,
             "claude-3-haiku-20240307",
             *ANTHROPIC_API_KEY,
-        ));
+        );
 
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
@@ -826,11 +823,11 @@ mod api_tests {
     async fn infer_tool_call() {
         use crate::model::InferenceConfig;
 
-        let mut model = StreamAPILangModel::new(APIUsage::new(
+        let mut model = StreamAPILangModel::new(
             APIProvider::Anthropic,
             "claude-3-haiku-20240307",
             *ANTHROPIC_API_KEY,
-        ));
+        );
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -876,11 +873,11 @@ mod api_tests {
     async fn infer_tool_response() {
         use crate::model::InferenceConfig;
 
-        let mut model = StreamAPILangModel::new(APIUsage::new(
+        let mut model = StreamAPILangModel::new(
             APIProvider::Anthropic,
             "claude-3-haiku-20240307",
             *ANTHROPIC_API_KEY,
-        ));
+        );
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")

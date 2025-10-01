@@ -5,7 +5,7 @@ use futures::StreamExt as _;
 use crate::{
     model::{
         InferenceConfig, LangModelInference,
-        api::{APIProvider, APIUsage, RequestConfig},
+        api::{APIProvider, RequestConfig},
     },
     utils::{BoxStream, MaybeSend, MaybeSync},
     value::{Message, MessageOutput, Role, ToolDesc},
@@ -62,17 +62,26 @@ pub(crate) struct StreamAPILangModel {
 }
 
 impl StreamAPILangModel {
-    pub fn new(api_usage: APIUsage) -> Self {
-        let url = api_usage.default_url();
-        Self::with_url(api_usage, url)
+    pub fn new(
+        provider: APIProvider,
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Self {
+        let url = provider.default_url();
+        Self::with_url(provider, model, api_key, url)
     }
 
-    pub fn with_url(api_usage: APIUsage, url: impl Into<String>) -> Self {
-        let model = api_usage.model;
-        let api_key = api_usage.api_key;
+    pub fn with_url(
+        provider: APIProvider,
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+        url: impl Into<String>,
+    ) -> Self {
+        let model = model.into();
+        let api_key = api_key.into();
         let url = url.into();
 
-        match api_usage.provider {
+        match provider {
             APIProvider::OpenAI => StreamAPILangModel {
                 name: model.into(),
                 make_request: Arc::new(
