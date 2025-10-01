@@ -1,10 +1,11 @@
 use base64::Engine;
 
 use crate::{
+    model::{ServerEvent, ThinkEffort, api::RequestConfig},
     to_value,
     value::{
-        Marshal, Message, MessageDelta, Part, PartDelta, PartDeltaFunction, PartFunction, Role,
-        ToolDesc, Unmarshal, Value,
+        FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageOutput, Part, PartDelta,
+        PartDeltaFunction, PartFunction, Role, ToolDesc, Unmarshal, Unmarshaled, Value,
     },
 };
 
@@ -19,11 +20,8 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
                 id,
                 f: PartFunction { name, args },
             } => {
-                let arguments_string = serde_json::to_string(args)
-                    .map_err(|_| String::from("Invald function"))
-                    .unwrap();
                 let mut value =
-                    to_value!({"type": "tool_use", "name": name, "input": arguments_string});
+                    to_value!({"type": "tool_use", "name": name, "input": args.clone()});
                 if let Some(id) = id {
                     value
                         .as_object_mut()
@@ -33,7 +31,7 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
                 value
             }
             Part::Value { value } => {
-                to_value!({"type": "text", "text": serde_json::to_string(&value).unwrap()})
+                to_value!(serde_json::to_string(&value).unwrap())
             }
             Part::Image { .. } => {
                 // Get image
@@ -58,6 +56,21 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             }
         }
     };
+
+    if msg.role == Role::Tool {
+        return to_value!(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": msg.id.clone().expect("Tool call id must exist."),
+                        "content": part_to_value(&msg.contents[0])
+                    }
+                ]
+            }
+        );
+    }
 
     // Collecting contents
     let mut contents = Vec::<Value>::new();
@@ -102,22 +115,113 @@ impl Marshal<ToolDesc> for AnthropicMarshal {
     fn marshal(&mut self, item: &ToolDesc) -> Value {
         if let Some(desc) = &item.description {
             to_value!({
-                "type": "function",
-                "function": {
-                    "name": &item.name,
-                    "description": desc,
-                    "parameters": item.parameters.clone()
-                }
+                "name": &item.name,
+                "description": desc,
+                "input_schema": item.parameters.clone()
             })
         } else {
             to_value!({
-                "type": "function",
-                "function": {
-                    "name": &item.name,
-                    "parameters": item.parameters.clone()
-                }
+                "name": &item.name,
+                "input_schema": item.parameters.clone()
             })
         }
+    }
+}
+
+enum AnthropicModelType {
+    Opus,
+    Sonnet,
+    Haiku,
+    Haiku3,
+}
+
+impl Marshal<RequestConfig> for AnthropicMarshal {
+    fn marshal(&mut self, config: &RequestConfig) -> Value {
+        let Some(model) = &config.model else {
+            panic!("Cannot marshal `Config` without `model`.");
+        };
+
+        let model_type = if model.contains("opus") {
+            AnthropicModelType::Opus
+        } else if model.contains("sonnet") {
+            AnthropicModelType::Sonnet
+        } else if model.starts_with("claude-3-5-haiku") {
+            AnthropicModelType::Haiku
+        } else if model.starts_with("claude-3-haiku") {
+            AnthropicModelType::Haiku3
+        } else {
+            panic!("Unsupported model.");
+        };
+
+        let is_reasoning_model = match model_type {
+            AnthropicModelType::Opus | AnthropicModelType::Sonnet => true,
+            AnthropicModelType::Haiku | AnthropicModelType::Haiku3 => false,
+        };
+
+        let budget_tokens = match (&config.think_effort, &model_type) {
+            (_, AnthropicModelType::Haiku) => 0,
+            (_, AnthropicModelType::Haiku3) => 0,
+            (ThinkEffort::Disable, _) => 0,
+            (ThinkEffort::Enable, _) => 8192,
+            (ThinkEffort::Low, _) => 1024,
+            (ThinkEffort::Medium, _) => 8192,
+            (ThinkEffort::High, _) => 24576,
+        };
+
+        let reasoning = if budget_tokens != 0 {
+            to_value!({"type": "enabled", "budget_tokens": budget_tokens as i64})
+        } else {
+            Value::Null
+        };
+
+        let system = if let Some(system_message) = &config.system_message {
+            to_value!(system_message)
+        } else {
+            Value::Null
+        };
+
+        let max_tokens = if let Some(max_tokens) = &config.max_tokens {
+            Value::integer(*max_tokens as i64)
+        } else {
+            Value::integer(match &model_type {
+                AnthropicModelType::Opus => 32000,
+                AnthropicModelType::Sonnet => 64000,
+                AnthropicModelType::Haiku => 8192,
+                AnthropicModelType::Haiku3 => 4096,
+            })
+        };
+
+        let temperature = if let Some(temperature) = &config.temperature
+            && !is_reasoning_model
+        {
+            to_value!(*temperature)
+        } else {
+            Value::Null
+        };
+
+        let top_p = if let Some(top_p) = &config.top_p
+            && !is_reasoning_model
+        {
+            to_value!(*top_p)
+        } else {
+            Value::Null
+        };
+
+        let stream = config.stream;
+
+        let mut body = to_value!({
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "reasoning": reasoning,
+            "stream": stream,
+            "temperature": temperature,
+            "top_p": top_p,
+        });
+        body.as_object_mut()
+            .unwrap()
+            .retain(|_key, value| !value.is_null());
+        body
     }
 }
 
@@ -297,16 +401,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                                 args: serde_json::to_string(input).unwrap_or_default(),
                             },
                         });
-                    }
-                    // else if let Some(refusal) = content.get("refusal")
-                    //     && !refusal.is_null()
-                    // {
-                    //     let Some(text) = refusal.as_str() else {
-                    //         return Err(String::from("Invalid refusal content"));
-                    //     };
-                    //     rv.parts.push(PartDelta::TextRefusal(text.into()));
-                    // }
-                    else {
+                    } else {
                         return Err(String::from("Invalid part"));
                     }
                 }
@@ -319,8 +414,75 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
     }
 }
 
+pub(super) fn make_request(
+    url: &str,
+    api_key: &str,
+    msgs: Vec<Message>,
+    tools: Vec<ToolDesc>,
+    config: RequestConfig,
+) -> reqwest::RequestBuilder {
+    let mut body = serde_json::json!(&Marshaled::<_, AnthropicMarshal>::new(&config));
+
+    body["messages"] = serde_json::json!(&Marshaled::<_, AnthropicMarshal>::new(&msgs));
+    if !tools.is_empty() {
+        body["tool_choice"] = serde_json::json!({"type": "auto"});
+        body["tools"] = serde_json::json!(
+            tools
+                .iter()
+                .map(|v| Marshaled::<_, AnthropicMarshal>::new(v))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    let builder = reqwest::Client::new()
+        .request(reqwest::Method::POST, url)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .body(body.to_string());
+
+    #[cfg(target_arch = "wasm32")]
+    let builder = builder.header("anthropic-dangerous-direct-browser-access", "true");
+
+    builder
+}
+
+pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
+        return MessageOutput::default();
+    };
+
+    let finish_reason = val
+        .pointer("/delta/stop_reason")
+        .and_then(|v| v.as_str())
+        .map(|reason| match reason {
+            "end_turn" => FinishReason::Stop(),
+            "pause_turn" => FinishReason::Stop(), // consider same as "end_turn"
+            "max_tokens" => FinishReason::Length(),
+            "tool_use" => FinishReason::ToolCall(),
+            "refusal" => {
+                FinishReason::Refusal("Model output violated Anthropic's safety policy.".to_owned())
+            }
+            reason => FinishReason::Refusal(format!("reason: {}", reason)),
+        });
+
+    let delta = match finish_reason {
+        Some(FinishReason::Refusal(_)) => MessageDelta::default(),
+        _ => serde_json::from_value::<Unmarshaled<_, AnthropicUnmarshal>>(val.clone())
+            .ok()
+            .map(|decoded| decoded.get())
+            .unwrap_or_default(),
+    };
+
+    MessageOutput {
+        delta,
+        finish_reason,
+    }
+}
+
 #[cfg(test)]
-mod tests {
+mod dialect_tests {
     use super::*;
     use crate::value::{Delta, Marshaled, Message, Role};
 
@@ -375,10 +537,30 @@ mod tests {
             ),
         ]);
         let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msg);
-        // println!("{}", serde_json::to_string(&marshaled).unwrap());
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"assistant","content":[{"type":"tool_use","name":"temperature","input":"{\"unit\":\"celsius\"}","id":"funcid_123456"},{"type":"tool_use","name":"temperature","input":"{\"unit\":\"fahrenheit\"}","id":"funcid_7890ab"}]}"#,
+            r#"{"role":"assistant","content":[{"type":"tool_use","name":"temperature","input":{"unit":"celsius"},"id":"funcid_123456"},{"type":"tool_use","name":"temperature","input":{"unit":"fahrenheit"},"id":"funcid_7890ab"}]}"#,
+        );
+    }
+
+    #[test]
+    pub fn serialize_tool_response() {
+        let msgs = vec![
+            Message::new(Role::Tool)
+                .with_id("funcid_123456")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("funcid_7890ab")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+        ];
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","content":[{"type":"tool_result","tool_use_id":"funcid_123456","content":"{\"temperature\":30,\"unit\":\"celsius\"}"}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"funcid_7890ab","content":"{\"temperature\":86,\"unit\":\"fahrenheit\"}"}]}]"#
         );
     }
 
@@ -397,6 +579,39 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_config() {
+        let config = RequestConfig {
+            model: Some("claude-sonnet-4-5".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"claude-sonnet-4-5","max_tokens":1024,"system":"You are a helpful assistant.","reasoning":{"type":"enabled","budget_tokens":8192},"stream":true}"#
+        );
+
+        let config = RequestConfig {
+            model: Some("claude-3-haiku-20240307".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"claude-3-haiku-20240307","max_tokens":1024,"system":"You are a helpful assistant.","stream":true,"temperature":0.6,"top_p":0.9}"#
         );
     }
 
@@ -560,5 +775,163 @@ mod tests {
         assert_eq!(id.unwrap(), "call_DF3wZtLHv5eBNfURjvI8MULJ");
         assert_eq!(name, "get_weather");
         assert_eq!(args, "{\"location\":\"Paris, France\"}");
+    }
+}
+
+#[cfg(test)]
+mod api_tests {
+    use std::sync::LazyLock;
+
+    use futures::StreamExt;
+
+    use super::*;
+    use crate::{
+        debug,
+        model::{
+            APISpecification, InferenceConfig, LangModelInference as _, api::StreamAPILangModel,
+        },
+        to_value,
+        value::{Delta, Part, Role, ToolDescBuilder},
+    };
+
+    static ANTHROPIC_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("ANTHROPIC_API_KEY")
+            .expect("Environment variable 'ANTHROPIC_API_KEY' is required for the tests.")
+    });
+
+    #[tokio::test]
+    async fn infer_simple_chat() {
+        let mut model = StreamAPILangModel::new(
+            APISpecification::Claude,
+            "claude-3-haiku-20240307",
+            *ANTHROPIC_API_KEY,
+        );
+
+        let msgs =
+            vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
+        let mut assistant_msg = MessageDelta::new();
+        let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
+        }
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_call() {
+        use crate::model::InferenceConfig;
+
+        let mut model = StreamAPILangModel::new(
+            APISpecification::Claude,
+            "claude-3-haiku-20240307",
+            *ANTHROPIC_API_KEY,
+        );
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
+        ];
+
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?")]),
+        ];
+        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
+        }
+        assert_eq!(finish_reason, Some(FinishReason::ToolCall()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!(
+                "{:?}",
+                message.tool_calls.first().and_then(|f| f.as_function())
+            );
+            message.tool_calls.len() > 0
+                && message
+                    .tool_calls
+                    .first()
+                    .and_then(|f| f.as_function())
+                    .map(|f| f.1 == "temperature")
+                    .unwrap_or(false)
+        }));
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_response() {
+        use crate::model::InferenceConfig;
+
+        let mut model = StreamAPILangModel::new(
+            APISpecification::Claude,
+            "claude-3-haiku-20240307",
+            *ANTHROPIC_API_KEY,
+        );
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
+        ];
+
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?")]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "toolu_01KjM9aTHwxL8zLQTKcj2yY8",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "fahrenheit"}),
+            )]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "toolu_01A8fw3xe1Rxe2eahjevvFbE",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "celsius"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("toolu_01KjM9aTHwxL8zLQTKcj2yY8")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("toolu_01A8fw3xe1Rxe2eahjevvFbE")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+        ];
+        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
+        }
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
     }
 }

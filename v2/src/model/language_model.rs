@@ -6,7 +6,11 @@ use serde::Serialize;
 
 use crate::{
     cache::CacheProgress,
-    model::{CustomLangModel, CustomLangModelInferFunc, LocalLangModel, StreamAPILangModel},
+    model::{
+        LocalLangModel, StreamAPILangModel,
+        api::APISpecification,
+        custom::{CustomLangModel, CustomLangModelInferFunc},
+    },
     utils::BoxStream,
     value::{Message, MessageOutput, ToolDesc},
 };
@@ -108,9 +112,13 @@ impl LangModel {
         })
     }
 
-    pub fn new_stream_api(model_name: impl Into<String>, api_key: impl Into<String>) -> Self {
+    pub fn new_stream_api(
+        spec: APISpecification,
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Self {
         Self {
-            inner: LangModelInner::StreamAPI(StreamAPILangModel::new(model_name, api_key)),
+            inner: LangModelInner::StreamAPI(StreamAPILangModel::new(spec, model, api_key)),
         }
     }
 

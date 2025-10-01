@@ -4,9 +4,12 @@ use ailoy_macros::maybe_send_sync;
 use futures::StreamExt as _;
 
 use crate::{
-    model::{InferenceConfig, LangModelInference, api::RequestConfig},
+    model::{
+        InferenceConfig, LangModelInference,
+        api::{APISpecification, RequestConfig},
+    },
     utils::BoxStream,
-    value::{FinishReason, Message, MessageOutput, Role, ToolDesc},
+    value::{Message, MessageOutput, Role, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
@@ -63,31 +66,17 @@ pub(crate) struct StreamAPILangModel {
 }
 
 impl StreamAPILangModel {
-    pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
-        let model = model.into();
-        let ret = if model.starts_with("gpt") || model.starts_with("o") {
-            // OpenAI models
-            StreamAPILangModel::with_url(model, api_key, "https://api.openai.com/v1/responses")
-        } else if model.starts_with("claude") {
-            // Anthropic models
-            todo!()
-        } else if model.starts_with("gemini") {
-            // Gemini models
-            StreamAPILangModel::with_url(
-                model,
-                api_key,
-                "https://generativelanguage.googleapis.com/v1beta/models",
-            )
-        } else if model.starts_with("grok") {
-            todo!()
-        } else {
-            panic!()
-        };
-
-        ret
+    pub fn new(
+        spec: APISpecification,
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Self {
+        let url = spec.default_url();
+        Self::with_url(spec, model, api_key, url)
     }
 
     pub fn with_url(
+        spec: APISpecification,
         model: impl Into<String>,
         api_key: impl Into<String>,
         url: impl Into<String>,
@@ -96,9 +85,8 @@ impl StreamAPILangModel {
         let api_key = api_key.into();
         let url = url.into();
 
-        let ret = if model.starts_with("gpt") || model.starts_with("o") {
-            // OpenAI models
-            StreamAPILangModel {
+        match spec {
+            APISpecification::OpenAI | APISpecification::Responses => StreamAPILangModel {
                 name: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
@@ -106,13 +94,8 @@ impl StreamAPILangModel {
                     },
                 ),
                 handle_event: Arc::new(super::openai::handle_event),
-            }
-        } else if model.starts_with("claude") {
-            // Anthropic models
-            todo!()
-        } else if model.starts_with("gemini") {
-            // Gemini models
-            StreamAPILangModel {
+            },
+            APISpecification::Gemini => StreamAPILangModel {
                 name: model.into(),
                 make_request: Arc::new(
                     move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
@@ -120,14 +103,26 @@ impl StreamAPILangModel {
                     },
                 ),
                 handle_event: Arc::new(super::gemini::handle_event),
-            }
-        } else if model.starts_with("grok") {
-            todo!()
-        } else {
-            panic!()
-        };
-
-        ret
+            },
+            APISpecification::Claude => StreamAPILangModel {
+                name: model.into(),
+                make_request: Arc::new(
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
+                        super::anthropic::make_request(&url, &api_key, msgs, tools, req)
+                    },
+                ),
+                handle_event: Arc::new(super::anthropic::handle_event),
+            },
+            APISpecification::ChatCompletion | APISpecification::Grok => StreamAPILangModel {
+                name: model.into(),
+                make_request: Arc::new(
+                    move |msgs: Vec<Message>, tools: Vec<ToolDesc>, req: RequestConfig| {
+                        super::chat_completion::make_request(&url, &api_key, msgs, tools, req)
+                    },
+                ),
+                handle_event: Arc::new(super::chat_completion::handle_event),
+            },
+        }
     }
 }
 
@@ -183,10 +178,11 @@ impl LangModelInference for StreamAPILangModel {
                     while let Some(evt) = drain_next_event(&mut buf) {
                         let message_output = (self.handle_event)(evt);
                         match message_output.finish_reason {
-                            None | Some(FinishReason::Stop()) => {
+                            None => {
                                 yield message_output;
                             }
                             Some(_) => {
+                                yield message_output;
                                 break 'outer;
                             }
                         }
