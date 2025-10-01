@@ -10,12 +10,6 @@ pub(crate) mod vector_store;
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
 
-use crate::ffi::py::vector_store::{
-    BaseVectorStore, ChromaVectorStore, FaissVectorStore,
-    PyVectorStoreAddInput as VectorStoreAddInput, PyVectorStoreGetResult as VectorStoreGetResult,
-    PyVectorStoreRetrieveResult as VectorStoreRetrieveResult,
-};
-
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // Add classes in alphabetical order
@@ -23,19 +17,19 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // m.add_class::<AgentRunIterator>()?;
     // m.add_class::<AgentRunSyncIterator>()?;
     // m.add_class::<AnthropicLanguageModel>()?;
-    m.add_class::<BaseVectorStore>()?;
+    m.add_class::<vector_store::BaseVectorStore>()?;
     // m.add_class::<BaseTool>()?;
     // m.add_class::<BuiltinTool>()?;
-    m.add_class::<ChromaVectorStore>()?;
-    m.add_class::<FaissVectorStore>()?;
+    m.add_class::<vector_store::ChromaVectorStore>()?;
+    m.add_class::<vector_store::FaissVectorStore>()?;
     // m.add_class::<MCPTool>()?;
     // m.add_class::<MCPTransport>()?;
     // m.add_class::<PythonAsyncFunctionTool>()?;
     // m.add_class::<PythonFunctionTool>()?;
     // m.add_class::<ToolDesc>()?;
-    m.add_class::<VectorStoreAddInput>()?;
-    m.add_class::<VectorStoreGetResult>()?;
-    m.add_class::<VectorStoreRetrieveResult>()?;
+    m.add_class::<vector_store::PyVectorStoreAddInput>()?;
+    m.add_class::<vector_store::PyVectorStoreGetResult>()?;
+    m.add_class::<vector_store::PyVectorStoreRetrieveResult>()?;
     m.add_class::<crate::model::EmbeddingModel>()?;
     m.add_class::<crate::model::LangModel>()?;
     m.add_class::<crate::value::FinishReason>()?;
