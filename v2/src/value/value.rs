@@ -391,6 +391,12 @@ impl TryFrom<Value> for usize {
     }
 }
 
+impl From<i32> for Value {
+    fn from(value: i32) -> Self {
+        Value::Integer(value as i64)
+    }
+}
+
 impl From<i64> for Value {
     fn from(value: i64) -> Self {
         Value::Integer(value)

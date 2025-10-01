@@ -51,6 +51,24 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         }
     };
 
+    if msg.role == Role::Tool {
+        return to_value!(
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "name": msg.id.clone().expect("Tool call id must exist."),
+                            "response": {
+                                "result": part_to_value(&msg.contents[0])
+                            }
+                        }
+                    }
+                ]
+            }
+        );
+    }
+
     // Collecting contents
     let mut parts = Vec::<Value>::new();
     if !msg.thinking.is_empty() && include_thinking {
@@ -102,13 +120,13 @@ impl Marshal<ToolDesc> for GeminiMarshal {
 }
 
 impl Marshal<RequestConfig> for GeminiMarshal {
-    fn marshal(&mut self, req: &RequestConfig) -> Value {
-        let (include_thoughts, thinking_budget) = if let Some(model) = &req.model
+    fn marshal(&mut self, config: &RequestConfig) -> Value {
+        let (include_thoughts, thinking_budget) = if let Some(model) = &config.model
             && matches!(
                 model.as_str(),
                 "gemini-2.5-pro" | "gemini-2.5-flash" | "gemini-2.5-flash-lite"
             ) {
-            match &req.think_effort {
+            match &config.think_effort {
                 ThinkEffort::Disable => match model.as_str() {
                     "gemini-2.5-pro" => (false, 128),
                     "gemini-2.5-flash" => (false, 0),
@@ -139,7 +157,7 @@ impl Marshal<RequestConfig> for GeminiMarshal {
             (false, 0)
         };
 
-        let system_instruction = if let Some(system_message) = &req.system_message {
+        let system_instruction = if let Some(system_message) = &config.system_message {
             to_value!({
                 "parts": [{"text": system_message}]
             })
@@ -153,17 +171,23 @@ impl Marshal<RequestConfig> for GeminiMarshal {
             "thinkingConfig": thinking_config,
         });
 
-        if let Some(max_tokens) = req.max_tokens {
+        if let Some(max_tokens) = config.max_tokens {
             generation_config.as_object_mut().unwrap().insert(
                 "max_output_tokens".into(),
                 Value::Integer(max_tokens.into()),
             );
         }
-        if let Some(temperature) = req.temperature {
+        if let Some(temperature) = config.temperature {
             generation_config
                 .as_object_mut()
                 .unwrap()
                 .insert("temperature".into(), Value::Float(temperature.into()));
+        }
+        if let Some(top_p) = config.top_p {
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("top_p".into(), Value::Float(top_p.into()));
         }
 
         to_value!({"system_instruction": system_instruction, "generationConfig": generation_config})
@@ -255,9 +279,9 @@ pub(super) fn make_request(
     api_key: &str,
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
-    req: RequestConfig,
+    config: RequestConfig,
 ) -> reqwest::RequestBuilder {
-    let mut body = serde_json::json!(&Marshaled::<_, GeminiMarshal>::new(&req));
+    let mut body = serde_json::json!(&Marshaled::<_, GeminiMarshal>::new(&config));
 
     body["contents"] = serde_json::json!(&Marshaled::<_, GeminiMarshal>::new(&msgs));
     if !tools.is_empty() {
@@ -272,8 +296,8 @@ pub(super) fn make_request(
     };
 
     // let model = model_name;
-    let model = req.model.unwrap();
-    let generate_method = if req.stream {
+    let model = config.model.unwrap();
+    let generate_method = if config.stream {
         "streamGenerateContent?alt=sse"
     } else {
         "generateContent"
@@ -375,6 +399,27 @@ mod dialect_tests {
     }
 
     #[test]
+    pub fn serialize_tool_response() {
+        let msgs = vec![
+            Message::new(Role::Tool)
+                .with_id("temperature")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("temperature")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+        ];
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":30,"unit":"celsius"}}}}]},{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":86,"unit":"fahrenheit"}}}}]}]"#
+        );
+    }
+
+    #[test]
     pub fn serialize_image() {
         let raw_pixels: Vec<u8> = vec![
             10, 20, 30, // First row
@@ -389,6 +434,39 @@ mod dialect_tests {
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"user","parts":[{"text":"What you can see in this image?"},{"inline_data":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#,
+        );
+    }
+
+    #[test]
+    pub fn serialize_config() {
+        let config = RequestConfig {
+            model: Some("gemini-2.5-pro".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"system_instruction":{"parts":[{"text":"You are a helpful assistant."}]},"generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingBudget":-1},"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}}"#
+        );
+
+        let config = RequestConfig {
+            model: Some("gemini-2.0-flash".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"system_instruction":{"parts":[{"text":"You are a helpful assistant."}]},"generationConfig":{"thinkingConfig":{"includeThoughts":false,"thinkingBudget":0},"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}}"#
         );
     }
 
@@ -508,29 +586,32 @@ mod dialect_tests {
 }
 
 #[cfg(test)]
-mod sse_tests {
-    // use std::sync::LazyLock;
+mod api_tests {
+    use std::sync::LazyLock;
 
+    use futures::StreamExt;
+
+    use super::*;
     use crate::{
         debug,
-        model::{InferenceConfig, LangModelInference as _, StreamAPILangModel},
-        value::Delta,
+        model::{
+            InferenceConfig, LangModelInference as _, StreamAPILangModel, api::APISpecification,
+        },
+        value::{Delta, ToolDescBuilder},
     };
 
-    // static GEMINI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
-    //     option_env!("GEMINI_API_KEY")
-    //         .expect("Environment variable 'GEMINI_API_KEY' is required for the tests.")
-    // });
-    const GEMINI_API_KEY: &str = "";
+    static GEMINI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("GEMINI_API_KEY")
+            .expect("Environment variable 'GEMINI_API_KEY' is required for the tests.")
+    });
 
     #[tokio::test]
     async fn infer_simple_chat() {
-        use futures::StreamExt;
-
-        use super::*;
-        use crate::value::{Part, Role};
-
-        let mut model = StreamAPILangModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
+        let mut model = StreamAPILangModel::new(
+            APISpecification::Gemini,
+            "gemini-2.5-flash-lite",
+            *GEMINI_API_KEY,
+        );
 
         let msgs = vec![
             Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
@@ -538,33 +619,28 @@ mod sse_tests {
         ];
         let mut assistant_msg = MessageDelta::new();
         let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
-        let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
+        let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
-            if let Some(reason) = output.finish_reason {
-                finish_reason = reason;
-            }
+            finish_reason = output.finish_reason;
         }
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
-        assert_eq!(finish_reason, FinishReason::Stop());
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_call() {
-        use futures::StreamExt;
-
-        use super::*;
-        use crate::{
-            to_value,
-            value::{Part, Role, ToolDescBuilder},
-        };
-
-        let mut model = StreamAPILangModel::new("gemini-2.5-flash-lite", GEMINI_API_KEY);
+        let mut model = StreamAPILangModel::new(
+            APISpecification::Gemini,
+            "gemini-2.5-flash",
+            *GEMINI_API_KEY,
+        );
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -583,22 +659,81 @@ mod sse_tests {
         ];
         let mut strm = model.infer(msgs, tools, InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
-        let mut finish_reason = FinishReason::Refusal("Initial".to_owned());
+        let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
-            if let Some(reason) = output.finish_reason {
-                finish_reason = reason;
-            }
+            finish_reason = output.finish_reason;
         }
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!(
                 "{:?}",
                 message.tool_calls.first().and_then(|f| f.as_function())
             );
             message.tool_calls.len() > 0
-                && message.tool_calls[0].as_function().unwrap().1 == "temperature"
+                && message
+                    .tool_calls
+                    .first()
+                    .and_then(|f| f.as_function())
+                    .map(|f| f.1 == "temperature")
+                    .unwrap_or(false)
         }));
-        assert_eq!(finish_reason, FinishReason::Stop());
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_response() {
+        let mut model = StreamAPILangModel::new(
+            APISpecification::Gemini,
+            "gemini-2.5-flash",
+            *GEMINI_API_KEY,
+        );
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
+        ];
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?")]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "fahrenheit"}),
+            )]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "celsius"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("temperature")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("temperature")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+        ];
+        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
+        }
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
     }
 }

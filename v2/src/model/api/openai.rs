@@ -116,11 +116,7 @@ impl Marshal<RequestConfig> for OpenAIMarshal {
             panic!("Cannot marshal `Config` without `model`.");
         };
 
-        let is_reasoning_model = if model.starts_with("o") || model.starts_with("gpt-5") {
-            true
-        } else {
-            false
-        };
+        let is_reasoning_model = model.starts_with("o") || model.starts_with("gpt-5");
 
         let (reasoning_effort, reasoning_summary) = if is_reasoning_model {
             match &config.think_effort {
@@ -580,6 +576,27 @@ mod dialect_tests {
     }
 
     #[test]
+    pub fn serialize_tool_response() {
+        let msgs = vec![
+            Message::new(Role::Tool)
+                .with_id("funcid_123456")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("funcid_7890ab")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+        ];
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"type":"function_call_output","call_id":"funcid_123456","output":"{\"temperature\":30,\"unit\":\"celsius\"}"},{"type":"function_call_output","call_id":"funcid_7890ab","output":"{\"temperature\":86,\"unit\":\"fahrenheit\"}"}]"#
+        );
+    }
+
+    #[test]
     pub fn serialize_image() {
         let raw_pixels: Vec<u8> = vec![
             10, 20, 30, // First row
@@ -599,37 +616,35 @@ mod dialect_tests {
 
     #[test]
     pub fn serialize_config() {
-        // let config = RequestConfigBuilder::new()
-        //     .max_tokens(1024)
-        //     .thinking_option(ThinkEffort::Enable)
-        //     .stream(true)
-        //     .system_message("You are a helpful assistant.")
-        //     .temperature(0.6)
-        //     .top_p(0.9)
-        //     .build()
-        //     .with_model("gpt-5");
-        // let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
-        // println!("{}", serde_json::to_string(&marshaled).unwrap());
-        // assert_eq!(
-        //     serde_json::to_string(&marshaled).unwrap(),
-        //     r#"{"model":"gpt-5","instructions":"You are a helpful assistant.","reasoning":{"effort":"medium","summary":"auto"},"stream":true,"max_output_tokens":1024}"#
-        // );
+        let config = RequestConfig {
+            model: Some("gpt-5".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-5","instructions":"You are a helpful assistant.","reasoning":{"effort":"medium","summary":"auto"},"stream":true,"max_output_tokens":1024}"#
+        );
 
-        // let config = RequestConfigBuilder::new()
-        //     .max_tokens(1024)
-        //     .thinking_option(ThinkEffort::Enable)
-        //     .stream(true)
-        //     .system_message("You are a helpful assistant.")
-        //     .temperature(0.6)
-        //     .top_p(0.9)
-        //     .build()
-        //     .with_model("gpt-4o");
-        // let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
-        // println!("{}", serde_json::to_string(&marshaled).unwrap());
-        // assert_eq!(
-        //     serde_json::to_string(&marshaled).unwrap(),
-        //     r#"{"model":"gpt-4o","instructions":"You are a helpful assistant.","stream":true,"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}"#
-        // );
+        let config = RequestConfig {
+            model: Some("gpt-4o".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-4o","instructions":"You are a helpful assistant.","stream":true,"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}"#
+        );
     }
 
     #[test]
@@ -793,48 +808,53 @@ mod dialect_tests {
 }
 
 #[cfg(test)]
-mod sse_tests {
+mod api_tests {
+    use std::sync::LazyLock;
+
+    use futures::StreamExt as _;
+
     use crate::{
-        model::{InferenceConfig, LangModelInference as _, api::StreamAPILangModel},
-        value::Delta,
+        debug,
+        model::{
+            InferenceConfig, LangModelInference as _,
+            api::{APISpecification, StreamAPILangModel},
+        },
+        to_value,
+        value::{Delta, FinishReason, Message, MessageDelta, Part, Role, ToolDescBuilder},
     };
 
-    const OPENAI_API_KEY: &str = "";
+    static OPENAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
+        option_env!("OPENAI_API_KEY")
+            .expect("Environment variable 'OPENAI_API_KEY' is required for the tests.")
+    });
 
     #[tokio::test]
     async fn infer_simple_chat() {
-        use futures::StreamExt;
+        let mut model =
+            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
 
-        use super::*;
-        use crate::value::{Part, Role};
-
-        let mut model = StreamAPILangModel::new("gpt-4.1", OPENAI_API_KEY);
-
-        let msgs = vec![
-            Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
-            Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
-        ];
+        let msgs =
+            vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
         let mut assistant_msg = MessageDelta::new();
         let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
+        let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
         }
-        println!("{:?}", assistant_msg.finish());
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn infer_tool_call() {
-        use futures::StreamExt;
-
-        use super::*;
-        use crate::{
-            to_value,
-            value::{Part, Role, ToolDescBuilder},
-        };
-
-        let mut model = StreamAPILangModel::new("gpt-4.1", OPENAI_API_KEY);
+        let mut model =
+            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -850,13 +870,82 @@ mod sse_tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        // let config = LMConfigBuilder::new().stream(true).build();
         let mut strm = model.infer(msgs, tools, InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
         }
-        println!("{:?}", assistant_msg.finish());
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!(
+                "{:?}",
+                message.tool_calls.first().and_then(|f| f.as_function())
+            );
+            message.tool_calls.len() > 0
+                && message
+                    .tool_calls
+                    .first()
+                    .and_then(|f| f.as_function())
+                    .map(|f| f.1 == "temperature")
+                    .unwrap_or(false)
+        }));
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_response() {
+        let mut model =
+            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
+        ];
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?")]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "call_DF3wZtLHv5eBNfURjvI8MULJ",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "fahrenheit"}),
+            )]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "call_sSoeWuqaIeAww669Wf7W48rk",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "celsius"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("call_DF3wZtLHv5eBNfURjvI8MULJ")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("call_sSoeWuqaIeAww669Wf7W48rk")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+        ];
+        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
+        }
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
     }
 }
