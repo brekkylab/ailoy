@@ -1,40 +1,6 @@
-use crate::{
-    to_value,
-    value::{ToolDesc, Value},
-};
+use crate::{to_value, value::Value};
 
-/// Convert MCP tool description to ToolDesc
-pub(super) fn map_mcp_tool_to_tool_description(value: rmcp::model::Tool) -> ToolDesc {
-    ToolDesc {
-        name: value.name.into(),
-        description: value.description.map(|v| v.into()),
-        parameters: value
-            .input_schema
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    <serde_json::Value as Into<Value>>::into(v.clone()),
-                )
-            })
-            .collect(),
-        returns: value.output_schema.map(|map| {
-            map.iter()
-                .map(|(k, v)| {
-                    (
-                        k.clone(),
-                        <serde_json::Value as Into<Value>>::into(v.clone()),
-                    )
-                })
-                .collect()
-        }),
-    }
-}
-
-/// Convert MCP result to parts
-pub(super) fn call_tool_result_to_parts(
-    value: rmcp::model::CallToolResult,
-) -> Result<Value, String> {
+pub fn handle_result(value: rmcp::model::CallToolResult) -> Result<Value, String> {
     if let Some(result) = value.structured_content {
         Ok(result.into())
     } else if let Some(content) = value.content {

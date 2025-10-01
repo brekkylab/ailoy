@@ -164,16 +164,7 @@ mod tests {
         {
             let mut agent_guard = agent.lock().await;
             // Example of customizing with_stringify
-            let tool = KnowledgeTool::from(knowledge).with_stringify(Arc::new(|results| {
-                Ok(serde_json::to_value(
-                    results
-                        .iter()
-                        .map(|res| res.document.clone())
-                        .collect::<Vec<_>>(),
-                )
-                .map_err(|e| anyhow!(e.to_string()))?
-                .to_string())
-            }));
+            let tool = KnowledgeTool::from(knowledge);
             agent_guard.add_tool(Arc::new(tool.clone())).await?;
 
             let mut strm = Box::pin(agent_guard.run(vec![Part::text(format!(
