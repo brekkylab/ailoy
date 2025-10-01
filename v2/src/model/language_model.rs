@@ -282,14 +282,17 @@ mod py {
         }
 
         #[classmethod]
-        #[pyo3(name = "CreateStreamAPI", signature = (model_name, api_key))]
+        #[pyo3(name = "CreateStreamAPI", signature = (spec, model_name, api_key))]
         fn create_stream_api<'a>(
             _cls: &Bound<'a, PyType>,
+            spec: APISpecification,
             model_name: String,
             api_key: String,
         ) -> LangModel {
             LangModel {
-                inner: LangModelInner::StreamAPI(StreamAPILangModel::new(model_name, api_key)),
+                inner: LangModelInner::StreamAPI(StreamAPILangModel::new(
+                    spec, model_name, api_key,
+                )),
             }
         }
 
