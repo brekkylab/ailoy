@@ -107,7 +107,7 @@ impl LangModel {
     }
 
     pub fn new_stream_api(
-        provider: APISpecification,
+        spec: APISpecification,
         model: impl Into<String>,
         api_key: impl Into<String>,
     ) -> Self {
