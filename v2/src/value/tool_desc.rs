@@ -1,71 +1,104 @@
 use serde::{Deserialize, Serialize};
 
+use crate::value::Value;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 pub struct ToolDesc {
     pub name: String,
-    pub description: String,
-    pub parameters: serde_json::Value,
-    pub returns: Option<serde_json::Value>,
+    pub description: Option<String>,
+    pub parameters: Value,
+    pub returns: Option<Value>,
 }
 
-impl ToolDesc {
-    pub fn new(
-        name: String,
-        description: String,
-        parameters: serde_json::Value,
-        returns: Option<serde_json::Value>,
-    ) -> Result<Self, String> {
-        jsonschema::validator_for(&parameters)
-            .map_err(|e| format!("parameters is not a valid jsonschema: {}", e.to_string()))?;
-        if let Some(returns) = &returns {
-            jsonschema::validator_for(&returns)
-                .map_err(|e| format!("returns is not a valid jsonschema: {}", e.to_string()))?;
+impl ToolDesc {}
+
+#[derive(Clone, Debug)]
+pub struct ToolDescBuilder {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Option<Value>,
+    pub returns: Option<Value>,
+}
+
+impl ToolDescBuilder {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            description: None,
+            parameters: None,
+            returns: None,
         }
-        Ok(Self {
-            name,
-            description,
-            parameters,
-            returns,
-        })
+    }
+
+    pub fn description(self, desc: impl Into<String>) -> Self {
+        Self {
+            name: self.name,
+            description: Some(desc.into()),
+            parameters: self.parameters,
+            returns: self.returns,
+        }
+    }
+
+    pub fn parameters(self, param: impl Into<Value>) -> Self {
+        Self {
+            name: self.name,
+            description: self.description,
+            parameters: Some(param.into()),
+            returns: self.returns,
+        }
+    }
+
+    pub fn returns(self, ret: impl Into<Value>) -> Self {
+        Self {
+            name: self.name,
+            description: self.description,
+            parameters: self.parameters,
+            returns: Some(ret.into()),
+        }
+    }
+
+    pub fn build(self) -> ToolDesc {
+        ToolDesc {
+            name: self.name,
+            description: self.description,
+            parameters: match self.parameters {
+                Some(p) => p,
+                None => Value::Null,
+            },
+            returns: self.returns,
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use serde_json::json;
+    use crate::to_value;
 
     use super::*;
 
     #[test]
     fn simple_tool_description_serde() {
-        let parameters = json!({
-            "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": "The city name"
+        let desc = ToolDescBuilder::new("temperature")
+            .description("Get current temperature")
+            .parameters(to_value!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The city name"
+                    },
+                    "unit": {
+                        "type": "string",
+                        "description": "Default: Celsius",
+                        "enum": ["Celsius", "Fahrenheit"]
+                    }
                 },
-                "unit": {
-                    "type": "string",
-                    "description": "Default: Celsius",
-                    "enum": ["Celsius", "Fahrenheit"]
-                }
-            },
-            "required": ["location"]
-        });
-        let returns = json!({
-            "type": "number"
-        });
-        let desc = ToolDesc::new(
-            "temperature".into(),
-            "Get current temperature".into(),
-            parameters,
-            Some(returns),
-        )
-        .unwrap();
+                "required": ["location"]
+            }))
+            .build();
 
         let serialized = {
             let expected = r#"{"name":"temperature","description":"Get current temperature","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city name"},"unit":{"type":"string","description":"Default: Celsius","enum":["Celsius","Fahrenheit"]}},"required":["location"]},"returns":{"type":"number"}}"#;

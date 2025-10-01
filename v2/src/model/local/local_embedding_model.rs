@@ -2,21 +2,21 @@ use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::Result;
-use futures::{StreamExt, lock::Mutex, stream::Stream};
+use futures::lock::Mutex;
 
 use crate::{
-    cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
+    cache::{Cache, CacheClaim, CacheContents, CacheEntry, TryFromCache},
     dyn_maybe_send,
     model::{
-        EmbeddingModel,
-        embedding_model::Embedding,
+        EmbeddingModelInference,
         local::{EmbeddingModelInferencer, Tokenizer},
     },
     utils::{BoxFuture, Normalize},
+    vector_store::Embedding,
 };
 
-#[derive(Debug)]
-pub struct LocalEmbeddingModel {
+#[derive(Debug, Clone)]
+pub(crate) struct LocalEmbeddingModel {
     tokenizer: Tokenizer,
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.
@@ -25,31 +25,9 @@ pub struct LocalEmbeddingModel {
     do_normalize: bool,
 }
 
-impl LocalEmbeddingModel {
-    pub async fn try_new(
-        model_name: impl Into<String>,
-    ) -> impl Stream<Item = Result<CacheProgress<Self>, String>> + 'static {
-        let model_name = model_name.into();
-        Cache::new().try_create::<LocalEmbeddingModel>(model_name)
-    }
-
-    pub async fn new(model_name: impl Into<String>) -> Result<Self> {
-        let cache = crate::cache::Cache::new();
-        let mut model_strm = Box::pin(cache.try_create::<Self>(model_name));
-        let mut model: Option<Self> = None;
-        while let Some(progress) = model_strm.next().await {
-            let mut progress = progress.unwrap();
-            if progress.current_task == progress.total_task {
-                model = progress.result.take();
-            }
-        }
-        Ok(model.unwrap())
-    }
-}
-
 #[multi_platform_async_trait]
-impl EmbeddingModel for LocalEmbeddingModel {
-    async fn run(self: &mut Self, text: String) -> Result<Embedding> {
+impl EmbeddingModelInference for LocalEmbeddingModel {
+    async fn infer(&self, text: String) -> Result<Embedding> {
         let input_tokens = self.tokenizer.encode(&text, true).unwrap();
         let mut inferencer = self.inferencer.lock().await;
 
@@ -179,9 +157,9 @@ mod tests {
                 model = progress.result.take();
             }
         }
-        let mut model = model.unwrap();
+        let model = model.unwrap();
 
-        let embedding = model.run("What is BGE M3?".to_owned()).await.unwrap();
+        let embedding = model.infer("What is BGE M3?".to_owned()).await.unwrap();
         assert_eq!(embedding.len(), 1024);
         log::debug(format!("{:?}", embedding.normalized()));
     }
@@ -207,16 +185,20 @@ mod tests {
                 model = progress.result.take();
             }
         }
-        let mut model = model.unwrap();
+        let model = model.unwrap();
 
-        let query_embedding1 = model.run("BGE-M3".to_owned()).await.unwrap();
-        let query_embedding2 = model.run("BM25".to_owned()).await.unwrap();
-        let answer_embedding1 = model.run("BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.".to_owned()).await.unwrap();
-        let answer_embedding2 = model.run("BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document".to_owned()).await.unwrap();
-        log::debug(format!("{:?}", dot(&query_embedding1, &answer_embedding1)));
-        log::debug(format!("{:?}", dot(&query_embedding1, &answer_embedding2)));
-        log::debug(format!("{:?}", dot(&query_embedding2, &answer_embedding1)));
-        log::debug(format!("{:?}", dot(&query_embedding2, &answer_embedding2)));
+        let query_embedding1 = model
+            .infer("What is BGE M3?".to_owned())
+            .await
+            .unwrap()
+            .normalized();
+        let query_embedding2 = model
+            .infer("Defination of BM25".to_owned())
+            .await
+            .unwrap()
+            .normalized();
+        let answer_embedding1 = model.infer("BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.".to_owned()).await.unwrap().normalized();
+        let answer_embedding2 = model.infer("BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document".to_owned()).await.unwrap().normalized();
         assert!(
             dot(&query_embedding1, &answer_embedding1) > dot(&query_embedding1, &answer_embedding2)
         );

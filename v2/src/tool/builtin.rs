@@ -3,22 +3,20 @@ use std::{
     sync::Arc,
 };
 
-use ailoy_macros::multi_platform_async_trait;
+use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 
 use crate::{
     tool::Tool,
-    value::{Part, ToolCallArg, ToolDesc},
+    value::{ToolDesc, Value},
 };
+
+#[maybe_send_sync]
+type ToolFunc = dyn Fn(Value) -> Value;
 
 #[derive(Clone)]
 pub struct BuiltinTool {
     desc: ToolDesc,
-
-    #[cfg(not(target_arch = "wasm32"))]
-    f: Arc<dyn Fn(ToolCallArg) -> Part + Send + Sync + 'static>,
-
-    #[cfg(target_arch = "wasm32")]
-    f: Arc<dyn Fn(ToolCallArg) -> Part + 'static>,
+    f: Arc<ToolFunc>,
 }
 
 impl Debug for BuiltinTool {
@@ -31,16 +29,7 @@ impl Debug for BuiltinTool {
 }
 
 impl BuiltinTool {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn new(
-        desc: ToolDesc,
-        f: Arc<dyn Fn(ToolCallArg) -> Part + Send + Sync + 'static>,
-    ) -> Self {
-        BuiltinTool { desc, f }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn new(desc: ToolDesc, f: Arc<dyn Fn(ToolCallArg) -> Part + 'static>) -> Self {
+    pub fn new(desc: ToolDesc, f: Arc<ToolFunc>) -> Self {
         BuiltinTool { desc, f }
     }
 }
@@ -51,9 +40,8 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    async fn run(&self, args: ToolCallArg) -> Result<Vec<Part>, String> {
-        let tool_func = self.f.clone();
-        Ok(vec![tool_func(args)])
+    async fn run(&self, args: Value) -> Result<Value, String> {
+        Ok(self.f.clone()(args))
     }
 }
 
@@ -65,7 +53,10 @@ pub fn create_terminal_tool() -> BuiltinTool {
         process::{Command, Stdio},
     };
 
-    use serde_json::json;
+    use crate::{
+        to_value,
+        value::{ToolDescBuilder, Value},
+    };
 
     let current_shell = {
         #[cfg(target_family = "unix")]
@@ -77,83 +68,44 @@ pub fn create_terminal_tool() -> BuiltinTool {
             "powershell"
         }
     };
-
-    let desc = ToolDesc::new(
-        "execute_command".into(),
-        format!(
+    let desc = ToolDescBuilder::new("execute_command")
+        .description(format!(
             "Executes a command on the current system using the default shell. Current shell: {}. \
             Optional fields: cwd (string), env (object), stdin (string)",
             current_shell
-        ),
-        json!({
+        ))
+        .parameters(to_value!({
             "type": "object",
             "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The command to execute."
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Optional working directory."
-                },
-                "env": {
-                    "type": "object",
-                    "description": "Optional environment variables as key-value pairs."
-                },
-                "stdin": {
-                    "type": "string",
-                    "description": "Optional string to send to STDIN."
-                }
+                "command": {"type": "string", "description": "The command to execute."},
+                "cwd": {"type": "string", "description": "Optional working directory."},
+                "env": {"type": "object", "description": "Optional environment variables as key-value pairs."},
+                "stdin": {"type": "string", "description": "Optional string to send to STDIN."},
             },
             "required": ["command"]
-        }),
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "stdout": {
-                    "type": "string",
-                    "description": "Captured STDOUT"
-                },
-                "stderr": {
-                    "type": "string",
-                    "description": "Captured STDERR"
-                },
-                "exit_code": {
-                    "type": "number",
-                    "description": "Process exit code"
-                }
-            },
-            "required": ["stdout", "stderr", "exit_code"]
-        })),
-    )
-    .unwrap();
+        }))
+        .build();
 
-    let f = Arc::new(|args: ToolCallArg| {
+    let f = Arc::new(|args: Value| -> Value {
         let args = match args.as_object() {
             Some(a) => a,
             None => {
-                return Part::Text(
-                    serde_json::json!({
-                        "stdout": "",
-                        "stderr": "Invalid arguments: expected object",
-                        "exit_code": -1
-                    })
-                    .to_string(),
-                );
+                return to_value!({
+                    "stdout": "",
+                    "stderr": "Invalid arguments: expected object",
+                    "exit_code": -1 as i64
+                });
             }
         };
 
         let cmd_str = match args.get("command").and_then(|v| v.as_str()) {
             Some(s) => s,
             None => {
-                return Part::Text(
-                    serde_json::json!({
-                        "stdout": "",
-                        "stderr": "Missing required 'command' string",
-                        "exit_code": -1
-                    })
-                    .to_string(),
-                );
+                return to_value!({
+                    "stdout": "",
+                    "stderr": "Missing required 'command' string",
+                    "exit_code": -1 as i64
+                });
             }
         };
 
@@ -206,7 +158,7 @@ pub fn create_terminal_tool() -> BuiltinTool {
         }
 
         // Run
-        let output = match command.spawn().and_then(|mut child| {
+        let value = match command.spawn().and_then(|mut child| {
             if let Some(input) = stdin_data {
                 if let Some(mut stdin) = child.stdin.take() {
                     use std::io::Write;
@@ -219,23 +171,23 @@ pub fn create_terminal_tool() -> BuiltinTool {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&out.stderr).to_string();
                 let code = out.status.code().unwrap_or(-1);
-                serde_json::json!({
+                to_value!({
                     "stdout": stdout,
                     "stderr": stderr,
-                    "exit_code": code
+                    "exit_code": code as i64
                 })
             }
             Err(e) => {
-                serde_json::json!({
+                to_value!({
                     "stdout": "",
                     "stderr": format!("failed to run command: {}", e),
-                    "exit_code": -1
+                    "exit_code": -1 as i64
                 })
             }
         };
 
         // Return
-        Part::Text(output.to_string())
+        value
     });
 
     BuiltinTool::new(desc, f)

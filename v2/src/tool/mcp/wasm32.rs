@@ -9,16 +9,12 @@ use rmcp::model::{
     InitializedNotification, JsonRpcResponse, ListToolsRequest, ListToolsResult, NumberOrString,
     ServerJsonRpcMessage, ServerResult,
 };
-use serde_json::{Map as JsonMap, Value as JsonValue};
 use sse_stream::{Error as SseError, Sse, SseStream};
 use thiserror::Error;
 
 use crate::{
-    tool::{
-        Tool,
-        mcp::common::{call_tool_result_to_parts, map_mcp_tool_to_tool_description},
-    },
-    value::{Part, ToolCallArg, ToolDesc},
+    tool::{Tool, mcp::common::handle_result},
+    value::{ToolDesc, Value},
 };
 
 type BoxedSseStream = LocalBoxStream<'static, Result<Sse, SseError>>;
@@ -313,27 +309,82 @@ impl StreamableHttpClient {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct MCPClient {
+    /// In wasm, only the streamable http transport is allowed
+    _client: Rc<StreamableHttpClient>,
+    pub tools: Vec<MCPTool>,
+}
+
+impl MCPClient {
+    pub async fn from_streamable_http(url: impl Into<String>) -> anyhow::Result<Self> {
+        let mut client = StreamableHttpClient::new(&url.into(), None, true);
+        client.initialize().await?;
+
+        let tools = client
+            .list_tools()
+            .await?
+            .tools
+            .into_iter()
+            .map(|t| MCPTool {
+                client: Rc::new(client.clone()),
+                inner: t.clone(),
+            })
+            .collect();
+
+        Ok(Self {
+            _client: Rc::new(client),
+            tools,
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MCPTool {
     client: Rc<StreamableHttpClient>,
-    name: String,
-    pub desc: ToolDesc,
+    inner: rmcp::model::Tool,
 }
 
 #[multi_platform_async_trait]
 impl Tool for MCPTool {
     fn get_description(&self) -> ToolDesc {
-        self.desc.clone()
+        ToolDesc {
+            name: self.inner.name.to_string(),
+            description: self.inner.description.clone().map(|v| v.into()),
+            parameters: self
+                .inner
+                .input_schema
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        <serde_json::Value as Into<Value>>::into(v.clone()),
+                    )
+                })
+                .collect(),
+            returns: self.inner.output_schema.clone().map(|map| {
+                map.iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            <serde_json::Value as Into<Value>>::into(v.clone()),
+                        )
+                    })
+                    .collect()
+            }),
+        }
     }
 
-    async fn run(&self, args: ToolCallArg) -> Result<Vec<Part>, String> {
+    async fn run(&self, args: Value) -> Result<Value, String> {
         let client = self.client.clone();
-        let tool_name = self.name.clone();
+        let tool_name = self.inner.name.clone();
 
-        let arguments: Option<JsonMap<String, JsonValue>> = serde_json::to_value(args)
-            .map_err(|e| format!("serialize ToolCall arguments failed: {e}"))?
-            .as_object()
-            .cloned();
+        // Convert your ToolCall arguments → serde_json::Map (MCP expects JSON object)
+        let arguments: Option<serde_json::Map<String, serde_json::Value>> =
+            serde_json::to_value(args)
+                .map_err(|e| format!("serialize ToolCall arguments failed: {e}"))?
+                .as_object()
+                .cloned();
 
         let result = client
             .call_tool(CallToolRequestParam {
@@ -343,33 +394,10 @@ impl Tool for MCPTool {
             .await
             .map_err(|e| format!("mcp call_tool failed: {e}"))?;
 
-        let parts = call_tool_result_to_parts(&result)
-            .map_err(|e| format!("call_tool_result_to_parts failed: {e}"))?;
+        let parts =
+            handle_result(result).map_err(|e| format!("call_tool_result_to_parts failed: {e}"))?;
         Ok(parts)
     }
-}
-
-pub async fn mcp_tools_from_streamable_http(
-    url: &str,
-    tool_name_prefix: &str,
-) -> anyhow::Result<Vec<MCPTool>> {
-    let mut client = StreamableHttpClient::new(url, None, true);
-    client.initialize().await?;
-
-    let tools = client.list_tools().await?;
-    Ok(tools
-        .tools
-        .into_iter()
-        .map(|t| {
-            let mut desc = map_mcp_tool_to_tool_description(&t);
-            desc.name = format!("{}--{}", tool_name_prefix, desc.name);
-            MCPTool {
-                client: Rc::new(client.clone()),
-                name: t.name.to_string(),
-                desc: desc,
-            }
-        })
-        .collect())
 }
 
 #[cfg(test)]
@@ -408,14 +436,14 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn test_mcp_tools_from_streamable_http() -> anyhow::Result<()> {
-        let tools = mcp_tools_from_streamable_http("http://localhost:8123/mcp", "test").await?;
-        let tool = tools[1].clone();
+        let client = MCPClient::from_streamable_http("http://localhost:8123/mcp").await?;
+        let tool = client.tools[1].clone();
 
-        let args = serde_json::from_value::<ToolCallArg>(
+        let args = serde_json::from_value::<Value>(
             serde_json::json!({"latitude": 32.7767, "longitude": -96.797}),
         )?;
-        let parts = tool.run(args).await.unwrap();
-        log::debug(&format!("tool call result: {:?}", parts));
+        let result = tool.run(args).await.unwrap();
+        log::debug(&format!("tool call result: {:?}", result));
 
         Ok(())
     }

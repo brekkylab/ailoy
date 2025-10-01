@@ -1,604 +1,937 @@
-use std::collections::HashMap;
-
-use anthropic_ai_sdk::{
-    client::{AnthropicClient, AnthropicClientBuilder},
-    types::message::{
-        ContentBlock as AnthropicContentBlock, ContentBlockDelta as AnthropicContentBlockDelta,
-        CreateMessageParams, Message as AnthropicMessage, MessageClient, MessageError,
-        Metadata as AnthropicMetadata, RequiredMessageParams, Role as AnthropicRole,
-        StopReason as AnthropicStopReason, StreamEvent as AnthropicStreamEvent,
-        Thinking as AnthropicThinking, ThinkingType as AnthropicThinkingType,
-        Tool as AnthropicTool, ToolChoice as _AnthropicToolChoice,
-    },
-};
-use futures::StreamExt;
+use base64::Engine;
 
 use crate::{
-    model::LanguageModel,
-    utils::{BoxStream, log},
-    value::{FinishReason, Message, MessageOutput, Part, Role},
+    model::{ServerEvent, ThinkEffort, api::RequestConfig},
+    to_value,
+    value::{
+        FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageOutput, Part, PartDelta,
+        PartDeltaFunction, PartFunction, Role, ToolDesc, Unmarshal, Unmarshaled, Value,
+    },
 };
 
-#[derive(Clone)]
-pub struct AnthropicGenerationConfig {
-    pub max_tokens: u32,
-    pub temperature: Option<f32>,
-    pub stop_sequences: Option<Vec<String>>,
-    pub top_k: Option<u32>,
-    pub top_p: Option<f32>,
-    pub tool_choice: Option<AnthropicToolChoice>,
-    pub thinking: Option<AnthropicThinkingConfig>,
-    pub metadata: Option<HashMap<String, String>>,
-}
+#[derive(Clone, Debug, Default)]
+struct AnthropicMarshal;
 
-#[derive(Clone)]
-pub enum AnthropicToolChoice {
-    Auto,
-    Any,
-    Tool { name: String },
-    None,
-}
-
-#[derive(Clone)]
-pub struct AnthropicThinkingConfig {
-    pub enabled: bool,
-    pub budget_tokens: usize,
-}
-
-impl Default for AnthropicGenerationConfig {
-    fn default() -> Self {
-        Self {
-            max_tokens: 1024,
-            temperature: None,
-            stop_sequences: None,
-            top_k: None,
-            top_p: None,
-            tool_choice: None,
-            thinking: None,
-            metadata: None,
-        }
-    }
-}
-
-impl Default for AnthropicThinkingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            budget_tokens: 1024,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct AnthropicLanguageModel {
-    model_name: String,
-    inner: AnthropicClient,
-    config: AnthropicGenerationConfig,
-}
-
-impl AnthropicLanguageModel {
-    pub fn new(model_name: impl Into<String>, api_key: impl Into<String>) -> Self {
-        let client = AnthropicClientBuilder::new(api_key, "2023-06-01")
-            .build::<MessageError>()
-            .unwrap();
-        Self {
-            model_name: model_name.into(),
-            inner: client,
-            config: AnthropicGenerationConfig::default(),
-        }
-    }
-
-    pub fn with_config(&mut self, config: AnthropicGenerationConfig) -> Self {
-        self.config = config;
-        self.clone()
-    }
-}
-
-fn anthropic_stream_event_to_ailoy(
-    evt: AnthropicStreamEvent,
-) -> Result<Option<MessageOutput>, String> {
-    match evt {
-        AnthropicStreamEvent::MessageStart { message } => {
-            log::debug(format!(
-                "[Anthropic] new message started (id: {})",
-                message.id
-            ));
-            Ok(Some(
-                MessageOutput::new().with_delta(Message::new().with_role(Role::Assistant)),
-            ))
-        }
-        AnthropicStreamEvent::ContentBlockStart {
-            index,
-            content_block,
-        } => {
-            log::debug(format!(
-                "[Anthropic] content block (idx: {}) start: {:?}",
-                index, content_block
-            ));
-            match content_block {
-                AnthropicContentBlock::Text { text } => Ok(Some(
-                    MessageOutput::new()
-                        .with_delta(Message::new().with_contents(vec![Part::Text(text)])),
-                )),
-                AnthropicContentBlock::Image { source } => {
-                    Ok(Some(MessageOutput::new().with_delta(
-                        Message::new().with_contents(vec![Part::ImageData {
-                            data: source.data,
-                            mime_type: source.media_type,
-                        }]),
-                    )))
-                }
-                AnthropicContentBlock::ToolUse { id, name, .. } => {
-                    // tool_use.input always starts with "{}".
-                    // The arguments will be eventually assembled by following content block deltas,
-                    // so we ignore the first arguments string.
-                    Ok(Some(MessageOutput::new().with_delta(
-                        Message::new().with_tool_calls(vec![Part::Function {
-                            id,
-                            name,
-                            arguments: "".into(),
-                        }]),
-                    )))
-                }
-                AnthropicContentBlock::ToolResult {
-                    tool_use_id,
-                    content,
-                } => {
-                    // This happens on "server_tool_use".
-                    // There's no way to figure out the name of server tool, so fill it as empty.
-                    Ok(Some(
-                        MessageOutput::new().with_delta(
-                            Message::new()
-                                .with_role(Role::Tool)
-                                .with_tool_call_id(tool_use_id)
-                                .with_contents(vec![Part::Text(content)]),
-                        ),
-                    ))
-                }
-                AnthropicContentBlock::Thinking { thinking, .. } => Ok(Some(
-                    MessageOutput::new().with_delta(Message::new().with_reasoning(thinking)),
-                )),
-                AnthropicContentBlock::RedactedThinking { .. } => {
-                    log::warn("[Anthropic] Redacted thinking is not supported");
-                    Ok(None)
-                }
+fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
+    let part_to_value = |part: &Part| -> Value {
+        match part {
+            Part::Text { text } => to_value!({"type": "text", "text": text}),
+            Part::Function {
+                id,
+                f: PartFunction { name, args },
+            } => {
+                let mut value =
+                    to_value!({"type": "tool_use", "name": name, "input": args.clone()});
+                if let Some(id) = id {
+                    value
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("id".into(), id.into());
+                };
+                value
+            }
+            Part::Value { value } => {
+                to_value!(serde_json::to_string(&value).unwrap())
+            }
+            Part::Image { .. } => {
+                // Get image
+                let img = part.as_image().unwrap();
+                // Write PNG string
+                let mut png_buf = Vec::new();
+                img.write_to(
+                    &mut std::io::Cursor::new(&mut png_buf),
+                    image::ImageFormat::Png,
+                )
+                .unwrap();
+                // base64 encoding
+                let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
+                to_value!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": encoded
+                    }
+                })
             }
         }
-        AnthropicStreamEvent::ContentBlockDelta { index, delta } => {
-            log::debug(format!(
-                "[Anthropic] content block (idx: {}) delta: {:?}",
-                index, delta
-            ));
-            match delta {
-                AnthropicContentBlockDelta::TextDelta { text } => Ok(Some(
-                    MessageOutput::new()
-                        .with_delta(Message::new().with_contents(vec![Part::Text(text)])),
-                )),
-                AnthropicContentBlockDelta::InputJsonDelta { partial_json } => {
-                    Ok(Some(MessageOutput::new().with_delta(
-                        Message::new().with_tool_calls(vec![Part::Function {
-                            id: "".into(),
-                            name: "".into(),
-                            arguments: partial_json,
-                        }]),
-                    )))
-                }
-                AnthropicContentBlockDelta::ThinkingDelta { thinking } => Ok(Some(
-                    MessageOutput::new().with_delta(Message::new().with_reasoning(thinking)),
-                )),
-                AnthropicContentBlockDelta::SignatureDelta { .. } => {
-                    log::warn("[Anthropic] Thinking signature delta is ignored");
-                    Ok(None)
-                }
+    };
+
+    if msg.role == Role::Tool {
+        return to_value!(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": msg.id.clone().expect("Tool call id must exist."),
+                        "content": part_to_value(&msg.contents[0])
+                    }
+                ]
             }
+        );
+    }
+
+    // Collecting contents
+    let mut contents = Vec::<Value>::new();
+    if !msg.thinking.is_empty() && include_thinking {
+        let mut part = to_value!({"type": "thinking", "thinking": &msg.thinking});
+        if let Some(sig) = &msg.signature {
+            part.as_object_mut()
+                .unwrap()
+                .insert("signature".into(), sig.into());
         }
-        AnthropicStreamEvent::ContentBlockStop { index } => {
-            log::debug(format!("[Anthropic] content block (idx: {}) stop", index));
-            Ok(None)
-        }
-        AnthropicStreamEvent::MessageDelta { delta, .. } => {
-            log::debug(format!("[Anthropic] message delta: {:?}", delta));
-            let stop_reason = delta
-                .stop_reason
-                .expect("MessageDelta should have stop_reason");
-            match stop_reason {
-                AnthropicStopReason::EndTurn => Ok(Some(
-                    MessageOutput::new().with_finish_reason(FinishReason::Stop),
-                )),
-                AnthropicStopReason::MaxTokens => Ok(Some(
-                    MessageOutput::new().with_finish_reason(FinishReason::Length),
-                )),
-                AnthropicStopReason::StopSequence => Ok(Some(
-                    MessageOutput::new().with_finish_reason(FinishReason::Stop),
-                )),
-                AnthropicStopReason::ToolUse => Ok(Some(
-                    MessageOutput::new().with_finish_reason(FinishReason::ToolCalls),
-                )),
-                AnthropicStopReason::Refusal => Ok(Some(
-                    MessageOutput::new().with_finish_reason(FinishReason::ContentFilter),
-                )),
-            }
-        }
-        AnthropicStreamEvent::MessageStop => {
-            log::debug("[Anthropic] Message stop");
-            Ok(None)
-        }
-        AnthropicStreamEvent::Ping => {
-            log::debug("[Anthropic] Ping");
-            Ok(None)
-        }
-        AnthropicStreamEvent::Error { error } => {
-            Err(format!("type: {}, message: {}", error.type_, error.message))
+        contents.push(part);
+    }
+    contents.extend(msg.contents.iter().map(part_to_value));
+    contents.extend(msg.tool_calls.iter().map(part_to_value));
+
+    // Final message object with role and collected parts
+    to_value!({"role": msg.role.to_string(), "content": contents})
+}
+
+impl Marshal<Message> for AnthropicMarshal {
+    fn marshal(&mut self, msg: &Message) -> Value {
+        marshal_message(msg, true)
+    }
+}
+
+impl Marshal<Vec<Message>> for AnthropicMarshal {
+    fn marshal(&mut self, msgs: &Vec<Message>) -> Value {
+        let last_user_index = msgs
+            .iter()
+            .rposition(|m| m.role == Role::User)
+            .unwrap_or_else(|| msgs.len());
+        Value::array(
+            msgs.iter()
+                .enumerate()
+                .map(|(i, msg)| marshal_message(msg, i > last_user_index))
+                .collect::<Vec<_>>(),
+        )
+    }
+}
+
+impl Marshal<ToolDesc> for AnthropicMarshal {
+    fn marshal(&mut self, item: &ToolDesc) -> Value {
+        if let Some(desc) = &item.description {
+            to_value!({
+                "name": &item.name,
+                "description": desc,
+                "input_schema": item.parameters.clone()
+            })
+        } else {
+            to_value!({
+                "name": &item.name,
+                "input_schema": item.parameters.clone()
+            })
         }
     }
 }
 
-impl LanguageModel for AnthropicLanguageModel {
-    fn run<'a>(
-        self: &'a mut Self,
-        msgs: Vec<crate::value::Message>,
-        tools: Vec<crate::value::ToolDesc>,
-    ) -> BoxStream<'a, Result<crate::value::MessageOutput, String>> {
-        let mut params = CreateMessageParams::new(RequiredMessageParams {
-            model: self.model_name.clone(),
-            messages: vec![],
-            max_tokens: self.config.max_tokens,
+enum AnthropicModelType {
+    Opus,
+    Sonnet,
+    Haiku,
+    Haiku3,
+}
+
+impl Marshal<RequestConfig> for AnthropicMarshal {
+    fn marshal(&mut self, config: &RequestConfig) -> Value {
+        let Some(model) = &config.model else {
+            panic!("Cannot marshal `Config` without `model`.");
+        };
+
+        let model_type = if model.contains("opus") {
+            AnthropicModelType::Opus
+        } else if model.contains("sonnet") {
+            AnthropicModelType::Sonnet
+        } else if model.starts_with("claude-3-5-haiku") {
+            AnthropicModelType::Haiku
+        } else if model.starts_with("claude-3-haiku") {
+            AnthropicModelType::Haiku3
+        } else {
+            panic!("Unsupported model.");
+        };
+
+        let is_reasoning_model = match model_type {
+            AnthropicModelType::Opus | AnthropicModelType::Sonnet => true,
+            AnthropicModelType::Haiku | AnthropicModelType::Haiku3 => false,
+        };
+
+        let budget_tokens = match (&config.think_effort, &model_type) {
+            (_, AnthropicModelType::Haiku) => 0,
+            (_, AnthropicModelType::Haiku3) => 0,
+            (ThinkEffort::Disable, _) => 0,
+            (ThinkEffort::Enable, _) => 8192,
+            (ThinkEffort::Low, _) => 1024,
+            (ThinkEffort::Medium, _) => 8192,
+            (ThinkEffort::High, _) => 24576,
+        };
+
+        let reasoning = if budget_tokens != 0 {
+            to_value!({"type": "enabled", "budget_tokens": budget_tokens as i64})
+        } else {
+            Value::Null
+        };
+
+        let system = if let Some(system_message) = &config.system_message {
+            to_value!(system_message)
+        } else {
+            Value::Null
+        };
+
+        let max_tokens = if let Some(max_tokens) = &config.max_tokens {
+            Value::integer(*max_tokens as i64)
+        } else {
+            Value::integer(match &model_type {
+                AnthropicModelType::Opus => 32000,
+                AnthropicModelType::Sonnet => 64000,
+                AnthropicModelType::Haiku => 8192,
+                AnthropicModelType::Haiku3 => 4096,
+            })
+        };
+
+        let temperature = if let Some(temperature) = &config.temperature
+            && !is_reasoning_model
+        {
+            to_value!(*temperature)
+        } else {
+            Value::Null
+        };
+
+        let top_p = if let Some(top_p) = &config.top_p
+            && !is_reasoning_model
+        {
+            to_value!(*top_p)
+        } else {
+            Value::Null
+        };
+
+        let stream = config.stream;
+
+        let mut body = to_value!({
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "reasoning": reasoning,
+            "stream": stream,
+            "temperature": temperature,
+            "top_p": top_p,
+        });
+        body.as_object_mut()
+            .unwrap()
+            .retain(|_key, value| !value.is_null());
+        body
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AnthropicUnmarshal;
+
+impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
+    fn unmarshal(&mut self, val: Value) -> Result<MessageDelta, String> {
+        const STREAM_TYPES: &[&str] = &[
+            "ping",
+            "message_start",
+            "message_delta",
+            "message_stop",
+            "content_block_start",
+            "content_block_delta",
+            "content_block_stop",
+        ];
+
+        let mut rv = MessageDelta::default();
+        let ty = if let Some(ty) = val.pointer("/type") {
+            ty.as_str().unwrap_or_default()
+        } else {
+            ""
+        };
+        let streamed = STREAM_TYPES.contains(&ty);
+
+        if streamed {
+            match ty {
+                "ping" => {
+                    // r#"{"type":"ping"}"#,
+                }
+                "message_start" => {
+                    // r#"{"type":"message_start","message":{"type":"message","role":"assistant","content":[]}}"#,
+                    if let Some(r) = val.pointer_as::<String>("/message/role") {
+                        let v = match r.as_str() {
+                            "system" => Ok(Role::System),
+                            "user" => Ok(Role::User),
+                            "assistant" => Ok(Role::Assistant),
+                            "tool" => Ok(Role::Tool),
+                            other => Err(format!("Unknown role: {other}")),
+                        }?;
+                        rv.role = Some(v);
+                    }
+                }
+                "message_delta" => {
+                    // r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
+                }
+                "message_stop" => {
+                    // r#"{"type":"message_stop"}"#,
+                }
+                "content_block_start" => {
+                    // r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+                    // r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+                    // r#"{"type":"content_block_start","content_block":{"type":"tool_use","id":"call_DF3wZtLHv5eBNfURjvI8MULJ","name":"get_weather","input":{}}}"#,
+                    let Some(ty) = val.pointer_as::<String>("/content_block/type") else {
+                        return Err(String::from("Invalid content block type"));
+                    };
+                    match ty.as_str() {
+                        "text" => {
+                            rv.contents.push(PartDelta::Text {
+                                text: String::default(),
+                            });
+                        }
+                        "thinking" => {}
+                        "tool_use" => {
+                            let id = val.pointer_as::<String>("/content_block/id").cloned();
+                            let name = val
+                                .pointer_as::<String>("/content_block/name")
+                                .cloned()
+                                .unwrap_or_default();
+                            let args = if let Some(input) =
+                                val.pointer_as::<String>("/content_block/input")
+                            {
+                                input.clone()
+                            } else {
+                                "".to_owned()
+                            };
+                            rv.tool_calls.push(PartDelta::Function {
+                                id,
+                                f: PartDeltaFunction::WithStringArgs { name, args },
+                            });
+                        }
+                        _ => {}
+                    };
+                }
+                "content_block_delta" => {
+                    if let Some(text) = val.pointer_as::<String>("/delta/text") {
+                        rv.contents.push(PartDelta::Text { text: text.into() });
+                    }
+                    if let Some(text) = val.pointer_as::<String>("/delta/thinking") {
+                        rv.thinking.push_str(text.as_str());
+                    }
+                    if let Some(text) = val.pointer_as::<String>("/delta/signature") {
+                        rv.signature = Some(text.to_owned());
+                    }
+                    if let Some(args) = val.pointer_as::<String>("/delta/partial_json") {
+                        rv.tool_calls.push(PartDelta::Function {
+                            id: None,
+                            f: PartDeltaFunction::WithStringArgs {
+                                name: String::new(),
+                                args: args.to_owned(),
+                            },
+                        });
+                    }
+                }
+                "content_block_stop" => {
+                    // r#"{"type":"content_block_stop","index":0}"#,
+                    // r#"{"type":"content_block_stop","index":1}"#,
+                }
+                _ => {
+                    return Err(String::from("Invalid stream message type"));
+                }
+            }
+            return Ok(rv);
+        }
+
+        // not streamed below
+
+        let root = val
+            .as_object()
+            .ok_or_else(|| String::from("Root should be an object"))?;
+
+        // Parse role
+        if let Some(r) = root.get("role") {
+            let s = r
+                .as_str()
+                .ok_or_else(|| String::from("Role should be a string"))?;
+            let v = match s {
+                "system" => Ok(Role::System),
+                "user" => Ok(Role::User),
+                "assistant" => Ok(Role::Assistant),
+                "tool" => Ok(Role::Tool),
+                other => Err(format!("Unknown role: {other}")),
+            }?;
+            rv.role = Some(v);
+        }
+
+        // Parse contents
+        if let Some(contents) = root.get("content")
+            && !contents.is_null()
+        {
+            if let Some(text) = contents.as_str() {
+                // Contents can be a single string
+                rv.contents.push(PartDelta::Text { text: text.into() });
+            } else if let Some(contents) = contents.as_array() {
+                // In case of part vector
+                for content in contents {
+                    let Some(content) = content.as_object() else {
+                        return Err(String::from("Invalid part"));
+                    };
+                    if let Some(text) = content.get("text") {
+                        let Some(text) = text.as_str() else {
+                            return Err(String::from("Invalid content part"));
+                        };
+                        rv.contents.push(PartDelta::Text { text: text.into() });
+                    } else if let Some(thinking) = content.get("thinking")
+                        && let Some(signature) = content.get("signature")
+                    {
+                        let Some(thinking) = thinking.as_str() else {
+                            return Err(String::from("Invalid thinking content"));
+                        };
+                        let Some(signature) = signature.as_str() else {
+                            return Err(String::from("Invalid signature content"));
+                        };
+                        rv.signature = Some(signature.to_owned());
+                        rv.thinking = thinking.into();
+                    } else if let Some(ty) = content.get("type")
+                        && ty.as_str() == Some("tool_use")
+                        && let Some(id) = content.get("id")
+                        && let Some(name) = content.get("name")
+                        && let Some(input) = content.get("input")
+                    {
+                        rv.tool_calls.push(PartDelta::Function {
+                            id: id.as_str().and_then(|id| Some(id.to_owned())),
+                            f: PartDeltaFunction::WithStringArgs {
+                                name: name.as_str().unwrap_or_default().to_owned(),
+                                args: serde_json::to_string(input).unwrap_or_default(),
+                            },
+                        });
+                    } else {
+                        return Err(String::from("Invalid part"));
+                    }
+                }
+            } else {
+                return Err(String::from("Invalid content"));
+            }
+        }
+
+        Ok(rv)
+    }
+}
+
+pub(super) fn make_request(
+    url: &str,
+    api_key: &str,
+    msgs: Vec<Message>,
+    tools: Vec<ToolDesc>,
+    config: RequestConfig,
+) -> reqwest::RequestBuilder {
+    let mut body = serde_json::json!(&Marshaled::<_, AnthropicMarshal>::new(&config));
+
+    body["messages"] = serde_json::json!(&Marshaled::<_, AnthropicMarshal>::new(&msgs));
+    if !tools.is_empty() {
+        body["tool_choice"] = serde_json::json!({"type": "auto"});
+        body["tools"] = serde_json::json!(
+            tools
+                .iter()
+                .map(|v| Marshaled::<_, AnthropicMarshal>::new(v))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    let builder = reqwest::Client::new()
+        .request(reqwest::Method::POST, url)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .body(body.to_string());
+
+    #[cfg(target_arch = "wasm32")]
+    let builder = builder.header("anthropic-dangerous-direct-browser-access", "true");
+
+    builder
+}
+
+pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
+        return MessageOutput::default();
+    };
+
+    let finish_reason = val
+        .pointer("/delta/stop_reason")
+        .and_then(|v| v.as_str())
+        .map(|reason| match reason {
+            "end_turn" => FinishReason::Stop(),
+            "pause_turn" => FinishReason::Stop(), // consider same as "end_turn"
+            "max_tokens" => FinishReason::Length(),
+            "tool_use" => FinishReason::ToolCall(),
+            "refusal" => {
+                FinishReason::Refusal("Model output violated Anthropic's safety policy.".to_owned())
+            }
+            reason => FinishReason::Refusal(format!("reason: {}", reason)),
         });
 
-        // Parse messages
-        for msg in msgs {
-            match &msg.role {
-                Some(role) => match role {
-                    Role::System => {
-                        // Anthropic does not consider system message as a general message.
-                        // It's rather considered as one of the generation config.
-                        let system_message = msg.contents[0].to_string();
-                        params.system = Some(system_message.to_string());
-                        continue;
-                    }
-                    Role::User => {
-                        let mut content_blocks: Vec<AnthropicContentBlock> = vec![];
-                        for part in msg.contents.iter() {
-                            match part {
-                                Part::Text(text) => {
-                                    content_blocks.push(AnthropicContentBlock::text(text));
-                                }
-                                Part::ImageData { data, mime_type } => {
-                                    content_blocks.push(AnthropicContentBlock::image(
-                                        "base64".to_string(),
-                                        mime_type,
-                                        data,
-                                    ));
-                                }
-                                Part::ImageURL(_) => {
-                                    // let mime_type =
-                                    //     mime_infer::from_path(url).first().unwrap().to_string();
-                                    // let block = AnthropicContentBlock::Image {
-                                    //     source: AnthropicImageSource {
-                                    //         type_: "url".into(),
-                                    //         media_type: mime_type,
-                                    //         data: url,
-                                    //     },
-                                    // };
-                                    // content_blocks.push(block);
-                                    todo!(
-                                        "Anthropic indeed supports image url input, but anthropic-ai-sdk currently does not support it."
-                                    )
-                                }
-                                _ => panic!("This part cannot belong to user"),
-                            }
-                        }
-                        params.messages.push(AnthropicMessage::new_blocks(
-                            AnthropicRole::User,
-                            content_blocks,
-                        ));
-                    }
-                    Role::Assistant => {
-                        let mut content_blocks: Vec<AnthropicContentBlock> = vec![];
-                        for part in msg.contents.iter() {
-                            match part {
-                                Part::Text(text) => {
-                                    content_blocks.push(AnthropicContentBlock::text(text));
-                                }
-                                _ => panic!("This part cannot belong to assistant contents"),
-                            }
-                        }
-                        for tc in msg.tool_calls.into_iter() {
-                            match tc {
-                                Part::Function {
-                                    id,
-                                    name,
-                                    arguments,
-                                } => {
-                                    content_blocks.push(AnthropicContentBlock::ToolUse {
-                                        id,
-                                        name,
-                                        input: serde_json::from_str(arguments.as_str()).unwrap(),
-                                    });
-                                }
-                                Part::FunctionString(_) => {
-                                    panic!("Function call should be in a completed form")
-                                }
-                                _ => panic!("This part cannot belong to assistant tool_calls"),
-                            }
-                        }
-                        params.messages.push(AnthropicMessage::new_blocks(
-                            AnthropicRole::Assistant,
-                            content_blocks,
-                        ));
-                    }
-                    Role::Tool => {
-                        let mut content_blocks: Vec<AnthropicContentBlock> = vec![];
-                        let tool_call_id = msg
-                            .tool_call_id
-                            .clone()
-                            .expect("Tool message shuold have a tool call identifier");
-                        for part in msg.contents.iter() {
-                            match part {
-                                Part::Text(text) => {
-                                    content_blocks.push(AnthropicContentBlock::ToolResult {
-                                        tool_use_id: tool_call_id.clone(),
-                                        content: text.to_string(),
-                                    });
-                                }
-                                _ => {
-                                    panic!("Tool results other than text are not supported")
-                                }
-                            }
-                        }
-                        params.messages.push(AnthropicMessage::new_blocks(
-                            AnthropicRole::User,
-                            content_blocks,
-                        ));
-                    }
-                },
-                None => panic!("Message role should not be None"),
-            }
-        }
+    let delta = match finish_reason {
+        Some(FinishReason::Refusal(_)) => MessageDelta::default(),
+        _ => serde_json::from_value::<Unmarshaled<_, AnthropicUnmarshal>>(val.clone())
+            .ok()
+            .map(|decoded| decoded.get())
+            .unwrap_or_default(),
+    };
 
-        // Parse tools
-        if tools.len() > 0 {
-            params.tools = Some(
-                tools
-                    .into_iter()
-                    .map(|tool| AnthropicTool {
-                        name: tool.name,
-                        description: Some(tool.description),
-                        input_schema: serde_json::from_value(
-                            serde_json::to_value(tool.parameters).unwrap(),
-                        )
-                        .unwrap(),
-                    })
-                    .collect::<Vec<AnthropicTool>>(),
-            );
-        }
-
-        // Set generation configs
-        if let Some(temperature) = self.config.temperature {
-            params.temperature = Some(temperature);
-        }
-        if let Some(stop_sequences) = &self.config.stop_sequences {
-            params.stop_sequences = Some(stop_sequences.clone());
-        }
-        if let Some(top_k) = self.config.top_k {
-            params.top_k = Some(top_k);
-        }
-        if let Some(top_p) = self.config.top_p {
-            params.top_p = Some(top_p);
-        }
-        if let Some(tool_choice) = &self.config.tool_choice {
-            match tool_choice {
-                AnthropicToolChoice::Auto => {
-                    params.tool_choice = Some(_AnthropicToolChoice::Auto);
-                }
-                AnthropicToolChoice::Any => {
-                    params.tool_choice = Some(_AnthropicToolChoice::Any);
-                }
-                AnthropicToolChoice::Tool { name } => {
-                    params.tool_choice = Some(_AnthropicToolChoice::Tool { name: name.clone() });
-                }
-                AnthropicToolChoice::None => {
-                    params.tool_choice = Some(_AnthropicToolChoice::None);
-                }
-            }
-        }
-        if let Some(thinking) = self.config.thinking.clone()
-            && thinking.enabled
-        {
-            params.thinking = Some(AnthropicThinking {
-                budget_tokens: thinking.budget_tokens,
-                type_: AnthropicThinkingType::Enabled,
-            });
-        }
-        if let Some(metadata) = &self.config.metadata {
-            params.metadata = Some(AnthropicMetadata {
-                fields: metadata.clone(),
-            });
-        }
-
-        // Always streaming
-        params = params.with_stream(true);
-
-        let strm = async_stream::try_stream! {
-            match self.inner.create_message_streaming(&params).await {
-                Ok(mut stream) => {
-                    while let Some(result) = stream.next().await {
-                        let resp: AnthropicStreamEvent = result.map_err(|e| e.to_string()).unwrap();
-                        match anthropic_stream_event_to_ailoy(resp) {
-                            Ok(output) => {
-                                if let Some(output) = output {
-                                    yield output;
-                                } else {
-                                    continue;
-                                }
-                            },
-                            Err(e) => {
-                                panic!("Error occurred during streaming: {}", e)
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    panic!("Failed to send request: {}", e)
-                }
-            }
-        };
-        Box::pin(strm)
+    MessageOutput {
+        delta,
+        finish_reason,
     }
 }
 
 #[cfg(test)]
-mod tests {
+mod dialect_tests {
+    use super::*;
+    use crate::value::{Delta, Marshaled, Message, Role};
+
+    #[test]
+    pub fn serialize_text() {
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("Explain me about Riemann hypothesis."),
+            Part::text("How cold brew is different from the normal coffee?"),
+        ]);
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"user","content":[{"type":"text","text":"Explain me about Riemann hypothesis."},{"type":"text","text":"How cold brew is different from the normal coffee?"}]}"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_messages_with_reasonings() {
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("Hello there."), Part::text("How are you?")]),
+            Message::new(Role::Assistant)
+                .with_thinking_signature("This is reasoning text would be vanished.", "")
+                .with_contents([Part::text("I'm fine, thank you. And you?")]),
+            Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
+            Message::new(Role::Assistant)
+                .with_thinking_signature(
+                    "This is reasoning text would be remaining.",
+                    "Ev4MCkYIBxgCKkDl5A",
+                )
+                .with_contents([Part::text("Is there anything I can help with?")]),
+        ];
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","content":[{"type":"text","text":"Hello there."},{"type":"text","text":"How are you?"}]},{"role":"assistant","content":[{"type":"text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"text","text":"I'm okay."}]},{"role":"assistant","content":[{"type":"thinking","thinking":"This is reasoning text would be remaining.","signature":"Ev4MCkYIBxgCKkDl5A"},{"type":"text","text":"Is there anything I can help with?"}]}]"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_function() {
+        let msg = Message::new(Role::Assistant).with_tool_calls([
+            Part::function_with_id(
+                "funcid_123456",
+                "temperature",
+                Value::object([("unit", "celsius")]),
+            ),
+            Part::function_with_id(
+                "funcid_7890ab",
+                "temperature",
+                Value::object([("unit", "fahrenheit")]),
+            ),
+        ]);
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"assistant","content":[{"type":"tool_use","name":"temperature","input":{"unit":"celsius"},"id":"funcid_123456"},{"type":"tool_use","name":"temperature","input":{"unit":"fahrenheit"},"id":"funcid_7890ab"}]}"#,
+        );
+    }
+
+    #[test]
+    pub fn serialize_tool_response() {
+        let msgs = vec![
+            Message::new(Role::Tool)
+                .with_id("funcid_123456")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("funcid_7890ab")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+        ];
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","content":[{"type":"tool_result","tool_use_id":"funcid_123456","content":"{\"temperature\":30,\"unit\":\"celsius\"}"}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"funcid_7890ab","content":"{\"temperature\":86,\"unit\":\"fahrenheit\"}"}]}]"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_image() {
+        let raw_pixels: Vec<u8> = vec![
+            10, 20, 30, // First row
+            40, 50, 60, // Second row
+            70, 80, 90, // Third row
+        ];
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("What you can see in this image?"),
+            Part::image_binary(3, 3, "grayscale", raw_pixels).unwrap(),
+        ]);
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
+        );
+    }
+
+    #[test]
+    pub fn serialize_config() {
+        let config = RequestConfig {
+            model: Some("claude-sonnet-4-5".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"claude-sonnet-4-5","max_tokens":1024,"system":"You are a helpful assistant.","reasoning":{"type":"enabled","budget_tokens":8192},"stream":true}"#
+        );
+
+        let config = RequestConfig {
+            model: Some("claude-3-haiku-20240307".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"claude-3-haiku-20240307","max_tokens":1024,"system":"You are a helpful assistant.","stream":true,"temperature":0.6,"top_p":0.9}"#
+        );
+    }
+
+    #[test]
+    pub fn deserialize_text() {
+        let inputs = [
+            r#"{"type":"message","content":[{"type":"output_text","text":"Hello world!"}],"role": "assistant"}"#,
+        ];
+        let mut u = AnthropicUnmarshal;
+
+        let mut delta = MessageDelta::new();
+
+        for input in inputs {
+            let val = serde_json::from_str::<Value>(input).unwrap();
+            let cur_delta = u.unmarshal(val).unwrap();
+            delta = delta.aggregate(cur_delta).unwrap();
+        }
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
+    }
+
+    #[test]
+    pub fn deserialize_text_stream() {
+        let inputs = [
+            r#"{"type":"message_start","message":{"type":"message","role":"assistant","content":[]}}"#,
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world!"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
+            r#"{"type":"message_stop"}"#,
+        ];
+        let mut u = AnthropicUnmarshal;
+
+        let mut delta = MessageDelta::new();
+
+        for input in inputs {
+            let val = serde_json::from_str::<Value>(input).unwrap();
+            let cur_delta = u.unmarshal(val).unwrap();
+            delta = delta.aggregate(cur_delta).unwrap();
+        }
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
+    }
+
+    #[test]
+    pub fn deserialize_text_with_reasoning() {
+        let inputs = [
+            r#"{"role": "assistant","content":[{"type": "thinking","thinking":"**Answering a simple question**\n\nUser is saying hello.","signature":"Ev4MCkYIBxgCKkDl5A"},{"type":"text","text":"Hello world!"}]}"#,
+        ];
+        let mut u = AnthropicUnmarshal;
+
+        let mut delta = MessageDelta::new();
+
+        for input in inputs {
+            let val = serde_json::from_str::<Value>(input).unwrap();
+            let cur_delta = u.unmarshal(val).unwrap();
+            delta = delta.aggregate(cur_delta).unwrap();
+        }
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert_eq!(
+            delta.thinking,
+            "**Answering a simple question**\n\nUser is saying hello."
+        );
+        assert_eq!(delta.signature.unwrap(), "Ev4MCkYIBxgCKkDl5A");
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
+    }
+
+    #[test]
+    pub fn deserialize_text_with_reasoning_stream() {
+        let inputs = [
+            r#"{"type":"message_start","message":{"type":"message","role":"assistant","content":[]}}"#,
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"**Answering a simple question**\n\n"}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"User is saying hello."}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Ev4MCkYIBxgCKkDl5A"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" world!"}}"#,
+            r#"{"type":"content_block_stop","index":1}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
+            r#"{"type":"message_stop"}"#,
+        ];
+        let mut u = AnthropicUnmarshal;
+
+        let mut delta = MessageDelta::new();
+
+        for input in inputs {
+            let val = serde_json::from_str::<Value>(input).unwrap();
+            let cur_delta = u.unmarshal(val).unwrap();
+            delta = delta.aggregate(cur_delta).unwrap();
+        }
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert_eq!(
+            delta.thinking,
+            "**Answering a simple question**\n\nUser is saying hello."
+        );
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
+    }
+
+    #[test]
+    pub fn deserialize_tool_call() {
+        let inputs = [
+            r#"{"role": "assistant","content":[{"type":"tool_use","id":"call_DF3wZtLHv5eBNfURjvI8MULJ","name":"get_weather","input":{"location":"Paris, France"}}]}"#,
+        ];
+        let mut u = AnthropicUnmarshal;
+
+        let mut delta = MessageDelta::new();
+
+        for input in inputs {
+            let val = serde_json::from_str::<Value>(input).unwrap();
+            let cur_delta = u.unmarshal(val).unwrap();
+            delta = delta.aggregate(cur_delta).unwrap();
+        }
+        assert_eq!(delta.tool_calls.len(), 1);
+        let tool_call = delta.tool_calls.pop().unwrap();
+        let (id, name, args) = tool_call.to_function().unwrap();
+        assert_eq!(id.unwrap(), "call_DF3wZtLHv5eBNfURjvI8MULJ");
+        assert_eq!(name, "get_weather");
+        assert_eq!(args, "{\"location\":\"Paris, France\"}");
+    }
+
+    #[test]
+    pub fn deserialize_tool_call_stream() {
+        let inputs = [
+            r#"{"type":"message_start","message":{"type":"message","role":"assistant","content":[]}}"#,
+            r#"{"type":"content_block_start","content_block":{"type":"tool_use","id":"call_DF3wZtLHv5eBNfURjvI8MULJ","name":"get_weather","input":{}}}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\""}}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"location"}}"#,
+            r#"{"type":"ping"}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"\":\""}}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"Paris"}}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":","}}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":" France"}}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"\"}"}}"#,
+            r#"{"type":"content_block_stop"}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null}}"#,
+            r#"{"type":"message_stop"}"#,
+        ];
+        let mut u = AnthropicUnmarshal;
+
+        let mut delta = MessageDelta::new();
+
+        for input in inputs {
+            let val = serde_json::from_str::<Value>(input).unwrap();
+            let cur_delta = u.unmarshal(val).unwrap();
+            delta = delta.aggregate(cur_delta).unwrap();
+        }
+        assert_eq!(delta.tool_calls.len(), 1);
+        let tool_call = delta.tool_calls.pop().unwrap();
+        let (id, name, args) = tool_call.to_function().unwrap();
+        assert_eq!(id.unwrap(), "call_DF3wZtLHv5eBNfURjvI8MULJ");
+        assert_eq!(name, "get_weather");
+        assert_eq!(args, "{\"location\":\"Paris, France\"}");
+    }
+}
+
+#[cfg(test)]
+mod api_tests {
     use std::sync::LazyLock;
 
-    use ailoy_macros::multi_platform_test;
+    use futures::StreamExt;
 
     use super::*;
-    use crate::value::{MessageAggregator, ToolDesc};
+    use crate::{
+        debug,
+        model::{
+            APISpecification, InferenceConfig, LangModelInference as _, api::StreamAPILangModel,
+        },
+        to_value,
+        value::{Delta, Part, Role, ToolDescBuilder},
+    };
 
     static ANTHROPIC_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
         option_env!("ANTHROPIC_API_KEY")
             .expect("Environment variable 'ANTHROPIC_API_KEY' is required for the tests.")
     });
 
-    #[multi_platform_test]
-    async fn anthropic_infer_with_thinking() {
-        let mut config = AnthropicGenerationConfig::default();
-        config.max_tokens = 2048;
-        config.thinking = Some(AnthropicThinkingConfig::default());
-        let mut anthropic =
-            AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY)
-                .with_config(config);
+    #[tokio::test]
+    async fn infer_simple_chat() {
+        let mut model = StreamAPILangModel::new(
+            APISpecification::Claude,
+            "claude-3-haiku-20240307",
+            *ANTHROPIC_API_KEY,
+        );
 
-        let msgs = vec![
-            Message::new()
-                .with_role(Role::System)
-                .with_contents(vec![Part::Text(
-                    "You are a helpful mathematics assistant".to_owned(),
-                )]),
-            Message::new()
-                .with_role(Role::User)
-                .with_contents(vec![Part::Text(
-                    "What is the sum of the first 50 prime numbers?".to_owned(),
-                )]),
-        ];
-        let mut agg = MessageAggregator::new();
-        let mut strm = anthropic.run(msgs, Vec::new());
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            if let Some(msg) = agg.update(delta) {
-                log::info(format!("{:?}", msg).as_str());
-            }
+        let msgs =
+            vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
+        let mut assistant_msg = MessageDelta::new();
+        let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
         }
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
     }
 
-    #[multi_platform_test]
-    async fn anthropic_infer_tool_call() {
-        use serde_json::json;
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_call() {
+        use crate::model::InferenceConfig;
 
-        let mut anthropic =
-            AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY);
-
+        let mut model = StreamAPILangModel::new(
+            APISpecification::Claude,
+            "claude-3-haiku-20240307",
+            *ANTHROPIC_API_KEY,
+        );
         let tools = vec![
-            ToolDesc::new(
-                "temperature".into(),
-                "Get current temperature".into(),
-                json!({
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
                     "type": "object",
                     "properties": {
-                        "location": {
-                            "type": "string",
-                            "description": "The city name"
-                        },
-                        "unit": {
-                            "type": "string",
-                            "description": "The unit of temperature",
-                            "enum": ["Celsius", "Fahrenheit"]
-                        }
-                    },
-                    "required": ["location", "unit"]
-                }),
-                Some(json!({
-                    "type": "number",
-                    "description": "Null if the given city name is unavailable.",
-                    "nullable": true,
-                })),
-            )
-            .unwrap(),
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
         ];
-        let mut msgs = vec![
-            Message::new()
-                .with_role(Role::User)
-                .with_contents([Part::Text(
-                    "How much hot currently in Dubai? Answer in Celsius.".to_owned(),
-                )]),
-        ];
-        let mut agg = MessageAggregator::new();
-        let mut assistant_msg: Option<Message> = None;
-        {
-            let mut strm = anthropic.run(msgs.clone(), tools.clone());
-            while let Some(delta_opt) = strm.next().await {
-                let delta = delta_opt.unwrap();
-                if let Some(msg) = agg.update(delta) {
-                    log::info(format!("{:?}", msg).as_str());
-                    assistant_msg = Some(msg);
-                }
-            }
-        }
-        // This should be tool call message
-        let assistant_msg = assistant_msg.unwrap();
-        msgs.push(assistant_msg.clone());
-
-        // Append a fake tool call result message
-        let mut tool_result_msg = Message::new()
-            .with_role(Role::Tool)
-            .with_contents(vec![Part::Text("{\"temperature\": 38.5}".into())]);
-        if let Part::Function { id, .. } = assistant_msg.tool_calls[0].clone() {
-            tool_result_msg = tool_result_msg.with_tool_call_id(id);
-        }
-        msgs.push(tool_result_msg);
-
-        let mut strm = anthropic.run(msgs, tools);
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            if let Some(msg) = agg.update(delta) {
-                // Final message shuold say something like "Dubai is 38.5°C"
-                log::info(format!("{:?}", msg).as_str());
-            }
-        }
-    }
-
-    #[multi_platform_test]
-    async fn anthropic_infer_with_image() {
-        use base64::Engine;
-
-        let client = reqwest::Client::new();
-        let test_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Jensen_Huang_%28cropped%29.jpg/250px-Jensen_Huang_%28cropped%29.jpg";
-        let response = client.get(test_image_url).header(reqwest::header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36").send().await.unwrap();
-        let image_bytes = response.bytes().await.unwrap();
-        let image_base64 = base64::engine::general_purpose::STANDARD.encode(image_bytes);
-
-        let mut anthropic =
-            AnthropicLanguageModel::new("claude-sonnet-4-20250514", *ANTHROPIC_API_KEY);
 
         let msgs = vec![
-            Message::new()
-                .with_role(Role::User)
-                .with_contents(vec![Part::ImageData {
-                    data: image_base64,
-                    mime_type: "image/jpeg".into(),
-                }]),
-            Message::new()
-                .with_role(Role::User)
-                .with_contents(vec![Part::Text("What is shown in this image?".to_owned())]),
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let mut agg = MessageAggregator::new();
-        let mut strm = anthropic.run(msgs, Vec::new());
-        while let Some(delta_opt) = strm.next().await {
-            let delta = delta_opt.unwrap();
-            if let Some(msg) = agg.update(delta) {
-                log::info(format!("{:?}", msg));
-            }
+        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
         }
+        assert_eq!(finish_reason, Some(FinishReason::ToolCall()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!(
+                "{:?}",
+                message.tool_calls.first().and_then(|f| f.as_function())
+            );
+            message.tool_calls.len() > 0
+                && message
+                    .tool_calls
+                    .first()
+                    .and_then(|f| f.as_function())
+                    .map(|f| f.1 == "temperature")
+                    .unwrap_or(false)
+        }));
+    }
+
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn infer_tool_response() {
+        use crate::model::InferenceConfig;
+
+        let mut model = StreamAPILangModel::new(
+            APISpecification::Claude,
+            "claude-3-haiku-20240307",
+            *ANTHROPIC_API_KEY,
+        );
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
+        ];
+
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?")]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "toolu_01KjM9aTHwxL8zLQTKcj2yY8",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "fahrenheit"}),
+            )]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "toolu_01A8fw3xe1Rxe2eahjevvFbE",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "celsius"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("toolu_01KjM9aTHwxL8zLQTKcj2yY8")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("toolu_01A8fw3xe1Rxe2eahjevvFbE")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+        ];
+        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
+        }
+        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
     }
 }

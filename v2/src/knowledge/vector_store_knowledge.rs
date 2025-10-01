@@ -6,7 +6,7 @@ use futures::lock::Mutex;
 
 use crate::{
     knowledge::base::{Knowledge, KnowledgeRetrieveResult},
-    model::EmbeddingModel,
+    model::{EmbeddingModel, EmbeddingModelInference},
     vector_store::{VectorStore, VectorStoreRetrieveResult},
 };
 
@@ -14,7 +14,7 @@ use crate::{
 pub struct VectorStoreKnowledge {
     name: String,
     store: Arc<Mutex<dyn VectorStore>>,
-    embedding_model: Arc<Mutex<dyn EmbeddingModel>>,
+    embedding_model: EmbeddingModel,
     top_k: usize,
 }
 
@@ -31,7 +31,7 @@ impl VectorStoreKnowledge {
     pub fn new(
         name: impl Into<String>,
         store: impl VectorStore + 'static,
-        embedding_model: impl EmbeddingModel + 'static,
+        embedding_model: EmbeddingModel,
     ) -> Self {
         let name = name.into();
         let default_top_k = 5 as usize;
@@ -39,7 +39,7 @@ impl VectorStoreKnowledge {
         Self {
             name: name,
             store: Arc::new(Mutex::new(store)),
-            embedding_model: Arc::new(Mutex::new(embedding_model)),
+            embedding_model: embedding_model,
             top_k: default_top_k,
         }
     }
@@ -56,11 +56,7 @@ impl Knowledge for VectorStoreKnowledge {
     }
 
     async fn retrieve(&self, query: String) -> Result<Vec<KnowledgeRetrieveResult>> {
-        let query_embedding = {
-            let mut model = self.embedding_model.lock().await;
-            model.run(query.into()).await
-        }?;
-
+        let query_embedding = self.embedding_model.infer(query.into()).await?;
         let results = {
             let store = self.store.lock().await;
             store.retrieve(query_embedding, self.top_k).await
@@ -84,20 +80,20 @@ mod tests {
     use crate::{
         agent::{Agent, SystemMessageRenderer},
         knowledge::KnowledgeTool,
-        model::{LocalEmbeddingModel, LocalLanguageModel},
+        model::{EmbeddingModel, LangModel},
         tool::Tool,
-        value::{MessageAggregator, Part, ToolCallArg},
+        value::{Part, Value},
         vector_store::{FaissStore, VectorStoreAddInput},
     };
 
     async fn prepare_knowledge() -> Result<VectorStoreKnowledge> {
         let mut store = FaissStore::new(1024).await.unwrap();
-        let mut embedding_model = LocalEmbeddingModel::new("BAAI/bge-m3").await.unwrap();
+        let embedding_model = EmbeddingModel::new_local("BAAI/bge-m3").await.unwrap();
 
         let doc0: String = "Ailoy is an awesome AI agent framework.".into();
         store
             .add_vector(VectorStoreAddInput {
-                embedding: embedding_model.run(doc0.clone()).await.unwrap(),
+                embedding: embedding_model.infer(doc0.clone()).await.unwrap(),
                 document: doc0,
                 metadata: None,
             })
@@ -105,7 +101,7 @@ mod tests {
         let doc1: String = "Langchain is a library".into();
         store
             .add_vector(VectorStoreAddInput {
-                embedding: embedding_model.run(doc1.clone()).await.unwrap(),
+                embedding: embedding_model.infer(doc1.clone()).await.unwrap(),
                 document: doc1,
                 metadata: None,
             })
@@ -129,7 +125,7 @@ mod tests {
 
         // Testing with tool call
         let tool = KnowledgeTool::from(knowledge);
-        let args = serde_json::from_value::<ToolCallArg>(json!({
+        let args = serde_json::from_value::<Value>(json!({
             "query": "What is Langchain?"
         }))?;
         let tool_result = tool.run(args).await.map_err(|e| anyhow!(e))?;
@@ -141,20 +137,19 @@ mod tests {
     #[multi_platform_test]
     async fn test_vectorstore_knowledge_with_agent() -> Result<()> {
         let knowledge = prepare_knowledge().await?;
-        let model = LocalLanguageModel::new("Qwen/Qwen3-0.6B").await.unwrap();
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
         let agent = Arc::new(Mutex::new(Agent::new(model, vec![])));
-        let mut agg = MessageAggregator::new();
 
         // Testing as knowledge
         {
             let mut agent_guard = agent.lock().await;
             agent_guard.set_knowledge(knowledge.clone());
 
-            let mut strm = Box::pin(agent_guard.run(vec![Part::Text("What is Ailoy?".into())]));
-            while let Some(delta_opt) = strm.next().await {
-                let delta = delta_opt.unwrap();
-                if let Some(msg) = agg.update(delta) {
-                    println!("{:?}", msg);
+            let mut strm = Box::pin(agent_guard.run(vec![Part::text("What is Ailoy?")]));
+            while let Some(out_opt) = strm.next().await {
+                let out = out_opt.unwrap();
+                if out.aggregated.is_some() {
+                    println!("{:?}", out.aggregated.unwrap());
                 }
             }
         }
@@ -169,26 +164,17 @@ mod tests {
         {
             let mut agent_guard = agent.lock().await;
             // Example of customizing with_stringify
-            let tool = KnowledgeTool::from(knowledge).with_stringify(Arc::new(|results| {
-                Ok(serde_json::to_value(
-                    results
-                        .iter()
-                        .map(|res| res.document.clone())
-                        .collect::<Vec<_>>(),
-                )
-                .map_err(|e| anyhow!(e.to_string()))?
-                .to_string())
-            }));
+            let tool = KnowledgeTool::from(knowledge);
             agent_guard.add_tool(Arc::new(tool.clone())).await?;
 
-            let mut strm = Box::pin(agent_guard.run(vec![Part::Text(format!(
+            let mut strm = Box::pin(agent_guard.run(vec![Part::text(format!(
                 "What is Ailoy? Answer by calling tool '{}'",
                 tool.get_description().name
             ))]));
-            while let Some(delta_opt) = strm.next().await {
-                let delta = delta_opt.unwrap();
-                if let Some(msg) = agg.update(delta) {
-                    println!("{:?}", msg);
+            while let Some(output) = strm.next().await {
+                let output = output.unwrap();
+                if output.aggregated.is_some() {
+                    println!("{:?}", output.aggregated.unwrap());
                 }
             }
         }

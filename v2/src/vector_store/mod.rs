@@ -1,13 +1,11 @@
 mod api;
 mod local;
 
-use ailoy_macros::multi_platform_async_trait;
+use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 use anyhow::Result;
 pub use api::*;
 pub use local::*;
 use serde_json::{Map, Value as Json};
-
-use crate::utils::{MaybeSend, MaybeSync};
 
 pub type Embedding = Vec<f32>;
 pub type Metadata = Map<String, Json>;
@@ -35,8 +33,9 @@ pub struct VectorStoreRetrieveResult {
     pub distance: f32,
 }
 
+#[maybe_send_sync]
 #[multi_platform_async_trait]
-pub trait VectorStore: MaybeSend + MaybeSync {
+pub trait VectorStore {
     async fn add_vector(&mut self, input: VectorStoreAddInput) -> Result<String>;
     async fn add_vectors(&mut self, inputs: Vec<VectorStoreAddInput>) -> Result<Vec<String>>;
     async fn get_by_id(&self, id: &str) -> Result<Option<VectorStoreGetResult>>;
