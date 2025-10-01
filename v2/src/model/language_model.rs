@@ -112,7 +112,7 @@ impl LangModel {
         api_key: impl Into<String>,
     ) -> Self {
         Self {
-            inner: LangModelInner::StreamAPI(StreamAPILangModel::new(provider, model, api_key)),
+            inner: LangModelInner::StreamAPI(StreamAPILangModel::new(spec, model, api_key)),
         }
     }
 
