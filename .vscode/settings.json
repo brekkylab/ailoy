@@ -30,12 +30,17 @@
             "source.fixAll.ruff": "explicit"
         },
     },
+    "[rust]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "rust-lang.rust-analyzer"
+    },
     "cmake.configureOnOpen": true,
     "cmake.configureArgs": [
         "-DOpenMP_ROOT=/opt/homebrew/opt/libomp",
     ],
     "cmake.environment": {
     },
+    "cmake.sourceDirectory": "${workspaceFolder}/v2/shim",
     "cmake.useCMakePresets": "always",
     "files.associations": {
         ".prettierrc": "typescript",
@@ -127,6 +132,17 @@
         "numeric": "cpp",
         "cinttypes": "cpp",
         "filesystem": "cpp",
-        "ranges": "cpp"
+        "ranges": "cpp",
+        "cfenv": "cpp",
+        "source_location": "cpp",
+        "*.rs": "rust"
     },
+    "rust-analyzer.cargo.buildScripts.enable": true,
+    "rust-analyzer.cargo.features": [],
+    // "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
+    "rust-analyzer.procMacro.enable": true,
+    "rust-analyzer.runnables.extraEnv": {
+        "RUST_LOG": "debug"
+    },
+    "rust-analyzer.rustfmt.extraArgs": [],
 }

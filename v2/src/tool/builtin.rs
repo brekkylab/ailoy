@@ -1,0 +1,194 @@
+use std::{
+    fmt::{self, Debug, Formatter},
+    sync::Arc,
+};
+
+use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
+
+use crate::{
+    tool::Tool,
+    value::{ToolDesc, Value},
+};
+
+#[maybe_send_sync]
+type ToolFunc = dyn Fn(Value) -> Value;
+
+#[derive(Clone)]
+pub struct BuiltinTool {
+    desc: ToolDesc,
+    f: Arc<ToolFunc>,
+}
+
+impl Debug for BuiltinTool {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BuiltinTool")
+            .field("desc", &self.desc)
+            .field("f", &"(Function)")
+            .finish()
+    }
+}
+
+impl BuiltinTool {
+    pub fn new(desc: ToolDesc, f: Arc<ToolFunc>) -> Self {
+        BuiltinTool { desc, f }
+    }
+}
+
+#[multi_platform_async_trait]
+impl Tool for BuiltinTool {
+    fn get_description(&self) -> ToolDesc {
+        self.desc.clone()
+    }
+
+    async fn run(&self, args: Value) -> Result<Value, String> {
+        Ok(self.f.clone()(args))
+    }
+}
+
+///
+#[cfg(any(target_family = "unix", target_family = "windows"))]
+pub fn create_terminal_tool() -> BuiltinTool {
+    use std::{
+        collections::HashMap,
+        process::{Command, Stdio},
+    };
+
+    use crate::{
+        to_value,
+        value::{ToolDescBuilder, Value},
+    };
+
+    let current_shell = {
+        #[cfg(target_family = "unix")]
+        {
+            "bash"
+        }
+        #[cfg(target_family = "windows")]
+        {
+            "powershell"
+        }
+    };
+    let desc = ToolDescBuilder::new("execute_command")
+        .description(format!(
+            "Executes a command on the current system using the default shell. Current shell: {}. \
+            Optional fields: cwd (string), env (object), stdin (string)",
+            current_shell
+        ))
+        .parameters(to_value!({
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The command to execute."},
+                "cwd": {"type": "string", "description": "Optional working directory."},
+                "env": {"type": "object", "description": "Optional environment variables as key-value pairs."},
+                "stdin": {"type": "string", "description": "Optional string to send to STDIN."},
+            },
+            "required": ["command"]
+        }))
+        .build();
+
+    let f = Arc::new(|args: Value| -> Value {
+        let args = match args.as_object() {
+            Some(a) => a,
+            None => {
+                return to_value!({
+                    "stdout": "",
+                    "stderr": "Invalid arguments: expected object",
+                    "exit_code": -1 as i64
+                });
+            }
+        };
+
+        let cmd_str = match args.get("command").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => {
+                return to_value!({
+                    "stdout": "",
+                    "stderr": "Missing required 'command' string",
+                    "exit_code": -1 as i64
+                });
+            }
+        };
+
+        // optional cwd
+        let cwd = args.get("cwd").and_then(|v| v.as_str());
+
+        // optional env
+        let env_map: Option<HashMap<String, String>> =
+            args.get("env").and_then(|v| v.as_object()).map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            });
+
+        // optional stdin
+        let stdin_data = args.get("stdin").and_then(|v| v.as_str());
+
+        // Prepare command
+        #[cfg(target_family = "unix")]
+        let mut command = Command::new("bash");
+        #[cfg(target_family = "unix")]
+        {
+            command.args(["-lc", cmd_str]);
+        }
+        #[cfg(target_family = "windows")]
+        let mut command = Command::new("powershell");
+        #[cfg(target_family = "windows")]
+        {
+            command.args(["-NoProfile", "-Command", cmd_str]);
+        }
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        // Apply cwd
+        if let Some(dir) = cwd
+            && !dir.is_empty()
+        {
+            command.current_dir(dir);
+        }
+
+        // Apply env
+        if let Some(envs) = env_map {
+            for (k, v) in envs {
+                command.env(k, v);
+            }
+        }
+
+        // Apply stdin
+        if stdin_data.is_some() {
+            command.stdin(Stdio::piped());
+        }
+
+        // Run
+        let value = match command.spawn().and_then(|mut child| {
+            if let Some(input) = stdin_data {
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let _ = stdin.write_all(input.as_bytes());
+                }
+            }
+            child.wait_with_output()
+        }) {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                let code = out.status.code().unwrap_or(-1);
+                to_value!({
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "exit_code": code as i64
+                })
+            }
+            Err(e) => {
+                to_value!({
+                    "stdout": "",
+                    "stderr": format!("failed to run command: {}", e),
+                    "exit_code": -1 as i64
+                })
+            }
+        };
+
+        // Return
+        value
+    });
+
+    BuiltinTool::new(desc, f)
+}

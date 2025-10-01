@@ -1,0 +1,103 @@
+[package]
+name = "ailoy"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+python = ["dep:pyo3", "dep:pyo3-async-runtimes", "dep:pyo3-stub-gen", "dep:pyo3-stub-gen-derive"]
+nodejs = ["dep:napi", "dep:napi-derive"]
+default = []
+
+[dependencies]
+ailoy-macros = { path = "./macros" }
+anyhow = "1"
+async-channel = "2.5"
+async-stream = "0.3"
+async-trait = "0.1.89"
+base64 = "0.21"
+chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "master" }
+dedent = "0.1.1"
+derive_builder = "0.20.2"
+downcast-rs = "2.0.2"
+futures = "0.3.31"
+indexmap = { version = "2", features = ["serde"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+jsonschema = { version = "0.33.0", default-features = false }
+mime-infer = "4.0.0"
+minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
+minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
+napi = { version = "3", features = ["tokio_rt", "napi5", "serde-json"], optional = true }
+napi-derive = { version = "3", optional = true }
+ordered-float = { version = "5.0.0", features = ["serde"] }
+pyo3 = { version = "0.26", features = ["experimental-async", "macros"], optional = true }
+pyo3-async-runtimes = { version = "0.26", features = ["attributes", "tokio-runtime"], optional = true }
+pyo3-stub-gen = { version = "0.12.2", optional = true }
+pyo3-stub-gen-derive = { version = "0.12.2", optional = true }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+rmcp = { version = "0.5.0", features = ["default"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = { version = "1.0", features = ["preserve_order"] }
+sha1 = "0.10"
+strum = { version = "0.27", features = ["derive"] }
+strum_macros = "0.27.2"
+thiserror = "2.0.15"
+url = "2.5.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+js-sys = "0.3"
+sse-stream = "0.2"
+tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex"] }
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt", "sync"] }
+uuid = { version = "1.18.0", features = ["v4", "js"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "FileSystemCreateWritableOptions",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemGetFileOptions",
+    "FileSystemRemoveOptions",
+    "FileSystemWritableFileStream",
+    "Navigator",
+    "Storage",
+    "StorageManager",
+    "console"
+] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cxx = "1.0"
+log = "0.4.27"
+onig = "6"
+parking_lot = "0.12.4"
+rmcp = { version = "0.5.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client"] }
+tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+uuid = { version = "1.18.0", features = ["v4"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+env_logger = "0.11.8"
+
+[build-dependencies]
+dotenvy = "0.15.7"
+napi-build = "2"
+
+[target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
+cmake = "0.1"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "py_stub_gen"
+doc = false
+required-features = ["python"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--enable-bulk-memory"]

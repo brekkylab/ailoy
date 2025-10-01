@@ -1,0 +1,63 @@
+[project]
+name = "ailoy-py"
+version = "0.2.0"
+description = "A lightweight library for building AI applications"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Brekkylab Inc.", email = "contact@brekkylab.com"}
+]
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[project.urls]
+Homepage = "https://brekkylab.github.io/ailoy"
+Documentation = "https://brekkylab.github.io/ailoy"
+Repository = "https://github.com/brekkylab/ailoy"
+Issues = "https://github.com/brekkylab/ailoy/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
+    "ruff>=0.11.8",
+    "pdoc>=15.0.3",
+]
+
+[build-system]
+requires = ["maturin>=1.9"]
+build-backend = "maturin"
+
+[tool.maturin]
+auditwheel = "repair"
+compatibility = "pypi"
+features = ["python", "pyo3/extension-module"]
+manifest-path = "../../Cargo.toml"
+module-name = "ailoy._core"
+profile = "release"
+python-source = "."
+python-packages = ["ailoy"]
+strip = true
+
+[tool.ruff]
+extend-select = ["I"]
+exclude = [
+    "ailoy/_core.pyi"
+]
+
+[tool.pytest.ini_options]
+addopts = "--capture=tee-sys"
+pythonpath = "tests"
+testpaths = ["tests"]
