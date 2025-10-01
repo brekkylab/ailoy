@@ -3,7 +3,6 @@ pub mod chat_completion;
 pub mod gemini;
 pub mod openai;
 mod stream;
-// pub mod xai;
 
 pub(super) use stream::*;
 
