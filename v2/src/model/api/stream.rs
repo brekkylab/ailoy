@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use ailoy_macros::maybe_send_sync;
+use anyhow::anyhow;
 use futures::StreamExt as _;
 
 use crate::{
@@ -132,7 +133,7 @@ impl LangModelInference for StreamAPILangModel {
         mut msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: InferenceConfig,
-    ) -> BoxStream<'a, Result<MessageOutput, String>> {
+    ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         // Initialize buffer
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
@@ -166,14 +167,14 @@ impl LangModelInference for StreamAPILangModel {
 
         let strm = async_stream::try_stream! {
             // Await response
-            let resp = resp.await.map_err(|e| e.to_string())?;
+            let resp = resp.await?;
 
             if resp.status().is_success() {
                 // println!("{:?}", resp.text().await);
                 // On success - read stream
                 let mut strm = resp.bytes_stream();
                 'outer: while let Some(chunk_res) = strm.next().await {
-                    let chunk = chunk_res.map_err(|e| e.to_string())?;
+                    let chunk = chunk_res?;
                     buf.extend_from_slice(&chunk);
                     while let Some(evt) = drain_next_event(&mut buf) {
                         let message_output = (self.handle_event)(evt);
@@ -192,7 +193,7 @@ impl LangModelInference for StreamAPILangModel {
                 // On error
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
-                Err(format!("Request failed: {} - {}", status, text))?;
+                Err(anyhow!("Request failed: {} - {}", status, text))?
             }
         };
         Box::pin(strm)

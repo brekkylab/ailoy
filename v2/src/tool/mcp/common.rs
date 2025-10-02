@@ -1,6 +1,6 @@
 use crate::{to_value, value::Value};
 
-pub fn handle_result(value: rmcp::model::CallToolResult) -> Result<Value, String> {
+pub fn handle_result(value: rmcp::model::CallToolResult) -> anyhow::Result<Value> {
     if let Some(result) = value.structured_content {
         Ok(result.into())
     } else if let Some(content) = value.content {

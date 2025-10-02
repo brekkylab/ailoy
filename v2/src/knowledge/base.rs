@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -23,7 +22,7 @@ pub struct KnowledgeRetrieveResult {
 pub trait Knowledge: std::fmt::Debug {
     fn name(&self) -> String;
 
-    async fn retrieve(&self, query: String) -> Result<Vec<KnowledgeRetrieveResult>>;
+    async fn retrieve(&self, query: String) -> anyhow::Result<Vec<KnowledgeRetrieveResult>>;
 }
 
 #[derive(Clone)]
@@ -77,7 +76,7 @@ impl Tool for KnowledgeTool {
         self.desc.clone()
     }
 
-    async fn run(&self, args: Value) -> Result<Value, String> {
+    async fn run(&self, args: Value) -> anyhow::Result<Value> {
         let args = match args.as_object() {
             Some(a) => a,
             None => {
@@ -124,7 +123,7 @@ mod tests {
             "about-ailoy".into()
         }
 
-        async fn retrieve(&self, _query: String) -> Result<Vec<KnowledgeRetrieveResult>> {
+        async fn retrieve(&self, _query: String) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
             let documents = vec![
                 KnowledgeRetrieveResult {
                     document: "Ailoy is an awesome AI agent framework.".into(),
@@ -144,7 +143,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_custom_knowledge_with_agent() -> Result<()> {
+    async fn test_custom_knowledge_with_agent() -> anyhow::Result<()> {
         let knowledge = CustomKnowledge {};
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
         let mut agent = Agent::new(model, vec![]);

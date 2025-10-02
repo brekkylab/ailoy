@@ -4,7 +4,7 @@ use std::{
     sync::atomic::{AtomicI64, Ordering},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, bail};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FaissMetricType {
@@ -48,9 +48,9 @@ impl fmt::Display for FaissMetricType {
 }
 
 impl FromStr for FaissMetricType {
-    type Err = ();
+    type Err = anyhow::Error; // TODO: Define custom error for this.
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "InnerProduct" => Ok(FaissMetricType::InnerProduct),
             "L2" => Ok(FaissMetricType::L2),
@@ -63,7 +63,7 @@ impl FromStr for FaissMetricType {
             "Jaccard" => Ok(FaissMetricType::Jaccard),
             "NaNEuclidean" => Ok(FaissMetricType::NaNEuclidean),
             "Gower" => Ok(FaissMetricType::Gower),
-            _ => Err(()),
+            _ => bail!("Unknown metric type: '{}'", s),
         }
     }
 }
@@ -153,7 +153,7 @@ impl FaissIndexBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<FaissIndex> {
+    pub async fn build(self) -> anyhow::Result<FaissIndex> {
         FaissIndex::new(self.dimension, self.description.as_str(), self.metric).await
     }
 }
@@ -169,7 +169,11 @@ pub struct FaissIndex {
 }
 
 impl FaissIndex {
-    pub async fn new(dimension: i32, description: &str, metric: FaissMetricType) -> Result<Self> {
+    pub async fn new(
+        dimension: i32,
+        description: &str,
+        metric: FaissMetricType,
+    ) -> anyhow::Result<Self> {
         #[cfg(any(target_family = "unix", target_family = "windows"))]
         let wrapper =
             unsafe { crate::ffi::cxx_bridge::create_index(dimension, description, metric.into())? };
@@ -229,7 +233,7 @@ impl FaissIndex {
         }
     }
 
-    pub fn train(&mut self, training_vectors: &[Vec<f32>]) -> Result<()> {
+    pub fn train(&mut self, training_vectors: &[Vec<f32>]) -> anyhow::Result<()> {
         if self.is_trained() {
             return Ok(());
         }
@@ -253,12 +257,12 @@ impl FaissIndex {
         }
     }
 
-    pub fn add_vector(&mut self, vector: &Vec<f32>) -> Result<String> {
+    pub fn add_vector(&mut self, vector: &Vec<f32>) -> anyhow::Result<String> {
         let ids = self.add_vectors(&[vector.clone()])?;
         Ok(ids.first().unwrap().to_string())
     }
 
-    pub fn add_vectors(&mut self, vectors: &[Vec<f32>]) -> Result<Vec<String>> {
+    pub fn add_vectors(&mut self, vectors: &[Vec<f32>]) -> anyhow::Result<Vec<String>> {
         if vectors.is_empty() {
             return Ok(vec![]);
         }
@@ -299,7 +303,7 @@ impl FaissIndex {
         &self,
         query_vectors: &[Vec<f32>],
         k: usize,
-    ) -> Result<Vec<FaissIndexSearchResult>> {
+    ) -> anyhow::Result<Vec<FaissIndexSearchResult>> {
         if query_vectors.is_empty() {
             return Ok(vec![]);
         }
@@ -366,7 +370,7 @@ impl FaissIndex {
 
     /// assume that for every id, there is a vector corresponding to that id.
     /// This should be guaranteed before call this function.
-    pub fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<Vec<f32>>> {
+    pub fn get_by_ids(&self, ids: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
         if ids.is_empty() {
             return Ok(vec![]);
         }
@@ -422,7 +426,7 @@ impl FaissIndex {
 
     /// assume that for every id, there is a vector corresponding to that id.
     /// This should be guaranteed before call this function.
-    pub fn remove_vectors(&mut self, ids: &[&str]) -> Result<usize> {
+    pub fn remove_vectors(&mut self, ids: &[&str]) -> anyhow::Result<usize> {
         let numeric_ids: Vec<i64> = ids
             .iter()
             .map(|s| s.parse::<i64>())
@@ -443,7 +447,7 @@ impl FaissIndex {
         }
     }
 
-    pub fn clear(&mut self) -> Result<()> {
+    pub fn clear(&mut self) -> anyhow::Result<()> {
         #[cfg(any(target_family = "unix", target_family = "windows"))]
         unsafe {
             Ok(self.inner.pin_mut().clear()?)
@@ -457,12 +461,12 @@ impl FaissIndex {
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
-    pub fn write_index(&self, filename: &str) -> Result<()> {
+    pub fn write_index(&self, filename: &str) -> anyhow::Result<()> {
         unsafe { Ok(self.inner().write_index(filename)?) }
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
-    pub fn read_index(filename: &str) -> Result<Self> {
+    pub fn read_index(filename: &str) -> anyhow::Result<Self> {
         let wrapper = unsafe { crate::ffi::cxx_bridge::read_index(filename)? };
         let current_total = wrapper.get_ntotal();
         Ok(Self {

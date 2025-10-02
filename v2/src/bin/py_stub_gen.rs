@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use anyhow::{Context, Result};
+use anyhow::Context;
 
 fn main() -> anyhow::Result<()> {
     #[cfg(feature = "python")]
@@ -17,7 +17,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// Inject TypeVar declaration after the last import line in a .pyi file
-fn inject_typevar<P: AsRef<Path>>(file_path: P, typevar_name: &str) -> Result<()> {
+fn inject_typevar<P: AsRef<Path>>(file_path: P, typevar_name: &str) -> anyhow::Result<()> {
     let file_path = file_path.as_ref();
 
     // Read the file

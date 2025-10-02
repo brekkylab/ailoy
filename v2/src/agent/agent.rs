@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::Context;
 use futures::{Stream, StreamExt, lock::Mutex};
 
 use crate::{
@@ -9,6 +10,7 @@ use crate::{
     tool::Tool,
     utils::log,
     value::{Delta, FinishReason, Message, MessageDelta, Part, PartDelta, Role},
+    warn,
 };
 
 #[derive(Clone)]
@@ -127,7 +129,7 @@ impl Agent {
     pub fn run<'a>(
         &'a mut self,
         contents: Vec<Part>,
-    ) -> impl Stream<Item = Result<AgentResponse, String>> {
+    ) -> impl Stream<Item = anyhow::Result<AgentResponse>> {
         // Messages used for the current run round
         let mut messages: Vec<Message> = vec![];
         // For storing message history except system message
@@ -141,7 +143,7 @@ impl Agent {
                 let retrieved = match knowledge.retrieve(query.clone()).await {
                     Ok(retrieved) => retrieved,
                     Err(e) => {
-                        log::warn(format!("Failed to retrieve from knowledge {}: {}", knowledge.name(), e.to_string()));
+                        warn!("Failed to retrieve from knowledge {}: {}", knowledge.name(), e.to_string());
                         vec![]
                     }
                 };
@@ -180,7 +182,7 @@ impl Agent {
                     let mut strm = model.infer(messages.clone(), tool_descs.clone(), InferenceConfig::default());
                     while let Some(out) = strm.next().await {
                         let out = out?;
-                        assistant_msg_delta = assistant_msg_delta.aggregate(out.clone().delta).map_err(|_| String::from("Aggregation failed"))?;
+                        assistant_msg_delta = assistant_msg_delta.aggregate(out.clone().delta).context("Aggregation failed")?;
 
                         // Message aggregation is finalized if finish_reason does exist
                         if out.finish_reason.is_some() {

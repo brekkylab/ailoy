@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
+use anyhow::{Context, bail};
 use minijinja::{Environment, context};
 use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
@@ -59,7 +60,7 @@ impl ChatTemplate {
         messages: impl IntoIterator<Item = Message>,
         tools: impl IntoIterator<Item = ToolDesc>,
         add_generation_prompt: bool,
-    ) -> Result<String, String> {
+    ) -> anyhow::Result<String> {
         let messages = messages.into_iter().collect::<Vec<_>>();
         let tools = tools.into_iter().collect::<Vec<_>>();
         let do_reasoning = *self.do_reasoning.lock().unwrap();
@@ -72,7 +73,7 @@ impl ChatTemplate {
             .get_template(&self.key)
             .unwrap()
             .render(ctx)
-            .map_err(|e| format!("minijinja::render failed: {}", e.to_string()))
+            .context("minijinja::render failed")
     }
 }
 
@@ -80,18 +81,17 @@ impl TryFromCache for ChatTemplate {
     fn claim_files(
         _: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
         let dirname = key.as_ref().replace("/", "--");
         Box::pin(async move { Ok(CacheClaim::new([(dirname.as_str(), "chat_template.j2")])) })
     }
 
-    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, Result<Self, String>> {
+    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>> {
         Box::pin(async move {
             let Some((entry, bytes)) = contents.remove_with_filename("chat_template.j2") else {
-                return Err("chat_template.j2 not exists".to_owned());
+                bail!("chat_template.j2 not exists")
             };
-            let s =
-                std::str::from_utf8(&bytes).map_err(|_| "Utf-8 conversion failed".to_owned())?;
+            let s = std::str::from_utf8(&bytes).context("Utf-8 conversion failed")?;
             Ok(ChatTemplate::new(entry.path(), s.to_owned()))
         })
     }

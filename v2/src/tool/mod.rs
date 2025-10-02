@@ -4,6 +4,7 @@ pub mod mcp;
 use std::{any::TypeId, fmt::Debug, sync::Arc};
 
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
+use anyhow::bail;
 pub use builtin::*;
 use downcast_rs::{Downcast, impl_downcast};
 pub use mcp::*;
@@ -15,7 +16,7 @@ use crate::value::{ToolDesc, Value};
 pub trait Tool: Debug + Downcast {
     fn get_description(&self) -> ToolDesc;
 
-    async fn run(&self, args: Value) -> Result<Value, String>;
+    async fn run(&self, args: Value) -> anyhow::Result<Value>;
 }
 
 impl_downcast!(Tool);
@@ -52,12 +53,9 @@ impl ArcTool {
         TypeId::of::<T>() == self.type_id
     }
 
-    pub fn downcast<T: Tool + 'static>(&self) -> Result<Arc<T>, String> {
+    pub fn downcast<T: Tool + 'static>(&self) -> anyhow::Result<Arc<T>> {
         if !self.type_of::<T>() {
-            return Err(format!(
-                "TypeId of provided type is not same as {:?}",
-                self.type_id
-            ));
+            bail!("TypeId of provided type is not same as {:?}", self.type_id);
         }
         let arc_ptr = Arc::into_raw(self.inner.clone());
         let arc_model = unsafe { Arc::from_raw(arc_ptr as *const T) };

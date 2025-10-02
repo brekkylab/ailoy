@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use ailoy_macros::multi_platform_async_trait;
-use anyhow::Result;
 
 use crate::{
     ffi,
@@ -23,7 +22,7 @@ pub struct FaissStore {
 }
 
 impl FaissStore {
-    pub async fn new(dim: i32) -> Result<Self> {
+    pub async fn new(dim: i32) -> anyhow::Result<Self> {
         // use only default type("IdMap2,Flat", InnerProduct) Index for now
         let index = ffi::FaissIndexBuilder::new(dim).build().await.unwrap();
         Ok(Self {
@@ -35,7 +34,7 @@ impl FaissStore {
 
 #[multi_platform_async_trait]
 impl VectorStore for FaissStore {
-    async fn add_vector(&mut self, input: VectorStoreAddInput) -> Result<String> {
+    async fn add_vector(&mut self, input: VectorStoreAddInput) -> anyhow::Result<String> {
         let ids: Vec<String> = self.index.add_vectors(&[input.embedding]).unwrap();
         let id = ids.iter().next().unwrap().clone();
         self.doc_store.insert(
@@ -48,7 +47,10 @@ impl VectorStore for FaissStore {
         Ok(id)
     }
 
-    async fn add_vectors(&mut self, inputs: Vec<VectorStoreAddInput>) -> Result<Vec<String>> {
+    async fn add_vectors(
+        &mut self,
+        inputs: Vec<VectorStoreAddInput>,
+    ) -> anyhow::Result<Vec<String>> {
         let (embeddings, entries): (Vec<Embedding>, Vec<DocEntry>) = inputs
             .into_iter()
             .map(|input| {
@@ -67,7 +69,7 @@ impl VectorStore for FaissStore {
         Ok(ids)
     }
 
-    async fn get_by_id(&self, id: &str) -> Result<Option<VectorStoreGetResult>> {
+    async fn get_by_id(&self, id: &str) -> anyhow::Result<Option<VectorStoreGetResult>> {
         if !self.doc_store.contains_key(&id.to_string()) {
             return Ok(None);
         }
@@ -83,7 +85,7 @@ impl VectorStore for FaissStore {
         }))
     }
 
-    async fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<VectorStoreGetResult>> {
+    async fn get_by_ids(&self, ids: &[&str]) -> anyhow::Result<Vec<VectorStoreGetResult>> {
         // filter ids to only those that exist in doc_store
         let filtered_ids: Vec<_> = ids
             .iter()
@@ -113,7 +115,7 @@ impl VectorStore for FaissStore {
         &self,
         query_embedding: Embedding,
         top_k: usize,
-    ) -> Result<Vec<VectorStoreRetrieveResult>> {
+    ) -> anyhow::Result<Vec<VectorStoreRetrieveResult>> {
         let index_results = self.index.search(&[query_embedding], top_k).unwrap();
         let index_result = index_results.into_iter().next().unwrap();
 
@@ -139,7 +141,7 @@ impl VectorStore for FaissStore {
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
-    ) -> Result<Vec<Vec<VectorStoreRetrieveResult>>> {
+    ) -> anyhow::Result<Vec<Vec<VectorStoreRetrieveResult>>> {
         let index_results = self.index.search(&query_embeddings, top_k).unwrap();
 
         Ok(index_results
@@ -165,7 +167,7 @@ impl VectorStore for FaissStore {
             .collect::<Vec<_>>())
     }
 
-    async fn remove_vector(&mut self, id: &str) -> Result<()> {
+    async fn remove_vector(&mut self, id: &str) -> anyhow::Result<()> {
         if !self.doc_store.contains_key(&id.to_string()) {
             return Ok(());
         }
@@ -175,7 +177,7 @@ impl VectorStore for FaissStore {
         Ok(())
     }
 
-    async fn remove_vectors(&mut self, ids: &[&str]) -> Result<()> {
+    async fn remove_vectors(&mut self, ids: &[&str]) -> anyhow::Result<()> {
         // filter ids to only those that exist in doc_store
         let filtered_ids: Vec<_> = ids
             .iter()
@@ -191,13 +193,13 @@ impl VectorStore for FaissStore {
         Ok(())
     }
 
-    async fn clear(&mut self) -> Result<()> {
+    async fn clear(&mut self) -> anyhow::Result<()> {
         self.index.clear().unwrap();
         self.doc_store.clear();
         Ok(())
     }
 
-    async fn count(&self) -> Result<usize> {
+    async fn count(&self) -> anyhow::Result<usize> {
         Ok(self.index.ntotal() as usize)
     }
 }
@@ -210,12 +212,12 @@ mod tests {
 
     use super::*;
 
-    async fn setup_test_store() -> Result<FaissStore> {
+    async fn setup_test_store() -> anyhow::Result<FaissStore> {
         Ok(FaissStore::new(3).await.unwrap())
     }
 
     #[multi_platform_test]
-    async fn faiss_add_and_get_vector() -> Result<()> {
+    async fn faiss_add_and_get_vector() -> anyhow::Result<()> {
         let mut store = setup_test_store().await?;
         let test_embedding = vec![1.1, 2.2, 3.3];
         let test_document = "This is a test document.".to_owned();
@@ -245,7 +247,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn faiss_add_vectors_batch() -> Result<()> {
+    async fn faiss_add_vectors_batch() -> anyhow::Result<()> {
         let mut store = setup_test_store().await?;
 
         let added_ids = store
@@ -286,7 +288,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn faiss_retrieve_similar_vectors() -> Result<()> {
+    async fn faiss_retrieve_similar_vectors() -> anyhow::Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             VectorStoreAddInput {
@@ -356,7 +358,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn faiss_remove_vector() -> Result<()> {
+    async fn faiss_remove_vector() -> anyhow::Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             VectorStoreAddInput {
@@ -402,7 +404,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn faiss_get_non_existent_vector() -> Result<()> {
+    async fn faiss_get_non_existent_vector() -> anyhow::Result<()> {
         let store = setup_test_store().await?;
         let non_existent_id = "-1";
 
@@ -417,7 +419,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn faiss_clear_collection() -> Result<()> {
+    async fn faiss_clear_collection() -> anyhow::Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             VectorStoreAddInput {

@@ -218,8 +218,7 @@ fn function_tool_result_to_parts(result: Py<PyAny>) -> Result<Vec<Part>, String>
             let text = result.to_string();
             Ok(vec![Part::new_text(text)])
         }
-    })
-    .map_err(|e| e.to_string())
+    })?
 }
 
 #[derive(Debug, Clone)]
@@ -245,8 +244,7 @@ impl Tool for PythonFunctionTool {
             };
             let result = self.func.call(py, PyTuple::empty(py), kwargs)?;
             Ok(result)
-        })
-        .map_err(|e| e.to_string())?;
+        })?;
 
         function_tool_result_to_parts(result)
     }
@@ -327,8 +325,7 @@ impl Tool for PythonAsyncFunctionTool {
             };
 
             Ok(result.into())
-        })
-        .map_err(|e| e.to_string())?;
+        })?;
 
         function_tool_result_to_parts(result)
     }

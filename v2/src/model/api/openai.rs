@@ -1,3 +1,4 @@
+use anyhow::{Context, bail};
 use base64::Engine;
 
 use crate::{
@@ -194,7 +195,7 @@ impl Marshal<RequestConfig> for OpenAIMarshal {
 pub struct OpenAIUnmarshal;
 
 impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
-    fn unmarshal(&mut self, val: Value) -> Result<MessageDelta, String> {
+    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDelta> {
         const STREAM_TYPES: &[&str] = &[
             "response.output_item.added",
             "response.output_item.done",
@@ -215,7 +216,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
             .pointer("/type")
             .unwrap()
             .as_str()
-            .ok_or_else(|| String::from("Stream message type should be a string"))?;
+            .context("Stream message type should be a string")?;
         let streamed = STREAM_TYPES.contains(&ty);
 
         if streamed {
@@ -225,12 +226,12 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         // message with role
                         // r#"{"type":"response.output_item.added","item":{"type":"message","content":[],"role":"assistant"}}"#,
                         let v = match r.as_str() {
-                            "system" => Ok(Role::System),
-                            "user" => Ok(Role::User),
-                            "assistant" => Ok(Role::Assistant),
-                            "tool" => Ok(Role::Tool),
-                            other => Err(format!("Unknown role: {other}")),
-                        }?;
+                            "system" => Role::System,
+                            "user" => Role::User,
+                            "assistant" => Role::Assistant,
+                            "tool" => Role::Tool,
+                            other => bail!("Unknown role: {other}"),
+                        };
                         rv.role = Some(v);
                     } else if let Some(ty) = val.pointer_as::<String>("/item/type")
                         && ty.as_str() == "function_call"
@@ -268,8 +269,8 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                     // r#"{"type":"response.output_text.delta","delta":" world!"}"#,
                     let text = val
                         .pointer_as::<String>("/delta")
-                        .ok_or_else(|| String::from("Output text delta should be a string"))?
-                        .to_owned();
+                        .cloned()
+                        .context("Output text delta should be a string")?;
                     rv.contents.push(PartDelta::Text { text });
                 }
                 "response.output_text.done" => {
@@ -283,9 +284,10 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                 }
                 "response.reasoning_summary_text.delta" => {
                     // r#"{"type":"response.reasoning_summary_text.delta","delta":"**Responding to a greeting**\n\nThe user just said, \"Hello!\" So, it seems I need to engage. I'll greet them back and offer help since they're looking to chat. I could say something like, \"Hello! How can I assist you today?\" That feels friendly and open. They didn't ask a specific question, so this approach will work well for starting a conversation. Let's see where it goes from there!"}"#
-                    let s = val.pointer_as::<String>("/delta").ok_or_else(|| {
-                        String::from("Reasoning summary text delta should be a string")
-                    })?;
+                    let s = val
+                        .pointer_as::<String>("/delta")
+                        .cloned()
+                        .context("Reasoning summary text delta should be a string")?;
                     rv.thinking.push_str(s.as_str());
                 }
                 "response.reasoning_summary_text.done" => {
@@ -301,10 +303,8 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                     // r#"{"type":"response.function_call_arguments.delta","delta":"\"}"}"#,
                     let args = val
                         .pointer_as::<String>("/delta")
-                        .ok_or_else(|| {
-                            String::from("Function call argument delta should be a string")
-                        })?
-                        .to_owned();
+                        .cloned()
+                        .context("Function call argument delta should be a string")?;
                     rv.tool_calls.push(PartDelta::Function {
                         id: None,
                         f: PartDeltaFunction::WithStringArgs {
@@ -317,7 +317,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                     // r#"{"type":"response.function_call_arguments.done","arguments":"{\"location\":\"Paris, France\"}"}"#,
                 }
                 _ => {
-                    return Err(String::from("Invalid stream message type"));
+                    bail!("Invalid stream message type");
                 }
             }
             return Ok(rv);
@@ -325,22 +325,18 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
 
         // not streamed below
 
-        let root = val
-            .as_object()
-            .ok_or_else(|| String::from("Root should be an object"))?;
+        let root = val.as_object().context("Root should be an object")?;
 
         // Parse role
         if let Some(r) = root.get("role") {
-            let s = r
-                .as_str()
-                .ok_or_else(|| String::from("Role should be a string"))?;
+            let s = r.as_str().context("Role should be a string")?;
             let v = match s {
-                "system" => Ok(Role::System),
-                "user" => Ok(Role::User),
-                "assistant" => Ok(Role::Assistant),
-                "tool" => Ok(Role::Tool),
-                other => Err(format!("Unknown role: {other}")),
-            }?;
+                "system" => Role::System,
+                "user" => Role::User,
+                "assistant" => Role::Assistant,
+                "tool" => Role::Tool,
+                other => bail!("Unknown role: {other}"),
+            };
             rv.role = Some(v);
         }
 
@@ -355,11 +351,11 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                 // In case of part vector
                 for content in contents {
                     let Some(content) = content.as_object() else {
-                        return Err(String::from("Invalid part"));
+                        bail!("Invalid part");
                     };
                     if let Some(text) = content.get("text") {
                         let Some(text) = text.as_str() else {
-                            return Err(String::from("Invalid content part"));
+                            bail!("Invalid content part");
                         };
                         rv.contents.push(PartDelta::Text { text: text.into() });
                     }
@@ -367,16 +363,16 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                     //     && !refusal.is_null()
                     // {
                     //     let Some(text) = refusal.as_str() else {
-                    //         return Err(String::from("Invalid refusal content"));
+                    //         bail!("Invalid refusal content");
                     //     };
                     //     rv.parts.push(PartDelta::TextRefusal(text.into()));
                     // }
                     else {
-                        return Err(String::from("Invalid part"));
+                        bail!("Invalid part");
                     }
                 }
             } else {
-                return Err(String::from("Invalid content"));
+                bail!("Invalid content");
             }
         }
 
@@ -391,19 +387,19 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                 // In case of part vector
                 for content in summary {
                     let Some(content) = content.as_object() else {
-                        return Err(String::from("Invalid part"));
+                        bail!("Invalid part");
                     };
                     if let Some(text) = content.get("text") {
                         let Some(text) = text.as_str() else {
-                            return Err(String::from("Invalid content part"));
+                            bail!("Invalid content part");
                         };
                         rv.thinking.push_str(text);
                     } else {
-                        return Err(String::from("Invalid part"));
+                        bail!("Invalid part");
                     }
                 }
             } else {
-                return Err(String::from("Invalid content"));
+                bail!("Invalid content");
             }
         }
 
