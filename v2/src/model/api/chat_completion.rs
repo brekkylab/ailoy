@@ -1,3 +1,4 @@
+use anyhow::{Context, bail};
 use base64::Engine;
 
 use crate::{
@@ -190,25 +191,21 @@ impl Marshal<RequestConfig> for ChatCompletionMarshal {
 struct ChatCompletionUnmarshal;
 
 impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
-    fn unmarshal(&mut self, val: Value) -> Result<MessageDelta, String> {
+    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDelta> {
         // Root must be an object
-        let root = val
-            .as_object()
-            .ok_or_else(|| String::from("Root should be an object"))?;
+        let root = val.as_object().context("Root should be an object")?;
         let mut rv = MessageDelta::default();
 
         // Parse role
         if let Some(r) = root.get("role") {
-            let s = r
-                .as_str()
-                .ok_or_else(|| String::from("Role should be a string"))?;
+            let s = r.as_str().context("Role should be a string")?;
             let v = match s {
-                "system" => Ok(Role::System),
-                "user" => Ok(Role::User),
-                "assistant" => Ok(Role::Assistant),
-                "tool" => Ok(Role::Tool),
-                other => Err(format!("Unknown role: {other}")),
-            }?;
+                "system" => Role::System,
+                "user" => Role::User,
+                "assistant" => Role::Assistant,
+                "tool" => Role::Tool,
+                other => bail!("Unknown role: {other}"),
+            };
             rv.role = Some(v);
         }
 
@@ -223,19 +220,19 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
                 // Multiple content parts
                 for content in contents {
                     let Some(content) = content.as_object() else {
-                        return Err(String::from("Invalid part"));
+                        bail!("Invalid part");
                     };
                     if let Some(text) = content.get("text") {
                         let Some(text) = text.as_str() else {
-                            return Err(String::from("Invalid content part"));
+                            bail!("Invalid content part");
                         };
                         rv.contents.push(PartDelta::Text { text: text.into() });
                     } else {
-                        return Err(String::from("Invalid part"));
+                        bail!("Invalid part");
                     }
                 }
             } else {
-                return Err(String::from("Invalid content"));
+                bail!("Invalid content");
             }
         }
 
@@ -246,7 +243,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
             if let Some(tool_calls) = tool_calls.as_array() {
                 for tool_call in tool_calls {
                     let Some(tool_call) = tool_call.as_object() else {
-                        return Err(String::from("Invalid part"));
+                        bail!("Invalid part");
                     };
                     let id = match tool_call.get("id") {
                         Some(id) if id.is_string() => Some(id.as_str().unwrap().to_owned()),
@@ -254,7 +251,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
                     };
                     if let Some(func) = tool_call.get("function") {
                         let Some(func) = func.as_object() else {
-                            return Err(String::from("Invalid tool call part"));
+                            bail!("Invalid tool call part");
                         };
                         let name = match func.get("name") {
                             Some(name) if name.is_string() => name.as_str().unwrap().to_owned(),
@@ -271,7 +268,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
                     }
                 }
             } else {
-                return Err(String::from("Invalid tool calls"));
+                bail!("Invalid tool calls");
             }
         };
 

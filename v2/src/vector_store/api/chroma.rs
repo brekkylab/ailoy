@@ -1,5 +1,5 @@
 use ailoy_macros::multi_platform_async_trait;
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, bail};
 use chromadb::{
     client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions},
     collection::{ChromaCollection, CollectionEntries, GetOptions, QueryOptions, QueryResult},
@@ -17,7 +17,7 @@ pub struct ChromaStore {
 }
 
 impl ChromaStore {
-    pub async fn new(chroma_url: &str, collection_name: &str) -> Result<Self> {
+    pub async fn new(chroma_url: &str, collection_name: &str) -> anyhow::Result<Self> {
         let client = ChromaClient::new(ChromaClientOptions {
             url: Some(chroma_url.to_owned()),
             ..Default::default()
@@ -33,7 +33,7 @@ impl ChromaStore {
         chroma_url: &str,
         collection_name: &str,
         auth: ChromaAuthMethod,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         let client = ChromaClient::new(ChromaClientOptions {
             url: Some(chroma_url.to_owned()),
             auth,
@@ -46,35 +46,34 @@ impl ChromaStore {
         Ok(Self { client, collection })
     }
 
-    pub async fn get_collection(&self, collection_name: &str) -> Result<Option<ChromaCollection>> {
-        match self.client.get_collection(collection_name).await {
-            Ok(col) => Ok(Some(col)),
-            Err(_) => Ok(None),
-        }
+    pub async fn get_collection(&self, collection_name: &str) -> anyhow::Result<ChromaCollection> {
+        self.client
+            .get_collection(collection_name)
+            .await
+            .context(format!(
+                "Failed to get collection '{}'. It might not exist or an error occurred.",
+                collection_name
+            ))
     }
 
     pub async fn create_collection(
         &self,
         collection_name: &str,
         metadata: Option<Map<String, Json>>,
-    ) -> Result<ChromaCollection> {
+    ) -> anyhow::Result<ChromaCollection> {
         self.client
             .create_collection(collection_name, metadata, true)
             .await
-            .map_err(|e| anyhow!(e))
     }
 
-    pub async fn delete_collection(&self, collection_name: &str) -> Result<()> {
-        self.client
-            .delete_collection(collection_name)
-            .await
-            .map_err(|e| anyhow!(e))
+    pub async fn delete_collection(&self, collection_name: &str) -> anyhow::Result<()> {
+        self.client.delete_collection(collection_name).await
     }
 }
 
 #[multi_platform_async_trait]
 impl VectorStore for ChromaStore {
-    async fn add_vector(&mut self, input: VectorStoreAddInput) -> Result<String> {
+    async fn add_vector(&mut self, input: VectorStoreAddInput) -> anyhow::Result<String> {
         let id = Uuid::new_v4().to_string();
 
         let metadatas = input.metadata.as_ref().map(|map| vec![map.clone()]);
@@ -89,7 +88,10 @@ impl VectorStore for ChromaStore {
         Ok(id)
     }
 
-    async fn add_vectors(&mut self, inputs: Vec<VectorStoreAddInput>) -> Result<Vec<String>> {
+    async fn add_vectors(
+        &mut self,
+        inputs: Vec<VectorStoreAddInput>,
+    ) -> anyhow::Result<Vec<String>> {
         let ids: Vec<String> = (0..inputs.len())
             .map(|_| Uuid::new_v4().to_string())
             .collect();
@@ -119,12 +121,12 @@ impl VectorStore for ChromaStore {
         Ok(ids)
     }
 
-    async fn get_by_id(&self, id: &str) -> Result<Option<VectorStoreGetResult>> {
+    async fn get_by_id(&self, id: &str) -> anyhow::Result<Option<VectorStoreGetResult>> {
         let results: Vec<VectorStoreGetResult> = self.get_by_ids(&[id]).await?;
         Ok(results.into_iter().next())
     }
 
-    async fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<VectorStoreGetResult>> {
+    async fn get_by_ids(&self, ids: &[&str]) -> anyhow::Result<Vec<VectorStoreGetResult>> {
         let opts = GetOptions {
             ids: ids.iter().map(|s| s.to_string()).collect(),
             include: Some(vec![
@@ -170,7 +172,7 @@ impl VectorStore for ChromaStore {
         &self,
         query: Embedding,
         top_k: usize,
-    ) -> Result<Vec<VectorStoreRetrieveResult>> {
+    ) -> anyhow::Result<Vec<VectorStoreRetrieveResult>> {
         let opts = QueryOptions {
             query_embeddings: Some(vec![query.to_vec()]),
             n_results: Some(top_k),
@@ -222,7 +224,7 @@ impl VectorStore for ChromaStore {
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
-    ) -> Result<Vec<Vec<VectorStoreRetrieveResult>>> {
+    ) -> anyhow::Result<Vec<Vec<VectorStoreRetrieveResult>>> {
         let opts = QueryOptions {
             query_embeddings: Some(query_embeddings),
             n_results: Some(top_k),
@@ -273,19 +275,19 @@ impl VectorStore for ChromaStore {
         Ok(out)
     }
 
-    async fn remove_vector(&mut self, id: &str) -> Result<()> {
+    async fn remove_vector(&mut self, id: &str) -> anyhow::Result<()> {
         self.collection.delete(Some(vec![id]), None, None).await?;
         Ok(())
     }
 
-    async fn remove_vectors(&mut self, ids: &[&str]) -> Result<()> {
+    async fn remove_vectors(&mut self, ids: &[&str]) -> anyhow::Result<()> {
         self.collection
             .delete(Some(ids.to_vec()), None, None)
             .await?;
         Ok(())
     }
 
-    async fn clear(&mut self) -> Result<()> {
+    async fn clear(&mut self) -> anyhow::Result<()> {
         let all_items = self.collection.get(GetOptions::default()).await?;
         if !all_items.ids.is_empty() {
             self.collection
@@ -299,7 +301,7 @@ impl VectorStore for ChromaStore {
         Ok(())
     }
 
-    async fn count(&self) -> Result<usize> {
+    async fn count(&self) -> anyhow::Result<usize> {
         Ok(self.collection.count().await?)
     }
 }
@@ -311,7 +313,7 @@ mod tests {
 
     use super::*;
 
-    async fn setup_test_store() -> Result<ChromaStore> {
+    async fn setup_test_store() -> anyhow::Result<ChromaStore> {
         let client = ChromaClient::new(ChromaClientOptions::default()).await?;
         let collection_name = format!("test-collection-{}", Uuid::new_v4());
         let collection = client
@@ -321,7 +323,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_add_and_get_vector() -> Result<()> {
+    async fn test_add_and_get_vector() -> anyhow::Result<()> {
         let mut store = setup_test_store().await?;
         let test_embedding = vec![1.1, 2.2, 3.3];
         let test_document = "This is a test document.".to_owned();
@@ -351,7 +353,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_add_vectors_batch() -> Result<()> {
+    async fn test_add_vectors_batch() -> anyhow::Result<()> {
         let mut store = setup_test_store().await?;
 
         let added_ids = store
@@ -392,7 +394,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_retrieve_similar_vectors() -> Result<()> {
+    async fn test_retrieve_similar_vectors() -> anyhow::Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             VectorStoreAddInput {
@@ -462,7 +464,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_remove_vector() -> Result<()> {
+    async fn test_remove_vector() -> anyhow::Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             VectorStoreAddInput {
@@ -508,7 +510,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_get_non_existent_vector() -> Result<()> {
+    async fn test_get_non_existent_vector() -> anyhow::Result<()> {
         let store = setup_test_store().await?;
         let non_existent_id = Uuid::new_v4().to_string();
 
@@ -522,7 +524,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_clear_collection() -> Result<()> {
+    async fn test_clear_collection() -> anyhow::Result<()> {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             VectorStoreAddInput {

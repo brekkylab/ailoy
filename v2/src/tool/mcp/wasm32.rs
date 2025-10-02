@@ -239,9 +239,9 @@ impl StreamableHttpClient {
         );
         self.post_message(notification)
             .await
-            .map_err(|e| anyhow!("Failed to send initialized notification: {e}"))?
+            .context("Failed to send initialized notification")?
             .expect_accepted()
-            .map_err(|e| anyhow!("Response of initialized notification is not accepted: {e}"))?;
+            .context("Response of initialized notification is not accepted")?;
 
         Ok(())
     }
@@ -375,14 +375,14 @@ impl Tool for MCPTool {
         }
     }
 
-    async fn run(&self, args: Value) -> Result<Value, String> {
+    async fn run(&self, args: Value) -> anyhow::Result<Value> {
         let client = self.client.clone();
         let tool_name = self.inner.name.clone();
 
         // Convert your ToolCall arguments → serde_json::Map (MCP expects JSON object)
         let arguments: Option<serde_json::Map<String, serde_json::Value>> =
             serde_json::to_value(args)
-                .map_err(|e| format!("serialize ToolCall arguments failed: {e}"))?
+                .context("serialize ToolCall arguments failed: {e}")?
                 .as_object()
                 .cloned();
 
@@ -392,10 +392,9 @@ impl Tool for MCPTool {
                 arguments,
             })
             .await
-            .map_err(|e| format!("mcp call_tool failed: {e}"))?;
+            .context("mcp call_tool failed: {e}")?;
 
-        let parts =
-            handle_result(result).map_err(|e| format!("call_tool_result_to_parts failed: {e}"))?;
+        let parts = handle_result(result).context("call_tool_result_to_parts failed")?;
         Ok(parts)
     }
 }
