@@ -23,6 +23,7 @@ pub enum Role {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 pub struct Message {
     pub role: Role,
 
@@ -86,6 +87,7 @@ impl Message {
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 pub struct MessageDelta {
     pub role: Option<Role>,
     pub id: Option<String>,
@@ -279,6 +281,7 @@ impl Delta for MessageDelta {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum FinishReason {
     Stop(),
     Length(), // max_output_tokens
@@ -289,6 +292,7 @@ pub enum FinishReason {
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 pub struct MessageOutput {
     pub delta: MessageDelta,
     pub finish_reason: Option<FinishReason>,
