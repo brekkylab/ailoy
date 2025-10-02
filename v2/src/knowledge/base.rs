@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     to_value,
-    tool::Tool,
+    tool::ToolBehavior,
     value::{ToolDesc, Value},
 };
 
@@ -72,7 +72,7 @@ impl KnowledgeTool {
 }
 
 #[multi_platform_async_trait]
-impl Tool for KnowledgeTool {
+impl ToolBehavior for KnowledgeTool {
     fn get_description(&self) -> ToolDesc {
         self.desc.clone()
     }

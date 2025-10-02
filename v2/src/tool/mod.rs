@@ -1,66 +1,74 @@
-pub mod builtin;
-pub mod mcp;
+mod builtin;
+mod function;
+mod mcp;
 
-use std::{any::TypeId, fmt::Debug, sync::Arc};
+use std::{fmt::Debug, sync::Arc};
 
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 pub use builtin::*;
-use downcast_rs::{Downcast, impl_downcast};
+pub use function::*;
 pub use mcp::*;
 
-use crate::value::{ToolDesc, Value};
+use crate::{
+    knowledge::KnowledgeTool,
+    value::{ToolDesc, Value},
+};
 
 #[maybe_send_sync]
 #[multi_platform_async_trait]
-pub trait Tool: Debug + Downcast {
+pub trait ToolBehavior: Debug + Clone {
     fn get_description(&self) -> ToolDesc;
 
     async fn run(&self, args: Value) -> Result<Value, String>;
 }
 
-impl_downcast!(Tool);
-
-#[derive(Clone)]
-pub struct ArcTool {
-    pub inner: Arc<dyn Tool>,
-    pub type_id: TypeId,
+#[derive(Debug, Clone)]
+pub enum ToolInner {
+    Function(FunctionTool),
+    MCP(MCPTool),
+    Knowledge(KnowledgeTool),
 }
 
-impl ArcTool {
-    pub fn new<T: Tool + 'static>(tool: T) -> Self {
+#[derive(Debug, Clone)]
+pub struct Tool {
+    inner: ToolInner,
+}
+
+impl Tool {
+    pub fn new_function(desc: ToolDesc, f: Arc<ToolFunc>) -> Self {
         Self {
-            inner: Arc::new(tool),
-            type_id: TypeId::of::<T>(),
+            inner: ToolInner::Function(FunctionTool::new(desc, f)),
         }
     }
 
-    pub fn new_from_arc<T: Tool + 'static>(tool: Arc<T>) -> Self {
+    pub fn new_mcp(tool: MCPTool) -> Self {
         Self {
-            inner: tool,
-            type_id: TypeId::of::<T>(),
+            inner: ToolInner::MCP(tool),
         }
     }
 
-    pub fn new_from_arc_any(tool: Arc<dyn Tool>) -> Self {
+    pub fn new_knowledge(tool: KnowledgeTool) -> Self {
         Self {
-            inner: tool.clone(),
-            type_id: tool.type_id(),
+            inner: ToolInner::Knowledge(tool),
+        }
+    }
+}
+
+#[multi_platform_async_trait]
+impl ToolBehavior for Tool {
+    fn get_description(&self) -> ToolDesc {
+        match &self.inner {
+            ToolInner::Function(tool) => tool.get_description(),
+            ToolInner::MCP(tool) => tool.get_description(),
+            ToolInner::Knowledge(tool) => tool.get_description(),
         }
     }
 
-    pub fn type_of<T: Tool + 'static>(&self) -> bool {
-        TypeId::of::<T>() == self.type_id
-    }
-
-    pub fn downcast<T: Tool + 'static>(&self) -> Result<Arc<T>, String> {
-        if !self.type_of::<T>() {
-            return Err(format!(
-                "TypeId of provided type is not same as {:?}",
-                self.type_id
-            ));
+    async fn run(&self, args: Value) -> Result<Value, String> {
+        match &self.inner {
+            ToolInner::Function(tool) => tool.run(args).await,
+            ToolInner::MCP(tool) => tool.run(args).await,
+            ToolInner::Knowledge(tool) => tool.run(args).await,
         }
-        let arc_ptr = Arc::into_raw(self.inner.clone());
-        let arc_model = unsafe { Arc::from_raw(arc_ptr as *const T) };
-        Ok(arc_model)
     }
 }

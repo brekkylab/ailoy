@@ -81,7 +81,7 @@ mod tests {
         agent::{Agent, SystemMessageRenderer},
         knowledge::KnowledgeTool,
         model::{EmbeddingModel, LangModel},
-        tool::Tool,
+        tool::{Tool, ToolBehavior as _},
         value::{Part, Value},
         vector_store::{FaissStore, VectorStoreAddInput},
     };
@@ -165,7 +165,9 @@ mod tests {
             let mut agent_guard = agent.lock().await;
             // Example of customizing with_stringify
             let tool = KnowledgeTool::from(knowledge);
-            agent_guard.add_tool(Arc::new(tool.clone())).await?;
+            agent_guard
+                .add_tool(Tool::new_knowledge(tool.clone()))
+                .await?;
 
             let mut strm = Box::pin(agent_guard.run(vec![Part::text(format!(
                 "What is Ailoy? Answer by calling tool '{}'",
