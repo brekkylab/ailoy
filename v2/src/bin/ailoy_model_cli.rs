@@ -14,21 +14,21 @@ use tokio::io::AsyncWriteExt;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    #[arg(short, long, default_value = "default")]
+    aws_profile_name: String,
+
+    #[arg(short, long, default_value = None)]
+    aws_endpoint_url: Option<String>,
+
+    #[arg(short, long, default_value = "ailoy-cache")]
+    s3_bucket_name: String,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
     Upload {
         model_path: PathBuf,
-
-        #[arg(short, long, default_value = "default")]
-        aws_profile_name: String,
-
-        #[arg(short, long, default_value = None)]
-        aws_endpoint_url: Option<String>,
-
-        #[arg(short, long, default_value = "ailoy-cache")]
-        s3_bucket_name: String,
     },
     Download {
         model_name: String,
@@ -49,29 +49,18 @@ enum Commands {
 
         #[arg(short, long)]
         download_path: Option<PathBuf>,
-
-        #[arg(short, long, default_value = "default")]
-        aws_profile_name: String,
-
-        #[arg(short, long)]
-        aws_endpoint_url: Option<String>,
-
-        #[arg(short, long, default_value = "ailoy-cache")]
-        s3_bucket_name: String,
     },
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let aws_profile_name = cli.aws_profile_name;
+    let aws_endpoint_url = cli.aws_endpoint_url;
+    let s3_bucket_name = cli.s3_bucket_name;
 
     match &cli.command {
-        Commands::Upload {
-            model_path,
-            aws_profile_name,
-            aws_endpoint_url,
-            s3_bucket_name,
-        } => {
+        Commands::Upload { model_path } => {
             if !model_path.is_dir() {
                 eprintln!(
                     "Model path does not exist: {}",
@@ -82,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
 
             let model_name = model_path.file_name().unwrap().to_str().unwrap();
 
-            let client = get_s3_client(aws_profile_name, aws_endpoint_url).await?;
+            let client = get_s3_client(&aws_profile_name, &aws_endpoint_url).await?;
             let target_entries = std::fs::read_dir(model_path)
                 .unwrap()
                 .into_iter()
@@ -119,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
 
                 match client
                     .put_object()
-                    .bucket(s3_bucket_name.clone())
+                    .bucket(&s3_bucket_name)
                     .key(format!("{}/{}", model_name, manifest.sha1()))
                     .body(s3_body)
                     .send()
@@ -170,9 +159,6 @@ async fn main() -> anyhow::Result<()> {
             platform,
             device,
             download_path,
-            aws_profile_name,
-            aws_endpoint_url,
-            s3_bucket_name,
         } => {
             let model_name = model_name.clone().replace("/", "--");
             let platform = platform
@@ -188,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
             println!("- Device: {}", device);
             println!("- Download path: {:?}", download_path);
 
-            let client = get_s3_client(aws_profile_name, aws_endpoint_url).await?;
+            let client = get_s3_client(&aws_profile_name, &aws_endpoint_url).await?;
 
             let model_dirs = vec![
                 model_name.clone(),
@@ -204,7 +190,7 @@ async fn main() -> anyhow::Result<()> {
             for model_dir in model_dirs.into_iter() {
                 let dir_resp = client
                     .list_objects_v2()
-                    .bucket(s3_bucket_name)
+                    .bucket(&s3_bucket_name)
                     .prefix(format!("{}/", model_dir))
                     .max_keys(1)
                     .send()
@@ -217,7 +203,7 @@ async fn main() -> anyhow::Result<()> {
 
                 let manifest_obj = client
                     .get_object()
-                    .bucket(s3_bucket_name)
+                    .bucket(&s3_bucket_name)
                     .key(format!("{}/_manifest.json", model_dir))
                     .send()
                     .await
@@ -254,7 +240,7 @@ async fn main() -> anyhow::Result<()> {
 
                     let file_obj = client
                         .get_object()
-                        .bucket(s3_bucket_name)
+                        .bucket(&s3_bucket_name)
                         .key(remote_key)
                         .send()
                         .await?;
