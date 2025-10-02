@@ -17,7 +17,7 @@ required-features = ["python"]
 
 [[bin]]
 name = "ailoy-model"
-path = "src/bin/ailoy_model_cli.rs"
+path = "src/bin/ailoy_model.rs"
 required-features = ["ailoy-model-cli"]
 
 [features]

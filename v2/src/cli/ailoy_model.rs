@@ -1,27 +1,28 @@
 use std::path::PathBuf;
 
-use ailoy::{
-    cache::{Cache, Manifest, ManifestDirectory},
-    model::get_accelerator,
-};
 use aws_config::meta::region::ProvideRegion;
 use clap::{Parser, Subcommand};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tokio::io::AsyncWriteExt;
 
+use crate::{
+    cache::{Cache, Manifest, ManifestDirectory},
+    model::get_accelerator,
+};
+
 #[derive(Parser, Debug)]
-#[command(version, about = "Ailoy Model Manager CLI", long_about = None)]
+#[command(name = "ailoy-model", version, about = "Ailoy Model Manager CLI", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    #[arg(short, long, default_value = "default")]
+    #[arg(long, global = true, default_value = "default")]
     aws_profile_name: String,
 
-    #[arg(short, long, default_value = None)]
+    #[arg(long, global = true, default_value = None)]
     aws_endpoint_url: Option<String>,
 
-    #[arg(short, long, default_value = "ailoy-cache")]
+    #[arg(long, global = true, default_value = "ailoy-cache")]
     s3_bucket_name: String,
 }
 
@@ -34,27 +35,41 @@ enum Commands {
         model_name: String,
 
         #[arg(
-            short,
             long,
             help = "Target platform triple (e.g. aarch64-apple-darwin). If not provided, it's inferred based on the current environment."
         )]
         platform: Option<String>,
 
         #[arg(
-            short,
             long,
             help = "Target device (e.g. metal). If not provided, it's inferred based on the current environment."
         )]
         device: Option<String>,
 
-        #[arg(short, long)]
+        #[arg(long)]
         download_path: Option<PathBuf>,
     },
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+pub async fn ailoy_model_cli() -> anyhow::Result<()> {
+    let mut args: Vec<String> = std::env::args().collect();
+
+    // When running the CLI via Python, we need to shift the args.
+    // But this is not a good workaround, need to search for better ways later.
+    if args
+        .first()
+        .unwrap()
+        .split("/")
+        .last()
+        .unwrap()
+        .to_lowercase()
+        == "python"
+    {
+        args.remove(0);
+    }
+
+    let cli = Cli::parse_from(args.clone());
+
     let aws_profile_name = cli.aws_profile_name;
     let aws_endpoint_url = cli.aws_endpoint_url;
     let s3_bucket_name = cli.s3_bucket_name;

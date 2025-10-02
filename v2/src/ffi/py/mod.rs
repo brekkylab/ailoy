@@ -10,6 +10,13 @@ pub(crate) mod vector_store;
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
 
+use crate::ffi::py::base::await_future;
+
+#[pyfunction]
+fn ailoy_model_cli() -> PyResult<()> {
+    await_future(crate::cli::ailoy_model::ailoy_model_cli())
+}
+
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // Add classes in alphabetical order
@@ -42,6 +49,9 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<crate::value::PartImage>()?;
     m.add_class::<crate::value::Role>()?;
     m.add_class::<crate::value::ToolDesc>()?;
+
+    m.add_wrapped(wrap_pyfunction!(ailoy_model_cli))?;
+
     Ok(())
 }
 
