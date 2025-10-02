@@ -958,8 +958,6 @@ mod node {
     use napi::bindgen_prelude::*;
     use napi::{Env, Result, Unknown};
 
-    const JS_SAFE_INT_MAX: u64 = (1u64 << 53) - 1;
-
     impl FromNapiValue for Value {
         unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
             let env = Env::from_raw(env);

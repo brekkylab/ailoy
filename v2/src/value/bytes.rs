@@ -163,10 +163,18 @@ mod node {
         fn type_name() -> &'static str {
             "Buffer"
         }
+
         fn value_type() -> ValueType {
             ValueType::Object
         }
     }
 
-    impl ValidateNapiValue for Bytes {}
+    impl ValidateNapiValue for Bytes {
+        unsafe fn validate(
+            env: sys::napi_env,
+            napi_val: sys::napi_value,
+        ) -> Result<sys::napi_value> {
+            unsafe { <Buffer as ValidateNapiValue>::validate(env, napi_val) }
+        }
+    }
 }
