@@ -1,17 +1,35 @@
-// prettier-ignore
-/* @ts-ignore */
-export type LanguageModel = LocalLanguageModel | OpenAILanguageModel | GeminiLanguageModel | AnthropicLanguageModel | XAILanguageModel;
-/* @ts-ignore */
-export type EmbeddingModel = LocalEmbeddingModel;
-/* @ts-ignore */
-export type VectorStore = FaissVectorStore | ChromaVectorStore;
-/* @ts-ignore */
-export type Tool = BuiltinTool | MCPTool | JsFunctionTool;
+export declare class LangModel {
+  static createLocal(
+    modelName: string,
+    progressCallback?: ((arg: CacheProgress) => void) | undefined | null
+  ): Promise<LangModel>;
+  run(
+    messages: Array<Message>,
+    tools?: Array<ToolDesc> | undefined | null
+  ): LangModelRunIterator;
+}
+
+export declare class LangModelRunIterator {
+  [Symbol.asyncIterator](): this;
+  next(): Promise<LanguageModelIteratorResult>;
+}
+
+export interface CacheProgress {
+  comment: string;
+  current: number;
+  total: number;
+}
+
 export type FinishReason =
   | { type: "Stop" }
   | { type: "Length" }
   | { type: "ToolCall" }
   | { type: "Refusal"; field0: string };
+
+export interface LanguageModelIteratorResult {
+  value: MessageOutput;
+  done: boolean;
+}
 
 export interface Message {
   role: Role;
