@@ -18,6 +18,7 @@ use crate::{
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
 pub enum ThinkEffort {
     #[default]
     Disable,
@@ -33,6 +34,7 @@ pub enum ThinkEffort {
     pyo3_stub_gen::derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
 pub enum Grammar {
     Plain(),
     JSON(),
@@ -50,6 +52,7 @@ impl Default for Grammar {
 #[derive(Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 pub struct InferenceConfig {
     pub think_effort: ThinkEffort,
 
@@ -417,6 +420,18 @@ mod node {
             .unwrap();
             Ok(LangModel {
                 inner: LangModelInner::Local(inner),
+            })
+        }
+
+        #[napi]
+        pub fn create_stream_api(
+            spec: APISpecification,
+            model_name: String,
+            api_key: String,
+        ) -> napi::Result<LangModel> {
+            let inner = StreamAPILangModel::new(spec, model_name, api_key);
+            Ok(LangModel {
+                inner: LangModelInner::StreamAPI(inner),
             })
         }
 
