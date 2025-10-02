@@ -5,7 +5,7 @@ use anyhow::Result;
 use futures::lock::Mutex;
 
 use crate::{
-    knowledge::base::{Knowledge, KnowledgeRetrieveResult},
+    knowledge::base::{KnowledgeBehavior, KnowledgeRetrieveResult},
     model::{EmbeddingModel, EmbeddingModelInference},
     vector_store::{VectorStore, VectorStoreRetrieveResult},
 };
@@ -50,7 +50,7 @@ impl VectorStoreKnowledge {
 }
 
 #[multi_platform_async_trait]
-impl Knowledge for VectorStoreKnowledge {
+impl KnowledgeBehavior for VectorStoreKnowledge {
     fn name(&self) -> String {
         self.name.clone()
     }
@@ -79,14 +79,14 @@ mod tests {
     use super::*;
     use crate::{
         agent::{Agent, SystemMessageRenderer},
-        knowledge::KnowledgeTool,
+        knowledge::{Knowledge, KnowledgeTool},
         model::{EmbeddingModel, LangModel},
         tool::{Tool, ToolBehavior as _},
         value::{Part, Value},
         vector_store::{FaissStore, VectorStoreAddInput},
     };
 
-    async fn prepare_knowledge() -> Result<VectorStoreKnowledge> {
+    async fn prepare_knowledge() -> Result<Knowledge> {
         let mut store = FaissStore::new(1024).await.unwrap();
         let embedding_model = EmbeddingModel::new_local("BAAI/bge-m3").await.unwrap();
 
@@ -107,7 +107,8 @@ mod tests {
             })
             .await?;
 
-        let knowledge = VectorStoreKnowledge::new("my-store", store, embedding_model).with_top_k(1);
+        let knowledge =
+            Knowledge::new_vector_store("my-store", store, embedding_model).with_top_k(1);
         Ok(knowledge)
     }
 

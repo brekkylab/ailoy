@@ -4,7 +4,7 @@ use futures::{Stream, StreamExt, lock::Mutex};
 
 use crate::{
     agent::SystemMessageRenderer,
-    knowledge::Knowledge,
+    knowledge::{Knowledge, KnowledgeBehavior as _},
     model::{InferenceConfig, LangModel, LangModelInference as _},
     tool::{Tool, ToolBehavior as _},
     utils::log,
@@ -16,7 +16,7 @@ pub struct Agent {
     lm: LangModel,
     tools: Vec<Tool>,
     messages: Arc<Mutex<Vec<Message>>>,
-    knowledge: Option<Arc<dyn Knowledge>>,
+    knowledge: Option<Knowledge>,
     system_message_renderer: Arc<SystemMessageRenderer>,
 }
 
@@ -57,7 +57,7 @@ impl Agent {
         self.tools.clone()
     }
 
-    pub fn knowledge(&self) -> Option<Arc<dyn Knowledge>> {
+    pub fn knowledge(&self) -> Option<Knowledge> {
         self.knowledge.clone()
     }
 
@@ -107,8 +107,8 @@ impl Agent {
         self.remove_tools(vec![tool_name]).await
     }
 
-    pub fn set_knowledge(&mut self, knowledge: impl Knowledge + 'static) {
-        self.knowledge = Some(Arc::new(knowledge));
+    pub fn set_knowledge(&mut self, knowledge: Knowledge) {
+        self.knowledge = Some(knowledge);
     }
 
     pub fn remove_knowledge(&mut self) {
