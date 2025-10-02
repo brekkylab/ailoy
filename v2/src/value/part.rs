@@ -613,6 +613,3 @@ mod py {
         }
     }
 }
-
-#[cfg(feature = "nodejs")]
-mod node {}
