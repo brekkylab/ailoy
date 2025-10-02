@@ -1,17 +1,64 @@
-// prettier-ignore
-/* @ts-ignore */
-export type LanguageModel = LocalLanguageModel | OpenAILanguageModel | GeminiLanguageModel | AnthropicLanguageModel | XAILanguageModel;
-/* @ts-ignore */
-export type EmbeddingModel = LocalEmbeddingModel;
-/* @ts-ignore */
-export type VectorStore = FaissVectorStore | ChromaVectorStore;
-/* @ts-ignore */
-export type Tool = BuiltinTool | MCPTool | JsFunctionTool;
+export declare class LangModel {
+  static createLocal(
+    modelName: string,
+    progressCallback?: ((arg: CacheProgress) => void) | undefined | null
+  ): Promise<LangModel>;
+  static createStreamApi(
+    spec: APISpecification,
+    modelName: string,
+    apiKey: string
+  ): LangModel;
+  run(
+    messages: Array<Message>,
+    tools?: Array<ToolDesc> | undefined | null
+  ): LangModelRunIterator;
+}
+
+export declare class LangModelRunIterator {
+  [Symbol.asyncIterator](): this;
+  next(): Promise<LanguageModelIteratorResult>;
+}
+
+export declare const enum APISpecification {
+  ChatCompletion = "ChatCompletion",
+  OpenAI = "OpenAI",
+  Gemini = "Gemini",
+  Claude = "Claude",
+  Responses = "Responses",
+  Grok = "Grok",
+}
+
+export interface CacheProgress {
+  comment: string;
+  current: number;
+  total: number;
+}
+
 export type FinishReason =
   | { type: "Stop" }
   | { type: "Length" }
   | { type: "ToolCall" }
   | { type: "Refusal"; field0: string };
+
+export type Grammar =
+  | { type: "Plain" }
+  | { type: "JSON" }
+  | { type: "JSONSchema"; field0: string }
+  | { type: "Regex"; field0: string }
+  | { type: "CFG"; field0: string };
+
+export interface InferenceConfig {
+  thinkEffort: ThinkEffort;
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  grammar: Grammar;
+}
+
+export interface LanguageModelIteratorResult {
+  value: MessageOutput;
+  done: boolean;
+}
 
 export interface Message {
   role: Role;
@@ -82,6 +129,14 @@ export declare const enum Role {
   Assistant = "Assistant",
   /** Outputs produced by external tools/functions */
   Tool = "Tool",
+}
+
+export declare const enum ThinkEffort {
+  Disable = "Disable",
+  Enable = "Enable",
+  Low = "Low",
+  Medium = "Medium",
+  High = "High",
 }
 
 export interface ToolDesc {

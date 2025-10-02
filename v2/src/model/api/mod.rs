@@ -24,6 +24,7 @@ struct RequestConfig {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
 pub enum APISpecification {
     ChatCompletion,
     OpenAI,
