@@ -9,7 +9,7 @@ pub trait Marshal<T>: Default {
 }
 
 pub trait Unmarshal<T: Delta>: Default {
-    fn unmarshal(&mut self, val: Value) -> Result<T, String>;
+    fn unmarshal(&mut self, val: Value) -> anyhow::Result<T>;
 }
 
 pub struct Marshaled<'d, D, M: Marshal<D>> {

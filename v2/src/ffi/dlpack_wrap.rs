@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::bail;
 
 use crate::{
     ffi::cxx_bridge::{DLDevice, DLPackTensor},
@@ -11,7 +11,7 @@ unsafe impl Send for DLPackTensor {}
 
 impl DLPackTensor {
     /// 1-dimensional float32 Tensor to Vec<f32>
-    pub fn to_vec_f32(&self) -> Result<Vec<f32>> {
+    pub fn to_vec_f32(&self) -> anyhow::Result<Vec<f32>> {
         let managed_tensor = self.inner.as_ref().unwrap();
         let dimension = managed_tensor.get_dimension();
         if dimension == -1 {

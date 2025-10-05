@@ -14,7 +14,7 @@ pub(super) type CustomLangModelInferFunc =
         Vec<Message>,
         Vec<ToolDesc>,
         InferenceConfig,
-    ) -> BoxStream<'static, Result<MessageOutput, String>>;
+    ) -> BoxStream<'static, anyhow::Result<MessageOutput>>;
 
 #[derive(Clone)]
 pub(super) struct CustomLangModel {
@@ -27,7 +27,7 @@ impl LangModelInference for CustomLangModel {
         msg: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: InferenceConfig,
-    ) -> BoxStream<'a, Result<MessageOutput, String>> {
+    ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         (self.infer_func)(msg, tools, config)
     }
 }
