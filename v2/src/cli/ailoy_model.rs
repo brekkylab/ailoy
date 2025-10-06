@@ -51,23 +51,7 @@ enum Commands {
     },
 }
 
-pub async fn ailoy_model_cli() -> anyhow::Result<()> {
-    let mut args: Vec<String> = std::env::args().collect();
-
-    // When running the CLI via Python, we need to shift the args.
-    // But this is not a good workaround, need to search for better ways later.
-    if args
-        .first()
-        .unwrap()
-        .split("/")
-        .last()
-        .unwrap()
-        .to_lowercase()
-        == "python"
-    {
-        args.remove(0);
-    }
-
+pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
     let cli = Cli::parse_from(args.clone());
 
     let aws_profile_name = cli.aws_profile_name;
