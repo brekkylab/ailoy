@@ -1,6 +1,7 @@
 // mod agent;
 pub(crate) mod base;
 pub(crate) mod cache_progress;
+pub(crate) mod cli;
 pub(crate) mod vector_store;
 
 // use agent::{
@@ -9,17 +10,6 @@ pub(crate) mod vector_store;
 // };
 use pyo3::prelude::*;
 use pyo3_stub_gen::{Result, generate::StubInfo};
-
-use crate::ffi::py::base::await_future;
-
-#[pyfunction]
-fn ailoy_model_cli() -> PyResult<()> {
-    // When running the CLI via Python, we need to shift the args.
-    let mut args: Vec<String> = std::env::args().collect();
-    args.remove(0);
-
-    await_future(crate::cli::ailoy_model::ailoy_model_cli(args))
-}
 
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
@@ -54,7 +44,7 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<crate::value::Role>()?;
     m.add_class::<crate::value::ToolDesc>()?;
 
-    m.add_wrapped(wrap_pyfunction!(ailoy_model_cli))?;
+    m.add_function(wrap_pyfunction!(cli::ailoy_model_cli, m)?)?;
 
     Ok(())
 }

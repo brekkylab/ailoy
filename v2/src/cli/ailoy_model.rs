@@ -2,8 +2,10 @@ use std::path::PathBuf;
 
 use aws_config::meta::region::ProvideRegion;
 use clap::{Parser, Subcommand};
+use futures::stream::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tokio::io::AsyncWriteExt;
+use url::Url;
 
 use crate::{
     cache::{Cache, Manifest, ManifestDirectory},
@@ -15,21 +17,21 @@ use crate::{
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-
-    #[arg(long, global = true, default_value = "default")]
-    aws_profile_name: String,
-
-    #[arg(long, global = true, default_value = None)]
-    aws_endpoint_url: Option<String>,
-
-    #[arg(long, global = true, default_value = "ailoy-cache")]
-    s3_bucket_name: String,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
     Upload {
         model_path: PathBuf,
+
+        #[arg(long, default_value = "default")]
+        aws_profile_name: String,
+
+        #[arg(long, default_value = None)]
+        aws_endpoint_url: Option<String>,
+
+        #[arg(long, default_value = "ailoy-cache")]
+        s3_bucket_name: String,
     },
     Download {
         model_name: String,
@@ -46,20 +48,30 @@ enum Commands {
         )]
         device: Option<String>,
 
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Path to download model files. Default to Ailoy cache root (`$HOME/.cache/ailoy`)"
+        )]
         download_path: Option<PathBuf>,
+
+        #[arg(
+            long,
+            help = "Remote URL to download model files from. Default to Ailoy cache remote url"
+        )]
+        cache_remote_url: Option<Url>,
     },
 }
 
 pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
     let cli = Cli::parse_from(args.clone());
 
-    let aws_profile_name = cli.aws_profile_name;
-    let aws_endpoint_url = cli.aws_endpoint_url;
-    let s3_bucket_name = cli.s3_bucket_name;
-
     match &cli.command {
-        Commands::Upload { model_path } => {
+        Commands::Upload {
+            model_path,
+            aws_profile_name,
+            aws_endpoint_url,
+            s3_bucket_name,
+        } => {
             if !model_path.is_dir() {
                 eprintln!(
                     "Model path does not exist: {}",
@@ -107,7 +119,7 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
 
                 match client
                     .put_object()
-                    .bucket(&s3_bucket_name)
+                    .bucket(s3_bucket_name)
                     .key(format!("{}/{}", model_name, manifest.sha1()))
                     .body(s3_body)
                     .send()
@@ -158,63 +170,39 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
             platform,
             device,
             download_path,
+            cache_remote_url,
         } => {
             let model_name = model_name.clone().replace("/", "--");
             let platform = platform
                 .clone()
                 .unwrap_or(env!("BUILD_TARGET_TRIPLE").to_string());
             let device = device.clone().unwrap_or(get_accelerator().to_string());
-            let download_path = download_path
+
+            let cache = Cache::new();
+            let cache_remote_url = cache_remote_url
                 .clone()
-                .unwrap_or(Cache::new().root().to_path_buf());
+                .unwrap_or(cache.remote_url().clone());
+            let download_path = download_path.clone().unwrap_or(cache.root().to_path_buf());
 
             println!("Downloading {}", model_name);
             println!("- Platform: {}", platform);
             println!("- Device: {}", device);
             println!("- Download path: {:?}", download_path);
 
-            let client = get_s3_client(&aws_profile_name, &aws_endpoint_url).await?;
-
             let model_dirs = vec![
-                model_name.clone(),
-                format!("{}--{}--{}", model_name, platform, device),
+                model_name.clone(), // common files (e.g. model params, tokenizer config, etc.)
+                format!("{}--{}--{}", model_name, platform, device), // platform and device specific files (e.g. runtime lib)
             ];
 
-            let mp = MultiProgress::new();
-            let spinner_style = ProgressStyle::default_spinner()
-                .template("{spinner:.green} {msg}")
-                .unwrap()
-                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]);
+            let pb_style = ProgressStyle::default_bar().template("{spinner:.green} {msg} [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} [{elapsed_precise}]")?.progress_chars("#>-");
+
+            let client = reqwest::Client::new();
 
             for model_dir in model_dirs.into_iter() {
-                let dir_resp = client
-                    .list_objects_v2()
-                    .bucket(&s3_bucket_name)
-                    .prefix(format!("{}/", model_dir))
-                    .max_keys(1)
-                    .send()
-                    .await?;
-                let objects = dir_resp.contents();
-                if objects.is_empty() {
-                    eprintln!("Model directory '{}' not found in S3 bucket.", model_dir);
-                    std::process::exit(1);
-                }
-
-                let manifest_obj = client
-                    .get_object()
-                    .bucket(&s3_bucket_name)
-                    .key(format!("{}/_manifest.json", model_dir))
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        eprintln!(
-                            "Failed to read _manifest.json for model directory '{}': {}",
-                            model_dir,
-                            e.to_string()
-                        );
-                        std::process::exit(1);
-                    })?;
-                let manifest_data = manifest_obj.body.collect().await?.into_bytes();
+                let manifest_url =
+                    cache_remote_url.join(format!("{}/_manifest.json", model_dir).as_str())?;
+                let manifest_resp = client.get(manifest_url).send().await?;
+                let manifest_data = manifest_resp.bytes().await?.to_vec();
                 let manifest_dir: ManifestDirectory =
                     serde_json::from_slice(manifest_data.iter().as_slice())?;
 
@@ -232,33 +220,32 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
                     let remote_key = format!("{}/{}", model_dir, manifest.sha1());
                     let local_key = format!("{}/{}", model_dir, filename);
 
-                    let pb = mp.add(ProgressBar::new_spinner());
-                    pb.set_style(spinner_style.clone());
-                    pb.set_message(local_key.clone());
-                    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+                    let file_url = cache_remote_url.join(&remote_key)?;
+                    let file_resp = client.get(file_url).send().await?.error_for_status()?;
+                    let total_size = file_resp.content_length().unwrap_or(0);
 
-                    let file_obj = client
-                        .get_object()
-                        .bucket(&s3_bucket_name)
-                        .key(remote_key)
-                        .send()
-                        .await?;
-                    let file_data = file_obj.body.collect().await?.into_bytes();
+                    let pb = ProgressBar::new(total_size);
+                    pb.set_style(pb_style.clone());
+                    pb.set_message(local_key.clone());
+
                     let mut file =
                         tokio::fs::File::create(format!("{}/{}", download_dir, filename)).await?;
-                    file.write_all(&file_data).await?;
+                    let mut stream = file_resp.bytes_stream();
+                    let mut downloaded: u64 = 0;
 
-                    pb.set_style(
-                        ProgressStyle::default_spinner()
-                            .template("{prefix:.green} {msg}")
-                            .unwrap(),
-                    );
-                    pb.set_prefix("✓");
+                    while let Some(chunk_result) = stream.next().await {
+                        let chunk = chunk_result?;
+                        file.write_all(&chunk).await?;
+                        let new = u64::min(downloaded + (chunk.len() as u64), total_size);
+                        downloaded = new;
+                        pb.set_position(new);
+                    }
+
                     pb.finish();
                 }
             }
 
-            println!("🎉 Download complete!");
+            println!("\n🎉 Download complete!");
         }
     }
 
