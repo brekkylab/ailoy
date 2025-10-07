@@ -24,6 +24,12 @@ enum Commands {
     Upload {
         model_path: PathBuf,
 
+        #[arg(
+            long,
+            help = "Dump files and manifest to local directory instead of uploading to remote S3 bucket. Use this as debugging or DRY option."
+        )]
+        to_local_path: Option<PathBuf>,
+
         #[arg(long, default_value = "default")]
         aws_profile_name: String,
 
@@ -68,6 +74,7 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
     match &cli.command {
         Commands::Upload {
             model_path,
+            to_local_path,
             aws_profile_name,
             aws_endpoint_url,
             s3_bucket_name,
@@ -82,7 +89,6 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
 
             let model_name = model_path.file_name().unwrap().to_str().unwrap();
 
-            let client = get_s3_client(&aws_profile_name, &aws_endpoint_url).await?;
             let target_entries = std::fs::read_dir(model_path)
                 .unwrap()
                 .into_iter()
@@ -100,31 +106,53 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
                 .unwrap()
                 .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]);
 
+            let s3_client: Option<aws_sdk_s3::Client> = if to_local_path.is_none() {
+                Some(get_s3_client(&aws_profile_name, &aws_endpoint_url).await?)
+            } else {
+                None
+            };
+
             println!("Uploading model files from {:?}", model_path);
+            if let Some(local_path) = to_local_path {
+                tokio::fs::create_dir_all(local_path.join(model_name)).await?;
+                println!("- To local path: {:?}", local_path);
+            }
+
             for path in target_entries {
                 let filename = path.file_name().unwrap().to_string_lossy().to_string();
 
-                let pb = mp.add(ProgressBar::new_spinner());
-                pb.set_style(spinner_style.clone());
-                pb.set_message(filename.clone());
-                pb.enable_steady_tick(std::time::Duration::from_millis(80));
-
                 let content = std::fs::read(path.clone())?;
-                let s3_body: aws_sdk_s3::primitives::ByteStream = content.into();
-                let manifest = Manifest::from_u8(s3_body.bytes().unwrap());
+                let manifest = Manifest::from_u8(&content);
                 manifests.insert_file(
                     path.file_name().unwrap().to_str().unwrap().to_owned(),
                     manifest.clone(),
                 );
 
-                match client
-                    .put_object()
-                    .bucket(s3_bucket_name)
-                    .key(format!("{}/{}", model_name, manifest.sha1()))
-                    .body(s3_body)
-                    .send()
-                    .await
-                {
+                let pb = mp.add(ProgressBar::new_spinner());
+                pb.set_style(spinner_style.clone());
+                pb.set_message(format!("{} (sha1: {})", filename, manifest.sha1()));
+                pb.enable_steady_tick(std::time::Duration::from_millis(80));
+
+                let upload_result: anyhow::Result<()> = if let Some(client) = &s3_client {
+                    let s3_body: aws_sdk_s3::primitives::ByteStream = content.into();
+                    client
+                        .put_object()
+                        .bucket(s3_bucket_name)
+                        .key(format!("{}/{}", model_name, manifest.sha1()))
+                        .body(s3_body)
+                        .send()
+                        .await?;
+                    Ok(())
+                } else {
+                    let local_path = to_local_path.as_ref().unwrap();
+                    let mut file =
+                        tokio::fs::File::create(local_path.join(model_name).join(manifest.sha1()))
+                            .await?;
+                    file.write_all(&content).await?;
+                    Ok(())
+                };
+
+                match upload_result {
                     Ok(_) => {
                         pb.set_style(
                             ProgressStyle::default_spinner()
@@ -149,21 +177,29 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
             }
 
             let manifests_json = serde_json::to_string(&manifests).unwrap().into_bytes();
-            let body: aws_sdk_s3::primitives::ByteStream = manifests_json.into();
-            client
-                .put_object()
-                .bucket(s3_bucket_name)
-                .key(format!("{}/_manifest.json", model_name))
-                .body(body)
-                .content_type("application/json")
-                .send()
-                .await
-                .map_err(|e| {
-                    eprintln!("Failed to upload _manifest.json: {}", e);
-                    std::process::exit(1);
-                })?;
+            if let Some(client) = &s3_client {
+                let body: aws_sdk_s3::primitives::ByteStream = manifests_json.into();
+                client
+                    .put_object()
+                    .bucket(s3_bucket_name)
+                    .key(format!("{}/_manifest.json", model_name))
+                    .body(body)
+                    .content_type("application/json")
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        eprintln!("Failed to upload _manifest.json: {}", e);
+                        std::process::exit(1);
+                    })?;
+            } else {
+                let local_path = to_local_path.as_ref().unwrap();
+                let mut file =
+                    tokio::fs::File::create(local_path.join(model_name).join("_manifest.json"))
+                        .await?;
+                file.write_all(&manifests_json).await?;
+            }
 
-            println!("🎉 Upload complete!")
+            println!("\n🎉 Upload complete!")
         }
         Commands::Download {
             model_name,
