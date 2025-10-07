@@ -589,6 +589,7 @@ mod dialect_tests {
 mod api_tests {
     use std::sync::LazyLock;
 
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
     use super::*;
@@ -605,7 +606,7 @@ mod api_tests {
             .expect("Environment variable 'GEMINI_API_KEY' is required for the tests.")
     });
 
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model = StreamAPILangModel::new(
             APISpecification::Gemini,
@@ -633,8 +634,7 @@ mod api_tests {
         assert_eq!(finish_reason, Some(FinishReason::Stop()));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_call() {
         let mut model = StreamAPILangModel::new(
             APISpecification::Gemini,
@@ -681,8 +681,7 @@ mod api_tests {
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_response() {
         let mut model = StreamAPILangModel::new(
             APISpecification::Gemini,

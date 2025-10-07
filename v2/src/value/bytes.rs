@@ -77,3 +77,59 @@ mod py {
         }
     }
 }
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use js_sys::{ArrayBuffer, Uint8Array};
+    use wasm_bindgen::prelude::*;
+
+    use super::Bytes;
+
+    impl TryFrom<JsValue> for Bytes {
+        type Error = js_sys::Error;
+
+        fn try_from(js_val: JsValue) -> Result<Self, Self::Error> {
+            // Try to handle Uint8Array
+            if let Some(uint8_array) = js_val.dyn_ref::<Uint8Array>() {
+                let len = uint8_array.length() as usize;
+                let mut vec = vec![0u8; len];
+                uint8_array.copy_to(&mut vec);
+                return Ok(Bytes(vec));
+            }
+
+            // Try to handle ArrayBuffer
+            if let Some(array_buffer) = js_val.dyn_ref::<ArrayBuffer>() {
+                let uint8_array = Uint8Array::new(array_buffer);
+                let len = uint8_array.length() as usize;
+                let mut vec = vec![0u8; len];
+                uint8_array.copy_to(&mut vec);
+                return Ok(Bytes(vec));
+            }
+
+            // Try to handle Array of numbers
+            if js_sys::Array::is_array(&js_val) {
+                let arr = js_sys::Array::from(&js_val);
+                let len = arr.length() as usize;
+                let mut vec = Vec::with_capacity(len);
+
+                for i in 0..len {
+                    if let Some(num) = arr.get(i as u32).as_f64() {
+                        vec.push(num as u8);
+                    }
+                }
+
+                return Ok(Bytes(vec));
+            }
+
+            Err(js_sys::Error::new("Cannot convert to Bytes"))
+        }
+    }
+
+    impl From<Bytes> for JsValue {
+        fn from(bytes: Bytes) -> Self {
+            let uint8_array = Uint8Array::new_with_length(bytes.0.len() as u32);
+            uint8_array.copy_from(&bytes.0);
+            uint8_array.into()
+        }
+    }
+}

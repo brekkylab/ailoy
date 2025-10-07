@@ -581,6 +581,7 @@ mod dialect_tests {
 mod openai_chatcompletion_api_tests {
     use std::sync::LazyLock;
 
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
     use crate::{
@@ -597,7 +598,7 @@ mod openai_chatcompletion_api_tests {
             .expect("Environment variable 'OPENAI_API_KEY' is required for the tests.")
     });
 
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model =
             StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
@@ -621,8 +622,7 @@ mod openai_chatcompletion_api_tests {
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_call() {
         let mut model =
             StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
@@ -665,8 +665,7 @@ mod openai_chatcompletion_api_tests {
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_response() {
         let mut model =
             StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
@@ -725,6 +724,7 @@ mod openai_chatcompletion_api_tests {
 mod grok_api_tests {
     use std::sync::LazyLock;
 
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
     use crate::{
@@ -741,7 +741,7 @@ mod grok_api_tests {
             .expect("Environment variable 'XAI_API_KEY' is required for the tests.")
     });
 
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model =
             StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
@@ -765,8 +765,7 @@ mod grok_api_tests {
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_call() {
         let mut model =
             StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
@@ -809,8 +808,7 @@ mod grok_api_tests {
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_response() {
         let mut model =
             StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
