@@ -811,6 +811,7 @@ mod dialect_tests {
 mod api_tests {
     use std::sync::LazyLock;
 
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt as _;
 
     use crate::{
@@ -828,7 +829,7 @@ mod api_tests {
             .expect("Environment variable 'OPENAI_API_KEY' is required for the tests.")
     });
 
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model =
             StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
@@ -850,8 +851,7 @@ mod api_tests {
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_call() {
         let mut model =
             StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
@@ -894,8 +894,7 @@ mod api_tests {
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_response() {
         let mut model =
             StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);

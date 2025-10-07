@@ -6,6 +6,10 @@ use crate::value::Value;
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(
+    feature = "wasm",
+    wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)
+)]
 pub struct ToolDesc {
     pub name: String,
     pub description: Option<String>,
@@ -75,9 +79,8 @@ impl ToolDescBuilder {
 
 #[cfg(test)]
 mod test {
-    use crate::to_value;
-
     use super::*;
+    use crate::to_value;
 
     #[test]
     fn simple_tool_description_serde() {
