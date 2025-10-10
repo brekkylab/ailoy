@@ -65,7 +65,7 @@ impl ToolBehavior for Tool {
         }
     }
 
-    async fn run(&self, args: Value) -> Result<Value, String> {
+    async fn run(&self, args: Value) -> anyhow::Result<Value> {
         match &self.inner {
             ToolInner::Function(tool) => tool.run(args).await,
             ToolInner::MCP(tool) => tool.run(args).await,

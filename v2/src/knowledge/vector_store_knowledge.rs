@@ -84,7 +84,7 @@ mod tests {
         vector_store::{FaissStore, VectorStoreAddInput},
     };
 
-    async fn prepare_knowledge() -> Result<Knowledge> {
+    async fn prepare_knowledge() -> anyhow::Result<Knowledge> {
         let mut store = FaissStore::new(1024).await.unwrap();
         let embedding_model = EmbeddingModel::new_local("BAAI/bge-m3").await.unwrap();
 
