@@ -133,10 +133,10 @@ impl LocalLangModelImpl {
         let strm = try_stream! {
             match config.think_effort {
                 ThinkEffort::Disable => {
-                    self.chat_template.disable_reasoning();
+                    self.chat_template.disable_thinking();
                 },
                 ThinkEffort::Enable | ThinkEffort::Low | ThinkEffort::Medium | ThinkEffort::High => {
-                    self.chat_template.enable_reasoning();
+                    self.chat_template.enable_thinking();
                 },
             }
             let prompt = self.chat_template.apply(msgs, tools, true)?;
