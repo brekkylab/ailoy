@@ -1,6 +1,7 @@
 // mod agent;
 pub(crate) mod base;
 pub(crate) mod cache_progress;
+pub(crate) mod cli;
 pub(crate) mod vector_store;
 
 // use agent::{
@@ -42,6 +43,9 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<crate::value::PartImage>()?;
     m.add_class::<crate::value::Role>()?;
     m.add_class::<crate::value::ToolDesc>()?;
+
+    m.add_function(wrap_pyfunction!(cli::ailoy_model_cli, m)?)?;
+
     Ok(())
 }
 
