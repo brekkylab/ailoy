@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::value::{Value, delta::Delta};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 pub struct PartFunction {
     pub name: String,
     #[serde(rename = "arguments")]
@@ -14,6 +15,7 @@ pub struct PartFunction {
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
 )]
 #[serde(untagged)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
 pub enum PartImageColorspace {
     #[strum(serialize = "grayscale")]
     #[serde(rename = "grayscale")]
@@ -27,7 +29,7 @@ pub enum PartImageColorspace {
 }
 
 impl PartImageColorspace {
-    pub fn channel(&self) -> usize {
+    pub fn channel(&self) -> u32 {
         match self {
             PartImageColorspace::Grayscale => 1,
             PartImageColorspace::RGB => 3,
@@ -51,15 +53,17 @@ impl TryFrom<String> for PartImageColorspace {
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum PartImage {
     #[serde(rename = "image/x-binary")]
     Binary {
         #[serde(rename = "height")]
-        h: usize,
+        h: u32,
         #[serde(rename = "width")]
-        w: usize,
+        w: u32,
         #[serde(rename = "colorspace")]
         c: PartImageColorspace,
+        #[cfg_attr(feature = "nodejs", napi_derive::napi(ts_type = "Buffer"))]
         data: super::bytes::Bytes,
     },
 }
@@ -71,6 +75,7 @@ pub enum PartImage {
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum Part {
     #[serde(rename = "text")]
     Text { text: String },
@@ -92,8 +97,8 @@ impl Part {
     }
 
     pub fn image_binary(
-        height: usize,
-        width: usize,
+        height: u32,
+        width: u32,
         colorspace: impl TryInto<PartImageColorspace>,
         data: impl IntoIterator<Item = u8>,
     ) -> anyhow::Result<Self> {
@@ -102,14 +107,14 @@ impl Part {
             .ok()
             .context("Colorspace parsing failed")?;
         let data = data.into_iter().collect::<Vec<_>>();
-        let nbytes = data.len() / height / width / colorspace.channel();
+        let nbytes = data.len() as u32 / height / width / colorspace.channel();
         if !(nbytes == 1 || nbytes == 2 || nbytes == 3 || nbytes == 4) {
             panic!("Invalid data length");
         }
         Ok(Self::Image {
             image: PartImage::Binary {
-                h: height,
-                w: width,
+                h: height as u32,
+                w: width as u32,
                 c: colorspace,
                 data: super::bytes::Bytes(data),
             },
@@ -239,7 +244,7 @@ impl Part {
                     },
             } => {
                 let (h, w) = (*h as u32, *w as u32);
-                let nbytes = buf.len() / h as usize / w as usize / c.channel();
+                let nbytes = buf.len() as u32 / h / w / c.channel();
                 match (c, nbytes) {
                     // Grayscale 8-bit
                     (&PartImageColorspace::Grayscale, 1) => {
@@ -298,6 +303,7 @@ impl Part {
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum PartDeltaFunction {
     Verbatim(String),
     WithStringArgs {
@@ -319,6 +325,7 @@ pub enum PartDeltaFunction {
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum PartDelta {
     Text {
         text: String,
