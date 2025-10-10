@@ -217,6 +217,7 @@ mod tvm_runtime {
 mod tvmjs_runtime {
     use std::fmt;
 
+    use anyhow::{anyhow, bail};
     use js_sys::{Float32Array, Object, Reflect, Uint8Array, Uint32Array};
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
@@ -285,8 +286,9 @@ mod tvmjs_runtime {
                 let prom = init_language_model_js(&cache_contents);
                 let js_lm = match JsFuture::from(prom).await {
                     Ok(out) => {
-                        let lm: JSLanguageModel =
-                            out.dyn_into().context("Conversion failed: {:?}", e)?;
+                        let lm: JSLanguageModel = out
+                            .dyn_into()
+                            .map_err(|e| anyhow!("Conversion failed: {:?}", e))?;
                         lm
                     }
                     Err(err) => {
@@ -360,12 +362,13 @@ mod tvmjs_runtime {
                 let prom = init_embedding_model_js(&cache_contents);
                 let js_em: JSEmbeddingModel = match JsFuture::from(prom).await {
                     Ok(out) => {
-                        let em: JSEmbeddingModel =
-                            out.dyn_into().context("Conversion failed: {:?}", e)?;
+                        let em: JSEmbeddingModel = out
+                            .dyn_into()
+                            .map_err(|e| anyhow!("Conversion failed: {:?}", e))?;
                         em
                     }
                     Err(err) => {
-                        bail!("JS inferencer init failed: {:?}", err);
+                        bail!("JS inferencer init failed: {:?}", err)
                     }
                 };
 

@@ -1,7 +1,7 @@
 use std::{borrow::Cow, rc::Rc, sync::atomic::AtomicU32};
 
 use ailoy_macros::multi_platform_async_trait;
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use futures::{StreamExt, stream::LocalBoxStream};
 use rmcp::model::{
     CallToolRequest, CallToolRequestParam, CallToolResult, ClientJsonRpcMessage,
