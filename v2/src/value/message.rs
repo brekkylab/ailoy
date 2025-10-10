@@ -304,4 +304,11 @@ pub struct MessageOutput {
     pub finish_reason: Option<FinishReason>,
 }
 
-impl MessageOutput {}
+impl MessageOutput {
+    pub fn new() -> Self {
+        Self {
+            delta: MessageDelta::new(),
+            finish_reason: None,
+        }
+    }
+}
