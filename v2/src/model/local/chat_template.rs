@@ -258,8 +258,6 @@ mod tests {
     async fn test_chat_template() {
         use futures::StreamExt;
 
-        use crate::debug;
-
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
 
@@ -277,18 +275,14 @@ mod tests {
         }
         let template = template.unwrap();
         for i in 0..8 {
-            // if TARGET_INDEX < 0 || i == TARGET_INDEX {
             let ((msgs, tools, think_effort), expected) = setup_input(i);
             if !think_effort.is_empty() {
                 template.set_think_effort(think_effort);
-                // template.enable_thinking();
             } else {
                 template.disable_thinking();
             }
             let prompt = template.apply(msgs, tools, true);
-            debug!("<{}>\n{}", i, prompt.as_ref().unwrap());
             assert_eq!(prompt.unwrap().as_str(), expected);
-            // }
         }
     }
 }
