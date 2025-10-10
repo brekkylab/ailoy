@@ -119,8 +119,6 @@ mod tests {
         value::{Part, Role, ToolDesc, ToolDescBuilder},
     };
 
-    // const TARGET_INDEX: i32 = -1;
-
     static TOOLS: LazyLock<Vec<ToolDesc>> = LazyLock::new(|| {
         vec![
             ToolDescBuilder::new("get_current_temperature").description("Get the current temperature at a location.").parameters(to_value!({
