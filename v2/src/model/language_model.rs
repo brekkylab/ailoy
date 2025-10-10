@@ -73,7 +73,7 @@ pub trait LangModelInference {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: InferenceConfig,
-    ) -> BoxStream<'a, Result<MessageOutput, String>>;
+    ) -> BoxStream<'a, anyhow::Result<MessageOutput>>;
 }
 
 #[derive(Clone)]
@@ -92,7 +92,7 @@ pub struct LangModel {
 }
 
 impl LangModel {
-    pub async fn try_new_local(model_name: impl Into<String>) -> Result<Self, String> {
+    pub async fn try_new_local(model_name: impl Into<String>) -> anyhow::Result<Self> {
         Ok(Self {
             inner: LangModelInner::Local(LocalLangModel::try_new(model_name).await?),
         })
@@ -100,7 +100,7 @@ impl LangModel {
 
     pub fn try_new_local_stream<'a>(
         model_name: impl Into<String>,
-    ) -> BoxStream<'a, Result<CacheProgress<Self>, String>> {
+    ) -> BoxStream<'a, anyhow::Result<CacheProgress<Self>>> {
         let model_name = model_name.into();
         Box::pin(async_stream::try_stream! {
             let mut strm = LocalLangModel::try_new_stream(model_name);
@@ -139,7 +139,7 @@ impl LangModelInference for LangModel {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: InferenceConfig,
-    ) -> BoxStream<'a, Result<MessageOutput, String>> {
+    ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         match &mut self.inner {
             LangModelInner::Local(model) => model.infer(msgs, tools, config),
             LangModelInner::StreamAPI(model) => model.infer(msgs, tools, config),
@@ -166,11 +166,11 @@ mod py {
         messages: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: InferenceConfig,
-    ) -> PyResult<(
+    ) -> anyhow::Result<(
         &'a tokio::runtime::Runtime,
-        async_channel::Receiver<Result<MessageOutput, String>>,
+        async_channel::Receiver<anyhow::Result<MessageOutput>>,
     )> {
-        let (tx, rx) = async_channel::unbounded::<Result<MessageOutput, String>>();
+        let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageOutput>>();
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         rt.spawn(async move {
             let mut stream = model.infer(messages, tools, config).boxed();
@@ -189,7 +189,7 @@ mod py {
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
     pub struct LanguageModelRunIterator {
-        rx: async_channel::Receiver<Result<MessageOutput, String>>,
+        rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
     }
 
     #[gen_stub_pymethods]
@@ -200,7 +200,7 @@ mod py {
         }
 
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageOutput]"))]
-        fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        fn __anext__(&self, py: Python<'_>) -> anyhow::Result<Py<PyAny>> {
             let rx = self.rx.clone();
             let fut = async move {
                 match rx.recv().await {
@@ -217,7 +217,7 @@ mod py {
     #[pyclass(unsendable)]
     pub struct LanguageModelRunSyncIterator {
         rt: &'static tokio::runtime::Runtime,
-        rx: async_channel::Receiver<Result<MessageOutput, String>>,
+        rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
     }
 
     #[gen_stub_pymethods]
@@ -227,7 +227,7 @@ mod py {
             slf
         }
 
-        fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
+        fn __next__(&mut self, py: Python<'_>) -> anyhow::Result<MessageOutput> {
             let item = py.detach(|| self.rt.block_on(self.rx.recv()));
             match item {
                 Ok(res) => res.map_err(|e| PyRuntimeError::new_err(e.to_string())),
@@ -248,7 +248,7 @@ mod py {
             model_name: String,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
-        ) -> PyResult<Bound<'a, PyAny>> {
+        ) -> Result<Bound<'a, PyAny>> {
             let fut = async move {
                 let inner =
                     await_cache_result::<LocalLangModel>(model_name, progress_callback).await?;
@@ -272,7 +272,7 @@ mod py {
             model_name: String,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
-        ) -> PyResult<Py<Self>> {
+        ) -> anyhow::Result<Py<Self>> {
             let inner = await_future(await_cache_result::<LocalLangModel>(
                 model_name,
                 progress_callback,
@@ -286,14 +286,17 @@ mod py {
         }
 
         #[classmethod]
-        #[pyo3(name = "CreateStreamAPI", signature = (model_name, api_key))]
+        #[pyo3(name = "CreateStreamAPI", signature = (spec, model_name, api_key))]
         fn create_stream_api<'a>(
             _cls: &Bound<'a, PyType>,
+            spec: APISpecification,
             model_name: String,
             api_key: String,
         ) -> LangModel {
             LangModel {
-                inner: LangModelInner::StreamAPI(StreamAPILangModel::new(model_name, api_key)),
+                inner: LangModelInner::StreamAPI(StreamAPILangModel::new(
+                    spec, model_name, api_key,
+                )),
             }
         }
 
@@ -303,7 +306,7 @@ mod py {
             messages: Vec<Message>,
             tools: Vec<ToolDesc>,
             config: InferenceConfig,
-        ) -> PyResult<LanguageModelRunIterator> {
+        ) -> anyhow::Result<LanguageModelRunIterator> {
             let (_, rx) = spawn(self.clone(), messages, tools, config)?;
             Ok(LanguageModelRunIterator { rx })
         }
@@ -314,7 +317,7 @@ mod py {
             messages: Vec<Message>,
             tools: Vec<ToolDesc>,
             config: InferenceConfig,
-        ) -> PyResult<LanguageModelRunSyncIterator> {
+        ) -> anyhow::Result<LanguageModelRunSyncIterator> {
             let (rt, rx) = spawn(self.clone(), messages, tools, config)?;
             Ok(LanguageModelRunSyncIterator { rt, rx })
         }
@@ -343,7 +346,7 @@ mod node {
     #[derive(Clone)]
     #[napi]
     pub struct LangModelRunIterator {
-        rx: Arc<Mutex<mpsc::UnboundedReceiver<std::result::Result<MessageOutput, String>>>>,
+        rx: Arc<Mutex<mpsc::UnboundedReceiver<std::result::Result<MessageOutput, anyhow::Error>>>>,
     }
 
     #[napi]
@@ -442,7 +445,7 @@ mod node {
             messages: Vec<Message>,
             tools: Option<Vec<ToolDesc>>,
         ) -> Result<Object<'a>> {
-            let (tx, rx) = mpsc::unbounded_channel::<std::result::Result<MessageOutput, String>>();
+            let (tx, rx) = mpsc::unbounded_channel::<std::result::Result<MessageOutput, _>>();
             let rt = crate::ffi::node::common::get_or_create_runtime();
             let mut model = self.clone();
 

@@ -1,3 +1,4 @@
+use anyhow::Context;
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 pub use tvm_runtime::EmbeddingModelInferencer;
 #[cfg(any(target_family = "unix", target_family = "windows"))]
@@ -67,15 +68,15 @@ pub fn get_accelerator() -> &'static str {
 pub fn claim_files(
     cache: Cache,
     key: impl AsRef<str>,
-) -> BoxFuture<'static, Result<CacheClaim, String>> {
+) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
     let dirname = vec![key.as_ref().replace("/", "--")].join("--");
     let elem = CacheEntry::new(&dirname, "ndarray-cache.json");
     Box::pin(async move {
         let ndarray_cache_bytes = cache.get(&elem).await?;
         let ndarray_cache_str =
-            std::str::from_utf8(&ndarray_cache_bytes).map_err(|_| format!("Internal error"))?;
-        let ndarray_cache: serde_json::Value = serde_json::from_str(ndarray_cache_str)
-            .map_err(|e| format!("JSON deserialization failed: {}", e.to_string()))?;
+            std::str::from_utf8(&ndarray_cache_bytes).context("Internal error")?;
+        let ndarray_cache: serde_json::Value =
+            serde_json::from_str(ndarray_cache_str).context("JSON deserialization failed")?;
         let mut rv = ndarray_cache
             .as_object()
             .unwrap()
@@ -153,13 +154,13 @@ mod tvm_runtime {
         fn claim_files(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+        ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
             claim_files(cache, key)
         }
 
         fn try_from_contents(
             mut contents: CacheContents,
-        ) -> BoxFuture<'static, Result<Self, String>> {
+        ) -> BoxFuture<'static, anyhow::Result<Self>> {
             Box::pin(async move {
                 let device = create_dldevice(
                     get_device_type(get_accelerator()),
@@ -192,13 +193,13 @@ mod tvm_runtime {
         fn claim_files(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+        ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
             claim_files(cache, key)
         }
 
         fn try_from_contents(
             mut contents: CacheContents,
-        ) -> BoxFuture<'static, Result<Self, String>> {
+        ) -> BoxFuture<'static, anyhow::Result<Self>> {
             Box::pin(async move {
                 let device = create_dldevice(
                     get_device_type(get_accelerator()),
@@ -216,6 +217,7 @@ mod tvm_runtime {
 mod tvmjs_runtime {
     use std::fmt;
 
+    use anyhow::{anyhow, bail};
     use js_sys::{Float32Array, Object, Reflect, Uint8Array, Uint32Array};
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
@@ -261,13 +263,13 @@ mod tvmjs_runtime {
         fn claim_files(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+        ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
             claim_files(cache, key)
         }
 
         fn try_from_contents(
             mut contents: CacheContents,
-        ) -> BoxFuture<'static, Result<Self, String>> {
+        ) -> BoxFuture<'static, anyhow::Result<Self>> {
             Box::pin(async move {
                 let cache_contents = {
                     let obj = Object::new();
@@ -286,11 +288,11 @@ mod tvmjs_runtime {
                     Ok(out) => {
                         let lm: JSLanguageModel = out
                             .dyn_into()
-                            .map_err(|e| format!("Conversion failed: {:?}", e))?;
+                            .map_err(|e| anyhow!("Conversion failed: {:?}", e))?;
                         lm
                     }
                     Err(err) => {
-                        return Err(format!("JS inferencer init failed: {:?}", err));
+                        bail!("JS inferencer init failed: {:?}", err);
                     }
                 };
 
@@ -337,13 +339,13 @@ mod tvmjs_runtime {
         fn claim_files(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+        ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
             claim_files(cache, key)
         }
 
         fn try_from_contents(
             mut contents: CacheContents,
-        ) -> BoxFuture<'static, Result<Self, String>> {
+        ) -> BoxFuture<'static, anyhow::Result<Self>> {
             Box::pin(async move {
                 let cache_contents = {
                     let obj = Object::new();
@@ -362,11 +364,11 @@ mod tvmjs_runtime {
                     Ok(out) => {
                         let em: JSEmbeddingModel = out
                             .dyn_into()
-                            .map_err(|e| format!("Conversion failed: {:?}", e))?;
+                            .map_err(|e| anyhow!("Conversion failed: {:?}", e))?;
                         em
                     }
                     Err(err) => {
-                        return Err(format!("JS inferencer init failed: {:?}", err));
+                        bail!("JS inferencer init failed: {:?}", err)
                     }
                 };
 

@@ -1,5 +1,6 @@
 use std::{any::Any, collections::BTreeMap, sync::Arc};
 
+use anyhow::bail;
 use async_stream::try_stream;
 use futures::StreamExt;
 use tokio::sync::mpsc;
@@ -21,7 +22,7 @@ struct Request {
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
     config: InferenceConfig,
-    tx_resp: mpsc::UnboundedSender<Result<MessageOutput, String>>,
+    tx_resp: mpsc::UnboundedSender<anyhow::Result<MessageOutput>>,
 }
 
 #[derive(Clone, Debug)]
@@ -30,7 +31,7 @@ pub struct LocalLangModel {
 }
 
 impl LocalLangModel {
-    pub async fn try_new(model: impl Into<String>) -> Result<Self, String> {
+    pub async fn try_new(model: impl Into<String>) -> anyhow::Result<Self> {
         let cache = Cache::new();
         let mut strm = Box::pin(cache.try_create::<LocalLangModel>(model));
         while let Some(v) = strm.next().await {
@@ -43,7 +44,7 @@ impl LocalLangModel {
 
     pub fn try_new_stream<'a>(
         model: impl Into<String>,
-    ) -> BoxStream<'a, Result<CacheProgress<Self>, String>> {
+    ) -> BoxStream<'a, anyhow::Result<CacheProgress<Self>>> {
         let cache = Cache::new();
         Box::pin(cache.try_create::<Self>(model))
     }
@@ -53,11 +54,11 @@ impl TryFromCache for LocalLangModel {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
         LocalLangModelImpl::claim_files(cache, key)
     }
 
-    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Result<Self, String>> {
+    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>> {
         Box::pin(async move {
             let mut body = LocalLangModelImpl::try_from_contents(contents).await?;
             let (tx, mut rx) = mpsc::channel(1);
@@ -94,7 +95,7 @@ impl LangModelInference for LocalLangModel {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: InferenceConfig,
-    ) -> crate::utils::BoxStream<'a, Result<MessageOutput, String>> {
+    ) -> crate::utils::BoxStream<'a, anyhow::Result<MessageOutput>> {
         let (tx_resp, mut rx_resp) = tokio::sync::mpsc::unbounded_channel();
         let req = Request {
             msgs,
@@ -128,14 +129,14 @@ impl LocalLangModelImpl {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         config: InferenceConfig,
-    ) -> BoxStream<'a, Result<MessageOutput, String>> {
+    ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         let strm = try_stream! {
             match config.think_effort {
                 ThinkEffort::Disable => {
-                    self.chat_template.disable_reasoning();
+                    self.chat_template.disable_thinking();
                 },
                 ThinkEffort::Enable | ThinkEffort::Low | ThinkEffort::Medium | ThinkEffort::High => {
-                    self.chat_template.enable_reasoning();
+                    self.chat_template.enable_thinking();
                 },
             }
             let prompt = self.chat_template.apply(msgs, tools, true)?;
@@ -217,7 +218,7 @@ impl TryFromCache for LocalLangModelImpl {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
         let key = key.as_ref().to_owned();
         Box::pin(async move {
             let mut chat_template = ChatTemplate::claim_files(cache.clone(), &key).await?;
@@ -248,7 +249,7 @@ impl TryFromCache for LocalLangModelImpl {
         })
     }
 
-    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, Result<Self, String>>
+    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>>
     where
         Self: Sized,
     {
@@ -259,9 +260,9 @@ impl TryFromCache for LocalLangModelImpl {
                         let [a, b, c] = *boxed;
                         (a, b, c)
                     }
-                    Err(_) => return Err("contents.ctx is not [Vec<CacheEntry>; 3]".into()),
+                    Err(_) => bail!("contents.ctx is not [Vec<CacheEntry>; 3]"),
                 },
-                None => return Err("contents.ctx is None".into()),
+                None => bail!("contents.ctx is None"),
             };
 
             let chat_template = {

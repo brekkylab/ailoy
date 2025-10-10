@@ -248,11 +248,7 @@ impl Value {
         for<'a> &'a T: core::convert::TryFrom<&'a Value>,
     {
         let prim = self.pointer(pointer)?;
-        let value = prim.try_into();
-        match value {
-            Ok(v) => Some(v),
-            Err(_) => None,
-        }
+        prim.try_into().ok()
     }
 
     /// Get a value by JSON Pointer (mutable).
@@ -292,8 +288,7 @@ impl Value {
         for<'a> &'a mut T: core::convert::TryFrom<&'a mut Value>,
     {
         let prim = self.pointer_mut(pointer)?;
-        let value: Result<&mut T, _> = prim.try_into();
-        value.ok()
+        prim.try_into().ok()
     }
 }
 
@@ -852,7 +847,7 @@ mod py {
         Ok(out)
     }
 
-    fn py_any_to_vec<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Vec<Value>> {
+    fn py_any_to_vec<'py>(obj: &Bound<'py, PyAny>) -> anyhow::Result<Vec<Value>> {
         if let Ok(list) = obj.downcast::<PyList>() {
             return list.iter().map(|it| it.extract::<Value>()).collect();
         }
@@ -870,7 +865,7 @@ mod py {
     }
 
     impl<'py> FromPyObject<'py> for Value {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
             if ob.is_none() {
                 return Ok(Value::Null);
             }
@@ -915,7 +910,7 @@ mod py {
         type Output = Bound<'py, PyAny>;
         type Error = PyErr;
 
-        fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        fn into_pyobject(self, py: Python<'py>) -> anyhow::Result<Self::Output> {
             match self {
                 // None
                 Value::Null => Ok(py.None().bind(py).clone()),

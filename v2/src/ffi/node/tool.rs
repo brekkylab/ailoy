@@ -232,13 +232,9 @@ impl Tool for JsFunctionTool {
         self.desc.clone()
     }
 
-    async fn run(&self, args: ToolCallArg) -> std::result::Result<Vec<Part>, String> {
+    async fn run(&self, args: ToolCallArg) -> anyhow::Result<Vec<Part>> {
         let kwargs = serde_json::to_value(args).unwrap();
-        let promise = self
-            .func
-            .call_async(kwargs)
-            .await
-            .map_err(|e| e.to_string())?;
+        let promise = self.func.call_async(kwargs).await?;
         let result = match promise.await {
             Ok(result) => result.to_string(),
             Err(e) => e.to_string(),

@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::{Context, bail};
 use async_stream::try_stream;
 use futures::{Stream, StreamExt as _, stream::FuturesUnordered};
 use tokio::sync::RwLock;
@@ -19,16 +20,16 @@ use crate::{
     utils::MaybeSend,
 };
 
-async fn download(url: Url) -> Result<Vec<u8>, String> {
+async fn download(url: Url) -> anyhow::Result<Vec<u8>> {
     let req = reqwest::get(url);
-    let resp = req.await.map_err(|e| e.to_string())?;
+    let resp = req.await?;
     if !resp.status().is_success() {
-        Err(format!("HTTP error: {}", resp.status()))?;
+        bail!("HTTP error: {}", resp.status());
     }
     let bytes = resp
         .bytes()
         .await
-        .map_err(|e| format!("reqwest::Response::bytes failed: {}", e.to_string()))?;
+        .context("reqwest::Response::bytes failed")?;
     Ok(bytes.to_vec())
 }
 
@@ -189,14 +190,13 @@ impl Cache {
             .unwrap()
     }
 
-    async fn get_manifest(&self, entry: &CacheEntry) -> Result<Manifest, String> {
+    async fn get_manifest(&self, entry: &CacheEntry) -> anyhow::Result<Manifest> {
         if !self.manifests.read().await.contains_key(entry.dirname()) {
             let entry_manifest = CacheEntry::new(entry.dirname(), "_manifest.json");
             let bytes = download(self.get_url(&entry_manifest)).await?;
-            let text = std::str::from_utf8(&bytes)
-                .map_err(|e| format!("std::str::from_utf_8 failed: {}", e.to_string()))?;
+            let text = std::str::from_utf8(&bytes).context("std::str::from_utf_8 failed")?;
             let value = serde_json::from_str::<ManifestDirectory>(text)
-                .map_err(|e| format!("`serde_json::from_str` failed: {}", e.to_string()))?;
+                .context("`serde_json::from_str` failed")?;
             self.manifests
                 .write()
                 .await
@@ -207,10 +207,7 @@ impl Cache {
         if files.contains_key(entry.filename()) {
             Ok(files.get(entry.filename()).unwrap().to_owned())
         } else {
-            Err(format!(
-                "The file {} not exists in manifest",
-                entry.filename()
-            ))
+            bail!("The file {} not exists in manifest", entry.filename())
         }
     }
 
@@ -224,7 +221,7 @@ impl Cache {
     ///    to the logical filename, then return the bytes.
     ///
     /// Errors bubble up from manifest lookup, IO, and network.
-    pub async fn get(&self, entry: impl AsRef<CacheEntry>) -> Result<Vec<u8>, String> {
+    pub async fn get(&self, entry: impl AsRef<CacheEntry>) -> anyhow::Result<Vec<u8>> {
         let entry = entry.as_ref();
 
         // Get manifest
@@ -284,7 +281,7 @@ impl Cache {
     pub fn try_create<T>(
         self,
         key: impl Into<String>,
-    ) -> impl Stream<Item = Result<CacheProgress<T>, String>> + 'static
+    ) -> impl Stream<Item = anyhow::Result<CacheProgress<T>>> + 'static
     where
         T: TryFromCache + MaybeSend + 'static,
     {

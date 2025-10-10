@@ -40,7 +40,7 @@ impl Tool for BuiltinTool {
         self.desc.clone()
     }
 
-    async fn run(&self, args: Value) -> Result<Value, String> {
+    async fn run(&self, args: Value) -> anyhow::Result<Value> {
         Ok(self.f.clone()(args))
     }
 }

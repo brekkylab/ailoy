@@ -1,3 +1,4 @@
+use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
 use crate::value::{Delta, Part, PartDelta};
@@ -143,15 +144,16 @@ impl MessageDelta {
         self
     }
 
-    pub fn to_message(self) -> Result<Message, String> {
+    pub fn to_message(self) -> anyhow::Result<Message> {
         self.finish()
     }
 }
 
 impl Delta for MessageDelta {
     type Item = Message;
+    type Err = anyhow::Error; // TODO: Define custom error for this.
 
-    fn aggregate(self, other: Self) -> Result<Self, ()> {
+    fn aggregate(self, other: Self) -> anyhow::Result<Self> {
         let Self {
             mut role,
             mut id,
@@ -166,7 +168,11 @@ impl Delta for MessageDelta {
             && let Some(rhs) = &other.role
         {
             if lhs != rhs {
-                return Err(());
+                bail!(
+                    "Cannot aggregate two message deltas with differenct roles. ({} != {})",
+                    lhs,
+                    rhs
+                );
             };
         } else if let Some(rhs) = other.role {
             role = Some(rhs);
@@ -240,7 +246,7 @@ impl Delta for MessageDelta {
         })
     }
 
-    fn finish(self) -> Result<Self::Item, String> {
+    fn finish(self) -> anyhow::Result<Self::Item> {
         let Self {
             role,
             id,
@@ -251,7 +257,7 @@ impl Delta for MessageDelta {
         } = self;
 
         let Some(role) = role else {
-            return Err("Role not specified".to_owned());
+            bail!("Role not specified")
         };
         let contents = {
             let mut contents_new = Vec::with_capacity(contents.len());

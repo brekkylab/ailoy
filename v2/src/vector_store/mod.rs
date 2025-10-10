@@ -2,7 +2,6 @@ mod api;
 mod local;
 
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
-use anyhow::Result;
 pub use api::*;
 pub use local::*;
 use serde_json::{Map, Value as Json};
@@ -36,23 +35,26 @@ pub struct VectorStoreRetrieveResult {
 #[maybe_send_sync]
 #[multi_platform_async_trait]
 pub trait VectorStore {
-    async fn add_vector(&mut self, input: VectorStoreAddInput) -> Result<String>;
-    async fn add_vectors(&mut self, inputs: Vec<VectorStoreAddInput>) -> Result<Vec<String>>;
-    async fn get_by_id(&self, id: &str) -> Result<Option<VectorStoreGetResult>>;
-    async fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<VectorStoreGetResult>>;
+    async fn add_vector(&mut self, input: VectorStoreAddInput) -> anyhow::Result<String>;
+    async fn add_vectors(
+        &mut self,
+        inputs: Vec<VectorStoreAddInput>,
+    ) -> anyhow::Result<Vec<String>>;
+    async fn get_by_id(&self, id: &str) -> anyhow::Result<Option<VectorStoreGetResult>>;
+    async fn get_by_ids(&self, ids: &[&str]) -> anyhow::Result<Vec<VectorStoreGetResult>>;
     async fn retrieve(
         &self,
         query_embedding: Embedding,
         top_k: usize,
-    ) -> Result<Vec<VectorStoreRetrieveResult>>;
+    ) -> anyhow::Result<Vec<VectorStoreRetrieveResult>>;
     async fn batch_retrieve(
         &self,
         query_embeddings: Vec<Embedding>,
         top_k: usize,
-    ) -> Result<Vec<Vec<VectorStoreRetrieveResult>>>;
-    async fn remove_vector(&mut self, id: &str) -> Result<()>;
-    async fn remove_vectors(&mut self, ids: &[&str]) -> Result<()>;
-    async fn clear(&mut self) -> Result<()>;
+    ) -> anyhow::Result<Vec<Vec<VectorStoreRetrieveResult>>>;
+    async fn remove_vector(&mut self, id: &str) -> anyhow::Result<()>;
+    async fn remove_vectors(&mut self, ids: &[&str]) -> anyhow::Result<()>;
+    async fn clear(&mut self) -> anyhow::Result<()>;
 
-    async fn count(&self) -> Result<usize>;
+    async fn count(&self) -> anyhow::Result<usize>;
 }
