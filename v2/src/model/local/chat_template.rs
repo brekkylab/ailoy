@@ -48,7 +48,9 @@ impl ChatTemplate {
     pub fn set_think_effort(&self, think_effort: impl Into<String>) {
         let mut v = self.think_effort.lock().unwrap();
         *v = think_effort.into();
-        self.enable_thinking();
+        if *v != "" {
+            self.enable_thinking();
+        }
     }
 
     /// Only affects to hybrid thinking models
@@ -61,6 +63,7 @@ impl ChatTemplate {
     pub fn disable_thinking(&self) {
         let mut v = self.do_thinking.lock().unwrap();
         *v = false;
+        self.set_think_effort("");
     }
 
     pub fn apply(
