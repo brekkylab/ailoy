@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use ailoy_macros::multi_platform_async_trait;
-use anyhow::Result;
 use futures::lock::Mutex;
 
 use crate::{
@@ -55,7 +54,7 @@ impl KnowledgeBehavior for VectorStoreKnowledge {
         self.name.clone()
     }
 
-    async fn retrieve(&self, query: String) -> Result<Vec<KnowledgeRetrieveResult>> {
+    async fn retrieve(&self, query: String) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
         let query_embedding = self.embedding_model.infer(query.into()).await?;
         let results = {
             let store = self.store.lock().await;
@@ -72,7 +71,6 @@ impl KnowledgeBehavior for VectorStoreKnowledge {
 #[cfg(test)]
 mod tests {
     use ailoy_macros::multi_platform_test;
-    use anyhow::anyhow;
     use futures::stream::StreamExt;
     use serde_json::json;
 
@@ -113,7 +111,7 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_vectorstore_knowledge() -> Result<()> {
+    async fn test_vectorstore_knowledge() -> anyhow::Result<()> {
         let knowledge = prepare_knowledge().await?;
 
         // Testing with renderer
@@ -129,14 +127,14 @@ mod tests {
         let args = serde_json::from_value::<Value>(json!({
             "query": "What is Langchain?"
         }))?;
-        let tool_result = tool.run(args).await.map_err(|e| anyhow!(e))?;
+        let tool_result = tool.run(args).await?;
         println!("Tool call results: {:?}", tool_result);
 
         Ok(())
     }
 
     #[multi_platform_test]
-    async fn test_vectorstore_knowledge_with_agent() -> Result<()> {
+    async fn test_vectorstore_knowledge_with_agent() -> anyhow::Result<()> {
         let knowledge = prepare_knowledge().await?;
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
         let agent = Arc::new(Mutex::new(Agent::new(model, vec![])));

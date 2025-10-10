@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use ailoy_macros::multi_platform_async_trait;
+use anyhow::Context;
 use rmcp::{
     RoleClient, ServiceExt as _,
     model::CallToolRequestParam,
@@ -85,14 +86,14 @@ impl ToolBehavior for MCPTool {
         }
     }
 
-    async fn run(&self, args: Value) -> Result<Value, String> {
+    async fn run(&self, args: Value) -> anyhow::Result<Value> {
         let tool_name = self.inner.name.clone();
         let peer = self.service.clone();
 
         // Convert your ToolCall arguments → serde_json::Map (MCP expects JSON object)
         let arguments: Option<serde_json::Map<String, serde_json::Value>> =
             serde_json::to_value(args)
-                .map_err(|e| format!("serialize ToolCall arguments failed: {e}"))?
+                .context("serialize ToolCall arguments failed: {e}")?
                 .as_object()
                 .cloned();
 
@@ -103,10 +104,9 @@ impl ToolBehavior for MCPTool {
                 arguments,
             })
             .await
-            .map_err(|e| format!("mcp call_tool failed: {e}"))?;
+            .context("mcp call_tool failed: {e}")?;
 
-        let parts =
-            handle_result(result).map_err(|e| format!("call_tool_result_to_parts failed: {e}"))?;
+        let parts = handle_result(result).context("call_tool_result_to_parts failed: {e}")?;
         Ok(parts)
     }
 }

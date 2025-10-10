@@ -24,6 +24,7 @@ struct RequestConfig {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
 pub enum APISpecification {

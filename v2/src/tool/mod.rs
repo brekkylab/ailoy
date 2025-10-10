@@ -5,6 +5,7 @@ mod mcp;
 use std::{fmt::Debug, sync::Arc};
 
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
+use anyhow::bail;
 pub use builtin::*;
 pub use function::*;
 pub use mcp::*;
@@ -19,7 +20,7 @@ use crate::{
 pub trait ToolBehavior: Debug + Clone {
     fn get_description(&self) -> ToolDesc;
 
-    async fn run(&self, args: Value) -> Result<Value, String>;
+    async fn run(&self, args: Value) -> anyhow::Result<Value>;
 }
 
 #[derive(Debug, Clone)]

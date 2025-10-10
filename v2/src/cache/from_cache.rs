@@ -39,7 +39,7 @@ use crate::{
 ///
 /// impl TryFromCache for MyModel {
 ///     fn claim_files(cache: Cache, key: impl AsRef<str>)
-///     -> BoxFuture<'static, Result<CacheClaim, String>> {
+///     -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
 ///         let k = key.as_ref().to_owned();
 ///         Box::pin(async move {
 ///             Ok(CacheClaim::with_ctx(
@@ -53,7 +53,7 @@ use crate::{
 ///     }
 ///
 ///     fn try_from_contents(contents: CacheContents)
-///     -> BoxFuture<'static, Result<Self, String>> {
+///     -> BoxFuture<'static, anyhow::Result<Self>> {
 ///         Box::pin(async move {
 ///             let tokenizer = contents.remove_with_filename_str("tokenizer.json")
 ///                 .ok_or("missing tokenizer.json")?.1;
@@ -75,13 +75,13 @@ pub trait TryFromCache: Sized + MaybeSend {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<CacheClaim, String>>;
+    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>>;
 
     /// Build `Self` from the previously fetched files.
     ///
     /// Implementations should verify that all required entries are present and valid,
     /// and return a descriptive `Err(String)` on failure.
-    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, Result<Self, String>>;
+    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>>;
 }
 
 /// Infallible variant of [`TryFromCache`].

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -26,7 +25,7 @@ pub struct KnowledgeRetrieveResult {
 pub trait KnowledgeBehavior: std::fmt::Debug {
     fn name(&self) -> String;
 
-    async fn retrieve(&self, query: String) -> Result<Vec<KnowledgeRetrieveResult>>;
+    async fn retrieve(&self, query: String) -> anyhow::Result<Vec<KnowledgeRetrieveResult>>;
 }
 
 #[derive(Clone)]
@@ -80,7 +79,7 @@ impl ToolBehavior for KnowledgeTool {
         self.desc.clone()
     }
 
-    async fn run(&self, args: Value) -> Result<Value, String> {
+    async fn run(&self, args: Value) -> anyhow::Result<Value> {
         let args = match args.as_object() {
             Some(a) => a,
             None => {
@@ -178,7 +177,7 @@ mod tests {
     use crate::{agent::Agent, knowledge::Knowledge, model::LangModel, value::Part};
 
     #[multi_platform_test]
-    async fn test_custom_knowledge_with_agent() -> Result<()> {
+    async fn test_custom_knowledge_with_agent() -> anyhow::Result<()> {
         let knowledge = Knowledge::new_custom(CustomKnowledge::new(
             "about-ailoy",
             Arc::new(|_| {

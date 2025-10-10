@@ -248,11 +248,7 @@ impl Value {
         for<'a> &'a T: core::convert::TryFrom<&'a Value>,
     {
         let prim = self.pointer(pointer)?;
-        let value = prim.try_into();
-        match value {
-            Ok(v) => Some(v),
-            Err(_) => None,
-        }
+        prim.try_into().ok()
     }
 
     /// Get a value by JSON Pointer (mutable).
@@ -292,8 +288,7 @@ impl Value {
         for<'a> &'a mut T: core::convert::TryFrom<&'a mut Value>,
     {
         let prim = self.pointer_mut(pointer)?;
-        let value: Result<&mut T, _> = prim.try_into();
-        value.ok()
+        prim.try_into().ok()
     }
 }
 
@@ -852,7 +847,7 @@ mod py {
         Ok(out)
     }
 
-    fn py_any_to_vec<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Vec<Value>> {
+    fn py_any_to_vec<'py>(obj: &Bound<'py, PyAny>) -> anyhow::Result<Vec<Value>> {
         if let Ok(list) = obj.downcast::<PyList>() {
             return list.iter().map(|it| it.extract::<Value>()).collect();
         }
@@ -870,7 +865,7 @@ mod py {
     }
 
     impl<'py> FromPyObject<'py> for Value {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
             if ob.is_none() {
                 return Ok(Value::Null);
             }
@@ -915,7 +910,7 @@ mod py {
         type Output = Bound<'py, PyAny>;
         type Error = PyErr;
 
-        fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        fn into_pyobject(self, py: Python<'py>) -> anyhow::Result<Self::Output> {
             match self {
                 // None
                 Value::Null => Ok(py.None().bind(py).clone()),
@@ -950,4 +945,132 @@ mod py {
             TypeInfo::any()
         }
     }
+}
+
+#[cfg(feature = "nodejs")]
+mod node {
+    use super::Value;
+    use napi::bindgen_prelude::*;
+    use napi::{Env, Result, Unknown};
+
+    impl FromNapiValue for Value {
+        unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+            let env = Env::from_raw(env);
+            let any = unsafe { Unknown::from_raw_unchecked(env.raw(), napi_val) };
+            match any.get_type()? {
+                ValueType::Undefined | ValueType::Null => Ok(Value::Null),
+                ValueType::Boolean => Ok(Value::Bool(any.coerce_to_bool()?)),
+                ValueType::Number => {
+                    let num = any.coerce_to_number()?;
+                    if let Ok(u) = num.get_uint32() {
+                        Ok(Value::Unsigned(u as u64))
+                    } else if let Ok(i) = num.get_int64() {
+                        Ok(Value::Integer(i))
+                    } else if let Ok(f) = num.get_double() {
+                        Ok(Value::Float(ordered_float::OrderedFloat(f)))
+                    } else {
+                        Err(Error::from_reason("Unsupported JS type for Value"))
+                    }
+                }
+                ValueType::BigInt => {
+                    let bi = BigInt::from_unknown(any)?;
+                    let (signed, u, lossless) = bi.get_u64();
+                    if !signed && lossless {
+                        return Ok(Value::Unsigned(u));
+                    }
+                    let (i, lossless) = bi.get_i64();
+                    if lossless {
+                        return Ok(Value::Integer(i));
+                    }
+                    Err(Error::from_reason(
+                        "BigInt value is out of supported i64/u64 range",
+                    ))
+                }
+                ValueType::String => Ok(Value::String(
+                    any.coerce_to_string()?.into_utf8()?.as_str()?.to_owned(),
+                )),
+                ValueType::Object => {
+                    let obj = any.coerce_to_object()?;
+
+                    if obj.is_array()? {
+                        // Array
+                        let len = obj.get_array_length()?;
+                        let mut out = Vec::with_capacity(len as usize);
+                        for i in 0..len {
+                            let el: Unknown = obj.get_element(i)?;
+                            let v = unsafe { Value::from_napi_value(env.raw(), el.raw()) }?;
+                            out.push(v);
+                        }
+                        Ok(Value::Array(out))
+                    } else {
+                        // Plain object
+                        let keys = obj.get_property_names()?; // JS 배열
+                        let klen = keys.get_array_length()?;
+                        let mut map = indexmap::IndexMap::with_capacity(klen as usize);
+
+                        for i in 0..klen {
+                            let k_any: Unknown = keys.get_element(i)?;
+                            let k = k_any.coerce_to_string()?.into_utf8()?.as_str()?.to_owned();
+
+                            let v_any: Unknown = obj.get_named_property(&k)?;
+                            let v = unsafe { Value::from_napi_value(env.raw(), v_any.raw()) }?;
+                            map.insert(k, v);
+                        }
+                        Ok(Value::Object(map))
+                    }
+                }
+                ValueType::Symbol
+                | ValueType::Function
+                | ValueType::External
+                | ValueType::Unknown => Err(Error::from_reason("Unsupported JS type for Value")),
+            }
+        }
+    }
+
+    impl ToNapiValue for Value {
+        unsafe fn to_napi_value(env: sys::napi_env, this: Self) -> Result<sys::napi_value> {
+            let env = Env::from_raw(env);
+            Ok(match this {
+                Value::Null => ().into_unknown(&env)?,
+                Value::Bool(b) => b.into_unknown(&env)?,
+                Value::Unsigned(u) => {
+                    if u <= u32::MAX as u64 {
+                        env.create_uint32(u as u32)?.into_unknown(&env)?
+                    } else {
+                        BigInt::from(u).into_unknown(&env)? // 권장: Env API 대신 BigInt 변환 사용
+                    }
+                }
+                Value::Integer(i) => env.create_int64(i as i64)?.into_unknown(&env)?,
+                Value::Float(f) => env.create_double(*f)?.into_unknown(&env)?,
+                Value::String(s) => env.create_string(&s)?.into_unknown(&env)?,
+                Value::Array(arr) => {
+                    let js_arr = Array::from_vec(&env, arr)?;
+                    js_arr.into_unknown(&env)?
+                }
+
+                Value::Object(map) => {
+                    let mut obj = Object::new(&env)?;
+                    for (k, v) in map {
+                        let v = unsafe { <Value as ToNapiValue>::to_napi_value(env.raw(), v) }?;
+                        let v = unsafe { Unknown::from_raw_unchecked(env.raw(), v) };
+                        obj.set_named_property(&k, v)?;
+                    }
+                    obj.into_unknown(&env)?
+                }
+            }
+            .raw())
+        }
+    }
+
+    impl TypeName for Value {
+        fn type_name() -> &'static str {
+            "any"
+        }
+
+        fn value_type() -> ValueType {
+            ValueType::Unknown
+        }
+    }
+
+    impl ValidateNapiValue for Value {}
 }

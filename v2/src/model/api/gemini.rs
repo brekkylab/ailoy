@@ -1,3 +1,4 @@
+use anyhow::{Context, bail};
 use base64::Engine;
 use indexmap::IndexMap;
 
@@ -198,26 +199,24 @@ impl Marshal<RequestConfig> for GeminiMarshal {
 struct GeminiUnmarshal;
 
 impl Unmarshal<MessageDelta> for GeminiUnmarshal {
-    fn unmarshal(&mut self, val: Value) -> Result<MessageDelta, String> {
+    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDelta> {
         let mut rv = MessageDelta::default();
 
         let content: &IndexMap<String, Value> = val
             .pointer_as::<IndexMap<String, Value>>("/content")
-            .ok_or_else(|| String::from("Content should be an object"))?;
+            .context("Content should be an object")?;
 
         // Parse role
         if let Some(r) = content.get("role") {
-            let s = r
-                .as_str()
-                .ok_or_else(|| String::from("Role should be a string"))?;
+            let s = r.as_str().context("Role should be a string")?;
             let v = match s {
-                "system" => Ok(Role::System),
-                "user" => Ok(Role::User),
-                "assistant" => Ok(Role::Assistant),
-                "model" => Ok(Role::Assistant),
-                "tool" => Ok(Role::Tool),
-                other => Err(format!("Unknown role: {other}")),
-            }?;
+                "system" => Role::System,
+                "user" => Role::User,
+                "assistant" => Role::Assistant,
+                "model" => Role::Assistant,
+                "tool" => Role::Tool,
+                other => bail!("Unknown role: {other}"),
+            };
             rv.role = Some(v);
         }
 
@@ -229,7 +228,7 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                 // In case of part vector
                 for part in parts {
                     let Some(part) = part.as_object() else {
-                        return Err(String::from("Invalid part"));
+                        bail!("Invalid part")
                     };
                     let thought = part
                         .get("thought")
@@ -237,7 +236,7 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                         .unwrap_or(false);
                     if let Some(text) = part.get("text") {
                         let Some(text) = text.as_str() else {
-                            return Err(String::from("Invalid content part"));
+                            bail!("Invalid content part")
                         };
                         if thought {
                             rv.thinking = text.into();
@@ -246,7 +245,7 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                         }
                     } else if let Some(tool_call_obj) = part.get("functionCall") {
                         let Some(tool_call_obj) = tool_call_obj.as_object() else {
-                            return Err(String::from("Invalid functionCall object"));
+                            bail!("Invalid functionCall object");
                         };
                         let name = tool_call_obj
                             .get("name")
@@ -262,11 +261,11 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                             f: PartDeltaFunction::WithParsedArgs { name, args },
                         });
                     } else {
-                        return Err(String::from("Invalid part"));
+                        bail!("Invalid part");
                     }
                 }
             } else {
-                return Err(String::from("Invalid parts"));
+                bail!("Invalid parts");
             }
         }
 

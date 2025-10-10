@@ -6,6 +6,7 @@ use crate::{
     cache::{Cache, CacheClaim, CacheContents, TryFromCache},
     utils::BoxFuture,
 };
+use anyhow::{Context, anyhow, bail};
 
 #[derive(Debug, Clone)]
 pub struct Tokenizer {
@@ -19,18 +20,18 @@ impl Tokenizer {
         }
     }
 
-    pub fn encode(&self, text: &str, add_special_tokens: bool) -> Result<Vec<u32>, String> {
+    pub fn encode(&self, text: &str, add_special_tokens: bool) -> anyhow::Result<Vec<u32>> {
         let encoded = self
             .inner
             .encode(text, add_special_tokens)
-            .map_err(|e| format!("Tokenizer::encode failed: {}", e.to_string()))?;
+            .map_err(|e| anyhow!("Tokenizer::encode failed: {}", e))?;
         Ok(encoded.get_ids().to_vec())
     }
 
-    pub fn decode(&self, ids: &[u32], skip_special_tokens: bool) -> Result<String, String> {
+    pub fn decode(&self, ids: &[u32], skip_special_tokens: bool) -> anyhow::Result<String> {
         self.inner
             .decode(ids, skip_special_tokens)
-            .map_err(|e| format!("Tokenizer::decode failed: {}", e.to_string()))
+            .map_err(|e| anyhow!("Tokenizer::decode failed: {}", e))
     }
 }
 
@@ -38,18 +39,17 @@ impl TryFromCache for Tokenizer {
     fn claim_files(
         _: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
         let dirname = key.as_ref().replace("/", "--");
         Box::pin(async move { Ok(CacheClaim::new([(dirname.as_str(), "tokenizer.json")])) })
     }
 
-    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, Result<Self, String>> {
+    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>> {
         Box::pin(async move {
             let Some((_, bytes)) = contents.remove_with_filename("tokenizer.json") else {
-                return Err("tokenizer.json not exists".to_owned());
+                bail!("tokenizer.json not exists");
             };
-            let s =
-                std::str::from_utf8(&bytes).map_err(|_| "Utf-8 conversion failed".to_owned())?;
+            let s = std::str::from_utf8(&bytes).context("Utf-8 conversion failed")?;
             Ok(Tokenizer::new(s))
         })
     }
