@@ -23,9 +23,11 @@ pub struct KnowledgeRetrieveResult {
 #[maybe_send_sync]
 #[multi_platform_async_trait]
 pub trait KnowledgeBehavior: std::fmt::Debug {
-    fn name(&self) -> String;
-
-    async fn retrieve(&self, query: String) -> anyhow::Result<Vec<KnowledgeRetrieveResult>>;
+    async fn retrieve(
+        &self,
+        query: String,
+        top_k: u32,
+    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>>;
 }
 
 #[derive(Clone)]
@@ -47,7 +49,7 @@ impl std::fmt::Debug for KnowledgeTool {
 impl KnowledgeTool {
     pub fn from(knowledge: impl KnowledgeBehavior + 'static) -> Self {
         let default_desc = ToolDesc {
-            name: format!("retrieve-{}", knowledge.name()),
+            name: "retrieve-from-knowledge".into(),
             description: Some("Retrieve the relevant context from knowledge base.".into()),
             parameters: to_value!({
                 "type": "object",
@@ -97,7 +99,7 @@ impl ToolBehavior for KnowledgeTool {
             }
         };
 
-        let results = match self.inner.retrieve(query.into()).await {
+        let results = match self.inner.retrieve(query.into(), 1).await {
             Ok(results) => results,
             Err(e) => {
                 return Ok(e.to_string().into());
@@ -122,16 +124,11 @@ pub struct Knowledge {
 
 impl Knowledge {
     pub fn new_vector_store(
-        name: impl Into<String>,
         store: impl VectorStore + 'static,
         embedding_model: EmbeddingModel,
     ) -> Self {
         Self {
-            inner: KnowledgeInner::VectorStore(VectorStoreKnowledge::new(
-                name,
-                store,
-                embedding_model,
-            )),
+            inner: KnowledgeInner::VectorStore(VectorStoreKnowledge::new(store, embedding_model)),
         }
     }
 
@@ -140,30 +137,18 @@ impl Knowledge {
             inner: KnowledgeInner::Custom(knowledge),
         }
     }
-
-    pub fn with_top_k(self, top_k: usize) -> Self {
-        match self.inner {
-            KnowledgeInner::VectorStore(knowledge) => Self {
-                inner: KnowledgeInner::VectorStore(knowledge.with_top_k(top_k)),
-            },
-            inner => Self { inner },
-        }
-    }
 }
 
 #[multi_platform_async_trait]
 impl KnowledgeBehavior for Knowledge {
-    fn name(&self) -> String {
+    async fn retrieve(
+        &self,
+        query: String,
+        top_k: u32,
+    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
         match &self.inner {
-            KnowledgeInner::VectorStore(knowledge) => knowledge.name(),
-            KnowledgeInner::Custom(knowledge) => knowledge.name(),
-        }
-    }
-
-    async fn retrieve(&self, query: String) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
-        match &self.inner {
-            KnowledgeInner::VectorStore(knowledge) => knowledge.retrieve(query).await,
-            KnowledgeInner::Custom(knowledge) => knowledge.retrieve(query).await,
+            KnowledgeInner::VectorStore(knowledge) => knowledge.retrieve(query, top_k).await,
+            KnowledgeInner::Custom(knowledge) => knowledge.retrieve(query, top_k).await,
         }
     }
 }

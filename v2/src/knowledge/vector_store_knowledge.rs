@@ -11,10 +11,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct VectorStoreKnowledge {
-    name: String,
     store: Arc<Mutex<dyn VectorStore>>,
     embedding_model: EmbeddingModel,
-    top_k: usize,
 }
 
 impl From<VectorStoreRetrieveResult> for KnowledgeRetrieveResult {
@@ -27,38 +25,25 @@ impl From<VectorStoreRetrieveResult> for KnowledgeRetrieveResult {
 }
 
 impl VectorStoreKnowledge {
-    pub fn new(
-        name: impl Into<String>,
-        store: impl VectorStore + 'static,
-        embedding_model: EmbeddingModel,
-    ) -> Self {
-        let name = name.into();
-        let default_top_k = 5 as usize;
-
+    pub fn new(store: impl VectorStore + 'static, embedding_model: EmbeddingModel) -> Self {
         Self {
-            name: name,
             store: Arc::new(Mutex::new(store)),
             embedding_model: embedding_model,
-            top_k: default_top_k,
         }
-    }
-
-    pub fn with_top_k(self, top_k: usize) -> Self {
-        Self { top_k, ..self }
     }
 }
 
 #[multi_platform_async_trait]
 impl KnowledgeBehavior for VectorStoreKnowledge {
-    fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    async fn retrieve(&self, query: String) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
+    async fn retrieve(
+        &self,
+        query: String,
+        top_k: u32,
+    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
         let query_embedding = self.embedding_model.infer(query.into()).await?;
         let results = {
             let store = self.store.lock().await;
-            store.retrieve(query_embedding, self.top_k).await
+            store.retrieve(query_embedding, top_k as usize).await
         }?
         .into_iter()
         .map(|res| res.into())
@@ -105,8 +90,7 @@ mod tests {
             })
             .await?;
 
-        let knowledge =
-            Knowledge::new_vector_store("my-store", store, embedding_model).with_top_k(1);
+        let knowledge = Knowledge::new_vector_store(store, embedding_model);
         Ok(knowledge)
     }
 
@@ -115,7 +99,7 @@ mod tests {
         let knowledge = prepare_knowledge().await?;
 
         // Testing with renderer
-        let retrieved = knowledge.retrieve("What is Ailoy?".into()).await?;
+        let retrieved = knowledge.retrieve("What is Ailoy?".into(), 1).await?;
         let renderer = SystemMessageRenderer::new();
         let rendered = renderer
             .render("This is a system message.".into(), Some(retrieved))

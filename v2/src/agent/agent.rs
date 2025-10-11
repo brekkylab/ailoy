@@ -131,10 +131,10 @@ impl Agent {
             let system_message_content = "You are helpful assistant.".to_string();
             let knowledge_results = if let Some(knowledge) = &self.knowledge {
                 let query = contents.iter().filter(|&c| matches!(c, Part::Text{..})).map(|c| c.as_text().unwrap()).collect::<Vec<_>>().join("\n");
-                let retrieved = match knowledge.retrieve(query.clone()).await {
+                let retrieved = match knowledge.retrieve(query.clone(), 1).await {
                     Ok(retrieved) => retrieved,
                     Err(e) => {
-                        warn!("Failed to retrieve from knowledge {}: {}", knowledge.name(), e.to_string());
+                        warn!("Failed to retrieve from knowledge: {}", e.to_string());
                         vec![]
                     }
                 };
