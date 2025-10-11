@@ -41,7 +41,6 @@ impl std::fmt::Debug for KnowledgeTool {
         f.debug_struct("KnowledgeTool")
             .field("desc", &self.desc)
             .field("inner", &self.inner)
-            .field("stringify", &"(Function)")
             .finish()
     }
 }

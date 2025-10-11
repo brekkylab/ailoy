@@ -146,7 +146,6 @@ mod tests {
         // Testing as tool
         {
             let mut agent_guard = agent.lock().await;
-            // Example of customizing with_stringify
             let tool = KnowledgeTool::from(knowledge);
             agent_guard
                 .add_tool(Tool::new_knowledge(tool.clone()))
