@@ -4,9 +4,12 @@ use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    knowledge::{CustomKnowledge, VectorStoreKnowledge},
+    model::EmbeddingModel,
     to_value,
-    tool::Tool,
+    tool::ToolBehavior,
     value::{ToolDesc, Value},
+    vector_store::VectorStore,
 };
 
 type Metadata = serde_json::Map<String, serde_json::Value>;
@@ -19,15 +22,17 @@ pub struct KnowledgeRetrieveResult {
 
 #[maybe_send_sync]
 #[multi_platform_async_trait]
-pub trait Knowledge: std::fmt::Debug {
-    fn name(&self) -> String;
-
-    async fn retrieve(&self, query: String) -> anyhow::Result<Vec<KnowledgeRetrieveResult>>;
+pub trait KnowledgeBehavior: std::fmt::Debug {
+    async fn retrieve(
+        &self,
+        query: String,
+        top_k: u32,
+    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>>;
 }
 
 #[derive(Clone)]
 pub struct KnowledgeTool {
-    inner: Arc<dyn Knowledge>,
+    inner: Arc<dyn KnowledgeBehavior>,
     desc: ToolDesc,
 }
 
@@ -36,15 +41,14 @@ impl std::fmt::Debug for KnowledgeTool {
         f.debug_struct("KnowledgeTool")
             .field("desc", &self.desc)
             .field("inner", &self.inner)
-            .field("stringify", &"(Function)")
             .finish()
     }
 }
 
 impl KnowledgeTool {
-    pub fn from(knowledge: impl Knowledge + 'static) -> Self {
+    pub fn from(knowledge: impl KnowledgeBehavior + 'static) -> Self {
         let default_desc = ToolDesc {
-            name: format!("retrieve-{}", knowledge.name()),
+            name: "retrieve-from-knowledge".into(),
             description: Some("Retrieve the relevant context from knowledge base.".into()),
             parameters: to_value!({
                 "type": "object",
@@ -71,7 +75,7 @@ impl KnowledgeTool {
 }
 
 #[multi_platform_async_trait]
-impl Tool for KnowledgeTool {
+impl ToolBehavior for KnowledgeTool {
     fn get_description(&self) -> ToolDesc {
         self.desc.clone()
     }
@@ -94,7 +98,7 @@ impl Tool for KnowledgeTool {
             }
         };
 
-        let results = match self.inner.retrieve(query.into()).await {
+        let results = match self.inner.retrieve(query.into(), 1).await {
             Ok(results) => results,
             Err(e) => {
                 return Ok(e.to_string().into());
@@ -106,58 +110,44 @@ impl Tool for KnowledgeTool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use ailoy_macros::multi_platform_test;
-    use futures::stream::StreamExt;
+#[derive(Debug, Clone)]
+pub enum KnowledgeInner {
+    VectorStore(VectorStoreKnowledge),
+    Custom(CustomKnowledge),
+}
 
-    use super::*;
-    use crate::{agent::Agent, model::LangModel, value::Part};
+#[derive(Debug, Clone)]
+pub struct Knowledge {
+    inner: KnowledgeInner,
+}
 
-    #[derive(Debug)]
-    struct CustomKnowledge {}
-
-    #[multi_platform_async_trait]
-    impl Knowledge for CustomKnowledge {
-        fn name(&self) -> String {
-            "about-ailoy".into()
-        }
-
-        async fn retrieve(&self, _query: String) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
-            let documents = vec![
-                KnowledgeRetrieveResult {
-                    document: "Ailoy is an awesome AI agent framework.".into(),
-                    metadata: None,
-                },
-                KnowledgeRetrieveResult {
-                    document: "Ailoy supports Python, Javascript and Rust.".into(),
-                    metadata: None,
-                },
-                KnowledgeRetrieveResult {
-                    document: "Ailoy enables running LLMs in local environment easily.".into(),
-                    metadata: None,
-                },
-            ];
-            Ok(documents)
+impl Knowledge {
+    pub fn new_vector_store(
+        store: impl VectorStore + 'static,
+        embedding_model: EmbeddingModel,
+    ) -> Self {
+        Self {
+            inner: KnowledgeInner::VectorStore(VectorStoreKnowledge::new(store, embedding_model)),
         }
     }
 
-    #[multi_platform_test]
-    async fn test_custom_knowledge_with_agent() -> anyhow::Result<()> {
-        let knowledge = CustomKnowledge {};
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
-        let mut agent = Agent::new(model, vec![]);
-
-        agent.set_knowledge(knowledge);
-
-        let mut strm = Box::pin(agent.run(vec![Part::Text {
-            text: "What is Ailoy?".into(),
-        }]));
-        while let Some(out) = strm.next().await {
-            let out = out.unwrap();
-            println!("{:?}", out);
+    pub fn new_custom(knowledge: CustomKnowledge) -> Self {
+        Self {
+            inner: KnowledgeInner::Custom(knowledge),
         }
+    }
+}
 
-        Ok(())
+#[multi_platform_async_trait]
+impl KnowledgeBehavior for Knowledge {
+    async fn retrieve(
+        &self,
+        query: String,
+        top_k: u32,
+    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
+        match &self.inner {
+            KnowledgeInner::VectorStore(knowledge) => knowledge.retrieve(query, top_k).await,
+            KnowledgeInner::Custom(knowledge) => knowledge.retrieve(query, top_k).await,
+        }
     }
 }
