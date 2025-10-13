@@ -4,17 +4,15 @@ use ailoy_macros::multi_platform_async_trait;
 use futures::lock::Mutex;
 
 use crate::{
-    knowledge::base::{Knowledge, KnowledgeRetrieveResult},
+    knowledge::base::{KnowledgeBehavior, KnowledgeRetrieveResult},
     model::{EmbeddingModel, EmbeddingModelInference},
     vector_store::{VectorStore, VectorStoreRetrieveResult},
 };
 
 #[derive(Debug, Clone)]
 pub struct VectorStoreKnowledge {
-    name: String,
     store: Arc<Mutex<dyn VectorStore>>,
     embedding_model: EmbeddingModel,
-    top_k: usize,
 }
 
 impl From<VectorStoreRetrieveResult> for KnowledgeRetrieveResult {
@@ -27,38 +25,25 @@ impl From<VectorStoreRetrieveResult> for KnowledgeRetrieveResult {
 }
 
 impl VectorStoreKnowledge {
-    pub fn new(
-        name: impl Into<String>,
-        store: impl VectorStore + 'static,
-        embedding_model: EmbeddingModel,
-    ) -> Self {
-        let name = name.into();
-        let default_top_k = 5 as usize;
-
+    pub fn new(store: impl VectorStore + 'static, embedding_model: EmbeddingModel) -> Self {
         Self {
-            name: name,
             store: Arc::new(Mutex::new(store)),
             embedding_model: embedding_model,
-            top_k: default_top_k,
         }
-    }
-
-    pub fn with_top_k(self, top_k: usize) -> Self {
-        Self { top_k, ..self }
     }
 }
 
 #[multi_platform_async_trait]
-impl Knowledge for VectorStoreKnowledge {
-    fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    async fn retrieve(&self, query: String) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
+impl KnowledgeBehavior for VectorStoreKnowledge {
+    async fn retrieve(
+        &self,
+        query: String,
+        top_k: u32,
+    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
         let query_embedding = self.embedding_model.infer(query.into()).await?;
         let results = {
             let store = self.store.lock().await;
-            store.retrieve(query_embedding, self.top_k).await
+            store.retrieve(query_embedding, top_k as usize).await
         }?
         .into_iter()
         .map(|res| res.into())
@@ -77,14 +62,14 @@ mod tests {
     use super::*;
     use crate::{
         agent::{Agent, SystemMessageRenderer},
-        knowledge::KnowledgeTool,
+        knowledge::{Knowledge, KnowledgeTool},
         model::{EmbeddingModel, LangModel},
-        tool::Tool,
+        tool::{Tool, ToolBehavior as _},
         value::{Part, Value},
         vector_store::{FaissStore, VectorStoreAddInput},
     };
 
-    async fn prepare_knowledge() -> anyhow::Result<VectorStoreKnowledge> {
+    async fn prepare_knowledge() -> anyhow::Result<Knowledge> {
         let mut store = FaissStore::new(1024).await.unwrap();
         let embedding_model = EmbeddingModel::new_local("BAAI/bge-m3").await.unwrap();
 
@@ -105,7 +90,7 @@ mod tests {
             })
             .await?;
 
-        let knowledge = VectorStoreKnowledge::new("my-store", store, embedding_model).with_top_k(1);
+        let knowledge = Knowledge::new_vector_store(store, embedding_model);
         Ok(knowledge)
     }
 
@@ -114,7 +99,7 @@ mod tests {
         let knowledge = prepare_knowledge().await?;
 
         // Testing with renderer
-        let retrieved = knowledge.retrieve("What is Ailoy?".into()).await?;
+        let retrieved = knowledge.retrieve("What is Ailoy?".into(), 1).await?;
         let renderer = SystemMessageRenderer::new();
         let rendered = renderer
             .render("This is a system message.".into(), Some(retrieved))
@@ -161,9 +146,10 @@ mod tests {
         // Testing as tool
         {
             let mut agent_guard = agent.lock().await;
-            // Example of customizing with_stringify
             let tool = KnowledgeTool::from(knowledge);
-            agent_guard.add_tool(Arc::new(tool.clone())).await?;
+            agent_guard
+                .add_tool(Tool::new_knowledge(tool.clone()))
+                .await?;
 
             let mut strm = Box::pin(agent_guard.run(vec![Part::text(format!(
                 "What is Ailoy? Answer by calling tool '{}'",

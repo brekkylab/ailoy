@@ -10,7 +10,7 @@ use rmcp::{
 };
 
 use crate::{
-    tool::{Tool, mcp::common::handle_result},
+    tool::{ToolBehavior, mcp::common::handle_result},
     value::{ToolDesc, Value},
 };
 
@@ -57,7 +57,7 @@ pub struct MCPTool {
 }
 
 #[multi_platform_async_trait]
-impl Tool for MCPTool {
+impl ToolBehavior for MCPTool {
     fn get_description(&self) -> ToolDesc {
         ToolDesc {
             name: self.inner.name.to_string(),

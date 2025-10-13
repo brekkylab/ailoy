@@ -1,53 +1,10 @@
-use std::{
-    fmt::{self, Debug, Formatter},
-    sync::Arc,
-};
+use std::sync::Arc;
 
-use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
-
-use crate::{
-    tool::Tool,
-    value::{ToolDesc, Value},
-};
-
-#[maybe_send_sync]
-type ToolFunc = dyn Fn(Value) -> Value;
-
-#[derive(Clone)]
-pub struct BuiltinTool {
-    desc: ToolDesc,
-    f: Arc<ToolFunc>,
-}
-
-impl Debug for BuiltinTool {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BuiltinTool")
-            .field("desc", &self.desc)
-            .field("f", &"(Function)")
-            .finish()
-    }
-}
-
-impl BuiltinTool {
-    pub fn new(desc: ToolDesc, f: Arc<ToolFunc>) -> Self {
-        BuiltinTool { desc, f }
-    }
-}
-
-#[multi_platform_async_trait]
-impl Tool for BuiltinTool {
-    fn get_description(&self) -> ToolDesc {
-        self.desc.clone()
-    }
-
-    async fn run(&self, args: Value) -> anyhow::Result<Value> {
-        Ok(self.f.clone()(args))
-    }
-}
-
+#[cfg(any(target_family = "unix", target_family = "windows"))]
+use crate::tool::FunctionTool;
 ///
 #[cfg(any(target_family = "unix", target_family = "windows"))]
-pub fn create_terminal_tool() -> BuiltinTool {
+pub fn create_terminal_tool() -> FunctionTool {
     use std::{
         collections::HashMap,
         process::{Command, Stdio},
@@ -190,5 +147,5 @@ pub fn create_terminal_tool() -> BuiltinTool {
         value
     });
 
-    BuiltinTool::new(desc, f)
+    FunctionTool::new(desc, f)
 }
