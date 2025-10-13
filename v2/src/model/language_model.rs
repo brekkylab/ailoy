@@ -152,7 +152,7 @@ impl LangModelInference for LangModel {
 mod py {
     use pyo3::{
         Bound, Py, PyAny, PyRef, PyResult, Python,
-        exceptions::{PyRuntimeError, PyStopAsyncIteration, PyStopIteration},
+        exceptions::{PyStopAsyncIteration, PyStopIteration},
         pyclass, pymethods,
         types::PyType,
     };
@@ -200,11 +200,11 @@ mod py {
         }
 
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageOutput]"))]
-        fn __anext__(&self, py: Python<'_>) -> anyhow::Result<Py<PyAny>> {
-            let rx = self.rx.clone();
+        fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+            let rx: async_channel::Receiver<Result<MessageOutput, anyhow::Error>> = self.rx.clone();
             let fut = async move {
                 match rx.recv().await {
-                    Ok(res) => res.map_err(|e| PyRuntimeError::new_err(e.to_string())),
+                    Ok(res) => res.map_err(Into::into),
                     Err(_) => Err(PyStopAsyncIteration::new_err(())),
                 }
             };
@@ -227,10 +227,10 @@ mod py {
             slf
         }
 
-        fn __next__(&mut self, py: Python<'_>) -> anyhow::Result<MessageOutput> {
+        fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
             let item = py.detach(|| self.rt.block_on(self.rx.recv()));
             match item {
-                Ok(res) => res.map_err(|e| PyRuntimeError::new_err(e.to_string())),
+                Ok(res) => res.map_err(Into::into),
                 Err(_) => Err(PyStopIteration::new_err(())),
             }
         }
@@ -248,7 +248,7 @@ mod py {
             model_name: String,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
-        ) -> Result<Bound<'a, PyAny>> {
+        ) -> PyResult<Bound<'a, PyAny>> {
             let fut = async move {
                 let inner =
                     await_cache_result::<LocalLangModel>(model_name, progress_callback).await?;
@@ -272,7 +272,7 @@ mod py {
             model_name: String,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
-        ) -> anyhow::Result<Py<Self>> {
+        ) -> PyResult<Py<Self>> {
             let inner = await_future(await_cache_result::<LocalLangModel>(
                 model_name,
                 progress_callback,

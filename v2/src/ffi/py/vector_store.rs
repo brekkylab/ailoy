@@ -433,8 +433,8 @@ impl ChromaVectorStore {
     }
 
     fn collection_exists(&self, collection_name: String) -> PyResult<bool> {
-        let col = await_future(self.inner.get_collection(collection_name.as_str()))?;
-        Ok(col.is_some())
+        let col = await_future(self.inner.get_collection(collection_name.as_str()));
+        Ok(col.is_ok())
     }
 
     #[pyo3(signature = (collection_name, metadata = None))]

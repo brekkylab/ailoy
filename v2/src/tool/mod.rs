@@ -5,7 +5,6 @@ mod mcp;
 use std::{fmt::Debug, sync::Arc};
 
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
-use anyhow::bail;
 pub use builtin::*;
 pub use function::*;
 pub use mcp::*;

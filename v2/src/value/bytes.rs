@@ -39,17 +39,16 @@ impl<'de> Deserialize<'de> for Bytes {
 #[cfg(feature = "python")]
 mod py {
     use pyo3::{
-        Bound, FromPyObject, PyAny, PyResult,
+        Bound, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult,
         exceptions::PyTypeError,
         types::{PyAnyMethods, PyBytes, PyBytesMethods as _},
     };
-    use pyo3::{IntoPyObject, PyErr};
     use pyo3_stub_gen::{PyStubType, TypeInfo};
 
     use super::*;
 
     impl<'py> FromPyObject<'py> for Bytes {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
             if let Ok(pybytes) = ob.downcast::<PyBytes>() {
                 Ok(Bytes(pybytes.as_bytes().to_vec()))
             } else {
@@ -78,9 +77,9 @@ mod py {
 
 #[cfg(feature = "nodejs")]
 mod node {
+    use napi::{Env, ValueType, bindgen_prelude::*};
+
     use super::Bytes;
-    use napi::bindgen_prelude::*;
-    use napi::{Env, ValueType};
 
     unsafe fn read_buffer(env: sys::napi_env, val: sys::napi_value) -> Result<Vec<u8>> {
         let mut data_ptr: *mut core::ffi::c_void = std::ptr::null_mut();
