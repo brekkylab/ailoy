@@ -3,26 +3,61 @@ use serde::{Deserialize, Serialize};
 
 use crate::value::{Value, delta::Delta};
 
+/// Represents a function call contained within a message part.
+///
+/// Many language models (LLMs) use a **function calling** mechanism to extend their capabilities.
+/// When an LLM decides to use external *tools*, it produces a structured output called a `function`.
+/// A function conventionally consists of two fields: a `name`, and an `arguments` field formatted as JSON.
+/// This is conceptually similar to making an HTTP POST request, where the request body carries a single JSON object.
+///
+/// This struct models that convention, representing a function invocation request
+/// from an LLM to an external tool or API.
+///
+/// # Examples
+/// ```rust
+/// let f = PartFunction {
+///     name: "translate".to_string(),
+///     args: Value::from_json(r#"{"text": "hello", "lang": "cn"}"#).unwrap(),
+/// };
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 pub struct PartFunction {
+    /// The name of the function
     pub name: String,
+
+    /// The arguments of the function, usually represented as a JSON object.
     #[serde(rename = "arguments")]
     pub args: Value,
 }
 
+/// Represents the color space of an image part.
+///
+/// This enum defines the supported pixel formats of image data. It determines
+/// how many channels each pixel has and how the image should be interpreted.
+///
+/// # Examples
+/// ```rust
+/// let c = PartImageColorspace::RGB;
+/// assert_eq!(c.channel(), 3);
+/// ```
 #[derive(
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
 )]
 #[serde(untagged)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
 pub enum PartImageColorspace {
+    /// Single-channel grayscale image
     #[strum(serialize = "grayscale")]
     #[serde(rename = "grayscale")]
     Grayscale,
+
+    /// Three-channel color image without alpha    
     #[strum(serialize = "rgb")]
     #[serde(rename = "rgb")]
     RGB,
+
+    /// Four-channel color image with alpha
     #[strum(serialize = "rgba")]
     #[serde(rename = "rgba")]
     RGBA,
@@ -46,6 +81,20 @@ impl TryFrom<String> for PartImageColorspace {
     }
 }
 
+/// Represents the image data contained in a [`Part`].
+///
+/// `PartImage` provides structured access to image data.
+/// Currently, it only implments "binary" types.
+///
+/// # Example
+/// ```rust
+/// let part = Part::image_binary(640, 480, "rgb", (0..640*480*3).map(|i| (i % 255) as u8)).unwrap();
+///
+/// if let Some(img) = part.as_image() {
+///     assert_eq!(img.height(), 640);
+///     assert_eq!(img.width(), 480);
+/// }
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "media-type")]
 #[cfg_attr(
@@ -68,6 +117,26 @@ pub enum PartImage {
     },
 }
 
+/// Represents a semantically meaningful content unit exchanged between the model and the user.
+///
+/// Conceptually, each `Part` encapsulates a piece of **data** that contributes
+/// to a chat message — such as text, a function invocation, or an image.  
+///
+/// For example, a single message consisting of a sequence like  
+/// `(text..., image, text...)` is represented as a `Message` containing
+/// an array of three `Part` elements.
+///
+/// Note that a `Part` does **not** carry "intent", such as "reasoning" or "tool call".
+/// These higher-level semantics are determined by the context of a [`Message`].
+///
+/// # Example
+///
+/// ## Rust
+/// ```rust
+/// let part = Part::text("Hello, world!");
+/// assert!(part.is_text());
+/// ```
+///
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[cfg_attr(
@@ -77,16 +146,23 @@ pub enum PartImage {
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum Part {
+    /// Plain text content.
     #[serde(rename = "text")]
     Text { text: String },
+
+    /// Represents a structured function call to an external tool.
     #[serde(rename = "function")]
     Function {
         id: Option<String>,
         #[serde(rename = "function")]
         f: PartFunction,
     },
+
+    /// Holds a structured data value, typically a JSON object.
     #[serde(rename = "value")]
     Value { value: Value },
+
+    /// Contains image data or references with optional metadata.
     #[serde(rename = "image")]
     Image { image: PartImage },
 }
@@ -96,6 +172,17 @@ impl Part {
         Self::Text { text: v.into() }
     }
 
+    /// Create a new image pixel map.
+    ///
+    /// # Encoding Notes
+    /// * The `data` field is expected to contain pixel data in **row-major order**.
+    /// * The bytes per channel depend on the color depth (e.g., 1 byte for 8-bit, 2 bytes for 16-bit).
+    /// * The total size of `data` must be equal to: `height × width × colorspace.channel() × bytes_per_channel`.
+    ///
+    /// # Errors
+    /// Image construction fails if:
+    /// * The colorspace cannot be parsed from the provided input.
+    /// * The data length does not match the expected size given dimensions and channels.
     pub fn image_binary(
         height: u32,
         width: u32,
@@ -296,6 +383,26 @@ impl Part {
     }
 }
 
+/// Represents an incremental update (delta) of a function part.
+///
+/// This type is used during streaming or partial message generation, when function calls are being streamed as text chunks or partial JSON fragments.
+///
+/// # Variants
+/// * `Verbatim(String)` — Raw text content, typically a partial JSON fragment.
+/// * `WithStringArgs { name, args }` — Function name and its serialized arguments as strings.
+/// * `WithParsedArgs { name, args }` — Function name and parsed arguments as a `Value`.
+///
+/// # Use Case
+/// When the model streams out a function call response (e.g., `"function_call":{"name":...}`),
+/// the incremental deltas can be aggregated until the full function payload is formed.
+///
+/// # Example
+/// ```rust
+/// let delta = PartDeltaFunction::WithStringArgs {
+///     name: "translate".into(),
+///     args: r#"{"text":"hi"}"#.into(),
+/// };
+/// `
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 #[cfg_attr(
@@ -318,6 +425,25 @@ pub enum PartDeltaFunction {
     },
 }
 
+/// Represents a partial or incremental update (delta) of a [`Part`].
+///
+/// This type enables composable, streaming updates to message parts.
+/// For example, text may be produced token-by-token, or a function call
+/// may be emitted gradually as its arguments stream in.
+///
+/// # Example
+///
+/// ## Rust
+/// ```rust
+/// let d1 = PartDelta::Text { text: "Hel".into() };
+/// let d2 = PartDelta::Text { text: "lo".into() };
+/// let merged = d1.aggregate(d2).unwrap();
+/// assert_eq!(merged.to_text().unwrap(), "Hello");
+/// ```
+///
+/// # Error Handling
+/// Aggregation or finalization may return an error if incompatible deltas
+/// (e.g. mismatched function IDs) are combined or invalid JSON arguments are given.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 #[cfg_attr(
@@ -327,17 +453,20 @@ pub enum PartDeltaFunction {
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum PartDelta {
-    Text {
-        text: String,
-    },
+    /// Incremental text fragment.
+    Text { text: String },
+
+    /// Incremental function call fragment.
     Function {
         id: Option<String>,
         #[serde(rename = "function")]
         f: PartDeltaFunction,
     },
-    Value {
-        value: Value,
-    },
+
+    /// JSON-like value update.
+    Value { value: Value },
+
+    /// Placeholder representing no data yet.
     Null(),
 }
 
