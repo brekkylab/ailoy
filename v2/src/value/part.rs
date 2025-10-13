@@ -1,8 +1,10 @@
+use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::value::{Value, delta::Delta};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 pub struct PartFunction {
     pub name: String,
     #[serde(rename = "arguments")]
@@ -13,6 +15,7 @@ pub struct PartFunction {
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
 )]
 #[serde(untagged)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
 pub enum PartImageColorspace {
     #[strum(serialize = "grayscale")]
     #[serde(rename = "grayscale")]
@@ -26,7 +29,7 @@ pub enum PartImageColorspace {
 }
 
 impl PartImageColorspace {
-    pub fn channel(&self) -> usize {
+    pub fn channel(&self) -> u32 {
         match self {
             PartImageColorspace::Grayscale => 1,
             PartImageColorspace::RGB => 3,
@@ -50,15 +53,17 @@ impl TryFrom<String> for PartImageColorspace {
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum PartImage {
     #[serde(rename = "image/x-binary")]
     Binary {
         #[serde(rename = "height")]
-        h: usize,
+        h: u32,
         #[serde(rename = "width")]
-        w: usize,
+        w: u32,
         #[serde(rename = "colorspace")]
         c: PartImageColorspace,
+        #[cfg_attr(feature = "nodejs", napi_derive::napi(ts_type = "Buffer"))]
         data: super::bytes::Bytes,
     },
 }
@@ -70,6 +75,7 @@ pub enum PartImage {
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum Part {
     #[serde(rename = "text")]
     Text { text: String },
@@ -91,23 +97,24 @@ impl Part {
     }
 
     pub fn image_binary(
-        height: usize,
-        width: usize,
+        height: u32,
+        width: u32,
         colorspace: impl TryInto<PartImageColorspace>,
         data: impl IntoIterator<Item = u8>,
-    ) -> Result<Self, String> {
+    ) -> anyhow::Result<Self> {
         let colorspace: PartImageColorspace = colorspace
             .try_into()
-            .map_err(|_| String::from("Colorspace parsing failed"))?;
+            .ok()
+            .context("Colorspace parsing failed")?;
         let data = data.into_iter().collect::<Vec<_>>();
-        let nbytes = data.len() / height / width / colorspace.channel();
+        let nbytes = data.len() as u32 / height / width / colorspace.channel();
         if !(nbytes == 1 || nbytes == 2 || nbytes == 3 || nbytes == 4) {
             panic!("Invalid data length");
         }
         Ok(Self::Image {
             image: PartImage::Binary {
-                h: height,
-                w: width,
+                h: height as u32,
+                w: width as u32,
                 c: colorspace,
                 data: super::bytes::Bytes(data),
             },
@@ -237,7 +244,7 @@ impl Part {
                     },
             } => {
                 let (h, w) = (*h as u32, *w as u32);
-                let nbytes = buf.len() / h as usize / w as usize / c.channel();
+                let nbytes = buf.len() as u32 / h / w / c.channel();
                 match (c, nbytes) {
                     // Grayscale 8-bit
                     (&PartImageColorspace::Grayscale, 1) => {
@@ -296,6 +303,7 @@ impl Part {
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum PartDeltaFunction {
     Verbatim(String),
     WithStringArgs {
@@ -317,6 +325,7 @@ pub enum PartDeltaFunction {
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum PartDelta {
     Text {
         text: String,
@@ -423,8 +432,9 @@ impl Default for PartDelta {
 
 impl Delta for PartDelta {
     type Item = Part;
+    type Err = anyhow::Error; // TODO: Define custom error for this.
 
-    fn aggregate(self, other: Self) -> Result<Self, ()> {
+    fn aggregate(self, other: Self) -> anyhow::Result<Self> {
         match (self, other) {
             (PartDelta::Null(), other) => Ok(other),
             (PartDelta::Text { text: mut t1 }, PartDelta::Text { text: t2 }) => {
@@ -433,8 +443,16 @@ impl Delta for PartDelta {
             }
             (PartDelta::Function { id: id1, f: f1 }, PartDelta::Function { id: id2, f: f2 }) => {
                 let id = match (id1, id2) {
-                    (Some(id1), Some(id2)) if id1 == id2 => Some(id1),
-                    (Some(_), Some(_)) => return Err(()),
+                    (Some(id1), Some(id2)) => {
+                        if id1 != id2 {
+                            bail!(
+                                "Cannot aggregate two functions with different ids. ({} != {}).",
+                                id1,
+                                id2
+                            )
+                        }
+                        Some(id1)
+                    }
                     (None, Some(id2)) => Some(id2),
                     (Some(id1), None) => Some(id1),
                     (None, None) => None,
@@ -466,15 +484,25 @@ impl Delta for PartDelta {
                         n1.push_str(&n2);
                         PartDeltaFunction::WithParsedArgs { name: n1, args: a2 }
                     }
-                    _ => return Err(()),
+                    (f1, f2) => bail!(
+                        "Aggregation between those two function delta {:?}, {:?} is not defined.",
+                        f1,
+                        f2
+                    ),
                 };
                 Ok(PartDelta::Function { id, f })
             }
-            _ => Err(()),
+            (pd1, pd2) => {
+                bail!(
+                    "Aggregation between those two part delta {:?}, {:?} is not defined.",
+                    pd1,
+                    pd2
+                )
+            }
         }
     }
 
-    fn finish(self) -> Result<Self::Item, String> {
+    fn finish(self) -> anyhow::Result<Self::Item> {
         match self {
             PartDelta::Null() => Ok(Part::Text {
                 text: String::new(),
@@ -487,26 +515,23 @@ impl Delta for PartDelta {
                     {
                         Ok(root) => {
                             match (root.pointer_as::<str>("/name"), root.pointer("/arguments")) {
-                                (Some(name), Some(args)) => Ok(PartFunction {
+                                (Some(name), Some(args)) => PartFunction {
                                     name: name.to_owned(),
                                     args: args.to_owned(),
-                                }),
-                                _ => Err(String::from("Invalid function JSON")),
+                                },
+                                _ => bail!("Invalid function JSON"),
                             }
                         }
-                        Err(_) => Err(String::from("Invalid JSON")),
+                        Err(_) => bail!("Invalid JSON"),
                     },
                     // Try json deserialization for args
                     PartDeltaFunction::WithStringArgs { name, args } => {
-                        let args = serde_json::from_str::<Value>(&args)
-                            .map_err(|_| String::from("Invalid JSON"))?;
-                        Ok(PartFunction { name, args })
+                        let args = serde_json::from_str::<Value>(&args).context("Invalid JSON")?;
+                        PartFunction { name, args }
                     }
                     // As-is
-                    PartDeltaFunction::WithParsedArgs { name, args } => {
-                        Ok(PartFunction { name, args })
-                    }
-                }?;
+                    PartDeltaFunction::WithParsedArgs { name, args } => PartFunction { name, args },
+                };
                 Ok(Part::Function { id, f })
             }
             PartDelta::Value { value } => Ok(Part::Value { value }),
@@ -526,7 +551,7 @@ mod py {
     use super::*;
 
     impl<'py> FromPyObject<'py> for PartFunction {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
             if let Ok(pydict) = ob.downcast::<PyDict>() {
                 let name_any = pydict.get_item("name")?;
                 let name: String = name_any.extract()?;
@@ -587,10 +612,10 @@ mod py {
     }
 
     impl<'py> FromPyObject<'py> for PartImageColorspace {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
             let s: &str = ob.extract()?;
             s.parse::<PartImageColorspace>()
-                .map_err(|_| PyValueError::new_err(format!("Invalid colorspace: {s}")))
+                .map_err(|_| PyValueError::new_bail!("Invalid colorspace: {s}"))
         }
     }
 

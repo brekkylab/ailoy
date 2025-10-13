@@ -52,9 +52,9 @@ indexmap = { version = "2", features = ["serde"] }
 indicatif = { version = "0.18.0", optional = true }
 jsonschema = { version = "0.33.0", default-features = false }
 mime-infer = "4.0.0"
-minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json"] }
+minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json", "preserve_order"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
-napi = { version = "3", features = ["tokio_rt", "napi5", "serde-json"], optional = true }
+napi = { version = "3", features = ["tokio_rt", "napi8", "serde-json"], optional = true }
 napi-derive = { version = "3", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 pyo3 = { version = "0.26", features = ["experimental-async", "macros"], optional = true }
@@ -111,6 +111,9 @@ napi-build = "2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
 cmake = "0.1"
+
+[dev-dependencies]
+yare = "3.0.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 env_logger = "0.11.8"

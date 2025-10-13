@@ -27,7 +27,7 @@ pub struct LanguageModelIteratorResult {
 #[derive(Clone)]
 #[napi]
 pub struct LanguageModelRunIterator {
-    rx: Arc<Mutex<mpsc::UnboundedReceiver<std::result::Result<MessageOutput, String>>>>,
+    rx: Arc<Mutex<mpsc::UnboundedReceiver<Result<MessageOutput>>>>,
 }
 
 #[napi]
@@ -83,7 +83,7 @@ pub trait LanguageModelMethods {
         tools: Option<Vec<ToolDesc>>,
     ) -> napi::Result<Object<'a>> {
         let inner = self.get_inner()?;
-        let (tx, rx) = mpsc::unbounded_channel::<std::result::Result<MessageOutput, String>>();
+        let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
 
         let rt = get_or_create_runtime();
 
