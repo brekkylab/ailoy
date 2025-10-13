@@ -2,6 +2,7 @@
 mod native {
     use std::path::Path;
 
+    use anyhow::{Context, bail};
     use tokio::fs::{
         create_dir_all as tokio_create_dir_all, read as tokio_read,
         remove_dir_all as tokio_remove_dir, remove_file as tokio_remove_file, write as tokio_write,
@@ -11,42 +12,40 @@ mod native {
         path.as_ref().exists()
     }
 
-    pub async fn read(path: impl AsRef<Path>) -> Result<Vec<u8>, String> {
-        tokio_read(path)
-            .await
-            .map_err(|e| format!("tokio::fs::read failed: {}", e.to_string()))
+    pub async fn read(path: impl AsRef<Path>) -> anyhow::Result<Vec<u8>> {
+        tokio_read(path).await.context("tokio::fs::read failed")
     }
 
     pub async fn write(
         path: impl AsRef<Path>,
         data: impl AsRef<[u8]>,
         create_parent: bool,
-    ) -> Result<(), String> {
+    ) -> anyhow::Result<()> {
         let parent_dir = path.as_ref().parent().unwrap();
         if !parent_dir.exists() && create_parent {
             tokio_create_dir_all(parent_dir)
                 .await
-                .map_err(|e| format!("tokio::fs::create_dir_all failed: {}", e.to_string()))?;
+                .context("tokio::fs::create_dir_all failed")?;
         }
         tokio_write(path, data)
             .await
-            .map_err(|e| format!("tokio::fs::write failed: {}", e.to_string()))
+            .context("tokio::fs::write failed")
     }
 
-    pub async fn _remove(path: impl AsRef<Path>) -> Result<(), String> {
+    pub async fn _remove(path: impl AsRef<Path>) -> anyhow::Result<()> {
         if path.as_ref().is_dir() {
             tokio_remove_dir(path)
                 .await
-                .map_err(|e| format!("tokio::fs::remove_dir_all failed: {}", e.to_string()))
+                .context("tokio::fs::remove_dir_all failed")
         } else if path.as_ref().is_file() {
             tokio_remove_file(path)
                 .await
-                .map_err(|e| format!("tokio::fs::remove_file failed: {}", e.to_string()))
+                .context("tokio::fs::remove_file failed")
         } else {
-            Err(format!(
+            bail!(
                 "Neither directory nor file: {}",
                 path.as_ref().as_os_str().to_string_lossy()
-            ))
+            )
         }
     }
 }
@@ -55,6 +54,7 @@ mod native {
 mod opfs {
     use std::path::{Component, Path};
 
+    use anyhow::{anyhow, bail};
     use js_sys::Uint8Array;
     use wasm_bindgen::JsCast as _;
     use wasm_bindgen_futures::JsFuture;
@@ -66,21 +66,21 @@ mod opfs {
     async fn get_dir_handle(
         path: &Path,
         create: bool,
-    ) -> Result<FileSystemDirectoryHandle, String> {
+    ) -> anyhow::Result<FileSystemDirectoryHandle> {
         if path.parent().is_none() {
-            return Err("Root is disallowed".to_owned());
+            bail!("Root is disallowed".to_owned());
         }
 
         // Initialize `handle` with OPFS root
         let promise = web_sys::window()
             .and_then(|w| Some(w.navigator().storage()))
-            .ok_or("no navigator.storage")?
+            .ok_or(anyhow!("no navigator.storage"))?
             .get_directory();
         let mut handle = JsFuture::from(promise)
             .await
-            .map_err(|_| "Failed to get OPFS root directory")?
+            .map_err(|_| anyhow!("Failed to get OPFS root directory"))?
             .dyn_into::<FileSystemDirectoryHandle>()
-            .map_err(|_| "Invalid root directory handle")?;
+            .map_err(|_| anyhow!("Invalid root directory handle"))?;
 
         // Call browser API `FileSystemDirectoryHandle` until the parent directory
         for component in path.parent().unwrap().components() {
@@ -93,19 +93,14 @@ mod opfs {
             let promise = handle.get_directory_handle_with_options(&component, &opts);
             handle = JsFuture::from(promise)
                 .await
-                .map_err(|err| {
-                    format!(
-                        "`FileSystemDirectoryHandle::GetDirectoryHandle failed`: {:?}",
-                        err
-                    )
-                })?
+                .map_err(|_| anyhow!("`FileSystemDirectoryHandle::GetDirectoryHandle failed`"))?
                 .dyn_into::<FileSystemDirectoryHandle>()
-                .map_err(|_| "Internal error(FileSystemDirectoryHandle)")?;
+                .map_err(|_| anyhow!("Internal error(FileSystemDirectoryHandle)"))?;
         }
         Ok(handle)
     }
 
-    async fn get_file_handle(path: &Path, create: bool) -> Result<FileSystemFileHandle, String> {
+    async fn get_file_handle(path: &Path, create: bool) -> anyhow::Result<FileSystemFileHandle> {
         let dir_handle = get_dir_handle(path, create).await?;
 
         // Call browser API `FileSystemDirectoryHandle::get_file_handle`
@@ -115,14 +110,9 @@ mod opfs {
             .get_file_handle_with_options(&path.file_name().unwrap().to_string_lossy(), &opts);
         let handle = JsFuture::from(promise)
             .await
-            .map_err(|err| {
-                format!(
-                    "`FileSystemDirectoryHandle::GetFileHandle failed`: {:?}",
-                    err
-                )
-            })?
+            .map_err(|_| anyhow!("`FileSystemDirectoryHandle::GetFileHandle failed`"))?
             .dyn_into::<FileSystemFileHandle>()
-            .map_err(|_| "Invalid file handle")?;
+            .map_err(|_| anyhow!("Invalid file handle"))?;
         Ok(handle)
     }
 
@@ -133,7 +123,7 @@ mod opfs {
         }
     }
 
-    pub async fn read(path: impl AsRef<Path>) -> Result<Vec<u8>, String> {
+    pub async fn read(path: impl AsRef<Path>) -> anyhow::Result<Vec<u8>> {
         // Get file handle
         let handle = get_file_handle(path.as_ref(), false).await?;
 
@@ -141,15 +131,15 @@ mod opfs {
         let promise = handle.get_file();
         let file = JsFuture::from(promise)
             .await
-            .map_err(|_| "Failed to get File object")?
+            .map_err(|_| anyhow!("Failed to get File object"))?
             .dyn_into::<web_sys::File>()
-            .map_err(|_| "Invalid File object")?;
+            .map_err(|_| anyhow!("Invalid File object"))?;
 
         // Call browser API `File::array_buffer()`
         let promise = file.array_buffer();
         let array_buffer = JsFuture::from(promise)
             .await
-            .map_err(|_| "Failed to read file as ArrayBuffer")?;
+            .map_err(|_| anyhow!("Failed to read file as ArrayBuffer"))?;
 
         // Convert to Uint8Array
         let uint8_array = Uint8Array::new(&array_buffer);
@@ -163,7 +153,7 @@ mod opfs {
         path: impl AsRef<Path>,
         data: impl AsRef<[u8]>,
         create_parent: bool,
-    ) -> Result<(), String> {
+    ) -> anyhow::Result<()> {
         // Get file handle
         let handle = get_file_handle(path.as_ref(), create_parent).await?;
 
@@ -171,28 +161,28 @@ mod opfs {
         let promise = handle.create_writable();
         let stream = JsFuture::from(promise)
             .await
-            .map_err(|_| "Failed to create writable stream")?
+            .map_err(|_| anyhow!("Failed to create writable stream"))?
             .dyn_into::<FileSystemWritableFileStream>()
-            .map_err(|_| "Invalid writable stream")?;
+            .map_err(|_| anyhow!("Invalid writable stream"))?;
 
         // Write to file
         let promise = stream
             .write_with_u8_array(data.as_ref())
-            .map_err(|_| "`write_with_u8_array` failed")?;
+            .map_err(|_| anyhow!("`write_with_u8_array` failed"))?;
         JsFuture::from(promise)
             .await
-            .map_err(|_| "Failed to write to file")?;
+            .map_err(|_| anyhow!("Failed to write to file"))?;
 
         // Close stream
         let close_promise = stream.close();
         JsFuture::from(close_promise)
             .await
-            .map_err(|_| "Failed to close file")?;
+            .map_err(|_| anyhow!("Failed to close file"))?;
 
         Ok(())
     }
 
-    pub async fn _remove(path: impl AsRef<Path>) -> Result<(), String> {
+    pub async fn _remove(path: impl AsRef<Path>) -> anyhow::Result<()> {
         let handle = get_dir_handle(path.as_ref(), false).await?;
 
         let opts = FileSystemRemoveOptions::new();
@@ -201,7 +191,7 @@ mod opfs {
         let promise = handle.remove_entry_with_options(&name, &opts);
         JsFuture::from(promise)
             .await
-            .map_err(|err| format!("FileSystemDirectoryHandle::remove_entry failed: {:?}", err))?;
+            .map_err(|_| anyhow!("FileSystemDirectoryHandle::remove_entry failed"))?;
         Ok(())
     }
 }

@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Context;
 use dedent::dedent;
 use minijinja::{Environment, context};
 use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
@@ -60,14 +60,14 @@ impl SystemMessageRenderer {
         &self,
         content: String,
         knowledge_results: Option<Vec<KnowledgeRetrieveResult>>,
-    ) -> Result<String> {
+    ) -> anyhow::Result<String> {
         let ctx = context!(content => content, knowledge_results => knowledge_results);
         let rendered = self
             .mj_env
             .get_template("template")
             .unwrap()
             .render(ctx)
-            .map_err(|e| anyhow!(format!("minijinja::render failed: {}", e.to_string())))?;
+            .context("minijinja::render failed")?;
 
         Ok(rendered)
     }

@@ -1,3 +1,4 @@
+use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
 use crate::value::{Delta, Part, PartDelta};
@@ -24,6 +25,7 @@ pub enum Role {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(
     feature = "wasm",
     wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)
@@ -91,6 +93,7 @@ impl Message {
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 pub struct MessageDelta {
     pub role: Option<Role>,
     pub id: Option<String>,
@@ -146,15 +149,16 @@ impl MessageDelta {
         self
     }
 
-    pub fn to_message(self) -> Result<Message, String> {
+    pub fn to_message(self) -> anyhow::Result<Message> {
         self.finish()
     }
 }
 
 impl Delta for MessageDelta {
     type Item = Message;
+    type Err = anyhow::Error; // TODO: Define custom error for this.
 
-    fn aggregate(self, other: Self) -> Result<Self, ()> {
+    fn aggregate(self, other: Self) -> anyhow::Result<Self> {
         let Self {
             mut role,
             mut id,
@@ -169,7 +173,11 @@ impl Delta for MessageDelta {
             && let Some(rhs) = &other.role
         {
             if lhs != rhs {
-                return Err(());
+                bail!(
+                    "Cannot aggregate two message deltas with differenct roles. ({} != {})",
+                    lhs,
+                    rhs
+                );
             };
         } else if let Some(rhs) = other.role {
             role = Some(rhs);
@@ -243,7 +251,7 @@ impl Delta for MessageDelta {
         })
     }
 
-    fn finish(self) -> Result<Self::Item, String> {
+    fn finish(self) -> anyhow::Result<Self::Item> {
         let Self {
             role,
             id,
@@ -254,7 +262,7 @@ impl Delta for MessageDelta {
         } = self;
 
         let Some(role) = role else {
-            return Err("Role not specified".to_owned());
+            bail!("Role not specified")
         };
         let contents = {
             let mut contents_new = Vec::with_capacity(contents.len());
@@ -284,6 +292,7 @@ impl Delta for MessageDelta {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 pub enum FinishReason {
     Stop(),
     Length(), // max_output_tokens
@@ -294,9 +303,17 @@ pub enum FinishReason {
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 pub struct MessageOutput {
     pub delta: MessageDelta,
     pub finish_reason: Option<FinishReason>,
 }
 
-impl MessageOutput {}
+impl MessageOutput {
+    pub fn new() -> Self {
+        Self {
+            delta: MessageDelta::new(),
+            finish_reason: None,
+        }
+    }
+}

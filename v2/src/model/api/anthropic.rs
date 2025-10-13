@@ -1,3 +1,4 @@
+use anyhow::{Context, bail};
 use base64::Engine;
 
 use crate::{
@@ -229,7 +230,7 @@ impl Marshal<RequestConfig> for AnthropicMarshal {
 pub struct AnthropicUnmarshal;
 
 impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
-    fn unmarshal(&mut self, val: Value) -> Result<MessageDelta, String> {
+    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDelta> {
         const STREAM_TYPES: &[&str] = &[
             "ping",
             "message_start",
@@ -256,13 +257,13 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                 "message_start" => {
                     // r#"{"type":"message_start","message":{"type":"message","role":"assistant","content":[]}}"#,
                     if let Some(r) = val.pointer_as::<String>("/message/role") {
-                        let v = match r.as_str() {
-                            "system" => Ok(Role::System),
-                            "user" => Ok(Role::User),
-                            "assistant" => Ok(Role::Assistant),
-                            "tool" => Ok(Role::Tool),
-                            other => Err(format!("Unknown role: {other}")),
-                        }?;
+                        let v: Role = match r.as_str() {
+                            "system" => Role::System,
+                            "user" => Role::User,
+                            "assistant" => Role::Assistant,
+                            "tool" => Role::Tool,
+                            other => bail!("Unknown role: {other}"),
+                        };
                         rv.role = Some(v);
                     }
                 }
@@ -277,7 +278,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                     // r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
                     // r#"{"type":"content_block_start","content_block":{"type":"tool_use","id":"call_DF3wZtLHv5eBNfURjvI8MULJ","name":"get_weather","input":{}}}"#,
                     let Some(ty) = val.pointer_as::<String>("/content_block/type") else {
-                        return Err(String::from("Invalid content block type"));
+                        bail!("Invalid content block type");
                     };
                     match ty.as_str() {
                         "text" => {
@@ -332,7 +333,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                     // r#"{"type":"content_block_stop","index":1}"#,
                 }
                 _ => {
-                    return Err(String::from("Invalid stream message type"));
+                    bail!("Invalid stream message type");
                 }
             }
             return Ok(rv);
@@ -340,22 +341,18 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
 
         // not streamed below
 
-        let root = val
-            .as_object()
-            .ok_or_else(|| String::from("Root should be an object"))?;
+        let root = val.as_object().context("Root should be an object")?;
 
         // Parse role
         if let Some(r) = root.get("role") {
-            let s = r
-                .as_str()
-                .ok_or_else(|| String::from("Role should be a string"))?;
+            let s = r.as_str().context("Role should be a string")?;
             let v = match s {
-                "system" => Ok(Role::System),
-                "user" => Ok(Role::User),
-                "assistant" => Ok(Role::Assistant),
-                "tool" => Ok(Role::Tool),
-                other => Err(format!("Unknown role: {other}")),
-            }?;
+                "system" => Role::System,
+                "user" => Role::User,
+                "assistant" => Role::Assistant,
+                "tool" => Role::Tool,
+                other => bail!("Unknown role: {other}"),
+            };
             rv.role = Some(v);
         }
 
@@ -370,21 +367,21 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                 // In case of part vector
                 for content in contents {
                     let Some(content) = content.as_object() else {
-                        return Err(String::from("Invalid part"));
+                        bail!("Invalid part");
                     };
                     if let Some(text) = content.get("text") {
                         let Some(text) = text.as_str() else {
-                            return Err(String::from("Invalid content part"));
+                            bail!("Invalid content part");
                         };
                         rv.contents.push(PartDelta::Text { text: text.into() });
                     } else if let Some(thinking) = content.get("thinking")
                         && let Some(signature) = content.get("signature")
                     {
                         let Some(thinking) = thinking.as_str() else {
-                            return Err(String::from("Invalid thinking content"));
+                            bail!("Invalid thinking content");
                         };
                         let Some(signature) = signature.as_str() else {
-                            return Err(String::from("Invalid signature content"));
+                            bail!("Invalid signature content");
                         };
                         rv.signature = Some(signature.to_owned());
                         rv.thinking = thinking.into();
@@ -402,11 +399,11 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                             },
                         });
                     } else {
-                        return Err(String::from("Invalid part"));
+                        bail!("Invalid part");
                     }
                 }
             } else {
-                return Err(String::from("Invalid content"));
+                bail!("Invalid content");
             }
         }
 

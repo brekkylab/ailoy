@@ -1,7 +1,7 @@
 use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use ailoy_macros::multi_platform_async_trait;
-use anyhow::Result;
+use anyhow::bail;
 use futures::lock::Mutex;
 
 use crate::{
@@ -27,7 +27,7 @@ pub(crate) struct LocalEmbeddingModel {
 
 #[multi_platform_async_trait]
 impl EmbeddingModelInference for LocalEmbeddingModel {
-    async fn infer(&self, text: String) -> Result<Embedding> {
+    async fn infer(&self, text: String) -> anyhow::Result<Embedding> {
         let input_tokens = self.tokenizer.encode(&text, true).unwrap();
         let mut inferencer = self.inferencer.lock().await;
 
@@ -48,7 +48,7 @@ impl TryFromCache for LocalEmbeddingModel {
     fn claim_files(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, Result<CacheClaim, String>> {
+    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
         let key = key.as_ref().to_owned();
         Box::pin(async move {
             let mut tokenizer = Tokenizer::claim_files(cache.clone(), &key).await?;
@@ -72,7 +72,7 @@ impl TryFromCache for LocalEmbeddingModel {
         })
     }
 
-    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, Result<Self, String>>
+    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>>
     where
         Self: Sized,
     {
@@ -83,9 +83,9 @@ impl TryFromCache for LocalEmbeddingModel {
                         let [a, b] = *boxed;
                         (a, b)
                     }
-                    Err(_) => return Err("contents.ctx is not [Vec<CacheEntry>; 3]".into()),
+                    Err(_) => bail!("contents.ctx is not [Vec<CacheEntry>; 3]"),
                 },
-                None => return Err("contents.ctx is None".into()),
+                None => bail!("contents.ctx is None"),
             };
 
             let tokenizer = {

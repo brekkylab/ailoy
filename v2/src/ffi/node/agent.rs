@@ -25,7 +25,7 @@ pub struct AgentRunIteratorResult {
 #[derive(Clone)]
 #[napi]
 pub struct AgentRunIterator {
-    rx: Arc<Mutex<mpsc::UnboundedReceiver<std::result::Result<MessageOutput, String>>>>,
+    rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>>>,
 }
 
 #[napi]
@@ -99,7 +99,7 @@ impl JsAgent {
 
     fn create_iterator<'a>(&'a self, env: Env, parts: Vec<JsPart>) -> napi::Result<Object<'a>> {
         let inner = self.inner.clone();
-        let (tx, rx) = mpsc::unbounded_channel::<std::result::Result<MessageOutput, String>>();
+        let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
 
         let rt = get_or_create_runtime();
         rt.spawn(async move {
