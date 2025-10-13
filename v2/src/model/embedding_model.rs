@@ -71,9 +71,7 @@ impl EmbeddingModelInference for EmbeddingModel {
 
 #[cfg(feature = "python")]
 mod py {
-    use pyo3::{
-        Bound, Py, PyAny, PyResult, Python, exceptions::PyRuntimeError, pymethods, types::PyType,
-    };
+    use pyo3::{Bound, Py, PyAny, PyResult, Python, pymethods, types::PyType};
     use pyo3_stub_gen_derive::*;
 
     use super::*;
@@ -91,7 +89,7 @@ mod py {
             model_name: String,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
-        ) -> Result<Bound<'a, PyAny>> {
+        ) -> PyResult<Bound<'a, PyAny>> {
             let fut = async move {
                 let inner =
                     await_cache_result::<LocalEmbeddingModel>(model_name, progress_callback)
@@ -116,7 +114,7 @@ mod py {
             model_name: String,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
-        ) -> anyhow::Result<Py<Self>> {
+        ) -> PyResult<Py<Self>> {
             let inner = await_future(await_cache_result::<LocalEmbeddingModel>(
                 model_name,
                 progress_callback,
@@ -130,19 +128,19 @@ mod py {
         }
 
         #[pyo3(signature = (text))]
-        async fn run(&mut self, text: String) -> anyhow::Result<Embedding> {
+        async fn run(&mut self, text: String) -> PyResult<Embedding> {
             match &mut self.inner {
                 EmbeddingModelInner::Local(model) => model.infer(text).await,
             }
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(Into::into)
         }
 
         #[pyo3(signature = (text))]
-        fn run_sync(&mut self, text: String) -> anyhow::Result<Embedding> {
+        fn run_sync(&mut self, text: String) -> PyResult<Embedding> {
             let fut = match &mut self.inner {
                 EmbeddingModelInner::Local(model) => model.infer(text),
             };
-            await_future(fut).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            await_future(fut).map_err(Into::into)
         }
     }
 }

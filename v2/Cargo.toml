@@ -57,7 +57,7 @@ minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { git = "https://github.com/brekkylab/napi-rs.git", package = "napi", rev = "5c8991b91072b5e468b1781de5703dc8449e000a", features = ["tokio_rt", "napi8", "serde-json"], optional = true }
 napi-derive = { git = "https://github.com/brekkylab/napi-rs.git", package = "napi-derive", rev = "5c8991b91072b5e468b1781de5703dc8449e000a", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
-pyo3 = { version = "0.26", features = ["experimental-async", "macros"], optional = true }
+pyo3 = { version = "0.26", features = ["experimental-async", "macros", "anyhow"], optional = true }
 pyo3-async-runtimes = { version = "0.26", features = ["attributes", "tokio-runtime"], optional = true }
 pyo3-stub-gen = { version = "0.12.2", optional = true }
 pyo3-stub-gen-derive = { version = "0.12.2", optional = true }

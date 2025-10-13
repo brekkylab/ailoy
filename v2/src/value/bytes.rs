@@ -51,7 +51,7 @@ mod py {
     use super::*;
 
     impl<'py> FromPyObject<'py> for Bytes {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
             if let Ok(pybytes) = ob.downcast::<PyBytes>() {
                 Ok(Bytes(pybytes.as_bytes().to_vec().into()))
             } else {

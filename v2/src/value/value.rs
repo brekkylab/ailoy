@@ -842,7 +842,7 @@ mod py {
             let key = if let Ok(s) = k.downcast::<PyString>() {
                 s.to_str()?.to_owned()
             } else {
-                return Err(PyTypeError::new_err("dict key must be str"));
+                return Err(PyTypeError::new_err("dict key must be str").into());
             };
             let val: Value = v.extract()?;
             out.insert(key, val);
@@ -850,7 +850,7 @@ mod py {
         Ok(out)
     }
 
-    fn py_any_to_vec<'py>(obj: &Bound<'py, PyAny>) -> anyhow::Result<Vec<Value>> {
+    fn py_any_to_vec<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Vec<Value>> {
         if let Ok(list) = obj.downcast::<PyList>() {
             return list.iter().map(|it| it.extract::<Value>()).collect();
         }
@@ -868,7 +868,7 @@ mod py {
     }
 
     impl<'py> FromPyObject<'py> for Value {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
             if ob.is_none() {
                 return Ok(Value::Null);
             }
@@ -913,7 +913,7 @@ mod py {
         type Output = Bound<'py, PyAny>;
         type Error = PyErr;
 
-        fn into_pyobject(self, py: Python<'py>) -> anyhow::Result<Self::Output> {
+        fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
             match self {
                 // None
                 Value::Null => Ok(py.None().bind(py).clone()),

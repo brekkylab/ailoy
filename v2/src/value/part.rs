@@ -580,7 +580,7 @@ mod py {
     use super::*;
 
     impl<'py> FromPyObject<'py> for PartFunction {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
             if let Ok(pydict) = ob.downcast::<PyDict>() {
                 let name_any = pydict.get_item("name")?;
                 let name: String = name_any.extract()?;
@@ -597,9 +597,7 @@ mod py {
 
     impl<'py> IntoPyObject<'py> for PartFunction {
         type Target = PyDict;
-
         type Output = Bound<'py, PyDict>;
-
         type Error = PyErr;
 
         fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
@@ -641,10 +639,10 @@ mod py {
     }
 
     impl<'py> FromPyObject<'py> for PartImageColorspace {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
             let s: &str = ob.extract()?;
             s.parse::<PartImageColorspace>()
-                .map_err(|_| PyValueError::new_bail!("Invalid colorspace: {s}"))
+                .map_err(|_| PyValueError::new_err(format!("Invalid colorspace: {s}")))
         }
     }
 
