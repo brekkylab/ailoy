@@ -24,6 +24,10 @@ pub enum Role {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "wasm",
+    wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)
+)]
 pub struct Message {
     pub role: Role,
 

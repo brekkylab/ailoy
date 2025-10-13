@@ -81,9 +81,56 @@ mod py {
 #[cfg(feature = "wasm")]
 mod wasm {
     use js_sys::{ArrayBuffer, Uint8Array};
-    use wasm_bindgen::prelude::*;
+    use wasm_bindgen::{
+        convert::{FromWasmAbi, IntoWasmAbi, OptionFromWasmAbi, OptionIntoWasmAbi},
+        describe::WasmDescribe,
+        prelude::*,
+    };
 
     use super::Bytes;
+
+    impl WasmDescribe for Bytes {
+        fn describe() {
+            JsValue::describe()
+        }
+    }
+
+    impl FromWasmAbi for Bytes {
+        type Abi = <JsValue as FromWasmAbi>::Abi;
+
+        #[inline]
+        unsafe fn from_abi(js: Self::Abi) -> Self {
+            let bytes = unsafe { JsValue::from_abi(js) };
+            Bytes::try_from(bytes).unwrap()
+        }
+    }
+
+    impl IntoWasmAbi for Bytes {
+        type Abi = <JsValue as IntoWasmAbi>::Abi;
+
+        #[inline]
+        fn into_abi(self) -> Self::Abi {
+            let js_value = JsValue::from(self);
+            js_value.into_abi()
+        }
+    }
+
+    impl OptionFromWasmAbi for Bytes {
+        #[inline]
+        fn is_none(js: &Self::Abi) -> bool {
+            let js_value = unsafe { JsValue::from_abi(*js) };
+            let is_none = js_value.is_null() || js_value.is_undefined();
+            std::mem::forget(js_value);
+            is_none
+        }
+    }
+
+    impl OptionIntoWasmAbi for Bytes {
+        #[inline]
+        fn none() -> Self::Abi {
+            JsValue::NULL.into_abi()
+        }
+    }
 
     impl TryFrom<JsValue> for Bytes {
         type Error = js_sys::Error;
