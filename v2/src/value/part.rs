@@ -5,10 +5,8 @@ use crate::value::{Value, delta::Delta};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
-#[cfg_attr(
-    feature = "wasm",
-    wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)
-)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct PartFunction {
     pub name: String,
     #[serde(rename = "arguments")]
@@ -18,18 +16,14 @@ pub struct PartFunction {
 #[derive(
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
 )]
-#[serde(untagged)]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartImageColorspace {
-    #[strum(serialize = "grayscale")]
-    #[serde(rename = "grayscale")]
     Grayscale,
-    #[strum(serialize = "rgb")]
-    #[serde(rename = "rgb")]
     RGB,
-    #[strum(serialize = "rgba")]
-    #[serde(rename = "rgba")]
     RGBA,
 }
 
@@ -52,13 +46,15 @@ impl TryFrom<String> for PartImageColorspace {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "media-type")]
+#[serde(tag = "media_type")]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartImage {
     #[serde(rename = "image/x-binary")]
     Binary {
@@ -81,6 +77,8 @@ pub enum PartImage {
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum Part {
     #[serde(rename = "text")]
     Text { text: String },
@@ -121,7 +119,7 @@ impl Part {
                 h: height as u32,
                 w: width as u32,
                 c: colorspace,
-                data: super::bytes::Bytes(data),
+                data: super::bytes::Bytes(data.into()),
             },
         })
     }
@@ -253,7 +251,7 @@ impl Part {
                 match (c, nbytes) {
                     // Grayscale 8-bit
                     (&PartImageColorspace::Grayscale, 1) => {
-                        let buf = image::GrayImage::from_raw(w, h, buf.clone())?;
+                        let buf = image::GrayImage::from_raw(w, h, buf.to_vec())?;
                         Some(image::DynamicImage::ImageLuma8(buf))
                     }
                     // Grayscale 16-bit
@@ -267,12 +265,12 @@ impl Part {
                     }
                     // RGB 8-bit
                     (&PartImageColorspace::RGB, 1) => {
-                        let buf = image::RgbImage::from_raw(w, h, buf.clone())?;
+                        let buf = image::RgbImage::from_raw(w, h, buf.to_vec())?;
                         Some(image::DynamicImage::ImageRgb8(buf))
                     }
                     // RGBA 8-bit
                     (&PartImageColorspace::RGBA, 1) => {
-                        let buf = image::RgbaImage::from_raw(w, h, buf.clone())?;
+                        let buf = image::RgbaImage::from_raw(w, h, buf.to_vec())?;
                         Some(image::DynamicImage::ImageRgba8(buf))
                     }
                     // RGB 16-bit
@@ -309,6 +307,8 @@ impl Part {
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartDeltaFunction {
     Verbatim(String),
     WithStringArgs {
@@ -331,6 +331,8 @@ pub enum PartDeltaFunction {
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartDelta {
     Text {
         text: String,
@@ -633,229 +635,6 @@ mod py {
                 name: r#"typing.Literal["grayscale", "rgb", "rgba"]"#.into(),
                 import,
             }
-        }
-    }
-}
-
-#[cfg(feature = "wasm")]
-mod wasm {
-    use std::convert::TryFrom;
-
-    use js_sys::{Object, Reflect};
-    use wasm_bindgen::{
-        convert::{
-            FromWasmAbi, IntoWasmAbi, OptionFromWasmAbi, OptionIntoWasmAbi, TryFromJsValue,
-            VectorFromWasmAbi, VectorIntoWasmAbi,
-        },
-        describe::{WasmDescribe, WasmDescribeVector},
-        prelude::*,
-    };
-
-    use super::*;
-
-    #[wasm_bindgen]
-    pub struct PartImageBinary {
-        height: usize,
-        width: usize,
-        colorspace: PartImageColorspace,
-        data: crate::value::bytes::Bytes,
-    }
-
-    impl WasmDescribe for Part {
-        fn describe() {
-            JsValue::describe()
-        }
-    }
-
-    impl WasmDescribeVector for Part {
-        fn describe_vector() {
-            <JsValue as WasmDescribeVector>::describe_vector()
-        }
-    }
-
-    impl FromWasmAbi for Part {
-        type Abi = <JsValue as FromWasmAbi>::Abi;
-
-        #[inline]
-        unsafe fn from_abi(js: Self::Abi) -> Self {
-            let js_value = unsafe { JsValue::from_abi(js) };
-            Part::try_from(js_value).unwrap()
-        }
-    }
-
-    impl IntoWasmAbi for Part {
-        type Abi = <JsValue as IntoWasmAbi>::Abi;
-
-        #[inline]
-        fn into_abi(self) -> Self::Abi {
-            let js_value = JsValue::from(self);
-            js_value.into_abi()
-        }
-    }
-
-    impl OptionFromWasmAbi for Part {
-        #[inline]
-        fn is_none(js: &Self::Abi) -> bool {
-            let js_value = unsafe { JsValue::from_abi(*js) };
-            let is_none = js_value.is_null() || js_value.is_undefined();
-            std::mem::forget(js_value);
-            is_none
-        }
-    }
-
-    impl OptionIntoWasmAbi for Part {
-        #[inline]
-        fn none() -> Self::Abi {
-            JsValue::NULL.into_abi()
-        }
-    }
-
-    impl VectorFromWasmAbi for Part {
-        type Abi = <Box<[JsValue]> as FromWasmAbi>::Abi;
-
-        unsafe fn vector_from_abi(js: Self::Abi) -> Box<[Self]> {
-            let js_values = unsafe { <Box<[JsValue]> as FromWasmAbi>::from_abi(js) };
-            let vec: Vec<Part> = js_values
-                .iter()
-                .map(|js_val| {
-                    Part::try_from(js_val.clone())
-                        .expect("Failed to convert JsValue to Part in array")
-                })
-                .collect();
-
-            vec.into_boxed_slice()
-        }
-    }
-
-    impl VectorIntoWasmAbi for Part {
-        type Abi = <Box<[JsValue]> as IntoWasmAbi>::Abi;
-
-        fn vector_into_abi(vector: Box<[Self]>) -> Self::Abi {
-            let js_values: Vec<JsValue> = vector.iter().map(|part| part.clone().into()).collect();
-            js_values.into_boxed_slice().into_abi()
-        }
-    }
-
-    impl TryFrom<JsValue> for Part {
-        type Error = js_sys::Error;
-
-        fn try_from(js_val: JsValue) -> Result<Self, Self::Error> {
-            if !js_val.is_object() {
-                return Err(js_sys::Error::new("The value is not an object"));
-            }
-
-            let obj = Object::from(js_val.clone());
-            let part_type = Reflect::get(&obj, &JsValue::from_str("partType"))
-                .map_err(|_| js_sys::Error::new("partType field does not exist"))?
-                .as_string()
-                .ok_or(js_sys::Error::new("partType should be a string"))?;
-            match part_type.as_str() {
-                "text" => {
-                    let text = Reflect::get(&obj, &JsValue::from_str("text"))
-                        .map_err(|_| js_sys::Error::new("text field does not exist"))?
-                        .as_string()
-                        .ok_or(js_sys::Error::new("text field should be a string"))?;
-                    return Ok(Part::Text { text });
-                }
-                "function" => {
-                    let id = Reflect::get(&obj, &JsValue::from_str("id"))
-                        .map_err(|_| js_sys::Error::new("'id' field does not exist"))?
-                        .as_string();
-                    let f = PartFunction::try_from_js_value(
-                        Reflect::get(&obj, &JsValue::from_str("function"))
-                            .map_err(|_| js_sys::Error::new("'function' field does not exist"))?,
-                    )?;
-                    return Ok(Part::Function { id, f });
-                }
-                "value" => {
-                    let js_val = Reflect::get(&obj, &JsValue::from_str("value"))
-                        .map_err(|_| js_sys::Error::new("'value' field does not exist"))?;
-                    let value = Value::try_from(js_val)?;
-                    return Ok(Part::Value { value });
-                }
-                "image" => {
-                    if let Ok(binary) = Reflect::get(&obj, &JsValue::from_str("binary")) {
-                        let img = PartImageBinary::try_from_js_value(binary)?;
-                        return Ok(Part::Image {
-                            image: PartImage::Binary {
-                                h: img.height,
-                                w: img.width,
-                                c: img.colorspace,
-                                data: img.data,
-                            },
-                        });
-                    }
-                    return Err(js_sys::Error::new("Invalid image object"));
-                }
-                _ => {
-                    return Err(js_sys::Error::new(
-                        format!("Unknown partType: {}", part_type).as_str(),
-                    ));
-                }
-            }
-        }
-    }
-
-    impl From<Part> for JsValue {
-        fn from(value: Part) -> Self {
-            let obj = Object::new();
-            match value {
-                Part::Text { text } => {
-                    Reflect::set(
-                        &obj,
-                        &JsValue::from_str("partType"),
-                        &JsValue::from_str("text"),
-                    )
-                    .unwrap();
-                    Reflect::set(&obj, &JsValue::from_str("text"), &JsValue::from_str(&text))
-                        .unwrap();
-                }
-                Part::Function { id, f } => {
-                    Reflect::set(
-                        &obj,
-                        &JsValue::from_str("partType"),
-                        &JsValue::from_str("function"),
-                    )
-                    .unwrap();
-                    let id = if let Some(id) = id {
-                        &JsValue::from_str(&id)
-                    } else {
-                        &JsValue::NULL
-                    };
-                    Reflect::set(&obj, &JsValue::from_str("id"), id).unwrap();
-                    Reflect::set(&obj, &JsValue::from_str("function"), &JsValue::from(f)).unwrap();
-                }
-                Part::Value { value } => {
-                    Reflect::set(
-                        &obj,
-                        &JsValue::from_str("partType"),
-                        &JsValue::from_str("value"),
-                    )
-                    .unwrap();
-                    Reflect::set(&obj, &JsValue::from_str("value"), &JsValue::from(value)).unwrap();
-                }
-                Part::Image { image } => {
-                    Reflect::set(
-                        &obj,
-                        &JsValue::from_str("partType"),
-                        &JsValue::from_str("image"),
-                    )
-                    .unwrap();
-                    match image {
-                        PartImage::Binary { h, w, c, data } => {
-                            let img = PartImageBinary {
-                                height: h,
-                                width: w,
-                                colorspace: c,
-                                data: data,
-                            };
-                            Reflect::set(&obj, &JsValue::from_str("binary"), &JsValue::from(img))
-                                .unwrap();
-                        }
-                    }
-                }
-            }
-            obj.into()
         }
     }
 }

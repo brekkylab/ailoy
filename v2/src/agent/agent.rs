@@ -215,7 +215,7 @@ impl Agent {
                         }
                         yield AgentResponse {
                             delta: tool_msg_delta,
-                            finish_reason: Some(FinishReason::Stop()),
+                            finish_reason: Some(FinishReason::Stop{}),
                             aggregated: Some(tool_msg.clone()),
                         };
 

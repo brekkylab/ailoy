@@ -153,13 +153,13 @@ impl LocalLangModelImpl {
             let mut agg_tokens = Vec::<u32>::new();
             let mut count = 0;
             let mut mode = "content".to_owned();
-            let mut finish_reason = FinishReason::Stop();
+            let mut finish_reason = FinishReason::Stop{};
 
             // @jhlee: TODO remove hard-coded token names
             loop {
                 count += 1;
                 if count > config.max_tokens.unwrap_or(16384) {
-                    yield MessageOutput{delta: MessageDelta::new(), finish_reason: Some(FinishReason::Length())};
+                    yield MessageOutput{delta: MessageDelta::new(), finish_reason: Some(FinishReason::Length{})};
                     break;
                 }
 
@@ -187,7 +187,7 @@ impl LocalLangModelImpl {
                     continue;
                 } else if s == "</tool_call>" {
                     mode = "content".to_owned();
-                    finish_reason = FinishReason::ToolCall();
+                    finish_reason = FinishReason::ToolCall{};
                     continue;
                 } else if s == "<think>" {
                     mode = "reasoning".to_owned();

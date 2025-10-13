@@ -30,14 +30,17 @@ fn decode_json_pointer_token(token: &str) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum Value {
     Null,
     Bool(bool),
     Unsigned(u64),
     Integer(i64),
-    Float(OrderedFloat<f64>),
+    Float(#[cfg_attr(feature = "wasm", tsify(type = "number"))] OrderedFloat<f64>),
     String(String),
-    Object(IndexMap<String, Value>),
+    Object(
+        #[cfg_attr(feature = "wasm", tsify(type = "Record<string, any>"))] IndexMap<String, Value>,
+    ),
     Array(Vec<Value>),
 }
 
@@ -949,9 +952,9 @@ mod py {
 
 #[cfg(feature = "nodejs")]
 mod node {
+    use napi::{Env, Result, Unknown, bindgen_prelude::*};
+
     use super::Value;
-    use napi::bindgen_prelude::*;
-    use napi::{Env, Result, Unknown};
 
     impl FromNapiValue for Value {
         unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {

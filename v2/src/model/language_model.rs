@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ailoy_macros::maybe_send_sync;
 use futures::StreamExt as _;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     cache::CacheProgress,
@@ -15,10 +15,13 @@ use crate::{
     value::{Message, MessageOutput, ToolDesc},
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum ThinkEffort {
     #[default]
     Disable,
@@ -28,31 +31,37 @@ pub enum ThinkEffort {
     High,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen::derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum Grammar {
-    Plain(),
-    JSON(),
-    JSONSchema(String),
-    Regex(String),
-    CFG(String),
+    Plain {},
+    JSON {},
+    JSONSchema { schema: String },
+    Regex { regex: String },
+    CFG { cfg: String },
 }
 
 impl Default for Grammar {
     fn default() -> Self {
-        Self::Plain()
+        Self::Plain {}
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct InferenceConfig {
     pub think_effort: ThinkEffort,
 

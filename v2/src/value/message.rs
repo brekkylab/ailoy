@@ -9,8 +9,9 @@ use crate::value::{Delta, Part, PartDelta};
 #[strum(serialize_all = "lowercase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum Role {
     /// System instructions and constraints provided to the assistant.
     System,
@@ -23,13 +24,12 @@ pub enum Role {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
-#[cfg_attr(
-    feature = "wasm",
-    wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)
-)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Message {
     pub role: Role,
 
@@ -90,10 +90,13 @@ impl Message {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct MessageDelta {
     pub role: Option<Role>,
     pub id: Option<String>,
@@ -289,21 +292,27 @@ impl Delta for MessageDelta {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "snake_case"))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum FinishReason {
-    Stop(),
-    Length(), // max_output_tokens
-    ToolCall(),
-    Refusal(String), // content_filter, refusal
+    Stop {},
+    Length {}, // max_output_tokens
+    ToolCall {},
+    Refusal { reason: String }, // content_filter, refusal
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct MessageOutput {
     pub delta: MessageDelta,
     pub finish_reason: Option<FinishReason>,

@@ -467,7 +467,7 @@ pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
             // Valid termination of stream
             return MessageOutput {
                 delta: MessageDelta::default(),
-                finish_reason: Some(FinishReason::Stop()),
+                finish_reason: Some(FinishReason::Stop {}),
             };
         }
         "response.refusal.done" => {
@@ -478,7 +478,9 @@ pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
                 .unwrap_or_else(|| "reason: unknown");
             return MessageOutput {
                 delta: MessageDelta::default(),
-                finish_reason: Some(FinishReason::Refusal(refusal_text.to_owned())),
+                finish_reason: Some(FinishReason::Refusal {
+                    reason: refusal_text.to_owned(),
+                }),
             };
         }
         "response.incomplete" => {
@@ -488,11 +490,13 @@ pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
                 .and_then(|v| v.as_str())
                 .unwrap_or_else(|| "unknown");
             let finish_reason = match reason {
-                "max_output_tokens" => FinishReason::Length(),
-                "content_filter" => FinishReason::Refusal(
-                    "Model output violated OpenAI's safety policy.".to_owned(),
-                ),
-                reason => FinishReason::Refusal(format!("reason: {}", reason)),
+                "max_output_tokens" => FinishReason::Length {},
+                "content_filter" => FinishReason::Refusal {
+                    reason: "Model output violated OpenAI's safety policy.".to_owned(),
+                },
+                reason => FinishReason::Refusal {
+                    reason: format!("reason: {}", reason),
+                },
             };
             return MessageOutput {
                 delta: MessageDelta::default(),
@@ -840,7 +844,7 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
@@ -874,7 +878,7 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!(
                 "{:?}",
@@ -937,7 +941,7 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0

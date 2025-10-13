@@ -324,13 +324,15 @@ pub(super) fn handle_event(evt: ServerEvent) -> MessageOutput {
         .pointer("/finishReason")
         .and_then(|v| v.as_str())
         .map(|reason| match reason {
-            "STOP" => FinishReason::Stop(),
-            "MAX_TOKENS" => FinishReason::Length(),
-            reason => FinishReason::Refusal(reason.to_owned()),
+            "STOP" => FinishReason::Stop {},
+            "MAX_TOKENS" => FinishReason::Length {},
+            reason => FinishReason::Refusal {
+                reason: reason.to_owned(),
+            },
         });
 
     let delta = match finish_reason {
-        Some(FinishReason::Refusal(_)) => MessageDelta::default(),
+        Some(FinishReason::Refusal { .. }) => MessageDelta::default(),
         _ => serde_json::from_value::<Unmarshaled<_, GeminiUnmarshal>>(candidate.clone())
             .ok()
             .map(|decoded| decoded.get())
@@ -625,12 +627,12 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
     }
 
     #[multi_platform_test]
@@ -664,7 +666,7 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!(
                 "{:?}",
@@ -728,7 +730,7 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0

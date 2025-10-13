@@ -6,14 +6,14 @@ use crate::value::Value;
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
-#[cfg_attr(
-    feature = "wasm",
-    wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)
-)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct ToolDesc {
     pub name: String,
     pub description: Option<String>,
+    #[cfg_attr(feature = "wasm", tsify(type = "any"))]
     pub parameters: Value,
+    #[cfg_attr(feature = "wasm", tsify(type = "any | undefined"))]
     pub returns: Option<Value>,
 }
 

@@ -1,8 +1,11 @@
 use base64::Engine as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+use serde_bytes::ByteBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Bytes(pub Vec<u8>);
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
+pub struct Bytes(pub ByteBuf);
 
 impl Serialize for Bytes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -28,10 +31,10 @@ impl<'de> Deserialize<'de> for Bytes {
             let data = base64::engine::general_purpose::STANDARD
                 .decode(s.as_bytes())
                 .map_err(D::Error::custom)?;
-            Ok(Bytes(data))
+            Ok(Bytes(data.into()))
         } else {
             let b = <Vec<u8>>::deserialize(deserializer)?;
-            Ok(Bytes(b))
+            Ok(Bytes(b.into()))
         }
     }
 }
@@ -39,11 +42,10 @@ impl<'de> Deserialize<'de> for Bytes {
 #[cfg(feature = "python")]
 mod py {
     use pyo3::{
-        Bound, FromPyObject, PyAny, PyResult,
+        Bound, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult,
         exceptions::PyTypeError,
         types::{PyAnyMethods, PyBytes, PyBytesMethods as _},
     };
-    use pyo3::{IntoPyObject, PyErr};
     use pyo3_stub_gen::{PyStubType, TypeInfo};
 
     use super::*;
@@ -78,9 +80,9 @@ mod py {
 
 #[cfg(feature = "nodejs")]
 mod node {
+    use napi::{Env, ValueType, bindgen_prelude::*};
+
     use super::Bytes;
-    use napi::bindgen_prelude::*;
-    use napi::{Env, ValueType};
 
     unsafe fn read_buffer(env: sys::napi_env, val: sys::napi_value) -> Result<Vec<u8>> {
         let mut data_ptr: *mut core::ffi::c_void = std::ptr::null_mut();
@@ -97,7 +99,7 @@ mod node {
         unsafe fn from_napi_value(env: sys::napi_env, val: sys::napi_value) -> Result<Self> {
             let env = Env::from_raw(env);
             if let Ok(data) = unsafe { read_buffer(env.raw(), val) } {
-                return Ok(Bytes(data));
+                return Ok(Bytes(data.into()));
             }
             Err(Error::new(
                 Status::InvalidArg,
@@ -175,109 +177,6 @@ mod node {
             napi_val: sys::napi_value,
         ) -> Result<sys::napi_value> {
             unsafe { <Buffer as ValidateNapiValue>::validate(env, napi_val) }
-        }
-    }
-}
-
-#[cfg(feature = "wasm")]
-mod wasm {
-    use js_sys::{ArrayBuffer, Uint8Array};
-    use wasm_bindgen::{
-        convert::{FromWasmAbi, IntoWasmAbi, OptionFromWasmAbi, OptionIntoWasmAbi},
-        describe::WasmDescribe,
-        prelude::*,
-    };
-
-    use super::Bytes;
-
-    impl WasmDescribe for Bytes {
-        fn describe() {
-            JsValue::describe()
-        }
-    }
-
-    impl FromWasmAbi for Bytes {
-        type Abi = <JsValue as FromWasmAbi>::Abi;
-
-        #[inline]
-        unsafe fn from_abi(js: Self::Abi) -> Self {
-            let bytes = unsafe { JsValue::from_abi(js) };
-            Bytes::try_from(bytes).unwrap()
-        }
-    }
-
-    impl IntoWasmAbi for Bytes {
-        type Abi = <JsValue as IntoWasmAbi>::Abi;
-
-        #[inline]
-        fn into_abi(self) -> Self::Abi {
-            let js_value = JsValue::from(self);
-            js_value.into_abi()
-        }
-    }
-
-    impl OptionFromWasmAbi for Bytes {
-        #[inline]
-        fn is_none(js: &Self::Abi) -> bool {
-            let js_value = unsafe { JsValue::from_abi(*js) };
-            let is_none = js_value.is_null() || js_value.is_undefined();
-            std::mem::forget(js_value);
-            is_none
-        }
-    }
-
-    impl OptionIntoWasmAbi for Bytes {
-        #[inline]
-        fn none() -> Self::Abi {
-            JsValue::NULL.into_abi()
-        }
-    }
-
-    impl TryFrom<JsValue> for Bytes {
-        type Error = js_sys::Error;
-
-        fn try_from(js_val: JsValue) -> Result<Self, Self::Error> {
-            // Try to handle Uint8Array
-            if let Some(uint8_array) = js_val.dyn_ref::<Uint8Array>() {
-                let len = uint8_array.length() as usize;
-                let mut vec = vec![0u8; len];
-                uint8_array.copy_to(&mut vec);
-                return Ok(Bytes(vec));
-            }
-
-            // Try to handle ArrayBuffer
-            if let Some(array_buffer) = js_val.dyn_ref::<ArrayBuffer>() {
-                let uint8_array = Uint8Array::new(array_buffer);
-                let len = uint8_array.length() as usize;
-                let mut vec = vec![0u8; len];
-                uint8_array.copy_to(&mut vec);
-                return Ok(Bytes(vec));
-            }
-
-            // Try to handle Array of numbers
-            if js_sys::Array::is_array(&js_val) {
-                let arr = js_sys::Array::from(&js_val);
-                let len = arr.length() as usize;
-                let mut vec = Vec::with_capacity(len);
-
-                for i in 0..len {
-                    if let Some(num) = arr.get(i as u32).as_f64() {
-                        vec.push(num as u8);
-                    }
-                }
-
-                return Ok(Bytes(vec));
-            }
-
-            Err(js_sys::Error::new("Cannot convert to Bytes"))
-        }
-    }
-
-    impl From<Bytes> for JsValue {
-        fn from(bytes: Bytes) -> Self {
-            let uint8_array = Uint8Array::new_with_length(bytes.0.len() as u32);
-            uint8_array.copy_from(&bytes.0);
-            uint8_array.into()
         }
     }
 }
