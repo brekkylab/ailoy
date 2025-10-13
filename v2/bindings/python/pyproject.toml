@@ -28,6 +28,9 @@ Documentation = "https://brekkylab.github.io/ailoy"
 Repository = "https://github.com/brekkylab/ailoy"
 Issues = "https://github.com/brekkylab/ailoy/issues"
 
+[project.scripts]
+ailoy-model = "ailoy._core:ailoy_model_cli"
+
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",

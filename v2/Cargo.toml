@@ -3,9 +3,33 @@ name = "ailoy"
 version = "0.1.0"
 edition = "2024"
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--enable-bulk-memory"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "py_stub_gen"
+doc = false
+required-features = ["python"]
+
+[[bin]]
+name = "ailoy-model"
+path = "src/bin/ailoy_model.rs"
+required-features = ["ailoy-model-cli"]
+
 [features]
-python = ["dep:pyo3", "dep:pyo3-async-runtimes", "dep:pyo3-stub-gen", "dep:pyo3-stub-gen-derive"]
-nodejs = ["dep:napi", "dep:napi-derive"]
+python = [
+    "dep:pyo3",
+    "dep:pyo3-async-runtimes",
+    "dep:pyo3-stub-gen",
+    "dep:pyo3-stub-gen-derive",
+    "ailoy-model-cli",
+]
+nodejs = ["dep:napi", "dep:napi-derive", "ailoy-model-cli"]
+ailoy-model-cli = ["dep:aws-config", "dep:aws-sdk-s3", "dep:clap", "dep:indicatif"]
 default = []
 
 [dependencies]
@@ -14,14 +38,18 @@ anyhow = "1"
 async-channel = "2.5"
 async-stream = "0.3"
 async-trait = "0.1.89"
+aws-config = { version = "1.8.6", optional = true }
+aws-sdk-s3 = { version = "1.106.0", optional = true }
 base64 = "0.21"
 chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "master" }
+clap = { version = "4.5.48", optional = true, features = ["derive"] }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
 downcast-rs = "2.0.2"
 futures = "0.3.31"
-indexmap = { version = "2", features = ["serde"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+indexmap = { version = "2", features = ["serde"] }
+indicatif = { version = "0.18.0", optional = true }
 jsonschema = { version = "0.33.0", default-features = false }
 mime-infer = "4.0.0"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json", "preserve_order"] }
@@ -43,6 +71,16 @@ strum = { version = "0.27", features = ["derive"] }
 strum_macros = "0.27.2"
 thiserror = "2.0.15"
 url = "2.5.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cxx = "1.0"
+log = "0.4.27"
+onig = "6"
+parking_lot = "0.12.4"
+rmcp = { version = "0.5.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client"] }
+tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+uuid = { version = "1.18.0", features = ["v4"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
@@ -67,25 +105,6 @@ web-sys = { version = "0.3", features = [
     "console"
 ] }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-cxx = "1.0"
-log = "0.4.27"
-onig = "6"
-parking_lot = "0.12.4"
-rmcp = { version = "0.5.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client"] }
-tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
-tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
-uuid = { version = "1.18.0", features = ["v4"] }
-
-[dev-dependencies]
-yare = "3.0.0"
-
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-test = "0.3"
-
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-env_logger = "0.11.8"
-
 [build-dependencies]
 dotenvy = "0.15.7"
 napi-build = "2"
@@ -93,14 +112,11 @@ napi-build = "2"
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
 cmake = "0.1"
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-path = "src/lib.rs"
+[dev-dependencies]
+yare = "3.0.0"
 
-[[bin]]
-name = "py_stub_gen"
-doc = false
-required-features = ["python"]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+env_logger = "0.11.8"
 
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O", "--enable-bulk-memory"]
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

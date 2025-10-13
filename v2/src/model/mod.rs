@@ -8,4 +8,4 @@ use api::*;
 use custom::*;
 pub use embedding_model::*;
 pub use language_model::*;
-use local::*;
+pub use local::*;
