@@ -6,26 +6,13 @@
  * *This API requires the following crate features to be activated: `ReadableStreamType`*
  */
 type ReadableStreamType = "bytes";
-export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
+export type PartDelta = { type: "text"; text: string } | { type: "function"; id: string | undefined; function: PartDeltaFunction } | { type: "value"; value: Value } | { type: "null" };
 
-export interface ToolDesc {
-    name: string;
-    description: string | undefined;
-    parameters: any;
-    returns: any | undefined;
-}
-
-export type Bytes = Uint8Array;
-
-export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
-
-export type PartDelta = { text: string } | { id: string | undefined; function: PartDeltaFunction } | { value: Value } | [];
-
-export type PartDeltaFunction = string | { name: string; arguments: string } | { name: string; arguments: Value };
+export type PartDeltaFunction = { type: "verbatim"; text: string } | { type: "with_string_args"; name: string; arguments: string } | { type: "with_parsed_args"; name: string; arguments: Value };
 
 export type Part = { type: "text"; text: string } | { type: "function"; id: string | undefined; function: PartFunction } | { type: "value"; value: Value } | { type: "image"; image: PartImage };
 
-export type PartImage = { media_type: "image/x-binary"; height: number; width: number; colorspace: PartImageColorspace; data: Bytes };
+export type PartImage = { type: "binary"; height: number; width: number; colorspace: PartImageColorspace; data: Bytes };
 
 export type PartImageColorspace = "grayscale" | "rgb" | "rgba";
 
@@ -75,6 +62,19 @@ export interface InferenceConfig {
 export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema"; schema: string } | { type: "regex"; regex: string } | { type: "cfg"; cfg: string };
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
+
+export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
+
+export interface ToolDesc {
+    name: string;
+    description: string | undefined;
+    parameters: Value;
+    returns: Value | undefined;
+}
+
+export type Bytes = Uint8Array;
+
+export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
 
 export class IntoUnderlyingByteSource {
   private constructor();

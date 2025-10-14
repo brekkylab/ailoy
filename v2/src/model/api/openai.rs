@@ -19,9 +19,9 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
             Part::Text { text } => to_value!({"type": "input_text", "text": text}),
             Part::Function {
                 id,
-                f: PartFunction { name, args },
+                function: PartFunction { name, arguments },
             } => {
-                let arguments_string = serde_json::to_string(args).unwrap();
+                let arguments_string = serde_json::to_string(arguments).unwrap();
                 if let Some(id) = id {
                     to_value!({"type": "function_call", "call_id":id, "name": name, "arguments": arguments_string})
                 } else {
@@ -248,9 +248,9 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         rv.role = Some(Role::Assistant);
                         rv.tool_calls.push(PartDelta::Function {
                             id,
-                            f: PartDeltaFunction::WithStringArgs {
+                            function: PartDeltaFunction::WithStringArgs {
                                 name: name.to_owned(),
-                                args: args.to_owned(),
+                                arguments: args.to_owned(),
                             },
                         });
                     }
@@ -301,15 +301,15 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                     // r#"{"type":"response.function_call_arguments.delta","delta":","}"#,
                     // r#"{"type":"response.function_call_arguments.delta","delta":" France"}"#,
                     // r#"{"type":"response.function_call_arguments.delta","delta":"\"}"}"#,
-                    let args = val
+                    let arguments = val
                         .pointer_as::<String>("/delta")
                         .cloned()
                         .context("Function call argument delta should be a string")?;
                     rv.tool_calls.push(PartDelta::Function {
                         id: None,
-                        f: PartDeltaFunction::WithStringArgs {
+                        function: PartDeltaFunction::WithStringArgs {
                             name: String::new(),
-                            args,
+                            arguments,
                         },
                     });
                 }
@@ -415,13 +415,13 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                 Some(name) if name.is_string() => name.as_str().unwrap().to_owned(),
                 _ => String::new(),
             };
-            let args = match root.get("arguments") {
+            let arguments = match root.get("arguments") {
                 Some(args) if args.is_string() => args.as_str().unwrap().to_owned(),
                 _ => String::new(),
             };
             rv.tool_calls.push(PartDelta::Function {
                 id,
-                f: PartDeltaFunction::WithStringArgs { name, args },
+                function: PartDeltaFunction::WithStringArgs { name, arguments },
             });
         };
 

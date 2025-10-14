@@ -19,10 +19,10 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             Part::Text { text } => to_value!({"type": "text", "text": text}),
             Part::Function {
                 id,
-                f: PartFunction { name, args },
+                function: PartFunction { name, arguments },
             } => {
                 let mut value =
-                    to_value!({"type": "tool_use", "name": name, "input": args.clone()});
+                    to_value!({"type": "tool_use", "name": name, "input": arguments.clone()});
                 if let Some(id) = id {
                     value
                         .as_object_mut()
@@ -293,7 +293,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                                 .pointer_as::<String>("/content_block/name")
                                 .cloned()
                                 .unwrap_or_default();
-                            let args = if let Some(input) =
+                            let arguments = if let Some(input) =
                                 val.pointer_as::<String>("/content_block/input")
                             {
                                 input.clone()
@@ -302,7 +302,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                             };
                             rv.tool_calls.push(PartDelta::Function {
                                 id,
-                                f: PartDeltaFunction::WithStringArgs { name, args },
+                                function: PartDeltaFunction::WithStringArgs { name, arguments },
                             });
                         }
                         _ => {}
@@ -321,9 +321,9 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                     if let Some(args) = val.pointer_as::<String>("/delta/partial_json") {
                         rv.tool_calls.push(PartDelta::Function {
                             id: None,
-                            f: PartDeltaFunction::WithStringArgs {
+                            function: PartDeltaFunction::WithStringArgs {
                                 name: String::new(),
-                                args: args.to_owned(),
+                                arguments: args.to_owned(),
                             },
                         });
                     }
@@ -393,9 +393,9 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                     {
                         rv.tool_calls.push(PartDelta::Function {
                             id: id.as_str().and_then(|id| Some(id.to_owned())),
-                            f: PartDeltaFunction::WithStringArgs {
+                            function: PartDeltaFunction::WithStringArgs {
                                 name: name.as_str().unwrap_or_default().to_owned(),
-                                args: serde_json::to_string(input).unwrap_or_default(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                             },
                         });
                     } else {

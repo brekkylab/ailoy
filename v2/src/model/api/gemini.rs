@@ -22,9 +22,10 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             }
             Part::Function {
                 id,
-                f: PartFunction { name, args },
+                function: PartFunction { name, arguments },
             } => {
-                let mut value = to_value!({"functionCall": {"name": name, "args": args.clone()}});
+                let mut value =
+                    to_value!({"functionCall": {"name": name, "args": arguments.clone()}});
                 if let Some(id) = id {
                     value
                         .as_object_mut()
@@ -252,13 +253,13 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                             .and_then(|name| name.as_str())
                             .map(|name| name.to_owned())
                             .unwrap_or_default();
-                        let args = match tool_call_obj.get("args") {
+                        let arguments = match tool_call_obj.get("args") {
                             Some(args) => args.to_owned(),
                             None => Value::Null,
                         };
                         rv.tool_calls.push(PartDelta::Function {
                             id: None,
-                            f: PartDeltaFunction::WithParsedArgs { name, args },
+                            function: PartDeltaFunction::WithParsedArgs { name, arguments },
                         });
                     } else {
                         bail!("Invalid part");

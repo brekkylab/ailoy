@@ -11,9 +11,7 @@ use crate::value::Value;
 pub struct ToolDesc {
     pub name: String,
     pub description: Option<String>,
-    #[cfg_attr(feature = "wasm", tsify(type = "any"))]
     pub parameters: Value,
-    #[cfg_attr(feature = "wasm", tsify(type = "any | undefined"))]
     pub returns: Option<Value>,
 }
 

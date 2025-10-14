@@ -36,17 +36,17 @@ export interface CacheProgress {
 }
 
 export type FinishReason =
-  | { type: "Stop" }
-  | { type: "Length" }
-  | { type: "ToolCall" }
-  | { type: "Refusal"; reason: string };
+  | { type: "stop" }
+  | { type: "length" }
+  | { type: "tool_call" }
+  | { type: "refusal"; reason: string };
 
 export type Grammar =
-  | { type: "Plain" }
-  | { type: "JSON" }
-  | { type: "JSONSchema"; schema: string }
-  | { type: "Regex"; regex: string }
-  | { type: "CFG"; cfg: string };
+  | { type: "plain" }
+  | { type: "json" }
+  | { type: "jsonschema"; schema: string }
+  | { type: "regex"; regex: string }
+  | { type: "cfg"; cfg: string };
 
 export interface InferenceConfig {
   thinkEffort: ThinkEffort;
@@ -85,32 +85,32 @@ export interface MessageOutput {
 }
 
 export type Part =
-  | { type: "Text"; text: string }
-  | { type: "Function"; id?: string; f: PartFunction }
-  | { type: "Value"; value: any }
-  | { type: "Image"; image: PartImage };
+  | { type: "text"; text: string }
+  | { type: "function"; id?: string; function: PartFunction }
+  | { type: "value"; value: any }
+  | { type: "image"; image: PartImage };
 
 export type PartDelta =
-  | { type: "Text"; text: string }
-  | { type: "Function"; id?: string; f: PartDeltaFunction }
-  | { type: "Value"; value: any }
-  | { type: "Null" };
+  | { type: "text"; text: string }
+  | { type: "function"; id?: string; function: PartDeltaFunction }
+  | { type: "value"; value: any }
+  | { type: "null" };
 
 export type PartDeltaFunction =
-  | { type: "Verbatim"; field0: string }
-  | { type: "WithStringArgs"; name: string; args: string }
-  | { type: "WithParsedArgs"; name: string; args: any };
+  | { type: "verbatim"; text: string }
+  | { type: "with_string_args"; name: string; arguments: string }
+  | { type: "with_parsed_args"; name: string; arguments: any };
 
 export interface PartFunction {
   name: string;
-  args: any;
+  arguments: any;
 }
 
 export type PartImage = {
-  type: "Binary";
-  h: number;
-  w: number;
-  c: PartImageColorspace;
+  type: "binary";
+  height: number;
+  width: number;
+  colorspace: PartImageColorspace;
   data: Buffer;
 };
 

@@ -201,7 +201,7 @@ impl LocalLangModelImpl {
                     } else if mode == "reasoning" {
                         MessageDelta::new().with_thinking(s)
                     } else if mode == "tool_call" {
-                        MessageDelta::new().with_tool_calls([PartDelta::Function{id: None, f: PartDeltaFunction::Verbatim(s)}])
+                        MessageDelta::new().with_tool_calls([PartDelta::Function{id: None, function: PartDeltaFunction::Verbatim{text: s}}])
                     } else {
                         unreachable!();
                     };

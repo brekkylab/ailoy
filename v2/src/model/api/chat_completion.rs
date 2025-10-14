@@ -20,9 +20,9 @@ fn marshal_message(item: &Message) -> Value {
             Part::Text { text } => to_value!({"type": "text", "text": text}),
             Part::Function {
                 id,
-                f: PartFunction { name, args },
+                function: PartFunction { name, arguments },
             } => {
-                let mut value = to_value!({"type": "function", "function": {"name": name, "arguments": serde_json::to_string(&args).unwrap()}});
+                let mut value = to_value!({"type": "function", "function": {"name": name, "arguments": serde_json::to_string(&arguments).unwrap()}});
                 if let Some(id) = &id {
                     value
                         .as_object_mut()
@@ -257,13 +257,13 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
                             Some(name) if name.is_string() => name.as_str().unwrap().to_owned(),
                             _ => String::new(),
                         };
-                        let args = match func.get("arguments") {
+                        let arguments = match func.get("arguments") {
                             Some(args) if args.is_string() => args.as_str().unwrap().to_owned(),
                             _ => String::new(),
                         };
                         rv.tool_calls.push(PartDelta::Function {
                             id,
-                            f: PartDeltaFunction::WithStringArgs { name, args },
+                            function: PartDeltaFunction::WithStringArgs { name, arguments },
                         });
                     }
                 }
