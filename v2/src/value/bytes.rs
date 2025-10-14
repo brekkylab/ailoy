@@ -53,7 +53,7 @@ mod py {
     impl<'py> FromPyObject<'py> for Bytes {
         fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
             if let Ok(pybytes) = ob.downcast::<PyBytes>() {
-                Ok(Bytes(pybytes.as_bytes().to_vec()))
+                Ok(Bytes(pybytes.as_bytes().to_vec().into()))
             } else {
                 Err(PyTypeError::new_err("Expected a bytes object"))
             }

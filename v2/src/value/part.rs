@@ -585,8 +585,8 @@ mod py {
                 let name_any = pydict.get_item("name")?;
                 let name: String = name_any.extract()?;
                 let args_any = pydict.get_item("args")?;
-                let args: Value = args_any.extract()?;
-                Ok(Self { name, args })
+                let arguments: Value = args_any.extract()?;
+                Ok(Self { name, arguments })
             } else {
                 Err(PyTypeError::new_err(
                     "PartFunction must be a dict with keys 'name' and 'args'",
@@ -605,7 +605,7 @@ mod py {
         fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
             let d = PyDict::new(py);
             d.set_item("name", self.name)?;
-            let py_args = self.args.into_pyobject(py)?;
+            let py_args = self.arguments.into_pyobject(py)?;
             d.set_item("args", py_args)?;
             Ok(d)
         }
