@@ -10,8 +10,10 @@ use crate::value::Value;
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct ToolDesc {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub parameters: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub returns: Option<Value>,
 }
 
