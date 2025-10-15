@@ -77,6 +77,8 @@ impl ToolBehavior for Tool {
 
 #[cfg(feature = "python")]
 mod py {
+    use std::sync::Arc;
+
     use indexmap::IndexMap;
     use ordered_float::OrderedFloat;
     use pyo3::{
@@ -149,6 +151,8 @@ mod py {
     pub fn wrap_python_function(py_func: Py<PyAny>) -> Arc<dyn Fn(Value) -> Value + Send + Sync> {
         Arc::new(move |args: Value| -> Value {
             Python::attach(|py| {
+                let py_func_bound = py_func.clone_ref(py);
+
                 // Rust Value -> Python object
                 let py_args = match value_to_python(py, &args) {
                     Ok(obj) => obj,
@@ -162,32 +166,99 @@ mod py {
 
                 // call python function
                 let result = if let Ok(dict) = py_args.downcast::<PyDict>() {
-                    py_func.bind(py).call((), Some(&dict))
+                    py_func_bound.bind(py).call((), Some(&dict))
                 } else {
-                    // call with single argument instead of error?
-                    // py_func.bind(py).call1((py_args,))
                     return Value::object([(
                         "error",
                         format!("Failed to convert arguments to Python dict: {:?}", py_args),
                     )]);
                 };
 
-                // Python object -> Rust Value
-                match result {
-                    Ok(py_result) => match python_to_value(&py_result) {
-                        Ok(value) => value,
-                        Err(e) => Value::object([(
-                            "error",
-                            format!("Failed to convert Python result to Value: {}", e),
-                        )]),
-                    },
+                let py_result = match result {
+                    Ok(r) => r,
                     Err(e) => {
-                        Value::object([("error", format!("Python function call failed: {}", e))])
+                        return Value::object([(
+                            "error",
+                            format!("Python function call failed: {}", e),
+                        )]);
                     }
+                };
+
+                // check whether result is coroutine
+                let is_coroutine = py_result.hasattr("__await__").unwrap_or(false);
+
+                let final_result = if is_coroutine {
+                    // execute coroutine using Python `asyncio`
+                    match py
+                        .import("asyncio")
+                        .and_then(|asyncio| asyncio.call_method1("run", (py_result,)))
+                    {
+                        Ok(r) => r.unbind(),
+                        Err(e) => {
+                            return Value::object([(
+                                "error",
+                                format!("Async execution failed: {}", e),
+                            )]);
+                        }
+                    }
+                } else {
+                    py_result.unbind()
+                };
+
+                // Python object -> Rust Value
+                match python_to_value(&final_result.bind(py)) {
+                    Ok(value) => value,
+                    Err(e) => Value::object([(
+                        "error",
+                        format!("Failed to convert Python result to Value: {}", e),
+                    )]),
                 }
             })
         })
     }
+
+    // pub fn wrap_python_function(py_func: Py<PyAny>) -> Arc<dyn Fn(Value) -> Value + Send + Sync> {
+    //     Arc::new(move |args: Value| -> Value {
+    //         Python::attach(|py| {
+    //             // Rust Value -> Python object
+    //             let py_args = match value_to_python(py, &args) {
+    //                 Ok(obj) => obj,
+    //                 Err(e) => {
+    //                     return Value::object([(
+    //                         "error",
+    //                         format!("Failed to convert arguments to Python: {}", e),
+    //                     )]);
+    //                 }
+    //             };
+
+    //             // call python function
+    //             let result = if let Ok(dict) = py_args.downcast::<PyDict>() {
+    //                 py_func.bind(py).call((), Some(&dict))
+    //             } else {
+    //                 // call with single argument instead of error?
+    //                 // py_func.bind(py).call1((py_args,))
+    //                 return Value::object([(
+    //                     "error",
+    //                     format!("Failed to convert arguments to Python dict: {:?}", py_args),
+    //                 )]);
+    //             };
+
+    //             // Python object -> Rust Value
+    //             match result {
+    //                 Ok(py_result) => match python_to_value(&py_result) {
+    //                     Ok(value) => value,
+    //                     Err(e) => Value::object([(
+    //                         "error",
+    //                         format!("Failed to convert Python result to Value: {}", e),
+    //                     )]),
+    //                 },
+    //                 Err(e) => {
+    //                     Value::object([("error", format!("Python function call failed: {}", e))])
+    //                 }
+    //             }
+    //         })
+    //     })
+    // }
 
     #[gen_stub_pymethods]
     #[pymethods]

@@ -4,7 +4,7 @@ use pyo3_stub_gen::derive::*;
 
 use crate::{
     ffi::py::base::{json_to_pydict, pydict_to_json},
-    model::{Grammar, InferenceConfig, ThinkEffort},
+    model::{InferenceConfig, ThinkEffort},
     value::{
         Delta, FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta, Role, ToolDesc,
     },
