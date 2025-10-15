@@ -1,15 +1,13 @@
-use std::str::FromStr;
-
-use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-    types::{PyDict, PyString},
-};
+use anyhow::Ok;
+use pyo3::{prelude::*, types::PyDict};
 use pyo3_stub_gen::derive::*;
 
 use crate::{
     ffi::py::base::{json_to_pydict, pydict_to_json},
-    value::{FinishReason, Message, MessageAggregator, MessageOutput, Part, Role, ToolDesc},
+    model::{Grammar, InferenceConfig, ThinkEffort},
+    value::{
+        Delta, FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta, Role, ToolDesc,
+    },
 };
 
 #[gen_stub_pymethods]
@@ -17,18 +15,22 @@ use crate::{
 impl Part {
     fn __repr__(&self) -> String {
         let s = match &self {
-            Part::Text(text) => format!("Text(\"{}\")", text),
-            Part::FunctionString(_) | Part::Function { .. } => {
-                format!("Function({})", self.to_string())
+            Part::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
+            Part::Function { .. } => {
+                format!(
+                    "Function({})",
+                    serde_json::to_string(self).unwrap_or("".to_owned())
+                )
             }
-            Part::ImageURL(url) => format!("ImageURL(\"{}\")", url),
-            Part::ImageData { .. } => {
-                let mut s = self.to_string();
-                if s.len() > 30 {
-                    s.truncate(30);
-                    s += "...";
-                }
-                format!("ImageData(\"{}\")", s)
+            Part::Value { value } => format!(
+                "Value({})",
+                serde_json::to_string(value).unwrap_or("{...}".to_owned())
+            ),
+            Part::Image { image } => {
+                format!(
+                    "Image(\"{}\")",
+                    serde_json::to_string(image).unwrap_or("".to_owned())
+                )
             }
         };
         format!("Part.{}", s)
@@ -37,51 +39,89 @@ impl Part {
     #[getter]
     fn part_type(&self) -> &'static str {
         match &self {
-            Part::Text(_) => "text",
-            Part::FunctionString(_) | Part::Function { .. } => "function",
-            Part::ImageURL(_) => "image_url",
-            Part::ImageData { .. } => "image_data",
+            Part::Text { .. } => "text",
+            Part::Function { .. } => "function",
+            Part::Value { .. } => "value",
+            Part::Image { .. } => "image",
         }
     }
 
-    #[getter]
-    fn text(&self) -> Option<String> {
-        match &self {
-            Part::Text(..) => Some(self.to_string()),
-            _ => None,
-        }
+    // #[getter]
+    // fn text(&self) -> Option<String> {
+    //     match &self {
+    //         Part::Text { .. } => Some(self.to_string()),
+    //         _ => None,
+    //     }
+    // }
+
+    // #[getter]
+    // fn function(&self) -> Option<String> {
+    //     match &self {
+    //         Part::Function { .. } => Some(self.to_string()),
+    //         _ => None,
+    //     }
+    // }
+
+    // #[getter]
+    // fn image(&self) -> Option<String> {
+    //     match &self {
+    //         Part::Image { .. } => Some(self.to_string()),
+    //         _ => None,
+    //     }
+    // }
+
+    // #[getter]
+    // fn mime_type(&self) -> Option<String> {
+    //     match &self {
+    //         Part::ImageData { mime_type, .. } => Some(mime_type.clone()),
+    //         _ => None,
+    //     }
+    // }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PartDelta {
+    fn __repr__(&self) -> String {
+        let s = match &self {
+            PartDelta::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
+            PartDelta::Function { .. } => {
+                format!(
+                    "Function({})",
+                    serde_json::to_string(self).unwrap_or("".to_owned())
+                )
+            }
+            PartDelta::Value { value } => format!(
+                "Value({})",
+                serde_json::to_string(value).unwrap_or("{...}".to_owned())
+            ),
+            PartDelta::Null() => "Null()".to_owned(),
+        };
+        format!("PartDelta.{}", s)
     }
 
     #[getter]
-    fn function(&self) -> Option<String> {
+    fn part_type(&self) -> &'static str {
         match &self {
-            Part::Function { .. } | Part::FunctionString(..) => Some(self.to_string()),
-            _ => None,
+            PartDelta::Text { .. } => "text",
+            PartDelta::Function { .. } => "function",
+            PartDelta::Value { .. } => "value",
+            PartDelta::Null() => "null",
         }
     }
+}
 
-    #[getter]
-    fn url(&self) -> Option<String> {
-        match &self {
-            Part::ImageURL(..) => Some(self.to_string()),
-            _ => None,
+#[gen_stub_pymethods]
+#[pymethods]
+impl Role {
+    fn __repr__(&self) -> String {
+        match self {
+            Role::System => "Role.System",
+            Role::User => "Role.User",
+            Role::Assistant => "Role.Assistant",
+            Role::Tool => "Role.Tool",
         }
-    }
-
-    #[getter]
-    fn data(&self) -> Option<String> {
-        match &self {
-            Part::ImageData { data, .. } => Some(data.clone()),
-            _ => None,
-        }
-    }
-
-    #[getter]
-    fn mime_type(&self) -> Option<String> {
-        match &self {
-            Part::ImageData { mime_type, .. } => Some(mime_type.clone()),
-            _ => None,
-        }
+        .to_owned()
     }
 }
 
@@ -89,42 +129,73 @@ impl Part {
 #[pymethods]
 impl Message {
     #[new]
-    fn __new__() -> PyResult<Self> {
-        Ok(Self::default())
+    #[pyo3(signature = (role, id = None, thinking = None, contents = None, tool_calls = None, signature = None))]
+    fn __new__(
+        role: Role,
+        id: Option<String>,
+        thinking: Option<String>,
+        contents: Option<Vec<Part>>,
+        tool_calls: Option<Vec<Part>>,
+        signature: Option<String>,
+    ) -> Self {
+        Self {
+            role,
+            id,
+            thinking: thinking.unwrap_or_default(),
+            contents: contents.unwrap_or_default(),
+            tool_calls: tool_calls.unwrap_or_default(),
+            signature,
+        }
     }
 
     fn __repr__(&self) -> String {
-        self.to_string()
+        format!(
+            "Message(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
+            self.role.__repr__(),
+            self.id,
+            self.thinking,
+            self.contents
+                .iter()
+                .map(|content| content.__repr__())
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.tool_calls
+                .iter()
+                .map(|tool| tool.__repr__())
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.signature,
+        )
     }
 
-    #[getter]
-    fn role(&self) -> Option<Role> {
-        self.role.clone()
-    }
+    // #[getter]
+    // fn role(&self) -> Role {
+    //     self.role.clone()
+    // }
 
-    #[setter]
-    fn set_role(
-        &mut self,
-        #[gen_stub(override_type(
-            type_repr = "Role | typing.Literal[\"system\",\"user\",\"assistant\",\"tool\"]"
-        ))]
-        role: Bound<'_, PyAny>,
-    ) -> PyResult<()> {
-        Python::attach(|py| {
-            if let Ok(role) = role.downcast::<PyString>() {
-                self.role = Some(
-                    Role::from_str(&role.to_string())
-                        .map_err(|e| PyValueError::new_err(e.to_string()))?,
-                );
-                Ok(())
-            } else if let Ok(role) = role.downcast::<Role>() {
-                self.role = Some(role.clone().unbind().borrow(py).clone());
-                Ok(())
-            } else {
-                return Err(PyTypeError::new_err("role should be either Role or str"));
-            }
-        })
-    }
+    // #[setter]
+    // fn set_role(
+    //     &mut self,
+    //     #[gen_stub(override_type(
+    //         type_repr = "Role | typing.Literal[\"system\",\"user\",\"assistant\",\"tool\"]"
+    //     ))]
+    //     role: Bound<'_, PyAny>,
+    // ) -> PyResult<()> {
+    //     Python::attach(|py| {
+    //         if let Ok(role) = role.downcast::<PyString>() {
+    //             self.role = Some(
+    //                 Role::from_str(&role.to_string())
+    //                     .map_err(|e| PyValueError::new_err(e.to_string()))?,
+    //             );
+    //             Ok(())
+    //         } else if let Ok(role) = role.downcast::<Role>() {
+    //             self.role = Some(role.clone().unbind().borrow(py).clone());
+    //             Ok(())
+    //         } else {
+    //             return Err(PyTypeError::new_err("role should be either Role or str"));
+    //         }
+    //     })
+    // }
 
     #[getter]
     fn contents(&self) -> Vec<Part> {
@@ -141,13 +212,13 @@ impl Message {
     }
 
     #[getter]
-    fn reasoning(&self) -> String {
-        self.reasoning.clone()
+    fn thinking(&self) -> String {
+        self.thinking.clone()
     }
 
     #[setter]
-    fn set_reasoning(&mut self, reasoning: String) {
-        self.reasoning = reasoning;
+    fn set_thinking(&mut self, thinking: String) {
+        self.thinking = thinking;
     }
 
     #[getter]
@@ -165,13 +236,82 @@ impl Message {
     }
 
     #[getter]
-    fn tool_call_id(&self) -> Option<String> {
-        self.tool_call_id.clone()
+    fn id(&self) -> Option<String> {
+        self.id.clone()
     }
 
     #[setter]
-    fn set_tool_call_id(&mut self, tool_call_id: Option<String>) {
-        self.tool_call_id = tool_call_id;
+    fn set_id(&mut self, id: Option<String>) {
+        self.id = id;
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl MessageDelta {
+    #[new]
+    #[pyo3(signature = (role=None, id = None, thinking = None, contents = None, tool_calls = None, signature = None))]
+    fn __new__(
+        role: Option<Role>,
+        id: Option<String>,
+        thinking: Option<String>,
+        contents: Option<Vec<PartDelta>>,
+        tool_calls: Option<Vec<PartDelta>>,
+        signature: Option<String>,
+    ) -> Self {
+        Self {
+            role,
+            id,
+            thinking: thinking.unwrap_or_default(),
+            contents: contents.unwrap_or_default(),
+            tool_calls: tool_calls.unwrap_or_default(),
+            signature,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MessageDelta(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
+            self.role
+                .clone()
+                .map(|role| role.__repr__())
+                .unwrap_or("None".to_owned()),
+            self.id,
+            self.thinking,
+            self.contents
+                .iter()
+                .map(|content| content.__repr__())
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.tool_calls
+                .iter()
+                .map(|tool| tool.__repr__())
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.signature,
+        )
+    }
+
+    fn __add__(&self, other: &Self) -> PyResult<Self> {
+        self.clone().aggregate(other.clone()).map_err(Into::into)
+    }
+
+    #[pyo3(name = "to_message")]
+    pub fn to_message_py(&self) -> PyResult<Message> {
+        self.clone().to_message().map_err(Into::into)
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl FinishReason {
+    fn __repr__(&self) -> String {
+        match self {
+            FinishReason::Stop() => "FinishReason.Stop()".to_owned(),
+            FinishReason::Length() => "FinishReason.Length()".to_owned(),
+            FinishReason::ToolCall() => "FinishReason.ToolCall()".to_owned(),
+            FinishReason::Refusal(refusal) => format!("FinishReason.Refusal({})", refusal),
+        }
     }
 }
 
@@ -179,11 +319,18 @@ impl Message {
 #[pymethods]
 impl MessageOutput {
     fn __repr__(&self) -> String {
-        self.to_string()
+        format!(
+            "MessageOutput(delta={}, finish_reason={})",
+            self.delta.__repr__(),
+            self.finish_reason
+                .clone()
+                .map(|finish_reason| finish_reason.__repr__())
+                .unwrap_or("None".to_owned())
+        )
     }
 
     #[getter]
-    fn delta(&self) -> Message {
+    fn delta(&self) -> MessageDelta {
         self.delta.clone()
     }
 
@@ -195,32 +342,13 @@ impl MessageOutput {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl MessageAggregator {
-    #[new]
-    fn __new__() -> Self {
-        Self::new()
-    }
-
-    #[getter]
-    fn buffer(&self) -> Option<Message> {
-        self.buffer.clone()
-    }
-
-    #[pyo3(name = "update")]
-    fn update_(&mut self, msg_out: MessageOutput) -> Option<Message> {
-        self.update(msg_out)
-    }
-}
-
-#[gen_stub_pymethods]
-#[pymethods]
 impl ToolDesc {
     #[new]
     #[pyo3(signature = (name, description, parameters, *, returns=None))]
     fn __new__(
         py: Python<'_>,
         name: String,
-        description: String,
+        description: Option<String>,
         parameters: Py<PyDict>,
         returns: Option<Py<PyDict>>,
     ) -> PyResult<Self> {
@@ -233,14 +361,37 @@ impl ToolDesc {
         } else {
             None
         };
-        Self::new(name, description, parameters, returns).map_err(|e| PyValueError::new_err(e))
+        Ok(Self::new(
+            name,
+            description,
+            parameters.into(),
+            returns.map(|returns| returns.into()),
+        ))
+        .map_err(Into::into)
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "ToolDesc(name=\"{}\", description=\"{}\")",
-            self.name, self.description
-        )
+        let returns_display = self
+            .returns
+            .clone()
+            .and_then(|v| serde_json::to_string(&v).ok());
+
+        if let Some(returns_display) = returns_display {
+            format!(
+                "ToolDesc(name=\"{}\", description={}, parameters={}, returns={})",
+                self.name,
+                self.description.clone().unwrap_or_default(),
+                serde_json::to_string(&self.parameters).expect("Invalid parameters"),
+                returns_display,
+            )
+        } else {
+            format!(
+                "ToolDesc(name=\"{}\", description={}, parameters={})",
+                self.name,
+                self.description.clone().unwrap_or_default(),
+                serde_json::to_string(&self.parameters).expect("Invalid parameters"),
+            )
+        }
     }
 
     #[getter]
@@ -249,7 +400,7 @@ impl ToolDesc {
     }
 
     #[getter]
-    fn description(&self) -> String {
+    fn description(&self) -> Option<String> {
         self.description.clone()
     }
 

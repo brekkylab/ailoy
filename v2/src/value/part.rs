@@ -109,7 +109,7 @@ impl Part {
         let data = data.into_iter().collect::<Vec<_>>();
         let nbytes = data.len() as u32 / height / width / colorspace.channel();
         if !(nbytes == 1 || nbytes == 2 || nbytes == 3 || nbytes == 4) {
-            panic!("Invalid data length");
+            bail!("Invalid data length");
         }
         Ok(Self::Image {
             image: PartImage::Binary {

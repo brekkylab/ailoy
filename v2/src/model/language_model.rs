@@ -300,27 +300,63 @@ mod py {
             }
         }
 
-        #[pyo3(signature = (messages, tools, config))]
+        #[pyo3(signature = (messages, tools=None, config=None))]
         fn run(
             &mut self,
             messages: Vec<Message>,
-            tools: Vec<ToolDesc>,
-            config: InferenceConfig,
+            tools: Option<Vec<ToolDesc>>,
+            config: Option<InferenceConfig>,
         ) -> anyhow::Result<LanguageModelRunIterator> {
-            let (_, rx) = spawn(self.clone(), messages, tools, config)?;
+            let (_, rx) = spawn(
+                self.clone(),
+                messages,
+                tools.unwrap_or(vec![]),
+                config.unwrap_or(InferenceConfig::default()),
+            )?;
             Ok(LanguageModelRunIterator { rx })
         }
 
-        #[pyo3(signature = (messages, tools, config))]
+        #[pyo3(signature = (messages, tools=None, config=None))]
         fn run_sync(
             &mut self,
             messages: Vec<Message>,
-            tools: Vec<ToolDesc>,
-            config: InferenceConfig,
+            tools: Option<Vec<ToolDesc>>,
+            config: Option<InferenceConfig>,
         ) -> anyhow::Result<LanguageModelRunSyncIterator> {
-            let (rt, rx) = spawn(self.clone(), messages, tools, config)?;
+            let (rt, rx) = spawn(
+                self.clone(),
+                messages,
+                tools.unwrap_or(vec![]),
+                config.unwrap_or(InferenceConfig::default()),
+            )?;
             Ok(LanguageModelRunSyncIterator { rt, rx })
         }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl InferenceConfig {
+        #[new]
+        // #[pyo3(signature = (think_effort=None, temperature=None, top_p=None, max_tokens=None, grammar=None))]
+        #[pyo3(signature = (think_effort=None, temperature=None, top_p=None, max_tokens=None))]
+        fn __new__(
+            think_effort: Option<ThinkEffort>,
+            temperature: Option<f64>,
+            top_p: Option<f64>,
+            max_tokens: Option<i32>,
+            // grammar: Option<Grammar>,
+        ) -> InferenceConfig {
+            Self {
+                think_effort: think_effort.unwrap_or(ThinkEffort::default()),
+                temperature,
+                top_p,
+                max_tokens,
+                grammar: Grammar::default(),
+            }
+        }
+
+        // TODO: initialize from {"think_effort": "enable", ...}
+        // fn from_dict(d: Py<PyDict>)
     }
 }
 

@@ -2,6 +2,7 @@
 pub(crate) mod base;
 pub(crate) mod cache_progress;
 pub(crate) mod cli;
+pub(crate) mod value;
 pub(crate) mod vector_store;
 
 // use agent::{
@@ -31,7 +32,9 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<vector_store::PyVectorStoreGetResult>()?;
     m.add_class::<vector_store::PyVectorStoreRetrieveResult>()?;
     m.add_class::<crate::model::EmbeddingModel>()?;
+    m.add_class::<crate::model::ThinkEffort>()?;
     m.add_class::<crate::model::LangModel>()?;
+    m.add_class::<crate::model::InferenceConfig>()?;
     m.add_class::<crate::value::FinishReason>()?;
     m.add_class::<crate::value::Message>()?;
     m.add_class::<crate::value::MessageDelta>()?;

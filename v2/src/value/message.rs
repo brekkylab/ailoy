@@ -284,7 +284,7 @@ impl Delta for MessageDelta {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
