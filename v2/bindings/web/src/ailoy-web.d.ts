@@ -23,7 +23,7 @@ export interface PartFunction {
 
 export interface MessageOutput {
     delta: MessageDelta;
-    finishReason: FinishReason | undefined;
+    finish_reason: FinishReason | undefined;
 }
 
 export type FinishReason = { type: "stop" } | { type: "length" } | { type: "tool_call" } | { type: "refusal"; reason: string };
@@ -33,7 +33,7 @@ export interface MessageDelta {
     id: string | undefined;
     thinking: string;
     contents: PartDelta[];
-    toolCalls: PartDelta[];
+    tool_calls: PartDelta[];
     signature: string | undefined;
 }
 
@@ -42,7 +42,7 @@ export interface Message {
     id: string | undefined;
     thinking: string;
     contents: Part[];
-    toolCalls: Part[];
+    tool_calls: Part[];
     signature: string | undefined;
 }
 

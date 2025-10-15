@@ -4,8 +4,6 @@ pub mod gemini;
 pub mod openai;
 mod stream;
 
-#[cfg(feature = "nodejs")]
-use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 pub(super) use stream::*;
 
@@ -29,7 +27,7 @@ struct RequestConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
-#[cfg_attr(feature = "nodejs", napi(string_enum))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum APISpecification {

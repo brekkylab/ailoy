@@ -24,7 +24,6 @@ pub enum Role {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
@@ -39,6 +38,7 @@ pub struct Message {
 
     pub contents: Vec<Part>,
 
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
     pub tool_calls: Vec<Part>,
 
     pub signature: Option<String>,
@@ -91,7 +91,6 @@ impl Message {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
@@ -102,6 +101,7 @@ pub struct MessageDelta {
     pub id: Option<String>,
     pub thinking: String,
     pub contents: Vec<PartDelta>,
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
     pub tool_calls: Vec<PartDelta>,
     pub signature: Option<String>,
 }
@@ -310,7 +310,6 @@ pub enum FinishReason {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
@@ -318,6 +317,7 @@ pub enum FinishReason {
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct MessageOutput {
     pub delta: MessageDelta,
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "finish_reason"))]
     pub finish_reason: Option<FinishReason>,
 }
 

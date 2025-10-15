@@ -66,7 +66,7 @@ export interface Message {
   id?: string;
   thinking: string;
   contents: Array<Part>;
-  toolCalls: Array<Part>;
+  tool_calls: Array<Part>;
   signature?: string;
 }
 
@@ -75,13 +75,13 @@ export interface MessageDelta {
   id?: string;
   thinking: string;
   contents: Array<PartDelta>;
-  toolCalls: Array<PartDelta>;
+  tool_calls: Array<PartDelta>;
   signature?: string;
 }
 
 export interface MessageOutput {
   delta: MessageDelta;
-  finishReason?: FinishReason;
+  finish_reason?: FinishReason;
 }
 
 export type Part =
