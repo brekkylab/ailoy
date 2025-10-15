@@ -49,11 +49,11 @@ export type Grammar =
   | { type: "cfg"; cfg: string };
 
 export interface InferenceConfig {
-  thinkEffort: ThinkEffort;
+  thinkEffort?: ThinkEffort;
   temperature?: number;
   topP?: number;
   maxTokens?: number;
-  grammar: Grammar;
+  grammar?: Grammar;
 }
 
 export interface LanguageModelIteratorResult {
@@ -63,17 +63,17 @@ export interface LanguageModelIteratorResult {
 
 export interface Message {
   role: Role;
-  id?: string;
-  thinking: string;
   contents: Array<Part>;
-  tool_calls: Array<Part>;
+  id?: string;
+  thinking?: string;
+  tool_calls?: Array<Part>;
   signature?: string;
 }
 
 export interface MessageDelta {
   role?: Role;
   id?: string;
-  thinking: string;
+  thinking?: string;
   contents: Array<PartDelta>;
   tool_calls: Array<PartDelta>;
   signature?: string;

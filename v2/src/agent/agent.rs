@@ -202,8 +202,8 @@ impl Agent {
                 messages_history.lock().await.push(assistant_msg.clone());
 
                 // Handling tool calls if exist
-                if !assistant_msg.tool_calls.is_empty() {
-                    for part in &assistant_msg.tool_calls {
+                if let Some(tool_calls) = assistant_msg.tool_calls && !tool_calls.is_empty() {
+                    for part in &tool_calls {
                         let Some((id, name, args)) = part.as_function() else { continue; };
                         let tool = tools.iter().find(|v| v.get_description().name == name).unwrap().clone();
                         let resp = tool.run(args.clone()).await?;

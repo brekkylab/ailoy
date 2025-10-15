@@ -14,7 +14,8 @@ use crate::{
     },
     utils::{BoxFuture, BoxStream},
     value::{
-        FinishReason, Message, MessageDelta, MessageOutput, PartDelta, PartDeltaFunction, ToolDesc,
+        FinishReason, Message, MessageDelta, MessageOutput, PartDelta, PartDeltaFunction, Role,
+        ToolDesc,
     },
 };
 
@@ -132,10 +133,10 @@ impl LocalLangModelImpl {
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         let strm = try_stream! {
             match config.think_effort {
-                ThinkEffort::Disable => {
+                Some(ThinkEffort::Disable) | None => {
                     self.chat_template.disable_thinking();
                 },
-                ThinkEffort::Enable | ThinkEffort::Low | ThinkEffort::Medium | ThinkEffort::High => {
+                _ => {
                     self.chat_template.enable_thinking();
                 },
             }
@@ -157,9 +158,10 @@ impl LocalLangModelImpl {
 
             // @jhlee: TODO remove hard-coded token names
             loop {
+                let delta = MessageDelta::new().with_role(Role::Assistant);
                 count += 1;
                 if count > config.max_tokens.unwrap_or(16384) {
-                    yield MessageOutput{delta: MessageDelta::new(), finish_reason: Some(FinishReason::Length{})};
+                    yield MessageOutput{delta, finish_reason: Some(FinishReason::Length{})};
                     break;
                 }
 
@@ -180,7 +182,7 @@ impl LocalLangModelImpl {
                 agg_tokens.clear();
 
                 if s == "<|im_end|>" {
-                    yield MessageOutput{delta: MessageDelta::new(), finish_reason: Some(finish_reason)};
+                    yield MessageOutput{delta, finish_reason: Some(finish_reason)};
                     break;
                 } else if s == "<tool_call>" {
                     mode = "tool_call".to_owned();
@@ -197,11 +199,11 @@ impl LocalLangModelImpl {
                     continue;
                 } else {
                     let delta = if mode == "content" {
-                        MessageDelta::new().with_contents([PartDelta::Text{text: s}])
+                        delta.with_contents([PartDelta::Text{text: s}])
                     } else if mode == "reasoning" {
-                        MessageDelta::new().with_thinking(s)
+                        delta.with_thinking(s)
                     } else if mode == "tool_call" {
-                        MessageDelta::new().with_tool_calls([PartDelta::Function{id: None, function: PartDeltaFunction::Verbatim{text: s}}])
+                        delta.with_tool_calls([PartDelta::Function{id: None, function: PartDeltaFunction::Verbatim{text: s}}])
                     } else {
                         unreachable!();
                     };

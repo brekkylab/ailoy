@@ -524,6 +524,26 @@ impl From<&String> for Value {
     }
 }
 
+impl From<Option<String>> for Value {
+    fn from(value: Option<String>) -> Self {
+        if let Some(value) = value {
+            Value::from(value)
+        } else {
+            Value::Null
+        }
+    }
+}
+
+impl From<&Option<String>> for Value {
+    fn from(value: &Option<String>) -> Self {
+        if let Some(value) = value {
+            Value::from(value)
+        } else {
+            Value::Null
+        }
+    }
+}
+
 impl<'a> TryFrom<&'a mut Value> for &'a mut String {
     type Error = ValueError;
 

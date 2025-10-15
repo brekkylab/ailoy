@@ -156,7 +156,7 @@ impl LangModelInference for StreamAPILangModel {
                 None
             },
             stream: true,
-            think_effort: config.think_effort,
+            think_effort: config.think_effort.unwrap_or_default(),
             temperature: config.temperature,
             top_p: config.top_p,
             max_tokens: config.max_tokens,

@@ -32,15 +32,19 @@ pub enum Role {
 pub struct Message {
     pub role: Role,
 
-    pub id: Option<String>,
-
-    pub thinking: String,
-
     pub contents: Vec<Part>,
 
-    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
-    pub tool_calls: Vec<Part>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
+    pub tool_calls: Option<Vec<Part>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
 }
 
@@ -48,10 +52,10 @@ impl Message {
     pub fn new(role: Role) -> Self {
         Self {
             role,
-            id: None,
-            thinking: String::new(),
             contents: Vec::new(),
-            tool_calls: Vec::new(),
+            id: None,
+            thinking: None,
+            tool_calls: None,
             signature: None,
         }
     }
@@ -62,7 +66,7 @@ impl Message {
     }
 
     pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
-        self.thinking = thinking.into();
+        self.thinking = Some(thinking.into());
         self
     }
 
@@ -71,7 +75,7 @@ impl Message {
         thinking: impl Into<String>,
         signature: impl Into<String>,
     ) -> Self {
-        self.thinking = thinking.into();
+        self.thinking = Some(thinking.into());
         self.signature = Some(signature.into());
         self
     }
@@ -85,7 +89,7 @@ impl Message {
         mut self,
         tool_calls: impl IntoIterator<Item = impl Into<Part>>,
     ) -> Self {
-        self.tool_calls = tool_calls.into_iter().map(|v| v.into()).collect();
+        self.tool_calls = Some(tool_calls.into_iter().map(|v| v.into()).collect());
         self
     }
 }
@@ -99,7 +103,7 @@ impl Message {
 pub struct MessageDelta {
     pub role: Option<Role>,
     pub id: Option<String>,
-    pub thinking: String,
+    pub thinking: Option<String>,
     pub contents: Vec<PartDelta>,
     #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
     pub tool_calls: Vec<PartDelta>,
@@ -122,7 +126,7 @@ impl MessageDelta {
     }
 
     pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
-        self.thinking = thinking.into();
+        self.thinking = Some(thinking.into());
         self
     }
 
@@ -131,7 +135,7 @@ impl MessageDelta {
         thinking: impl Into<String>,
         signature: impl Into<String>,
     ) -> Self {
-        self.thinking = thinking.into();
+        self.thinking = Some(thinking.into());
         self.signature = Some(signature.into());
         self
     }
@@ -192,8 +196,13 @@ impl Delta for MessageDelta {
         }
 
         // Merge think
-        if !other.thinking.is_empty() {
-            thinking.push_str(&other.thinking);
+        if let Some(thinking_rhs) = other.thinking {
+            if let Some(mut thinking_lhs) = thinking {
+                thinking_lhs.push_str(&thinking_rhs);
+                thinking = Some(thinking_lhs);
+            } else {
+                thinking = Some(thinking_rhs);
+            }
         }
 
         // Merge content
@@ -279,13 +288,13 @@ impl Delta for MessageDelta {
             for v in tool_calls.drain(..) {
                 tool_calls_new.push(v.finish()?);
             }
-            tool_calls_new
+            Some(tool_calls_new)
         };
         Ok(Message {
             role,
+            contents,
             id,
             thinking,
-            contents,
             tool_calls,
             signature,
         })

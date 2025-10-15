@@ -6,6 +6,19 @@
  * *This API requires the following crate features to be activated: `ReadableStreamType`*
  */
 type ReadableStreamType = "bytes";
+export interface ToolDesc {
+    name: string;
+    description: string | undefined;
+    parameters: Value;
+    returns: Value | undefined;
+}
+
+export type Bytes = Uint8Array;
+
+export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
+
+export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
+
 export type PartDelta = { type: "text"; text: string } | { type: "function"; id: string | undefined; function: PartDeltaFunction } | { type: "value"; value: Value } | { type: "null" };
 
 export type PartDeltaFunction = { type: "verbatim"; text: string } | { type: "with_string_args"; name: string; arguments: string } | { type: "with_parsed_args"; name: string; arguments: Value };
@@ -31,7 +44,7 @@ export type FinishReason = { type: "stop" } | { type: "length" } | { type: "tool
 export interface MessageDelta {
     role: Role | undefined;
     id: string | undefined;
-    thinking: string;
+    thinking: string | undefined;
     contents: PartDelta[];
     tool_calls: PartDelta[];
     signature: string | undefined;
@@ -39,11 +52,11 @@ export interface MessageDelta {
 
 export interface Message {
     role: Role;
-    id: string | undefined;
-    thinking: string;
     contents: Part[];
-    tool_calls: Part[];
-    signature: string | undefined;
+    id?: string;
+    thinking?: string;
+    tool_calls?: Part[];
+    signature?: string;
 }
 
 /**
@@ -52,29 +65,16 @@ export interface Message {
 export type Role = "system" | "user" | "assistant" | "tool";
 
 export interface InferenceConfig {
-    thinkEffort: ThinkEffort;
-    temperature: number | undefined;
-    topP: number | undefined;
-    maxTokens: number | undefined;
-    grammar: Grammar;
+    thinkEffort?: ThinkEffort;
+    temperature?: number;
+    topP?: number;
+    maxTokens?: number;
+    grammar?: Grammar;
 }
 
 export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema"; schema: string } | { type: "regex"; regex: string } | { type: "cfg"; cfg: string };
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
-
-export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
-
-export interface ToolDesc {
-    name: string;
-    description: string | undefined;
-    parameters: Value;
-    returns: Value | undefined;
-}
-
-export type Bytes = Uint8Array;
-
-export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
 
 export class IntoUnderlyingByteSource {
   private constructor();

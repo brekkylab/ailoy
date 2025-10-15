@@ -60,13 +60,22 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
     }
 
     let mut rv = Vec::<Value>::new();
-    if !msg.thinking.is_empty() && include_thinking {
-        rv.push(to_value!({"type": "reasoning", "summary": [{"type": "summary_text", "text": &msg.thinking}]}));
+    if let Some(thinking) = &msg.thinking
+        && !thinking.is_empty()
+        && include_thinking
+    {
+        rv.push(to_value!({"type": "reasoning", "summary": [{"type": "summary_text", "text": thinking}]}));
     }
     if !msg.contents.is_empty() {
         rv.push(to_value!({"role": msg.role.to_string(), "content": msg.contents.iter().map(part_to_value).collect::<Vec<_>>()}));
     }
-    rv.extend(msg.tool_calls.iter().map(part_to_value));
+    rv.extend(
+        msg.tool_calls
+            .clone()
+            .unwrap_or(vec![])
+            .iter()
+            .map(part_to_value),
+    );
     rv
 }
 
@@ -288,7 +297,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         .pointer_as::<String>("/delta")
                         .cloned()
                         .context("Reasoning summary text delta should be a string")?;
-                    rv.thinking.push_str(s.as_str());
+                    rv.thinking = Some(rv.thinking.unwrap_or("".into()) + &s);
                 }
                 "response.reasoning_summary_text.done" => {
                     // r#"{"type":"response.reasoning_summary_text.done","text":"**Responding to a greeting**\n\nThe user just said, \"Hello!\" So, it seems I need to engage. I'll greet them back and offer help since they're looking to chat. I could say something like, \"Hello! How can I assist you today?\" That feels friendly and open. They didn't ask a specific question, so this approach will work well for starting a conversation. Let's see where it goes from there!"}"#
@@ -382,7 +391,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
         {
             if let Some(text) = summary.as_str() {
                 // Can summary be a single string?
-                rv.thinking.push_str(text);
+                rv.thinking = Some(rv.thinking.unwrap_or("".into()) + text);
             } else if let Some(summary) = summary.as_array() {
                 // In case of part vector
                 for content in summary {
@@ -393,7 +402,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         let Some(text) = text.as_str() else {
                             bail!("Invalid content part");
                         };
-                        rv.thinking.push_str(text);
+                        rv.thinking = Some(rv.thinking.unwrap_or("".into()) + text);
                     } else {
                         bail!("Invalid part");
                     }
@@ -711,7 +720,7 @@ mod dialect_tests {
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
             delta.thinking,
-            "**Answering a simple question**\n\nUser is saying hello."
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
         );
         assert_eq!(delta.contents.len(), 1);
         let content = delta.contents.pop().unwrap();
@@ -746,7 +755,7 @@ mod dialect_tests {
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
             delta.thinking,
-            "**Answering a simple question**\n\nUser is saying hello."
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
         );
         assert_eq!(delta.contents.len(), 1);
         let content = delta.contents.pop().unwrap();
@@ -880,17 +889,16 @@ mod api_tests {
         }
         assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!(
-                "{:?}",
-                message.tool_calls.first().and_then(|f| f.as_function())
-            );
-            message.tool_calls.len() > 0
-                && message
-                    .tool_calls
+            if let Some(tool_calls) = message.tool_calls {
+                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                tool_calls
                     .first()
                     .and_then(|f| f.as_function())
                     .map(|f| f.1 == "temperature")
                     .unwrap_or(false)
+            } else {
+                false
+            }
         }));
     }
 

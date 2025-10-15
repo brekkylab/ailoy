@@ -70,10 +70,12 @@ fn marshal_message(item: &Message) -> Value {
                 .into(),
         );
     }
-    if !item.tool_calls.is_empty() {
+    if let Some(tool_calls) = &item.tool_calls
+        && !tool_calls.is_empty()
+    {
         rv.as_object_mut().unwrap().insert(
             "tool_calls".into(),
-            item.tool_calls
+            tool_calls
                 .iter()
                 .map(part_to_value)
                 .collect::<Vec<_>>()
@@ -455,7 +457,7 @@ mod dialect_tests {
             model: Some("grok-3-mini".to_owned()),
             system_message: Some("You are a helpful assistant.".to_owned()),
             stream: true,
-            think_effort: ThinkEffort::Enable,
+            think_effort: ThinkEffort::Low,
             temperature: Some(0.6),
             top_p: Some(0.9),
             max_tokens: Some(1024),
@@ -650,17 +652,16 @@ mod openai_chatcompletion_api_tests {
         }
         assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!(
-                "{:?}",
-                message.tool_calls.first().and_then(|f| f.as_function())
-            );
-            message.tool_calls.len() > 0
-                && message
-                    .tool_calls
+            if let Some(tool_calls) = message.tool_calls {
+                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                tool_calls
                     .first()
                     .and_then(|f| f.as_function())
                     .map(|f| f.1 == "temperature")
                     .unwrap_or(false)
+            } else {
+                false
+            }
         }));
     }
 
@@ -793,17 +794,16 @@ mod grok_api_tests {
         }
         assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!(
-                "{:?}",
-                message.tool_calls.first().and_then(|f| f.as_function())
-            );
-            message.tool_calls.len() > 0
-                && message
-                    .tool_calls
+            if let Some(tool_calls) = message.tool_calls {
+                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                tool_calls
                     .first()
                     .and_then(|f| f.as_function())
                     .map(|f| f.1 == "temperature")
                     .unwrap_or(false)
+            } else {
+                false
+            }
         }));
     }
 

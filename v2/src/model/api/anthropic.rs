@@ -75,8 +75,11 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
 
     // Collecting contents
     let mut contents = Vec::<Value>::new();
-    if !msg.thinking.is_empty() && include_thinking {
-        let mut part = to_value!({"type": "thinking", "thinking": &msg.thinking});
+    if let Some(thinking) = &msg.thinking
+        && !thinking.is_empty()
+        && include_thinking
+    {
+        let mut part = to_value!({"type": "thinking", "thinking": thinking});
         if let Some(sig) = &msg.signature {
             part.as_object_mut()
                 .unwrap()
@@ -85,7 +88,13 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         contents.push(part);
     }
     contents.extend(msg.contents.iter().map(part_to_value));
-    contents.extend(msg.tool_calls.iter().map(part_to_value));
+    contents.extend(
+        msg.tool_calls
+            .clone()
+            .unwrap_or(vec![])
+            .iter()
+            .map(part_to_value),
+    );
 
     // Final message object with role and collected parts
     to_value!({"role": msg.role.to_string(), "content": contents})
@@ -313,7 +322,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                         rv.contents.push(PartDelta::Text { text: text.into() });
                     }
                     if let Some(text) = val.pointer_as::<String>("/delta/thinking") {
-                        rv.thinking.push_str(text.as_str());
+                        rv.thinking = Some(rv.thinking.unwrap_or("".into()) + text);
                     }
                     if let Some(text) = val.pointer_as::<String>("/delta/signature") {
                         rv.signature = Some(text.to_owned());
@@ -384,7 +393,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                             bail!("Invalid signature content");
                         };
                         rv.signature = Some(signature.to_owned());
-                        rv.thinking = thinking.into();
+                        rv.thinking = Some(thinking.into());
                     } else if let Some(ty) = content.get("type")
                         && ty.as_str() == Some("tool_use")
                         && let Some(id) = content.get("id")
@@ -677,7 +686,7 @@ mod dialect_tests {
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
             delta.thinking,
-            "**Answering a simple question**\n\nUser is saying hello."
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
         );
         assert_eq!(delta.signature.unwrap(), "Ev4MCkYIBxgCKkDl5A");
         assert_eq!(delta.contents.len(), 1);
@@ -713,7 +722,7 @@ mod dialect_tests {
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
             delta.thinking,
-            "**Answering a simple question**\n\nUser is saying hello."
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
         );
         assert_eq!(delta.contents.len(), 1);
         let content = delta.contents.pop().unwrap();
@@ -859,17 +868,16 @@ mod api_tests {
         }
         assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!(
-                "{:?}",
-                message.tool_calls.first().and_then(|f| f.as_function())
-            );
-            message.tool_calls.len() > 0
-                && message
-                    .tool_calls
+            if let Some(tool_calls) = message.tool_calls {
+                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                tool_calls
                     .first()
                     .and_then(|f| f.as_function())
                     .map(|f| f.1 == "temperature")
                     .unwrap_or(false)
+            } else {
+                false
+            }
         }));
     }
 
