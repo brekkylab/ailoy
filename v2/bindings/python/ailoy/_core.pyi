@@ -7,6 +7,23 @@ from enum import Enum
 
 CacheResultT = typing.TypeVar("CacheResultT")
 
+class Agent:
+    ...
+
+class AgentResponse:
+    r"""
+    The yielded value from agent.run().
+    """
+    ...
+
+class BaseTool:
+    @property
+    def description(self) -> ToolDesc: ...
+    def __call__(self, **kwargs) -> typing.Any:
+        r"""
+        This is not a function used by Agents, but this let users directly call the tool function for debugging purpose.
+        """
+
 class BaseVectorStore:
     def add_vector(self, input:VectorStoreAddInput) -> builtins.str: ...
     def add_vectors(self, inputs:typing.Sequence[VectorStoreAddInput]) -> builtins.list[builtins.str]: ...
@@ -343,8 +360,21 @@ class PartImage:
     
     ...
 
+class Tool:
+    @classmethod
+    def new_py_function(cls, desc:ToolDesc, func:typing.Any) -> Tool: ...
+
 class ToolDesc:
-    ...
+    @property
+    def name(self) -> builtins.str: ...
+    @property
+    def description(self) -> typing.Optional[builtins.str]: ...
+    @property
+    def parameters(self) -> dict: ...
+    @property
+    def returns(self) -> typing.Optional[dict]: ...
+    def __new__(cls, name:builtins.str, description:typing.Optional[builtins.str], parameters:dict, *, returns:typing.Optional[dict]=None) -> ToolDesc: ...
+    def __repr__(self) -> builtins.str: ...
 
 class VectorStoreAddInput:
     @property

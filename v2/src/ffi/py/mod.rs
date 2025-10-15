@@ -2,6 +2,7 @@
 pub(crate) mod base;
 pub(crate) mod cache_progress;
 pub(crate) mod cli;
+pub(crate) mod tool;
 pub(crate) mod value;
 pub(crate) mod vector_store;
 
@@ -14,20 +15,16 @@ use pyo3::prelude::*;
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // Add classes in alphabetical order
-    // m.add_class::<Agent>()?;
+    m.add_class::<crate::agent::Agent>()?;
+    m.add_class::<crate::agent::AgentResponse>()?;
     // m.add_class::<AgentRunIterator>()?;
     // m.add_class::<AgentRunSyncIterator>()?;
     // m.add_class::<AnthropicLanguageModel>()?;
-    m.add_class::<vector_store::BaseVectorStore>()?;
-    // m.add_class::<BaseTool>()?;
-    // m.add_class::<BuiltinTool>()?;
+    // m.add_class::<vector_store::BaseVectorStore>()?;
+    m.add_class::<crate::tool::Tool>()?;
     m.add_class::<vector_store::ChromaVectorStore>()?;
     m.add_class::<vector_store::FaissVectorStore>()?;
-    // m.add_class::<MCPTool>()?;
-    // m.add_class::<MCPTransport>()?;
-    // m.add_class::<PythonAsyncFunctionTool>()?;
-    // m.add_class::<PythonFunctionTool>()?;
-    // m.add_class::<ToolDesc>()?;
+    m.add_class::<crate::value::ToolDesc>()?;
     m.add_class::<vector_store::PyVectorStoreAddInput>()?;
     m.add_class::<vector_store::PyVectorStoreGetResult>()?;
     m.add_class::<vector_store::PyVectorStoreRetrieveResult>()?;

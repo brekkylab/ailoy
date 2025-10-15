@@ -13,7 +13,21 @@ pub struct ToolDesc {
     pub returns: Option<Value>,
 }
 
-impl ToolDesc {}
+impl ToolDesc {
+    pub fn new(
+        name: String,
+        description: Option<String>,
+        parameters: Value,
+        returns: Option<Value>,
+    ) -> Self {
+        ToolDesc {
+            name,
+            description,
+            parameters,
+            returns,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ToolDescBuilder {
@@ -75,9 +89,8 @@ impl ToolDescBuilder {
 
 #[cfg(test)]
 mod test {
-    use crate::to_value;
-
     use super::*;
+    use crate::to_value;
 
     #[test]
     fn simple_tool_description_serde() {
