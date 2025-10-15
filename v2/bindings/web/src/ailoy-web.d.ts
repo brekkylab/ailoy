@@ -101,3 +101,10 @@ export class IntoUnderlyingSource {
   pull(controller: ReadableStreamDefaultController): Promise<any>;
   cancel(): void;
 }
+export class LangModel {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  static create_stream_api(spec: APISpecification, model_name: string, api_key: string): Promise<LangModel>;
+  infer(msgs: Message[], tools?: ToolDesc[] | null, config?: InferenceConfig | null): AsyncIterable<MessageOutput>;
+}
