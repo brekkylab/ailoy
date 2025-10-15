@@ -170,7 +170,7 @@ impl Agent {
                 let mut assistant_msg: Option<Message> = None;
                 {
                     let mut model = self.lm.clone();
-                    let mut strm = model.infer(messages.clone(), tool_descs.clone(), InferenceConfig::default());
+                    let mut strm = model.infer(messages.clone(), tool_descs.clone(), Vec::new(), InferenceConfig::default());
                     while let Some(out) = strm.next().await {
                         let out = out?;
                         assistant_msg_delta = assistant_msg_delta.aggregate(out.clone().delta).context("Aggregation failed")?;

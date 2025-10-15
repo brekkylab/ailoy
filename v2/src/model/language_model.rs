@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ailoy_macros::maybe_send_sync;
 use futures::StreamExt as _;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     cache::CacheProgress,
@@ -10,12 +10,14 @@ use crate::{
         LocalLangModel, StreamAPILangModel,
         api::APISpecification,
         custom::{CustomLangModel, CustomLangModelInferFunc},
+        polyfill::DocumentPolyfill,
     },
     utils::BoxStream,
-    value::{Message, MessageOutput, ToolDesc},
+    value::{Document, Message, MessageOutput, ToolDesc},
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
@@ -28,7 +30,7 @@ pub enum ThinkEffort {
     High,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen::derive::gen_stub_pyclass_complex_enum
@@ -49,11 +51,13 @@ impl Default for Grammar {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 pub struct InferenceConfig {
+    pub document_polyfill: Option<DocumentPolyfill>,
+
     pub think_effort: ThinkEffort,
 
     pub temperature: Option<f64>,
@@ -72,6 +76,7 @@ pub trait LangModelInference {
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>>;
 }
@@ -138,12 +143,13 @@ impl LangModelInference for LangModel {
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         match &mut self.inner {
-            LangModelInner::Local(model) => model.infer(msgs, tools, config),
-            LangModelInner::StreamAPI(model) => model.infer(msgs, tools, config),
-            LangModelInner::Custom(model) => model.infer(msgs, tools, config),
+            LangModelInner::Local(model) => model.infer(msgs, tools, docs, config),
+            LangModelInner::StreamAPI(model) => model.infer(msgs, tools, docs, config),
+            LangModelInner::Custom(model) => model.infer(msgs, tools, docs, config),
         }
     }
 }
