@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(raw_module = "/shim_js/dist/index.js")]
+#[wasm_bindgen(raw_module = "./shim_js/dist/index.js")]
 extern "C" {
     //////////////////////
     /// Language Model ///
