@@ -3,7 +3,7 @@ use dedent::dedent;
 use minijinja::{Environment, context};
 use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
-use crate::knowledge::KnowledgeRetrieveResult;
+use crate::value::Document;
 
 pub struct SystemMessageRenderer {
     template: String,
@@ -59,7 +59,7 @@ impl SystemMessageRenderer {
     pub fn render(
         &self,
         content: String,
-        knowledge_results: Option<Vec<KnowledgeRetrieveResult>>,
+        knowledge_results: Option<Vec<Document>>,
     ) -> anyhow::Result<String> {
         let ctx = context!(content => content, knowledge_results => knowledge_results);
         let rendered = self

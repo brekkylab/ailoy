@@ -5,7 +5,7 @@ use futures::{Stream, StreamExt, lock::Mutex};
 
 use crate::{
     agent::SystemMessageRenderer,
-    knowledge::{Knowledge, KnowledgeBehavior as _},
+    knowledge::{Knowledge, KnowledgeBehavior as _, KnowledgeConfig},
     model::{InferenceConfig, LangModel, LangModelInference as _},
     tool::{Tool, ToolBehavior as _},
     utils::log,
@@ -131,7 +131,7 @@ impl Agent {
             let system_message_content = "You are helpful assistant.".to_string();
             let knowledge_results = if let Some(knowledge) = &self.knowledge {
                 let query = contents.iter().filter(|&c| matches!(c, Part::Text{..})).map(|c| c.as_text().unwrap()).collect::<Vec<_>>().join("\n");
-                let retrieved = match knowledge.retrieve(query.clone(), 1).await {
+                let retrieved = match knowledge.retrieve(query.clone(), KnowledgeConfig::default()).await {
                     Ok(retrieved) => retrieved,
                     Err(e) => {
                         warn!("Failed to retrieve from knowledge: {}", e.to_string());

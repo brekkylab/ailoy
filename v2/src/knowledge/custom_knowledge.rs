@@ -4,14 +4,15 @@ use ailoy_macros::multi_platform_async_trait;
 use futures::future::BoxFuture;
 
 use crate::{
-    knowledge::{KnowledgeBehavior, KnowledgeRetrieveResult},
+    knowledge::{KnowledgeBehavior, KnowledgeConfig},
     utils::{MaybeSend, MaybeSync},
+    value::Document,
 };
 
 #[derive(Clone)]
 pub struct CustomKnowledge {
     f: Arc<
-        dyn Fn(String, u32) -> BoxFuture<'static, anyhow::Result<Vec<KnowledgeRetrieveResult>>>
+        dyn Fn(String, KnowledgeConfig) -> BoxFuture<'static, anyhow::Result<Vec<Document>>>
             + MaybeSend
             + MaybeSync,
     >,
@@ -28,7 +29,7 @@ impl Debug for CustomKnowledge {
 impl CustomKnowledge {
     pub fn new(
         f: Arc<
-            dyn Fn(String, u32) -> BoxFuture<'static, anyhow::Result<Vec<KnowledgeRetrieveResult>>>
+            dyn Fn(String, KnowledgeConfig) -> BoxFuture<'static, anyhow::Result<Vec<Document>>>
                 + MaybeSend
                 + MaybeSync,
         >,
@@ -42,9 +43,9 @@ impl KnowledgeBehavior for CustomKnowledge {
     async fn retrieve(
         &self,
         query: String,
-        top_k: u32,
-    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
-        (self.f)(query, top_k).await
+        config: KnowledgeConfig,
+    ) -> anyhow::Result<Vec<Document>> {
+        (self.f)(query, config).await
     }
 }
 
@@ -61,17 +62,20 @@ mod tests {
         let knowledge = Knowledge::new_custom(CustomKnowledge::new(Arc::new(|_, _| {
             async {
                 let documents = vec![
-                    KnowledgeRetrieveResult {
-                        document: "Ailoy is an awesome AI agent framework.".into(),
-                        metadata: None,
+                    Document {
+                        id: String::from("1"),
+                        title: None,
+                        text: "Ailoy is an awesome AI agent framework.".into(),
                     },
-                    KnowledgeRetrieveResult {
-                        document: "Ailoy supports Python, Javascript and Rust.".into(),
-                        metadata: None,
+                    Document {
+                        id: String::from("2"),
+                        title: None,
+                        text: "Ailoy supports Python, Javascript and Rust.".into(),
                     },
-                    KnowledgeRetrieveResult {
-                        document: "Ailoy enables running LLMs in local environment easily.".into(),
-                        metadata: None,
+                    Document {
+                        id: String::from("3"),
+                        title: None,
+                        text: "Ailoy enables running LLMs in local environment easily.".into(),
                     },
                 ];
                 Ok(documents)
