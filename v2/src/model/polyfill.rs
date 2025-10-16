@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::value::{Document, Message, Part, Role};
 
-/// Document가 native하게 지원되지 않는 LLM들에 대해서 polyfill을 해줌
+/// Provides a polyfill for LLMs that do not natively support the Document feature.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
