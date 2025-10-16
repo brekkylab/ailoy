@@ -162,7 +162,9 @@ pub enum Part {
     #[serde(rename = "value")]
     Value { value: Value },
 
-    /// Contains image data or references with optional metadata.
+    /// Contains an image payload or reference used within a message part.
+    /// The image may be provided as raw binary data or an encoded format (e.g., PNG, JPEG),
+    /// or as a reference via a URL. Optional metadata can be included alongside the image.
     #[serde(rename = "image")]
     Image { image: PartImage },
 }
