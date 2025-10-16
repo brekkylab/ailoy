@@ -73,12 +73,7 @@ where
     let cache_key = cache_key.into();
     let mut strm = Box::pin(Cache::new().try_create::<T>(cache_key));
     while let Some(item) = strm.next().await {
-        if item.is_err() {
-            // Exit the loop and return the error
-            return item.err().map(|e| Err(PyRuntimeError::new_err(e))).unwrap();
-        }
-
-        let progress = item.unwrap();
+        let progress = item?;
 
         // Call progress_callback if exists
         if let Some(callback) = &progress_callback {

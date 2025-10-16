@@ -1,6 +1,7 @@
 // mod agent;
 pub(crate) mod base;
 pub(crate) mod cache_progress;
+#[cfg(feature = "ailoy-model-cli")]
 pub(crate) mod cli;
 pub(crate) mod vector_store;
 
@@ -9,7 +10,6 @@ pub(crate) mod vector_store;
 //     PyAgentRunSyncIterator as AgentRunSyncIterator,
 // };
 use pyo3::prelude::*;
-use pyo3_stub_gen::{Result, generate::StubInfo};
 
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
@@ -44,12 +44,8 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<crate::value::Role>()?;
     m.add_class::<crate::value::ToolDesc>()?;
 
+    #[cfg(feature = "ailoy-model-cli")]
     m.add_function(wrap_pyfunction!(cli::ailoy_model_cli, m)?)?;
 
     Ok(())
-}
-
-pub fn stub_info() -> Result<StubInfo> {
-    let manifest_dir: &::std::path::Path = env!("CARGO_MANIFEST_DIR").as_ref();
-    StubInfo::from_pyproject_toml(manifest_dir.join("bindings/python/pyproject.toml"))
 }

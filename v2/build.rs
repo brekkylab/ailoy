@@ -131,6 +131,8 @@ fn build_native() {
 fn build_wasm() {
     use std::process::Command;
 
+    println!("cargo:rustc-cfg=feature=\"wasm\"");
+
     let cargo_manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
     let shim_js_dir = cargo_manifest_dir.join("shim_js");

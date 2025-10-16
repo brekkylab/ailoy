@@ -1,16 +1,10 @@
 use pyo3::{
-    IntoPyObjectExt, PyClass,
+    IntoPyObjectExt,
     exceptions::PyRuntimeError,
     prelude::*,
     types::{PyDict, PyList},
 };
 use serde_json::{Map, Value};
-
-pub trait PyWrapper: PyClass + Send + 'static {
-    type Inner: Send;
-
-    fn into_py_obj(inner: Self::Inner, py: Python<'_>) -> PyResult<Py<Self>>;
-}
 
 pub fn json_value_to_py_object(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
     match value {

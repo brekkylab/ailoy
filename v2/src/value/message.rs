@@ -9,7 +9,9 @@ use crate::value::{Delta, Part, PartDelta};
 #[strum(serialize_all = "lowercase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum Role {
     /// System instructions and constraints provided to the assistant.
     System,
@@ -44,25 +46,32 @@ pub enum Role {
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Message {
     /// Author of the message.
     pub role: Role,
 
-    /// Optional stable identifier for deduplication or threading.
-    pub id: Option<String>,
-
-    /// Internal “thinking” text used by some models before producing final output.
-    pub thinking: String,
-
     /// Primary message parts (e.g., text, image, value, or function).
     pub contents: Vec<Part>,
 
+    /// Optional stable identifier for deduplication or threading.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
+    /// Internal “thinking” text used by some models before producing final output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+
     /// Tool-call parts emitted alongside the main contents.
-    pub tool_calls: Vec<Part>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
+    pub tool_calls: Option<Vec<Part>>,
 
     /// Optional signature for the `thinking` field.
     ///
     /// This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
 }
 
@@ -70,10 +79,10 @@ impl Message {
     pub fn new(role: Role) -> Self {
         Self {
             role,
-            id: None,
-            thinking: String::new(),
             contents: Vec::new(),
-            tool_calls: Vec::new(),
+            id: None,
+            thinking: None,
+            tool_calls: None,
             signature: None,
         }
     }
@@ -84,7 +93,7 @@ impl Message {
     }
 
     pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
-        self.thinking = thinking.into();
+        self.thinking = Some(thinking.into());
         self
     }
 
@@ -93,7 +102,7 @@ impl Message {
         thinking: impl Into<String>,
         signature: impl Into<String>,
     ) -> Self {
-        self.thinking = thinking.into();
+        self.thinking = Some(thinking.into());
         self.signature = Some(signature.into());
         self
     }
@@ -107,7 +116,7 @@ impl Message {
         mut self,
         tool_calls: impl IntoIterator<Item = impl Into<Part>>,
     ) -> Self {
-        self.tool_calls = tool_calls.into_iter().map(|v| v.into()).collect();
+        self.tool_calls = Some(tool_calls.into_iter().map(|v| v.into()).collect());
         self
     }
 }
@@ -136,15 +145,18 @@ impl Message {
 /// let msg = merged.finish().unwrap();
 /// assert_eq!(msg.contents[0].as_text().unwrap(), "Hello");
 /// ```
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct MessageDelta {
     pub role: Option<Role>,
     pub id: Option<String>,
-    pub thinking: String,
+    pub thinking: Option<String>,
     pub contents: Vec<PartDelta>,
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
     pub tool_calls: Vec<PartDelta>,
     pub signature: Option<String>,
 }
@@ -165,7 +177,7 @@ impl MessageDelta {
     }
 
     pub fn with_thinking(mut self, thinking: impl Into<String>) -> Self {
-        self.thinking = thinking.into();
+        self.thinking = Some(thinking.into());
         self
     }
 
@@ -174,7 +186,7 @@ impl MessageDelta {
         thinking: impl Into<String>,
         signature: impl Into<String>,
     ) -> Self {
-        self.thinking = thinking.into();
+        self.thinking = Some(thinking.into());
         self.signature = Some(signature.into());
         self
     }
@@ -235,8 +247,13 @@ impl Delta for MessageDelta {
         }
 
         // Merge think
-        if !other.thinking.is_empty() {
-            thinking.push_str(&other.thinking);
+        if let Some(thinking_rhs) = other.thinking {
+            if let Some(mut thinking_lhs) = thinking {
+                thinking_lhs.push_str(&thinking_rhs);
+                thinking = Some(thinking_lhs);
+            } else {
+                thinking = Some(thinking_rhs);
+            }
         }
 
         // Merge content
@@ -322,13 +339,13 @@ impl Delta for MessageDelta {
             for v in tool_calls.drain(..) {
                 tool_calls_new.push(v.finish()?);
             }
-            tool_calls_new
+            Some(tool_calls_new)
         };
         Ok(Message {
             role,
+            contents,
             id,
             thinking,
-            contents,
             tool_calls,
             signature,
         })
@@ -336,22 +353,28 @@ impl Delta for MessageDelta {
 }
 
 /// Explains why a language model's streamed generation finished.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(
+    feature = "nodejs",
+    napi_derive::napi(discriminant_case = "snake_case")
+)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum FinishReason {
     /// The model stopped naturally (e.g., EOS token or stop sequence).
-    Stop(),
+    Stop {},
 
     /// Hit the maximum token/length limit.
-    Length(),
+    Length {},
 
     /// Stopped because a tool call was produced, waiting for it's execution.
-    ToolCall(),
+    ToolCall {},
 
     /// Content was refused/filtered; string provides reason.
-    Refusal(String),
+    Refusal { reason: String },
 }
 
 /// A container for a streamed message delta and its termination signal.
@@ -369,12 +392,15 @@ pub enum FinishReason {
 /// # Lifecycle
 /// - While streaming: `finish_reason` is typically `None`.
 /// - On completion: `finish_reason` is set; callers can then `finish()` the delta to obtain a concrete [`Message`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct MessageOutput {
     pub delta: MessageDelta,
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "finish_reason"))]
     pub finish_reason: Option<FinishReason>,
 }
 
