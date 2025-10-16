@@ -5,9 +5,9 @@ use futures::{Stream, StreamExt, lock::Mutex};
 
 use crate::{
     agent::SystemMessageRenderer,
-    knowledge::Knowledge,
+    knowledge::{Knowledge, KnowledgeBehavior as _},
     model::{InferenceConfig, LangModel, LangModelInference as _},
-    tool::Tool,
+    tool::{Tool, ToolBehavior as _},
     utils::log,
     value::{Delta, FinishReason, Message, MessageDelta, Part, PartDelta, Role},
     warn,
@@ -16,9 +16,9 @@ use crate::{
 #[derive(Clone)]
 pub struct Agent {
     lm: LangModel,
-    tools: Vec<Arc<dyn Tool>>,
+    tools: Vec<Tool>,
     messages: Arc<Mutex<Vec<Message>>>,
-    knowledge: Option<Arc<dyn Knowledge>>,
+    knowledge: Option<Knowledge>,
     system_message_renderer: Arc<SystemMessageRenderer>,
 }
 
@@ -34,7 +34,7 @@ pub struct AgentResponse {
 }
 
 impl Agent {
-    pub fn new(lm: LangModel, tools: impl IntoIterator<Item = Arc<dyn Tool>>) -> Self {
+    pub fn new(lm: LangModel, tools: impl IntoIterator<Item = Tool>) -> Self {
         Self {
             lm,
             tools: tools.into_iter().collect(),
@@ -55,11 +55,11 @@ impl Agent {
         self.lm.clone()
     }
 
-    pub fn get_tools(&self) -> Vec<Arc<dyn Tool>> {
+    pub fn get_tools(&self) -> Vec<Tool> {
         self.tools.clone()
     }
 
-    pub fn knowledge(&self) -> Option<Arc<dyn Knowledge>> {
+    pub fn knowledge(&self) -> Option<Knowledge> {
         self.knowledge.clone()
     }
 
@@ -68,7 +68,7 @@ impl Agent {
         Ok(())
     }
 
-    pub async fn add_tools(&mut self, tools: Vec<Arc<dyn Tool>>) -> anyhow::Result<()> {
+    pub async fn add_tools(&mut self, tools: Vec<Tool>) -> anyhow::Result<()> {
         for tool in tools.iter() {
             let tool_name = tool.get_description().name;
 
@@ -92,7 +92,7 @@ impl Agent {
         Ok(())
     }
 
-    pub async fn add_tool(&mut self, tool: Arc<dyn Tool>) -> anyhow::Result<()> {
+    pub async fn add_tool(&mut self, tool: Tool) -> anyhow::Result<()> {
         self.add_tools(vec![tool]).await
     }
 
@@ -109,17 +109,8 @@ impl Agent {
         self.remove_tools(vec![tool_name]).await
     }
 
-    pub async fn remove_mcp_tools(&mut self, client_name: String) -> anyhow::Result<()> {
-        self.tools.retain(|t| {
-            let tool_name = t.get_description().name;
-            // Remove the MCP tool if its description name is prefixed with the provided client name.
-            !tool_name.starts_with(format!("{}--", client_name).as_str())
-        });
-        Ok(())
-    }
-
-    pub fn set_knowledge(&mut self, knowledge: impl Knowledge + 'static) {
-        self.knowledge = Some(Arc::new(knowledge));
+    pub fn set_knowledge(&mut self, knowledge: Knowledge) {
+        self.knowledge = Some(knowledge);
     }
 
     pub fn remove_knowledge(&mut self) {
@@ -140,10 +131,10 @@ impl Agent {
             let system_message_content = "You are helpful assistant.".to_string();
             let knowledge_results = if let Some(knowledge) = &self.knowledge {
                 let query = contents.iter().filter(|&c| matches!(c, Part::Text{..})).map(|c| c.as_text().unwrap()).collect::<Vec<_>>().join("\n");
-                let retrieved = match knowledge.retrieve(query.clone()).await {
+                let retrieved = match knowledge.retrieve(query.clone(), 1).await {
                     Ok(retrieved) => retrieved,
                     Err(e) => {
-                        warn!("Failed to retrieve from knowledge {}: {}", knowledge.name(), e.to_string());
+                        warn!("Failed to retrieve from knowledge: {}", e.to_string());
                         vec![]
                     }
                 };
@@ -319,7 +310,7 @@ mod tests {
     //                 Part::Text("104".to_owned())
     //             }
     //         }),
-    //     )) as Arc<dyn Tool>];
+    //     )) as Tool];
     //     let mut agent = Agent::new(model, tools);
 
     //     let mut agg = MessageAggregator::new();

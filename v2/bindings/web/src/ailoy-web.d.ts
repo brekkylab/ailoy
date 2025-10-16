@@ -6,75 +6,115 @@
  * *This API requires the following crate features to be activated: `ReadableStreamType`*
  */
 type ReadableStreamType = "bytes";
-export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
+export type Value =
+  | undefined
+  | boolean
+  | number
+  | number
+  | number
+  | string
+  | Record<string, any>
+  | Value[];
 
 export interface InferenceConfig {
-    thinkEffort?: ThinkEffort;
-    temperature?: number;
-    topP?: number;
-    maxTokens?: number;
-    grammar?: Grammar;
+  thinkEffort?: ThinkEffort;
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  grammar?: Grammar;
 }
 
-export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema"; schema: string } | { type: "regex"; regex: string } | { type: "cfg"; cfg: string };
+export type Grammar =
+  | { type: "plain" }
+  | { type: "json" }
+  | { type: "jsonschema"; schema: string }
+  | { type: "regex"; regex: string }
+  | { type: "cfg"; cfg: string };
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
 
 export interface CacheProgress {
-    comment: string;
-    current: number;
-    total: number;
+  comment: string;
+  current: number;
+  total: number;
 }
 
 export interface ToolDesc {
-    name: string;
-    description?: string;
-    parameters: Value;
-    returns?: Value;
+  name: string;
+  description?: string;
+  parameters: Value;
+  returns?: Value;
 }
 
 export type Bytes = Uint8Array;
 
-export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
+export type APISpecification =
+  | "ChatCompletion"
+  | "OpenAI"
+  | "Gemini"
+  | "Claude"
+  | "Responses"
+  | "Grok";
 
-export type PartDelta = { type: "text"; text: string } | { type: "function"; id: string | undefined; function: PartDeltaFunction } | { type: "value"; value: Value } | { type: "null" };
+export type PartDelta =
+  | { type: "text"; text: string }
+  | { type: "function"; id: string | undefined; function: PartDeltaFunction }
+  | { type: "value"; value: Value }
+  | { type: "null" };
 
-export type PartDeltaFunction = { type: "verbatim"; text: string } | { type: "with_string_args"; name: string; arguments: string } | { type: "with_parsed_args"; name: string; arguments: Value };
+export type PartDeltaFunction =
+  | { type: "verbatim"; text: string }
+  | { type: "with_string_args"; name: string; arguments: string }
+  | { type: "with_parsed_args"; name: string; arguments: Value };
 
-export type Part = { type: "text"; text: string } | { type: "function"; id: string | undefined; function: PartFunction } | { type: "value"; value: Value } | { type: "image"; image: PartImage };
+export type Part =
+  | { type: "text"; text: string }
+  | { type: "function"; id: string | undefined; function: PartFunction }
+  | { type: "value"; value: Value }
+  | { type: "image"; image: PartImage };
 
-export type PartImage = { type: "binary"; height: number; width: number; colorspace: PartImageColorspace; data: Bytes };
+export type PartImage = {
+  type: "binary";
+  height: number;
+  width: number;
+  colorspace: PartImageColorspace;
+  data: Bytes;
+};
 
 export type PartImageColorspace = "grayscale" | "rgb" | "rgba";
 
 export interface PartFunction {
-    name: string;
-    arguments: Value;
+  name: string;
+  arguments: Value;
 }
 
 export interface MessageOutput {
-    delta: MessageDelta;
-    finish_reason: FinishReason | undefined;
+  delta: MessageDelta;
+  finish_reason: FinishReason | undefined;
 }
 
-export type FinishReason = { type: "stop" } | { type: "length" } | { type: "tool_call" } | { type: "refusal"; reason: string };
+export type FinishReason =
+  | { type: "stop" }
+  | { type: "length" }
+  | { type: "tool_call" }
+  | { type: "refusal"; reason: string };
 
 export interface MessageDelta {
-    role: Role | undefined;
-    id: string | undefined;
-    thinking: string | undefined;
-    contents: PartDelta[];
-    tool_calls: PartDelta[];
-    signature: string | undefined;
+  role: Role | undefined;
+  id: string | undefined;
+  thinking: string | undefined;
+  contents: PartDelta[];
+  tool_calls: PartDelta[];
+  signature: string | undefined;
 }
 
 export interface Message {
-    role: Role;
-    contents: Part[];
-    id?: string;
-    thinking?: string;
-    tool_calls?: Part[];
-    signature?: string;
+  role: Role;
+  contents: Part[];
+  id?: string;
+  thinking?: string;
+  tool_calls?: Part[];
+  signature?: string;
 }
 
 /**
@@ -111,7 +151,18 @@ export class LangModel {
   private constructor();
   free(): void;
   [Symbol.dispose](): void;
-  static create_local(modelName: string, progressCallback: (progress: CacheProgress) => void): Promise<LangModel>;
-  static create_stream_api(spec: APISpecification, modelName: string, apiKey: string): Promise<LangModel>;
-  infer(msgs: Message[], tools?: ToolDesc[] | null, config?: InferenceConfig | null): AsyncIterable<MessageOutput>;
+  static create_local(
+    modelName: string,
+    progressCallback: (progress: CacheProgress) => void
+  ): Promise<LangModel>;
+  static create_stream_api(
+    spec: APISpecification,
+    modelName: string,
+    apiKey: string
+  ): Promise<LangModel>;
+  infer(
+    msgs: Message[],
+    tools?: ToolDesc[] | null,
+    config?: InferenceConfig | null
+  ): AsyncIterable<MessageOutput>;
 }
