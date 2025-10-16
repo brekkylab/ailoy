@@ -17,7 +17,7 @@ use crate::value::{Value, delta::Delta};
 /// ```rust
 /// let f = PartFunction {
 ///     name: "translate".to_string(),
-///     args: Value::from_json(r#"{"text": "hello", "lang": "cn"}"#).unwrap(),
+///     arguments: Value::from_json(r#"{"text": "hello", "lang": "cn"}"#).unwrap(),
 /// };
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,12 +202,12 @@ impl Part {
         })
     }
 
-    pub fn function(name: impl Into<String>, args: impl Into<Value>) -> Self {
+    pub fn function(name: impl Into<String>, arguments: impl Into<Value>) -> Self {
         Self::Function {
             id: None,
             function: PartFunction {
                 name: name.into(),
-                arguments: args.into(),
+                arguments: arguments.into(),
             },
         }
     }
@@ -215,13 +215,13 @@ impl Part {
     pub fn function_with_id(
         id: impl Into<String>,
         name: impl Into<String>,
-        args: impl Into<Value>,
+        arguments: impl Into<Value>,
     ) -> Self {
         Self::Function {
             id: Some(id.into()),
             function: PartFunction {
                 name: name.into(),
-                arguments: args.into(),
+                arguments: arguments.into(),
             },
         }
     }
@@ -383,8 +383,8 @@ impl Part {
 ///
 /// # Variants
 /// * `Verbatim(String)` — Raw text content, typically a partial JSON fragment.
-/// * `WithStringArgs { name, args }` — Function name and its serialized arguments as strings.
-/// * `WithParsedArgs { name, args }` — Function name and parsed arguments as a `Value`.
+/// * `WithStringArgs { name, arguments }` — Function name and its serialized arguments as strings.
+/// * `WithParsedArgs { name, arguments }` — Function name and parsed arguments as a `Value`.
 ///
 /// # Use Case
 /// When the model streams out a function call response (e.g., `"function_call":{"name":...}`),
@@ -394,7 +394,7 @@ impl Part {
 /// ```rust
 /// let delta = PartDeltaFunction::WithStringArgs {
 ///     name: "translate".into(),
-///     args: r#"{"text":"hi"}"#.into(),
+///     arguments: r#"{"text":"hi"}"#.into(),
 /// };
 /// `
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -708,12 +708,12 @@ mod py {
             if let Ok(pydict) = ob.downcast::<PyDict>() {
                 let name_any = pydict.get_item("name")?;
                 let name: String = name_any.extract()?;
-                let args_any = pydict.get_item("args")?;
+                let args_any = pydict.get_item("arguments")?;
                 let arguments: Value = args_any.extract()?;
                 Ok(Self { name, arguments })
             } else {
                 Err(PyTypeError::new_err(
-                    "PartFunction must be a dict with keys 'name' and 'args'",
+                    "PartFunction must be a dict with keys 'name' and 'arguments'",
                 ))
             }
         }
@@ -728,7 +728,7 @@ mod py {
             let d = PyDict::new(py);
             d.set_item("name", self.name)?;
             let py_args = self.arguments.into_pyobject(py)?;
-            d.set_item("args", py_args)?;
+            d.set_item("arguments", py_args)?;
             Ok(d)
         }
     }
@@ -744,7 +744,7 @@ mod py {
 
             TypeInfo {
                 name: format!(
-                    "dict[typing.Literal[\"name\", \"args\"], typing.Union[str, {}]]",
+                    "dict[typing.Literal[\"name\", \"arguments\"], typing.Union[str, {}]]",
                     value_name
                 ),
                 import: imports,
