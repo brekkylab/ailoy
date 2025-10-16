@@ -10,8 +10,8 @@ use crate::cache::{Cache, TryFromCache};
 #[tsify(into_wasm_abi, from_wasm_abi)]
 pub struct CacheProgress {
     pub comment: String,
-    pub current: u32,
-    pub total: u32,
+    pub current: usize,
+    pub total: usize,
 }
 
 pub async fn await_cache_result<T>(
@@ -34,11 +34,11 @@ where
         if let Some(callback) = &progress_callback {
             let js_progress = CacheProgress {
                 comment: progress.comment,
-                current: progress.current_task as u32,
-                total: progress.total_task as u32,
+                current: progress.current_task,
+                total: progress.total_task,
             };
             callback
-                .call0(&js_progress.into())
+                .call1(&JsValue::NULL, &js_progress.into())
                 .map_err(|_| anyhow!("Failed to call progress callback"))?;
         }
 

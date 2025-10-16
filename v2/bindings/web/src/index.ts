@@ -1,7 +1,8 @@
-export { LangModel } from "./ailoy-web.js";
+export { LangModel, EmbeddingModel } from "./ailoy-web.js";
 export type {
   APISpecification,
   Bytes,
+  CacheProgress,
   FinishReason,
   Grammar,
   InferenceConfig,

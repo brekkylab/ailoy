@@ -6,8 +6,6 @@
  * *This API requires the following crate features to be activated: `ReadableStreamType`*
  */
 type ReadableStreamType = "bytes";
-export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
-
 export interface InferenceConfig {
     thinkEffort?: ThinkEffort;
     temperature?: number;
@@ -36,6 +34,8 @@ export interface ToolDesc {
 export type Bytes = Uint8Array;
 
 export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
+
+export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
 
 export type PartDelta = { type: "text"; text: string } | { type: "function"; id: string | undefined; function: PartDeltaFunction } | { type: "value"; value: Value } | { type: "null" };
 
@@ -82,6 +82,13 @@ export interface Message {
  */
 export type Role = "system" | "user" | "assistant" | "tool";
 
+export class EmbeddingModel {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  static create_local(modelName: string, progressCallback: (progress: CacheProgress) => void): Promise<EmbeddingModel>;
+  infer(text: string): Promise<Float32Array>;
+}
 export class IntoUnderlyingByteSource {
   private constructor();
   free(): void;
