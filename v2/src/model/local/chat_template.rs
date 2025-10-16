@@ -65,9 +65,9 @@ impl ChatTemplate {
             messages => messages,
             tools => if !tools.is_empty() { Some(tools) } else { None::<_> },
             documents => if !documents.is_empty() { Some(documents) } else { None::<_> },
-            add_generation_prompt=>add_generation_prompt,
-            enable_thinking=>enable_thinking,
-            reasoning_effort=>if !reasoning_effort.is_empty() { Some(reasoning_effort) } else { None::<_> },
+            add_generation_prompt => add_generation_prompt,
+            enable_thinking => enable_thinking,
+            reasoning_effort => if !reasoning_effort.is_empty() { Some(reasoning_effort) } else { None::<_> },
         );
         get_env()
             .get_template(&self.key)
