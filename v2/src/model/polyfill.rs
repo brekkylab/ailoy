@@ -19,6 +19,9 @@ impl DocumentPolyfill {
         documents: Vec<Document>,
     ) -> anyhow::Result<Vec<Message>> {
         // Find part indices
+        // @jhlee: Currently, templating applies only to the first text `Part` within a message.
+        // If the text `Part` is splitted, it might lead to undefined behavior.
+        // We need to find a more robust solution for handling multiple Parts and non-text cases.
         fn get_part_idx(msgs: &[Message], msg_idx: Option<usize>) -> Option<usize> {
             if let Some(msg_idx) = msg_idx {
                 msgs.get(msg_idx)
