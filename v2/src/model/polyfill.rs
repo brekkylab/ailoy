@@ -1,3 +1,4 @@
+use dedent::dedent;
 use serde::{Deserialize, Serialize};
 
 use crate::value::{Document, Message, Part, Role};
@@ -142,5 +143,30 @@ impl DocumentPolyfill {
         }
 
         Ok(msgs)
+    }
+}
+
+pub fn get_default_document_polyfill() -> DocumentPolyfill {
+    DocumentPolyfill {
+        system_message_template: Some(dedent!(r#"
+            {%- if text %}
+                {{- text }}
+            {%- endif %}
+            # Knowledges
+            After the user’s question, a list of documents retrieved from the knowledge base may appear. Try to answer the user’s question based on the provided knowledges.
+            "#
+        ).to_owned()),
+        query_message_template: Some(dedent!(r#"
+            {%- if documents %}
+                {{- "<documents>\n" }}
+                {%- for doc in documents %}
+                {{- "<document>\n" }}
+                    {{- doc.text + '\n' }}
+                {{- "</document>\n" }}
+                {%- endfor %}
+                {{- "</documents>\n" }}
+            {%- endif %}
+            "#
+        ).to_owned()),
     }
 }

@@ -69,15 +69,14 @@ impl KnowledgeBehavior for VectorStoreKnowledge {
 mod tests {
     use ailoy_macros::multi_platform_test;
     use futures::stream::StreamExt;
-    use serde_json::json;
 
     use super::*;
     use crate::{
-        agent::{Agent, SystemMessageRenderer},
+        agent::Agent,
         knowledge::{Knowledge, KnowledgeTool},
         model::{EmbeddingModel, LangModel},
         tool::{Tool, ToolBehavior as _},
-        value::{Part, Value},
+        value::Part,
         vector_store::{FaissStore, VectorStoreAddInput},
     };
 
@@ -104,31 +103,6 @@ mod tests {
 
         let knowledge = Knowledge::new_vector_store(store, embedding_model);
         Ok(knowledge)
-    }
-
-    #[multi_platform_test]
-    async fn test_vectorstore_knowledge() -> anyhow::Result<()> {
-        let knowledge = prepare_knowledge().await?;
-
-        // Testing with renderer
-        let retrieved = knowledge
-            .retrieve("What is Ailoy?".into(), KnowledgeConfig::default())
-            .await?;
-        let renderer = SystemMessageRenderer::new();
-        let rendered = renderer
-            .render("This is a system message.".into(), Some(retrieved))
-            .unwrap();
-        println!("Rendered results: {:?}", rendered);
-
-        // Testing with tool call
-        let tool = KnowledgeTool::from(knowledge);
-        let args = serde_json::from_value::<Value>(json!({
-            "query": "What is Langchain?"
-        }))?;
-        let tool_result = tool.run(args).await?;
-        println!("Tool call results: {:?}", tool_result);
-
-        Ok(())
     }
 
     #[multi_platform_test]
