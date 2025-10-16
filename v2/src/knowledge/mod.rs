@@ -27,8 +27,8 @@
 ///
 /// Vector stores are a key component in modern **RAG (Retrieval-Augmented
 /// Generation)** systems. This module provides the [`VectorStoreKnowledge`]
-/// implementation that connects any [`VectorStore`] backend with an
-/// [`EmbeddingModel`] to perform such retrievals.
+/// implementation that connects any [`crate::vector_store::VectorStore`] backend with an
+/// [`crate::model::EmbeddingModel`] to perform such retrievals.
 ///
 /// # Integration Modes
 ///
@@ -36,14 +36,15 @@
 /// natively support knowledge retrieval. The `Knowledge` module bridges this gap
 /// in two main ways:
 ///
-/// 1. **Native (Polyfill)** – When a model does not natively accept `knowledge`
-///    inputs, the system can use a polyfill (see [`DocumentPolyfill`]) to
-///    inject retrieved documents into the model’s prompt as if they were
-///    natively supported.
+/// 1. **Native** - If the LLM natively supports knowledge, it will work out of the box without any extra configuration.
+///    However, if the model does not support knowledge natively, Ailoy also ignores documents by default, without any extra setup.
+///    To make such models reference external document data during inference, you need to use a technique called polyfill.
+///    When a model does not natively accept knowledge inputs, the system can use a polyfill (see [`crate::model::DocumentPolyfill`]) to
+///    inject retrieved documents into the model’s prompt as if they were natively supported.
 ///
 /// 2. **Tool Mode** – When the model determines that it needs external knowledge,
 ///    it can call a retrieval function as a *tool* through the
-///    [`KnowledgeTool`], which implements the [`ToolBehavior`] interface.
+///    [`KnowledgeTool`], which implements the [`crate::tool::ToolBehavior`] interface.
 ///
 /// # Components
 ///
