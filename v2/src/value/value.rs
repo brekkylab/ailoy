@@ -30,14 +30,17 @@ fn decode_json_pointer_token(token: &str) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum Value {
     Null,
     Bool(bool),
     Unsigned(u64),
     Integer(i64),
-    Float(OrderedFloat<f64>),
+    Float(#[cfg_attr(feature = "wasm", tsify(type = "number"))] OrderedFloat<f64>),
     String(String),
-    Object(IndexMap<String, Value>),
+    Object(
+        #[cfg_attr(feature = "wasm", tsify(type = "Record<string, any>"))] IndexMap<String, Value>,
+    ),
     Array(Vec<Value>),
 }
 
@@ -521,6 +524,26 @@ impl From<&String> for Value {
     }
 }
 
+impl From<Option<String>> for Value {
+    fn from(value: Option<String>) -> Self {
+        if let Some(value) = value {
+            Value::from(value)
+        } else {
+            Value::Null
+        }
+    }
+}
+
+impl From<&Option<String>> for Value {
+    fn from(value: &Option<String>) -> Self {
+        if let Some(value) = value {
+            Value::from(value)
+        } else {
+            Value::Null
+        }
+    }
+}
+
 impl<'a> TryFrom<&'a mut Value> for &'a mut String {
     type Error = ValueError;
 
@@ -839,7 +862,7 @@ mod py {
             let key = if let Ok(s) = k.downcast::<PyString>() {
                 s.to_str()?.to_owned()
             } else {
-                return Err(PyTypeError::new_err("dict key must be str"));
+                return Err(PyTypeError::new_err("dict key must be str").into());
             };
             let val: Value = v.extract()?;
             out.insert(key, val);
@@ -847,7 +870,7 @@ mod py {
         Ok(out)
     }
 
-    fn py_any_to_vec<'py>(obj: &Bound<'py, PyAny>) -> anyhow::Result<Vec<Value>> {
+    fn py_any_to_vec<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Vec<Value>> {
         if let Ok(list) = obj.downcast::<PyList>() {
             return list.iter().map(|it| it.extract::<Value>()).collect();
         }
@@ -865,7 +888,7 @@ mod py {
     }
 
     impl<'py> FromPyObject<'py> for Value {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
             if ob.is_none() {
                 return Ok(Value::Null);
             }
@@ -910,7 +933,7 @@ mod py {
         type Output = Bound<'py, PyAny>;
         type Error = PyErr;
 
-        fn into_pyobject(self, py: Python<'py>) -> anyhow::Result<Self::Output> {
+        fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
             match self {
                 // None
                 Value::Null => Ok(py.None().bind(py).clone()),
@@ -949,9 +972,9 @@ mod py {
 
 #[cfg(feature = "nodejs")]
 mod node {
+    use napi::{Env, Result, Unknown, bindgen_prelude::*};
+
     use super::Value;
-    use napi::bindgen_prelude::*;
-    use napi::{Env, Result, Unknown};
 
     impl FromNapiValue for Value {
         unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
@@ -1073,4 +1096,197 @@ mod node {
     }
 
     impl ValidateNapiValue for Value {}
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use std::convert::TryFrom;
+
+    use js_sys::{Array, BigInt, Object, Reflect};
+    use wasm_bindgen::{
+        convert::{FromWasmAbi, IntoWasmAbi, OptionFromWasmAbi, OptionIntoWasmAbi},
+        describe::WasmDescribe,
+        prelude::*,
+    };
+
+    use super::Value;
+
+    impl WasmDescribe for Value {
+        fn describe() {
+            JsValue::describe()
+        }
+    }
+
+    impl FromWasmAbi for Value {
+        type Abi = <JsValue as FromWasmAbi>::Abi;
+
+        #[inline]
+        unsafe fn from_abi(js: Self::Abi) -> Self {
+            let js_value = unsafe { JsValue::from_abi(js) };
+            Value::try_from(js_value).unwrap()
+        }
+    }
+
+    impl IntoWasmAbi for Value {
+        type Abi = <JsValue as IntoWasmAbi>::Abi;
+
+        #[inline]
+        fn into_abi(self) -> Self::Abi {
+            let js_value = JsValue::from(self);
+            js_value.into_abi()
+        }
+    }
+
+    impl OptionFromWasmAbi for Value {
+        #[inline]
+        fn is_none(js: &Self::Abi) -> bool {
+            let js_value = unsafe { JsValue::from_abi(*js) };
+            let is_none = js_value.is_null() || js_value.is_undefined();
+            std::mem::forget(js_value);
+            is_none
+        }
+    }
+
+    impl OptionIntoWasmAbi for Value {
+        #[inline]
+        fn none() -> Self::Abi {
+            JsValue::NULL.into_abi()
+        }
+    }
+
+    impl TryFrom<JsValue> for Value {
+        type Error = js_sys::Error;
+
+        fn try_from(js_val: JsValue) -> Result<Self, Self::Error> {
+            // Handle null and undefined
+            if js_val.is_null() || js_val.is_undefined() {
+                return Ok(Value::Null);
+            }
+
+            // Handle boolean
+            if let Some(b) = js_val.as_bool() {
+                return Ok(Value::Bool(b));
+            }
+
+            // Handle string
+            if let Some(s) = js_val.as_string() {
+                return Ok(Value::String(s));
+            }
+
+            // Handle number
+            if let Some(n) = js_val.as_f64() {
+                if n.is_finite() && n.fract() == 0.0 {
+                    return Ok(Value::Unsigned(n as u64));
+                } else if n >= i64::MIN as f64 && n <= i64::MAX as f64 {
+                    return Ok(Value::Integer(n as i64));
+                }
+                return Ok(Value::Float(ordered_float::OrderedFloat(n)));
+            }
+
+            // Handle BigInt
+            if let Ok(bigint) = js_val.clone().dyn_into::<BigInt>() {
+                // Try to convert to u64 first
+                if let Ok(s) = bigint.to_string(10) {
+                    if let Some(s_str) = s.as_string() {
+                        // Try parsing as u64
+                        if let Ok(u) = s_str.parse::<u64>() {
+                            return Ok(Value::Unsigned(u));
+                        }
+
+                        // Try parsing as i64
+                        if let Ok(i) = s_str.parse::<i64>() {
+                            return Ok(Value::Integer(i));
+                        }
+                    }
+                }
+                // BigInt out of range
+                return Err(js_sys::Error::new("BigInt out of range"));
+            }
+
+            // Handle Array
+            if Array::is_array(&js_val) {
+                let arr = Array::from(&js_val);
+                let len = arr.length();
+                let mut vec = Vec::with_capacity(len as usize);
+
+                for i in 0..len {
+                    let elem = arr.get(i);
+                    vec.push(Value::try_from(elem)?);
+                }
+
+                return Ok(Value::Array(vec));
+            }
+
+            // Handle Object
+            if js_val.is_object() {
+                let obj = Object::from(js_val.clone());
+                let keys = Object::keys(&obj);
+                let len = keys.length();
+                let mut map = indexmap::IndexMap::with_capacity(len as usize);
+
+                for i in 0..len {
+                    let key_val = keys.get(i);
+                    if let Some(key) = key_val.as_string() {
+                        if let Ok(val) = Reflect::get(&obj, &key_val) {
+                            map.insert(key, Value::try_from(val)?);
+                        }
+                    }
+                }
+
+                return Ok(Value::Object(map));
+            }
+
+            // Fallback to null for unsupported types
+            Err(js_sys::Error::new("Unknown value type"))
+        }
+    }
+
+    impl From<Value> for JsValue {
+        fn from(value: Value) -> Self {
+            match value {
+                Value::Null => JsValue::NULL,
+                Value::Bool(b) => JsValue::from_bool(b),
+                Value::Unsigned(u) => {
+                    if u <= (1u64 << 53) {
+                        // Safe integer range
+                        JsValue::from_f64(u as f64)
+                    } else {
+                        // Use BigInt for large numbers
+                        match BigInt::new(&JsValue::from_str(&u.to_string())) {
+                            Ok(bi) => bi.into(),
+                            Err(_) => JsValue::from_f64(u as f64),
+                        }
+                    }
+                }
+                Value::Integer(i) => {
+                    if i.abs() <= (1i64 << 53) {
+                        // Safe integer range
+                        JsValue::from_f64(i as f64)
+                    } else {
+                        // Use BigInt for large numbers
+                        match BigInt::new(&JsValue::from_str(&i.to_string())) {
+                            Ok(bi) => bi.into(),
+                            Err(_) => JsValue::from_f64(i as f64),
+                        }
+                    }
+                }
+                Value::Float(f) => JsValue::from_f64(*f),
+                Value::String(s) => JsValue::from_str(&s),
+                Value::Array(arr) => {
+                    let js_arr = Array::new_with_length(arr.len() as u32);
+                    for (i, val) in arr.into_iter().enumerate() {
+                        js_arr.set(i as u32, JsValue::from(val));
+                    }
+                    js_arr.into()
+                }
+                Value::Object(map) => {
+                    let obj = Object::new();
+                    for (key, val) in map {
+                        let _ = Reflect::set(&obj, &JsValue::from_str(&key), &JsValue::from(val));
+                    }
+                    obj.into()
+                }
+            }
+        }
+    }
 }

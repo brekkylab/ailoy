@@ -20,9 +20,9 @@ fn marshal_message(item: &Message) -> Value {
             Part::Text { text } => to_value!({"type": "text", "text": text}),
             Part::Function {
                 id,
-                f: PartFunction { name, args },
+                function: PartFunction { name, arguments },
             } => {
-                let mut value = to_value!({"type": "function", "function": {"name": name, "arguments": serde_json::to_string(&args).unwrap()}});
+                let mut value = to_value!({"type": "function", "function": {"name": name, "arguments": serde_json::to_string(&arguments).unwrap()}});
                 if let Some(id) = &id {
                     value
                         .as_object_mut()
@@ -70,10 +70,12 @@ fn marshal_message(item: &Message) -> Value {
                 .into(),
         );
     }
-    if !item.tool_calls.is_empty() {
+    if let Some(tool_calls) = &item.tool_calls
+        && !tool_calls.is_empty()
+    {
         rv.as_object_mut().unwrap().insert(
             "tool_calls".into(),
-            item.tool_calls
+            tool_calls
                 .iter()
                 .map(part_to_value)
                 .collect::<Vec<_>>()
@@ -257,13 +259,13 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
                             Some(name) if name.is_string() => name.as_str().unwrap().to_owned(),
                             _ => String::new(),
                         };
-                        let args = match func.get("arguments") {
+                        let arguments = match func.get("arguments") {
                             Some(args) if args.is_string() => args.as_str().unwrap().to_owned(),
                             _ => String::new(),
                         };
                         rv.tool_calls.push(PartDelta::Function {
                             id,
-                            f: PartDeltaFunction::WithStringArgs { name, args },
+                            function: PartDeltaFunction::WithStringArgs { name, arguments },
                         });
                     }
                 }
@@ -323,18 +325,20 @@ pub(super) fn handle_event(evt: ServerEvent) -> MessageOutput {
         .pointer("/choices/0/finish_reason")
         .and_then(|v| v.as_str())
         .map(|reason| match reason {
-            "stop" => FinishReason::Stop(),
-            "end_turn" => FinishReason::Stop(),
-            "length" => FinishReason::Length(),
-            "tool_calls" => FinishReason::ToolCall(),
-            "content_filter" => {
-                FinishReason::Refusal("Model output violated Provider's safety policy.".to_owned())
-            }
-            reason => FinishReason::Refusal(format!("reason: {}", reason)),
+            "stop" => FinishReason::Stop {},
+            "end_turn" => FinishReason::Stop {},
+            "length" => FinishReason::Length {},
+            "tool_calls" => FinishReason::ToolCall {},
+            "content_filter" => FinishReason::Refusal {
+                reason: "Model output violated Provider's safety policy.".to_owned(),
+            },
+            reason => FinishReason::Refusal {
+                reason: format!("reason: {}", reason),
+            },
         });
 
     let delta = match finish_reason {
-        Some(FinishReason::Refusal(_)) => MessageDelta::default(),
+        Some(FinishReason::Refusal { .. }) => MessageDelta::default(),
         _ => serde_json::from_value::<Unmarshaled<_, ChatCompletionUnmarshal>>(choice.clone())
             .ok()
             .map(|decoded| decoded.get())
@@ -453,7 +457,7 @@ mod dialect_tests {
             model: Some("grok-3-mini".to_owned()),
             system_message: Some("You are a helpful assistant.".to_owned()),
             stream: true,
-            think_effort: ThinkEffort::Enable,
+            think_effort: ThinkEffort::Low,
             temperature: Some(0.6),
             top_p: Some(0.9),
             max_tokens: Some(1024),
@@ -578,6 +582,7 @@ mod dialect_tests {
 mod openai_chatcompletion_api_tests {
     use std::sync::LazyLock;
 
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
     use crate::{
@@ -594,7 +599,7 @@ mod openai_chatcompletion_api_tests {
             .expect("Environment variable 'OPENAI_API_KEY' is required for the tests.")
     });
 
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model =
             StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
@@ -611,15 +616,14 @@ mod openai_chatcompletion_api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_call() {
         let mut model =
             StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
@@ -646,24 +650,22 @@ mod openai_chatcompletion_api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::ToolCall()));
+        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!(
-                "{:?}",
-                message.tool_calls.first().and_then(|f| f.as_function())
-            );
-            message.tool_calls.len() > 0
-                && message
-                    .tool_calls
+            if let Some(tool_calls) = message.tool_calls {
+                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                tool_calls
                     .first()
                     .and_then(|f| f.as_function())
                     .map(|f| f.1 == "temperature")
                     .unwrap_or(false)
+            } else {
+                false
+            }
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_response() {
         let mut model =
             StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
@@ -710,7 +712,7 @@ mod openai_chatcompletion_api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
@@ -722,6 +724,7 @@ mod openai_chatcompletion_api_tests {
 mod grok_api_tests {
     use std::sync::LazyLock;
 
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
     use crate::{
@@ -738,7 +741,7 @@ mod grok_api_tests {
             .expect("Environment variable 'XAI_API_KEY' is required for the tests.")
     });
 
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model =
             StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
@@ -755,15 +758,14 @@ mod grok_api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_call() {
         let mut model =
             StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
@@ -790,24 +792,22 @@ mod grok_api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::ToolCall()));
+        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!(
-                "{:?}",
-                message.tool_calls.first().and_then(|f| f.as_function())
-            );
-            message.tool_calls.len() > 0
-                && message
-                    .tool_calls
+            if let Some(tool_calls) = message.tool_calls {
+                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                tool_calls
                     .first()
                     .and_then(|f| f.as_function())
                     .map(|f| f.1 == "temperature")
                     .unwrap_or(false)
+            } else {
+                false
+            }
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_response() {
         let mut model =
             StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
@@ -854,7 +854,7 @@ mod grok_api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
