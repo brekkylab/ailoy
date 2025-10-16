@@ -65,17 +65,17 @@ mod tests {
                     Document {
                         id: "1".to_owned(),
                         title: None,
-                        text: "Ailoy is an awesome AI agent framework.".into(),
+                        text: "Ailoy is an awesome AI agent framework.".to_owned(),
                     },
                     Document {
                         id: "2".to_owned(),
                         title: None,
-                        text: "Ailoy supports Python, Javascript and Rust.".into(),
+                        text: "Ailoy supports Python, Javascript and Rust.".to_owned(),
                     },
                     Document {
                         id: "3".to_owned(),
                         title: None,
-                        text: "Ailoy enables running LLMs in local environment easily.".into(),
+                        text: "Ailoy enables running LLMs in local environment easily.".to_owned(),
                     },
                 ];
                 Ok(documents)

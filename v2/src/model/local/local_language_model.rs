@@ -161,7 +161,7 @@ impl LocalLangModelImpl {
 
             // @jhlee: TODO remove hard-coded token names
             loop {
-                let delta = MessageDelta::new().with_role(Role::Assistant);
+                let delta = MessageDelta::new();
                 count += 1;
                 if count > config.max_tokens.unwrap_or(16384) {
                     yield MessageOutput{delta, finish_reason: Some(FinishReason::Length{})};
