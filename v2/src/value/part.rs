@@ -4,22 +4,6 @@ use serde::{Deserialize, Serialize};
 use crate::value::{Value, delta::Delta};
 
 /// Represents a function call contained within a message part.
-///
-/// Many language models (LLMs) use a **function calling** mechanism to extend their capabilities.
-/// When an LLM decides to use external *tools*, it produces a structured output called a `function`.
-/// A function conventionally consists of two fields: a `name`, and an `arguments` field formatted as JSON.
-/// This is conceptually similar to making an HTTP POST request, where the request body carries a single JSON object.
-///
-/// This struct models that convention, representing a function invocation request
-/// from an LLM to an external tool or API.
-///
-/// # Examples
-/// ```rust
-/// let f = PartFunction {
-///     name: "translate".to_string(),
-///     arguments: Value::from_json(r#"{"text": "hello", "lang": "cn"}"#).unwrap(),
-/// };
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
@@ -144,15 +128,32 @@ pub enum PartImage {
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum Part {
-    /// Represents a structured function call to an external tool.
+    /// Plain utf-8 encoded text.
     Text { text: String },
 
+    /// Represents a structured function call to an external tool.
+    ///
+    /// Many language models (LLMs) use a **function calling** mechanism to extend their capabilities.
+    /// When an LLM decides to use external *tools*, it produces a structured output called a `function`.
+    /// A function conventionally consists of two fields: a `name`, and an `arguments` field formatted as JSON.
+    /// This is conceptually similar to making an HTTP POST request, where the request body carries a single JSON object.
+    ///
+    /// This struct models that convention, representing a function invocation request
+    /// from an LLM to an external tool or API.
+    ///
+    /// # Examples
+    /// ```rust
+    /// let f = PartFunction {
+    ///     name: "translate".to_string(),
+    ///     arguments: Value::from_json(r#"{"source": "hello", "lang": "cn"}"#).unwrap(),
+    /// };
+    /// ```
     Function {
         id: Option<String>,
         function: PartFunction,
     },
 
-    /// Holds a structured data value, typically a JSON object.
+    /// Holds a structured data value, typically considered as a JSON structure.
     Value { value: Value },
 
     /// Contains an image payload or reference used within a message part.
