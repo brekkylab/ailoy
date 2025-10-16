@@ -62,8 +62,8 @@
 //! use crate::model::EmbeddingModel;
 //!
 //! // Create a vector-store based knowledge source
-//! let store = SimpleVectorStore::new();
-//! let embedding_model = EmbeddingModel::new("BAAI/BGE-m3").await;
+//! let store = FaissStore::new(3).await.unwrap();
+//! let embedding_model = EmbeddingModel::new("BAAI/bge-m3").await;
 //! let knowledge = Knowledge::new_vector_store(store, embedding_model);
 //!
 //! // Retrieve relevant documents for a query
