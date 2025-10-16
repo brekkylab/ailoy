@@ -5,26 +5,24 @@ use crate::value::{Value, delta::Delta};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct PartFunction {
     pub name: String,
-    #[serde(rename = "arguments")]
-    pub args: Value,
+    pub arguments: Value,
 }
 
 #[derive(
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
 )]
-#[serde(untagged)]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartImageColorspace {
-    #[strum(serialize = "grayscale")]
-    #[serde(rename = "grayscale")]
     Grayscale,
-    #[strum(serialize = "rgb")]
-    #[serde(rename = "rgb")]
     RGB,
-    #[strum(serialize = "rgba")]
-    #[serde(rename = "rgba")]
     RGBA,
 }
 
@@ -47,48 +45,49 @@ impl TryFrom<String> for PartImageColorspace {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "media-type")]
+#[serde(tag = "type", rename_all = "lowercase")]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(discriminant_case = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartImage {
-    #[serde(rename = "image/x-binary")]
     Binary {
-        #[serde(rename = "height")]
-        h: u32,
-        #[serde(rename = "width")]
-        w: u32,
-        #[serde(rename = "colorspace")]
-        c: PartImageColorspace,
+        height: u32,
+        width: u32,
+        colorspace: PartImageColorspace,
         #[cfg_attr(feature = "nodejs", napi_derive::napi(ts_type = "Buffer"))]
         data: super::bytes::Bytes,
     },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "lowercase")]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(discriminant_case = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum Part {
-    #[serde(rename = "text")]
-    Text { text: String },
-    #[serde(rename = "function")]
+    Text {
+        text: String,
+    },
     Function {
         id: Option<String>,
-        #[serde(rename = "function")]
-        f: PartFunction,
+        function: PartFunction,
     },
-    #[serde(rename = "value")]
-    Value { value: Value },
-    #[serde(rename = "image")]
-    Image { image: PartImage },
+    Value {
+        value: Value,
+    },
+    Image {
+        image: PartImage,
+    },
 }
 
 impl Part {
@@ -113,10 +112,10 @@ impl Part {
         }
         Ok(Self::Image {
             image: PartImage::Binary {
-                h: height as u32,
-                w: width as u32,
-                c: colorspace,
-                data: super::bytes::Bytes(data),
+                height: height as u32,
+                width: width as u32,
+                colorspace,
+                data: super::bytes::Bytes(data.into()),
             },
         })
     }
@@ -124,9 +123,9 @@ impl Part {
     pub fn function(name: impl Into<String>, args: impl Into<Value>) -> Self {
         Self::Function {
             id: None,
-            f: PartFunction {
+            function: PartFunction {
                 name: name.into(),
-                args: args.into(),
+                arguments: args.into(),
             },
         }
     }
@@ -138,9 +137,9 @@ impl Part {
     ) -> Self {
         Self::Function {
             id: Some(id.into()),
-            f: PartFunction {
+            function: PartFunction {
                 name: name.into(),
-                args: args.into(),
+                arguments: args.into(),
             },
         }
     }
@@ -191,8 +190,8 @@ impl Part {
         match self {
             Self::Function {
                 id,
-                f: PartFunction { name, args },
-            } => Some((id.as_deref(), name.as_str(), args)),
+                function: PartFunction { name, arguments },
+            } => Some((id.as_deref(), name.as_str(), arguments)),
             _ => None,
         }
     }
@@ -201,8 +200,8 @@ impl Part {
         match self {
             Self::Function {
                 id,
-                f: PartFunction { name, args },
-            } => Some((id.as_mut(), name, args)),
+                function: PartFunction { name, arguments },
+            } => Some((id.as_mut(), name, arguments)),
             _ => None,
         }
     }
@@ -237,18 +236,18 @@ impl Part {
             Self::Image {
                 image:
                     PartImage::Binary {
-                        h,
-                        w,
-                        c,
+                        height,
+                        width,
+                        colorspace,
                         data: super::bytes::Bytes(buf),
                     },
             } => {
-                let (h, w) = (*h as u32, *w as u32);
-                let nbytes = buf.len() as u32 / h / w / c.channel();
-                match (c, nbytes) {
+                let (h, w) = (*height as u32, *width as u32);
+                let nbytes = buf.len() as u32 / h / w / colorspace.channel();
+                match (colorspace, nbytes) {
                     // Grayscale 8-bit
                     (&PartImageColorspace::Grayscale, 1) => {
-                        let buf = image::GrayImage::from_raw(w, h, buf.clone())?;
+                        let buf = image::GrayImage::from_raw(w, h, buf.to_vec())?;
                         Some(image::DynamicImage::ImageLuma8(buf))
                     }
                     // Grayscale 16-bit
@@ -262,12 +261,12 @@ impl Part {
                     }
                     // RGB 8-bit
                     (&PartImageColorspace::RGB, 1) => {
-                        let buf = image::RgbImage::from_raw(w, h, buf.clone())?;
+                        let buf = image::RgbImage::from_raw(w, h, buf.to_vec())?;
                         Some(image::DynamicImage::ImageRgb8(buf))
                     }
                     // RGBA 8-bit
                     (&PartImageColorspace::RGBA, 1) => {
-                        let buf = image::RgbaImage::from_raw(w, h, buf.clone())?;
+                        let buf = image::RgbaImage::from_raw(w, h, buf.to_vec())?;
                         Some(image::DynamicImage::ImageRgba8(buf))
                     }
                     // RGB 16-bit
@@ -297,48 +296,49 @@ impl Part {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(
+    feature = "nodejs",
+    napi_derive::napi(discriminant_case = "snake_case")
+)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartDeltaFunction {
-    Verbatim(String),
-    WithStringArgs {
-        name: String,
-        #[serde(rename = "arguments")]
-        args: String,
-    },
-    WithParsedArgs {
-        name: String,
-        #[serde(rename = "arguments")]
-        args: Value,
-    },
+    Verbatim { text: String },
+    WithStringArgs { name: String, arguments: String },
+    WithParsedArgs { name: String, arguments: Value },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(
+    feature = "nodejs",
+    napi_derive::napi(discriminant_case = "snake_case")
+)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartDelta {
     Text {
         text: String,
     },
     Function {
         id: Option<String>,
-        #[serde(rename = "function")]
-        f: PartDeltaFunction,
+        function: PartDeltaFunction,
     },
     Value {
         value: Value,
     },
-    Null(),
+    Null {},
 }
 
 impl PartDelta {
@@ -351,7 +351,7 @@ impl PartDelta {
     pub fn is_verbatim_function(&self) -> bool {
         match self {
             Self::Function {
-                f: PartDeltaFunction::Verbatim(..),
+                function: PartDeltaFunction::Verbatim { .. },
                 ..
             } => true,
             _ => false,
@@ -361,7 +361,7 @@ impl PartDelta {
     pub fn is_function(&self) -> bool {
         match self {
             Self::Function {
-                f: PartDeltaFunction::WithStringArgs { .. },
+                function: PartDeltaFunction::WithStringArgs { .. },
                 ..
             } => true,
             _ => false,
@@ -371,7 +371,7 @@ impl PartDelta {
     pub fn is_parsed_function(&self) -> bool {
         match self {
             Self::Function {
-                f: PartDeltaFunction::WithParsedArgs { .. },
+                function: PartDeltaFunction::WithParsedArgs { .. },
                 ..
             } => true,
             _ => false,
@@ -389,7 +389,7 @@ impl PartDelta {
         match self {
             Self::Text { text } => Some(text),
             Self::Function {
-                f: PartDeltaFunction::Verbatim(text),
+                function: PartDeltaFunction::Verbatim { text },
                 ..
             } => Some(text),
             _ => None,
@@ -400,8 +400,8 @@ impl PartDelta {
         match self {
             Self::Function {
                 id,
-                f: PartDeltaFunction::WithStringArgs { name, args },
-            } => Some((id, name, args)),
+                function: PartDeltaFunction::WithStringArgs { name, arguments },
+            } => Some((id, name, arguments)),
             _ => None,
         }
     }
@@ -410,8 +410,8 @@ impl PartDelta {
         match self {
             Self::Function {
                 id,
-                f: PartDeltaFunction::WithParsedArgs { name, args },
-            } => Some((id, name, args)),
+                function: PartDeltaFunction::WithParsedArgs { name, arguments },
+            } => Some((id, name, arguments)),
             _ => None,
         }
     }
@@ -426,7 +426,7 @@ impl PartDelta {
 
 impl Default for PartDelta {
     fn default() -> Self {
-        Self::Null()
+        Self::Null {}
     }
 }
 
@@ -436,12 +436,21 @@ impl Delta for PartDelta {
 
     fn aggregate(self, other: Self) -> anyhow::Result<Self> {
         match (self, other) {
-            (PartDelta::Null(), other) => Ok(other),
+            (PartDelta::Null {}, other) => Ok(other),
             (PartDelta::Text { text: mut t1 }, PartDelta::Text { text: t2 }) => {
                 t1.push_str(&t2);
                 Ok(PartDelta::Text { text: t1 })
             }
-            (PartDelta::Function { id: id1, f: f1 }, PartDelta::Function { id: id2, f: f2 }) => {
+            (
+                PartDelta::Function {
+                    id: id1,
+                    function: f1,
+                },
+                PartDelta::Function {
+                    id: id2,
+                    function: f2,
+                },
+            ) => {
                 let id = match (id1, id2) {
                     (Some(id1), Some(id2)) => {
                         if id1 != id2 {
@@ -458,31 +467,46 @@ impl Delta for PartDelta {
                     (None, None) => None,
                 };
                 let f = match (f1, f2) {
-                    (PartDeltaFunction::Verbatim(mut t1), PartDeltaFunction::Verbatim(t2)) => {
+                    (
+                        PartDeltaFunction::Verbatim { text: mut t1 },
+                        PartDeltaFunction::Verbatim { text: t2 },
+                    ) => {
                         t1.push_str(&t2);
-                        PartDeltaFunction::Verbatim(t1)
+                        PartDeltaFunction::Verbatim { text: t1 }
                     }
                     (
                         PartDeltaFunction::WithStringArgs {
                             name: mut n1,
-                            args: mut a1,
+                            arguments: mut a1,
                         },
-                        PartDeltaFunction::WithStringArgs { name: n2, args: a2 },
+                        PartDeltaFunction::WithStringArgs {
+                            name: n2,
+                            arguments: a2,
+                        },
                     ) => {
                         n1.push_str(&n2);
                         a1.push_str(&a2);
-                        PartDeltaFunction::WithStringArgs { name: n1, args: a1 }
+                        PartDeltaFunction::WithStringArgs {
+                            name: n1,
+                            arguments: a1,
+                        }
                     }
                     (
                         PartDeltaFunction::WithParsedArgs {
                             name: mut n1,
-                            args: _,
+                            arguments: _,
                         },
-                        PartDeltaFunction::WithParsedArgs { name: n2, args: a2 },
+                        PartDeltaFunction::WithParsedArgs {
+                            name: n2,
+                            arguments: a2,
+                        },
                     ) => {
                         // @jhlee: Rather than just replacing, merge logic could be helpful
                         n1.push_str(&n2);
-                        PartDeltaFunction::WithParsedArgs { name: n1, args: a2 }
+                        PartDeltaFunction::WithParsedArgs {
+                            name: n1,
+                            arguments: a2,
+                        }
                     }
                     (f1, f2) => bail!(
                         "Aggregation between those two function delta {:?}, {:?} is not defined.",
@@ -490,7 +514,7 @@ impl Delta for PartDelta {
                         f2
                     ),
                 };
-                Ok(PartDelta::Function { id, f })
+                Ok(PartDelta::Function { id, function: f })
             }
             (pd1, pd2) => {
                 bail!(
@@ -504,35 +528,40 @@ impl Delta for PartDelta {
 
     fn finish(self) -> anyhow::Result<Self::Item> {
         match self {
-            PartDelta::Null() => Ok(Part::Text {
+            PartDelta::Null {} => Ok(Part::Text {
                 text: String::new(),
             }),
             PartDelta::Text { text } => Ok(Part::Text { text }),
-            PartDelta::Function { id, f } => {
-                let f = match f {
+            PartDelta::Function { id, function } => {
+                let function = match function {
                     // Try json deserialization if verbatim
-                    PartDeltaFunction::Verbatim(text) => match serde_json::from_str::<Value>(&text)
-                    {
-                        Ok(root) => {
-                            match (root.pointer_as::<str>("/name"), root.pointer("/arguments")) {
-                                (Some(name), Some(args)) => PartFunction {
-                                    name: name.to_owned(),
-                                    args: args.to_owned(),
-                                },
-                                _ => bail!("Invalid function JSON"),
+                    PartDeltaFunction::Verbatim { text } => {
+                        match serde_json::from_str::<Value>(&text) {
+                            Ok(root) => {
+                                match (root.pointer_as::<str>("/name"), root.pointer("/arguments"))
+                                {
+                                    (Some(name), Some(args)) => PartFunction {
+                                        name: name.to_owned(),
+                                        arguments: args.to_owned(),
+                                    },
+                                    _ => bail!("Invalid function JSON"),
+                                }
                             }
+                            Err(_) => bail!("Invalid JSON"),
                         }
-                        Err(_) => bail!("Invalid JSON"),
-                    },
+                    }
                     // Try json deserialization for args
-                    PartDeltaFunction::WithStringArgs { name, args } => {
-                        let args = serde_json::from_str::<Value>(&args).context("Invalid JSON")?;
-                        PartFunction { name, args }
+                    PartDeltaFunction::WithStringArgs { name, arguments } => {
+                        let arguments =
+                            serde_json::from_str::<Value>(&arguments).context("Invalid JSON")?;
+                        PartFunction { name, arguments }
                     }
                     // As-is
-                    PartDeltaFunction::WithParsedArgs { name, args } => PartFunction { name, args },
+                    PartDeltaFunction::WithParsedArgs { name, arguments } => {
+                        PartFunction { name, arguments }
+                    }
                 };
-                Ok(Part::Function { id, f })
+                Ok(Part::Function { id, function })
             }
             PartDelta::Value { value } => Ok(Part::Value { value }),
         }
@@ -551,13 +580,13 @@ mod py {
     use super::*;
 
     impl<'py> FromPyObject<'py> for PartFunction {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
             if let Ok(pydict) = ob.downcast::<PyDict>() {
                 let name_any = pydict.get_item("name")?;
                 let name: String = name_any.extract()?;
                 let args_any = pydict.get_item("args")?;
-                let args: Value = args_any.extract()?;
-                Ok(Self { name, args })
+                let arguments: Value = args_any.extract()?;
+                Ok(Self { name, arguments })
             } else {
                 Err(PyTypeError::new_err(
                     "PartFunction must be a dict with keys 'name' and 'args'",
@@ -568,15 +597,13 @@ mod py {
 
     impl<'py> IntoPyObject<'py> for PartFunction {
         type Target = PyDict;
-
         type Output = Bound<'py, PyDict>;
-
         type Error = PyErr;
 
         fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
             let d = PyDict::new(py);
             d.set_item("name", self.name)?;
-            let py_args = self.args.into_pyobject(py)?;
+            let py_args = self.arguments.into_pyobject(py)?;
             d.set_item("args", py_args)?;
             Ok(d)
         }
@@ -612,10 +639,10 @@ mod py {
     }
 
     impl<'py> FromPyObject<'py> for PartImageColorspace {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> anyhow::Result<Self> {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
             let s: &str = ob.extract()?;
             s.parse::<PartImageColorspace>()
-                .map_err(|_| PyValueError::new_bail!("Invalid colorspace: {s}"))
+                .map_err(|_| PyValueError::new_err(format!("Invalid colorspace: {s}")))
         }
     }
 

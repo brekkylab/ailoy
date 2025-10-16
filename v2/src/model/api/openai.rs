@@ -19,9 +19,9 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
             Part::Text { text } => to_value!({"type": "input_text", "text": text}),
             Part::Function {
                 id,
-                f: PartFunction { name, args },
+                function: PartFunction { name, arguments },
             } => {
-                let arguments_string = serde_json::to_string(args).unwrap();
+                let arguments_string = serde_json::to_string(arguments).unwrap();
                 if let Some(id) = id {
                     to_value!({"type": "function_call", "call_id":id, "name": name, "arguments": arguments_string})
                 } else {
@@ -60,13 +60,22 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
     }
 
     let mut rv = Vec::<Value>::new();
-    if !msg.thinking.is_empty() && include_thinking {
-        rv.push(to_value!({"type": "reasoning", "summary": [{"type": "summary_text", "text": &msg.thinking}]}));
+    if let Some(thinking) = &msg.thinking
+        && !thinking.is_empty()
+        && include_thinking
+    {
+        rv.push(to_value!({"type": "reasoning", "summary": [{"type": "summary_text", "text": thinking}]}));
     }
     if !msg.contents.is_empty() {
         rv.push(to_value!({"role": msg.role.to_string(), "content": msg.contents.iter().map(part_to_value).collect::<Vec<_>>()}));
     }
-    rv.extend(msg.tool_calls.iter().map(part_to_value));
+    rv.extend(
+        msg.tool_calls
+            .clone()
+            .unwrap_or(vec![])
+            .iter()
+            .map(part_to_value),
+    );
     rv
 }
 
@@ -248,9 +257,9 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         rv.role = Some(Role::Assistant);
                         rv.tool_calls.push(PartDelta::Function {
                             id,
-                            f: PartDeltaFunction::WithStringArgs {
+                            function: PartDeltaFunction::WithStringArgs {
                                 name: name.to_owned(),
-                                args: args.to_owned(),
+                                arguments: args.to_owned(),
                             },
                         });
                     }
@@ -288,7 +297,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         .pointer_as::<String>("/delta")
                         .cloned()
                         .context("Reasoning summary text delta should be a string")?;
-                    rv.thinking.push_str(s.as_str());
+                    rv.thinking = Some(rv.thinking.unwrap_or("".into()) + &s);
                 }
                 "response.reasoning_summary_text.done" => {
                     // r#"{"type":"response.reasoning_summary_text.done","text":"**Responding to a greeting**\n\nThe user just said, \"Hello!\" So, it seems I need to engage. I'll greet them back and offer help since they're looking to chat. I could say something like, \"Hello! How can I assist you today?\" That feels friendly and open. They didn't ask a specific question, so this approach will work well for starting a conversation. Let's see where it goes from there!"}"#
@@ -301,15 +310,15 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                     // r#"{"type":"response.function_call_arguments.delta","delta":","}"#,
                     // r#"{"type":"response.function_call_arguments.delta","delta":" France"}"#,
                     // r#"{"type":"response.function_call_arguments.delta","delta":"\"}"}"#,
-                    let args = val
+                    let arguments = val
                         .pointer_as::<String>("/delta")
                         .cloned()
                         .context("Function call argument delta should be a string")?;
                     rv.tool_calls.push(PartDelta::Function {
                         id: None,
-                        f: PartDeltaFunction::WithStringArgs {
+                        function: PartDeltaFunction::WithStringArgs {
                             name: String::new(),
-                            args,
+                            arguments,
                         },
                     });
                 }
@@ -382,7 +391,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
         {
             if let Some(text) = summary.as_str() {
                 // Can summary be a single string?
-                rv.thinking.push_str(text);
+                rv.thinking = Some(rv.thinking.unwrap_or("".into()) + text);
             } else if let Some(summary) = summary.as_array() {
                 // In case of part vector
                 for content in summary {
@@ -393,7 +402,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                         let Some(text) = text.as_str() else {
                             bail!("Invalid content part");
                         };
-                        rv.thinking.push_str(text);
+                        rv.thinking = Some(rv.thinking.unwrap_or("".into()) + text);
                     } else {
                         bail!("Invalid part");
                     }
@@ -415,13 +424,13 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
                 Some(name) if name.is_string() => name.as_str().unwrap().to_owned(),
                 _ => String::new(),
             };
-            let args = match root.get("arguments") {
+            let arguments = match root.get("arguments") {
                 Some(args) if args.is_string() => args.as_str().unwrap().to_owned(),
                 _ => String::new(),
             };
             rv.tool_calls.push(PartDelta::Function {
                 id,
-                f: PartDeltaFunction::WithStringArgs { name, args },
+                function: PartDeltaFunction::WithStringArgs { name, arguments },
             });
         };
 
@@ -467,7 +476,7 @@ pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
             // Valid termination of stream
             return MessageOutput {
                 delta: MessageDelta::default(),
-                finish_reason: Some(FinishReason::Stop()),
+                finish_reason: Some(FinishReason::Stop {}),
             };
         }
         "response.refusal.done" => {
@@ -478,7 +487,9 @@ pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
                 .unwrap_or_else(|| "reason: unknown");
             return MessageOutput {
                 delta: MessageDelta::default(),
-                finish_reason: Some(FinishReason::Refusal(refusal_text.to_owned())),
+                finish_reason: Some(FinishReason::Refusal {
+                    reason: refusal_text.to_owned(),
+                }),
             };
         }
         "response.incomplete" => {
@@ -488,11 +499,13 @@ pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
                 .and_then(|v| v.as_str())
                 .unwrap_or_else(|| "unknown");
             let finish_reason = match reason {
-                "max_output_tokens" => FinishReason::Length(),
-                "content_filter" => FinishReason::Refusal(
-                    "Model output violated OpenAI's safety policy.".to_owned(),
-                ),
-                reason => FinishReason::Refusal(format!("reason: {}", reason)),
+                "max_output_tokens" => FinishReason::Length {},
+                "content_filter" => FinishReason::Refusal {
+                    reason: "Model output violated OpenAI's safety policy.".to_owned(),
+                },
+                reason => FinishReason::Refusal {
+                    reason: format!("reason: {}", reason),
+                },
             };
             return MessageOutput {
                 delta: MessageDelta::default(),
@@ -707,7 +720,7 @@ mod dialect_tests {
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
             delta.thinking,
-            "**Answering a simple question**\n\nUser is saying hello."
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
         );
         assert_eq!(delta.contents.len(), 1);
         let content = delta.contents.pop().unwrap();
@@ -742,7 +755,7 @@ mod dialect_tests {
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
             delta.thinking,
-            "**Answering a simple question**\n\nUser is saying hello."
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
         );
         assert_eq!(delta.contents.len(), 1);
         let content = delta.contents.pop().unwrap();
@@ -807,6 +820,7 @@ mod dialect_tests {
 mod api_tests {
     use std::sync::LazyLock;
 
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt as _;
 
     use crate::{
@@ -824,7 +838,7 @@ mod api_tests {
             .expect("Environment variable 'OPENAI_API_KEY' is required for the tests.")
     });
 
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model =
             StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
@@ -839,15 +853,14 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_call() {
         let mut model =
             StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
@@ -874,24 +887,22 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!(
-                "{:?}",
-                message.tool_calls.first().and_then(|f| f.as_function())
-            );
-            message.tool_calls.len() > 0
-                && message
-                    .tool_calls
+            if let Some(tool_calls) = message.tool_calls {
+                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                tool_calls
                     .first()
                     .and_then(|f| f.as_function())
                     .map(|f| f.1 == "temperature")
                     .unwrap_or(false)
+            } else {
+                false
+            }
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_response() {
         let mut model =
             StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
@@ -938,7 +949,7 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0

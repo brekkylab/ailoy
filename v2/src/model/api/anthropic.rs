@@ -19,10 +19,10 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             Part::Text { text } => to_value!({"type": "text", "text": text}),
             Part::Function {
                 id,
-                f: PartFunction { name, args },
+                function: PartFunction { name, arguments },
             } => {
                 let mut value =
-                    to_value!({"type": "tool_use", "name": name, "input": args.clone()});
+                    to_value!({"type": "tool_use", "name": name, "input": arguments.clone()});
                 if let Some(id) = id {
                     value
                         .as_object_mut()
@@ -75,8 +75,11 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
 
     // Collecting contents
     let mut contents = Vec::<Value>::new();
-    if !msg.thinking.is_empty() && include_thinking {
-        let mut part = to_value!({"type": "thinking", "thinking": &msg.thinking});
+    if let Some(thinking) = &msg.thinking
+        && !thinking.is_empty()
+        && include_thinking
+    {
+        let mut part = to_value!({"type": "thinking", "thinking": thinking});
         if let Some(sig) = &msg.signature {
             part.as_object_mut()
                 .unwrap()
@@ -85,7 +88,13 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         contents.push(part);
     }
     contents.extend(msg.contents.iter().map(part_to_value));
-    contents.extend(msg.tool_calls.iter().map(part_to_value));
+    contents.extend(
+        msg.tool_calls
+            .clone()
+            .unwrap_or(vec![])
+            .iter()
+            .map(part_to_value),
+    );
 
     // Final message object with role and collected parts
     to_value!({"role": msg.role.to_string(), "content": contents})
@@ -293,7 +302,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                                 .pointer_as::<String>("/content_block/name")
                                 .cloned()
                                 .unwrap_or_default();
-                            let args = if let Some(input) =
+                            let arguments = if let Some(input) =
                                 val.pointer_as::<String>("/content_block/input")
                             {
                                 input.clone()
@@ -302,7 +311,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                             };
                             rv.tool_calls.push(PartDelta::Function {
                                 id,
-                                f: PartDeltaFunction::WithStringArgs { name, args },
+                                function: PartDeltaFunction::WithStringArgs { name, arguments },
                             });
                         }
                         _ => {}
@@ -313,7 +322,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                         rv.contents.push(PartDelta::Text { text: text.into() });
                     }
                     if let Some(text) = val.pointer_as::<String>("/delta/thinking") {
-                        rv.thinking.push_str(text.as_str());
+                        rv.thinking = Some(rv.thinking.unwrap_or("".into()) + text);
                     }
                     if let Some(text) = val.pointer_as::<String>("/delta/signature") {
                         rv.signature = Some(text.to_owned());
@@ -321,9 +330,9 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                     if let Some(args) = val.pointer_as::<String>("/delta/partial_json") {
                         rv.tool_calls.push(PartDelta::Function {
                             id: None,
-                            f: PartDeltaFunction::WithStringArgs {
+                            function: PartDeltaFunction::WithStringArgs {
                                 name: String::new(),
-                                args: args.to_owned(),
+                                arguments: args.to_owned(),
                             },
                         });
                     }
@@ -384,7 +393,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                             bail!("Invalid signature content");
                         };
                         rv.signature = Some(signature.to_owned());
-                        rv.thinking = thinking.into();
+                        rv.thinking = Some(thinking.into());
                     } else if let Some(ty) = content.get("type")
                         && ty.as_str() == Some("tool_use")
                         && let Some(id) = content.get("id")
@@ -393,9 +402,9 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
                     {
                         rv.tool_calls.push(PartDelta::Function {
                             id: id.as_str().and_then(|id| Some(id.to_owned())),
-                            f: PartDeltaFunction::WithStringArgs {
+                            function: PartDeltaFunction::WithStringArgs {
                                 name: name.as_str().unwrap_or_default().to_owned(),
-                                args: serde_json::to_string(input).unwrap_or_default(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                             },
                         });
                     } else {
@@ -454,18 +463,20 @@ pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
         .pointer("/delta/stop_reason")
         .and_then(|v| v.as_str())
         .map(|reason| match reason {
-            "end_turn" => FinishReason::Stop(),
-            "pause_turn" => FinishReason::Stop(), // consider same as "end_turn"
-            "max_tokens" => FinishReason::Length(),
-            "tool_use" => FinishReason::ToolCall(),
-            "refusal" => {
-                FinishReason::Refusal("Model output violated Anthropic's safety policy.".to_owned())
-            }
-            reason => FinishReason::Refusal(format!("reason: {}", reason)),
+            "end_turn" => FinishReason::Stop {},
+            "pause_turn" => FinishReason::Stop {}, // consider same as "end_turn"
+            "max_tokens" => FinishReason::Length {},
+            "tool_use" => FinishReason::ToolCall {},
+            "refusal" => FinishReason::Refusal {
+                reason: "Model output violated Anthropic's safety policy.".to_owned(),
+            },
+            reason => FinishReason::Refusal {
+                reason: format!("reason: {}", reason),
+            },
         });
 
     let delta = match finish_reason {
-        Some(FinishReason::Refusal(_)) => MessageDelta::default(),
+        Some(FinishReason::Refusal { .. }) => MessageDelta::default(),
         _ => serde_json::from_value::<Unmarshaled<_, AnthropicUnmarshal>>(val.clone())
             .ok()
             .map(|decoded| decoded.get())
@@ -675,7 +686,7 @@ mod dialect_tests {
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
             delta.thinking,
-            "**Answering a simple question**\n\nUser is saying hello."
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
         );
         assert_eq!(delta.signature.unwrap(), "Ev4MCkYIBxgCKkDl5A");
         assert_eq!(delta.contents.len(), 1);
@@ -711,7 +722,7 @@ mod dialect_tests {
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
             delta.thinking,
-            "**Answering a simple question**\n\nUser is saying hello."
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
         );
         assert_eq!(delta.contents.len(), 1);
         let content = delta.contents.pop().unwrap();
@@ -779,6 +790,7 @@ mod dialect_tests {
 mod api_tests {
     use std::sync::LazyLock;
 
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
     use super::*;
@@ -796,7 +808,7 @@ mod api_tests {
             .expect("Environment variable 'ANTHROPIC_API_KEY' is required for the tests.")
     });
 
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model = StreamAPILangModel::new(
             APISpecification::Claude,
@@ -814,15 +826,14 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_call() {
         use crate::model::InferenceConfig;
 
@@ -855,24 +866,22 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::ToolCall()));
+        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!(
-                "{:?}",
-                message.tool_calls.first().and_then(|f| f.as_function())
-            );
-            message.tool_calls.len() > 0
-                && message
-                    .tool_calls
+            if let Some(tool_calls) = message.tool_calls {
+                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                tool_calls
                     .first()
                     .and_then(|f| f.as_function())
                     .map(|f| f.1 == "temperature")
                     .unwrap_or(false)
+            } else {
+                false
+            }
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_response() {
         use crate::model::InferenceConfig;
 
@@ -925,7 +934,7 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0

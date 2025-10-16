@@ -22,9 +22,10 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             }
             Part::Function {
                 id,
-                f: PartFunction { name, args },
+                function: PartFunction { name, arguments },
             } => {
-                let mut value = to_value!({"functionCall": {"name": name, "args": args.clone()}});
+                let mut value =
+                    to_value!({"functionCall": {"name": name, "args": arguments.clone()}});
                 if let Some(id) = id {
                     value
                         .as_object_mut()
@@ -70,16 +71,34 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         );
     }
 
+    // Role
+    let role: String = if msg.role == Role::Assistant {
+        "model".into()
+    } else if msg.role == Role::User {
+        "user".into()
+    } else {
+        panic!("Gemini accepts \"model\" and \"user\" role only.")
+    };
+
     // Collecting contents
     let mut parts = Vec::<Value>::new();
-    if !msg.thinking.is_empty() && include_thinking {
-        parts.push(to_value!({"text": msg.thinking.clone(), "thought": true}));
+    if let Some(thinking) = &msg.thinking
+        && !thinking.is_empty()
+        && include_thinking
+    {
+        parts.push(to_value!({"text": thinking, "thought": true}));
     }
     parts.extend(msg.contents.iter().map(part_to_value));
-    parts.extend(msg.tool_calls.iter().map(part_to_value));
+    parts.extend(
+        msg.tool_calls
+            .clone()
+            .unwrap_or(vec![])
+            .iter()
+            .map(part_to_value),
+    );
 
     // Final message object with role and collected parts
-    to_value!({"role": msg.role.to_string(), "parts": parts})
+    to_value!({"role": role, "parts": parts})
 }
 
 impl Marshal<Message> for GeminiMarshal {
@@ -239,7 +258,7 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                             bail!("Invalid content part")
                         };
                         if thought {
-                            rv.thinking = text.into();
+                            rv.thinking = Some(text.into());
                         } else {
                             rv.contents.push(PartDelta::Text { text: text.into() });
                         }
@@ -252,13 +271,13 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                             .and_then(|name| name.as_str())
                             .map(|name| name.to_owned())
                             .unwrap_or_default();
-                        let args = match tool_call_obj.get("args") {
+                        let arguments = match tool_call_obj.get("args") {
                             Some(args) => args.to_owned(),
                             None => Value::Null,
                         };
                         rv.tool_calls.push(PartDelta::Function {
                             id: None,
-                            f: PartDeltaFunction::WithParsedArgs { name, args },
+                            function: PartDeltaFunction::WithParsedArgs { name, arguments },
                         });
                     } else {
                         bail!("Invalid part");
@@ -324,13 +343,15 @@ pub(super) fn handle_event(evt: ServerEvent) -> MessageOutput {
         .pointer("/finishReason")
         .and_then(|v| v.as_str())
         .map(|reason| match reason {
-            "STOP" => FinishReason::Stop(),
-            "MAX_TOKENS" => FinishReason::Length(),
-            reason => FinishReason::Refusal(reason.to_owned()),
+            "STOP" => FinishReason::Stop {},
+            "MAX_TOKENS" => FinishReason::Length {},
+            reason => FinishReason::Refusal {
+                reason: reason.to_owned(),
+            },
         });
 
     let delta = match finish_reason {
-        Some(FinishReason::Refusal(_)) => MessageDelta::default(),
+        Some(FinishReason::Refusal { .. }) => MessageDelta::default(),
         _ => serde_json::from_value::<Unmarshaled<_, GeminiUnmarshal>>(candidate.clone())
             .ok()
             .map(|decoded| decoded.get())
@@ -380,7 +401,7 @@ mod dialect_tests {
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msgs);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"[{"role":"user","parts":[{"text":"Hello there."},{"text":"How are you?"}]},{"role":"assistant","parts":[{"text":"I'm fine, thank you. And you?"}]},{"role":"user","parts":[{"text":"I'm okay."}]},{"role":"assistant","parts":[{"text":"This is thinking text would be remaining.","thought":true},{"text":"Is there anything I can help with?"}]}]"#
+            r#"[{"role":"user","parts":[{"text":"Hello there."},{"text":"How are you?"}]},{"role":"model","parts":[{"text":"I'm fine, thank you. And you?"}]},{"role":"user","parts":[{"text":"I'm okay."}]},{"role":"model","parts":[{"text":"This is thinking text would be remaining.","thought":true},{"text":"Is there anything I can help with?"}]}]"#
         );
     }
 
@@ -393,7 +414,7 @@ mod dialect_tests {
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"assistant","parts":[{"functionCall":{"name":"temperature","args":{"unit":"celsius"}}},{"functionCall":{"name":"temperature","args":{"unit":"fahrenheit"}}}]}"#
+            r#"{"role":"model","parts":[{"functionCall":{"name":"temperature","args":{"unit":"celsius"}}},{"functionCall":{"name":"temperature","args":{"unit":"fahrenheit"}}}]}"#
         );
     }
 
@@ -525,7 +546,7 @@ mod dialect_tests {
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
             delta.thinking,
-            "**Answering a simple question**\n\nUser is saying hello."
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
         );
         assert_eq!(delta.contents.len(), 1);
         let content = delta.contents.pop().unwrap();
@@ -552,7 +573,7 @@ mod dialect_tests {
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
             delta.thinking,
-            "**Answering a simple question**\n\nUser is saying hello."
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
         );
         assert_eq!(delta.contents.len(), 1);
         let content = delta.contents.pop().unwrap();
@@ -588,6 +609,7 @@ mod dialect_tests {
 mod api_tests {
     use std::sync::LazyLock;
 
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
     use super::*;
@@ -604,7 +626,7 @@ mod api_tests {
             .expect("Environment variable 'GEMINI_API_KEY' is required for the tests.")
     });
 
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model = StreamAPILangModel::new(
             APISpecification::Gemini,
@@ -624,16 +646,15 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_call() {
         let mut model = StreamAPILangModel::new(
             APISpecification::Gemini,
@@ -664,24 +685,22 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!(
-                "{:?}",
-                message.tool_calls.first().and_then(|f| f.as_function())
-            );
-            message.tool_calls.len() > 0
-                && message
-                    .tool_calls
+            if let Some(tool_calls) = message.tool_calls {
+                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                tool_calls
                     .first()
                     .and_then(|f| f.as_function())
                     .map(|f| f.1 == "temperature")
                     .unwrap_or(false)
+            } else {
+                false
+            }
         }));
     }
 
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
+    #[multi_platform_test]
     async fn infer_tool_response() {
         let mut model = StreamAPILangModel::new(
             APISpecification::Gemini,
@@ -729,7 +748,7 @@ mod api_tests {
             assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop()));
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
