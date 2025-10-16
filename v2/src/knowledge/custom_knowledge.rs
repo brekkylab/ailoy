@@ -63,17 +63,17 @@ mod tests {
             async {
                 let documents = vec![
                     Document {
-                        id: String::from("1"),
+                        id: "1".to_owned(),
                         title: None,
                         text: "Ailoy is an awesome AI agent framework.".into(),
                     },
                     Document {
-                        id: String::from("2"),
+                        id: "2".to_owned(),
                         title: None,
                         text: "Ailoy supports Python, Javascript and Rust.".into(),
                     },
                     Document {
-                        id: String::from("3"),
+                        id: "3".to_owned(),
                         title: None,
                         text: "Ailoy enables running LLMs in local environment easily.".into(),
                     },
