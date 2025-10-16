@@ -18,25 +18,6 @@ export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
 
-export interface CacheProgress {
-    comment: string;
-    current: number;
-    total: number;
-}
-
-export interface ToolDesc {
-    name: string;
-    description?: string;
-    parameters: Value;
-    returns?: Value;
-}
-
-export type Bytes = Uint8Array;
-
-export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
-
-export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
-
 export type PartDelta = { type: "text"; text: string } | { type: "function"; id: string | undefined; function: PartDeltaFunction } | { type: "value"; value: Value } | { type: "null" };
 
 export type PartDeltaFunction = { type: "verbatim"; text: string } | { type: "with_string_args"; name: string; arguments: string } | { type: "with_parsed_args"; name: string; arguments: Value };
@@ -81,6 +62,25 @@ export interface Message {
  * The author of a message (or streaming delta) in a chat.
  */
 export type Role = "system" | "user" | "assistant" | "tool";
+
+export interface CacheProgress {
+    comment: string;
+    current: number;
+    total: number;
+}
+
+export interface ToolDesc {
+    name: string;
+    description?: string;
+    parameters: Value;
+    returns?: Value;
+}
+
+export type Bytes = Uint8Array;
+
+export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
+
+export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
 
 export class EmbeddingModel {
   private constructor();

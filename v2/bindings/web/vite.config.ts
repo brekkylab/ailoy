@@ -16,7 +16,11 @@ export default defineConfig(({ mode }) => {
         formats: ["es"],
       },
       rollupOptions: {
-        external: ["./ailoy-web_bg.js", "./ailoy-web.js"],
+        external: [
+          "./ailoy-web_bg.js",
+          "./ailoy-web.js",
+          "./shim_js/dist/index.js",
+        ],
       },
     },
     plugins: [
@@ -30,6 +34,7 @@ export default defineConfig(({ mode }) => {
               "./src/ailoy-web_bg.js",
               "./src/ailoy-web_bg.wasm",
               "./src/ailoy-web.js",
+              "./src/shim_js",
             ],
             dest: "./",
           },

@@ -1,4 +1,3 @@
-export { LangModel, EmbeddingModel } from "./ailoy-web.js";
 export type {
   APISpecification,
   Bytes,
@@ -20,3 +19,4 @@ export type {
   ToolDesc,
   Value,
 } from "./ailoy-web";
+export { LangModel, EmbeddingModel } from "./ailoy-web";
