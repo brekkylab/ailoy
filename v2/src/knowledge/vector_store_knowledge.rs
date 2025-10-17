@@ -4,8 +4,9 @@ use ailoy_macros::multi_platform_async_trait;
 use futures::lock::Mutex;
 
 use crate::{
-    knowledge::base::{KnowledgeBehavior, KnowledgeRetrieveResult},
+    knowledge::{KnowledgeConfig, base::KnowledgeBehavior},
     model::{EmbeddingModel, EmbeddingModelInference},
+    value::Document,
     vector_store::{VectorStore, VectorStoreRetrieveResult},
 };
 
@@ -15,11 +16,22 @@ pub struct VectorStoreKnowledge {
     embedding_model: EmbeddingModel,
 }
 
-impl From<VectorStoreRetrieveResult> for KnowledgeRetrieveResult {
+impl From<VectorStoreRetrieveResult> for Document {
     fn from(value: VectorStoreRetrieveResult) -> Self {
+        let title = if let Some(metadata) = &value.metadata
+            && let Some(raw_title) = metadata.get("title")
+        {
+            Some(match raw_title {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+        } else {
+            None
+        };
         Self {
-            document: value.document,
-            metadata: value.metadata,
+            id: value.id,
+            title,
+            text: value.document,
         }
     }
 }
@@ -38,16 +50,16 @@ impl KnowledgeBehavior for VectorStoreKnowledge {
     async fn retrieve(
         &self,
         query: String,
-        top_k: u32,
-    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
+        config: KnowledgeConfig,
+    ) -> anyhow::Result<Vec<Document>> {
         let query_embedding = self.embedding_model.infer(query.into()).await?;
         let results = {
             let store = self.store.lock().await;
-            store.retrieve(query_embedding, top_k as usize).await
+            store.retrieve(query_embedding, config.top_k as usize).await
         }?
         .into_iter()
         .map(|res| res.into())
-        .collect::<Vec<KnowledgeRetrieveResult>>();
+        .collect::<Vec<_>>();
 
         Ok(results)
     }
@@ -57,15 +69,14 @@ impl KnowledgeBehavior for VectorStoreKnowledge {
 mod tests {
     use ailoy_macros::multi_platform_test;
     use futures::stream::StreamExt;
-    use serde_json::json;
 
     use super::*;
     use crate::{
-        agent::{Agent, SystemMessageRenderer},
+        agent::Agent,
         knowledge::{Knowledge, KnowledgeTool},
         model::{EmbeddingModel, LangModel},
         tool::{Tool, ToolBehavior as _},
-        value::{Part, Value},
+        value::Part,
         vector_store::{FaissStore, VectorStoreAddInput},
     };
 
@@ -92,29 +103,6 @@ mod tests {
 
         let knowledge = Knowledge::new_vector_store(store, embedding_model);
         Ok(knowledge)
-    }
-
-    #[multi_platform_test]
-    async fn test_vectorstore_knowledge() -> anyhow::Result<()> {
-        let knowledge = prepare_knowledge().await?;
-
-        // Testing with renderer
-        let retrieved = knowledge.retrieve("What is Ailoy?".into(), 1).await?;
-        let renderer = SystemMessageRenderer::new();
-        let rendered = renderer
-            .render("This is a system message.".into(), Some(retrieved))
-            .unwrap();
-        println!("Rendered results: {:?}", rendered);
-
-        // Testing with tool call
-        let tool = KnowledgeTool::from(knowledge);
-        let args = serde_json::from_value::<Value>(json!({
-            "query": "What is Langchain?"
-        }))?;
-        let tool_result = tool.run(args).await?;
-        println!("Tool call results: {:?}", tool_result);
-
-        Ok(())
     }
 
     #[multi_platform_test]

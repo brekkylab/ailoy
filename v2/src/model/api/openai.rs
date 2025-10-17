@@ -846,7 +846,7 @@ mod api_tests {
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
         let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -879,7 +879,7 @@ mod api_tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
+        let mut strm = model.infer(msgs, tools, Vec::new(), InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
@@ -941,7 +941,7 @@ mod api_tests {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
         ];
-        let mut strm = model.infer(msgs, tools, InferenceConfig::default());
+        let mut strm = model.infer(msgs, tools, Vec::new(), InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
