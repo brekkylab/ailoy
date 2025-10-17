@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ailoy_macros::maybe_send_sync;
 use futures::StreamExt as _;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     cache::CacheProgress,
@@ -15,10 +15,13 @@ use crate::{
     value::{Message, MessageOutput, ToolDesc},
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum ThinkEffort {
     #[default]
     Disable,
@@ -28,41 +31,52 @@ pub enum ThinkEffort {
     High,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen::derive::gen_stub_pyclass_complex_enum
 )]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(discriminant_case = "lowercase"))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum Grammar {
-    Plain(),
-    JSON(),
-    JSONSchema(String),
-    Regex(String),
-    CFG(String),
+    Plain {},
+    JSON {},
+    JSONSchema { schema: String },
+    Regex { regex: String },
+    CFG { cfg: String },
 }
 
 impl Default for Grammar {
     fn default() -> Self {
-        Self::Plain()
+        Self::Plain {}
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct InferenceConfig {
-    pub think_effort: ThinkEffort,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub think_effort: Option<ThinkEffort>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<i32>,
 
-    pub grammar: Grammar,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grammar: Option<Grammar>,
 }
 
 #[maybe_send_sync]
@@ -347,11 +361,11 @@ mod py {
             // grammar: Option<Grammar>,
         ) -> InferenceConfig {
             Self {
-                think_effort: think_effort.unwrap_or(ThinkEffort::default()),
+                think_effort: Some(think_effort.unwrap_or(ThinkEffort::default())),
                 temperature,
                 top_p,
                 max_tokens,
-                grammar: Grammar::default(),
+                grammar: Some(Grammar::default()),
             }
         }
 
@@ -368,32 +382,31 @@ mod node {
     use napi::{
         Error, JsSymbol, Status, bindgen_prelude::*, threadsafe_function::ThreadsafeFunction,
     };
-    use napi_derive::napi;
     use tokio::sync::mpsc;
 
     use super::*;
 
-    #[napi(object)]
+    #[napi_derive::napi(object)]
     pub struct LanguageModelIteratorResult {
         pub value: MessageOutput,
         pub done: bool,
     }
 
     #[derive(Clone)]
-    #[napi]
+    #[napi_derive::napi]
     pub struct LangModelRunIterator {
         rx: Arc<Mutex<mpsc::UnboundedReceiver<std::result::Result<MessageOutput, anyhow::Error>>>>,
     }
 
-    #[napi]
+    #[napi_derive::napi]
     impl LangModelRunIterator {
-        #[napi(js_name = "[Symbol.asyncIterator]")]
+        #[napi_derive::napi(js_name = "[Symbol.asyncIterator]")]
         pub fn async_iterator(&self) -> &Self {
             // This is a dummy function to add typing for Symbol.asyncIterator
             self
         }
 
-        #[napi]
+        #[napi_derive::napi]
         pub async unsafe fn next(&mut self) -> napi::Result<LanguageModelIteratorResult> {
             let mut rx = self.rx.lock().await;
             match rx.recv().await {
@@ -436,9 +449,9 @@ mod node {
         }
     }
 
-    #[napi]
+    #[napi_derive::napi]
     impl LangModel {
-        #[napi]
+        #[napi_derive::napi]
         pub async fn create_local(
             model_name: String,
             progress_callback: Option<

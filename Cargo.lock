@@ -73,7 +73,7 @@ dependencies = [
  "minijinja",
  "minijinja-contrib",
  "napi",
- "napi-build",
+ "napi-build 2.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "napi-derive",
  "onig",
  "ordered-float",
@@ -94,6 +94,7 @@ dependencies = [
  "thiserror",
  "tokenizers",
  "tokio",
+ "tsify",
  "url",
  "uuid",
  "wasm-bindgen",
@@ -1177,9 +1178,9 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67773048316103656a637612c4a62477603b777d91d9c62ff2290f9cde178fdb"
+checksum = "59c9b8bdf64ee849747c1b12eb861d21aa47fa161564f48332f1afe2373bf899"
 dependencies = [
  "ctor-proc-macro",
  "dtor",
@@ -1187,9 +1188,9 @@ dependencies = [
 
 [[package]]
 name = "ctor-proc-macro"
-version = "0.0.6"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2931af7e13dc045d8e9d26afccc6fa115d64e115c9c84b1166288b46f6782c2"
+checksum = "52560adf09603e58c9a7ee1fe1dcb95a16927b17c127f0ac02d6e768a0e25bc1"
 
 [[package]]
 name = "cxx"
@@ -2722,12 +2723,11 @@ dependencies = [
 [[package]]
 name = "napi"
 version = "3.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1b74e3dce5230795bb4d2821b941706dee733c7308752507254b0497f39cad7"
+source = "git+https://github.com/brekkylab/napi-rs.git?rev=5c8991b91072b5e468b1781de5703dc8449e000a#5c8991b91072b5e468b1781de5703dc8449e000a"
 dependencies = [
  "bitflags 2.9.4",
  "ctor",
- "napi-build",
+ "napi-build 2.2.3 (git+https://github.com/brekkylab/napi-rs.git?rev=5c8991b91072b5e468b1781de5703dc8449e000a)",
  "napi-sys",
  "nohash-hasher",
  "rustc-hash",
@@ -2743,10 +2743,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dcae8ad5609d14afb3a3b91dee88c757016261b151e9dcecabf1b2a31a6cab14"
 
 [[package]]
+name = "napi-build"
+version = "2.2.3"
+source = "git+https://github.com/brekkylab/napi-rs.git?rev=5c8991b91072b5e468b1781de5703dc8449e000a#5c8991b91072b5e468b1781de5703dc8449e000a"
+
+[[package]]
 name = "napi-derive"
 version = "3.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7552d5a579b834614bbd496db5109f1b9f1c758f08224b0dee1e408333adf0d0"
+source = "git+https://github.com/brekkylab/napi-rs.git?rev=5c8991b91072b5e468b1781de5703dc8449e000a#5c8991b91072b5e468b1781de5703dc8449e000a"
 dependencies = [
  "convert_case",
  "ctor",
@@ -2759,8 +2763,7 @@ dependencies = [
 [[package]]
 name = "napi-derive-backend"
 version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f6a81ac7486b70f2532a289603340862c06eea5a1e650c1ffeda2ce1238516a"
+source = "git+https://github.com/brekkylab/napi-rs.git?rev=5c8991b91072b5e468b1781de5703dc8449e000a#5c8991b91072b5e468b1781de5703dc8449e000a"
 dependencies = [
  "convert_case",
  "proc-macro2",
@@ -2772,8 +2775,7 @@ dependencies = [
 [[package]]
 name = "napi-sys"
 version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e4e7135a8f97aa0f1509cce21a8a1f9dcec1b50d8dee006b48a5adb69a9d64d"
+source = "git+https://github.com/brekkylab/napi-rs.git?rev=5c8991b91072b5e468b1781de5703dc8449e000a#5c8991b91072b5e468b1781de5703dc8449e000a"
 dependencies = [
  "libloading",
 ]
@@ -4007,6 +4009,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "serde_bytes"
 version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4669,6 +4682,30 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tsify"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2ec91b85e6c6592ed28636cb1dd1fac377ecbbeb170ff1d79f97aac5e38926d"
+dependencies = [
+ "serde",
+ "serde-wasm-bindgen",
+ "tsify-macros",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "tsify-macros"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a324606929ad11628a19206d7853807481dcaecd6c08be70a235930b8241955"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn",
+]
 
 [[package]]
 name = "typenum"

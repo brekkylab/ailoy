@@ -95,7 +95,7 @@ impl PartDelta {
                 "Value({})",
                 serde_json::to_string(value).unwrap_or("{...}".to_owned())
             ),
-            PartDelta::Null() => "Null()".to_owned(),
+            PartDelta::Null {} => "Null()".to_owned(),
         };
         format!("PartDelta.{}", s)
     }
@@ -106,7 +106,7 @@ impl PartDelta {
             PartDelta::Text { .. } => "text",
             PartDelta::Function { .. } => "function",
             PartDelta::Value { .. } => "value",
-            PartDelta::Null() => "null",
+            PartDelta::Null {} => "null",
         }
     }
 }
@@ -141,9 +141,9 @@ impl Message {
         Self {
             role,
             id,
-            thinking: thinking.unwrap_or_default(),
+            thinking: Some(thinking.unwrap_or_default()),
             contents: contents.unwrap_or_default(),
-            tool_calls: tool_calls.unwrap_or_default(),
+            tool_calls: Some(tool_calls.unwrap_or_default()),
             signature,
         }
     }
@@ -159,11 +159,13 @@ impl Message {
                 .map(|content| content.__repr__())
                 .collect::<Vec<_>>()
                 .join(", "),
-            self.tool_calls
-                .iter()
-                .map(|tool| tool.__repr__())
-                .collect::<Vec<_>>()
-                .join(", "),
+            self.tool_calls.as_ref().map_or(String::new(), |calls| {
+                calls
+                    .iter()
+                    .map(|tool_part| tool_part.__repr__())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }),
             self.signature,
         )
     }
@@ -212,27 +214,30 @@ impl Message {
     }
 
     #[getter]
-    fn thinking(&self) -> String {
+    fn thinking(&self) -> Option<String> {
         self.thinking.clone()
     }
 
     #[setter]
     fn set_thinking(&mut self, thinking: String) {
-        self.thinking = thinking;
+        self.thinking = Some(thinking);
     }
 
     #[getter]
     fn tool_calls(&self) -> Vec<Part> {
-        self.tool_calls.clone()
+        self.tool_calls.clone().unwrap_or_default()
     }
 
     #[setter]
     fn set_tool_calls(&mut self, tool_calls: Vec<Part>) {
-        self.tool_calls = tool_calls;
+        self.tool_calls = Some(tool_calls);
     }
 
     fn append_tool_call(&mut self, part: Part) {
-        self.tool_calls.push(part);
+        match &mut self.tool_calls {
+            Some(tool_calls) => tool_calls.push(part),
+            None => self.tool_calls = vec![part].into(),
+        };
     }
 
     #[getter]
@@ -262,7 +267,7 @@ impl MessageDelta {
         Self {
             role,
             id,
-            thinking: thinking.unwrap_or_default(),
+            thinking: Some(thinking.unwrap_or_default()),
             contents: contents.unwrap_or_default(),
             tool_calls: tool_calls.unwrap_or_default(),
             signature,
@@ -307,10 +312,12 @@ impl MessageDelta {
 impl FinishReason {
     fn __repr__(&self) -> String {
         match self {
-            FinishReason::Stop() => "FinishReason.Stop()".to_owned(),
-            FinishReason::Length() => "FinishReason.Length()".to_owned(),
-            FinishReason::ToolCall() => "FinishReason.ToolCall()".to_owned(),
-            FinishReason::Refusal(refusal) => format!("FinishReason.Refusal({})", refusal),
+            FinishReason::Stop {} => "FinishReason.Stop()".to_owned(),
+            FinishReason::Length {} => "FinishReason.Length()".to_owned(),
+            FinishReason::ToolCall {} => "FinishReason.ToolCall()".to_owned(),
+            FinishReason::Refusal { reason } => {
+                format!("FinishReason.Refusal(reason={})", reason)
+            }
         }
     }
 }

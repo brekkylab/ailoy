@@ -1,8 +1,11 @@
 use base64::Engine as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+use serde_bytes::ByteBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Bytes(pub Vec<u8>);
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
+pub struct Bytes(pub ByteBuf);
 
 impl Serialize for Bytes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -28,10 +31,10 @@ impl<'de> Deserialize<'de> for Bytes {
             let data = base64::engine::general_purpose::STANDARD
                 .decode(s.as_bytes())
                 .map_err(D::Error::custom)?;
-            Ok(Bytes(data))
+            Ok(Bytes(data.into()))
         } else {
             let b = <Vec<u8>>::deserialize(deserializer)?;
-            Ok(Bytes(b))
+            Ok(Bytes(b.into()))
         }
     }
 }
@@ -50,7 +53,7 @@ mod py {
     impl<'py> FromPyObject<'py> for Bytes {
         fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
             if let Ok(pybytes) = ob.downcast::<PyBytes>() {
-                Ok(Bytes(pybytes.as_bytes().to_vec()))
+                Ok(Bytes(pybytes.as_bytes().to_vec().into()))
             } else {
                 Err(PyTypeError::new_err("Expected a bytes object"))
             }
@@ -96,7 +99,7 @@ mod node {
         unsafe fn from_napi_value(env: sys::napi_env, val: sys::napi_value) -> Result<Self> {
             let env = Env::from_raw(env);
             if let Ok(data) = unsafe { read_buffer(env.raw(), val) } {
-                return Ok(Bytes(data));
+                return Ok(Bytes(data.into()));
             }
             Err(Error::new(
                 Status::InvalidArg,

@@ -9,7 +9,7 @@ use pyo3::{
 use pyo3_stub_gen::derive::*;
 
 use crate::{
-    ffi::py::base::{PyWrapper, json_to_pydict, pydict_to_json},
+    ffi::py::base::{json_to_pydict, pydict_to_json},
     tool::{
         FunctionTool, MCPClient, MCPTool, Tool, ToolBehavior, ToolFunc, ToolInner,
         create_terminal_tool,

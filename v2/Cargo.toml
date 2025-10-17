@@ -26,9 +26,9 @@ python = [
     "dep:pyo3-async-runtimes",
     "dep:pyo3-stub-gen",
     "dep:pyo3-stub-gen-derive",
-    "ailoy-model-cli",
 ]
-nodejs = ["dep:napi", "dep:napi-derive", "ailoy-model-cli"]
+nodejs = ["dep:napi", "dep:napi-derive"]
+wasm = []
 ailoy-model-cli = ["dep:aws-config", "dep:aws-sdk-s3", "dep:clap", "dep:indicatif"]
 default = []
 
@@ -54,8 +54,8 @@ jsonschema = { version = "0.33.0", default-features = false }
 mime-infer = "4.0.0"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json", "preserve_order"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
-napi = { version = "3", features = ["tokio_rt", "napi8", "serde-json"], optional = true }
-napi-derive = { version = "3", optional = true }
+napi = { git = "https://github.com/brekkylab/napi-rs.git", package = "napi", rev = "5c8991b91072b5e468b1781de5703dc8449e000a", features = ["tokio_rt", "napi8", "serde-json"], optional = true }
+napi-derive = { git = "https://github.com/brekkylab/napi-rs.git", package = "napi-derive", rev = "5c8991b91072b5e468b1781de5703dc8449e000a", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 pyo3 = { version = "0.26", features = ["experimental-async", "macros", "anyhow"], optional = true }
 pyo3-async-runtimes = { version = "0.26", features = ["attributes", "tokio-runtime"], optional = true }
@@ -88,6 +88,7 @@ js-sys = "0.3"
 sse-stream = "0.2"
 tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt", "sync"] }
+tsify = { version = "0.5.5", default-features = false, features = ["js"] }
 uuid = { version = "1.18.0", features = ["v4", "js"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
