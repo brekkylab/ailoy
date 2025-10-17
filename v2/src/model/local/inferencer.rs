@@ -226,13 +226,14 @@ mod tvmjs_runtime {
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
         ffi::js_bridge::{
-            JSEmbeddingModel, JSLanguageModel, init_embedding_model_js, init_language_model_js,
+            JSTVMEmbeddingModel, JSTVMLanguageModel, init_tvm_embedding_model_js,
+            init_tvm_language_model_js,
         },
         utils::{BoxFuture, float16},
     };
 
     pub struct LanguageModelInferencer {
-        inner: JSLanguageModel,
+        inner: JSTVMLanguageModel,
     }
 
     impl fmt::Debug for LanguageModelInferencer {
@@ -283,10 +284,10 @@ mod tvmjs_runtime {
                     obj
                 };
 
-                let prom = init_language_model_js(&cache_contents);
+                let prom = init_tvm_language_model_js(&cache_contents);
                 let js_lm = match JsFuture::from(prom).await {
                     Ok(out) => {
-                        let lm: JSLanguageModel = out
+                        let lm: JSTVMLanguageModel = out
                             .dyn_into()
                             .map_err(|e| anyhow!("Conversion failed: {:?}", e))?;
                         lm
@@ -302,7 +303,7 @@ mod tvmjs_runtime {
     }
 
     pub struct EmbeddingModelInferencer {
-        inner: JSEmbeddingModel,
+        inner: JSTVMEmbeddingModel,
     }
 
     impl fmt::Debug for EmbeddingModelInferencer {
@@ -359,10 +360,10 @@ mod tvmjs_runtime {
                     obj
                 };
 
-                let prom = init_embedding_model_js(&cache_contents);
-                let js_em: JSEmbeddingModel = match JsFuture::from(prom).await {
+                let prom = init_tvm_embedding_model_js(&cache_contents);
+                let js_em: JSTVMEmbeddingModel = match JsFuture::from(prom).await {
                     Ok(out) => {
-                        let em: JSEmbeddingModel = out
+                        let em: JSTVMEmbeddingModel = out
                             .dyn_into()
                             .map_err(|e| anyhow!("Conversion failed: {:?}", e))?;
                         em

@@ -138,7 +138,7 @@ class KVCache {
   }
 }
 
-export class LanguageModel {
+export class TVMLanguageModel {
   private rt: TVMRuntime;
   private tvm: Instance;
   private kvcache: KVCache;
@@ -332,8 +332,8 @@ export class LanguageModel {
 
 export async function init(
   cache_contents: Record<string, ArrayBuffer>
-): Promise<LanguageModel> {
+): Promise<TVMLanguageModel> {
   const rt = await init_tvm_runtime(cache_contents);
-  const rv = new LanguageModel(rt);
+  const rv = new TVMLanguageModel(rt);
   return rv;
 }
