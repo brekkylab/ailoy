@@ -228,6 +228,20 @@ mod py {
             }
         }
 
+        fn __repr__(&self) -> String {
+            match &self.inner {
+                ToolInner::Function(tool) => {
+                    format!("Tool(FunctionTool(name={}))", tool.get_description().name)
+                }
+                ToolInner::MCP(tool) => {
+                    format!("Tool(MCPTool(name={}))", tool.get_description().name)
+                }
+                ToolInner::Knowledge(tool) => {
+                    format!("Tool(KnowledgeTool(name={}))", tool.get_description().name)
+                }
+            }
+        }
+
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[Any]"))]
         #[pyo3(signature = (**kwargs))]
         fn __call__<'py>(

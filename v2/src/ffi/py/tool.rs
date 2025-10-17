@@ -17,30 +17,30 @@ use crate::{
     value::{Part, ToolDesc},
 };
 
-#[derive(Clone)]
-#[gen_stub_pyclass]
-#[pyclass(name = "BaseTool", subclass)]
-pub struct PyBaseTool {}
+// #[derive(Clone)]
+// #[gen_stub_pyclass]
+// #[pyclass(name = "BaseTool", subclass)]
+// pub struct PyBaseTool {}
 
-#[gen_stub_pymethods]
-#[pymethods]
-impl PyBaseTool {
-    #[getter]
-    fn description(&self) -> PyResult<ToolDesc> {
-        Err(PyNotImplementedError::new_err(
-            "BaseTool subclasses must implement 'description' getter",
-        ))
-    }
+// #[gen_stub_pymethods]
+// #[pymethods]
+// impl PyBaseTool {
+//     #[getter]
+//     fn description(&self) -> PyResult<ToolDesc> {
+//         Err(PyNotImplementedError::new_err(
+//             "BaseTool subclasses must implement 'description' getter",
+//         ))
+//     }
 
-    /// This is not a function used by Agents, but this let users directly call the tool function for debugging purpose.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (**kwargs))]
-    fn __call__(&self, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
-        Err(PyNotImplementedError::new_err(
-            "BaseTool subclasses must implement '__call__'",
-        ))
-    }
-}
+//     /// This is not a function used by Agents, but this let users directly call the tool function for debugging purpose.
+//     #[allow(unused_variables)]
+//     #[pyo3(signature = (**kwargs))]
+//     fn __call__(&self, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
+//         Err(PyNotImplementedError::new_err(
+//             "BaseTool subclasses must implement '__call__'",
+//         ))
+//     }
+// }
 
 // pub trait PyToolMethods<T: ToolBehavior + Clone + 'static>: PyClass<BaseType = PyBaseTool> {
 //     fn inner(&self) -> &T;
@@ -199,27 +199,27 @@ impl PyBaseTool {
 //     }
 // }
 
-fn function_tool_result_to_parts(result: Py<PyAny>) -> PyResult<Vec<Part>> {
-    Python::attach(|py| {
-        if let Ok(list) = result.downcast_bound::<PyList>(py) {
-            list.iter()
-                .map(|item| {
-                    if let Ok(item) = item.downcast::<Part>() {
-                        Ok(item.as_unbound().borrow(py).clone())
-                    } else {
-                        // If the list item is not a type of part, it's just converted to a text type part.
-                        let text = item.to_string();
-                        Ok(Part::Text { text })
-                    }
-                })
-                .collect::<PyResult<Vec<Part>>>()
-        } else {
-            // If the result is not a list of part, it's just converted to a single text type part.
-            let text = result.to_string();
-            Ok(vec![Part::Text { text }])
-        }
-    })
-}
+// fn function_tool_result_to_parts(result: Py<PyAny>) -> PyResult<Vec<Part>> {
+//     Python::attach(|py| {
+//         if let Ok(list) = result.downcast_bound::<PyList>(py) {
+//             list.iter()
+//                 .map(|item| {
+//                     if let Ok(item) = item.downcast::<Part>() {
+//                         Ok(item.as_unbound().borrow(py).clone())
+//                     } else {
+//                         // If the list item is not a type of part, it's just converted to a text type part.
+//                         let text = item.to_string();
+//                         Ok(Part::Text { text })
+//                     }
+//                 })
+//                 .collect::<PyResult<Vec<Part>>>()
+//         } else {
+//             // If the result is not a list of part, it's just converted to a single text type part.
+//             let text = result.to_string();
+//             Ok(vec![Part::Text { text }])
+//         }
+//     })
+// }
 
 // #[derive(Debug, Clone)]
 // #[gen_stub_pyclass]

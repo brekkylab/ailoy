@@ -22,6 +22,7 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // m.add_class::<AnthropicLanguageModel>()?;
     // m.add_class::<vector_store::BaseVectorStore>()?;
     m.add_class::<crate::tool::Tool>()?;
+    m.add_class::<crate::tool::MCPClient>()?;
     m.add_class::<vector_store::ChromaVectorStore>()?;
     m.add_class::<vector_store::FaissVectorStore>()?;
     m.add_class::<crate::value::ToolDesc>()?;
