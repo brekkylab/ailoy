@@ -217,59 +217,91 @@ mod py {
         })
     }
 
-    // pub fn wrap_python_function(py_func: Py<PyAny>) -> Arc<dyn Fn(Value) -> Value + Send + Sync> {
-    //     Arc::new(move |args: Value| -> Value {
-    //         Python::attach(|py| {
-    //             // Rust Value -> Python object
-    //             let py_args = match value_to_python(py, &args) {
-    //                 Ok(obj) => obj,
-    //                 Err(e) => {
-    //                     return Value::object([(
-    //                         "error",
-    //                         format!("Failed to convert arguments to Python: {}", e),
-    //                     )]);
-    //                 }
-    //             };
-
-    //             // call python function
-    //             let result = if let Ok(dict) = py_args.downcast::<PyDict>() {
-    //                 py_func.bind(py).call((), Some(&dict))
-    //             } else {
-    //                 // call with single argument instead of error?
-    //                 // py_func.bind(py).call1((py_args,))
-    //                 return Value::object([(
-    //                     "error",
-    //                     format!("Failed to convert arguments to Python dict: {:?}", py_args),
-    //                 )]);
-    //             };
-
-    //             // Python object -> Rust Value
-    //             match result {
-    //                 Ok(py_result) => match python_to_value(&py_result) {
-    //                     Ok(value) => value,
-    //                     Err(e) => Value::object([(
-    //                         "error",
-    //                         format!("Failed to convert Python result to Value: {}", e),
-    //                     )]),
-    //                 },
-    //                 Err(e) => {
-    //                     Value::object([("error", format!("Python function call failed: {}", e))])
-    //                 }
-    //             }
-    //         })
-    //     })
-    // }
-
     #[gen_stub_pymethods]
     #[pymethods]
     impl Tool {
         #[classmethod]
-        // #[gen_stub(override_return_type(type_repr = "typing.Awaitable[LangModel]"))]
         #[pyo3(signature = (desc, func))]
         pub fn new_py_function(_cls: &Bound<'_, PyType>, desc: ToolDesc, func: Py<PyAny>) -> Self {
             Self {
                 inner: ToolInner::Function(FunctionTool::new(desc, wrap_python_function(func))),
             }
+        }
+
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[Any]"))]
+        #[pyo3(signature = (**kwargs))]
+        fn __call__<'py>(
+            &self,
+            py: Python<'py>,
+            kwargs: Option<&Bound<'_, PyDict>>,
+        ) -> PyResult<Bound<'py, PyAny>> {
+            self.call(py, kwargs)
+        }
+
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[Any]"))]
+        #[pyo3(signature = (**kwargs))]
+        fn call<'py>(
+            &self,
+            py: Python<'py>,
+            kwargs: Option<&Bound<'_, PyDict>>,
+        ) -> PyResult<Bound<'py, PyAny>> {
+            // Python object -> Rust Value
+            let py_input = kwargs
+                .map(|py_dict| py_dict.clone().into_any())
+                .unwrap_or(PyDict::new(py).into_any());
+            let input = python_to_value(&py_input).unwrap_or_else(|e| {
+                Value::object([(
+                    "error",
+                    format!("Failed to convert Python result to Value: {}", e),
+                )])
+            });
+
+            // create Rust Future to run tool
+            let inner = self.inner.clone();
+            let future = async move {
+                let result = match inner {
+                    ToolInner::Function(tool) => tool.run(input).await,
+                    ToolInner::MCP(tool) => tool.run(input).await,
+                    ToolInner::Knowledge(tool) => tool.run(input).await,
+                }
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+                // Rust Value -> Python object
+                Python::attach(|py| value_to_python(py, &result).map(|bound| bound.unbind()))
+            };
+
+            // Rust Future -> Python Coroutine
+            pyo3_async_runtimes::tokio::future_into_py(py, future)
+        }
+
+        #[pyo3(signature = (**kwargs))]
+        fn call_sync(
+            &self,
+            py: Python<'_>,
+            kwargs: Option<&Bound<'_, PyDict>>,
+        ) -> PyResult<Py<PyAny>> {
+            // Python object -> Rust Value
+            let py_input = kwargs
+                .map(|py_dict| py_dict.clone().into_any())
+                .unwrap_or(PyDict::new(py).into_any());
+            let input = python_to_value(&py_input).unwrap_or_else(|e| {
+                Value::object([(
+                    "error",
+                    format!("Failed to convert Python result to Value: {}", e),
+                )])
+            });
+
+            // run tool synced
+            let result = match tokio::runtime::Handle::try_current() {
+                Ok(handle) => tokio::task::block_in_place(|| handle.block_on(self.run(input))),
+                Err(_) => tokio::runtime::Runtime::new()
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
+                    .block_on(self.run(input)),
+            }
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+            // Rust Value -> Python object
+            value_to_python(py, &result).map(|bound| bound.unbind())
         }
     }
 }
