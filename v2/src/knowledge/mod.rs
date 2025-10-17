@@ -58,7 +58,7 @@
 //!
 //! ```rust
 //! use crate::knowledge::{Knowledge, KnowledgeConfig};
-//! use crate::vector_store::SimpleVectorStore;
+//! use crate::vector_store::FaissStore;
 //! use crate::model::EmbeddingModel;
 //!
 //! // Create a vector-store based knowledge source
