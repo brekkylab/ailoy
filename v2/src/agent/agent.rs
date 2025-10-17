@@ -14,8 +14,6 @@ use crate::{
 };
 
 #[derive(Clone)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct Agent {
     lm: LangModel,
     tools: Vec<Tool>,
@@ -26,8 +24,6 @@ pub struct Agent {
 
 /// The yielded value from agent.run().
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct AgentResponse {
     /// The message delta per iteration.
     pub delta: MessageDelta,
