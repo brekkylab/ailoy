@@ -15,8 +15,11 @@ use crate::{
 type Metadata = serde_json::Map<String, serde_json::Value>;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct KnowledgeRetrieveResult {
     pub document: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
 }
 
@@ -117,15 +120,13 @@ pub enum KnowledgeInner {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Knowledge {
     inner: KnowledgeInner,
 }
 
 impl Knowledge {
-    pub fn new_vector_store(
-        store: impl VectorStore + 'static,
-        embedding_model: EmbeddingModel,
-    ) -> Self {
+    pub fn new_vector_store(store: VectorStore, embedding_model: EmbeddingModel) -> Self {
         Self {
             inner: KnowledgeInner::VectorStore(VectorStoreKnowledge::new(store, embedding_model)),
         }
@@ -148,6 +149,32 @@ impl KnowledgeBehavior for Knowledge {
         match &self.inner {
             KnowledgeInner::VectorStore(knowledge) => knowledge.retrieve(query, top_k).await,
             KnowledgeInner::Custom(knowledge) => knowledge.retrieve(query, top_k).await,
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+
+    #[wasm_bindgen]
+    impl Knowledge {
+        #[wasm_bindgen(js_name = "newVectorStore")]
+        pub fn new_vector_store_js(store: VectorStore, embedding_model: EmbeddingModel) -> Self {
+            Self::new_vector_store(store, embedding_model)
+        }
+
+        #[wasm_bindgen(js_name = "retrieve")]
+        pub async fn retrieve_js(
+            &self,
+            query: String,
+            top_k: u32,
+        ) -> Result<Vec<KnowledgeRetrieveResult>, js_sys::Error> {
+            self.retrieve(query, top_k)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
         }
     }
 }

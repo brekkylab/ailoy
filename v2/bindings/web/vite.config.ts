@@ -74,7 +74,7 @@ export default defineConfig(({ mode }) => {
       typecheck: {
         enabled: true,
       },
-      testTimeout: 60000,
+      testTimeout: 120000,
     },
     server: {
       headers: {

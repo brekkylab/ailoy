@@ -8,8 +8,11 @@ use serde_json::{Map, Value as Json};
 use uuid::Uuid;
 
 use crate::vector_store::{
-    Embedding, VectorStore, VectorStoreAddInput, VectorStoreGetResult, VectorStoreRetrieveResult,
+    Embedding, VectorStoreAddInput, VectorStoreBehavior, VectorStoreGetResult,
+    VectorStoreRetrieveResult,
 };
+
+const CHROMADB_DEFAULT_COLLECTION: &'static str = "default_collection";
 
 pub struct ChromaStore {
     client: ChromaClient,
@@ -17,14 +20,14 @@ pub struct ChromaStore {
 }
 
 impl ChromaStore {
-    pub async fn new(chroma_url: &str, collection_name: &str) -> anyhow::Result<Self> {
+    pub async fn new(chroma_url: &str, collection_name: Option<&str>) -> anyhow::Result<Self> {
         let client = ChromaClient::new(ChromaClientOptions {
             url: Some(chroma_url.to_owned()),
             ..Default::default()
         })
         .await?;
         let collection = client
-            .get_or_create_collection(collection_name, None)
+            .get_or_create_collection(collection_name.unwrap_or(CHROMADB_DEFAULT_COLLECTION), None)
             .await?;
         Ok(Self { client, collection })
     }
@@ -72,7 +75,7 @@ impl ChromaStore {
 }
 
 #[multi_platform_async_trait]
-impl VectorStore for ChromaStore {
+impl VectorStoreBehavior for ChromaStore {
     async fn add_vector(&mut self, input: VectorStoreAddInput) -> anyhow::Result<String> {
         let id = Uuid::new_v4().to_string();
 

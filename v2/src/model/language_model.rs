@@ -494,18 +494,19 @@ mod wasm {
     use wasm_bindgen::prelude::*;
 
     use super::*;
-    use crate::{ffi::web::stream_to_async_iterable, model::api::APISpecification};
+    use crate::{
+        ffi::web::{CacheProgressCallbackFn, stream_to_async_iterable},
+        model::api::APISpecification,
+    };
 
     #[wasm_bindgen]
     impl LangModel {
         #[wasm_bindgen]
         pub async fn create_local(
             #[wasm_bindgen(js_name = "modelName")] model_name: String,
-            #[wasm_bindgen(
-                js_name = "progressCallback",
-                unchecked_param_type = "(progress: CacheProgress) => void"
-            )]
-            progress_callback: Option<js_sys::Function>,
+            #[wasm_bindgen(js_name = "progressCallback")] progress_callback: Option<
+                CacheProgressCallbackFn,
+            >,
         ) -> Result<LangModel, js_sys::Error> {
             let inner = crate::ffi::web::await_cache_result::<LocalLangModel>(
                 model_name,

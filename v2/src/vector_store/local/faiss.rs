@@ -5,7 +5,7 @@ use ailoy_macros::multi_platform_async_trait;
 use crate::{
     ffi,
     vector_store::{
-        Embedding, Metadata, VectorStore, VectorStoreAddInput, VectorStoreGetResult,
+        Embedding, Metadata, VectorStoreAddInput, VectorStoreBehavior, VectorStoreGetResult,
         VectorStoreRetrieveResult,
     },
 };
@@ -33,7 +33,7 @@ impl FaissStore {
 }
 
 #[multi_platform_async_trait]
-impl VectorStore for FaissStore {
+impl VectorStoreBehavior for FaissStore {
     async fn add_vector(&mut self, input: VectorStoreAddInput) -> anyhow::Result<String> {
         let ids: Vec<String> = self.index.add_vectors(&[input.embedding]).unwrap();
         let id = ids.iter().next().unwrap().clone();

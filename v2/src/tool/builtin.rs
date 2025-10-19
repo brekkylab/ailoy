@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 use crate::tool::FunctionTool;
 ///
@@ -43,7 +41,7 @@ pub fn create_terminal_tool() -> FunctionTool {
         }))
         .build();
 
-    let f = Arc::new(|args: Value| -> Value {
+    let f = std::sync::Arc::new(|args: Value| -> Value {
         let args = match args.as_object() {
             Some(a) => a,
             None => {

@@ -5,7 +5,6 @@ mod language_model;
 mod local;
 
 use api::*;
-pub use custom::*;
 pub use embedding_model::*;
 pub use language_model::*;
 pub use local::*;

@@ -1,19 +1,21 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use futures::{Stream, StreamExt, lock::Mutex};
+use futures::{StreamExt, lock::Mutex};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     agent::SystemMessageRenderer,
     knowledge::{Knowledge, KnowledgeBehavior as _},
     model::{InferenceConfig, LangModel, LangModelInference as _},
     tool::{Tool, ToolBehavior as _},
-    utils::log,
+    utils::{BoxStream, log},
     value::{Delta, FinishReason, Message, MessageDelta, Part, PartDelta, Role},
     warn,
 };
 
 #[derive(Clone)]
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Agent {
     lm: LangModel,
     tools: Vec<Tool>,
@@ -23,7 +25,9 @@ pub struct Agent {
 }
 
 /// The yielded value from agent.run().
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct AgentResponse {
     /// The message delta per iteration.
     pub delta: MessageDelta,
@@ -120,14 +124,14 @@ impl Agent {
     pub fn run<'a>(
         &'a mut self,
         contents: Vec<Part>,
-    ) -> impl Stream<Item = anyhow::Result<AgentResponse>> {
+    ) -> BoxStream<'a, anyhow::Result<AgentResponse>> {
         // Messages used for the current run round
         let mut messages: Vec<Message> = vec![];
         // For storing message history except system message
         let messages_history = self.messages.clone();
 
         let tools = self.tools.clone();
-        async_stream::try_stream! {
+        let strm = async_stream::try_stream! {
             let system_message_content = "You are helpful assistant.".to_string();
             let knowledge_results = if let Some(knowledge) = &self.knowledge {
                 let query = contents.iter().filter(|&c| matches!(c, Part::Text{..})).map(|c| c.as_text().unwrap()).collect::<Vec<_>>().join("\n");
@@ -219,6 +223,44 @@ impl Agent {
                     break;
                 }
             }
+        };
+        Box::pin(strm)
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+    use crate::ffi::web::stream_to_async_iterable;
+
+    #[wasm_bindgen]
+    impl Agent {
+        #[wasm_bindgen(constructor)]
+        pub fn new_js(lm: LangModel, tools: Vec<Tool>) -> Self {
+            Self::new(lm, tools)
+        }
+
+        #[wasm_bindgen(
+            js_name = "run",
+            unchecked_return_type = "AsyncIterable<AgentResponse>"
+        )]
+        pub fn run_js(&self, contents: Vec<Part>) -> JsValue {
+            let mut agent = self.clone();
+            let stream = async_stream::stream! {
+                let mut inner_stream = agent.run(contents);
+                while let Some(item) = inner_stream.next().await {
+                    yield item;
+                }
+            };
+            let js_stream = Box::pin(stream.map(|response| {
+                response
+                    .map(|resp| resp.into())
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
+            }));
+
+            stream_to_async_iterable(js_stream).into()
         }
     }
 }

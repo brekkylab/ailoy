@@ -2,7 +2,7 @@ import { describe, it } from "vitest";
 
 import * as ailoy from "../src/index";
 
-describe("Ailoy LangModel", async () => {
+describe("Ailoy Agent", async () => {
   it("Local(Qwen3-0.6B)", async () => {
     const model = await ailoy.LangModel.create_local(
       "Qwen/Qwen3-0.6B",
@@ -10,12 +10,11 @@ describe("Ailoy LangModel", async () => {
         console.log(prog);
       }
     );
-    const msg: ailoy.Message = {
-      role: "user",
-      contents: [{ type: "text", text: "What is your name?" }],
-    };
-    for await (const result of model.infer([msg])) {
-      console.log(result);
+    const agent = new ailoy.Agent(model, []);
+    for await (const response of agent.run([
+      { type: "text", text: "What is your name?" },
+    ])) {
+      console.log(response);
     }
   });
 
@@ -26,12 +25,11 @@ describe("Ailoy LangModel", async () => {
       "gpt-4o",
       OPENAI_API_KEY
     );
-    const msg: ailoy.Message = {
-      role: "user",
-      contents: [{ type: "text", text: "What is your name?" }],
-    };
-    for await (const result of model.infer([msg])) {
-      console.log(result);
+    const agent = new ailoy.Agent(model, []);
+    for await (const response of agent.run([
+      { type: "text", text: "What is your name?" },
+    ])) {
+      console.log(response);
     }
   });
 });

@@ -1,10 +1,12 @@
 export type {
+  AgentResponse,
   APISpecification,
   Bytes,
   CacheProgress,
   FinishReason,
   Grammar,
   InferenceConfig,
+  KnowledgeRetrieveResult,
   Message,
   MessageDelta,
   MessageOutput,
@@ -18,5 +20,16 @@ export type {
   ThinkEffort,
   ToolDesc,
   Value,
+  VectorStoreAddInput,
+  VectorStoreGetResult,
+  VectorStoreRetrieveResult,
 } from "./ailoy-web";
-export { LangModel, EmbeddingModel } from "./ailoy-web";
+export {
+  Agent,
+  LangModel,
+  EmbeddingModel,
+  Tool,
+  MCPClient,
+  Knowledge,
+  VectorStore,
+} from "./ailoy-web";
