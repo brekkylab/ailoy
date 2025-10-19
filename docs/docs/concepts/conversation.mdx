@@ -1,0 +1,78 @@
+# Input & Output Format
+
+Many language models are fine-tuned for chat-based interactions, enabling them to engage in natural conversations with users.
+Through the conversation format, the model can understand a user’s natural-language query and generate an appropriate, context-aware response
+This process often referred to as **chat completion**.
+
+Conventionally, for chat completion, both the input and output follow a structured format.
+The format represents the dialogue as a sequence of messages, each containing a role (such as user, or assistant) and a content field describing the message body.
+Messages are typically represented as follows:
+
+```
+message = [
+  {
+    "role": "system",
+    "contents": [
+      { "type": "text", "text": "You are a friendly and knowledgeable assistant." }
+    ]
+  },
+  {
+    "role": "user",
+    "contents": [
+      { "type": "text", "text": "Can you explain how photosynthesis works?" }
+    ]
+  }
+]
+```
+
+:::info 
+These messages are templated and then converted into plain text before being passed to the model.
+
+For example, after templating and preparing for input, they look like this:
+
+```
+<|im_start|>system
+You are a friendly and knowledgeable assistant.
+<|im_end|>
+<|im_start|>user
+Can you explain how photosynthesis works?
+<|im_end|>
+<|im_start|>assistant
+...
+```
+
+The exact schema differs to each model, how it trained.
+:::
+
+If it is provided into input, it'll be like this:
+
+```
+generated = agent.run(message)
+```
+
+```
+{
+    "role": "assistant",
+    "contents": [
+        {
+            "type": "text",
+            "text": "Photosynthesis is the process by which plants convert sunlight, water, and carbon dioxide into energy. They use sunlight to produce glucose (a form of sugar) and release oxygen as a byproduct."
+        }
+    ]
+}
+```
+
+In **chat completion message format**, a conversation between a user and an assistant is represented as a sequence of **messages**.
+Each message a history of messages exchanged between the user and the assistant in a structured format.
+
+It associated with a specific role (such as system, user, or assistant) and a content (the message body).
+The model uses this structure to maintain context, infer intent, and generate the next message in a coherent, context-aware manner.
+
+Here, the three messages together form a simple conversation:
+
+- System message — Defines the model’s behavior or persona.
+- User message — Represents what the human user says or asks.
+- Assistant message — Contains the model’s generated response.
+
+## Message Structure
+

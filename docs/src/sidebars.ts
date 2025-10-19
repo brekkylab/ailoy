@@ -19,12 +19,12 @@ const sidebars: SidebarsConfig = {
       label: "Tutorial",
       items: [
         "tutorial/getting-started",
+        "tutorial/how-language-model-works",
         "tutorial/managing-conversation",
         "tutorial/reasoning",
         "tutorial/using-tools",
         "tutorial/integrate-with-mcp",
-        "tutorial/calling-low-level-apis",
-        "tutorial/rag-with-vector-store",
+        "tutorial/using-documents",
         "tutorial/webassembly-supports",
       ],
     },
@@ -32,7 +32,7 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Concepts",
       items: [
-        "concepts/architecture",
+        "concepts/conversation",
         "concepts/agent",
         "concepts/tools",
         "concepts/devices-environments",
