@@ -154,6 +154,7 @@ mod tests {
     }
 }
 
+#[cfg(feature = "python")]
 mod py {
     use pyo3::{prelude::*, pymethods, types::PyType};
     use pyo3_stub_gen_derive::gen_stub_pymethods;
