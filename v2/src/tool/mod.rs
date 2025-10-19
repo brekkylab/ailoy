@@ -241,6 +241,11 @@ mod py {
             }
         }
 
+        #[pyo3(name = "get_description", signature=())]
+        fn get_description_py(&self) -> ToolDesc {
+            self.get_description()
+        }
+
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[typing.Any]"))]
         #[pyo3(signature = (**kwargs))]
         fn __call__<'py>(
