@@ -115,6 +115,7 @@ impl Agent {
         &'a mut self,
         // messages: Vec<Message>,
         contents: Vec<Part>,
+        config: Option<InferenceConfig>,
     ) -> BoxStream<'a, anyhow::Result<AgentResponse>> {
         // Messages used for the current run round
         let mut messages: Vec<Message> = vec![];
@@ -152,7 +153,7 @@ impl Agent {
                 let mut assistant_msg: Option<Message> = None;
                 {
                     let mut model = self.lm.clone();
-                    let mut strm = model.infer(messages.clone(), tool_descs.clone(), docs.clone(), InferenceConfig::default());
+                    let mut strm = model.infer(messages.clone(), tool_descs.clone(), docs.clone(), config.clone().unwrap_or_default());
                     while let Some(out) = strm.next().await {
                         let out = out?;
                         assistant_msg_delta = assistant_msg_delta.aggregate(out.clone().delta).context("Aggregation failed")?;
@@ -219,7 +220,7 @@ mod tests {
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
         let mut agent = Agent::new(model, Vec::new());
 
-        let mut strm = Box::pin(agent.run(vec![Part::text("Hi what's your name?")]));
+        let mut strm = Box::pin(agent.run(vec![Part::text("Hi what's your name?")], None));
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
@@ -285,7 +286,8 @@ mod tests {
 
         let mut agent = Agent::new(model, tools);
 
-        let mut strm = Box::pin(agent.run(vec![Part::text("How much hot currently in Dubai?")]));
+        let mut strm =
+            Box::pin(agent.run(vec![Part::text("How much hot currently in Dubai?")], None));
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
@@ -323,9 +325,12 @@ mod tests {
         assert_eq!(agent_tools[0].get_description().name, "get_current_time");
         assert_eq!(agent_tools[1].get_description().name, "convert_time");
 
-        let mut strm = Box::pin(agent.run(vec![Part::text(
-            "What time is it now in America/New_York timezone?",
-        )]));
+        let mut strm = Box::pin(agent.run(
+            vec![Part::text(
+                "What time is it now in America/New_York timezone?",
+            )],
+            None,
+        ));
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
@@ -351,7 +356,7 @@ mod py {
     fn spawn<'a>(
         mut agent: Agent,
         contents: Vec<Part>,
-        // config: InferenceConfig,
+        config: Option<InferenceConfig>,
     ) -> anyhow::Result<(
         &'a tokio::runtime::Runtime,
         async_channel::Receiver<anyhow::Result<AgentResponse>>,
@@ -359,7 +364,7 @@ mod py {
         let (tx, rx) = async_channel::unbounded::<anyhow::Result<AgentResponse>>();
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         rt.spawn(async move {
-            let mut stream = agent.run(contents).boxed();
+            let mut stream = agent.run(contents, config).boxed();
 
             while let Some(item) = stream.next().await {
                 if tx.send(item).await.is_err() {
@@ -485,35 +490,35 @@ mod py {
         }
 
         // #[pyo3(name="run", signature = (messages, config=None))]
-        #[pyo3(name="run", signature = (contents))]
+        #[pyo3(name="run", signature = (contents, config=None))]
         fn run_py(
             &mut self,
-            contents: Vec<Part>,
             // messages: Vec<Message>,
-            // config: Option<InferenceConfig>,
+            contents: Vec<Part>,
+            config: Option<InferenceConfig>,
         ) -> anyhow::Result<AgentRunIterator> {
             let (_, rx) = spawn(
                 self.clone(),
-                contents,
                 // messages,
-                // config.unwrap_or(InferenceConfig::default()),
+                contents,
+                config,
             )?;
             Ok(AgentRunIterator { rx })
         }
 
         // #[pyo3(name="run_sync", signature = (messages, config=None))]
-        #[pyo3(name="run_sync", signature = (contents))]
+        #[pyo3(name="run_sync", signature = (contents, config=None))]
         fn run_sync_py(
             &mut self,
-            contents: Vec<Part>,
             // messages: Vec<Message>,
-            // config: Option<InferenceConfig>,
+            contents: Vec<Part>,
+            config: Option<InferenceConfig>,
         ) -> anyhow::Result<AgentRunSyncIterator> {
             let (rt, rx) = spawn(
                 self.clone(),
-                contents,
                 // messages,
-                // config.unwrap_or(InferenceConfig::default()),
+                contents,
+                config,
             )?;
             Ok(AgentRunSyncIterator { rt, rx })
         }
