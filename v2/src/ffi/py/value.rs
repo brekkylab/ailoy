@@ -148,7 +148,7 @@ impl Message {
         }
     }
 
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         format!(
             "Message(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
             self.role.__repr__(),
@@ -274,7 +274,7 @@ impl MessageDelta {
         }
     }
 
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         format!(
             "MessageDelta(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
             self.role
@@ -310,7 +310,7 @@ impl MessageDelta {
 #[gen_stub_pymethods]
 #[pymethods]
 impl FinishReason {
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         match self {
             FinishReason::Stop {} => "FinishReason.Stop()".to_owned(),
             FinishReason::Length {} => "FinishReason.Length()".to_owned(),

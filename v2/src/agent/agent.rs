@@ -1,17 +1,19 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use futures::{Stream, StreamExt, lock::Mutex};
+use futures::{StreamExt, lock::Mutex};
 
 use crate::{
     knowledge::{Knowledge, KnowledgeBehavior as _, KnowledgeConfig},
     model::{InferenceConfig, LangModel, LangModelInference as _},
     tool::{Tool, ToolBehavior as _},
-    utils::log,
+    utils::{BoxStream, log},
     value::{Delta, FinishReason, Message, MessageDelta, Part, PartDelta, Role},
 };
 
 #[derive(Clone)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct Agent {
     lm: LangModel,
     tools: Vec<Tool>,
@@ -21,6 +23,8 @@ pub struct Agent {
 
 /// The yielded value from agent.run().
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all))]
 pub struct AgentResponse {
     /// The message delta per iteration.
     pub delta: MessageDelta,
@@ -113,15 +117,16 @@ impl Agent {
 
     pub fn run<'a>(
         &'a mut self,
+        // messages: Vec<Message>,
         contents: Vec<Part>,
-    ) -> impl Stream<Item = anyhow::Result<AgentResponse>> {
+    ) -> BoxStream<'a, anyhow::Result<AgentResponse>> {
         // Messages used for the current run round
         let mut messages: Vec<Message> = vec![];
         // For storing message history except system message
         let messages_history = self.messages.clone();
 
         let tools = self.tools.clone();
-        async_stream::try_stream! {
+        let strm = async_stream::try_stream! {
             // Get documents
             let docs = if let Some(knowledge) = self.knowledge.clone() {
                 let query_str = contents.iter().filter(|p| p.is_text()).map(|p| p.as_text().unwrap().to_owned()).collect::<Vec<_>>().join("\n\n");
@@ -200,7 +205,8 @@ impl Agent {
                     break;
                 }
             }
-        }
+        };
+        Box::pin(strm)
     }
 }
 
@@ -330,6 +336,179 @@ mod tests {
             if output.aggregated.is_some() {
                 println!("message: {:?}", output.aggregated.unwrap());
             }
+        }
+    }
+}
+
+#[cfg(feature = "python")]
+mod py {
+    use pyo3::{
+        Bound, Py, PyAny, PyRef, PyResult, Python,
+        exceptions::{PyStopAsyncIteration, PyStopIteration},
+        pyclass, pymethods,
+        types::PyType,
+    };
+    use pyo3_stub_gen_derive::{gen_stub_pyclass, gen_stub_pymethods};
+
+    use super::*;
+
+    fn spawn<'a>(
+        mut agent: Agent,
+        contents: Vec<Part>,
+        // config: InferenceConfig,
+    ) -> anyhow::Result<(
+        &'a tokio::runtime::Runtime,
+        async_channel::Receiver<anyhow::Result<AgentResponse>>,
+    )> {
+        let (tx, rx) = async_channel::unbounded::<anyhow::Result<AgentResponse>>();
+        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        rt.spawn(async move {
+            let mut stream = agent.run(contents).boxed();
+
+            while let Some(item) = stream.next().await {
+                if tx.send(item).await.is_err() {
+                    break; // Exit if consumer vanished
+                }
+                // Add a yield point to allow other tasks to run
+                tokio::task::yield_now().await;
+            }
+        });
+        Ok((rt, rx))
+    }
+
+    #[gen_stub_pyclass]
+    #[pyclass(unsendable)]
+    pub struct AgentRunIterator {
+        rx: async_channel::Receiver<anyhow::Result<AgentResponse>>,
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl AgentRunIterator {
+        fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+            slf
+        }
+
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[AgentResponse]"))]
+        fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+            let rx: async_channel::Receiver<Result<AgentResponse, anyhow::Error>> = self.rx.clone();
+            let fut = async move {
+                match rx.recv().await {
+                    Ok(res) => res.map_err(Into::into),
+                    Err(_) => Err(PyStopAsyncIteration::new_err(())),
+                }
+            };
+            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
+            Ok(py_fut.into())
+        }
+    }
+
+    #[gen_stub_pyclass]
+    #[pyclass(unsendable)]
+    pub struct AgentRunSyncIterator {
+        rt: &'static tokio::runtime::Runtime,
+        rx: async_channel::Receiver<anyhow::Result<AgentResponse>>,
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl AgentRunSyncIterator {
+        fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+            slf
+        }
+
+        fn __next__(&mut self, py: Python<'_>) -> PyResult<AgentResponse> {
+            let item = py.detach(|| self.rt.block_on(self.rx.recv()));
+            match item {
+                Ok(res) => res.map_err(Into::into),
+                Err(_) => Err(PyStopIteration::new_err(())),
+            }
+        }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl Agent {
+        #[new]
+        #[pyo3(signature = (lm, tools = None))]
+        fn __new__(lm: LangModel, tools: Option<Vec<Tool>>) -> Self {
+            Agent::new(lm, tools.unwrap_or_default())
+        }
+
+        #[classmethod]
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[Agent]"))]
+        #[pyo3(signature = (lm, tools = None))]
+        fn create<'py>(
+            _cls: &Bound<'py, PyType>,
+            py: Python<'py>,
+            lm: LangModel,
+            tools: Option<Vec<Tool>>,
+        ) -> PyResult<Bound<'py, PyAny>> {
+            let fut = async move {
+                Python::attach(|py| Py::new(py, Agent::new(lm, tools.unwrap_or(vec![]))))
+            };
+            pyo3_async_runtimes::tokio::future_into_py(py, fut)
+        }
+
+        fn __repr__(&self) -> String {
+            format!(
+                "Agent(lm={}, tools=[{} items])",
+                self.get_lm().__repr__(),
+                self.tools.len()
+            )
+        }
+
+        // #[pyo3(signature = (messages, config=None))]
+        #[pyo3(name="run", signature = (contents))]
+        fn run_py(
+            &mut self,
+            // messages: Vec<Message>,
+            contents: Vec<Part>,
+            // config: Option<InferenceConfig>,
+        ) -> anyhow::Result<AgentRunIterator> {
+            let (_, rx) = spawn(
+                self.clone(),
+                contents,
+                // messages,
+                // config.unwrap_or(InferenceConfig::default()),
+            )?;
+            Ok(AgentRunIterator { rx })
+        }
+
+        // #[pyo3(signature = (messages, config=None))]
+        #[pyo3(name="run_sync", signature = (contents))]
+        fn run_sync_py(
+            &mut self,
+            // messages: Vec<Message>,
+            contents: Vec<Part>,
+            // config: Option<InferenceConfig>,
+        ) -> anyhow::Result<AgentRunSyncIterator> {
+            let (rt, rx) = spawn(
+                self.clone(),
+                contents,
+                // messages,
+                // config.unwrap_or(InferenceConfig::default()),
+            )?;
+            Ok(AgentRunSyncIterator { rt, rx })
+        }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl AgentResponse {
+        fn __repr__(&self) -> String {
+            format!(
+                "AgentResponse(delta={}, finish_reason={}, aggregated={})",
+                self.delta.__repr__(),
+                self.finish_reason
+                    .clone()
+                    .map(|finish_reason| finish_reason.__repr__())
+                    .unwrap_or("None".to_owned()),
+                self.aggregated
+                    .clone()
+                    .map(|aggregated| aggregated.__repr__())
+                    .unwrap_or("None".to_owned()),
+            )
         }
     }
 }

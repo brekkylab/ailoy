@@ -357,6 +357,16 @@ mod py {
             )?;
             Ok(LanguageModelRunSyncIterator { rt, rx })
         }
+
+        pub fn __repr__(&self) -> String {
+            // FIXME: provide model name or sth?
+            let s = match &self.inner {
+                LangModelInner::Local(_) => "LocalLangModel()",
+                LangModelInner::StreamAPI(_) => "StreamAPILangModel()",
+                LangModelInner::Custom(_) => "CustomLangModel()",
+            };
+            format!("LangModel({})", s)
+        }
     }
 
     #[gen_stub_pymethods]

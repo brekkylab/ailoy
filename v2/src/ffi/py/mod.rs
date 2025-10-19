@@ -16,12 +16,8 @@ use pyo3::prelude::*;
 #[pymodule(name = "_core")]
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // Add classes in alphabetical order
-    // m.add_class::<crate::agent::Agent>()?;
-    // m.add_class::<crate::agent::AgentResponse>()?;
-    // m.add_class::<AgentRunIterator>()?;
-    // m.add_class::<AgentRunSyncIterator>()?;
-    // m.add_class::<AnthropicLanguageModel>()?;
-    // m.add_class::<vector_store::BaseVectorStore>()?;
+    m.add_class::<crate::agent::Agent>()?;
+    m.add_class::<crate::agent::AgentResponse>()?;
     m.add_class::<crate::tool::Tool>()?;
     m.add_class::<crate::tool::MCPClient>()?;
     m.add_class::<vector_store::ChromaVectorStore>()?;
