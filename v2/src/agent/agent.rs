@@ -229,132 +229,107 @@ mod tests {
         Ok(())
     }
 
-    // #[cfg(any(target_family = "unix", target_family = "windows"))]
-    // #[tokio::test]
-    // async fn run_tool_call() {
-    //     use futures::StreamExt;
-    //     use serde_json::json;
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn run_tool_call() {
+        use futures::StreamExt;
 
-    //     use super::*;
-    //     use crate::{model::LocalLanguageModel, tool::BuiltinTool, value::ToolDesc};
+        use super::*;
+        use crate::{model::LangModel, to_value, value::ToolDesc};
 
-    //     let cache = crate::cache::Cache::new();
-    //     let key = "Qwen/Qwen3-0.6B";
-    //     let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
-    //     let mut model: Option<LocalLanguageModel> = None;
-    //     while let Some(progress) = model_strm.next().await {
-    //         let mut progress = progress.unwrap();
-    //         println!("{} / {}", progress.current_task, progress.total_task);
-    //         if progress.current_task == progress.total_task {
-    //             model = progress.result.take();
-    //         }
-    //     }
-    //     let model = model.unwrap();
-    //     let tool_desc = ToolDesc::new(
-    //         "temperature".into(),
-    //         "Get current temperature".into(),
-    //         json!({
-    //             "type": "object",
-    //             "properties": {
-    //                 "location": {
-    //                     "type": "string",
-    //                     "description": "The city name"
-    //                 },
-    //                 "unit": {
-    //                     "type": "string",
-    //                     "enum": ["Celsius", "Fahrenheit"]
-    //                 }
-    //             },
-    //             "required": ["location", "unit"]
-    //         }),
-    //         Some(json!({
-    //             "type": "number",
-    //             "description": "Null if the given city name is unavailable.",
-    //             "nullable": true,
-    //         })),
-    //     )
-    //     .unwrap();
-    //     let tools = vec![Arc::new(BuiltinTool::new(
-    //         tool_desc,
-    //         Arc::new(|args| {
-    //             if args
-    //                 .as_object()
-    //                 .unwrap()
-    //                 .get("unit")
-    //                 .unwrap()
-    //                 .as_str()
-    //                 .unwrap()
-    //                 == "Celsius"
-    //             {
-    //                 Part::Text("40".to_owned())
-    //             } else {
-    //                 Part::Text("104".to_owned())
-    //             }
-    //         }),
-    //     )) as Tool];
-    //     let mut agent = Agent::new(model, tools);
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
 
-    //     let mut agg = MessageAggregator::new();
-    //     let mut strm =
-    //         Box::pin(agent.run(vec![Part::Text("How much hot currently in Dubai?".into())]));
-    //     while let Some(delta_opt) = strm.next().await {
-    //         let delta = delta_opt.unwrap();
-    //         if let Some(msg) = agg.update(delta) {
-    //             println!("{:?}", msg);
-    //         }
-    //     }
-    // }
+        let tool_desc = ToolDesc::new(
+            "temperature".to_owned(),
+            Some("Get current temperature".to_owned()),
+            to_value!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The city name"
+                    },
+                    "unit": {
+                        "type": "string",
+                        "enum": ["Celsius", "Fahrenheit"]
+                    }
+                },
+                "required": ["location", "unit"]
+            }),
+            Some(to_value!({
+                "type": "number",
+                "description": "Null if the given city name is unavailable.",
+                "nullable": true,
+            })),
+        );
+        let tools = vec![Tool::new_function(
+            tool_desc,
+            Arc::new(|args| {
+                if args
+                    .as_object()
+                    .unwrap()
+                    .get("unit")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    == "Celsius"
+                {
+                    to_value!("40")
+                } else {
+                    to_value!("104")
+                }
+            }),
+        )];
 
-    // #[cfg(any(target_family = "unix", target_family = "windows"))]
-    // #[tokio::test]
-    // async fn run_mcp_stdio_tool_call() -> anyhow::Result<()> {
-    //     use futures::StreamExt;
+        let mut agent = Agent::new(model, tools);
 
-    //     use super::*;
-    //     use crate::{model::LocalLanguageModel, tool::MCPTransport};
+        let mut strm = Box::pin(agent.run(vec![Part::text("How much hot currently in Dubai?")]));
+        while let Some(output) = strm.next().await {
+            let output = output.unwrap();
+            println!("delta: {:?}", output.delta);
+            if output.aggregated.is_some() {
+                println!("message: {:?}", output.aggregated.unwrap());
+            }
+        }
+    }
 
-    //     let cache = crate::cache::Cache::new();
-    //     let key = "Qwen/Qwen3-0.6B";
-    //     let mut model_strm = Box::pin(cache.try_create::<LocalLanguageModel>(key));
-    //     let mut model: Option<LocalLanguageModel> = None;
-    //     while let Some(progress) = model_strm.next().await {
-    //         let mut progress = progress.unwrap();
-    //         println!("{} / {}", progress.current_task, progress.total_task);
-    //         if progress.current_task == progress.total_task {
-    //             model = progress.result.take();
-    //         }
-    //     }
-    //     let model = model.unwrap();
+    #[cfg(any(target_family = "unix", target_family = "windows"))]
+    #[tokio::test]
+    async fn run_mcp_stdio_tool_call() {
+        use futures::StreamExt;
+        use rmcp::transport::ConfigureCommandExt;
 
-    //     let mut agent = Agent::new(model, vec![]);
-    //     let transport = MCPTransport::Stdio {
-    //         command: "uvx".into(),
-    //         args: vec!["mcp-server-time".into()],
-    //     };
-    //     agent
-    //         .add_tools(transport.get_tools("time").await.unwrap())
-    //         .await
-    //         .unwrap();
+        use super::*;
+        use crate::{model::LangModel, tool::MCPClient};
 
-    //     let agent_tools = agent.get_tools();
-    //     assert_eq!(agent_tools.len(), 2);
-    //     assert_eq!(
-    //         agent_tools[0].get_description().name,
-    //         "time--get_current_time"
-    //     );
-    //     assert_eq!(agent_tools[1].get_description().name, "time--convert_time");
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
+        let mut agent = Agent::new(model, Vec::new());
 
-    //     let mut agg = MessageAggregator::new();
-    //     let mut strm = Box::pin(agent.run(vec![Part::Text(
-    //         "What time is it now in America/New_York timezone?".into(),
-    //     )]));
-    //     while let Some(delta_opt) = strm.next().await {
-    //         let delta = delta_opt.unwrap();
-    //         if let Some(msg) = agg.update(delta) {
-    //             println!("{:?}", msg);
-    //         }
-    //     }
+        let command = tokio::process::Command::new("uvx").configure(|cmd| {
+            cmd.arg("mcp-server-time");
+        });
+        let mcp_client = MCPClient::from_stdio(command).await.unwrap();
+        let mcp_tools = mcp_client
+            .tools
+            .into_iter()
+            .map(|tool| Tool::new_mcp(tool))
+            .collect();
+        agent.add_tools(mcp_tools).await.unwrap();
 
-    //     Ok(())
-    // }
+        let agent_tools = agent.get_tools();
+        assert_eq!(agent_tools.len(), 2);
+        assert_eq!(agent_tools[0].get_description().name, "get_current_time");
+        assert_eq!(agent_tools[1].get_description().name, "convert_time");
+
+        let mut strm = Box::pin(agent.run(vec![Part::text(
+            "What time is it now in America/New_York timezone?",
+        )]));
+        while let Some(output) = strm.next().await {
+            let output = output.unwrap();
+            println!("delta: {:?}", output.delta);
+            if output.aggregated.is_some() {
+                println!("message: {:?}", output.aggregated.unwrap());
+            }
+        }
+    }
 }
