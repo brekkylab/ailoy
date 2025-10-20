@@ -6,6 +6,12 @@
  * *This API requires the following crate features to be activated: `ReadableStreamType`*
  */
 type ReadableStreamType = "bytes";
+export interface CacheProgress {
+    comment: string;
+    current: number;
+    total: number;
+}
+
 /**
  * Describes a **tool** (or function) that a language model can invoke.
  *
@@ -71,6 +77,32 @@ export interface ToolDesc {
      */
     returns?: Value;
 }
+
+export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
+
+export interface VectorStoreRetrieveResult {
+    id: string;
+    document: string;
+    metadata?: Metadata;
+    distance: number;
+}
+
+export interface VectorStoreGetResult {
+    id: string;
+    document: string;
+    metadata?: Metadata;
+    embedding: Float32Array;
+}
+
+export interface VectorStoreAddInput {
+    embedding: Float32Array;
+    document: string;
+    metadata?: Metadata;
+}
+
+export type Metadata = Map<string, Value>;
+
+export type Embedding = number[];
 
 /**
  * Represents a partial or incremental update (delta) of a [`Part`].
@@ -318,35 +350,7 @@ export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
 
-export interface CacheProgress {
-    comment: string;
-    current: number;
-    total: number;
-}
-
-export interface VectorStoreRetrieveResult {
-    id: string;
-    document: string;
-    metadata?: Metadata;
-    distance: number;
-}
-
-export interface VectorStoreGetResult {
-    id: string;
-    document: string;
-    metadata?: Metadata;
-    embedding: Float32Array;
-}
-
-export interface VectorStoreAddInput {
-    embedding: Float32Array;
-    document: string;
-    metadata?: Metadata;
-}
-
-export type Metadata = Map<string, Value>;
-
-export type Embedding = number[];
+export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
 
 export type Bytes = Uint8Array;
 
@@ -354,10 +358,6 @@ export interface KnowledgeRetrieveResult {
     document: string;
     metadata?: Metadata;
 }
-
-export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
-
-export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
 
 /**
  * The yielded value from agent.run().
@@ -380,7 +380,17 @@ export interface AgentResponse {
 export class Agent {
   free(): void;
   [Symbol.dispose](): void;
-  constructor(lm: LangModel, tools: Tool[]);
+  /**
+   * Construct a new Agent instance with provided `LangModel` and `Tool`s.
+   *
+   * Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after the agent is initialized.
+   * If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
+   */
+  constructor(lm: LangModel, tools?: Tool[] | null);
+  addTool(tool: Tool): Promise<void>;
+  removeTool(toolName: string): Promise<void>;
+  setKnowledge(knowledge: Knowledge): void;
+  removeKnowledge(): void;
   run(contents: Part[]): AsyncIterable<AgentResponse>;
 }
 export class EmbeddingModel {
@@ -421,13 +431,14 @@ export class Knowledge {
   [Symbol.dispose](): void;
   static newVectorStore(store: VectorStore, embedding_model: EmbeddingModel): Knowledge;
   retrieve(query: string, top_k: number): Promise<KnowledgeRetrieveResult[]>;
+  asTool(): Tool;
 }
 export class LangModel {
   private constructor();
   free(): void;
   [Symbol.dispose](): void;
-  static create_local(modelName: string, progressCallback?: (progress: CacheProgress) => void | null): Promise<LangModel>;
-  static create_stream_api(spec: APISpecification, modelName: string, apiKey: string): Promise<LangModel>;
+  static newLocal(modelName: string, progressCallback?: (progress: CacheProgress) => void | null): Promise<LangModel>;
+  static newStreamAPI(spec: APISpecification, modelName: string, apiKey: string): Promise<LangModel>;
   infer(msgs: Message[], tools?: ToolDesc[] | null, config?: InferenceConfig | null): AsyncIterable<MessageOutput>;
 }
 export class MCPClient {

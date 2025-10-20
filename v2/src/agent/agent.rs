@@ -135,7 +135,7 @@ impl Agent {
             let system_message_content = "You are helpful assistant.".to_string();
             let knowledge_results = if let Some(knowledge) = &self.knowledge {
                 let query = contents.iter().filter(|&c| matches!(c, Part::Text{..})).map(|c| c.as_text().unwrap()).collect::<Vec<_>>().join("\n");
-                let retrieved = match knowledge.retrieve(query.clone(), 1).await {
+                let retrieved = match knowledge.retrieve(query.clone(), 5).await {
                     Ok(retrieved) => retrieved,
                     Err(e) => {
                         warn!("Failed to retrieve from knowledge: {}", e.to_string());
@@ -237,9 +237,40 @@ mod wasm {
 
     #[wasm_bindgen]
     impl Agent {
+        /// Construct a new Agent instance with provided `LangModel` and `Tool`s.
+        ///
+        /// Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after the agent is initialized.
+        /// If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
         #[wasm_bindgen(constructor)]
-        pub fn new_js(lm: LangModel, tools: Vec<Tool>) -> Self {
-            Self::new(lm, tools)
+        pub fn new_js(lm: &LangModel, tools: Option<Vec<Tool>>) -> Self {
+            Self::new(lm.clone(), tools.unwrap_or(vec![]))
+        }
+
+        #[wasm_bindgen(js_name = "addTool")]
+        pub async fn add_tool_js(&mut self, tool: &Tool) -> Result<(), js_sys::Error> {
+            self.add_tool(tool.clone())
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "removeTool")]
+        pub async fn remove_tool_js(
+            &mut self,
+            #[wasm_bindgen(js_name = "toolName")] tool_name: String,
+        ) -> Result<(), js_sys::Error> {
+            self.remove_tool(tool_name)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "setKnowledge")]
+        pub fn set_knowledge_js(&mut self, knowledge: &Knowledge) {
+            self.set_knowledge(knowledge.clone());
+        }
+
+        #[wasm_bindgen(js_name = "removeKnowledge")]
+        pub fn remove_knowledge_js(&mut self) {
+            self.remove_knowledge();
         }
 
         #[wasm_bindgen(

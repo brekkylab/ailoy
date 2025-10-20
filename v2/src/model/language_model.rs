@@ -501,8 +501,8 @@ mod wasm {
 
     #[wasm_bindgen]
     impl LangModel {
-        #[wasm_bindgen]
-        pub async fn create_local(
+        #[wasm_bindgen(js_name = "newLocal")]
+        pub async fn new_local_js(
             #[wasm_bindgen(js_name = "modelName")] model_name: String,
             #[wasm_bindgen(js_name = "progressCallback")] progress_callback: Option<
                 CacheProgressCallbackFn,
@@ -519,8 +519,8 @@ mod wasm {
             })
         }
 
-        #[wasm_bindgen]
-        pub async fn create_stream_api(
+        #[wasm_bindgen(js_name = "newStreamAPI")]
+        pub async fn new_stream_api_js(
             spec: APISpecification,
             #[wasm_bindgen(js_name = "modelName")] model_name: String,
             #[wasm_bindgen(js_name = "apiKey")] api_key: String,

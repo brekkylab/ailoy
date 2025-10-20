@@ -158,12 +158,13 @@ mod wasm {
     use wasm_bindgen::prelude::*;
 
     use super::*;
+    use crate::tool::Tool;
 
     #[wasm_bindgen]
     impl Knowledge {
         #[wasm_bindgen(js_name = "newVectorStore")]
-        pub fn new_vector_store_js(store: VectorStore, embedding_model: EmbeddingModel) -> Self {
-            Self::new_vector_store(store, embedding_model)
+        pub fn new_vector_store_js(store: &VectorStore, embedding_model: &EmbeddingModel) -> Self {
+            Self::new_vector_store(store.clone(), embedding_model.clone())
         }
 
         #[wasm_bindgen(js_name = "retrieve")]
@@ -175,6 +176,12 @@ mod wasm {
             self.retrieve(query, top_k)
                 .await
                 .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "asTool")]
+        pub fn as_tool(self) -> Tool {
+            let tool = KnowledgeTool::from(self);
+            Tool::new_knowledge(tool)
         }
     }
 }
