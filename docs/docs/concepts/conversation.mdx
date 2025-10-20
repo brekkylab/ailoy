@@ -1,15 +1,14 @@
-# Input & Output Format
+# Chat Completion Format
 
 Many language models are fine-tuned for chat-based interactions, enabling them to engage in natural conversations with users.
-Through the conversation format, the model can understand a user’s natural-language query and generate an appropriate, context-aware response
+Through the conversation format, the model can understand a user’s natural-language query and generate an appropriate, context-aware response.
 This process often referred to as **chat completion**.
 
-Conventionally, for chat completion, both the input and output follow a structured format.
-The format represents the dialogue as a sequence of messages, each containing a role (such as user, or assistant) and a content field describing the message body.
+Conventionally, in a chat completion setup, both **input** and **output** follow a structured format.
 Messages are typically represented as follows:
 
 ```
-message = [
+[
   {
     "role": "system",
     "contents": [
@@ -25,31 +24,7 @@ message = [
 ]
 ```
 
-:::info 
-These messages are templated and then converted into plain text before being passed to the model.
-
-For example, after templating and preparing for input, they look like this:
-
-```
-<|im_start|>system
-You are a friendly and knowledgeable assistant.
-<|im_end|>
-<|im_start|>user
-Can you explain how photosynthesis works?
-<|im_end|>
-<|im_start|>assistant
-...
-```
-
-The exact schema differs to each model, how it trained.
-:::
-
-If it is provided into input, it'll be like this:
-
-```
-generated = agent.run(message)
-```
-
+When it is executed, the output might look like:
 ```
 {
     "role": "assistant",
@@ -62,17 +37,92 @@ generated = agent.run(message)
 }
 ```
 
-In **chat completion message format**, a conversation between a user and an assistant is represented as a sequence of **messages**.
-Each message a history of messages exchanged between the user and the assistant in a structured format.
+## Message
 
-It associated with a specific role (such as system, user, or assistant) and a content (the message body).
-The model uses this structure to maintain context, infer intent, and generate the next message in a coherent, context-aware manner.
+A `Message` represents one conversational turn — what one participant (system, user, or assistant) says or does.
 
-Here, the three messages together form a simple conversation:
+Each message contains:
+- a **role**, indicating who is speaking,
+- a set of **contents**, describing what was said or sent.
 
-- System message — Defines the model’s behavior or persona.
-- User message — Represents what the human user says or asks.
-- Assistant message — Contains the model’s generated response.
+It associated with a specific role and a content.
 
-## Message Structure
+### Role
 
+|Role|Description|
+|---|---|
+|**system**|System instructions and constraints provided to the assistant. It usually defines the model’s behavior or persona.|
+|**user**|Content authored by the end user.|
+|**assistant**|Content authored by the assistant/model.|
+|**tool**|Outputs produced by external tools/functions.|
+
+### Contents
+
+What is said from each role is generally referred to as content.
+However, a model can operate in different modes, producing outputs that serve different purposes.
+
+These outputs reflect the **intention** behind what the model says or performs.
+
+|Intent|Description|
+|---|---|
+|**Content**|General output.|
+|**Reasoning(thinking)**|Some model generates intermediate thoughts or reasoning traces before producing the final answer. These are stored in the reasoning field (often hidden from the user) and can help trace or visualize the model’s internal decision process.|
+|**Tool call**|When the model decides to invoke an external function or API instead of generating plain text. These are represented as structured objects that describe which function to call(name) and with what arguments.|
+
+These types of outputs are stored in separate fields within a message, making it possible to distinguish from general conversation.
+
+**Example**
+
+```
+[
+  Message {
+      role: "assistant",
+      reasoning: "Let’s reason step by step: photosynthesis converts light energy into chemical energy...",
+      contents: [
+          { type: "text", text: "Photosynthesis is the process by which plants convert sunlight, water, and carbon dioxide into energy." }
+      ],
+      tool_calls: [
+          {
+            type: "function",
+            function: {
+              id: "func_call_1234abcd",
+              name: "get_current_location",
+              arguments: ...
+            }
+          }
+      ],
+  },
+]
+```
+
+## Parts
+
+While `Contents` describe the intention of a message, `Part` defines the data type of that message.
+
+Each Message contains a list of Part objects — the smallest semantic units within a conversation.
+A Part can represent text, images, function calls, or any structured values, enabling rich multimodal communication.
+
+|Part|Description|
+|---|---|
+|**Text**|Natural-language text content|
+|**Image**|Visual data or reference (e.g., binary, URL, or metadata)|
+|**Function**|Structured tool or function invocation|
+|**Value**|Arbitrary data (numbers, objects, JSON values, etc.)|
+
+For example, if a user asks about an image, the message could look like this:
+
+```
+[
+  {type: "image", "image": {data: "..."}}
+  {type: "text", text: "What you can see in this image?"} 
+]
+```
+
+Together, these parts form the foundation for Ailoy’s multimodal and tool-augmented conversations — allowing the same structure to represent plain chat, reasoning traces, or complex tool workflows consistently.
+
+## Delta
+
+A `Delta` represents a partial update to a message — for example, during streaming responses.
+When the model generates text token-by-token, each incremental addition is emitted as a delta, which is later merged into a full Message.
+
+This design allows Ailoy to support streaming outputs, real-time reasoning traces, and incremental tool calls efficiently.
