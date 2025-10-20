@@ -1,14 +1,71 @@
 # Interlude: How Language Model Works
 
-A **language model** is a type of AI system that can understand and generate natural language.
+A **language model(LM)** is a type of AI system that can understand and generate natural language.
 You can think of it as a highly advanced autocomplete engine.
 It predicts what words or sentences should come next based on the context it has already seen.
 Trained on massive datasets, it can hold meaningful conversations, write code, summarize documents, and even reason about complex problems.
 Yet, in a way, it’s a simple system at its core.
 
-TODO Gif
+To use Ailoy effectively, it helps to have a clear understanding of how a language model works.
+In this section, we’ll briefly explain the process how an LM operates.
 
-A language model works iteratively.
-It takes as input a sequence of text and outputs a continuation of that sequence.
-Then, in the next step, the generated output is appended to the input, and the model generates the next token.
-This process repeats until the model emits a special stop token, signaling the end of generation.
+## Input & Output
+
+At the most basic level, a language model working with **tokens**.
+It inputs tokens and generates next token.
+
+Since tokens are just numbers that represent pieces of text, You don’t need to worry about them unless you’re researching AI fundamentals.
+You can simply think of **the input is text**.
+(Ailoy inputs text and automatically converts into tokens internally.)
+
+Note that Ailoy uses a special text structure called the **chat completion format**.
+Please refer to [] about this format.
+
+## Step 1: Tokenization
+
+As mentioned above, input text is broken into tokens.
+Each token corresponds to a whole word, a subword, or even a single character, depending on the model’s vocabulary.
+Each token is then mapped to a number (its ID), forming a numerical sequence that the model can process.
+
+For example:
+
+```
+Text: "The sky is blue today."
+Tokens (string): ["The", " sky", " is", " blue", "today", "."]
+Tokens (IDs): [172,  10400,  8172,  404, 629, 100]
+```
+
+## Step 2: Predicting the Next Token
+
+Once the input sequence is encoded, the model estimates a probability distribution over all possible next tokens.
+In simple terms, it answers the question:
+
+> “Given what I’ve seen so far, what is the most likely next token?”
+
+For example:
+
+- Input: "The sky is"
+- Prediction:
+  - "blue" → 0.92  
+  - "green" → 0.03  
+  - "red" → 0.01
+  - ...
+
+The model then chooses one token based on these probabilities.
+It might take the most likely one (for accurate results) or sample randomly among several (for more creative outputs).
+
+## Step 3: Iterative Generation
+
+After generating a token, the model appends it to the input sequence and repeats the same process again.
+It re-encodes the new sequence, computes attention, predicts the next token, and continues this loop.
+
+For example:
+
+- Input: "The sky is" → Model predicts "blue"
+- New input: "The sky is blue" → Model predicts "today"
+- New input: "The sky is blue today" → Model predicts "." (period)
+
+Then it emits a stop token and finishes.
+
+This iterative process continues until the model decides the text is complete or reaches a set limit.
+The result is a coherent and contextually consistent piece of text.
