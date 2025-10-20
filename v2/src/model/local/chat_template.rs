@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use anyhow::{Context, bail};
 use minijinja::{Environment, context};
@@ -6,8 +6,9 @@ use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, TryFromCache},
+    model::ThinkEffort,
     utils::BoxFuture,
-    value::{Message, ToolDesc},
+    value::{Document, Message, ToolDesc},
 };
 
 /// Global Environment (initialized once)
@@ -27,8 +28,6 @@ fn get_env<'a>() -> MutexGuard<'a, Environment<'static>> {
 #[derive(Debug, Clone)]
 pub struct ChatTemplate {
     key: String,
-    do_thinking: Arc<Mutex<bool>>,
-    think_effort: Arc<Mutex<String>>,
 }
 
 impl ChatTemplate {
@@ -38,50 +37,38 @@ impl ChatTemplate {
             env.add_template_owned(key.clone(), source).unwrap();
         }
 
-        Self {
-            key,
-            do_thinking: Arc::new(Mutex::new(true)),
-            think_effort: Arc::new(Mutex::new("".to_owned())),
-        }
-    }
-
-    pub fn set_think_effort(&self, think_effort: impl Into<String>) {
-        let mut v = self.think_effort.lock().unwrap();
-        *v = think_effort.into();
-        if *v != "" {
-            self.enable_thinking();
-        }
-    }
-
-    /// Only affects to hybrid thinking models
-    pub fn enable_thinking(&self) {
-        let mut v = self.do_thinking.lock().unwrap();
-        *v = true;
-    }
-
-    /// Only affects to hybrid thinking models
-    pub fn disable_thinking(&self) {
-        let mut v = self.do_thinking.lock().unwrap();
-        *v = false;
-        self.set_think_effort("");
+        Self { key }
     }
 
     pub fn apply(
         &self,
         messages: impl IntoIterator<Item = Message>,
         tools: impl IntoIterator<Item = ToolDesc>,
+        documents: impl IntoIterator<Item = Document>,
+        think_effort: ThinkEffort,
         add_generation_prompt: bool,
     ) -> anyhow::Result<String> {
         let messages = messages.into_iter().collect::<Vec<_>>();
         let tools = tools.into_iter().collect::<Vec<_>>();
-        let do_thinking = *self.do_thinking.lock().unwrap();
-        let think_effort = self.think_effort.lock().unwrap().clone();
-
-        let ctx = if tools.is_empty() {
-            context!(messages => messages, add_generation_prompt=>add_generation_prompt, enable_thinking=>do_thinking, reasoning_effort=>think_effort)
-        } else {
-            context!(messages => messages, tools => tools, add_generation_prompt=>add_generation_prompt, enable_thinking=>do_thinking, reasoning_effort=>think_effort)
+        let documents = documents.into_iter().collect::<Vec<_>>();
+        let enable_thinking = match think_effort {
+            ThinkEffort::Disable => false,
+            _ => true,
         };
+        let reasoning_effort = match think_effort {
+            ThinkEffort::Low => "low",
+            ThinkEffort::Medium => "medium",
+            ThinkEffort::High => "high",
+            _ => "",
+        };
+        let ctx = context!(
+            messages => messages,
+            tools => if !tools.is_empty() { Some(tools) } else { None::<_> },
+            documents => if !documents.is_empty() { Some(documents) } else { None::<_> },
+            add_generation_prompt => add_generation_prompt,
+            enable_thinking => enable_thinking,
+            reasoning_effort => if !reasoning_effort.is_empty() { Some(reasoning_effort) } else { None::<_> },
+        );
         get_env()
             .get_template(&self.key)
             .unwrap()
@@ -319,12 +306,12 @@ mod tests {
         assert!(template.is_some());
         let template = template.unwrap();
 
-        if !think_effort.is_empty() {
-            template.set_think_effort(think_effort);
+        let think_effort: ThinkEffort = if !think_effort.is_empty() {
+            serde_json::from_str(think_effort).unwrap()
         } else {
-            template.disable_thinking();
-        }
-        let prompt = template.apply(msgs, tools, true);
+            ThinkEffort::Disable
+        };
+        let prompt = template.apply(msgs, tools, Vec::new(), think_effort, true);
         assert_eq!(prompt.unwrap().as_str(), expected);
     }
 }

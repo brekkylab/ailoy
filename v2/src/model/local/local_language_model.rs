@@ -9,19 +9,19 @@ use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
     dyn_maybe_send,
     model::{
-        ChatTemplate, InferenceConfig, LangModelInference, LanguageModelInferencer, ThinkEffort,
-        Tokenizer,
+        ChatTemplate, InferenceConfig, LangModelInference, LanguageModelInferencer, Tokenizer,
     },
     utils::{BoxFuture, BoxStream},
     value::{
-        FinishReason, Message, MessageDelta, MessageOutput, PartDelta, PartDeltaFunction, Role,
-        ToolDesc,
+        Document, FinishReason, Message, MessageDelta, MessageOutput, PartDelta, PartDeltaFunction,
+        Role, ToolDesc,
     },
 };
 
 struct Request {
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
+    docs: Vec<Document>,
     config: InferenceConfig,
     tx_resp: mpsc::UnboundedSender<anyhow::Result<MessageOutput>>,
 }
@@ -69,10 +69,11 @@ impl TryFromCache for LocalLangModel {
                     let Request {
                         msgs,
                         tools,
+                        docs,
                         config,
                         tx_resp,
                     } = req;
-                    let mut strm = body.infer(msgs, tools, config);
+                    let mut strm = body.infer(msgs, tools, docs, config);
                     while let Some(resp) = strm.next().await {
                         if tx_resp.send(resp).is_err() {
                             break;
@@ -95,12 +96,14 @@ impl LangModelInference for LocalLangModel {
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> crate::utils::BoxStream<'a, anyhow::Result<MessageOutput>> {
         let (tx_resp, mut rx_resp) = tokio::sync::mpsc::unbounded_channel();
         let req = Request {
             msgs,
             tools,
+            docs,
             config,
             tx_resp,
         };
@@ -129,18 +132,16 @@ impl LocalLangModelImpl {
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         let strm = try_stream! {
-            match config.think_effort {
-                Some(ThinkEffort::Disable) | None => {
-                    self.chat_template.disable_thinking();
-                },
-                _ => {
-                    self.chat_template.enable_thinking();
-                },
-            }
-            let prompt = self.chat_template.apply(msgs, tools, true)?;
+            let prompt = if let Some(polyfill) = config.document_polyfill {
+                let msgs = polyfill.polyfill(msgs, docs)?;
+                self.chat_template.apply(msgs, tools, Vec::new(), config.think_effort.unwrap_or_default(), true)?
+            } else {
+                self.chat_template.apply(msgs, tools, docs, config.think_effort.unwrap_or_default(), true)?
+            };
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
 
             {
@@ -156,9 +157,11 @@ impl LocalLangModelImpl {
             let mut mode = "content".to_owned();
             let mut finish_reason = FinishReason::Stop{};
 
+            yield MessageOutput{delta: MessageDelta::new().with_role(Role::Assistant), finish_reason: None};
+
             // @jhlee: TODO remove hard-coded token names
             loop {
-                let delta = MessageDelta::new().with_role(Role::Assistant);
+                let delta = MessageDelta::new();
                 count += 1;
                 if count > config.max_tokens.unwrap_or(16384) {
                     yield MessageOutput{delta, finish_reason: Some(FinishReason::Length{})};
@@ -360,7 +363,7 @@ mod tests {
             //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
         let mut delta = MessageDelta::new();
-        let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
             crate::utils::log::debug(format!("{:?}", out));

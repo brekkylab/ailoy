@@ -10,9 +10,10 @@ use crate::{
         LocalLangModel, StreamAPILangModel,
         api::APISpecification,
         custom::{CustomLangModel, CustomLangModelInferFunc},
+        polyfill::DocumentPolyfill,
     },
     utils::BoxStream,
-    value::{Message, MessageOutput, ToolDesc},
+    value::{Document, Message, MessageOutput, ToolDesc},
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +65,9 @@ impl Default for Grammar {
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct InferenceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_polyfill: Option<DocumentPolyfill>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub think_effort: Option<ThinkEffort>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,6 +90,7 @@ pub trait LangModelInference {
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>>;
 }
@@ -153,12 +158,13 @@ impl LangModelInference for LangModel {
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         match &mut self.inner {
-            LangModelInner::Local(model) => model.infer(msgs, tools, config),
-            LangModelInner::StreamAPI(model) => model.infer(msgs, tools, config),
-            LangModelInner::Custom(model) => model.infer(msgs, tools, config),
+            LangModelInner::Local(model) => model.infer(msgs, tools, docs, config),
+            LangModelInner::StreamAPI(model) => model.infer(msgs, tools, docs, config),
+            LangModelInner::Custom(model) => model.infer(msgs, tools, docs, config),
         }
     }
 }
