@@ -4,9 +4,9 @@ use pyo3_stub_gen::derive::*;
 
 use crate::{
     ffi::py::base::{json_to_pydict, pydict_to_json},
-    model::{InferenceConfig, ThinkEffort},
     value::{
-        Delta, FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta, Role, ToolDesc,
+        Delta, Document, FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta, Role,
+        ToolDesc,
     },
 };
 
@@ -425,6 +425,19 @@ impl ToolDesc {
                 Some(json_to_pydict(py, &json_value).unwrap().unwrap())
             }
             None => None,
+        }
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl Document {
+    #[new]
+    #[pyo3(signature = (id, text, title=None))]
+    fn __new__(id: String, text: String, title: Option<String>) -> Self {
+        match title {
+            Some(title) => Self::new(id, text).with_title(title),
+            None => Self::new(id, text),
         }
     }
 }
