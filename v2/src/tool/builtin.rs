@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 #[cfg(any(target_family = "unix", target_family = "windows"))]
-use crate::tool::FunctionTool;
+use crate::tool::Tool;
 ///
 #[cfg(any(target_family = "unix", target_family = "windows"))]
-pub fn create_terminal_tool() -> FunctionTool {
+pub fn create_terminal_tool() -> Tool {
     use std::{
         collections::HashMap,
         process::{Command, Stdio},
@@ -12,6 +12,7 @@ pub fn create_terminal_tool() -> FunctionTool {
 
     use crate::{
         to_value,
+        tool::Tool,
         value::{ToolDescBuilder, Value},
     };
 
@@ -147,5 +148,5 @@ pub fn create_terminal_tool() -> FunctionTool {
         value
     });
 
-    FunctionTool::new(desc, f)
+    Tool::new_function(desc, f)
 }

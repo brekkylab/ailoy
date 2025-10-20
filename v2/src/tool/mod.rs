@@ -321,5 +321,10 @@ mod py {
             // Rust Value -> Python object
             value_to_python(py, &result).map(|bound| bound.unbind())
         }
+
+        #[staticmethod]
+        fn terminal() -> Self {
+            create_terminal_tool()
+        }
     }
 }

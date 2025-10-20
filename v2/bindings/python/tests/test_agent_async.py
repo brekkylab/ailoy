@@ -43,29 +43,30 @@ async def test_simple_chat(agent: ai.Agent):
     print(f"{result.contents[0].text=}")
 
 
-# async def test_builtin_tool(agent: ai.Agent):
-#     tool = ai.BuiltinTool.terminal()
-#     agent.add_tool(tool)
-#     async for resp in agent.run(
-#         [ai.Part.Text(text="List the files in the current directory.")]
-#     ):
-#         if resp.finish_reason is not None:
-#             finish_reason = resp.finish_reason
-#             result = resp.aggregated
-#         else:
-#             for content in resp.delta.contents:
-#                 if content.part_type == "text":
-#                     print(content.text, end="")
-#                 elif content.part_type == "function":
-#                     print(content.function.text, end="")
-#                 elif content.part_type == "value":
-#                     print(content.value)
-#                 # elif content.part_type == "image":
-#                 #     pass
-#                 else:
-#                     continue
-#     assert finish_reason == ai.FinishReason.Stop()
-#     print(f"{result.contents[0].text=}")
+async def test_builtin_tool(agent: ai.Agent):
+    tool = ai.Tool.terminal()
+    agent.add_tool(tool)
+    async for resp in agent.run(
+        [ai.Part.Text(text="List the files in the current directory.")]
+    ):
+        if resp.finish_reason is not None:
+            finish_reason = resp.finish_reason
+            result = resp.aggregated
+        else:
+            for content in resp.delta.contents:
+                if content.part_type == "text":
+                    print(content.text, end="")
+                elif content.part_type == "function":
+                    print(content.function.text, end="")
+                elif content.part_type == "value":
+                    print(content.value)
+                # elif content.part_type == "image":
+                #     pass
+                else:
+                    continue
+    print()
+    assert finish_reason == ai.FinishReason.Stop()
+    print(f"{result.contents[0].text=}")
 
 
 async def test_python_async_function_tool(agent: ai.Agent):
