@@ -210,13 +210,13 @@ mod py {
 
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
-    pub struct LanguageModelRunIterator {
+    pub struct LangModelRunIterator {
         rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
     }
 
     #[gen_stub_pymethods]
     #[pymethods]
-    impl LanguageModelRunIterator {
+    impl LangModelRunIterator {
         fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
             slf
         }
@@ -237,14 +237,14 @@ mod py {
 
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
-    pub struct LanguageModelRunSyncIterator {
+    pub struct LangModelRunSyncIterator {
         rt: &'static tokio::runtime::Runtime,
         rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
     }
 
     #[gen_stub_pymethods]
     #[pymethods]
-    impl LanguageModelRunSyncIterator {
+    impl LangModelRunSyncIterator {
         fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
             slf
         }
@@ -329,15 +329,15 @@ mod py {
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
-        ) -> anyhow::Result<LanguageModelRunIterator> {
+        ) -> anyhow::Result<LangModelRunIterator> {
             let (_, rx) = spawn(
                 self.clone(),
                 messages,
-                tools.unwrap_or(vec![]),
-                documents.unwrap_or(vec![]),
-                config.unwrap_or(InferenceConfig::default()),
+                tools.unwrap_or_default(),
+                documents.unwrap_or_default(),
+                config.unwrap_or_default(),
             )?;
-            Ok(LanguageModelRunIterator { rx })
+            Ok(LangModelRunIterator { rx })
         }
 
         #[pyo3(signature = (messages, tools=None, documents=None, config=None))]
@@ -347,15 +347,15 @@ mod py {
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
-        ) -> anyhow::Result<LanguageModelRunSyncIterator> {
+        ) -> anyhow::Result<LangModelRunSyncIterator> {
             let (rt, rx) = spawn(
                 self.clone(),
                 messages,
-                tools.unwrap_or(vec![]),
-                documents.unwrap_or(vec![]),
-                config.unwrap_or(InferenceConfig::default()),
+                tools.unwrap_or_default(),
+                documents.unwrap_or_default(),
+                config.unwrap_or_default(),
             )?;
-            Ok(LanguageModelRunSyncIterator { rt, rx })
+            Ok(LangModelRunSyncIterator { rt, rx })
         }
 
         pub fn __repr__(&self) -> String {
