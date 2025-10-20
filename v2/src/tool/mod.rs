@@ -31,7 +31,7 @@ pub enum ToolInner {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(subclass))]
 pub struct Tool {
     inner: ToolInner,
 }
@@ -242,7 +242,7 @@ mod py {
             }
         }
 
-        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[Any]"))]
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[typing.Any]"))]
         #[pyo3(signature = (**kwargs))]
         fn __call__<'py>(
             &self,
@@ -252,7 +252,7 @@ mod py {
             self.call(py, kwargs)
         }
 
-        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[Any]"))]
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[typing.Any]"))]
         #[pyo3(signature = (**kwargs))]
         fn call<'py>(
             &self,
