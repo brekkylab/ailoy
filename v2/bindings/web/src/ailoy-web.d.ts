@@ -6,6 +6,18 @@
  * *This API requires the following crate features to be activated: `ReadableStreamType`*
  */
 type ReadableStreamType = "bytes";
+export interface InferenceConfig {
+    thinkEffort?: ThinkEffort;
+    temperature?: number;
+    topP?: number;
+    maxTokens?: number;
+    grammar?: Grammar;
+}
+
+export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema"; schema: string } | { type: "regex"; regex: string } | { type: "cfg"; cfg: string };
+
+export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
+
 export type PartDelta = { type: "text"; text: string } | { type: "function"; id: string | undefined; function: PartDeltaFunction } | { type: "value"; value: Value } | { type: "null" };
 
 export type PartDeltaFunction = { type: "verbatim"; text: string } | { type: "with_string_args"; name: string; arguments: string } | { type: "with_parsed_args"; name: string; arguments: Value };
@@ -51,19 +63,11 @@ export interface Message {
  */
 export type Role = "system" | "user" | "assistant" | "tool";
 
-export interface InferenceConfig {
-    thinkEffort?: ThinkEffort;
-    temperature?: number;
-    topP?: number;
-    maxTokens?: number;
-    grammar?: Grammar;
+export interface CacheProgress {
+    comment: string;
+    current: number;
+    total: number;
 }
-
-export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema"; schema: string } | { type: "regex"; regex: string } | { type: "cfg"; cfg: string };
-
-export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
-
-export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
 
 export interface ToolDesc {
     name: string;
@@ -74,8 +78,17 @@ export interface ToolDesc {
 
 export type Bytes = Uint8Array;
 
+export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
+
 export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
 
+export class EmbeddingModel {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  static create_local(modelName: string, progressCallback: (progress: CacheProgress) => void): Promise<EmbeddingModel>;
+  infer(text: string): Promise<Float32Array>;
+}
 export class IntoUnderlyingByteSource {
   private constructor();
   free(): void;
@@ -100,4 +113,12 @@ export class IntoUnderlyingSource {
   [Symbol.dispose](): void;
   pull(controller: ReadableStreamDefaultController): Promise<any>;
   cancel(): void;
+}
+export class LangModel {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  static create_local(modelName: string, progressCallback: (progress: CacheProgress) => void): Promise<LangModel>;
+  static create_stream_api(spec: APISpecification, modelName: string, apiKey: string): Promise<LangModel>;
+  infer(msgs: Message[], tools?: ToolDesc[] | null, config?: InferenceConfig | null): AsyncIterable<MessageOutput>;
 }

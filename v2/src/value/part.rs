@@ -3,15 +3,29 @@ use serde::{Deserialize, Serialize};
 
 use crate::value::{Value, delta::Delta};
 
+/// Represents a function call contained within a message part.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct PartFunction {
+    /// The name of the function
     pub name: String,
+
+    /// The arguments of the function, usually represented as a JSON object.
     pub arguments: Value,
 }
 
+/// Represents the color space of an image part.
+///
+/// This enum defines the supported pixel formats of image data. It determines
+/// how many channels each pixel has and how the image should be interpreted.
+///
+/// # Examples
+/// ```rust
+/// let c = PartImageColorspace::RGB;
+/// assert_eq!(c.channel(), 3);
+/// ```
 #[derive(
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
 )]
@@ -21,8 +35,13 @@ pub struct PartFunction {
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartImageColorspace {
+    /// Single-channel grayscale image
     Grayscale,
+
+    /// Three-channel color image without alpha    
     RGB,
+
+    /// Four-channel color image with alpha
     RGBA,
 }
 
@@ -44,6 +63,20 @@ impl TryFrom<String> for PartImageColorspace {
     }
 }
 
+/// Represents the image data contained in a [`Part`].
+///
+/// `PartImage` provides structured access to image data.
+/// Currently, it only implments "binary" types.
+///
+/// # Example
+/// ```rust
+/// let part = Part::image_binary(640, 480, "rgb", (0..640*480*3).map(|i| (i % 255) as u8)).unwrap();
+///
+/// if let Some(img) = part.as_image() {
+///     assert_eq!(img.height(), 640);
+///     assert_eq!(img.width(), 480);
+/// }
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 #[cfg_attr(
@@ -64,6 +97,26 @@ pub enum PartImage {
     },
 }
 
+/// Represents a semantically meaningful content unit exchanged between the model and the user.
+///
+/// Conceptually, each `Part` encapsulates a piece of **data** that contributes
+/// to a chat message — such as text, a function invocation, or an image.  
+///
+/// For example, a single message consisting of a sequence like  
+/// `(text..., image, text...)` is represented as a `Message` containing
+/// an array of three `Part` elements.
+///
+/// Note that a `Part` does **not** carry "intent", such as "reasoning" or "tool call".
+/// These higher-level semantics are determined by the context of a [`Message`].
+///
+/// # Example
+///
+/// ## Rust
+/// ```rust
+/// let part = Part::text("Hello, world!");
+/// assert!(part.is_text());
+/// ```
+///
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 #[cfg_attr(
@@ -75,19 +128,38 @@ pub enum PartImage {
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum Part {
-    Text {
-        text: String,
-    },
+    /// Plain utf-8 encoded text.
+    Text { text: String },
+
+    /// Represents a structured function call to an external tool.
+    ///
+    /// Many language models (LLMs) use a **function calling** mechanism to extend their capabilities.
+    /// When an LLM decides to use external *tools*, it produces a structured output called a `function`.
+    /// A function conventionally consists of two fields: a `name`, and an `arguments` field formatted as JSON.
+    /// This is conceptually similar to making an HTTP POST request, where the request body carries a single JSON object.
+    ///
+    /// This struct models that convention, representing a function invocation request
+    /// from an LLM to an external tool or API.
+    ///
+    /// # Examples
+    /// ```rust
+    /// let f = PartFunction {
+    ///     name: "translate".to_string(),
+    ///     arguments: Value::from_json(r#"{"source": "hello", "lang": "cn"}"#).unwrap(),
+    /// };
+    /// ```
     Function {
         id: Option<String>,
         function: PartFunction,
     },
-    Value {
-        value: Value,
-    },
-    Image {
-        image: PartImage,
-    },
+
+    /// Holds a structured data value, typically considered as a JSON structure.
+    Value { value: Value },
+
+    /// Contains an image payload or reference used within a message part.
+    /// The image may be provided as raw binary data or an encoded format (e.g., PNG, JPEG),
+    /// or as a reference via a URL. Optional metadata can be included alongside the image.
+    Image { image: PartImage },
 }
 
 impl Part {
@@ -95,6 +167,17 @@ impl Part {
         Self::Text { text: v.into() }
     }
 
+    /// Create a new image pixel map.
+    ///
+    /// # Encoding Notes
+    /// * The `data` field is expected to contain pixel data in **row-major order**.
+    /// * The bytes per channel depend on the color depth (e.g., 1 byte for 8-bit, 2 bytes for 16-bit).
+    /// * The total size of `data` must be equal to: `height × width × colorspace.channel() × bytes_per_channel`.
+    ///
+    /// # Errors
+    /// Image construction fails if:
+    /// * The colorspace cannot be parsed from the provided input.
+    /// * The data length does not match the expected size given dimensions and channels.
     pub fn image_binary(
         height: u32,
         width: u32,
@@ -120,12 +203,12 @@ impl Part {
         })
     }
 
-    pub fn function(name: impl Into<String>, args: impl Into<Value>) -> Self {
+    pub fn function(name: impl Into<String>, arguments: impl Into<Value>) -> Self {
         Self::Function {
             id: None,
             function: PartFunction {
                 name: name.into(),
-                arguments: args.into(),
+                arguments: arguments.into(),
             },
         }
     }
@@ -133,13 +216,13 @@ impl Part {
     pub fn function_with_id(
         id: impl Into<String>,
         name: impl Into<String>,
-        args: impl Into<Value>,
+        arguments: impl Into<Value>,
     ) -> Self {
         Self::Function {
             id: Some(id.into()),
             function: PartFunction {
                 name: name.into(),
-                arguments: args.into(),
+                arguments: arguments.into(),
             },
         }
     }
@@ -295,6 +378,26 @@ impl Part {
     }
 }
 
+/// Represents an incremental update (delta) of a function part.
+///
+/// This type is used during streaming or partial message generation, when function calls are being streamed as text chunks or partial JSON fragments.
+///
+/// # Variants
+/// * `Verbatim(String)` — Raw text content, typically a partial JSON fragment.
+/// * `WithStringArgs { name, arguments }` — Function name and its serialized arguments as strings.
+/// * `WithParsedArgs { name, arguments }` — Function name and parsed arguments as a `Value`.
+///
+/// # Use Case
+/// When the model streams out a function call response (e.g., `"function_call":{"name":...}`),
+/// the incremental deltas can be aggregated until the full function payload is formed.
+///
+/// # Example
+/// ```rust
+/// let delta = PartDeltaFunction::WithStringArgs {
+///     name: "translate".into(),
+///     arguments: r#"{"text":"hi"}"#.into(),
+/// };
+/// `
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(
@@ -314,6 +417,25 @@ pub enum PartDeltaFunction {
     WithParsedArgs { name: String, arguments: Value },
 }
 
+/// Represents a partial or incremental update (delta) of a [`Part`].
+///
+/// This type enables composable, streaming updates to message parts.
+/// For example, text may be produced token-by-token, or a function call
+/// may be emitted gradually as its arguments stream in.
+///
+/// # Example
+///
+/// ## Rust
+/// ```rust
+/// let d1 = PartDelta::Text { text: "Hel".into() };
+/// let d2 = PartDelta::Text { text: "lo".into() };
+/// let merged = d1.aggregate(d2).unwrap();
+/// assert_eq!(merged.to_text().unwrap(), "Hello");
+/// ```
+///
+/// # Error Handling
+/// Aggregation or finalization may return an error if incompatible deltas
+/// (e.g. mismatched function IDs) are combined or invalid JSON arguments are given.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(
@@ -328,16 +450,19 @@ pub enum PartDeltaFunction {
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartDelta {
-    Text {
-        text: String,
-    },
+    /// Incremental text fragment.
+    Text { text: String },
+
+    /// Incremental function call fragment.
     Function {
         id: Option<String>,
         function: PartDeltaFunction,
     },
-    Value {
-        value: Value,
-    },
+
+    /// JSON-like value update.
+    Value { value: Value },
+
+    /// Placeholder representing no data yet.
     Null {},
 }
 
@@ -584,12 +709,12 @@ mod py {
             if let Ok(pydict) = ob.downcast::<PyDict>() {
                 let name_any = pydict.get_item("name")?;
                 let name: String = name_any.extract()?;
-                let args_any = pydict.get_item("args")?;
+                let args_any = pydict.get_item("arguments")?;
                 let arguments: Value = args_any.extract()?;
                 Ok(Self { name, arguments })
             } else {
                 Err(PyTypeError::new_err(
-                    "PartFunction must be a dict with keys 'name' and 'args'",
+                    "PartFunction must be a dict with keys 'name' and 'arguments'",
                 ))
             }
         }
@@ -604,7 +729,7 @@ mod py {
             let d = PyDict::new(py);
             d.set_item("name", self.name)?;
             let py_args = self.arguments.into_pyobject(py)?;
-            d.set_item("args", py_args)?;
+            d.set_item("arguments", py_args)?;
             Ok(d)
         }
     }
@@ -620,7 +745,7 @@ mod py {
 
             TypeInfo {
                 name: format!(
-                    "dict[typing.Literal[\"name\", \"args\"], typing.Union[str, {}]]",
+                    "dict[typing.Literal[\"name\", \"arguments\"], typing.Union[str, {}]]",
                     value_name
                 ),
                 import: imports,

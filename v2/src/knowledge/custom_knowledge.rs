@@ -1,21 +1,20 @@
 use std::{fmt::Debug, sync::Arc};
 
-use ailoy_macros::multi_platform_async_trait;
-use futures::future::BoxFuture;
+use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 
 use crate::{
     knowledge::{KnowledgeBehavior, KnowledgeConfig},
-    utils::{MaybeSend, MaybeSync},
+    utils::BoxFuture,
     value::Document,
 };
 
+#[maybe_send_sync]
+pub(super) type CustomKnowledgeRetrieveFunc =
+    dyn Fn(String, KnowledgeConfig) -> BoxFuture<'static, anyhow::Result<Vec<Document>>>;
+
 #[derive(Clone)]
 pub struct CustomKnowledge {
-    f: Arc<
-        dyn Fn(String, KnowledgeConfig) -> BoxFuture<'static, anyhow::Result<Vec<Document>>>
-            + MaybeSend
-            + MaybeSync,
-    >,
+    f: Arc<CustomKnowledgeRetrieveFunc>,
 }
 
 impl Debug for CustomKnowledge {
@@ -27,13 +26,7 @@ impl Debug for CustomKnowledge {
 }
 
 impl CustomKnowledge {
-    pub fn new(
-        f: Arc<
-            dyn Fn(String, KnowledgeConfig) -> BoxFuture<'static, anyhow::Result<Vec<Document>>>
-                + MaybeSend
-                + MaybeSync,
-        >,
-    ) -> Self {
+    pub fn new(f: Arc<CustomKnowledgeRetrieveFunc>) -> Self {
         Self { f }
     }
 }
