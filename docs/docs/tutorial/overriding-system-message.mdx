@@ -1,3 +1,61 @@
 # Overriding System Message
 
+A **system message** defines the global behavior, tone, or role of the assistant.
+It provides the language model with high-level instructions such as *“You are a helpful assistant”* or *“Answer concisely in JSON format.”*
+
+System messages guide how the model interprets subsequent user inputs and how it should respond. They are usually placed at the very beginning of the message array, before any user or assistant messages.
+
+## Behavior in Ailoy
+
+Ailoy automatically inserts a **system message** at the start of the conversation when none is provided.
+This default message defines the model’s general role and ensures consistent behavior across sessions.
+
+However, developers can **override** this system message by explicitly including their own in the first element of the `messages` array.
+When an explicit system message is present, Ailoy respects it and does not prepend its default.
+
+For example:
+
+```json
+[
+  {
+    "role": "system",
+    "contents": [
+      { "type": "text", "text": "You are a senior software engineer. Answer with technical precision." }
+    ]
+  },
+  {
+    "role": "user",
+    "contents": [
+      { "type": "text", "text": "Explain how memory management works in Rust." }
+    ]
+  }
+]
+```
+
+<CodeTabs>
+
+```python
 TBD
+```
+
+```typescript
+TBD
+```
+
+```typescript web
+TBD
+```
+
+```rust
+TBD
+```
+
+</CodeTabs>
+
+In this example, Ailoy will use the developer-defined system message instead of its internal default, allowing full customization of the model’s tone, persona, or task-specific behavior.
+
+## Notes
+
+* Only the **first** system message is used; additional system messages later in the sequence are ignored.
+* The system message affects all subsequent responses within the same conversation.
+* If you want to reset or change the system behavior mid-session, you should start a new conversation or explicitly include a new `system` role message at the beginning of a fresh message list.

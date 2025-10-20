@@ -1,3 +1,54 @@
 # Managing Model Files
 
+Language models (LMs) usually contain very large size of parameters.
+This ranging from megabytes to gigabytes.
+In addition, they require extra files for chat templates, tokenization, and other supporting data.
+
+By default, Ailoy automatically downloads the required model files if they are not already present on the system.
+These files are stored in the following locations depending on your operating system:
+
+| OS | Model cache root path |
+|---|---|
+| Linux | `~/.cache/ailoy` |
+| macOS | `~/.cache/ailoy` |
+| Windows | `%LOCALAPPDATA%\ailoy` |
+| Webassembly | `https://ailoy.co`(OPFS) |
+
+Ailoy also provides a Command-Line Interface (CLI) that allows you to download and delete model files directly.
+
+:::info
+Model names follow the same naming convention as those registered on HuggingFace.
+:::
+
+## List
+
+<CodeTabs>
+
+```bash
+ailoy-models list
+```
+
+</CodeTabs>
+
+
+## Download
+
+<CodeTabs>
+
+```bash
+ailoy-models download Qwen/Qwen3-0.6B
+```
+
+</CodeTabs>
+
+## Remove
+
+<CodeTabs>
+
+```bash
+ailoy-models remove Qwen/Qwen3-0.6B
+```
+
+</CodeTabs>
+
 TBD
