@@ -76,7 +76,7 @@ from ailoy import Agent, LangModel
 
 lm = LangModel(model="gpt-5", api_key="YOUR_API_TOKEN_KEY")
 agent = Agent(lm)
-response = agent.run("Hello, world!")
+response = agent.run("Please give me a short poem about AI")
 print(response)
 ```
 
@@ -85,7 +85,7 @@ import { Agent, LangModel } from "ailoy";
 
 lm = new LangModel(model="gpt-5", api_key="YOUR_API_TOKEN_KEY");
 agent = new Agent(lm);
-response = agent.run("Hello, world!");
+response = agent.run("Please give me a short poem about AI");
 console.log(response);
 ```
 
