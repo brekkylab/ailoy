@@ -5,13 +5,11 @@ use futures::{StreamExt, lock::Mutex};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    agent::SystemMessageRenderer,
-    knowledge::{Knowledge, KnowledgeBehavior as _},
+    knowledge::{Knowledge, KnowledgeBehavior as _, KnowledgeConfig},
     model::{InferenceConfig, LangModel, LangModelInference as _},
     tool::{Tool, ToolBehavior as _},
     utils::{BoxStream, log},
     value::{Delta, FinishReason, Message, MessageDelta, Part, PartDelta, Role},
-    warn,
 };
 
 #[derive(Clone)]
@@ -21,7 +19,6 @@ pub struct Agent {
     tools: Vec<Tool>,
     messages: Arc<Mutex<Vec<Message>>>,
     knowledge: Option<Knowledge>,
-    system_message_renderer: Arc<SystemMessageRenderer>,
 }
 
 /// The yielded value from agent.run().
@@ -44,15 +41,12 @@ impl Agent {
             tools: tools.into_iter().collect(),
             messages: Arc::new(Mutex::new(Vec::new())),
             knowledge: None,
-            system_message_renderer: Arc::new(SystemMessageRenderer::new()),
         }
     }
 
-    pub fn with_system_message_renderer(self, renderer: SystemMessageRenderer) -> Self {
-        Self {
-            system_message_renderer: Arc::new(renderer),
-            ..self
-        }
+    pub fn with_knowledge(mut self, knowledge: Knowledge) -> Self {
+        self.knowledge = Some(knowledge);
+        self
     }
 
     pub fn get_lm(&self) -> LangModel {
@@ -132,26 +126,13 @@ impl Agent {
 
         let tools = self.tools.clone();
         let strm = async_stream::try_stream! {
-            let system_message_content = "You are helpful assistant.".to_string();
-            let knowledge_results = if let Some(knowledge) = &self.knowledge {
-                let query = contents.iter().filter(|&c| matches!(c, Part::Text{..})).map(|c| c.as_text().unwrap()).collect::<Vec<_>>().join("\n");
-                let retrieved = match knowledge.retrieve(query.clone(), 5).await {
-                    Ok(retrieved) => retrieved,
-                    Err(e) => {
-                        warn!("Failed to retrieve from knowledge: {}", e.to_string());
-                        vec![]
-                    }
-                };
-                Some(retrieved)
+            // Get documents
+            let docs = if let Some(knowledge) = self.knowledge.clone() {
+                let query_str = contents.iter().filter(|p| p.is_text()).map(|p| p.as_text().unwrap().to_owned()).collect::<Vec<_>>().join("\n\n");
+                knowledge.retrieve(query_str, KnowledgeConfig::default()).await?
             } else {
-                None
+                vec![]
             };
-
-            let system_message = Message::new(Role::System).with_contents(vec![Part::text(
-                self.system_message_renderer.render(system_message_content, knowledge_results).unwrap()
-            )]);
-            // Add system message to messages
-            messages.push(system_message);
 
             // Add message histories to messages
             for msg in messages_history.lock().await.iter() {
@@ -174,7 +155,7 @@ impl Agent {
                 let mut assistant_msg: Option<Message> = None;
                 {
                     let mut model = self.lm.clone();
-                    let mut strm = model.infer(messages.clone(), tool_descs.clone(), InferenceConfig::default());
+                    let mut strm = model.infer(messages.clone(), tool_descs.clone(), docs.clone(), InferenceConfig::default());
                     while let Some(out) = strm.next().await {
                         let out = out?;
                         assistant_msg_delta = assistant_msg_delta.aggregate(out.clone().delta).context("Aggregation failed")?;

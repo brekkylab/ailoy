@@ -6,79 +6,27 @@
  * *This API requires the following crate features to be activated: `ReadableStreamType`*
  */
 type ReadableStreamType = "bytes";
-export interface CacheProgress {
-    comment: string;
-    current: number;
-    total: number;
+export interface KnowledgeConfig {
+    topK?: number;
 }
 
 /**
- * Describes a **tool** (or function) that a language model can invoke.
- *
- * `ToolDesc` defines the schema, behavior, and input/output specification of a callable
- * external function, allowing an LLM to understand how to use it.
- *
- * The primary role of this struct is to describe to the LLM what a *tool* does,
- * how it can be invoked, and what input (`parameters`) and output (`returns`) schemas it expects.
- *
- * The format follows the same **schema conventions** used by Hugging Face’s
- * `transformers` library, as well as APIs such as *OpenAI* and *Anthropic*.
- * The `parameters` and `returns` fields are typically defined using **JSON Schema**.
- *
- * We provide a builder [`ToolDescBuilder`] helper for convenient and fluent construction.
- * Please refer to [`ToolDescBuilder`].
- *
- * # Example
- * ```rust
- * use crate::value::{ToolDescBuilder, to_value};
- *
- * let desc = ToolDescBuilder::new(\"temperature\")
- *     .description(\"Get the current temperature for a given city\")
- *     .parameters(to_value!({
- *         \"type\": \"object\",
- *         \"properties\": {
- *             \"location\": {
- *                 \"type\": \"string\",
- *                 \"description\": \"The city name\
- *             },
- *             \"unit\": {
- *                 \"type\": \"string\",
- *                 \"description\": \"Temperature unit (default: Celsius)\",
- *                 \"enum\": [\"Celsius\", \"Fahrenheit\"]
- *             }
- *         },
- *         \"required\": [\"location\"]
- *     }))
- *     .returns(to_value!({
- *         \"type\": \"number\
- *     }))
- *     .build();
- *
- * assert_eq!(desc.name, \"temperature\");
- * ```
+ * The yielded value from agent.run().
  */
-export interface ToolDesc {
+export interface AgentResponse {
     /**
-     * The unique name of the tool or function.
+     * The message delta per iteration.
      */
-    name: string;
+    delta: MessageDelta;
     /**
-     * A natural-language description of what the tool does.
+     * Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
      */
-    description?: string;
+    finish_reason: FinishReason | undefined;
     /**
-     * A [`Value`] describing the JSON Schema of the expected parameters.
-     * Typically an object schema such as `{ \"type\": \"object\", \"properties\": ... }`.
+     * Optional aggregated message.
      */
-    parameters: Value;
-    /**
-     * An optional [`Value`] that defines the return value schema.  
-     * If omitted, the tool is assumed to return free-form text or JSON.
-     */
-    returns?: Value;
+    aggregated: Message | undefined;
 }
-
-export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
 
 export interface VectorStoreRetrieveResult {
     id: string;
@@ -334,7 +282,31 @@ export interface Message {
  */
 export type Role = "system" | "user" | "assistant" | "tool";
 
+type Embedding = Float32Array;
+type Metadata = Record<string, any>;
+
+export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
+
+export type Bytes = Uint8Array;
+
+export interface CacheProgress {
+    comment: string;
+    current: number;
+    total: number;
+}
+
+/**
+ * Provides a polyfill for LLMs that do not natively support the Document feature.
+ */
+export interface DocumentPolyfill {
+    system_message_template?: string;
+    query_message_template?: string;
+}
+
+export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
+
 export interface InferenceConfig {
+    documentPolyfill?: DocumentPolyfill;
     thinkEffort?: ThinkEffort;
     temperature?: number;
     topP?: number;
@@ -346,35 +318,77 @@ export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
 
-export interface KnowledgeRetrieveResult {
-    document: string;
-    metadata?: Metadata;
-}
-
 /**
- * The yielded value from agent.run().
+ * Describes a **tool** (or function) that a language model can invoke.
+ *
+ * `ToolDesc` defines the schema, behavior, and input/output specification of a callable
+ * external function, allowing an LLM to understand how to use it.
+ *
+ * The primary role of this struct is to describe to the LLM what a *tool* does,
+ * how it can be invoked, and what input (`parameters`) and output (`returns`) schemas it expects.
+ *
+ * The format follows the same **schema conventions** used by Hugging Face’s
+ * `transformers` library, as well as APIs such as *OpenAI* and *Anthropic*.
+ * The `parameters` and `returns` fields are typically defined using **JSON Schema**.
+ *
+ * We provide a builder [`ToolDescBuilder`] helper for convenient and fluent construction.
+ * Please refer to [`ToolDescBuilder`].
+ *
+ * # Example
+ * ```rust
+ * use crate::value::{ToolDescBuilder, to_value};
+ *
+ * let desc = ToolDescBuilder::new(\"temperature\")
+ *     .description(\"Get the current temperature for a given city\")
+ *     .parameters(to_value!({
+ *         \"type\": \"object\",
+ *         \"properties\": {
+ *             \"location\": {
+ *                 \"type\": \"string\",
+ *                 \"description\": \"The city name\
+ *             },
+ *             \"unit\": {
+ *                 \"type\": \"string\",
+ *                 \"description\": \"Temperature unit (default: Celsius)\",
+ *                 \"enum\": [\"Celsius\", \"Fahrenheit\"]
+ *             }
+ *         },
+ *         \"required\": [\"location\"]
+ *     }))
+ *     .returns(to_value!({
+ *         \"type\": \"number\
+ *     }))
+ *     .build();
+ *
+ * assert_eq!(desc.name, \"temperature\");
+ * ```
  */
-export interface AgentResponse {
+export interface ToolDesc {
     /**
-     * The message delta per iteration.
+     * The unique name of the tool or function.
      */
-    delta: MessageDelta;
+    name: string;
     /**
-     * Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
+     * A natural-language description of what the tool does.
      */
-    finish_reason: FinishReason | undefined;
+    description?: string;
     /**
-     * Optional aggregated message.
+     * A [`Value`] describing the JSON Schema of the expected parameters.
+     * Typically an object schema such as `{ \"type\": \"object\", \"properties\": ... }`.
      */
-    aggregated: Message | undefined;
+    parameters: Value;
+    /**
+     * An optional [`Value`] that defines the return value schema.  
+     * If omitted, the tool is assumed to return free-form text or JSON.
+     */
+    returns?: Value;
 }
 
-type Embedding = Float32Array;
-type Metadata = Record<string, any>;
-
-export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
-
-export type Bytes = Uint8Array;
+export interface Document {
+    id: string;
+    title: string | undefined;
+    text: string;
+}
 
 export class Agent {
   free(): void;
@@ -429,7 +443,7 @@ export class Knowledge {
   free(): void;
   [Symbol.dispose](): void;
   static newVectorStore(store: VectorStore, embedding_model: EmbeddingModel): Knowledge;
-  retrieve(query: string, top_k: number): Promise<KnowledgeRetrieveResult[]>;
+  retrieve(query: string, config?: KnowledgeConfig | null): Promise<Document[]>;
   asTool(): Tool;
 }
 export class LangModel {
@@ -438,7 +452,7 @@ export class LangModel {
   [Symbol.dispose](): void;
   static newLocal(modelName: string, progressCallback?: (progress: CacheProgress) => void | null): Promise<LangModel>;
   static newStreamAPI(spec: APISpecification, modelName: string, apiKey: string): Promise<LangModel>;
-  infer(msgs: Message[], tools?: ToolDesc[] | null, config?: InferenceConfig | null): AsyncIterable<MessageOutput>;
+  infer(msgs: Message[], tools?: ToolDesc[] | null, docs?: Document[] | null, config?: InferenceConfig | null): AsyncIterable<MessageOutput>;
 }
 export class MCPClient {
   private constructor();

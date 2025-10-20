@@ -26,7 +26,7 @@ describe("Ailoy Knowledge", async () => {
       document: doc1,
     });
 
-    const result = await knowledge.retrieve("What is BGE-M3?", 1);
+    const result = await knowledge.retrieve("What is BGE-M3?", { topK: 2 });
     console.log(result);
   });
 });

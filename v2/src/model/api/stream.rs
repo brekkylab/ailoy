@@ -10,7 +10,7 @@ use crate::{
         api::{APISpecification, RequestConfig},
     },
     utils::BoxStream,
-    value::{Message, MessageOutput, Role, ToolDesc},
+    value::{Document, Message, MessageOutput, Role, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
@@ -130,47 +130,52 @@ impl StreamAPILangModel {
 impl LangModelInference for StreamAPILangModel {
     fn infer<'a>(
         self: &'a mut Self,
-        mut msgs: Vec<Message>,
+        msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
-        // Initialize buffer
-        let mut buf: Vec<u8> = Vec::with_capacity(8192);
-
-        // Build RequestConfig
-        let req = RequestConfig {
-            model: Some(self.name.clone()),
-            system_message: if let Some(msg) = msgs.get(0)
-                && msg.role == Role::System
-            {
-                Some(
-                    msgs.remove(0)
-                        .contents
-                        .get(0)
-                        .unwrap()
-                        .as_text()
-                        .unwrap()
-                        .to_owned(),
-                )
-            } else {
-                None
-            },
-            stream: true,
-            think_effort: config.think_effort.unwrap_or_default(),
-            temperature: config.temperature,
-            top_p: config.top_p,
-            max_tokens: config.max_tokens,
-        };
-
-        // Send request
-        let resp = (self.make_request)(msgs, tools, req).send();
-
         let strm = async_stream::try_stream! {
-            // Await response
-            let resp = resp.await?;
+            // Polyfill documents
+            let mut msgs = if let Some(polyfill) = config.document_polyfill {
+                polyfill.polyfill(msgs, docs)?
+            } else {
+                msgs
+            };
 
+            // Initialize buffer
+            let mut buf: Vec<u8> = Vec::with_capacity(8192);
+
+            // Build RequestConfig
+            let req = RequestConfig {
+                model: Some(self.name.clone()),
+                system_message: if let Some(msg) = msgs.get(0)
+                    && msg.role == Role::System
+                {
+                    Some(
+                        msgs.remove(0)
+                            .contents
+                            .get(0)
+                            .unwrap()
+                            .as_text()
+                            .unwrap()
+                            .to_owned(),
+                    )
+                } else {
+                    None
+                },
+                stream: true,
+                think_effort: config.think_effort.unwrap_or_default(),
+                temperature: config.temperature,
+                top_p: config.top_p,
+                max_tokens: config.max_tokens,
+            };
+
+            // Send request
+            let resp = (self.make_request)(msgs, tools, req).send().await?;
+
+            // Handle request
             if resp.status().is_success() {
-                // println!("{:?}", resp.text().await);
                 // On success - read stream
                 let mut strm = resp.bytes_stream();
                 'outer: while let Some(chunk_res) = strm.next().await {

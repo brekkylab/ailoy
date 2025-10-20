@@ -3,13 +3,14 @@ use std::{fmt::Debug, sync::Arc};
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 
 use crate::{
-    knowledge::{KnowledgeBehavior, KnowledgeRetrieveResult},
+    knowledge::{KnowledgeBehavior, KnowledgeConfig},
     utils::BoxFuture,
+    value::Document,
 };
 
 #[maybe_send_sync]
 pub(super) type CustomKnowledgeRetrieveFunc =
-    dyn Fn(String, u32) -> BoxFuture<'static, anyhow::Result<Vec<KnowledgeRetrieveResult>>>;
+    dyn Fn(String, KnowledgeConfig) -> BoxFuture<'static, anyhow::Result<Vec<Document>>>;
 
 #[derive(Clone)]
 pub struct CustomKnowledge {
@@ -35,9 +36,9 @@ impl KnowledgeBehavior for CustomKnowledge {
     async fn retrieve(
         &self,
         query: String,
-        top_k: u32,
-    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
-        (self.f)(query, top_k).await
+        config: KnowledgeConfig,
+    ) -> anyhow::Result<Vec<Document>> {
+        (self.f)(query, config).await
     }
 }
 
@@ -54,17 +55,20 @@ mod tests {
         let knowledge = Knowledge::new_custom(CustomKnowledge::new(Arc::new(|_, _| {
             async {
                 let documents = vec![
-                    KnowledgeRetrieveResult {
-                        document: "Ailoy is an awesome AI agent framework.".into(),
-                        metadata: None,
+                    Document {
+                        id: "1".to_owned(),
+                        title: None,
+                        text: "Ailoy is an awesome AI agent framework.".to_owned(),
                     },
-                    KnowledgeRetrieveResult {
-                        document: "Ailoy supports Python, Javascript and Rust.".into(),
-                        metadata: None,
+                    Document {
+                        id: "2".to_owned(),
+                        title: None,
+                        text: "Ailoy supports Python, Javascript and Rust.".to_owned(),
                     },
-                    KnowledgeRetrieveResult {
-                        document: "Ailoy enables running LLMs in local environment easily.".into(),
-                        metadata: None,
+                    Document {
+                        id: "3".to_owned(),
+                        title: None,
+                        text: "Ailoy enables running LLMs in local environment easily.".to_owned(),
                     },
                 ];
                 Ok(documents)
