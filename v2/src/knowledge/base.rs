@@ -8,16 +8,19 @@ use crate::{
     model::EmbeddingModel,
     to_value,
     tool::ToolBehavior,
-    value::{ToolDesc, Value},
+    value::{Document, ToolDesc, Value},
     vector_store::VectorStore,
 };
 
-type Metadata = serde_json::Map<String, serde_json::Value>;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeConfig {
+    pub top_k: u32,
+}
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct KnowledgeRetrieveResult {
-    pub document: String,
-    pub metadata: Option<Metadata>,
+impl Default for KnowledgeConfig {
+    fn default() -> Self {
+        Self { top_k: 1 }
+    }
 }
 
 #[maybe_send_sync]
@@ -26,8 +29,8 @@ pub trait KnowledgeBehavior: std::fmt::Debug {
     async fn retrieve(
         &self,
         query: String,
-        top_k: u32,
-    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>>;
+        config: KnowledgeConfig,
+    ) -> anyhow::Result<Vec<Document>>;
 }
 
 #[derive(Clone)]
@@ -98,7 +101,11 @@ impl ToolBehavior for KnowledgeTool {
             }
         };
 
-        let results = match self.inner.retrieve(query.into(), 1).await {
+        let results = match self
+            .inner
+            .retrieve(query.into(), KnowledgeConfig::default())
+            .await
+        {
             Ok(results) => results,
             Err(e) => {
                 return Ok(e.to_string().into());
@@ -143,11 +150,11 @@ impl KnowledgeBehavior for Knowledge {
     async fn retrieve(
         &self,
         query: String,
-        top_k: u32,
-    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
+        config: KnowledgeConfig,
+    ) -> anyhow::Result<Vec<Document>> {
         match &self.inner {
-            KnowledgeInner::VectorStore(knowledge) => knowledge.retrieve(query, top_k).await,
-            KnowledgeInner::Custom(knowledge) => knowledge.retrieve(query, top_k).await,
+            KnowledgeInner::VectorStore(knowledge) => knowledge.retrieve(query, config).await,
+            KnowledgeInner::Custom(knowledge) => knowledge.retrieve(query, config).await,
         }
     }
 }

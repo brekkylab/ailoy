@@ -10,9 +10,10 @@ use crate::{
         LocalLangModel, StreamAPILangModel,
         api::APISpecification,
         custom::{CustomLangModel, CustomLangModelInferFunc},
+        polyfill::DocumentPolyfill,
     },
     utils::BoxStream,
-    value::{Message, MessageOutput, ToolDesc},
+    value::{Document, Message, MessageOutput, ToolDesc},
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +65,9 @@ impl Default for Grammar {
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct InferenceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_polyfill: Option<DocumentPolyfill>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub think_effort: Option<ThinkEffort>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,6 +90,7 @@ pub trait LangModelInference {
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>>;
 }
@@ -101,6 +106,7 @@ enum LangModelInner {
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct LangModel {
     inner: LangModelInner,
 }
@@ -152,12 +158,13 @@ impl LangModelInference for LangModel {
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         match &mut self.inner {
-            LangModelInner::Local(model) => model.infer(msgs, tools, config),
-            LangModelInner::StreamAPI(model) => model.infer(msgs, tools, config),
-            LangModelInner::Custom(model) => model.infer(msgs, tools, config),
+            LangModelInner::Local(model) => model.infer(msgs, tools, docs, config),
+            LangModelInner::StreamAPI(model) => model.infer(msgs, tools, docs, config),
+            LangModelInner::Custom(model) => model.infer(msgs, tools, docs, config),
         }
     }
 }
@@ -520,6 +527,69 @@ mod node {
                 rx: Arc::new(Mutex::new(rx)),
             };
             it.to_async_iterator(env)
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+    use crate::{ffi::web::stream_to_async_iterable, model::api::APISpecification};
+
+    #[wasm_bindgen]
+    impl LangModel {
+        #[wasm_bindgen]
+        pub async fn create_local(
+            #[wasm_bindgen(js_name = "modelName")] model_name: String,
+            #[wasm_bindgen(
+                js_name = "progressCallback",
+                unchecked_param_type = "(progress: CacheProgress) => void"
+            )]
+            progress_callback: Option<js_sys::Function>,
+        ) -> Result<LangModel, js_sys::Error> {
+            let inner = crate::ffi::web::await_cache_result::<LocalLangModel>(
+                model_name,
+                progress_callback,
+            )
+            .await
+            .map_err(|e| js_sys::Error::new(&e.to_string()))?;
+            Ok(LangModel {
+                inner: LangModelInner::Local(inner),
+            })
+        }
+
+        #[wasm_bindgen]
+        pub async fn create_stream_api(
+            spec: APISpecification,
+            #[wasm_bindgen(js_name = "modelName")] model_name: String,
+            #[wasm_bindgen(js_name = "apiKey")] api_key: String,
+        ) -> LangModel {
+            LangModel::new_stream_api(spec, model_name, api_key)
+        }
+
+        #[wasm_bindgen(js_name = infer, unchecked_return_type = "AsyncIterable<MessageOutput>")]
+        pub fn infer_js(
+            &mut self,
+            msgs: Vec<Message>,
+            tools: Option<Vec<ToolDesc>>,
+            config: Option<InferenceConfig>,
+        ) -> JsValue {
+            let mut model = self.clone();
+            let stream = async_stream::stream! {
+                let mut inner_stream = model.infer(msgs, tools.unwrap_or(vec![]), config.unwrap_or_default());
+                while let Some(item) = inner_stream.next().await {
+                    yield item;
+                }
+            };
+            let js_stream = Box::pin(stream.map(|result| {
+                result
+                    .map(|output| output.into())
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
+            }));
+
+            stream_to_async_iterable(js_stream).into()
         }
     }
 }
