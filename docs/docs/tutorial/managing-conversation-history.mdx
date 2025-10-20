@@ -1,3 +1,42 @@
 # Managing Conversation History
 
-TBD
+Ailoy is designed to be fully stateless.
+It does not keep track of any previous messages, conversations, or user interactions internally.
+Each time you call the model, Ailoy treats it as an entirely new request.
+
+If you want to create a multi-turn chat — for example, a back-and-forth conversation with the assistant — you must include the entire conversation history (all previous messages) in every request.
+This way, the language model can understand the full context and respond appropriately, even though Ailoy itself doesn’t store any memory.
+
+In other words — Ailoy does not “remember” by itself; you provide the memory.
+
+**Example**
+
+Let’s start with a simple one-turn conversation:
+
+```
+from ailoy import Agent, LangModel
+
+lm = LangModel(model="Qwen/Qwen3-0.6B")
+agent = Agent(lm)
+
+response = agent.run([
+  { "role": "user", "contents": [{ "type": "text", "text": "Hello!" }] }
+])
+print(response)
+```
+
+The model will respond to "Hello!" normally.
+Now, if you want to continue the conversation, you must pass both the previous messages and the new user message again:
+
+```
+messages = [
+  { "role": "user", "contents": [{ "type": "text", "text": "Hello!" }] },
+  { "role": "assistant", "contents": [{ "type": "text", "text": "Hi there! How can I help you today?" }] },
+  { "role": "user", "contents": [{ "type": "text", "text": "What did I just say?" }] }
+]
+
+response = agent.run(messages)
+print(response)
+```
+
+Ailoy will now use the full conversation context to produce the correct reply — even though it doesn’t persist any state internally.

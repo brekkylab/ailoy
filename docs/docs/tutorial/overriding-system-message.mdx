@@ -3,14 +3,10 @@
 A **system message** defines the global behavior, tone, or role of the assistant.
 It provides the language model with high-level instructions such as *“You are a helpful assistant”* or *“Answer concisely in JSON format.”*
 
-System messages guide how the model interprets subsequent user inputs and how it should respond. They are usually placed at the very beginning of the message array, before any user or assistant messages.
+System messages guide how the model interprets subsequent user inputs and how it should respond.
+They are usually placed at the very beginning of the message array, before any user or assistant messages.
 
-## Behavior in Ailoy
-
-Ailoy automatically inserts a **system message** at the start of the conversation when none is provided.
-This default message defines the model’s general role and ensures consistent behavior across sessions.
-
-However, developers can **override** this system message by explicitly including their own in the first element of the `messages` array.
+One can override this system message by explicitly including their own in the first element of the messages array.
 When an explicit system message is present, Ailoy respects it and does not prepend its default.
 
 For example:
@@ -20,7 +16,7 @@ For example:
   {
     "role": "system",
     "contents": [
-      { "type": "text", "text": "You are a senior software engineer. Answer with technical precision." }
+      { "type": "text", "text": "You are an who always speaks like pirate." }
     ]
   },
   {
@@ -30,6 +26,20 @@ For example:
     ]
   }
 ]
+```
+
+The model will now respond according to the pirate persona instead of the default neutral assistant style:
+
+```json
+{
+  "role": "assistant",
+  "contents": [
+    {
+      "type": "text",
+      "text": "Arrr, matey! In Rust, the seas be ruled by ownership and borrowing. Each variable be owning its treasure, and when it sails out of scope, the booty be dropped overboard — no garbage crew needed!"
+    }
+  ]
+}
 ```
 
 <CodeTabs>
@@ -52,7 +62,7 @@ TBD
 
 </CodeTabs>
 
-In this example, Ailoy will use the developer-defined system message instead of its internal default, allowing full customization of the model’s tone, persona, or task-specific behavior.
+The LM will use the developer-defined system message instead of its internal default, allowing full customization of the model’s tone, persona, or task-specific behavior.
 
 ## Notes
 
