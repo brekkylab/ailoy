@@ -18,7 +18,6 @@ use crate::{
 #[multi_platform_async_trait]
 pub trait ToolBehavior: Debug + Clone {
     fn get_description(&self) -> ToolDesc;
-
     async fn run(&self, args: Value) -> anyhow::Result<Value>;
 }
 

@@ -7,10 +7,6 @@ pub(crate) mod tool;
 pub(crate) mod value;
 pub(crate) mod vector_store;
 
-// use agent::{
-//     PyAgent as Agent, PyAgentRunIterator as AgentRunIterator,
-//     PyAgentRunSyncIterator as AgentRunSyncIterator,
-// };
 use pyo3::prelude::*;
 
 #[pymodule(name = "_core")]

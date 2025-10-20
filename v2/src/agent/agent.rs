@@ -61,12 +61,11 @@ impl Agent {
         self.knowledge.clone()
     }
 
-    pub async fn clear_messages(&mut self) -> anyhow::Result<()> {
+    pub async fn clear_messages(&mut self) {
         self.messages.lock().await.clear();
-        Ok(())
     }
 
-    pub async fn add_tools(&mut self, tools: Vec<Tool>) -> anyhow::Result<()> {
+    pub fn add_tools(&mut self, tools: Vec<Tool>) {
         for tool in tools.iter() {
             let tool_name = tool.get_description().name;
 
@@ -86,25 +85,22 @@ impl Agent {
 
             self.tools.push(tool.clone());
         }
-
-        Ok(())
     }
 
-    pub async fn add_tool(&mut self, tool: Tool) -> anyhow::Result<()> {
-        self.add_tools(vec![tool]).await
+    pub fn add_tool(&mut self, tool: Tool) {
+        self.add_tools(vec![tool]);
     }
 
-    pub async fn remove_tools(&mut self, tool_names: Vec<String>) -> anyhow::Result<()> {
+    pub fn remove_tools(&mut self, tool_names: Vec<String>) {
         self.tools.retain(|t| {
             let tool_name = t.get_description().name;
             // Remove the tool if its name belongs to `tool_names`
             !tool_names.contains(&tool_name)
         });
-        Ok(())
     }
 
-    pub async fn remove_tool(&mut self, tool_name: String) -> anyhow::Result<()> {
-        self.remove_tools(vec![tool_name]).await
+    pub fn remove_tool(&mut self, tool_name: String) {
+        self.remove_tools(vec![tool_name]);
     }
 
     pub fn set_knowledge(&mut self, knowledge: Knowledge) {
@@ -320,7 +316,7 @@ mod tests {
             .into_iter()
             .map(|tool| Tool::new_mcp(tool))
             .collect();
-        agent.add_tools(mcp_tools).await.unwrap();
+        agent.add_tools(mcp_tools);
 
         let agent_tools = agent.get_tools();
         assert_eq!(agent_tools.len(), 2);
@@ -458,12 +454,42 @@ mod py {
             )
         }
 
-        // #[pyo3(signature = (messages, config=None))]
+        #[getter]
+        fn lm(&self) -> LangModel {
+            self.get_lm()
+        }
+
+        #[getter]
+        fn tools(&self) -> Vec<Tool> {
+            self.get_tools()
+        }
+
+        #[pyo3(name="add_tools", signature = (tools))]
+        fn add_tools_py(&mut self, tools: Vec<Tool>) {
+            self.add_tools(tools);
+        }
+
+        #[pyo3(name="add_tool", signature = (tool))]
+        fn add_tool_py(&mut self, tool: Tool) {
+            self.add_tool(tool);
+        }
+
+        #[pyo3(name="remove_tools", signature = (tool_names))]
+        fn remove_tools_py(&mut self, tool_names: Vec<String>) {
+            self.remove_tools(tool_names);
+        }
+
+        #[pyo3(name="remove_tool", signature = (tool_name))]
+        fn remove_tool_py(&mut self, tool_name: String) {
+            self.remove_tool(tool_name);
+        }
+
+        // #[pyo3(name="run", signature = (messages, config=None))]
         #[pyo3(name="run", signature = (contents))]
         fn run_py(
             &mut self,
-            // messages: Vec<Message>,
             contents: Vec<Part>,
+            // messages: Vec<Message>,
             // config: Option<InferenceConfig>,
         ) -> anyhow::Result<AgentRunIterator> {
             let (_, rx) = spawn(
@@ -475,12 +501,12 @@ mod py {
             Ok(AgentRunIterator { rx })
         }
 
-        // #[pyo3(signature = (messages, config=None))]
+        // #[pyo3(name="run_sync", signature = (messages, config=None))]
         #[pyo3(name="run_sync", signature = (contents))]
         fn run_sync_py(
             &mut self,
-            // messages: Vec<Message>,
             contents: Vec<Part>,
+            // messages: Vec<Message>,
             // config: Option<InferenceConfig>,
         ) -> anyhow::Result<AgentRunSyncIterator> {
             let (rt, rx) = spawn(
