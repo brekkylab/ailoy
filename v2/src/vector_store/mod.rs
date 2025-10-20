@@ -10,17 +10,14 @@ pub use local::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-#[cfg_attr(feature = "wasm", tsify::declare)]
 pub type Embedding = Vec<f32>;
 
-#[cfg_attr(feature = "wasm", tsify::declare)]
 pub type Metadata = Map<String, Value>;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct VectorStoreAddInput {
-    #[cfg_attr(feature = "wasm", tsify(type = "Float32Array"))]
     pub embedding: Embedding,
     pub document: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -35,7 +32,6 @@ pub struct VectorStoreGetResult {
     pub document: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
-    #[cfg_attr(feature = "wasm", tsify(type = "Float32Array"))]
     pub embedding: Embedding,
 }
 
@@ -205,6 +201,14 @@ mod wasm {
     use wasm_bindgen::prelude::*;
 
     use super::*;
+
+    #[wasm_bindgen(typescript_custom_section)]
+    const TS_APPEND_CONTENT: &'static str = dedent::dedent!(
+        r#"
+        type Embedding = Float32Array;
+        type Metadata = Record<string, any>;
+        "#
+    );
 
     #[wasm_bindgen]
     impl VectorStore {

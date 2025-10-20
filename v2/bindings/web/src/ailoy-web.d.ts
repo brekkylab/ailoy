@@ -91,18 +91,14 @@ export interface VectorStoreGetResult {
     id: string;
     document: string;
     metadata?: Metadata;
-    embedding: Float32Array;
+    embedding: Embedding;
 }
 
 export interface VectorStoreAddInput {
-    embedding: Float32Array;
+    embedding: Embedding;
     document: string;
     metadata?: Metadata;
 }
-
-export type Metadata = Map<string, Value>;
-
-export type Embedding = number[];
 
 /**
  * Represents a partial or incremental update (delta) of a [`Part`].
@@ -350,10 +346,6 @@ export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
 
-export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
-
-export type Bytes = Uint8Array;
-
 export interface KnowledgeRetrieveResult {
     document: string;
     metadata?: Metadata;
@@ -376,6 +368,13 @@ export interface AgentResponse {
      */
     aggregated: Message | undefined;
 }
+
+type Embedding = Float32Array;
+type Metadata = Record<string, any>;
+
+export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
+
+export type Bytes = Uint8Array;
 
 export class Agent {
   free(): void;

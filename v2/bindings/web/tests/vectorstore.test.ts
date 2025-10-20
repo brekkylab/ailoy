@@ -6,7 +6,9 @@ describe("Ailoy VectorStore", async () => {
   const testVectorStore = async (vs: ailoy.VectorStore) => {
     const doc0 =
       "BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.";
-    const meta0 = new Map([["topic", "bge-m3"]]);
+    const meta0 = {
+      topic: "bge-m3",
+    };
     const id0 = await vs.addVector({
       embedding: new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
       document: doc0,
@@ -15,7 +17,9 @@ describe("Ailoy VectorStore", async () => {
 
     const doc1 =
       "BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document";
-    const meta1 = new Map([["topic", "bm25"]]);
+    const meta1 = {
+      topic: "bm25",
+    };
     const id1 = await vs.addVector({
       embedding: new Float32Array([9, 8, 7, 6, 5, 4, 3, 2, 1, 0]),
       document: doc1,
