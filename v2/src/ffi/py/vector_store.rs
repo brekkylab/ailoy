@@ -108,7 +108,7 @@ impl PyVectorStoreGetResult {
         Ok(dict.unbind())
     }
 
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         format!("VectorStoreGetResult(id=\"{}\")", self.id)
     }
 }
@@ -158,7 +158,7 @@ impl PyVectorStoreRetrieveResult {
         Ok(dict.unbind())
     }
 
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         format!(
             "VectorStoreRetrieveResult(id=\"{}\", distance={})",
             self.id, self.distance

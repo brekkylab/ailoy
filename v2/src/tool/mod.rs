@@ -227,7 +227,7 @@ mod py {
             }
         }
 
-        fn __repr__(&self) -> String {
+        pub fn __repr__(&self) -> String {
             match &self.inner {
                 ToolInner::Function(tool) => {
                     format!("Tool(FunctionTool(name={}))", tool.get_description().name)

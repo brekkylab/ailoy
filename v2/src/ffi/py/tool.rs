@@ -119,7 +119,7 @@
 //         self.call(py, kwargs)
 //     }
 
-//     fn __repr__(&self) -> String {
+//     pub fn __repr__(&self) -> String {
 //         format!(
 //             "BuiltinTool(name=\"{}\")",
 //             self.inner.get_description().name
@@ -161,7 +161,7 @@
 //         self.call(py, kwargs)
 //     }
 
-//     fn __repr__(&self) -> String {
+//     pub fn __repr__(&self) -> String {
 //         format!("MCPTool(name=\"{}\")", self.inner.get_description().name)
 //     }
 // }
@@ -302,7 +302,7 @@
 //         self.call(py, kwargs)
 //     }
 
-//     fn __repr__(&self) -> String {
+//     pub fn __repr__(&self) -> String {
 //         format!(
 //             "PythonAsyncFunctionTool(name=\"{}\")",
 //             self.get_description().name

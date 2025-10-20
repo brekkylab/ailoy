@@ -451,7 +451,7 @@ mod py {
             pyo3_async_runtimes::tokio::future_into_py(py, fut)
         }
 
-        fn __repr__(&self) -> String {
+        pub fn __repr__(&self) -> String {
             format!(
                 "Agent(lm={}, tools=[{} items])",
                 self.get_lm().__repr__(),
@@ -527,7 +527,7 @@ mod py {
     #[gen_stub_pymethods]
     #[pymethods]
     impl AgentResponse {
-        fn __repr__(&self) -> String {
+        pub fn __repr__(&self) -> String {
             format!(
                 "AgentResponse(delta={}, finish_reason={}, aggregated={})",
                 self.delta.__repr__(),
