@@ -22,7 +22,7 @@ const sidebars: SidebarsConfig = {
         "tutorial/how-language-model-works",
         "tutorial/managing-model-files",
         "tutorial/overriding-system-message",
-        "tutorial/managing-conversation-history",
+        "tutorial/multi-turn-conversation",
         "tutorial/reasoning",
         "tutorial/using-tools",
         "tutorial/mcp-integration",
