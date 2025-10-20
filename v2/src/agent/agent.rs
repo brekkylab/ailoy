@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::Context;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -114,29 +112,21 @@ impl Agent {
         messages: Vec<Message>,
         config: Option<InferenceConfig>,
     ) -> BoxStream<'a, anyhow::Result<AgentResponse>> {
-        let contents = messages
-            .last()
-            .cloned()
-            .map(|message| message.contents)
-            .unwrap_or_default();
+        let last_message = messages.last().cloned();
         let tools = self.tools.clone();
 
         let mut messages = messages.clone();
 
         let strm = async_stream::try_stream! {
             // Get documents
-            let docs = if let Some(knowledge) = self.knowledge.clone() {
-                let query_str = contents.iter().filter(|p| p.is_text()).map(|p| p.as_text().unwrap().to_owned()).collect::<Vec<_>>().join("\n\n");
+            let docs = if let Some(message) = last_message
+                && message.role == Role::User
+                && let Some(knowledge) = self.knowledge.clone() {
+                let query_str = message.contents.iter().filter(|p| p.is_text()).map(|p| p.as_text().unwrap().to_owned()).collect::<Vec<_>>().join("\n\n");
                 knowledge.retrieve(query_str, KnowledgeConfig::default()).await?
             } else {
                 vec![]
             };
-
-            let system_message = Message::new(Role::System).with_contents(vec![Part::text(
-                self.system_message_renderer.render(system_message_content, knowledge_results).unwrap()
-            )]);
-            // Add system message to messages
-            messages.insert(0, system_message);
 
             let tool_descs = self
                 .tools
@@ -280,7 +270,7 @@ mod tests {
         let mut agent = Agent::new(model, Vec::new());
 
         let mut strm = Box::pin(agent.run(
-            vec![Message::new(Role::User).with_contents(vec![Part::text("Hi what's your name?")])],
+            vec![Message::new(Role::User).with_contents(vec![Part::text("Hi, what's your name?")])],
             None,
         ));
         while let Some(output) = strm.next().await {
@@ -332,7 +322,7 @@ mod tests {
         );
         let tools = vec![Tool::new_function(
             tool_desc,
-            Arc::<Box<ToolFunc>>::new(Box::new(move |args: Value| {
+            std::sync::Arc::<Box<ToolFunc>>::new(Box::new(move |args: Value| {
                 Box::pin(async move {
                     use anyhow::bail;
 
