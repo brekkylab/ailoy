@@ -13,8 +13,7 @@ use crate::{
 };
 
 #[maybe_send_sync]
-pub type ToolFunc =
-    Box<dyn Fn(Value) -> Pin<Box<dyn Future<Output = Result<Value, anyhow::Error>>>>>;
+pub type ToolFunc = dyn Fn(Value) -> Pin<Box<dyn Future<Output = Result<Value, anyhow::Error>>>>;
 
 #[derive(Clone)]
 pub struct FunctionTool {

@@ -93,7 +93,7 @@ mod wasm {
             #[wasm_bindgen(unchecked_param_type = "(args: any) => Promise<any>")]
             func: js_sys::Function,
         ) -> Self {
-            let tool_func: ToolFunc = Box::new(move |value: Value| {
+            let tool_func: Box<ToolFunc> = Box::new(move |value: Value| {
                 let func = func.clone();
                 Box::pin(async move {
                     let js_val: JsValue = value.into();
