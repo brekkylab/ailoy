@@ -69,7 +69,6 @@ async def test_python_async_function_tool():
     )
 
     # with async function
-    # tool = ai.PythonAsyncFunctionTool(func=tool_temperature)
     tool = ai.Tool.new_py_function(desc, tool_temperature)
 
     # __call__() (async)
@@ -81,18 +80,17 @@ async def test_python_async_function_tool():
     print(f'{await tool.call(location="Seoul", unit="Fahrenheit")=}')
 
     # with sync function
-    # tool = ai.PythonAsyncFunctionTool(func=tool_temperature_sync)
     tool_sync = ai.Tool.new_py_function(desc, tool_temperature_sync)
 
-    # __call__() (async)
+    # async calls with __call__()
     print(f'{await tool_sync(location="Seoul")=}')
     print(f'{await tool_sync(location="Seoul", unit="Fahrenheit")=}')
 
-    # call() (async)
+    # async calls with call()
     print(f'{await tool_sync.call(location="Seoul")=}')
     print(f'{await tool_sync.call(location="Seoul", unit="Fahrenheit")=}')
 
-    # call_sync() (sync)
+    # sync calls with call_sync()
     print(f'{tool_sync.call_sync(location="Seoul")=}')
     print(f'{tool_sync.call_sync(location="Seoul", unit="Fahrenheit")=}')
 
