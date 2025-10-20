@@ -99,7 +99,7 @@ async def test_mcp_tools():
     mcp_client = await ai.MCPClient.from_stdio("uvx", ["mcp-server-time"])
 
     # call tools() to get list of MCP tools
-    current_time_tool = mcp_client.tools()[0]
+    current_time_tool = mcp_client.tools[0]
     print(await current_time_tool(timezone="Asia/Seoul"))
 
     # call get_tool(name) to get the MCP tool with the given name

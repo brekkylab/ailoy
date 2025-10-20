@@ -213,7 +213,7 @@ mod py {
             Ok(py_fut.into())
         }
 
-        #[pyo3(signature = ())]
+        #[getter]
         fn tools(&self) -> Vec<Tool> {
             self.tools
                 .iter()
