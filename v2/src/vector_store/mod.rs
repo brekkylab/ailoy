@@ -230,6 +230,7 @@ mod py {
     #[pymethods]
     impl VectorStoreAddInput {
         #[new]
+        #[pyo3(signature = (embedding, document, metadata = None))]
         fn __new__(embedding: Embedding, document: String, metadata: Option<Metadata>) -> Self {
             Self {
                 embedding,
