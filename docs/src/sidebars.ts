@@ -34,6 +34,7 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Concepts",
       items: [
+        "concepts/architecture",
         "concepts/chat-completion-format",
         "concepts/agent",
         "concepts/tools",
