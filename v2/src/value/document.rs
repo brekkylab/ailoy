@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct Document {
     pub id: String,
     pub title: Option<String>,

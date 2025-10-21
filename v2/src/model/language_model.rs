@@ -553,18 +553,19 @@ mod wasm {
     use wasm_bindgen::prelude::*;
 
     use super::*;
-    use crate::{ffi::web::stream_to_async_iterable, model::api::APISpecification};
+    use crate::{
+        ffi::web::{CacheProgressCallbackFn, stream_to_async_iterable},
+        model::api::APISpecification,
+    };
 
     #[wasm_bindgen]
     impl LangModel {
-        #[wasm_bindgen]
-        pub async fn create_local(
+        #[wasm_bindgen(js_name = "newLocal")]
+        pub async fn new_local_js(
             #[wasm_bindgen(js_name = "modelName")] model_name: String,
-            #[wasm_bindgen(
-                js_name = "progressCallback",
-                unchecked_param_type = "(progress: CacheProgress) => void"
-            )]
-            progress_callback: Option<js_sys::Function>,
+            #[wasm_bindgen(js_name = "progressCallback")] progress_callback: Option<
+                CacheProgressCallbackFn,
+            >,
         ) -> Result<LangModel, js_sys::Error> {
             let inner = crate::ffi::web::await_cache_result::<LocalLangModel>(
                 model_name,
@@ -577,8 +578,8 @@ mod wasm {
             })
         }
 
-        #[wasm_bindgen]
-        pub async fn create_stream_api(
+        #[wasm_bindgen(js_name = "newStreamAPI")]
+        pub async fn new_stream_api_js(
             spec: APISpecification,
             #[wasm_bindgen(js_name = "modelName")] model_name: String,
             #[wasm_bindgen(js_name = "apiKey")] api_key: String,
@@ -591,11 +592,12 @@ mod wasm {
             &mut self,
             msgs: Vec<Message>,
             tools: Option<Vec<ToolDesc>>,
+            docs: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
         ) -> JsValue {
             let mut model = self.clone();
             let stream = async_stream::stream! {
-                let mut inner_stream = model.infer(msgs, tools.unwrap_or(vec![]), config.unwrap_or_default());
+                let mut inner_stream = model.infer(msgs, tools.unwrap_or(vec![]), docs.unwrap_or(vec![]), config.unwrap_or_default());
                 while let Some(item) = inner_stream.next().await {
                     yield item;
                 }

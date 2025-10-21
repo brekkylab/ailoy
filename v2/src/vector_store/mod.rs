@@ -1,40 +1,61 @@
 mod api;
 mod local;
 
+use std::{collections::HashMap, sync::Arc};
+
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 pub use api::*;
+use futures::lock::Mutex;
 pub use local::*;
-use serde_json::{Map, Value as Json};
+use serde::{Deserialize, Serialize};
+
+use crate::value::Value;
 
 pub type Embedding = Vec<f32>;
-pub type Metadata = Map<String, Json>;
 
-#[derive(Debug)]
+pub type Metadata = HashMap<String, Value>;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct VectorStoreAddInput {
     pub embedding: Embedding,
     pub document: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct VectorStoreGetResult {
     pub id: String,
     pub document: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
     pub embedding: Embedding,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct VectorStoreRetrieveResult {
     pub id: String,
     pub document: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
     pub distance: f32,
 }
 
 #[maybe_send_sync]
 #[multi_platform_async_trait]
-pub trait VectorStore {
+pub trait VectorStoreBehavior {
     async fn add_vector(&mut self, input: VectorStoreAddInput) -> anyhow::Result<String>;
     async fn add_vectors(
         &mut self,
@@ -57,4 +78,394 @@ pub trait VectorStore {
     async fn clear(&mut self) -> anyhow::Result<()>;
 
     async fn count(&self) -> anyhow::Result<usize>;
+}
+
+#[derive(Debug, Clone)]
+pub enum VectorStoreInner {
+    Faiss(Arc<Mutex<FaissStore>>),
+    Chroma(Arc<Mutex<ChromaStore>>),
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
+pub struct VectorStore {
+    inner: VectorStoreInner,
+}
+
+impl VectorStore {
+    pub fn new_faiss(store: FaissStore) -> Self {
+        Self {
+            inner: VectorStoreInner::Faiss(Arc::new(Mutex::new(store))),
+        }
+    }
+
+    pub fn new_chroma(store: ChromaStore) -> Self {
+        Self {
+            inner: VectorStoreInner::Chroma(Arc::new(Mutex::new(store))),
+        }
+    }
+
+    pub async fn add_vector(&mut self, input: VectorStoreAddInput) -> anyhow::Result<String> {
+        match &self.inner {
+            VectorStoreInner::Faiss(inner) => inner.lock().await.add_vector(input).await,
+            VectorStoreInner::Chroma(inner) => inner.lock().await.add_vector(input).await,
+        }
+    }
+
+    pub async fn add_vectors(
+        &mut self,
+        inputs: Vec<VectorStoreAddInput>,
+    ) -> anyhow::Result<Vec<String>> {
+        match &self.inner {
+            VectorStoreInner::Faiss(inner) => inner.lock().await.add_vectors(inputs).await,
+            VectorStoreInner::Chroma(inner) => inner.lock().await.add_vectors(inputs).await,
+        }
+    }
+
+    pub async fn get_by_id(&self, id: &str) -> anyhow::Result<Option<VectorStoreGetResult>> {
+        match &self.inner {
+            VectorStoreInner::Faiss(inner) => inner.lock().await.get_by_id(id).await,
+            VectorStoreInner::Chroma(inner) => inner.lock().await.get_by_id(id).await,
+        }
+    }
+
+    pub async fn get_by_ids(&self, ids: &[&str]) -> anyhow::Result<Vec<VectorStoreGetResult>> {
+        match &self.inner {
+            VectorStoreInner::Faiss(inner) => inner.lock().await.get_by_ids(ids).await,
+            VectorStoreInner::Chroma(inner) => inner.lock().await.get_by_ids(ids).await,
+        }
+    }
+
+    pub async fn retrieve(
+        &self,
+        query_embedding: Embedding,
+        top_k: usize,
+    ) -> anyhow::Result<Vec<VectorStoreRetrieveResult>> {
+        match self.inner.clone() {
+            VectorStoreInner::Faiss(inner) => {
+                inner.lock().await.retrieve(query_embedding, top_k).await
+            }
+            VectorStoreInner::Chroma(inner) => {
+                inner.lock().await.retrieve(query_embedding, top_k).await
+            }
+        }
+    }
+
+    pub async fn batch_retrieve(
+        &self,
+        query_embeddings: Vec<Embedding>,
+        top_k: usize,
+    ) -> anyhow::Result<Vec<Vec<VectorStoreRetrieveResult>>> {
+        match &self.inner {
+            VectorStoreInner::Faiss(inner) => {
+                inner
+                    .lock()
+                    .await
+                    .batch_retrieve(query_embeddings, top_k)
+                    .await
+            }
+            VectorStoreInner::Chroma(inner) => {
+                inner
+                    .lock()
+                    .await
+                    .batch_retrieve(query_embeddings, top_k)
+                    .await
+            }
+        }
+    }
+
+    pub async fn remove_vector(&mut self, id: &str) -> anyhow::Result<()> {
+        match &self.inner {
+            VectorStoreInner::Faiss(inner) => inner.lock().await.remove_vector(id).await,
+            VectorStoreInner::Chroma(inner) => inner.lock().await.remove_vector(id).await,
+        }
+    }
+
+    pub async fn remove_vectors(&mut self, ids: &[&str]) -> anyhow::Result<()> {
+        match &self.inner {
+            VectorStoreInner::Faiss(inner) => inner.lock().await.remove_vectors(ids).await,
+            VectorStoreInner::Chroma(inner) => inner.lock().await.remove_vectors(ids).await,
+        }
+    }
+
+    pub async fn clear(&mut self) -> anyhow::Result<()> {
+        match &self.inner {
+            VectorStoreInner::Faiss(inner) => inner.lock().await.clear().await,
+            VectorStoreInner::Chroma(inner) => inner.lock().await.clear().await,
+        }
+    }
+
+    pub async fn count(&self) -> anyhow::Result<usize> {
+        match &self.inner {
+            VectorStoreInner::Faiss(inner) => inner.lock().await.count().await,
+            VectorStoreInner::Chroma(inner) => inner.lock().await.count().await,
+        }
+    }
+}
+
+#[cfg(feature = "python")]
+mod py {
+    use pyo3::{prelude::*, types::PyType};
+    use pyo3_stub_gen_derive::*;
+
+    use super::*;
+    use crate::ffi::py::base::await_future;
+
+    impl Into<VectorStoreAddInput> for Py<VectorStoreAddInput> {
+        fn into(self) -> VectorStoreAddInput {
+            Python::attach(|py| {
+                let input = self.borrow(py);
+                VectorStoreAddInput {
+                    embedding: input.embedding.clone(),
+                    document: input.document.clone(),
+                    metadata: input.metadata.clone(),
+                }
+            })
+        }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl VectorStoreAddInput {
+        #[new]
+        #[pyo3(signature = (embedding, document, metadata = None))]
+        fn __new__(embedding: Embedding, document: String, metadata: Option<Metadata>) -> Self {
+            Self {
+                embedding,
+                document,
+                metadata,
+            }
+        }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl VectorStore {
+        #[classmethod]
+        #[pyo3(name = "new_faiss")]
+        fn new_faiss_py<'a>(
+            _cls: &Bound<'a, PyType>,
+            py: Python<'a>,
+            dim: i32,
+        ) -> PyResult<Py<Self>> {
+            let store = await_future(FaissStore::new(dim))?;
+            Py::new(py, Self::new_faiss(store))
+        }
+
+        #[classmethod]
+        #[pyo3(name = "new_chroma")]
+        fn new_chroma_py<'a>(
+            _cls: &Bound<'a, PyType>,
+            py: Python<'a>,
+            url: String,
+            collection_name: Option<String>,
+        ) -> PyResult<Py<Self>> {
+            let store = await_future(ChromaStore::new(&url, collection_name.as_deref()))?;
+            Py::new(py, Self::new_chroma(store))
+        }
+
+        #[pyo3(name = "add_vector")]
+        fn add_vector_py(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
+            await_future(self.add_vector(input.into()))
+        }
+
+        #[pyo3(name = "add_vectors")]
+        fn add_vectors_py(
+            &mut self,
+            inputs: Vec<Py<VectorStoreAddInput>>,
+        ) -> PyResult<Vec<String>> {
+            await_future(self.add_vectors(inputs.into_iter().map(|input| input.into()).collect()))
+        }
+
+        #[pyo3(name = "get_by_id")]
+        fn get_by_id_py(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
+            let result = await_future(self.get_by_id(&id))?;
+            match result {
+                Some(result) => Ok(Some(result.into())),
+                None => Ok(None),
+            }
+        }
+
+        #[pyo3(name = "get_by_ids")]
+        fn get_by_ids_py(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
+            Ok(await_future(
+                self.get_by_ids(&ids.iter().map(|id| id.as_str()).collect::<Vec<_>>()),
+            )?
+            .into_iter()
+            .map(|result| result.into())
+            .collect::<Vec<_>>())
+        }
+
+        #[pyo3(name = "retrieve")]
+        fn retrieve_py(
+            &self,
+            query_embedding: Embedding,
+            top_k: usize,
+        ) -> PyResult<Vec<VectorStoreRetrieveResult>> {
+            Ok(await_future(self.retrieve(query_embedding, top_k))?
+                .into_iter()
+                .map(|result| result.into())
+                .collect::<Vec<_>>())
+        }
+
+        #[pyo3(name = "batch_retrieve")]
+        fn batch_retrieve_py(
+            &self,
+            query_embeddings: Vec<Embedding>,
+            top_k: usize,
+        ) -> PyResult<Vec<Vec<VectorStoreRetrieveResult>>> {
+            Ok(await_future(self.batch_retrieve(query_embeddings, top_k))?
+                .into_iter()
+                .map(|batch| batch.into_iter().map(|item| item.into()).collect())
+                .collect())
+        }
+
+        #[pyo3(name = "remove_vector")]
+        fn remove_vector_py(&mut self, id: String) -> PyResult<()> {
+            await_future(self.remove_vector(&id))
+        }
+
+        #[pyo3(name = "remove_vectors")]
+        fn remove_vectors_py(&mut self, ids: Vec<String>) -> PyResult<()> {
+            await_future(self.remove_vectors(&ids.iter().map(|id| id.as_str()).collect::<Vec<_>>()))
+        }
+
+        #[pyo3(name = "clear")]
+        fn clear_py(&mut self) -> PyResult<()> {
+            await_future(self.clear())
+        }
+
+        #[pyo3(name = "count")]
+        fn count_py(&self) -> PyResult<usize> {
+            await_future(self.count())
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+
+    #[wasm_bindgen(typescript_custom_section)]
+    const TS_APPEND_CONTENT: &'static str = dedent::dedent!(
+        r#"
+        type Embedding = Float32Array;
+        type Metadata = Record<string, any>;
+        "#
+    );
+
+    #[wasm_bindgen]
+    impl VectorStore {
+        #[wasm_bindgen(js_name = "newFaiss")]
+        pub async fn new_faiss_js(dim: i32) -> Result<Self, js_sys::Error> {
+            let store = FaissStore::new(dim)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))?;
+            Ok(Self::new_faiss(store))
+        }
+
+        #[wasm_bindgen(js_name = "newChroma")]
+        pub async fn new_chroma_js(
+            url: String,
+            #[wasm_bindgen(js_name = "collectionName")] collection_name: Option<String>,
+        ) -> Result<Self, js_sys::Error> {
+            let store = ChromaStore::new(&url, collection_name.as_deref())
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))?;
+            Ok(Self::new_chroma(store))
+        }
+
+        #[wasm_bindgen(js_name = "addVector")]
+        pub async fn add_vector_js(
+            &mut self,
+            input: VectorStoreAddInput,
+        ) -> Result<String, js_sys::Error> {
+            self.add_vector(input)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "addVectors")]
+        pub async fn add_vectors_js(
+            &mut self,
+            inputs: Vec<VectorStoreAddInput>,
+        ) -> Result<Vec<String>, js_sys::Error> {
+            self.add_vectors(inputs)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "getById")]
+        pub async fn get_by_id_js(
+            &self,
+            id: String,
+        ) -> Result<Option<VectorStoreGetResult>, js_sys::Error> {
+            self.get_by_id(&id)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "getByIds")]
+        pub async fn get_by_ids_js(
+            &self,
+            ids: Vec<String>,
+        ) -> Result<Vec<VectorStoreGetResult>, js_sys::Error> {
+            self.get_by_ids(
+                ids.iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            )
+            .await
+            .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "retrieve")]
+        pub async fn retrieve_js(
+            &self,
+            query_embedding: Embedding,
+            top_k: usize,
+        ) -> Result<Vec<VectorStoreRetrieveResult>, js_sys::Error> {
+            self.retrieve(query_embedding, top_k)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "removeVector")]
+        pub async fn remove_vector_js(&mut self, id: String) -> Result<(), js_sys::Error> {
+            self.remove_vector(&id)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "removeVectors")]
+        pub async fn remove_vectors_js(&mut self, ids: Vec<String>) -> Result<(), js_sys::Error> {
+            self.remove_vectors(
+                ids.iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            )
+            .await
+            .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "clear")]
+        pub async fn clear_js(&mut self) -> Result<(), js_sys::Error> {
+            self.clear()
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "count")]
+        pub async fn count_js(&self) -> Result<usize, js_sys::Error> {
+            self.count()
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+    }
 }

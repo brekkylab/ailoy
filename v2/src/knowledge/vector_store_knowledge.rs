@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use ailoy_macros::multi_platform_async_trait;
-use futures::lock::Mutex;
 
 use crate::{
     knowledge::{KnowledgeConfig, base::KnowledgeBehavior},
@@ -12,7 +9,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct VectorStoreKnowledge {
-    store: Arc<Mutex<dyn VectorStore>>,
+    store: VectorStore,
     embedding_model: EmbeddingModel,
 }
 
@@ -22,8 +19,10 @@ impl From<VectorStoreRetrieveResult> for Document {
             && let Some(raw_title) = metadata.get("title")
         {
             Some(match raw_title {
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string(),
+                crate::value::Value::String(s) => s.clone(),
+                other => serde_json::Value::try_from(other.clone())
+                    .unwrap()
+                    .to_string(),
             })
         } else {
             None
@@ -37,9 +36,9 @@ impl From<VectorStoreRetrieveResult> for Document {
 }
 
 impl VectorStoreKnowledge {
-    pub fn new(store: impl VectorStore + 'static, embedding_model: EmbeddingModel) -> Self {
+    pub fn new(store: VectorStore, embedding_model: EmbeddingModel) -> Self {
         Self {
-            store: Arc::new(Mutex::new(store)),
+            store,
             embedding_model: embedding_model,
         }
     }
@@ -53,13 +52,13 @@ impl KnowledgeBehavior for VectorStoreKnowledge {
         config: KnowledgeConfig,
     ) -> anyhow::Result<Vec<Document>> {
         let query_embedding = self.embedding_model.infer(query.into()).await?;
-        let results = {
-            let store = self.store.lock().await;
-            store.retrieve(query_embedding, config.top_k as usize).await
-        }?
-        .into_iter()
-        .map(|res| res.into())
-        .collect::<Vec<_>>();
+        let results = self
+            .store
+            .retrieve(query_embedding, config.top_k.unwrap_or_default() as usize)
+            .await?
+            .into_iter()
+            .map(|res| res.into())
+            .collect::<Vec<_>>();
 
         Ok(results)
     }
@@ -67,8 +66,10 @@ impl KnowledgeBehavior for VectorStoreKnowledge {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use ailoy_macros::multi_platform_test;
-    use futures::stream::StreamExt;
+    use futures::{lock::Mutex, stream::StreamExt};
 
     use super::*;
     use crate::{
@@ -81,7 +82,7 @@ mod tests {
     };
 
     async fn prepare_knowledge() -> anyhow::Result<Knowledge> {
-        let mut store = FaissStore::new(1024).await.unwrap();
+        let mut store = VectorStore::new_faiss(FaissStore::new(1024).await.unwrap());
         let embedding_model = EmbeddingModel::new_local("BAAI/bge-m3").await.unwrap();
 
         let doc0: String = "Ailoy is an awesome AI agent framework.".into();

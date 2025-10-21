@@ -31,6 +31,7 @@ pub enum ToolInner {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(subclass))]
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Tool {
     inner: ToolInner,
 }
@@ -147,73 +148,75 @@ mod py {
         }
     }
 
-    pub fn wrap_python_function(py_func: Py<PyAny>) -> Arc<dyn Fn(Value) -> Value + Send + Sync> {
-        Arc::new(move |args: Value| -> Value {
-            Python::attach(|py| {
-                let py_func_bound = py_func.clone_ref(py);
-
-                // Rust Value -> Python object
-                let py_args = match value_to_python(py, &args) {
-                    Ok(obj) => obj,
-                    Err(e) => {
-                        return Value::object([(
-                            "error",
-                            format!("Failed to convert arguments to Python: {}", e),
-                        )]);
-                    }
-                };
-
-                // call python function
-                let result = if let Ok(dict) = py_args.downcast::<PyDict>() {
-                    py_func_bound.bind(py).call((), Some(&dict))
-                } else {
-                    return Value::object([(
-                        "error",
-                        format!("Failed to convert arguments to Python dict: {:?}", py_args),
-                    )]);
-                };
-
-                let py_result = match result {
-                    Ok(r) => r,
-                    Err(e) => {
-                        return Value::object([(
-                            "error",
-                            format!("Python function call failed: {}", e),
-                        )]);
-                    }
-                };
-
-                // check whether result is coroutine
-                let is_coroutine = py_result.hasattr("__await__").unwrap_or(false);
-
-                let final_result = if is_coroutine {
-                    // execute coroutine using Python `asyncio`
-                    match py
-                        .import("asyncio")
-                        .and_then(|asyncio| asyncio.call_method1("run", (py_result,)))
-                    {
-                        Ok(r) => r.unbind(),
+    pub fn wrap_python_function(py_func: Py<PyAny>) -> Arc<ToolFunc> {
+        let f: Box<ToolFunc> = Box::new(move |args: Value| {
+            let py_func = Python::attach(|py| py_func.clone_ref(py));
+            Box::pin(async move {
+                Python::attach(|py| {
+                    // Rust Value -> Python object
+                    let py_args = match value_to_python(py, &args) {
+                        Ok(obj) => obj,
                         Err(e) => {
-                            return Value::object([(
+                            return Ok(Value::object([(
                                 "error",
-                                format!("Async execution failed: {}", e),
-                            )]);
+                                format!("Failed to convert arguments to Python: {}", e),
+                            )]));
                         }
-                    }
-                } else {
-                    py_result.unbind()
-                };
+                    };
 
-                // Python object -> Rust Value
-                match python_to_value(&final_result.bind(py)) {
-                    Ok(value) => value,
-                    Err(e) => Value::object([(
-                        "error",
-                        format!("Failed to convert Python result to Value: {}", e),
-                    )]),
-                }
+                    // call python function
+                    let result = if let Ok(dict) = py_args.downcast::<PyDict>() {
+                        py_func.bind(py).call((), Some(&dict))
+                    } else {
+                        return Ok(Value::object([(
+                            "error",
+                            format!("Failed to convert arguments to Python dict: {:?}", py_args),
+                        )]));
+                    };
+
+                    let py_result = match result {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(Value::object([(
+                                "error",
+                                format!("Python function call failed: {}", e),
+                            )]));
+                        }
+                    };
+
+                    // check whether result is coroutine
+                    let is_coroutine = py_result.hasattr("__await__").unwrap_or(false);
+
+                    let final_result = if is_coroutine {
+                        // execute coroutine using Python `asyncio`
+                        match py
+                            .import("asyncio")
+                            .and_then(|asyncio| asyncio.call_method1("run", (py_result,)))
+                        {
+                            Ok(r) => r.unbind(),
+                            Err(e) => {
+                                return Ok(Value::object([(
+                                    "error",
+                                    format!("Async execution failed: {}", e),
+                                )]));
+                            }
+                        }
+                    } else {
+                        py_result.unbind()
+                    };
+
+                    // Python object -> Rust Value
+                    match python_to_value(&final_result.bind(py)) {
+                        Ok(value) => Ok(value),
+                        Err(e) => Ok(Value::object([(
+                            "error",
+                            format!("Failed to convert Python result to Value: {}", e),
+                        )])),
+                    }
+                })
             })
-        })
+        });
+        Arc::new(f)
     }
 
     #[gen_stub_pymethods]
@@ -227,7 +230,7 @@ mod py {
             }
         }
 
-        pub fn __repr__(&self) -> String {
+        fn __repr__(&self) -> String {
             match &self.inner {
                 ToolInner::Function(tool) => {
                     format!("Tool(FunctionTool(name={}))", tool.get_description().name)
@@ -325,6 +328,82 @@ mod py {
         #[staticmethod]
         fn terminal() -> Self {
             create_terminal_tool()
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use std::sync::Arc;
+
+    use anyhow::anyhow;
+    use js_sys::Promise;
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen_futures::JsFuture;
+
+    use super::*;
+
+    #[wasm_bindgen]
+    impl Tool {
+        #[wasm_bindgen(js_name = "newFunction")]
+        pub fn new_function_js(
+            desc: ToolDesc,
+            #[wasm_bindgen(unchecked_param_type = "(args: any) => Promise<any>")]
+            func: js_sys::Function,
+        ) -> Self {
+            let tool_func: Box<ToolFunc> = Box::new(move |value: Value| {
+                let func = func.clone();
+                Box::pin(async move {
+                    let js_val: JsValue = value.into();
+                    let js_promise = func.call1(&JsValue::NULL, &js_val).map_err(|e| {
+                        anyhow!(
+                            e.as_string()
+                                .unwrap_or("Failed to call tool function".to_owned())
+                        )
+                    })?;
+                    let js_future = JsFuture::from(Promise::from(js_promise));
+                    let js_ret: JsValue = js_future.await.map_err(|e| {
+                        anyhow!(e.as_string().unwrap_or("Failed to await future".to_owned()))
+                    })?;
+                    js_ret.try_into().map_err(|e: js_sys::Error| {
+                        anyhow!(e.as_string().unwrap_or(
+                            "Failed to convert tool function result to js value".to_owned()
+                        ))
+                    })
+                })
+            });
+            Self::new_function(desc, Arc::new(tool_func))
+        }
+
+        #[wasm_bindgen(getter)]
+        pub fn description(&self) -> ToolDesc {
+            self.get_description()
+        }
+
+        #[wasm_bindgen(js_name = "run")]
+        pub async fn run_js(&self, args: Value) -> Result<Value, js_sys::Error> {
+            self.run(args)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+    }
+
+    #[wasm_bindgen]
+    impl MCPClient {
+        #[wasm_bindgen(js_name = "streamableHttp")]
+        pub async fn from_streamable_http_js(url: String) -> Result<Self, js_sys::Error> {
+            Self::from_streamable_http(url)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(getter, js_name = "tools")]
+        pub fn tools_js(&self) -> Vec<Tool> {
+            self.tools
+                .clone()
+                .into_iter()
+                .map(|t| Tool::new_mcp(t))
+                .collect()
         }
     }
 }

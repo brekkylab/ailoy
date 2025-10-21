@@ -8,8 +8,29 @@ use serde_json::{Map, Value as Json};
 use uuid::Uuid;
 
 use crate::vector_store::{
-    Embedding, VectorStore, VectorStoreAddInput, VectorStoreGetResult, VectorStoreRetrieveResult,
+    Embedding, Metadata, VectorStoreAddInput, VectorStoreBehavior, VectorStoreGetResult,
+    VectorStoreRetrieveResult,
 };
+
+type ChromaMetadata = Map<String, Json>;
+
+fn into_chroma_metadata(metadata: &Metadata) -> ChromaMetadata {
+    let mut map = Map::new();
+    for (key, val) in metadata.iter() {
+        map.insert(key.clone(), val.clone().into());
+    }
+    map
+}
+
+fn from_chroma_metadata(metadata: &ChromaMetadata) -> Metadata {
+    let mut map = Metadata::new();
+    for (key, val) in metadata.iter() {
+        map.insert(key.clone(), val.clone().into());
+    }
+    map
+}
+
+const CHROMADB_DEFAULT_COLLECTION: &'static str = "default_collection";
 
 pub struct ChromaStore {
     client: ChromaClient,
@@ -17,14 +38,14 @@ pub struct ChromaStore {
 }
 
 impl ChromaStore {
-    pub async fn new(chroma_url: &str, collection_name: &str) -> anyhow::Result<Self> {
+    pub async fn new(chroma_url: &str, collection_name: Option<&str>) -> anyhow::Result<Self> {
         let client = ChromaClient::new(ChromaClientOptions {
             url: Some(chroma_url.to_owned()),
             ..Default::default()
         })
         .await?;
         let collection = client
-            .get_or_create_collection(collection_name, None)
+            .get_or_create_collection(collection_name.unwrap_or(CHROMADB_DEFAULT_COLLECTION), None)
             .await?;
         Ok(Self { client, collection })
     }
@@ -72,11 +93,14 @@ impl ChromaStore {
 }
 
 #[multi_platform_async_trait]
-impl VectorStore for ChromaStore {
+impl VectorStoreBehavior for ChromaStore {
     async fn add_vector(&mut self, input: VectorStoreAddInput) -> anyhow::Result<String> {
         let id = Uuid::new_v4().to_string();
 
-        let metadatas = input.metadata.as_ref().map(|map| vec![map.clone()]);
+        let metadatas = input
+            .metadata
+            .as_ref()
+            .map(|map| vec![into_chroma_metadata(map)]);
 
         let entry = CollectionEntries {
             ids: vec![id.as_ref()],
@@ -103,7 +127,7 @@ impl VectorStore for ChromaStore {
                     inputs
                         .iter()
                         .map(|i| match &i.metadata {
-                            Some(map) => map.clone(),
+                            Some(map) => into_chroma_metadata(map),
                             _ => Map::new(),
                         })
                         .collect(),
@@ -158,7 +182,7 @@ impl VectorStore for ChromaStore {
                 .map(|(id, document, metadata, embedding)| VectorStoreGetResult {
                     id,
                     document,
-                    metadata,
+                    metadata: metadata.map(|metadata| from_chroma_metadata(&metadata)),
                     embedding,
                 })
                 .collect();
@@ -186,36 +210,35 @@ impl VectorStore for ChromaStore {
             embeddings: _,
             ..
         } = self.collection.query(opts, None).await?;
-        let out: Vec<VectorStoreRetrieveResult> = ids
-            .get(0)
-            .and_then(|ids_vec| {
-                distances
-                    .as_ref()
-                    .and_then(|d| d.get(0))
-                    .map(|distances_vec| ids_vec.iter().zip(distances_vec).enumerate())
-            })
-            .map(|iter| {
-                iter.filter_map(|(i, (id_ref, &distance))| {
-                    let id = id_ref.clone();
-                    let document = documents
+        let out: Vec<VectorStoreRetrieveResult> =
+            ids.get(0)
+                .and_then(|ids_vec| {
+                    distances
                         .as_ref()
-                        .and_then(|d| d.get(0)?.get(i).cloned())
-                        .unwrap_or_default();
-                    let metadata = metadatas
-                        .as_ref()
-                        .and_then(|m| m.get(0)?.get(i))
-                        .and_then(|inner_opt| inner_opt.clone());
-
-                    Some(VectorStoreRetrieveResult {
-                        id,
-                        document,
-                        metadata,
-                        distance,
-                    })
+                        .and_then(|d| d.get(0))
+                        .map(|distances_vec| ids_vec.iter().zip(distances_vec).enumerate())
                 })
-                .collect()
-            })
-            .unwrap_or_else(Vec::new);
+                .map(|iter| {
+                    iter.filter_map(|(i, (id_ref, &distance))| {
+                        let id = id_ref.clone();
+                        let document = documents
+                            .as_ref()
+                            .and_then(|d| d.get(0)?.get(i).cloned())
+                            .unwrap_or_default();
+                        let metadata = metadatas.as_ref().and_then(|m| m.get(0)?.get(i)).and_then(
+                            |inner_opt| inner_opt.clone().map(|inner| from_chroma_metadata(&inner)),
+                        );
+
+                        Some(VectorStoreRetrieveResult {
+                            id,
+                            document,
+                            metadata,
+                            distance,
+                        })
+                    })
+                    .collect()
+                })
+                .unwrap_or_else(Vec::new);
 
         Ok(out)
     }
@@ -258,7 +281,9 @@ impl VectorStore for ChromaStore {
                                 let metadata = metadatas
                                     .as_ref()
                                     .and_then(|m| m.get(outer_index)?.get(inner_index))
-                                    .and_then(|inner_opt| inner_opt.clone());
+                                    .and_then(|inner_opt| {
+                                        inner_opt.clone().map(|inner| from_chroma_metadata(&inner))
+                                    });
 
                                 Some(VectorStoreRetrieveResult {
                                     id: id_ref.clone(),
@@ -335,7 +360,7 @@ mod tests {
         let input = VectorStoreAddInput {
             embedding: test_embedding.clone(),
             document: test_document.clone(),
-            metadata: Some(test_metadata.clone()),
+            metadata: Some(from_chroma_metadata(&test_metadata)),
         };
 
         let added_id = store.add_vector(input).await?;
@@ -347,7 +372,10 @@ mod tests {
         assert_eq!(retrieved.id, added_id);
         assert_eq!(retrieved.document, test_document);
         assert_eq!(retrieved.embedding, test_embedding);
-        assert_eq!(retrieved.metadata, Some(test_metadata));
+        assert_eq!(
+            retrieved.metadata,
+            Some(from_chroma_metadata(&test_metadata))
+        );
 
         Ok(())
     }
@@ -361,12 +389,12 @@ mod tests {
                 VectorStoreAddInput {
                     embedding: vec![1.0, 1.0, 1.0],
                     document: "doc1".to_owned(),
-                    metadata: Some(json!({"id": 1}).as_object().unwrap().clone()),
+                    metadata: Some(from_chroma_metadata(json!({"id": 1}).as_object().unwrap())),
                 },
                 VectorStoreAddInput {
                     embedding: vec![2.0, 2.0, 2.0],
                     document: "doc2".to_owned(),
-                    metadata: Some(json!({"id": 2}).as_object().unwrap().clone()),
+                    metadata: Some(from_chroma_metadata(json!({"id": 2}).as_object().unwrap())),
                 },
             ])
             .await?;
@@ -530,7 +558,9 @@ mod tests {
             VectorStoreAddInput {
                 embedding: vec![1.0, 1.1, 1.2],
                 document: "doc1".to_owned(),
-                metadata: Some(json!({"id": 1}).as_object().unwrap().clone()),
+                metadata: Some(from_chroma_metadata(
+                    &json!({"id": 1}).as_object().unwrap().clone(),
+                )),
             },
             VectorStoreAddInput {
                 embedding: vec![2.0, 2.1, 2.2],
