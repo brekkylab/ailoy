@@ -563,7 +563,7 @@ mod tests {
             //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
         let mut delta = MessageDelta::new();
-        let mut strm = model.infer(msgs, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
             crate::utils::log::debug(format!("{:?}", out));

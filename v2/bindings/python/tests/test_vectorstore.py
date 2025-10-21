@@ -6,12 +6,12 @@ import ailoy as ai
 
 @pytest.fixture(scope="module")
 def emb():
-    return ai.LocalEmbeddingModel.create_sync("BAAI/bge-m3")
+    return ai.EmbeddingModel.CreateLocalSync("BAAI/bge-m3")
 
 
 @pytest.fixture(scope="module")
 def faiss():
-    return ai.FaissVectorStore(dim=1024)
+    return ai.VectorStore.new_faiss(dim=1024)
 
 
 @pytest.fixture(scope="module")
@@ -19,7 +19,7 @@ def chroma():
     url = "http://localhost:8000"
     collection_name = "my_collection"
     try:
-        return ai.ChromaVectorStore(chroma_url=url, collection_name=collection_name)
+        return ai.VectorStore.new_chroma(url=url, collection_name=collection_name)
     except RuntimeError:
         pytest.skip(f"ChromaDB is not running on {url}. Skip Chroma test..")
 
@@ -31,7 +31,7 @@ def vs(request: FixtureRequest):
 
 
 @pytest.mark.parametrize("vs", ["faiss", "chroma"], indirect=True)
-def test_vectorstore_operations(vs: ai.BaseVectorStore, emb: ai.LocalEmbeddingModel):
+def test_vectorstore_operations(vs: ai.VectorStore, emb: ai.EmbeddingModel):
     vs.clear()
 
     doc0 = "Ailoy is an awesome library"

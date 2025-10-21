@@ -14,9 +14,15 @@ pub struct CacheProgress {
     pub total: usize,
 }
 
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(typescript_type = "(progress: CacheProgress) => void")]
+    pub type CacheProgressCallbackFn;
+}
+
 pub async fn await_cache_result<T>(
     cache_key: impl Into<String>,
-    progress_callback: Option<js_sys::Function>,
+    progress_callback: Option<CacheProgressCallbackFn>,
 ) -> Result<T>
 where
     T: TryFromCache + std::fmt::Debug + 'static,
@@ -37,6 +43,7 @@ where
                 current: progress.current_task,
                 total: progress.total_task,
             };
+            let callback: &js_sys::Function = callback.unchecked_ref();
             callback
                 .call1(&JsValue::NULL, &js_progress.into())
                 .map_err(|_| anyhow!("Failed to call progress callback"))?;

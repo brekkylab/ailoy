@@ -11,6 +11,7 @@ use rmcp::model::{
 };
 use sse_stream::{Error as SseError, Sse, SseStream};
 use thiserror::Error;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::{
     tool::{ToolBehavior, mcp::common::handle_result},
@@ -310,9 +311,11 @@ impl StreamableHttpClient {
 }
 
 #[derive(Debug, Clone)]
+#[wasm_bindgen(getter_with_clone)]
 pub struct MCPClient {
     /// In wasm, only the streamable http transport is allowed
     _client: Rc<StreamableHttpClient>,
+    #[wasm_bindgen(skip)]
     pub tools: Vec<MCPTool>,
 }
 

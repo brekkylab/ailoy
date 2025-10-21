@@ -1,17 +1,19 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use futures::{Stream, StreamExt, lock::Mutex};
+use futures::{StreamExt, lock::Mutex};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     knowledge::{Knowledge, KnowledgeBehavior as _, KnowledgeConfig},
     model::{InferenceConfig, LangModel, LangModelInference as _},
     tool::{Tool, ToolBehavior as _},
-    utils::log,
+    utils::{BoxStream, log},
     value::{Delta, FinishReason, Message, MessageDelta, Part, PartDelta, Role},
 };
 
 #[derive(Clone)]
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Agent {
     lm: LangModel,
     tools: Vec<Tool>,
@@ -20,7 +22,9 @@ pub struct Agent {
 }
 
 /// The yielded value from agent.run().
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct AgentResponse {
     /// The message delta per iteration.
     pub delta: MessageDelta,
@@ -114,14 +118,14 @@ impl Agent {
     pub fn run<'a>(
         &'a mut self,
         contents: Vec<Part>,
-    ) -> impl Stream<Item = anyhow::Result<AgentResponse>> {
+    ) -> BoxStream<'a, anyhow::Result<AgentResponse>> {
         // Messages used for the current run round
         let mut messages: Vec<Message> = vec![];
         // For storing message history except system message
         let messages_history = self.messages.clone();
 
         let tools = self.tools.clone();
-        async_stream::try_stream! {
+        let strm = async_stream::try_stream! {
             // Get documents
             let docs = if let Some(knowledge) = self.knowledge.clone() {
                 let query_str = contents.iter().filter(|p| p.is_text()).map(|p| p.as_text().unwrap().to_owned()).collect::<Vec<_>>().join("\n\n");
@@ -200,6 +204,75 @@ impl Agent {
                     break;
                 }
             }
+        };
+        Box::pin(strm)
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+    use crate::ffi::web::stream_to_async_iterable;
+
+    #[wasm_bindgen]
+    impl Agent {
+        /// Construct a new Agent instance with provided `LangModel` and `Tool`s.
+        ///
+        /// Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after the agent is initialized.
+        /// If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
+        #[wasm_bindgen(constructor)]
+        pub fn new_js(lm: &LangModel, tools: Option<Vec<Tool>>) -> Self {
+            Self::new(lm.clone(), tools.unwrap_or(vec![]))
+        }
+
+        #[wasm_bindgen(js_name = "addTool")]
+        pub async fn add_tool_js(&mut self, tool: &Tool) -> Result<(), js_sys::Error> {
+            self.add_tool(tool.clone())
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "removeTool")]
+        pub async fn remove_tool_js(
+            &mut self,
+            #[wasm_bindgen(js_name = "toolName")] tool_name: String,
+        ) -> Result<(), js_sys::Error> {
+            self.remove_tool(tool_name)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "setKnowledge")]
+        pub fn set_knowledge_js(&mut self, knowledge: &Knowledge) {
+            self.set_knowledge(knowledge.clone());
+        }
+
+        #[wasm_bindgen(js_name = "removeKnowledge")]
+        pub fn remove_knowledge_js(&mut self) {
+            self.remove_knowledge();
+        }
+
+        #[wasm_bindgen(
+            js_name = "run",
+            unchecked_return_type = "AsyncIterable<AgentResponse>"
+        )]
+        pub fn run_js(&self, contents: Vec<Part>) -> JsValue {
+            let mut agent = self.clone();
+            let stream = async_stream::stream! {
+                let mut inner_stream = agent.run(contents);
+                while let Some(item) = inner_stream.next().await {
+                    yield item;
+                }
+            };
+            let js_stream = Box::pin(stream.map(|response| {
+                response
+                    .map(|resp| resp.into())
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
+            }));
+
+            stream_to_async_iterable(js_stream).into()
         }
     }
 }

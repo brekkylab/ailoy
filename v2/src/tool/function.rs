@@ -1,5 +1,7 @@
 use std::{
     fmt::{self, Debug, Formatter},
+    future::Future,
+    pin::Pin,
     sync::Arc,
 };
 
@@ -11,7 +13,10 @@ use crate::{
 };
 
 #[maybe_send_sync]
-pub type ToolFunc = dyn Fn(Value) -> Value;
+pub type ToolFuncResult = dyn Future<Output = Result<Value, anyhow::Error>>;
+
+#[maybe_send_sync]
+pub type ToolFunc = dyn Fn(Value) -> Pin<Box<ToolFuncResult>>;
 
 #[derive(Clone)]
 pub struct FunctionTool {
@@ -41,6 +46,6 @@ impl ToolBehavior for FunctionTool {
     }
 
     async fn run(&self, args: Value) -> anyhow::Result<Value> {
-        Ok(self.f.clone()(args))
+        self.f.clone()(args).await
     }
 }

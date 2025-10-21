@@ -13,13 +13,17 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct KnowledgeConfig {
-    pub top_k: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
 }
 
 impl Default for KnowledgeConfig {
     fn default() -> Self {
-        Self { top_k: 1 }
+        Self { top_k: Some(1) }
     }
 }
 
@@ -124,15 +128,13 @@ pub enum KnowledgeInner {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Knowledge {
     inner: KnowledgeInner,
 }
 
 impl Knowledge {
-    pub fn new_vector_store(
-        store: impl VectorStore + 'static,
-        embedding_model: EmbeddingModel,
-    ) -> Self {
+    pub fn new_vector_store(store: VectorStore, embedding_model: EmbeddingModel) -> Self {
         Self {
             inner: KnowledgeInner::VectorStore(VectorStoreKnowledge::new(store, embedding_model)),
         }
@@ -155,6 +157,39 @@ impl KnowledgeBehavior for Knowledge {
         match &self.inner {
             KnowledgeInner::VectorStore(knowledge) => knowledge.retrieve(query, config).await,
             KnowledgeInner::Custom(knowledge) => knowledge.retrieve(query, config).await,
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+    use crate::tool::Tool;
+
+    #[wasm_bindgen]
+    impl Knowledge {
+        #[wasm_bindgen(js_name = "newVectorStore")]
+        pub fn new_vector_store_js(store: &VectorStore, embedding_model: &EmbeddingModel) -> Self {
+            Self::new_vector_store(store.clone(), embedding_model.clone())
+        }
+
+        #[wasm_bindgen(js_name = "retrieve")]
+        pub async fn retrieve_js(
+            &self,
+            query: String,
+            config: Option<KnowledgeConfig>,
+        ) -> Result<Vec<Document>, js_sys::Error> {
+            self.retrieve(query, config.unwrap_or_default())
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
+        #[wasm_bindgen(js_name = "asTool")]
+        pub fn as_tool(self) -> Tool {
+            let tool = KnowledgeTool::from(self);
+            Tool::new_knowledge(tool)
         }
     }
 }
