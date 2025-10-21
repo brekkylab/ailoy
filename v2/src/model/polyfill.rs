@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::value::{Document, Message, Part, Role};
 
 /// Provides a polyfill for LLMs that do not natively support the Document feature.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
@@ -167,5 +167,22 @@ pub fn get_default_document_polyfill() -> DocumentPolyfill {
             {%- endif %}
             "#
         ).to_owned()),
+    }
+}
+
+#[cfg(feature = "python")]
+mod py {
+    use pyo3::pymethods;
+    use pyo3_stub_gen_derive::gen_stub_pymethods;
+
+    use crate::model::DocumentPolyfill;
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl DocumentPolyfill {
+        #[new]
+        fn __new__() -> Self {
+            Self::default()
+        }
     }
 }
