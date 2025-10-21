@@ -186,6 +186,7 @@ mod py {
         mut model: LangModel,
         messages: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> anyhow::Result<(
         &'a tokio::runtime::Runtime,
@@ -194,7 +195,7 @@ mod py {
         let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageOutput>>();
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         rt.spawn(async move {
-            let mut stream = model.infer(messages, tools, config).boxed();
+            let mut stream = model.infer(messages, tools, docs, config).boxed();
 
             while let Some(item) = stream.next().await {
                 if tx.send(item).await.is_err() {
@@ -321,25 +322,27 @@ mod py {
             }
         }
 
-        #[pyo3(signature = (messages, tools, config))]
+        #[pyo3(signature = (messages, tools, docs, config))]
         fn run(
             &mut self,
             messages: Vec<Message>,
             tools: Vec<ToolDesc>,
+            docs: Vec<Document>,
             config: InferenceConfig,
         ) -> anyhow::Result<LanguageModelRunIterator> {
-            let (_, rx) = spawn(self.clone(), messages, tools, config)?;
+            let (_, rx) = spawn(self.clone(), messages, tools, docs, config)?;
             Ok(LanguageModelRunIterator { rx })
         }
 
-        #[pyo3(signature = (messages, tools, config))]
+        #[pyo3(signature = (messages, tools, docs, config))]
         fn run_sync(
             &mut self,
             messages: Vec<Message>,
             tools: Vec<ToolDesc>,
+            docs: Vec<Document>,
             config: InferenceConfig,
         ) -> anyhow::Result<LanguageModelRunSyncIterator> {
-            let (rt, rx) = spawn(self.clone(), messages, tools, config)?;
+            let (rt, rx) = spawn(self.clone(), messages, tools, docs, config)?;
             Ok(LanguageModelRunSyncIterator { rt, rx })
         }
     }

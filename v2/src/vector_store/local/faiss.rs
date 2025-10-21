@@ -208,7 +208,7 @@ impl VectorStoreBehavior for FaissStore {
 mod tests {
     use ailoy_macros::multi_platform_test;
     use anyhow::Ok;
-    use serde_json::json;
+    use serde_json::{from_value, json};
 
     use super::*;
 
@@ -221,10 +221,8 @@ mod tests {
         let mut store = setup_test_store().await?;
         let test_embedding = vec![1.1, 2.2, 3.3];
         let test_document = "This is a test document.".to_owned();
-        let test_metadata = json!({"source": "test_add_and_get_vector"})
-            .as_object()
-            .unwrap()
-            .clone();
+        let test_metadata: Metadata =
+            from_value(json!({"source": "test_add_and_get_vector"})).unwrap();
 
         let input = VectorStoreAddInput {
             embedding: test_embedding.clone(),
@@ -255,12 +253,12 @@ mod tests {
                 VectorStoreAddInput {
                     embedding: vec![1.0, 1.0, 1.0],
                     document: "doc1".to_owned(),
-                    metadata: Some(json!({"id": 1}).as_object().unwrap().clone()),
+                    metadata: Some(from_value(json!({"id": 1})).unwrap()),
                 },
                 VectorStoreAddInput {
                     embedding: vec![2.0, 2.0, 2.0],
                     document: "doc2".to_owned(),
-                    metadata: Some(json!({"id": 2}).as_object().unwrap().clone()),
+                    metadata: Some(from_value(json!({"id": 2})).unwrap()),
                 },
             ])
             .await?;

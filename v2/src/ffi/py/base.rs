@@ -6,6 +6,7 @@ use pyo3::{
 };
 use serde_json::{Map, Value};
 
+#[allow(unused)]
 pub fn json_value_to_py_object(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
     match value {
         Value::Null => Ok(py.None()),
@@ -42,6 +43,7 @@ pub fn json_value_to_py_object(py: Python, value: &Value) -> PyResult<Py<PyAny>>
     }
 }
 
+#[allow(unused)]
 pub fn json_to_pydict<'py>(py: Python<'py>, value: &Value) -> PyResult<Option<Bound<'py, PyDict>>> {
     match value {
         Value::Object(obj) => {
@@ -60,6 +62,7 @@ pub fn json_to_pydict<'py>(py: Python<'py>, value: &Value) -> PyResult<Option<Bo
 }
 
 // Conversion from PyDict back to serde_json::Value
+#[allow(unused)]
 fn py_object_to_json_value(py: Python, obj: &Py<PyAny>) -> PyResult<Value> {
     if obj.is_none(py) {
         Ok(Value::Null)
@@ -101,6 +104,7 @@ fn py_object_to_json_value(py: Python, obj: &Py<PyAny>) -> PyResult<Value> {
     }
 }
 
+#[allow(unused)]
 // Main conversion function from PyDict to serde_json::Map
 pub fn pydict_to_json(py: Python, py_dict: &Bound<PyDict>) -> PyResult<Map<String, Value>> {
     let mut map = serde_json::Map::new();

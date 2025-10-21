@@ -19,8 +19,10 @@ impl From<VectorStoreRetrieveResult> for Document {
             && let Some(raw_title) = metadata.get("title")
         {
             Some(match raw_title {
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string(),
+                crate::value::Value::String(s) => s.clone(),
+                other => serde_json::Value::try_from(other.clone())
+                    .unwrap()
+                    .to_string(),
             })
         } else {
             None
