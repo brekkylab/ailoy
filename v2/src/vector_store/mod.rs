@@ -9,48 +9,78 @@ use futures::lock::Mutex;
 pub use local::*;
 use serde::{Deserialize, Serialize};
 
-use crate::value::Value;
+use crate::{utils::Normalize, value::Value};
 
-pub type Embedding = Vec<f32>;
+// pub type Embedding = Vec<f32>;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Embedding(pub Vec<f32>);
+
+impl From<Vec<f32>> for Embedding {
+    fn from(value: Vec<f32>) -> Self {
+        Self(value)
+    }
+}
+
+impl Into<Vec<f32>> for Embedding {
+    fn into(self) -> Vec<f32> {
+        self.0
+    }
+}
+
+impl Normalize for Embedding {
+    fn normalized(&self) -> Self {
+        Self(self.0.normalized())
+    }
+}
+
+impl Embedding {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 
 pub type Metadata = HashMap<String, Value>;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct VectorStoreAddInput {
     pub embedding: Embedding,
     pub document: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Metadata>,
+    pub metadata: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct VectorStoreGetResult {
     pub id: String,
     pub document: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Metadata>,
+    pub metadata: Option<HashMap<String, Value>>,
     pub embedding: Embedding,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct VectorStoreRetrieveResult {
     pub id: String,
     pub document: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Metadata>,
-    pub distance: f32,
+    pub metadata: Option<HashMap<String, Value>>,
+    pub distance: f64,
 }
 
 #[maybe_send_sync]
@@ -89,6 +119,7 @@ pub enum VectorStoreInner {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct VectorStore {
     inner: VectorStoreInner,
@@ -340,6 +371,166 @@ mod py {
         #[pyo3(name = "count")]
         fn count_py(&self) -> PyResult<usize> {
             await_future(self.count())
+        }
+    }
+}
+
+#[cfg(feature = "nodejs")]
+mod node {
+    use napi::{Status, bindgen_prelude::*};
+    use napi_derive::*;
+
+    use super::*;
+
+    #[allow(unused)]
+    #[napi(js_name = "Embedding")]
+    pub type JsEmbedding = Float32Array;
+
+    impl FromNapiValue for Embedding {
+        unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+            let array = unsafe { Float32Array::from_napi_value(env, napi_val) }?;
+            Ok(Self(array.to_vec()))
+        }
+    }
+
+    impl ToNapiValue for Embedding {
+        unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
+            let env = Env::from_raw(env);
+            let array = Float32Array::new(val.0.clone());
+            let unknown = array.into_unknown(&env)?;
+            Ok(unknown.raw())
+        }
+    }
+
+    impl TypeName for Embedding {
+        fn type_name() -> &'static str {
+            "Float32Array"
+        }
+
+        fn value_type() -> ValueType {
+            ValueType::Object
+        }
+    }
+
+    impl ValidateNapiValue for Embedding {}
+
+    #[napi]
+    impl VectorStore {
+        #[napi(js_name = "newFaiss")]
+        pub async fn new_faiss_js(dim: i32) -> napi::Result<Self> {
+            let store = FaissStore::new(dim)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
+            Ok(Self::new_faiss(store))
+        }
+
+        #[napi(js_name = "newChroma")]
+        pub async fn new_chroma_js(
+            url: String,
+            collection_name: Option<String>,
+        ) -> napi::Result<Self> {
+            let store = ChromaStore::new(&url, collection_name.as_deref())
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
+            Ok(Self::new_chroma(store))
+        }
+
+        #[napi(js_name = "addVector")]
+        pub async unsafe fn add_vector_js(
+            &mut self,
+            input: VectorStoreAddInput,
+        ) -> napi::Result<String> {
+            self.add_vector(input)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "addVectors")]
+        pub async unsafe fn add_vectors_js(
+            &mut self,
+            inputs: Vec<VectorStoreAddInput>,
+        ) -> napi::Result<Vec<String>> {
+            self.add_vectors(inputs)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "getById")]
+        pub async fn get_by_id_js(&self, id: String) -> napi::Result<Option<VectorStoreGetResult>> {
+            self.get_by_id(&id)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "getByIds")]
+        pub async fn get_by_ids_js(
+            &self,
+            ids: Vec<String>,
+        ) -> napi::Result<Vec<VectorStoreGetResult>> {
+            self.get_by_ids(
+                ids.iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            )
+            .await
+            .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "retrieve")]
+        pub async fn retrieve_js(
+            &self,
+            query_embedding: Embedding,
+            top_k: u32,
+        ) -> napi::Result<Vec<VectorStoreRetrieveResult>> {
+            self.retrieve(query_embedding, top_k as usize)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "batchRetrieve")]
+        pub async fn batch_retrieve_js(
+            &self,
+            query_embeddings: Vec<Embedding>,
+            top_k: u32,
+        ) -> napi::Result<Vec<Vec<VectorStoreRetrieveResult>>> {
+            self.batch_retrieve(query_embeddings, top_k as usize)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "removeVector")]
+        pub async unsafe fn remove_vector_js(&mut self, id: String) -> napi::Result<()> {
+            self.remove_vector(&id)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "removeVectors")]
+        pub async unsafe fn remove_vectors_js(&mut self, ids: Vec<String>) -> napi::Result<()> {
+            self.remove_vectors(
+                ids.iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            )
+            .await
+            .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "clear")]
+        pub async unsafe fn clear_js(&mut self) -> napi::Result<()> {
+            self.clear()
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "count")]
+        pub async fn count_js(&self) -> napi::Result<u32> {
+            self.count()
+                .await
+                .map(|count| count as u32)
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
         }
     }
 }

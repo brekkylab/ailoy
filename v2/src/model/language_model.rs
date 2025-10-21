@@ -356,31 +356,36 @@ mod node {
     use napi::{
         Error, JsSymbol, Status, bindgen_prelude::*, threadsafe_function::ThreadsafeFunction,
     };
+    use napi_derive::napi;
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::ffi::node::{
+        cache::{JsCacheProgress, await_cache_result},
+        common::get_or_create_runtime,
+    };
 
-    #[napi_derive::napi(object)]
+    #[napi(object)]
     pub struct LanguageModelIteratorResult {
         pub value: MessageOutput,
         pub done: bool,
     }
 
     #[derive(Clone)]
-    #[napi_derive::napi]
+    #[napi]
     pub struct LangModelRunIterator {
         rx: Arc<Mutex<mpsc::UnboundedReceiver<std::result::Result<MessageOutput, anyhow::Error>>>>,
     }
 
-    #[napi_derive::napi]
+    #[napi]
     impl LangModelRunIterator {
-        #[napi_derive::napi(js_name = "[Symbol.asyncIterator]")]
+        #[napi(js_name = "[Symbol.asyncIterator]")]
         pub fn async_iterator(&self) -> &Self {
             // This is a dummy function to add typing for Symbol.asyncIterator
             self
         }
 
-        #[napi_derive::napi]
+        #[napi]
         pub async unsafe fn next(&mut self) -> napi::Result<LanguageModelIteratorResult> {
             let mut rx = self.rx.lock().await;
             match rx.recv().await {
@@ -423,34 +428,25 @@ mod node {
         }
     }
 
-    #[napi_derive::napi]
+    #[napi]
     impl LangModel {
-        #[napi_derive::napi]
-        pub async fn create_local(
+        #[napi(js_name = "newLocal")]
+        pub async fn new_local_js(
             model_name: String,
             progress_callback: Option<
-                ThreadsafeFunction<
-                    crate::ffi::node::cache::JsCacheProgress,
-                    (),
-                    crate::ffi::node::cache::JsCacheProgress,
-                    Status,
-                    false,
-                >,
+                ThreadsafeFunction<JsCacheProgress, (), JsCacheProgress, Status, false>,
             >,
         ) -> napi::Result<LangModel> {
-            let inner = crate::ffi::node::cache::await_cache_result::<LocalLangModel>(
-                model_name,
-                progress_callback,
-            )
-            .await
-            .unwrap();
+            let inner = await_cache_result::<LocalLangModel>(model_name, progress_callback)
+                .await
+                .unwrap();
             Ok(LangModel {
                 inner: LangModelInner::Local(inner),
             })
         }
 
-        #[napi]
-        pub fn create_stream_api(
+        #[napi(js_name = "newStreamAPI")]
+        pub fn new_stream_api_js(
             spec: APISpecification,
             model_name: String,
             api_key: String,
@@ -467,9 +463,10 @@ mod node {
             env: Env,
             messages: Vec<Message>,
             tools: Option<Vec<ToolDesc>>,
+            docs: Option<Vec<Document>>,
         ) -> Result<Object<'a>> {
             let (tx, rx) = mpsc::unbounded_channel::<std::result::Result<MessageOutput, _>>();
-            let rt = crate::ffi::node::common::get_or_create_runtime();
+            let rt = get_or_create_runtime();
             let mut model = self.clone();
 
             rt.spawn(async move {
@@ -478,6 +475,7 @@ mod node {
                     .infer(
                         messages,
                         tools.unwrap_or(vec![]),
+                        docs.unwrap_or(vec![]),
                         InferenceConfig::default(),
                     )
                     .boxed();

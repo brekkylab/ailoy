@@ -35,7 +35,7 @@ impl FaissStore {
 #[multi_platform_async_trait]
 impl VectorStoreBehavior for FaissStore {
     async fn add_vector(&mut self, input: VectorStoreAddInput) -> anyhow::Result<String> {
-        let ids: Vec<String> = self.index.add_vectors(&[input.embedding]).unwrap();
+        let ids: Vec<String> = self.index.add_vectors(&[input.embedding.0]).unwrap();
         let id = ids.iter().next().unwrap().clone();
         self.doc_store.insert(
             id.clone(),
@@ -63,7 +63,16 @@ impl VectorStoreBehavior for FaissStore {
                 )
             })
             .unzip();
-        let ids: Vec<String> = self.index.add_vectors(&embeddings).unwrap();
+        let ids: Vec<String> = self
+            .index
+            .add_vectors(
+                embeddings
+                    .into_iter()
+                    .map(|emb| emb.0)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            )
+            .unwrap();
         self.doc_store
             .extend(ids.iter().cloned().zip(entries.into_iter()));
         Ok(ids)
@@ -81,7 +90,7 @@ impl VectorStoreBehavior for FaissStore {
             id: id.to_string(),
             document: doc_entry.document.clone(),
             metadata: doc_entry.metadata.clone(),
-            embedding,
+            embedding: embedding.into(),
         }))
     }
 
@@ -105,7 +114,7 @@ impl VectorStoreBehavior for FaissStore {
                         id: id.to_string(),
                         document: doc_entry.document.clone(),
                         metadata: doc_entry.metadata.clone(),
-                        embedding,
+                        embedding: embedding.into(),
                     })
             })
             .collect())
@@ -116,7 +125,7 @@ impl VectorStoreBehavior for FaissStore {
         query_embedding: Embedding,
         top_k: usize,
     ) -> anyhow::Result<Vec<VectorStoreRetrieveResult>> {
-        let index_results = self.index.search(&[query_embedding], top_k).unwrap();
+        let index_results = self.index.search(&[query_embedding.0], top_k).unwrap();
         let index_result = index_results.into_iter().next().unwrap();
 
         Ok(index_result
@@ -131,7 +140,7 @@ impl VectorStoreBehavior for FaissStore {
                         id,
                         document: doc_entry.document.clone(),
                         metadata: doc_entry.metadata.clone(),
-                        distance,
+                        distance: distance as f64,
                     })
             })
             .collect::<Vec<_>>())
@@ -142,7 +151,17 @@ impl VectorStoreBehavior for FaissStore {
         query_embeddings: Vec<Embedding>,
         top_k: usize,
     ) -> anyhow::Result<Vec<Vec<VectorStoreRetrieveResult>>> {
-        let index_results = self.index.search(&query_embeddings, top_k).unwrap();
+        let index_results = self
+            .index
+            .search(
+                query_embeddings
+                    .into_iter()
+                    .map(|query| query.0)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                top_k,
+            )
+            .unwrap();
 
         Ok(index_results
             .into_iter()
@@ -159,7 +178,7 @@ impl VectorStoreBehavior for FaissStore {
                                 id,
                                 document: doc_entry.document.clone(),
                                 metadata: doc_entry.metadata.clone(),
-                                distance,
+                                distance: distance as f64,
                             })
                     })
                     .collect::<Vec<_>>()
@@ -219,7 +238,7 @@ mod tests {
     #[multi_platform_test]
     async fn faiss_add_and_get_vector() -> anyhow::Result<()> {
         let mut store = setup_test_store().await?;
-        let test_embedding = vec![1.1, 2.2, 3.3];
+        let test_embedding: Embedding = vec![1.1, 2.2, 3.3].into();
         let test_document = "This is a test document.".to_owned();
         let test_metadata: Metadata =
             from_value(json!({"source": "test_add_and_get_vector"})).unwrap();
@@ -251,12 +270,12 @@ mod tests {
         let added_ids = store
             .add_vectors(vec![
                 VectorStoreAddInput {
-                    embedding: vec![1.0, 1.0, 1.0],
+                    embedding: vec![1.0, 1.0, 1.0].into(),
                     document: "doc1".to_owned(),
                     metadata: Some(from_value(json!({"id": 1})).unwrap()),
                 },
                 VectorStoreAddInput {
-                    embedding: vec![2.0, 2.0, 2.0],
+                    embedding: vec![2.0, 2.0, 2.0].into(),
                     document: "doc2".to_owned(),
                     metadata: Some(from_value(json!({"id": 2})).unwrap()),
                 },
@@ -267,20 +286,20 @@ mod tests {
 
         let res1 = store.get_by_id(&added_ids[0]).await?.unwrap();
         assert_eq!(res1.document, "doc1");
-        assert_eq!(res1.embedding, vec![1.0, 1.0, 1.0]);
+        assert_eq!(res1.embedding.0, vec![1.0, 1.0, 1.0]);
 
         let res2 = store.get_by_id(&added_ids[1]).await?.unwrap();
         assert_eq!(res2.document, "doc2");
-        assert_eq!(res2.embedding, vec![2.0, 2.0, 2.0]);
+        assert_eq!(res2.embedding.0, vec![2.0, 2.0, 2.0]);
 
         let res = store
             .get_by_ids(&added_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>())
             .await?;
         assert_eq!(res[0].document, "doc1");
-        assert_eq!(res[0].embedding, vec![1.0, 1.0, 1.0]);
+        assert_eq!(res[0].embedding.0, vec![1.0, 1.0, 1.0]);
 
         assert_eq!(res[1].document, "doc2");
-        assert_eq!(res[1].embedding, vec![2.0, 2.0, 2.0]);
+        assert_eq!(res[1].embedding.0, vec![2.0, 2.0, 2.0]);
 
         Ok(())
     }
@@ -290,29 +309,29 @@ mod tests {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             VectorStoreAddInput {
-                embedding: vec![1.0, 0.0, 0.0],
+                embedding: vec![1.0, 0.0, 0.0].into(),
                 document: "vector one".to_owned(),
                 metadata: None,
             },
             VectorStoreAddInput {
-                embedding: vec![0.0, 1.0, 0.0],
+                embedding: vec![0.0, 1.0, 0.0].into(),
                 document: "vector two".to_owned(),
                 metadata: None,
             },
             VectorStoreAddInput {
-                embedding: vec![0.9, 0.1, 0.0],
+                embedding: vec![0.9, 0.1, 0.0].into(),
                 document: "vector one-ish".to_owned(),
                 metadata: None,
             },
             VectorStoreAddInput {
-                embedding: vec![0.0, 0.9, 0.1],
+                embedding: vec![0.0, 0.9, 0.1].into(),
                 document: "vector two-ish".to_owned(),
                 metadata: None,
             },
         ];
         store.add_vectors(inputs).await?;
 
-        let query_embeddings = vec![vec![0.95, 0.0, 0.0], vec![0.0, 0.95, 0.0]];
+        let query_embeddings = vec![vec![0.95, 0.0, 0.0].into(), vec![0.0, 0.95, 0.0].into()];
 
         // top_k=2
         let results = store
@@ -360,17 +379,17 @@ mod tests {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             VectorStoreAddInput {
-                embedding: vec![5.5, 6.6, 3.3],
+                embedding: vec![5.5, 6.6, 3.3].into(),
                 document: "to be deleted1".to_owned(),
                 metadata: None,
             },
             VectorStoreAddInput {
-                embedding: vec![4.4, 6.6, 5.5],
+                embedding: vec![4.4, 6.6, 5.5].into(),
                 document: "to be deleted2".to_owned(),
                 metadata: None,
             },
             VectorStoreAddInput {
-                embedding: vec![3.3, 2.2, 6.6],
+                embedding: vec![3.3, 2.2, 6.6].into(),
                 document: "to be deleted3".to_owned(),
                 metadata: None,
             },
@@ -421,12 +440,12 @@ mod tests {
         let mut store = setup_test_store().await?;
         let inputs = vec![
             VectorStoreAddInput {
-                embedding: vec![1.0, 1.1, 1.2],
+                embedding: vec![1.0, 1.1, 1.2].into(),
                 document: "doc1".to_owned(),
                 metadata: None,
             },
             VectorStoreAddInput {
-                embedding: vec![2.0, 2.1, 2.2],
+                embedding: vec![2.0, 2.1, 2.2].into(),
                 document: "doc2".to_owned(),
                 metadata: None,
             },

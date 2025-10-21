@@ -40,7 +40,7 @@ impl EmbeddingModelInference for LocalEmbeddingModel {
             embedding = embedding.normalized();
         }
 
-        Ok(embedding)
+        Ok(embedding.into())
     }
 }
 
@@ -132,12 +132,12 @@ mod tests {
     use super::*;
     use crate::utils::log;
 
-    fn dot(a: &[f32], b: &[f32]) -> f32 {
+    fn dot(a: &Embedding, b: &Embedding) -> f32 {
         if a.len() != b.len() {
             panic!("Cannot dot two vectors of different lengths");
         }
 
-        a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+        a.0.iter().zip(b.0.iter()).map(|(x, y)| x * y).sum()
     }
 
     #[multi_platform_test]

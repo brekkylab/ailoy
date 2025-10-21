@@ -6,7 +6,7 @@ const configs = [
   {
     name: "Faiss",
     create: async () => {
-      return await ailoy.FaissVectorStore.create(1024);
+      return await ailoy.VectorStore.newFaiss(1024);
     },
   },
   {
@@ -14,12 +14,12 @@ const configs = [
     create: async () => {
       const url = "http://localhost:8000";
       const collectionName = "my_collection";
-      return await ailoy.ChromaVectorStore.create(url, collectionName);
+      return await ailoy.VectorStore.newChroma(url, collectionName);
     },
   },
 ];
 
-const model = await ailoy.LocalEmbeddingModel.create("BAAI/bge-m3");
+const model = await ailoy.EmbeddingModel.newLocal("BAAI/bge-m3");
 
 for (const cfg of configs) {
   let skip = false;
@@ -41,7 +41,7 @@ for (const cfg of configs) {
 
     test.sequential("Add & get & remove a single input", async () => {
       const document = "What is your name?";
-      const embedding = await model.run(document);
+      const embedding = await model.infer(document);
       const input: ailoy.VectorStoreAddInput = {
         embedding,
         document,
@@ -65,10 +65,10 @@ for (const cfg of configs) {
 
     test.sequential("Add & get & remove multiple inputs", async () => {
       const doc0 = "document0";
-      const emb0 = await model.run(doc0);
+      const emb0 = await model.infer(doc0);
 
       const doc1 = "document1";
-      const emb1 = await model.run(doc1);
+      const emb1 = await model.infer(doc1);
 
       const ids = await vs.addVectors([
         {
@@ -101,10 +101,10 @@ for (const cfg of configs) {
 
     test.sequential("Retrieve results for a single query", async () => {
       const doc0 = "Ailoy is an awesome library";
-      const emb0 = await model.run(doc0);
+      const emb0 = await model.infer(doc0);
 
       const doc1 = "Langchain is a library";
-      const emb1 = await model.run(doc1);
+      const emb1 = await model.infer(doc1);
 
       const ids = await vs.addVectors([
         {
@@ -118,7 +118,7 @@ for (const cfg of configs) {
       ]);
 
       const query = "What is Ailoy?";
-      const queryEmb = await model.run(query);
+      const queryEmb = await model.infer(query);
       const retrieveResults = await vs.retrieve(queryEmb, 2);
       expect(retrieveResults).to.be.length(2);
       // The query is about Ailoy, so the most similar item should match to the first input.
@@ -132,11 +132,11 @@ for (const cfg of configs) {
     test.sequential("Retrieve batch results for multiple queries", async () => {
       const doc0 =
         "BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.";
-      const emb0 = await model.run(doc0);
+      const emb0 = await model.infer(doc0);
 
       const doc1 =
         "BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document";
-      const emb1 = await model.run(doc1);
+      const emb1 = await model.infer(doc1);
 
       const ids = await vs.addVectors([
         {
@@ -150,9 +150,9 @@ for (const cfg of configs) {
       ]);
 
       const query0 = "What is BGE-M3?";
-      const queryEmb0 = await model.run(query0);
+      const queryEmb0 = await model.infer(query0);
       const query1 = "Defination of BM25";
-      const queryEmb1 = await model.run(query1);
+      const queryEmb1 = await model.infer(query1);
       const retrieveResults = await vs.batchRetrieve([queryEmb0, queryEmb1], 2);
       expect(retrieveResults).to.be.length(2);
 

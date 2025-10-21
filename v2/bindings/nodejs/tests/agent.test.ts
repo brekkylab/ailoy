@@ -9,8 +9,7 @@ const modelConfigs = [
   {
     name: "Local",
     createAgent: async () => {
-      const model = await ailoy.LocalLanguageModel.create("Qwen/Qwen3-0.6B");
-      model.disableReasoning();
+      const model = await ailoy.LangModel.newLocal("Qwen/Qwen3-0.6B");
       return new ailoy.Agent(model);
     },
   },
@@ -18,7 +17,8 @@ const modelConfigs = [
     name: "OpenAI",
     skip: process.env.OPENAI_API_KEY === undefined,
     createAgent: async () => {
-      const model = new ailoy.OpenAILanguageModel(
+      const model = ailoy.LangModel.newStreamAPI(
+        "OpenAI",
         "gpt-4o",
         process.env.OPENAI_API_KEY!
       );
@@ -31,7 +31,8 @@ const modelConfigs = [
     name: "Gemini",
     skip: process.env.GEMINI_API_KEY === undefined,
     createAgent: async () => {
-      const model = new ailoy.GeminiLanguageModel(
+      const model = ailoy.LangModel.newStreamAPI(
+        "Gemini",
         "gemini-2.5-flash",
         process.env.GEMINI_API_KEY!
       );
@@ -43,7 +44,8 @@ const modelConfigs = [
     name: "Anthropic",
     skip: process.env.ANTHROPIC_API_KEY === undefined,
     createAgent: async () => {
-      const model = new ailoy.AnthropicLanguageModel(
+      const model = ailoy.LangModel.newStreamAPI(
+        "Claude",
         "claude-sonnet-4-20250514",
         process.env.ANTHROPIC_API_KEY!
       );
@@ -55,7 +57,8 @@ const modelConfigs = [
     name: "XAI",
     skip: process.env.XAI_API_KEY === undefined,
     createAgent: async () => {
-      const model = new ailoy.XAILanguageModel(
+      const model = ailoy.LangModel.newStreamAPI(
+        "Grok",
         "grok-4-fast",
         process.env.XAI_API_KEY!
       );
@@ -84,9 +87,7 @@ for (const cfg of modelConfigs) {
     });
 
     test.sequential("Simple Chat", async () => {
-      const agg = new ailoy.MessageAggregator();
       for await (const resp of agent.run("What is your name?")) {
-        const msg = agg.update(resp);
         if (msg !== null) {
           console.log(msg);
         }
@@ -99,11 +100,9 @@ for (const cfg of modelConfigs) {
         const tool = ailoy.BuiltinTool.terminal();
         agent.addTool(tool);
 
-        const agg = new ailoy.MessageAggregator();
         for await (const resp of agent.run(
           "List the files in the current directory."
         )) {
-          const msg = agg.update(resp);
           if (msg !== null) {
             console.log(msg);
           }
@@ -123,11 +122,9 @@ for (const cfg of modelConfigs) {
         const tools = await transport.tools("time");
         agent.addTools(tools);
 
-        const agg = new ailoy.MessageAggregator();
         for await (const resp of agent.run(
           "What time is it now in Asia/Seoul? Answer in local timezone."
         )) {
-          const msg = agg.update(resp);
           if (msg !== null) {
             console.log(msg);
           }
@@ -172,11 +169,9 @@ for (const cfg of modelConfigs) {
 
         agent.addTool(tool);
 
-        const agg = new ailoy.MessageAggregator();
         for await (const resp of agent.run(
           "What is the temperature in Seoul now? Answer in Celsius."
         )) {
-          const msg = agg.update(resp);
           if (msg !== null) {
             console.log(msg);
           }
@@ -192,12 +187,10 @@ for (const cfg of modelConfigs) {
         "Multimodal: Image URL",
         async () => {
           const imgPart = ailoy.Part.newImageUrl(testImageUrl);
-          const agg = new ailoy.MessageAggregator();
           for await (const resp of agent.run([
             imgPart,
             "What is shown in this image?",
           ])) {
-            const msg = agg.update(resp);
             if (msg !== null) {
               console.log(msg);
             }
@@ -216,12 +209,10 @@ for (const cfg of modelConfigs) {
             "image/jpeg"
           );
 
-          const agg = new ailoy.MessageAggregator();
           for await (const resp of agent.run([
             imgPart,
             "What is shown in this image?",
           ])) {
-            const msg = agg.update(resp);
             if (msg !== null) {
               console.log(msg);
             }

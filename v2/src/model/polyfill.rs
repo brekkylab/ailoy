@@ -12,9 +12,9 @@ use crate::value::{Document, Message, Part, Role};
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct DocumentPolyfill {
     #[serde(skip_serializing_if = "Option::is_none")]
-    system_message_template: Option<String>,
+    pub system_message_template: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    query_message_template: Option<String>,
+    pub query_message_template: Option<String>,
 }
 
 impl DocumentPolyfill {
