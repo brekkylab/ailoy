@@ -11,8 +11,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{utils::Normalize, value::Value};
 
-// pub type Embedding = Vec<f32>;
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Embedding(pub Vec<f32>);
 
