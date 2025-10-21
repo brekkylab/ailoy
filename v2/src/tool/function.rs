@@ -27,8 +27,8 @@ pub struct FunctionTool {
 impl Debug for FunctionTool {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("FunctionTool")
-            .field("desc", &self.desc)
             .field("f", &"(Function)")
+            .field("desc", &self.desc)
             .finish()
     }
 }

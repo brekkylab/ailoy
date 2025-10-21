@@ -4,19 +4,18 @@ import re
 import types
 from typing import (
     Any,
-    Awaitable,
     Callable,
     Literal,
     Optional,
+    Self,
     Union,
     get_args,
     get_origin,
     get_type_hints,
 )
 
-from ailoy._core import Part, ToolDesc
-from ailoy._core import PythonAsyncFunctionTool as _PythonAsyncFunctionTool
-from ailoy._core import PythonFunctionTool as _PythonFunctionTool
+from ailoy._core import Tool as _Tool
+from ailoy._core import ToolDesc
 
 description_re = re.compile(r"^(.*?)[\n\s]*(Args:|Returns:|Raises:|\Z)", re.DOTALL)
 # Extracts the Args: block from the docstring
@@ -242,10 +241,9 @@ def get_json_schema(func: Callable) -> dict:
     return {"type": "function", "function": output}
 
 
-class PythonFunctionTool(_PythonFunctionTool):
-    def __new__(
-        cls, func: Callable[..., list[Part]], tool_desc: Optional[ToolDesc] = None
-    ):
+class Tool(_Tool):
+    @classmethod
+    def new_py_function(cls, func: Any, tool_desc: Optional[ToolDesc] = None) -> Self:
         if tool_desc is None:
             try:
                 json_schema = get_json_schema(func)
@@ -254,21 +252,4 @@ class PythonFunctionTool(_PythonFunctionTool):
 
             tool_desc = ToolDesc(**json_schema.get("function"))
 
-        return super().__new__(cls, func, tool_desc)
-
-
-class PythonAsyncFunctionTool(_PythonAsyncFunctionTool):
-    def __new__(
-        cls,
-        func: Callable[..., Awaitable[list[Part]]],
-        tool_desc: Optional[ToolDesc] = None,
-    ):
-        if tool_desc is None:
-            try:
-                json_schema = get_json_schema(func)
-            except (TypeHintParsingException, DocstringParsingException) as e:
-                raise ValueError("Failed to parse docstring", e)
-
-            tool_desc = ToolDesc(**json_schema.get("function"))
-
-        return super().__new__(cls, func, tool_desc)
+        return super().new_py_function(tool_desc, func)

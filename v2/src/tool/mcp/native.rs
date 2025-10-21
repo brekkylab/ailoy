@@ -153,3 +153,80 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(feature = "python")]
+mod py {
+    use pyo3::{prelude::*, pymethods, types::PyType};
+    use pyo3_stub_gen_derive::gen_stub_pymethods;
+    use rmcp::transport::ConfigureCommandExt;
+
+    use super::*;
+    use crate::tool::{MCPClient, Tool};
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MCPClient {
+        fn __repr__(&self) -> String {
+            format!(
+                "MCPClient(tools=[{}])",
+                self.tools
+                    .iter()
+                    .map(|tool| format!("Tool(MCPTool(name={}))", tool.inner.name.as_ref()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+
+        #[classmethod]
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MCPClient]"))]
+        #[pyo3(name="from_stdio", signature = (command, args))]
+        fn from_stdio_py<'py>(
+            _cls: Bound<'py, PyType>,
+            py: Python<'py>,
+            command: String,
+            args: Vec<String>,
+        ) -> PyResult<Py<PyAny>> {
+            let fut = async move {
+                let command = tokio::process::Command::new(command).configure(|cmd| {
+                    cmd.args(args);
+                });
+                MCPClient::from_stdio(command).await.map_err(Into::into)
+            };
+            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
+            Ok(py_fut.into())
+        }
+
+        #[classmethod]
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MCPClient]"))]
+        #[pyo3(name="from_streamable_http", signature = (url))]
+        fn from_streamable_http_py<'py>(
+            _cls: Bound<'py, PyType>,
+            py: Python<'py>,
+            url: String,
+        ) -> PyResult<Py<PyAny>> {
+            let fut = async move {
+                MCPClient::from_streamable_http(url)
+                    .await
+                    .map_err(Into::into)
+            };
+            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
+            Ok(py_fut.into())
+        }
+
+        #[getter]
+        fn tools(&self) -> Vec<Tool> {
+            self.tools
+                .iter()
+                .map(|t| Tool::new_mcp(t.clone()))
+                .collect()
+        }
+
+        #[pyo3(signature = (name))]
+        fn get_tool(&self, name: String) -> Option<Tool> {
+            self.tools()
+                .iter()
+                .find(|tool| tool.get_description().name == name)
+                .cloned()
+        }
+    }
+}

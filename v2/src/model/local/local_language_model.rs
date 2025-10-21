@@ -322,7 +322,10 @@ impl TryFromCache for LocalLangModelImpl {
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 #[cfg(test)]
 mod tests {
-    use crate::value::{Delta, Part};
+    use crate::{
+        debug,
+        value::{Delta, Part},
+    };
 
     #[tokio::test]
     async fn infer_simple_chat() {
@@ -362,11 +365,11 @@ mod tests {
             // Message::with_role(Role::User)
             //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
-        let mut delta = MessageDelta::new();
+        let mut delta = MessageDelta::new().with_role(Role::Assistant);
         let mut strm = model.infer(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
-            crate::utils::log::debug(format!("{:?}", out));
+            debug!("{:?}", out);
             delta = delta.aggregate(out.delta).unwrap();
         }
         crate::utils::log::info(format!("{:?}", delta.finish().unwrap()));

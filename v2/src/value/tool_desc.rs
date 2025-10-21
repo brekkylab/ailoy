@@ -69,7 +69,21 @@ pub struct ToolDesc {
     pub returns: Option<Value>,
 }
 
-impl ToolDesc {}
+impl ToolDesc {
+    pub fn new(
+        name: String,
+        description: Option<String>,
+        parameters: Value,
+        returns: Option<Value>,
+    ) -> Self {
+        ToolDesc {
+            name,
+            description,
+            parameters,
+            returns,
+        }
+    }
+}
 
 /// A builder for constructing [`ToolDesc`] objects.
 ///
