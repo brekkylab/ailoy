@@ -186,7 +186,7 @@ mod py {
         mut model: LangModel,
         messages: Vec<Message>,
         tools: Vec<ToolDesc>,
-        docs: Vec<Document>,
+        documents: Vec<Document>,
         config: InferenceConfig,
     ) -> anyhow::Result<(
         &'a tokio::runtime::Runtime,
@@ -195,7 +195,7 @@ mod py {
         let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageOutput>>();
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         rt.spawn(async move {
-            let mut stream = model.infer(messages, tools, docs, config).boxed();
+            let mut stream = model.infer(messages, tools, documents, config).boxed();
 
             while let Some(item) = stream.next().await {
                 if tx.send(item).await.is_err() {
@@ -322,29 +322,69 @@ mod py {
             }
         }
 
-        #[pyo3(signature = (messages, tools, docs, config))]
+        #[pyo3(signature = (messages, tools=None, documents=None, config=None))]
         fn run(
             &mut self,
             messages: Vec<Message>,
-            tools: Vec<ToolDesc>,
-            docs: Vec<Document>,
-            config: InferenceConfig,
+            tools: Option<Vec<ToolDesc>>,
+            documents: Option<Vec<Document>>,
+            config: Option<InferenceConfig>,
         ) -> anyhow::Result<LanguageModelRunIterator> {
-            let (_, rx) = spawn(self.clone(), messages, tools, docs, config)?;
+            let (_, rx) = spawn(
+                self.clone(),
+                messages,
+                tools.unwrap_or(vec![]),
+                documents.unwrap_or(vec![]),
+                config.unwrap_or(InferenceConfig::default()),
+            )?;
             Ok(LanguageModelRunIterator { rx })
         }
 
-        #[pyo3(signature = (messages, tools, docs, config))]
+        #[pyo3(signature = (messages, tools=None, documents=None, config=None))]
         fn run_sync(
             &mut self,
             messages: Vec<Message>,
-            tools: Vec<ToolDesc>,
-            docs: Vec<Document>,
-            config: InferenceConfig,
+            tools: Option<Vec<ToolDesc>>,
+            documents: Option<Vec<Document>>,
+            config: Option<InferenceConfig>,
         ) -> anyhow::Result<LanguageModelRunSyncIterator> {
-            let (rt, rx) = spawn(self.clone(), messages, tools, docs, config)?;
+            let (rt, rx) = spawn(
+                self.clone(),
+                messages,
+                tools.unwrap_or(vec![]),
+                documents.unwrap_or(vec![]),
+                config.unwrap_or(InferenceConfig::default()),
+            )?;
             Ok(LanguageModelRunSyncIterator { rt, rx })
         }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl InferenceConfig {
+        #[new]
+        // #[pyo3(signature = (document_polyfill=None, think_effort=None, temperature=None, top_p=None, max_tokens=None, grammar=None))]
+        #[pyo3(signature = (document_polyfill=None, think_effort=None, temperature=None, top_p=None, max_tokens=None))]
+        fn __new__(
+            document_polyfill: Option<DocumentPolyfill>,
+            think_effort: Option<ThinkEffort>,
+            temperature: Option<f64>,
+            top_p: Option<f64>,
+            max_tokens: Option<i32>,
+            // grammar: Option<Grammar>,
+        ) -> InferenceConfig {
+            Self {
+                document_polyfill: document_polyfill,
+                think_effort: think_effort,
+                temperature,
+                top_p,
+                max_tokens,
+                grammar: Some(Grammar::default()),
+            }
+        }
+
+        // TODO: initialize from {"think_effort": "enable", ...}
+        // fn from_dict(d: Py<PyDict>)
     }
 }
 

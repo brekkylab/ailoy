@@ -198,7 +198,7 @@ impl PyAgentRunIterator {
         let rx = self.rx.clone();
         let fut = async move {
             match rx.recv().await {
-                Ok(res) => res.map_err(|e| PyRuntimeError::new_err(e)),
+                Ok(res) => res.map_err(Into::into),
                 Err(_) => Err(PyStopAsyncIteration::new_err(())),
             }
         };
@@ -224,7 +224,7 @@ impl PyAgentRunSyncIterator {
     fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
         let item = py.detach(|| self.rt.block_on(self.rx.recv()));
         match item {
-            Ok(res) => res.map_err(|e| PyRuntimeError::new_err(e)),
+            Ok(res) => res.map_err(Into::into),
             Err(_) => Err(PyStopIteration::new_err(())),
         }
     }
