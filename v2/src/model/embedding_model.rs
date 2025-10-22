@@ -183,11 +183,7 @@ mod node {
 
 #[cfg(feature = "wasm")]
 mod wasm {
-    use js_sys::Float32Array;
-    use wasm_bindgen::{
-        convert::{FromWasmAbi, IntoWasmAbi},
-        prelude::*,
-    };
+    use wasm_bindgen::prelude::*;
 
     use super::*;
     use crate::ffi::web::CacheProgressCallbackFn;
@@ -213,10 +209,9 @@ mod wasm {
         }
 
         #[wasm_bindgen(js_name = infer)]
-        pub async fn infer_js(&mut self, text: String) -> Result<Float32Array, js_sys::Error> {
+        pub async fn infer_js(&mut self, text: String) -> Result<Embedding, js_sys::Error> {
             self.infer(text)
                 .await
-                .map(|emb| unsafe { Float32Array::from_abi(emb.into_abi()) })
                 .map_err(|e| js_sys::Error::new(&e.to_string()))
         }
     }

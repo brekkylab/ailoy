@@ -594,7 +594,7 @@ mod wasm {
 
     impl WasmDescribe for Embedding {
         fn describe() {
-            JsValue::describe()
+            Float32Array::describe()
         }
     }
 
@@ -705,10 +705,11 @@ mod wasm {
         #[wasm_bindgen(js_name = "retrieve")]
         pub async fn retrieve_js(
             &self,
-            query_embedding: Float32Array,
+            query_embedding: Embedding,
+            // query_embedding: Float32Array,
             top_k: usize,
         ) -> Result<Vec<VectorStoreRetrieveResult>, js_sys::Error> {
-            self.retrieve(query_embedding.to_vec().into(), top_k)
+            self.retrieve(query_embedding, top_k)
                 .await
                 .map_err(|e| js_sys::Error::new(&e.to_string()))
         }
