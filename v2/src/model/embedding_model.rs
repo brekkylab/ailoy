@@ -4,7 +4,7 @@ use futures::{Stream, StreamExt as _};
 use crate::{
     cache::{Cache, CacheProgress},
     model::local::LocalEmbeddingModel,
-    vector_store::Embedding,
+    value::Embedding,
 };
 
 #[maybe_send_sync]

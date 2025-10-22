@@ -12,7 +12,7 @@ use crate::{
         local::{EmbeddingModelInferencer, Tokenizer},
     },
     utils::{BoxFuture, Normalize},
-    vector_store::Embedding,
+    value::Embedding,
 };
 
 #[derive(Debug, Clone)]
