@@ -45,7 +45,10 @@ pub type Metadata = HashMap<String, Value>;
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
+#[cfg_attr(
+    feature = "wasm",
+    tsify(from_wasm_abi, into_wasm_abi, hashmap_as_object)
+)]
 pub struct VectorStoreAddInput {
     pub embedding: Embedding,
     pub document: String,
@@ -58,7 +61,10 @@ pub struct VectorStoreAddInput {
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
+#[cfg_attr(
+    feature = "wasm",
+    tsify(from_wasm_abi, into_wasm_abi, hashmap_as_object)
+)]
 pub struct VectorStoreGetResult {
     pub id: String,
     pub document: String,
@@ -72,7 +78,10 @@ pub struct VectorStoreGetResult {
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
+#[cfg_attr(
+    feature = "wasm",
+    tsify(from_wasm_abi, into_wasm_abi, hashmap_as_object)
+)]
 pub struct VectorStoreRetrieveResult {
     pub id: String,
     pub document: String,
@@ -236,11 +245,38 @@ impl VectorStore {
 
 #[cfg(feature = "python")]
 mod py {
-    use pyo3::{prelude::*, types::PyType};
+    use pyo3::{
+        prelude::*,
+        types::{PyFloat, PyList, PyType},
+    };
+    use pyo3_stub_gen::{PyStubType, TypeInfo};
     use pyo3_stub_gen_derive::*;
 
     use super::*;
     use crate::ffi::py::base::await_future;
+
+    impl<'py> IntoPyObject<'py> for Embedding {
+        type Target = PyList;
+        type Output = Bound<'py, PyList>;
+        type Error = PyErr;
+
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            PyList::new(py, self.0).into()
+        }
+    }
+
+    impl<'py> FromPyObject<'py> for Embedding {
+        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+            let vec: Vec<f32> = ob.extract()?;
+            Ok(Embedding(vec))
+        }
+    }
+
+    impl PyStubType for Embedding {
+        fn type_output() -> pyo3_stub_gen::TypeInfo {
+            TypeInfo::list_of::<PyFloat>()
+        }
+    }
 
     impl Into<VectorStoreAddInput> for Py<VectorStoreAddInput> {
         fn into(self) -> VectorStoreAddInput {
@@ -539,7 +575,12 @@ mod node {
 
 #[cfg(feature = "wasm")]
 mod wasm {
-    use wasm_bindgen::prelude::*;
+    use js_sys::Float32Array;
+    use wasm_bindgen::{
+        convert::{FromWasmAbi, IntoWasmAbi},
+        describe::WasmDescribe,
+        prelude::*,
+    };
 
     use super::*;
 
@@ -550,6 +591,50 @@ mod wasm {
         type Metadata = Record<string, any>;
         "#
     );
+
+    impl WasmDescribe for Embedding {
+        fn describe() {
+            JsValue::describe()
+        }
+    }
+
+    impl IntoWasmAbi for Embedding {
+        type Abi = <JsValue as IntoWasmAbi>::Abi;
+
+        fn into_abi(self) -> Self::Abi {
+            let array = Float32Array::new_with_length(self.0.len() as u32);
+            array.copy_from(&self.0);
+            let js_value: JsValue = array.into();
+            js_value.into_abi()
+        }
+    }
+
+    impl FromWasmAbi for Embedding {
+        type Abi = <JsValue as IntoWasmAbi>::Abi;
+
+        unsafe fn from_abi(js: Self::Abi) -> Self {
+            let js_value = unsafe { JsValue::from_abi(js) };
+            let array = Float32Array::from(js_value);
+            let vec = array.to_vec();
+            Embedding(vec)
+        }
+    }
+
+    impl From<JsValue> for Embedding {
+        fn from(value: JsValue) -> Self {
+            let array = Float32Array::from(value);
+            let vec = array.to_vec();
+            Self(vec)
+        }
+    }
+
+    impl From<Embedding> for JsValue {
+        fn from(value: Embedding) -> Self {
+            let array = Float32Array::new_with_length(value.0.len() as u32);
+            array.copy_from(&value.0);
+            array.into()
+        }
+    }
 
     #[wasm_bindgen]
     impl VectorStore {
@@ -620,10 +705,10 @@ mod wasm {
         #[wasm_bindgen(js_name = "retrieve")]
         pub async fn retrieve_js(
             &self,
-            query_embedding: Embedding,
+            query_embedding: Float32Array,
             top_k: usize,
         ) -> Result<Vec<VectorStoreRetrieveResult>, js_sys::Error> {
-            self.retrieve(query_embedding, top_k)
+            self.retrieve(query_embedding.to_vec().into(), top_k)
                 .await
                 .map_err(|e| js_sys::Error::new(&e.to_string()))
         }

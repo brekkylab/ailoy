@@ -39,11 +39,14 @@ pub struct Tool {
 }
 
 impl Tool {
-    pub fn new_builtin(kind: BuiltinToolKind) -> Self {
+    pub fn new_builtin(kind: BuiltinToolKind) -> anyhow::Result<Self> {
         match kind {
-            BuiltinToolKind::Terminal => Self {
-                inner: ToolInner::Function(create_terminal_tool()),
-            },
+            BuiltinToolKind::Terminal => {
+                let terminal_tool = create_terminal_tool()?;
+                Ok(Self {
+                    inner: ToolInner::Function(terminal_tool),
+                })
+            }
         }
     }
 
@@ -343,8 +346,9 @@ mod node {
     #[napi]
     impl Tool {
         #[napi(js_name = "newBuiltin")]
-        pub fn new_builtin_js(kind: BuiltinToolKind) -> Self {
+        pub fn new_builtin_js(kind: BuiltinToolKind) -> napi::Result<Self> {
             Self::new_builtin(kind)
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
         }
 
         #[napi(js_name = "newFunction")]
@@ -421,6 +425,11 @@ mod wasm {
 
     #[wasm_bindgen]
     impl Tool {
+        #[wasm_bindgen(js_name = "newBuiltin")]
+        pub fn new_builtin_js(kind: BuiltinToolKind) -> Result<Self, js_sys::Error> {
+            Self::new_builtin(kind).map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
         #[wasm_bindgen(js_name = "newFunction")]
         pub fn new_function_js(
             desc: ToolDesc,

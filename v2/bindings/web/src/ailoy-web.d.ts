@@ -6,6 +6,28 @@
  * *This API requires the following crate features to be activated: `ReadableStreamType`*
  */
 type ReadableStreamType = "bytes";
+export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
+
+export interface VectorStoreRetrieveResult {
+    id: string;
+    document: string;
+    metadata?: Metadata;
+    distance: number;
+}
+
+export interface VectorStoreGetResult {
+    id: string;
+    document: string;
+    metadata?: Metadata;
+    embedding: Embedding;
+}
+
+export interface VectorStoreAddInput {
+    embedding: Embedding;
+    document: string;
+    metadata?: Metadata;
+}
+
 export interface KnowledgeConfig {
     topK?: number;
 }
@@ -28,24 +50,97 @@ export interface AgentResponse {
     aggregated: Message | undefined;
 }
 
-export interface VectorStoreRetrieveResult {
-    id: string;
-    document: string;
-    metadata?: Metadata;
-    distance: number;
+type Embedding = Float32Array;
+type Metadata = Record<string, any>;
+
+/**
+ * Describes a **tool** (or function) that a language model can invoke.
+ *
+ * `ToolDesc` defines the schema, behavior, and input/output specification of a callable
+ * external function, allowing an LLM to understand how to use it.
+ *
+ * The primary role of this struct is to describe to the LLM what a *tool* does,
+ * how it can be invoked, and what input (`parameters`) and output (`returns`) schemas it expects.
+ *
+ * The format follows the same **schema conventions** used by Hugging Face’s
+ * `transformers` library, as well as APIs such as *OpenAI* and *Anthropic*.
+ * The `parameters` and `returns` fields are typically defined using **JSON Schema**.
+ *
+ * We provide a builder [`ToolDescBuilder`] helper for convenient and fluent construction.
+ * Please refer to [`ToolDescBuilder`].
+ *
+ * # Example
+ * ```rust
+ * use crate::value::{ToolDescBuilder, to_value};
+ *
+ * let desc = ToolDescBuilder::new(\"temperature\")
+ *     .description(\"Get the current temperature for a given city\")
+ *     .parameters(to_value!({
+ *         \"type\": \"object\",
+ *         \"properties\": {
+ *             \"location\": {
+ *                 \"type\": \"string\",
+ *                 \"description\": \"The city name\
+ *             },
+ *             \"unit\": {
+ *                 \"type\": \"string\",
+ *                 \"description\": \"Temperature unit (default: Celsius)\",
+ *                 \"enum\": [\"Celsius\", \"Fahrenheit\"]
+ *             }
+ *         },
+ *         \"required\": [\"location\"]
+ *     }))
+ *     .returns(to_value!({
+ *         \"type\": \"number\
+ *     }))
+ *     .build();
+ *
+ * assert_eq!(desc.name, \"temperature\");
+ * ```
+ */
+export interface ToolDesc {
+    /**
+     * The unique name of the tool or function.
+     */
+    name: string;
+    /**
+     * A natural-language description of what the tool does.
+     */
+    description?: string;
+    /**
+     * A [`Value`] describing the JSON Schema of the expected parameters.
+     * Typically an object schema such as `{ \"type\": \"object\", \"properties\": ... }`.
+     */
+    parameters: Value;
+    /**
+     * An optional [`Value`] that defines the return value schema.  
+     * If omitted, the tool is assumed to return free-form text or JSON.
+     */
+    returns?: Value;
 }
 
-export interface VectorStoreGetResult {
-    id: string;
-    document: string;
-    metadata?: Metadata;
-    embedding: Embedding;
+export type Bytes = Uint8Array;
+
+export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
+
+/**
+ * Provides a polyfill for LLMs that do not natively support the Document feature.
+ */
+export interface DocumentPolyfill {
+    system_message_template?: string;
+    query_message_template?: string;
 }
 
-export interface VectorStoreAddInput {
-    embedding: Embedding;
-    document: string;
-    metadata?: Metadata;
+export interface CacheProgress {
+    comment: string;
+    current: number;
+    total: number;
+}
+
+export interface Document {
+    id: string;
+    title: string | undefined;
+    text: string;
 }
 
 /**
@@ -282,28 +377,7 @@ export interface Message {
  */
 export type Role = "system" | "user" | "assistant" | "tool";
 
-type Embedding = Float32Array;
-type Metadata = Record<string, any>;
-
-export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
-
-export type Bytes = Uint8Array;
-
-export interface CacheProgress {
-    comment: string;
-    current: number;
-    total: number;
-}
-
-/**
- * Provides a polyfill for LLMs that do not natively support the Document feature.
- */
-export interface DocumentPolyfill {
-    system_message_template?: string;
-    query_message_template?: string;
-}
-
-export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
+export type BuiltinToolKind = "terminal";
 
 export interface InferenceConfig {
     documentPolyfill?: DocumentPolyfill;
@@ -317,78 +391,6 @@ export interface InferenceConfig {
 export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema"; schema: string } | { type: "regex"; regex: string } | { type: "cfg"; cfg: string };
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
-
-/**
- * Describes a **tool** (or function) that a language model can invoke.
- *
- * `ToolDesc` defines the schema, behavior, and input/output specification of a callable
- * external function, allowing an LLM to understand how to use it.
- *
- * The primary role of this struct is to describe to the LLM what a *tool* does,
- * how it can be invoked, and what input (`parameters`) and output (`returns`) schemas it expects.
- *
- * The format follows the same **schema conventions** used by Hugging Face’s
- * `transformers` library, as well as APIs such as *OpenAI* and *Anthropic*.
- * The `parameters` and `returns` fields are typically defined using **JSON Schema**.
- *
- * We provide a builder [`ToolDescBuilder`] helper for convenient and fluent construction.
- * Please refer to [`ToolDescBuilder`].
- *
- * # Example
- * ```rust
- * use crate::value::{ToolDescBuilder, to_value};
- *
- * let desc = ToolDescBuilder::new(\"temperature\")
- *     .description(\"Get the current temperature for a given city\")
- *     .parameters(to_value!({
- *         \"type\": \"object\",
- *         \"properties\": {
- *             \"location\": {
- *                 \"type\": \"string\",
- *                 \"description\": \"The city name\
- *             },
- *             \"unit\": {
- *                 \"type\": \"string\",
- *                 \"description\": \"Temperature unit (default: Celsius)\",
- *                 \"enum\": [\"Celsius\", \"Fahrenheit\"]
- *             }
- *         },
- *         \"required\": [\"location\"]
- *     }))
- *     .returns(to_value!({
- *         \"type\": \"number\
- *     }))
- *     .build();
- *
- * assert_eq!(desc.name, \"temperature\");
- * ```
- */
-export interface ToolDesc {
-    /**
-     * The unique name of the tool or function.
-     */
-    name: string;
-    /**
-     * A natural-language description of what the tool does.
-     */
-    description?: string;
-    /**
-     * A [`Value`] describing the JSON Schema of the expected parameters.
-     * Typically an object schema such as `{ \"type\": \"object\", \"properties\": ... }`.
-     */
-    parameters: Value;
-    /**
-     * An optional [`Value`] that defines the return value schema.  
-     * If omitted, the tool is assumed to return free-form text or JSON.
-     */
-    returns?: Value;
-}
-
-export interface Document {
-    id: string;
-    title: string | undefined;
-    text: string;
-}
 
 export class Agent {
   free(): void;
@@ -465,6 +467,7 @@ export class Tool {
   private constructor();
   free(): void;
   [Symbol.dispose](): void;
+  static newBuiltin(kind: BuiltinToolKind): Tool;
   static newFunction(desc: ToolDesc, func: (args: any) => Promise<any>): Tool;
   run(args: any): Promise<any>;
   readonly description: ToolDesc;
