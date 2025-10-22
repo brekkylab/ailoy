@@ -36,6 +36,28 @@ export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude"
 
 export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
 
+export interface KnowledgeConfig {
+    topK?: number;
+}
+
+/**
+ * The yielded value from agent.run().
+ */
+export interface AgentResponse {
+    /**
+     * The message delta per iteration.
+     */
+    delta: MessageDelta;
+    /**
+     * Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
+     */
+    finish_reason: FinishReason | undefined;
+    /**
+     * Optional aggregated message.
+     */
+    aggregated: Message | undefined;
+}
+
 /**
  * Represents a partial or incremental update (delta) of a [`Part`].
  *
@@ -283,6 +305,9 @@ export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
 
+type Embedding = Float32Array;
+type Metadata = Record<string, any>;
+
 /**
  * Describes a **tool** (or function) that a language model can invoke.
  *
@@ -353,31 +378,6 @@ export type Bytes = Uint8Array;
 
 export type BuiltinToolKind = "terminal";
 
-export interface KnowledgeConfig {
-    topK?: number;
-}
-
-/**
- * The yielded value from agent.run().
- */
-export interface AgentResponse {
-    /**
-     * The message delta per iteration.
-     */
-    delta: MessageDelta;
-    /**
-     * Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
-     */
-    finish_reason: FinishReason | undefined;
-    /**
-     * Optional aggregated message.
-     */
-    aggregated: Message | undefined;
-}
-
-type Embedding = Float32Array;
-type Metadata = Record<string, any>;
-
 export interface Document {
     id: string;
     title: string | undefined;
@@ -406,7 +406,7 @@ export class Agent {
   removeTool(toolName: string): void;
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
-  run(contents: Part[], config?: InferenceConfig | null): AsyncIterable<AgentResponse>;
+  run(messages: Message[], config?: InferenceConfig | null): AsyncIterable<AgentResponse>;
 }
 export class EmbeddingModel {
   private constructor();

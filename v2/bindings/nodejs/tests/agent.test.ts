@@ -88,7 +88,10 @@ for (const cfg of modelConfigs) {
 
     test.sequential("Simple Chat", async () => {
       for await (const resp of agent.run([
-        { type: "text", text: "What is your name?" },
+        {
+          role: "user",
+          contents: [{ type: "text", text: "What is your name?" }],
+        },
       ])) {
         if (resp.aggregated !== undefined) {
           console.log(resp.aggregated);
@@ -104,8 +107,13 @@ for (const cfg of modelConfigs) {
 
         for await (const resp of agent.run([
           {
-            type: "text",
-            text: "List the files in the current directory.",
+            role: "user",
+            contents: [
+              {
+                type: "text",
+                text: "List the files in the current directory.",
+              },
+            ],
           },
         ])) {
           if (resp.aggregated !== undefined) {
@@ -128,8 +136,13 @@ for (const cfg of modelConfigs) {
 
         for await (const resp of agent.run([
           {
-            type: "text",
-            text: "What time is it now in Asia/Seoul? Answer in local timezone.",
+            role: "user",
+            contents: [
+              {
+                type: "text",
+                text: "What time is it now in Asia/Seoul? Answer in local timezone.",
+              },
+            ],
           },
         ])) {
           if (resp.aggregated !== undefined) {
@@ -178,8 +191,13 @@ for (const cfg of modelConfigs) {
 
         for await (const resp of agent.run([
           {
-            type: "text",
-            text: "What is the temperature in Seoul now? Answer in Celsius.",
+            role: "user",
+            contents: [
+              {
+                type: "text",
+                text: "What is the temperature in Seoul now? Answer in Celsius.",
+              },
+            ],
           },
         ])) {
           if (resp.aggregated !== undefined) {
@@ -248,8 +266,13 @@ for (const cfg of modelConfigs) {
 
         for await (const resp of agent.run([
           {
-            type: "text",
-            text: "What is Ailoy?",
+            role: "user",
+            contents: [
+              {
+                type: "text",
+                text: "What is Ailoy?",
+              },
+            ],
           },
         ])) {
           if (resp.aggregated !== undefined) {

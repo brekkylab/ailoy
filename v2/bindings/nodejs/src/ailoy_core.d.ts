@@ -9,7 +9,7 @@ export declare class Agent {
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
   run(
-    contents: Array<Part>,
+    messages: Array<Message>,
     config?: InferenceConfig | undefined | null
   ): AgentRunIterator;
 }

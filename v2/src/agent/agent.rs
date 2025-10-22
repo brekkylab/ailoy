@@ -300,7 +300,7 @@ mod node {
         pub fn run_js<'a>(
             &'a mut self,
             env: Env,
-            contents: Vec<Part>,
+            messages: Vec<Message>,
             config: Option<InferenceConfig>,
         ) -> napi::Result<Object<'a>> {
             let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<AgentResponse>>();
@@ -308,7 +308,7 @@ mod node {
             let mut agent = self.clone();
 
             rt.spawn(async move {
-                let mut stream = agent.run(contents, config).boxed();
+                let mut stream = agent.run(messages, config).boxed();
 
                 while let Some(item) = stream.next().await {
                     if tx
@@ -371,10 +371,10 @@ mod wasm {
             js_name = "run",
             unchecked_return_type = "AsyncIterable<AgentResponse>"
         )]
-        pub fn run_js(&self, contents: Vec<Part>, config: Option<InferenceConfig>) -> JsValue {
+        pub fn run_js(&self, messages: Vec<Message>, config: Option<InferenceConfig>) -> JsValue {
             let mut agent = self.clone();
             let stream = async_stream::stream! {
-                let mut inner_stream = agent.run(contents, config);
+                let mut inner_stream = agent.run(messages, config);
                 while let Some(item) = inner_stream.next().await {
                     yield item;
                 }
