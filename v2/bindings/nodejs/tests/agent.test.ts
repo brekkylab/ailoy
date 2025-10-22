@@ -100,7 +100,7 @@ for (const cfg of modelConfigs) {
       "Tool Calling: Builtin Tool (terminal)",
       async () => {
         const tool = ailoy.Tool.newBuiltin("terminal");
-        await agent.addTool(tool);
+        agent.addTool(tool);
 
         for await (const resp of agent.run([
           {
@@ -113,7 +113,7 @@ for (const cfg of modelConfigs) {
           }
         }
 
-        await agent.removeTool(tool.description.name);
+        agent.removeTool(tool.description.name);
       },
       10000
     );
@@ -124,7 +124,7 @@ for (const cfg of modelConfigs) {
         const client = await ailoy.MCPClient.newStdio("uvx", [
           "mcp-server-time",
         ]);
-        await agent.addTools(client.tools);
+        agent.addTools(client.tools);
 
         for await (const resp of agent.run([
           {
@@ -137,7 +137,7 @@ for (const cfg of modelConfigs) {
           }
         }
 
-        await agent.removeTools(client.tools.map((t) => t.description.name));
+        agent.removeTools(client.tools.map((t) => t.description.name));
       },
       10000
     );
@@ -174,7 +174,7 @@ for (const cfg of modelConfigs) {
           }
         );
 
-        await agent.addTool(tool);
+        agent.addTool(tool);
 
         for await (const resp of agent.run([
           {
@@ -187,7 +187,7 @@ for (const cfg of modelConfigs) {
           }
         }
 
-        await agent.removeTool(tool.description.name);
+        agent.removeTool(tool.description.name);
       },
       10000
     );
@@ -231,6 +231,7 @@ for (const cfg of modelConfigs) {
     //     10000
     //   );
     // }
+
     test.sequential(
       "Using Knowledge",
       async () => {
@@ -255,6 +256,8 @@ for (const cfg of modelConfigs) {
             console.log(resp.aggregated);
           }
         }
+
+        agent.removeKnowledge();
       },
       12000
     );
