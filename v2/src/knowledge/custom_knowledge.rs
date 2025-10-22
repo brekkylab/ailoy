@@ -48,7 +48,12 @@ mod tests {
     use futures::{FutureExt, stream::StreamExt};
 
     use super::*;
-    use crate::{agent::Agent, knowledge::Knowledge, model::LangModel, value::Part};
+    use crate::{
+        agent::Agent,
+        knowledge::Knowledge,
+        model::LangModel,
+        value::{Message, Part, Role},
+    };
 
     #[multi_platform_test]
     async fn test_custom_knowledge_with_agent() -> anyhow::Result<()> {
@@ -81,9 +86,9 @@ mod tests {
         agent.set_knowledge(knowledge);
 
         let mut strm = Box::pin(agent.run(
-            vec![Part::Text {
+            vec![Message::new(Role::User).with_contents(vec![Part::Text {
                 text: "What is Ailoy?".into(),
-            }],
+            }])],
             None,
         ));
         while let Some(out) = strm.next().await {
