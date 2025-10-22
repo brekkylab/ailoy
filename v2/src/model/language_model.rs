@@ -56,7 +56,7 @@ impl Default for Grammar {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
@@ -81,6 +81,19 @@ pub struct InferenceConfig {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grammar: Option<Grammar>,
+}
+
+impl Default for InferenceConfig {
+    fn default() -> Self {
+        Self {
+            document_polyfill: Some(DocumentPolyfill::default()),
+            think_effort: None,
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            grammar: None,
+        }
+    }
 }
 
 #[maybe_send_sync]

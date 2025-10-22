@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::value::{Document, Message, Part, Role};
 
 /// Provides a polyfill for LLMs that do not natively support the Document feature.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
@@ -15,6 +15,32 @@ pub struct DocumentPolyfill {
     pub system_message_template: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query_message_template: Option<String>,
+}
+
+impl Default for DocumentPolyfill {
+    fn default() -> Self {
+        Self {
+            system_message_template: Some(dedent!(r#"
+                {{- text }}
+                # Knowledges
+                After the user’s question, a list of documents retrieved from the knowledge base may appear. Try to answer the user’s question based on the provided knowledges.
+                "#
+            ).to_owned()),
+            query_message_template: Some(dedent!(r#"
+                {{- text }}
+                {%- if documents %}
+                    {{- "<documents>\n" }}
+                    {%- for doc in documents %}
+                    {{- "<document>\n" }}
+                        {{- doc.text + '\n' }}
+                    {{- "</document>\n" }}
+                    {%- endfor %}
+                    {{- "</documents>\n" }}
+                {%- endif %}
+                "#
+            ).to_owned()),
+        }
+    }
 }
 
 impl DocumentPolyfill {
@@ -147,30 +173,6 @@ impl DocumentPolyfill {
         }
 
         Ok(msgs)
-    }
-}
-
-pub fn get_default_document_polyfill() -> DocumentPolyfill {
-    DocumentPolyfill {
-        system_message_template: Some(dedent!(r#"
-            {{- text }}
-            # Knowledges
-            After the user’s question, a list of documents retrieved from the knowledge base may appear. Try to answer the user’s question based on the provided knowledges.
-            "#
-        ).to_owned()),
-        query_message_template: Some(dedent!(r#"
-            {{- text }}
-            {%- if documents %}
-                {{- "<documents>\n" }}
-                {%- for doc in documents %}
-                {{- "<document>\n" }}
-                    {{- doc.text + '\n' }}
-                {{- "</document>\n" }}
-                {%- endfor %}
-                {{- "</documents>\n" }}
-            {%- endif %}
-            "#
-        ).to_owned()),
     }
 }
 

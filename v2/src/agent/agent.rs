@@ -318,6 +318,16 @@ mod node {
                 .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
         }
 
+        #[napi(js_name = "setKnowledge")]
+        pub unsafe fn set_knowledge_js(&mut self, knowledge: &Knowledge) -> napi::Result<()> {
+            Ok(self.set_knowledge(knowledge.clone()))
+        }
+
+        #[napi(js_name = "removeKnowledge")]
+        pub unsafe fn remove_knowledge_js(&mut self) -> napi::Result<()> {
+            Ok(self.remove_knowledge())
+        }
+
         #[napi(js_name = "run", ts_return_type = "AgentRunIterator")]
         pub fn run_js<'a>(&'a mut self, env: Env, contents: Vec<Part>) -> napi::Result<Object<'a>> {
             let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<AgentResponse>>();

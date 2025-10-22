@@ -6,6 +6,8 @@ export declare class Agent {
   addTools(tools: Array<Tool>): Promise<void>;
   removeTool(toolName: string): Promise<void>;
   removeTools(toolNames: Array<string>): Promise<void>;
+  setKnowledge(knowledge: Knowledge): void;
+  removeKnowledge(): void;
   run(contents: Array<Part>): AgentRunIterator;
 }
 
@@ -20,6 +22,18 @@ export declare class EmbeddingModel {
     progressCallback?: ((arg: CacheProgress) => void) | undefined | null
   ): Promise<EmbeddingModel>;
   infer(text: string): Promise<Embedding>;
+}
+
+export declare class Knowledge {
+  static newVectorStore(
+    store: VectorStore,
+    embeddingModel: EmbeddingModel
+  ): Knowledge;
+  retrieve(
+    query: string,
+    config?: KnowledgeConfig | undefined | null
+  ): Promise<Array<Document>>;
+  asTool(): Tool;
 }
 
 export declare class LangModel {
@@ -149,6 +163,10 @@ export interface InferenceConfig {
   grammar?: Grammar;
 }
 
+export interface KnowledgeConfig {
+  topK?: number;
+}
+
 export interface LangModelRunIteratorResult {
   value: MessageOutput;
   done: boolean;
@@ -250,6 +268,8 @@ export interface MessageOutput {
   delta: MessageDelta;
   finish_reason?: FinishReason;
 }
+
+export type Metadata = Record<string, any>;
 
 /**
  * Represents a semantically meaningful content unit exchanged between the model and the user.
@@ -462,19 +482,19 @@ export interface ToolDesc {
 export interface VectorStoreAddInput {
   embedding: Embedding;
   document: string;
-  metadata?: Record<string, any>;
+  metadata?: Metadata;
 }
 
 export interface VectorStoreGetResult {
   id: string;
   document: string;
-  metadata?: Record<string, any>;
+  metadata?: Metadata;
   embedding: Embedding;
 }
 
 export interface VectorStoreRetrieveResult {
   id: string;
   document: string;
-  metadata?: Record<string, any>;
+  metadata?: Metadata;
   distance: number;
 }

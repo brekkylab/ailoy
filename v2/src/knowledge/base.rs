@@ -14,6 +14,7 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct KnowledgeConfig {
@@ -128,6 +129,7 @@ pub enum KnowledgeInner {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Knowledge {
     inner: KnowledgeInner,
@@ -157,6 +159,40 @@ impl KnowledgeBehavior for Knowledge {
         match &self.inner {
             KnowledgeInner::VectorStore(knowledge) => knowledge.retrieve(query, config).await,
             KnowledgeInner::Custom(knowledge) => knowledge.retrieve(query, config).await,
+        }
+    }
+}
+
+#[cfg(feature = "nodejs")]
+mod node {
+    use napi::bindgen_prelude::*;
+    use napi_derive::napi;
+
+    use super::*;
+    use crate::tool::Tool;
+
+    #[napi]
+    impl Knowledge {
+        #[napi(js_name = "newVectorStore")]
+        pub fn new_vector_store_js(store: &VectorStore, embedding_model: &EmbeddingModel) -> Self {
+            Self::new_vector_store(store.clone(), embedding_model.clone())
+        }
+
+        #[napi(js_name = "retrieve")]
+        pub async fn retrieve_js(
+            &self,
+            query: String,
+            config: Option<KnowledgeConfig>,
+        ) -> napi::Result<Vec<Document>> {
+            self.retrieve(query, config.unwrap_or_default())
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "asTool")]
+        pub fn as_tool(&self) -> Tool {
+            let tool = KnowledgeTool::from(self.clone());
+            Tool::new_knowledge(tool)
         }
     }
 }

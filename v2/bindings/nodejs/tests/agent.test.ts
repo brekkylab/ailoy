@@ -231,5 +231,32 @@ for (const cfg of modelConfigs) {
     //     10000
     //   );
     // }
+    test.sequential(
+      "Using Knowledge",
+      async () => {
+        const vs = await ailoy.VectorStore.newFaiss(1024);
+        const emb = await ailoy.EmbeddingModel.newLocal("BAAI/bge-m3");
+
+        const doc0 =
+          "Ailoy is an awesome AI agent framework supporting Rust, Python, Nodejs and WebAssembly.";
+        const emb0 = await emb.infer(doc0);
+        await vs.addVector({ embedding: emb0, document: doc0 });
+
+        const knowledge = ailoy.Knowledge.newVectorStore(vs, emb);
+        agent.setKnowledge(knowledge);
+
+        for await (const resp of agent.run([
+          {
+            type: "text",
+            text: "What is Ailoy?",
+          },
+        ])) {
+          if (resp.aggregated !== undefined) {
+            console.log(resp.aggregated);
+          }
+        }
+      },
+      12000
+    );
   });
 }

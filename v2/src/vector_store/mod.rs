@@ -50,7 +50,7 @@ pub struct VectorStoreAddInput {
     pub embedding: Embedding,
     pub document: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<HashMap<String, Value>>,
+    pub metadata: Option<Metadata>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,7 +63,7 @@ pub struct VectorStoreGetResult {
     pub id: String,
     pub document: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<HashMap<String, Value>>,
+    pub metadata: Option<Metadata>,
     pub embedding: Embedding,
 }
 
@@ -77,7 +77,7 @@ pub struct VectorStoreRetrieveResult {
     pub id: String,
     pub document: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<HashMap<String, Value>>,
+    pub metadata: Option<Metadata>,
     pub distance: f64,
 }
 
@@ -383,6 +383,10 @@ mod node {
     #[allow(unused)]
     #[napi(js_name = "Embedding")]
     pub type JsEmbedding = Float32Array; // dummy type to generate type alias in d.ts
+
+    #[allow(unused)]
+    #[napi(js_name = "Metadata")]
+    pub type JsMetadata = HashMap<String, Value>; // dummy type to generate type alias in d.ts
 
     impl FromNapiValue for Embedding {
         unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
