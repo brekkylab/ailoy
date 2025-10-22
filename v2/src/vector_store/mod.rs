@@ -599,22 +599,20 @@ mod wasm {
     }
 
     impl IntoWasmAbi for Embedding {
-        type Abi = <JsValue as IntoWasmAbi>::Abi;
+        type Abi = <Float32Array as IntoWasmAbi>::Abi;
 
         fn into_abi(self) -> Self::Abi {
             let array = Float32Array::new_with_length(self.0.len() as u32);
             array.copy_from(&self.0);
-            let js_value: JsValue = array.into();
-            js_value.into_abi()
+            array.into_abi()
         }
     }
 
     impl FromWasmAbi for Embedding {
-        type Abi = <JsValue as IntoWasmAbi>::Abi;
+        type Abi = <Float32Array as IntoWasmAbi>::Abi;
 
         unsafe fn from_abi(js: Self::Abi) -> Self {
-            let js_value = unsafe { JsValue::from_abi(js) };
-            let array = Float32Array::from(js_value);
+            let array = unsafe { Float32Array::from_abi(js) };
             let vec = array.to_vec();
             Embedding(vec)
         }
@@ -628,10 +626,10 @@ mod wasm {
         }
     }
 
-    impl From<Embedding> for JsValue {
-        fn from(value: Embedding) -> Self {
-            let array = Float32Array::new_with_length(value.0.len() as u32);
-            array.copy_from(&value.0);
+    impl Into<JsValue> for Embedding {
+        fn into(self) -> JsValue {
+            let array = Float32Array::new_with_length(self.0.len() as u32);
+            array.copy_from(&self.0);
             array.into()
         }
     }
