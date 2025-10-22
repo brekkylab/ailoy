@@ -1,13 +1,10 @@
 # Multi-Turn Conversation
 
-Ailoy is designed to be fully stateless.
-It does not keep track of any previous messages, conversations, or user interactions internally.
-Each time you call the model, Ailoy treats it as an entirely new request.
+Ailoy's `Agent` is designed to be stateless.
+It does not keep track of conversations.
+Each time you call the model, Ailoy treats it as an new request.
 
-If you want to create a multi-turn chat — for example, a back-and-forth conversation with the assistant — you must include the entire conversation history (all previous messages) in every request.
-This way, the language model can understand the full context and respond appropriately, even though Ailoy itself doesn’t store any memory.
-
-In other words — Ailoy does not “remember” by itself; you provide the memory.
+If you want to create a multi-turn chat — for example, a back-and-forth conversation with the assistant — you must include the entire conversation history (all previous messages) in the request.
 
 ## Example
 
