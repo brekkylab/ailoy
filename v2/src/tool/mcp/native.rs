@@ -172,7 +172,7 @@ mod py {
     #[gen_stub_pymethods]
     #[pymethods]
     impl MCPClient {
-        fn __repr__(&self) -> String {
+        pub fn __repr__(&self) -> String {
             format!(
                 "MCPClient(tools=[{}])",
                 self.tools

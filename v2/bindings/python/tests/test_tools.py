@@ -8,14 +8,15 @@ import ailoy as ai
 pytestmark = [pytest.mark.asyncio]
 
 
-# async def test_builtin_tool(agent: ai.Agent):
-#     tool = ai.BuiltinTool.terminal()
-#     agent.add_tool(tool)
-#     agg = ai.MessageAggregator()
-#     async for resp in agent.run("List the files in the current directory."):
-#         message = agg.update(resp)
-#         if message:
-#             print(message)
+async def test_builtin_tool():
+    import subprocess
+
+    tool = ai.Tool.terminal()
+    command = "pwd"
+
+    tool_result = await tool(command=command)
+    process_run = subprocess.run([command], stdout=subprocess.PIPE)
+    assert tool_result["stdout"] == process_run.stdout.decode()
 
 
 async def test_python_async_function_tool():

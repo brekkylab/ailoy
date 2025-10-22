@@ -6,7 +6,11 @@
  * *This API requires the following crate features to be activated: `ReadableStreamType`*
  */
 type ReadableStreamType = "bytes";
-export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
+export interface CacheProgress {
+    comment: string;
+    current: number;
+    total: number;
+}
 
 export interface VectorStoreRetrieveResult {
     id: string;
@@ -28,30 +32,9 @@ export interface VectorStoreAddInput {
     metadata?: Metadata;
 }
 
-export interface KnowledgeConfig {
-    topK?: number;
-}
+export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
 
-/**
- * The yielded value from agent.run().
- */
-export interface AgentResponse {
-    /**
-     * The message delta per iteration.
-     */
-    delta: MessageDelta;
-    /**
-     * Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
-     */
-    finish_reason: FinishReason | undefined;
-    /**
-     * Optional aggregated message.
-     */
-    aggregated: Message | undefined;
-}
-
-type Embedding = Float32Array;
-type Metadata = Record<string, any>;
+export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
 
 /**
  * Describes a **tool** (or function) that a language model can invoke.
@@ -121,26 +104,37 @@ export interface ToolDesc {
 
 export type Bytes = Uint8Array;
 
-export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
-
-/**
- * Provides a polyfill for LLMs that do not natively support the Document feature.
- */
-export interface DocumentPolyfill {
-    system_message_template?: string;
-    query_message_template?: string;
-}
-
-export interface CacheProgress {
-    comment: string;
-    current: number;
-    total: number;
-}
+export type BuiltinToolKind = "terminal";
 
 export interface Document {
     id: string;
     title: string | undefined;
     text: string;
+}
+
+type Embedding = Float32Array;
+type Metadata = Record<string, any>;
+
+export interface KnowledgeConfig {
+    topK?: number;
+}
+
+/**
+ * The yielded value from agent.run().
+ */
+export interface AgentResponse {
+    /**
+     * The message delta per iteration.
+     */
+    delta: MessageDelta;
+    /**
+     * Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
+     */
+    finish_reason: FinishReason | undefined;
+    /**
+     * Optional aggregated message.
+     */
+    aggregated: Message | undefined;
 }
 
 /**
@@ -377,8 +371,6 @@ export interface Message {
  */
 export type Role = "system" | "user" | "assistant" | "tool";
 
-export type BuiltinToolKind = "terminal";
-
 export interface InferenceConfig {
     documentPolyfill?: DocumentPolyfill;
     thinkEffort?: ThinkEffort;
@@ -392,6 +384,14 @@ export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
 
+/**
+ * Provides a polyfill for LLMs that do not natively support the Document feature.
+ */
+export interface DocumentPolyfill {
+    system_message_template?: string;
+    query_message_template?: string;
+}
+
 export class Agent {
   free(): void;
   [Symbol.dispose](): void;
@@ -402,11 +402,11 @@ export class Agent {
    * If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
    */
   constructor(lm: LangModel, tools?: Tool[] | null);
-  addTool(tool: Tool): Promise<void>;
-  removeTool(toolName: string): Promise<void>;
+  addTool(tool: Tool): void;
+  removeTool(toolName: string): void;
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
-  run(contents: Part[]): AsyncIterable<AgentResponse>;
+  run(contents: Part[], config?: InferenceConfig | null): AsyncIterable<AgentResponse>;
 }
 export class EmbeddingModel {
   private constructor();

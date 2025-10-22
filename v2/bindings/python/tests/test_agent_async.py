@@ -11,30 +11,62 @@ pytestmark = [pytest.mark.asyncio]
 
 @pytest_asyncio.fixture(scope="module")
 async def agent():
-    model = await ai.LocalLanguageModel.create(
+    model = await ai.LangModel.CreateLocal(
         "Qwen/Qwen3-0.6B", progress_callback=lambda prog: print(prog)
     )
-    model.disable_reasoning()
     agent = ai.Agent(model)
     return agent
 
 
 async def test_simple_chat(agent: ai.Agent):
-    agg = ai.MessageAggregator()
-    async for resp in agent.run("What is your name?"):
-        message = agg.update(resp)
-        if message:
-            print(message)
+    async for resp in agent.run(
+        [ai.Part.Text(text="What is your name?")],
+        config=ai.InferenceConfig(think_effort=ai.ThinkEffort.Disable),
+    ):
+        if resp.finish_reason is not None:
+            finish_reason = resp.finish_reason
+            result = resp.aggregated
+        else:
+            for content in resp.delta.contents:
+                if content.part_type == "text":
+                    print(content.text, end="")
+                elif content.part_type == "function":
+                    print(content.function.text, end="")
+                elif content.part_type == "value":
+                    print(content.value)
+                # elif content.part_type == "image":
+                #     pass
+                else:
+                    continue
+    print()
+    assert finish_reason == ai.FinishReason.Stop()
+    print(f"{result.contents[0].text=}")
 
 
 async def test_builtin_tool(agent: ai.Agent):
-    tool = ai.BuiltinTool.terminal()
+    tool = ai.Tool.terminal()
     agent.add_tool(tool)
-    agg = ai.MessageAggregator()
-    async for resp in agent.run("List the files in the current directory."):
-        message = agg.update(resp)
-        if message:
-            print(message)
+    async for resp in agent.run(
+        [ai.Part.Text(text="List the files in the current directory.")]
+    ):
+        if resp.finish_reason is not None:
+            finish_reason = resp.finish_reason
+            result = resp.aggregated
+        else:
+            for content in resp.delta.contents:
+                if content.part_type == "text":
+                    print(content.text, end="")
+                elif content.part_type == "function":
+                    print(content.function.text, end="")
+                elif content.part_type == "value":
+                    print(content.value)
+                # elif content.part_type == "image":
+                #     pass
+                else:
+                    continue
+    print()
+    assert finish_reason == ai.FinishReason.Stop()
+    print(f"{result.contents[0].text=}")
 
 
 async def test_python_async_function_tool(agent: ai.Agent):
@@ -50,27 +82,61 @@ async def test_python_async_function_tool(agent: ai.Agent):
             int: The temperature
         """
         await asyncio.sleep(1.0)
-        return 36
+        return 35 if unit == "Celsius" else 95
 
-    tool = ai.PythonAsyncFunctionTool(func=tool_temperature)
+    tool = ai.Tool.new_py_function(tool_temperature)
 
     agent.add_tool(tool)
-    agg = ai.MessageAggregator()
-    async for resp in agent.run("What is the temperature in Seoul now?"):
-        message = agg.update(resp)
-        if message:
-            print(message)
+    async for resp in agent.run(
+        [ai.Part.Text(text="What is the temperature in Seoul now?")]
+    ):
+        if resp.finish_reason is not None:
+            finish_reason = resp.finish_reason
+            result = resp.aggregated
+        else:
+            for content in resp.delta.contents:
+                if content.part_type == "text":
+                    print(content.text, end="")
+                elif content.part_type == "function":
+                    print(content.function.text, end="")
+                elif content.part_type == "value":
+                    print(content.value)
+                # elif content.part_type == "image":
+                #     pass
+                else:
+                    continue
+    print()
+    assert finish_reason == ai.FinishReason.Stop()
+    print(f"{result.contents[0].text=}")
 
-    agent.remove_tool(tool.description.name)
+    agent.remove_tool(tool.get_description().name)
 
 
 async def test_mcp_tools(agent: ai.Agent):
-    tools = await ai.MCPTransport.Stdio("uvx", ["mcp-server-time"]).tools("time")
-    agent.add_tools(tools)
-    agg = ai.MessageAggregator()
-    async for resp in agent.run("What time is it now in Asia/Seoul?"):
-        message = agg.update(resp)
-        if message:
-            print(message)
+    mcp_client = await ai.MCPClient.from_stdio("uvx", ["mcp-server-time"])
+    tools = mcp_client.tools
 
-    agent.remove_tools([t.description.name for t in tools])
+    agent.add_tools(tools)
+    async for resp in agent.run(
+        [ai.Part.Text(text="What time is it now in Asia/Seoul?")]
+    ):
+        if resp.finish_reason is not None:
+            finish_reason = resp.finish_reason
+            result = resp.aggregated
+        else:
+            for content in resp.delta.contents:
+                if content.part_type == "text":
+                    print(content.text, end="")
+                elif content.part_type == "function":
+                    print(content.function.text, end="")
+                elif content.part_type == "value":
+                    print(content.value)
+                # elif content.part_type == "image":
+                #     pass
+                else:
+                    continue
+    print()
+    assert finish_reason == ai.FinishReason.Stop()
+    print(f"{result.contents[0].text=}")
+
+    agent.remove_tools([t.get_description().name for t in tools])

@@ -18,7 +18,6 @@ use crate::{
 #[multi_platform_async_trait]
 pub trait ToolBehavior: Debug + Clone {
     fn get_description(&self) -> ToolDesc;
-
     async fn run(&self, args: Value) -> anyhow::Result<Value>;
 }
 
@@ -96,6 +95,7 @@ mod py {
     use ordered_float::OrderedFloat;
     use pyo3::{
         Bound, IntoPyObjectExt, Py, PyAny, PyResult, Python,
+        exceptions::PyRuntimeError,
         prelude::*,
         pymethods,
         types::{PyAnyMethods, PyBool, PyDict, PyFloat, PyList, PyListMethods, PyString, PyType},
@@ -236,6 +236,12 @@ mod py {
     #[pymethods]
     impl Tool {
         #[classmethod]
+        #[pyo3(name = "new_builtin")]
+        pub fn new_builtin_py(_cls: &Bound<'_, PyType>, kind: BuiltinToolKind) -> PyResult<Self> {
+            Self::new_builtin(kind).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        }
+
+        #[classmethod]
         #[pyo3(signature = (desc, func))]
         pub fn new_py_function(_cls: &Bound<'_, PyType>, desc: ToolDesc, func: Py<PyAny>) -> Self {
             Self {
@@ -255,6 +261,11 @@ mod py {
                     format!("Tool(KnowledgeTool(name={}))", tool.get_description().name)
                 }
             }
+        }
+
+        #[pyo3(name = "get_description", signature=())]
+        fn get_description_py(&self) -> ToolDesc {
+            self.get_description()
         }
 
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[typing.Any]"))]

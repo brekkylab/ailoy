@@ -2,13 +2,16 @@
 /* eslint-disable */
 export declare class Agent {
   constructor(lm: LangModel, tools?: Array<Tool> | undefined | null);
-  addTool(tool: Tool): Promise<void>;
-  addTools(tools: Array<Tool>): Promise<void>;
-  removeTool(toolName: string): Promise<void>;
-  removeTools(toolNames: Array<string>): Promise<void>;
+  addTool(tool: Tool): void;
+  addTools(tools: Array<Tool>): void;
+  removeTool(toolName: string): void;
+  removeTools(toolNames: Array<string>): void;
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
-  run(contents: Array<Part>): AgentRunIterator;
+  run(
+    contents: Array<Part>,
+    config?: InferenceConfig | undefined | null
+  ): AgentRunIterator;
 }
 
 export declare class AgentRunIterator {
