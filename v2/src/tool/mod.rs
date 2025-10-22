@@ -18,7 +18,6 @@ use crate::{
 #[multi_platform_async_trait]
 pub trait ToolBehavior: Debug + Clone {
     fn get_description(&self) -> ToolDesc;
-
     async fn run(&self, args: Value) -> anyhow::Result<Value>;
 }
 
@@ -245,6 +244,11 @@ mod py {
             }
         }
 
+        #[pyo3(name = "get_description", signature=())]
+        fn get_description_py(&self) -> ToolDesc {
+            self.get_description()
+        }
+
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[typing.Any]"))]
         #[pyo3(signature = (**kwargs))]
         fn __call__<'py>(
@@ -319,6 +323,11 @@ mod py {
 
             // Rust Value -> Python object
             value_to_python(py, &result).map(|bound| bound.unbind())
+        }
+
+        #[staticmethod]
+        fn terminal() -> Self {
+            create_terminal_tool()
         }
     }
 }

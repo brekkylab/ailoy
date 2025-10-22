@@ -117,7 +117,7 @@ mod tests {
             let mut agent_guard = agent.lock().await;
             agent_guard.set_knowledge(knowledge.clone());
 
-            let mut strm = Box::pin(agent_guard.run(vec![Part::text("What is Ailoy?")]));
+            let mut strm = Box::pin(agent_guard.run(vec![Part::text("What is Ailoy?")], None));
             while let Some(out_opt) = strm.next().await {
                 let out = out_opt.unwrap();
                 if out.aggregated.is_some() {
@@ -129,21 +129,22 @@ mod tests {
         {
             let mut agent_guard = agent.lock().await;
             agent_guard.remove_knowledge();
-            agent_guard.clear_messages().await?;
+            agent_guard.clear_messages().await;
         }
 
         // Testing as tool
         {
             let mut agent_guard = agent.lock().await;
             let tool = KnowledgeTool::from(knowledge);
-            agent_guard
-                .add_tool(Tool::new_knowledge(tool.clone()))
-                .await?;
+            agent_guard.add_tool(Tool::new_knowledge(tool.clone()));
 
-            let mut strm = Box::pin(agent_guard.run(vec![Part::text(format!(
-                "What is Ailoy? Answer by calling tool '{}'",
-                tool.get_description().name
-            ))]));
+            let mut strm = Box::pin(agent_guard.run(
+                vec![Part::text(format!(
+                    "What is Ailoy? Answer by calling tool '{}'",
+                    tool.get_description().name
+                ))],
+                None,
+            ));
             while let Some(output) = strm.next().await {
                 let output = output.unwrap();
                 if output.aggregated.is_some() {

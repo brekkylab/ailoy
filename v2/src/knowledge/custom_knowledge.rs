@@ -80,9 +80,12 @@ mod tests {
 
         agent.set_knowledge(knowledge);
 
-        let mut strm = Box::pin(agent.run(vec![Part::Text {
-            text: "What is Ailoy?".into(),
-        }]));
+        let mut strm = Box::pin(agent.run(
+            vec![Part::Text {
+                text: "What is Ailoy?".into(),
+            }],
+            None,
+        ));
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
             println!("{:?}", out);

@@ -13,7 +13,7 @@ use crate::{
 #[gen_stub_pymethods]
 #[pymethods]
 impl Part {
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         let s = match &self {
             Part::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
             Part::Function { .. } => {
@@ -82,7 +82,7 @@ impl Part {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PartDelta {
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         let s = match &self {
             PartDelta::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
             PartDelta::Function { .. } => {
@@ -114,7 +114,7 @@ impl PartDelta {
 #[gen_stub_pymethods]
 #[pymethods]
 impl Role {
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         match self {
             Role::System => "Role.System",
             Role::User => "Role.User",
@@ -148,7 +148,7 @@ impl Message {
         }
     }
 
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         format!(
             "Message(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
             self.role.__repr__(),
@@ -274,7 +274,7 @@ impl MessageDelta {
         }
     }
 
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         format!(
             "MessageDelta(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
             self.role
@@ -310,7 +310,7 @@ impl MessageDelta {
 #[gen_stub_pymethods]
 #[pymethods]
 impl FinishReason {
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         match self {
             FinishReason::Stop {} => "FinishReason.Stop()".to_owned(),
             FinishReason::Length {} => "FinishReason.Length()".to_owned(),
@@ -325,7 +325,7 @@ impl FinishReason {
 #[gen_stub_pymethods]
 #[pymethods]
 impl MessageOutput {
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         format!(
             "MessageOutput(delta={}, finish_reason={})",
             self.delta.__repr__(),
@@ -377,7 +377,7 @@ impl ToolDesc {
         .map_err(Into::into)
     }
 
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         let returns_display = self
             .returns
             .clone()
