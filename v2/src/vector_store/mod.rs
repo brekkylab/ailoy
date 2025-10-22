@@ -382,7 +382,7 @@ mod node {
 
     #[allow(unused)]
     #[napi(js_name = "Embedding")]
-    pub type JsEmbedding = Float32Array;
+    pub type JsEmbedding = Float32Array; // dummy type to generate type alias in d.ts
 
     impl FromNapiValue for Embedding {
         unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {

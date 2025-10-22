@@ -406,7 +406,7 @@ mod node {
     };
 
     #[napi(object)]
-    pub struct LanguageModelIteratorResult {
+    pub struct LangModelRunIteratorResult {
         pub value: MessageOutput,
         pub done: bool,
     }
@@ -426,15 +426,15 @@ mod node {
         }
 
         #[napi]
-        pub async unsafe fn next(&mut self) -> napi::Result<LanguageModelIteratorResult> {
+        pub async unsafe fn next(&mut self) -> napi::Result<LangModelRunIteratorResult> {
             let mut rx = self.rx.lock().await;
             match rx.recv().await {
-                Some(Ok(output)) => Ok(LanguageModelIteratorResult {
+                Some(Ok(output)) => Ok(LangModelRunIteratorResult {
                     value: output.into(),
                     done: false,
                 }),
                 Some(Err(e)) => Err(Error::new(Status::GenericFailure, e)),
-                None => Ok(LanguageModelIteratorResult {
+                None => Ok(LangModelRunIteratorResult {
                     value: MessageOutput::new().into(),
                     done: true,
                 }),
@@ -457,14 +457,6 @@ mod node {
             obj.set_property(symbol_async_iterator, func)?;
 
             Ok(obj)
-        }
-    }
-
-    impl FromNapiValue for LangModel {
-        unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-            let ci = unsafe { ClassInstance::<Self>::from_napi_value(env, napi_val) }?;
-            let inner = ci.as_ref().inner.clone();
-            Ok(Self { inner })
         }
     }
 

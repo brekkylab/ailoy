@@ -13,6 +13,7 @@ use crate::{
 };
 
 #[derive(Clone)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Agent {
     lm: LangModel,
@@ -22,7 +23,8 @@ pub struct Agent {
 }
 
 /// The yielded value from agent.run().
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct AgentResponse {
@@ -206,6 +208,141 @@ impl Agent {
             }
         };
         Box::pin(strm)
+    }
+}
+
+#[cfg(feature = "nodejs")]
+mod node {
+    use std::sync::Arc;
+
+    use futures::lock::Mutex;
+    use napi::{JsSymbol, Status, bindgen_prelude::*};
+    use napi_derive::napi;
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::ffi::node::common::get_or_create_runtime;
+
+    #[napi(object)]
+    pub struct AgentRunIteratorResult {
+        pub value: AgentResponse,
+        pub done: bool,
+    }
+
+    #[derive(Clone)]
+    #[napi]
+    pub struct AgentRunIterator {
+        rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<AgentResponse>>>>,
+    }
+
+    #[napi]
+    impl AgentRunIterator {
+        #[napi(js_name = "[Symbol.asyncIterator]")]
+        pub fn async_iterator(&self) -> &Self {
+            // This is a dummy function to add typing for Symbol.asyncIterator
+            self
+        }
+
+        #[napi]
+        pub async unsafe fn next(&mut self) -> napi::Result<AgentRunIteratorResult> {
+            let mut rx = self.rx.lock().await;
+            match rx.recv().await {
+                Some(Ok(response)) => Ok(AgentRunIteratorResult {
+                    value: response,
+                    done: false,
+                }),
+                Some(Err(e)) => Err(napi::Error::new(Status::GenericFailure, e)),
+                None => Ok(AgentRunIteratorResult {
+                    value: AgentResponse::default(),
+                    done: true,
+                }),
+            }
+        }
+    }
+
+    impl AgentRunIterator {
+        fn to_async_iterator<'a>(self, env: Env) -> napi::Result<Object<'a>> {
+            let mut obj = Object::new(&env)?;
+
+            let global = env.get_global()?;
+            let symbol: Function = global.get_named_property("Symbol")?;
+            let symbol_async_iterator: JsSymbol = symbol.get_named_property("asyncIterator")?;
+
+            let func: Function<(), AgentRunIterator> =
+                env.create_function_from_closure("asyncIterator", move |_| Ok(self.clone()))?;
+
+            obj.set_property(symbol_async_iterator, func)?;
+
+            Ok(obj)
+        }
+    }
+
+    #[napi]
+    impl Agent {
+        #[napi(constructor)]
+        pub fn new_js(lm: &LangModel, tools: Option<Vec<&Tool>>) -> Self {
+            Self::new(
+                lm.clone(),
+                tools.unwrap_or(vec![]).iter().map(|&t| t.clone()),
+            )
+        }
+
+        #[napi(js_name = "addTool")]
+        pub async unsafe fn add_tool_js(&mut self, tool: &Tool) -> napi::Result<()> {
+            self.add_tool(tool.clone())
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "addTools")]
+        pub async unsafe fn add_tools_js(&mut self, tools: Vec<&Tool>) -> napi::Result<()> {
+            self.add_tools(tools.iter().map(|&t| t.clone()).collect())
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "removeTool")]
+        pub async unsafe fn remove_tool_js(&mut self, tool_name: String) -> napi::Result<()> {
+            self.remove_tool(tool_name)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "removeTools")]
+        pub async unsafe fn remove_tools_js(
+            &mut self,
+            tool_names: Vec<String>,
+        ) -> napi::Result<()> {
+            self.remove_tools(tool_names)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "run", ts_return_type = "AgentRunIterator")]
+        pub fn run_js<'a>(&'a mut self, env: Env, contents: Vec<Part>) -> napi::Result<Object<'a>> {
+            let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<AgentResponse>>();
+            let rt = get_or_create_runtime();
+            let mut agent = self.clone();
+
+            rt.spawn(async move {
+                let mut stream = agent.run(contents).boxed();
+
+                while let Some(item) = stream.next().await {
+                    if tx
+                        .send(item.map_err(|e| anyhow::anyhow!(e.to_string())))
+                        .is_err()
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            });
+
+            let it = AgentRunIterator {
+                rx: Arc::new(Mutex::new(rx)),
+            };
+            it.to_async_iterator(env)
+        }
     }
 }
 

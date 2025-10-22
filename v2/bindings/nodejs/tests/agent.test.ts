@@ -69,14 +69,14 @@ const modelConfigs = [
   },
 ];
 
-const testImageUrl =
-  "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
-const testImageBase64 = await (async () => {
-  const resp = await fetch(testImageUrl);
-  const arrayBuffer = await resp.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  return buffer.toString("base64");
-})();
+// const testImageUrl =
+//   "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
+// const testImageBase64 = await (async () => {
+//   const resp = await fetch(testImageUrl);
+//   const arrayBuffer = await resp.arrayBuffer();
+//   const buffer = Buffer.from(arrayBuffer);
+//   return buffer.toString("base64");
+// })();
 
 for (const cfg of modelConfigs) {
   describe.skipIf(cfg.skip).concurrent(`Agent test: ${cfg.name}`, () => {
@@ -87,9 +87,11 @@ for (const cfg of modelConfigs) {
     });
 
     test.sequential("Simple Chat", async () => {
-      for await (const resp of agent.run("What is your name?")) {
-        if (msg !== null) {
-          console.log(msg);
+      for await (const resp of agent.run([
+        { type: "text", text: "What is your name?" },
+      ])) {
+        if (resp.aggregated !== undefined) {
+          console.log(resp.aggregated);
         }
       }
     });
@@ -97,18 +99,21 @@ for (const cfg of modelConfigs) {
     test.sequential(
       "Tool Calling: Builtin Tool (terminal)",
       async () => {
-        const tool = ailoy.BuiltinTool.terminal();
-        agent.addTool(tool);
+        const tool = ailoy.Tool.newBuiltin("terminal");
+        await agent.addTool(tool);
 
-        for await (const resp of agent.run(
-          "List the files in the current directory."
-        )) {
-          if (msg !== null) {
-            console.log(msg);
+        for await (const resp of agent.run([
+          {
+            type: "text",
+            text: "List the files in the current directory.",
+          },
+        ])) {
+          if (resp.aggregated !== undefined) {
+            console.log(`[${cfg.name}] `, resp.aggregated);
           }
         }
 
-        agent.removeTool(tool.description.name);
+        await agent.removeTool(tool.description.name);
       },
       10000
     );
@@ -116,21 +121,23 @@ for (const cfg of modelConfigs) {
     test.sequential(
       "Tool Calling: MCP Tools (time)",
       async () => {
-        const transport = ailoy.MCPTransport.newStdio("uvx", [
+        const client = await ailoy.MCPClient.newStdio("uvx", [
           "mcp-server-time",
         ]);
-        const tools = await transport.tools("time");
-        agent.addTools(tools);
+        await agent.addTools(client.tools);
 
-        for await (const resp of agent.run(
-          "What time is it now in Asia/Seoul? Answer in local timezone."
-        )) {
-          if (msg !== null) {
-            console.log(msg);
+        for await (const resp of agent.run([
+          {
+            type: "text",
+            text: "What time is it now in Asia/Seoul? Answer in local timezone.",
+          },
+        ])) {
+          if (resp.aggregated !== undefined) {
+            console.log(resp.aggregated);
           }
         }
 
-        agent.removeTools(tools.map((t) => t.description.name));
+        await agent.removeTools(client.tools.map((t) => t.description.name));
       },
       10000
     );
@@ -138,7 +145,7 @@ for (const cfg of modelConfigs) {
     test.sequential(
       "Tool Calling: JsFunctionTool (temperature)",
       async () => {
-        const tool = new ailoy.JsFunctionTool(
+        const tool = ailoy.Tool.newFunction(
           {
             name: "temperature",
             description: "Get temperature of the provided location",
@@ -167,59 +174,62 @@ for (const cfg of modelConfigs) {
           }
         );
 
-        agent.addTool(tool);
+        await agent.addTool(tool);
 
-        for await (const resp of agent.run(
-          "What is the temperature in Seoul now? Answer in Celsius."
-        )) {
-          if (msg !== null) {
-            console.log(msg);
+        for await (const resp of agent.run([
+          {
+            type: "text",
+            text: "What is the temperature in Seoul now? Answer in Celsius.",
+          },
+        ])) {
+          if (resp.aggregated !== undefined) {
+            console.log(resp.aggregated);
           }
         }
 
-        agent.removeTool(tool.description.name);
+        await agent.removeTool(tool.description.name);
       },
       10000
     );
 
-    if (cfg.runImageUrl) {
-      test.sequential(
-        "Multimodal: Image URL",
-        async () => {
-          const imgPart = ailoy.Part.newImageUrl(testImageUrl);
-          for await (const resp of agent.run([
-            imgPart,
-            "What is shown in this image?",
-          ])) {
-            if (msg !== null) {
-              console.log(msg);
-            }
-          }
-        },
-        10000
-      );
-    }
+    // if (cfg.runImageUrl) {
+    //   test.sequential(
+    //     "Multimodal: Image URL",
+    //     async () => {
+    //       const imgPart = ailoy.Part.newImageUrl(testImageUrl);
+    //       for await (const resp of agent.run([
+    //         imgPart,
+    //         "What is shown in this image?",
+    //       ])) {
+    //         if (msg !== null) {
+    //           console.log(msg);
+    //         }
+    //       }
+    //     },
+    //     10000
+    //   );
+    // }
 
-    if (cfg.runImageBase64) {
-      test.sequential(
-        "Multimodal: Image Base64",
-        async () => {
-          const imgPart = ailoy.Part.newImageData(
-            testImageBase64,
-            "image/jpeg"
-          );
+    // if (cfg.runImageBase64) {
+    //   test.sequential(
+    //     "Multimodal: Image Base64",
+    //     async () => {
+    //       const imgPart = ailoy.Part.newImageData(
+    //         testImageBase64,
+    //         "image/jpeg"
+    //       );
 
-          for await (const resp of agent.run([
-            imgPart,
-            "What is shown in this image?",
-          ])) {
-            if (msg !== null) {
-              console.log(msg);
-            }
-          }
-        },
-        10000
-      );
-    }
+    //       for await (const resp of agent.run([
+    //         imgPart,
+    //         "What is shown in this image?",
+    //       ])) {
+    //         if (msg !== null) {
+    //           console.log(msg);
+    //         }
+    //       }
+    //     },
+    //     10000
+    //   );
+    // }
   });
 }

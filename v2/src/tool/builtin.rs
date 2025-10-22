@@ -1,3 +1,8 @@
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
+pub enum BuiltinToolKind {
+    Terminal,
+}
+
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 use crate::tool::FunctionTool;
 ///
