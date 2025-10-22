@@ -119,17 +119,17 @@ contents: [
 ]
 ```
 
-Together, these parts form the foundation for Ailoy’s multimodal conversations.
+Together, these parts express Ailoy’s multimodal conversation.
 
 ## Delta
 
-The operation of a language model can take a significant amount of time.
+The inference of a language model can take a significant amount of time.
 To improve real-time responsiveness, many AI systems stream tokens as they are generated.
 These streamed outputs are typically delivered in the form of **deltas**.
 
-A **delta**(`MessageDelta` or `PartDelta`) represents a partial update to a message during a streaming response.
+A **delta**(`MessageDelta` or `PartDelta`) represents an output of this step(inference) updated during a streaming response.
 As the model generates text token by token, each incremental addition is emitted as a delta, which is later merged into a complete `Message`.
 
-Ailoy provides APIs to retrieve and aggregate these deltas easily.
+Ailoy provides a simple way to retrieve and aggregate deltas: One can simply use "+"(add) operator.
 
 TBD
