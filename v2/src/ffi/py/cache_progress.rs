@@ -55,7 +55,7 @@ pub struct PyCacheProgress {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyCacheProgress {
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         format!(
             "CacheProgress(comment=\"{}\", current={}, total={})",
             self.comment, self.current, self.total

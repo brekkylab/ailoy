@@ -5,6 +5,7 @@
     "scripts": {
         "build:faiss": "bash ./scripts/build_faiss_bridge.sh",
         "build:ts": "rollup -c --bundleConfigAsCjs",
+        "build": "npm run build:faiss && npm run build:ts",
         "test": "vitest"
     },
     "devDependencies": {

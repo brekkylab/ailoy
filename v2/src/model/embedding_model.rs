@@ -21,6 +21,7 @@ enum EmbeddingModelInner {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct EmbeddingModel {
     inner: EmbeddingModelInner,
 }
@@ -141,6 +142,42 @@ mod py {
                 EmbeddingModelInner::Local(model) => model.infer(text),
             };
             await_future(fut).map_err(Into::into)
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+    use crate::ffi::web::CacheProgressCallbackFn;
+
+    #[wasm_bindgen]
+    impl EmbeddingModel {
+        #[wasm_bindgen(js_name = "newLocal")]
+        pub async fn new_local_js(
+            #[wasm_bindgen(js_name = "modelName")] model_name: String,
+            #[wasm_bindgen(js_name = "progressCallback")] progress_callback: Option<
+                CacheProgressCallbackFn,
+            >,
+        ) -> Result<Self, js_sys::Error> {
+            let inner = crate::ffi::web::await_cache_result::<LocalEmbeddingModel>(
+                model_name,
+                progress_callback,
+            )
+            .await
+            .map_err(|e| js_sys::Error::new(&e.to_string()))?;
+            Ok(Self {
+                inner: EmbeddingModelInner::Local(inner),
+            })
+        }
+
+        #[wasm_bindgen(js_name = infer)]
+        pub async fn infer_js(&mut self, text: String) -> Result<Embedding, js_sys::Error> {
+            self.infer(text)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
         }
     }
 }

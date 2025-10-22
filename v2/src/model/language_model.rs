@@ -10,9 +10,10 @@ use crate::{
         LocalLangModel, StreamAPILangModel,
         api::APISpecification,
         custom::{CustomLangModel, CustomLangModelInferFunc},
+        polyfill::DocumentPolyfill,
     },
     utils::BoxStream,
-    value::{Message, MessageOutput, ToolDesc},
+    value::{Document, Message, MessageOutput, ToolDesc},
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +65,9 @@ impl Default for Grammar {
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct InferenceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_polyfill: Option<DocumentPolyfill>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub think_effort: Option<ThinkEffort>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,6 +90,7 @@ pub trait LangModelInference {
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>>;
 }
@@ -101,6 +106,7 @@ enum LangModelInner {
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct LangModel {
     inner: LangModelInner,
 }
@@ -152,12 +158,13 @@ impl LangModelInference for LangModel {
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
         config: InferenceConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         match &mut self.inner {
-            LangModelInner::Local(model) => model.infer(msgs, tools, config),
-            LangModelInner::StreamAPI(model) => model.infer(msgs, tools, config),
-            LangModelInner::Custom(model) => model.infer(msgs, tools, config),
+            LangModelInner::Local(model) => model.infer(msgs, tools, docs, config),
+            LangModelInner::StreamAPI(model) => model.infer(msgs, tools, docs, config),
+            LangModelInner::Custom(model) => model.infer(msgs, tools, docs, config),
         }
     }
 }
@@ -179,6 +186,7 @@ mod py {
         mut model: LangModel,
         messages: Vec<Message>,
         tools: Vec<ToolDesc>,
+        documents: Vec<Document>,
         config: InferenceConfig,
     ) -> anyhow::Result<(
         &'a tokio::runtime::Runtime,
@@ -187,7 +195,7 @@ mod py {
         let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageOutput>>();
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         rt.spawn(async move {
-            let mut stream = model.infer(messages, tools, config).boxed();
+            let mut stream = model.infer(messages, tools, documents, config).boxed();
 
             while let Some(item) = stream.next().await {
                 if tx.send(item).await.is_err() {
@@ -202,13 +210,13 @@ mod py {
 
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
-    pub struct LanguageModelRunIterator {
+    pub struct LangModelRunIterator {
         rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
     }
 
     #[gen_stub_pymethods]
     #[pymethods]
-    impl LanguageModelRunIterator {
+    impl LangModelRunIterator {
         fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
             slf
         }
@@ -229,14 +237,14 @@ mod py {
 
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
-    pub struct LanguageModelRunSyncIterator {
+    pub struct LangModelRunSyncIterator {
         rt: &'static tokio::runtime::Runtime,
         rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
     }
 
     #[gen_stub_pymethods]
     #[pymethods]
-    impl LanguageModelRunSyncIterator {
+    impl LangModelRunSyncIterator {
         fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
             slf
         }
@@ -314,27 +322,79 @@ mod py {
             }
         }
 
-        #[pyo3(signature = (messages, tools, config))]
+        #[pyo3(signature = (messages, tools=None, documents=None, config=None))]
         fn run(
             &mut self,
             messages: Vec<Message>,
-            tools: Vec<ToolDesc>,
-            config: InferenceConfig,
-        ) -> anyhow::Result<LanguageModelRunIterator> {
-            let (_, rx) = spawn(self.clone(), messages, tools, config)?;
-            Ok(LanguageModelRunIterator { rx })
+            tools: Option<Vec<ToolDesc>>,
+            documents: Option<Vec<Document>>,
+            config: Option<InferenceConfig>,
+        ) -> anyhow::Result<LangModelRunIterator> {
+            let (_, rx) = spawn(
+                self.clone(),
+                messages,
+                tools.unwrap_or_default(),
+                documents.unwrap_or_default(),
+                config.unwrap_or_default(),
+            )?;
+            Ok(LangModelRunIterator { rx })
         }
 
-        #[pyo3(signature = (messages, tools, config))]
+        #[pyo3(signature = (messages, tools=None, documents=None, config=None))]
         fn run_sync(
             &mut self,
             messages: Vec<Message>,
-            tools: Vec<ToolDesc>,
-            config: InferenceConfig,
-        ) -> anyhow::Result<LanguageModelRunSyncIterator> {
-            let (rt, rx) = spawn(self.clone(), messages, tools, config)?;
-            Ok(LanguageModelRunSyncIterator { rt, rx })
+            tools: Option<Vec<ToolDesc>>,
+            documents: Option<Vec<Document>>,
+            config: Option<InferenceConfig>,
+        ) -> anyhow::Result<LangModelRunSyncIterator> {
+            let (rt, rx) = spawn(
+                self.clone(),
+                messages,
+                tools.unwrap_or_default(),
+                documents.unwrap_or_default(),
+                config.unwrap_or_default(),
+            )?;
+            Ok(LangModelRunSyncIterator { rt, rx })
         }
+
+        pub fn __repr__(&self) -> String {
+            // FIXME: provide model name or sth?
+            let s = match &self.inner {
+                LangModelInner::Local(_) => "LocalLangModel()",
+                LangModelInner::StreamAPI(_) => "StreamAPILangModel()",
+                LangModelInner::Custom(_) => "CustomLangModel()",
+            };
+            format!("LangModel({})", s)
+        }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl InferenceConfig {
+        #[new]
+        // #[pyo3(signature = (document_polyfill=None, think_effort=None, temperature=None, top_p=None, max_tokens=None, grammar=None))]
+        #[pyo3(signature = (document_polyfill=None, think_effort=None, temperature=None, top_p=None, max_tokens=None))]
+        fn __new__(
+            document_polyfill: Option<DocumentPolyfill>,
+            think_effort: Option<ThinkEffort>,
+            temperature: Option<f64>,
+            top_p: Option<f64>,
+            max_tokens: Option<i32>,
+            // grammar: Option<Grammar>,
+        ) -> InferenceConfig {
+            Self {
+                document_polyfill: document_polyfill,
+                think_effort: think_effort,
+                temperature,
+                top_p,
+                max_tokens,
+                grammar: Some(Grammar::default()),
+            }
+        }
+
+        // TODO: initialize from {"think_effort": "enable", ...}
+        // fn from_dict(d: Py<PyDict>)
     }
 }
 
@@ -484,6 +544,71 @@ mod node {
                 rx: Arc::new(Mutex::new(rx)),
             };
             it.to_async_iterator(env)
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+    use crate::{
+        ffi::web::{CacheProgressCallbackFn, stream_to_async_iterable},
+        model::api::APISpecification,
+    };
+
+    #[wasm_bindgen]
+    impl LangModel {
+        #[wasm_bindgen(js_name = "newLocal")]
+        pub async fn new_local_js(
+            #[wasm_bindgen(js_name = "modelName")] model_name: String,
+            #[wasm_bindgen(js_name = "progressCallback")] progress_callback: Option<
+                CacheProgressCallbackFn,
+            >,
+        ) -> Result<LangModel, js_sys::Error> {
+            let inner = crate::ffi::web::await_cache_result::<LocalLangModel>(
+                model_name,
+                progress_callback,
+            )
+            .await
+            .map_err(|e| js_sys::Error::new(&e.to_string()))?;
+            Ok(LangModel {
+                inner: LangModelInner::Local(inner),
+            })
+        }
+
+        #[wasm_bindgen(js_name = "newStreamAPI")]
+        pub async fn new_stream_api_js(
+            spec: APISpecification,
+            #[wasm_bindgen(js_name = "modelName")] model_name: String,
+            #[wasm_bindgen(js_name = "apiKey")] api_key: String,
+        ) -> LangModel {
+            LangModel::new_stream_api(spec, model_name, api_key)
+        }
+
+        #[wasm_bindgen(js_name = infer, unchecked_return_type = "AsyncIterable<MessageOutput>")]
+        pub fn infer_js(
+            &mut self,
+            msgs: Vec<Message>,
+            tools: Option<Vec<ToolDesc>>,
+            docs: Option<Vec<Document>>,
+            config: Option<InferenceConfig>,
+        ) -> JsValue {
+            let mut model = self.clone();
+            let stream = async_stream::stream! {
+                let mut inner_stream = model.infer(msgs, tools.unwrap_or(vec![]), docs.unwrap_or(vec![]), config.unwrap_or_default());
+                while let Some(item) = inner_stream.next().await {
+                    yield item;
+                }
+            };
+            let js_stream = Box::pin(stream.map(|result| {
+                result
+                    .map(|output| output.into())
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
+            }));
+
+            stream_to_async_iterable(js_stream).into()
         }
     }
 }

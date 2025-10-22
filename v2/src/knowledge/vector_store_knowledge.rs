@@ -1,33 +1,44 @@
-use std::sync::Arc;
-
 use ailoy_macros::multi_platform_async_trait;
-use futures::lock::Mutex;
 
 use crate::{
-    knowledge::base::{KnowledgeBehavior, KnowledgeRetrieveResult},
+    knowledge::{KnowledgeConfig, base::KnowledgeBehavior},
     model::{EmbeddingModel, EmbeddingModelInference},
+    value::Document,
     vector_store::{VectorStore, VectorStoreRetrieveResult},
 };
 
 #[derive(Debug, Clone)]
 pub struct VectorStoreKnowledge {
-    store: Arc<Mutex<dyn VectorStore>>,
+    store: VectorStore,
     embedding_model: EmbeddingModel,
 }
 
-impl From<VectorStoreRetrieveResult> for KnowledgeRetrieveResult {
+impl From<VectorStoreRetrieveResult> for Document {
     fn from(value: VectorStoreRetrieveResult) -> Self {
+        let title = if let Some(metadata) = &value.metadata
+            && let Some(raw_title) = metadata.get("title")
+        {
+            Some(match raw_title {
+                crate::value::Value::String(s) => s.clone(),
+                other => serde_json::Value::try_from(other.clone())
+                    .unwrap()
+                    .to_string(),
+            })
+        } else {
+            None
+        };
         Self {
-            document: value.document,
-            metadata: value.metadata,
+            id: value.id,
+            title,
+            text: value.document,
         }
     }
 }
 
 impl VectorStoreKnowledge {
-    pub fn new(store: impl VectorStore + 'static, embedding_model: EmbeddingModel) -> Self {
+    pub fn new(store: VectorStore, embedding_model: EmbeddingModel) -> Self {
         Self {
-            store: Arc::new(Mutex::new(store)),
+            store,
             embedding_model: embedding_model,
         }
     }
@@ -38,16 +49,16 @@ impl KnowledgeBehavior for VectorStoreKnowledge {
     async fn retrieve(
         &self,
         query: String,
-        top_k: u32,
-    ) -> anyhow::Result<Vec<KnowledgeRetrieveResult>> {
+        config: KnowledgeConfig,
+    ) -> anyhow::Result<Vec<Document>> {
         let query_embedding = self.embedding_model.infer(query.into()).await?;
-        let results = {
-            let store = self.store.lock().await;
-            store.retrieve(query_embedding, top_k as usize).await
-        }?
-        .into_iter()
-        .map(|res| res.into())
-        .collect::<Vec<KnowledgeRetrieveResult>>();
+        let results = self
+            .store
+            .retrieve(query_embedding, config.top_k.unwrap_or_default() as usize)
+            .await?
+            .into_iter()
+            .map(|res| res.into())
+            .collect::<Vec<_>>();
 
         Ok(results)
     }
@@ -55,22 +66,23 @@ impl KnowledgeBehavior for VectorStoreKnowledge {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use ailoy_macros::multi_platform_test;
-    use futures::stream::StreamExt;
-    use serde_json::json;
+    use futures::{lock::Mutex, stream::StreamExt};
 
     use super::*;
     use crate::{
-        agent::{Agent, SystemMessageRenderer},
+        agent::Agent,
         knowledge::{Knowledge, KnowledgeTool},
         model::{EmbeddingModel, LangModel},
         tool::{Tool, ToolBehavior as _},
-        value::{Part, Value},
+        value::Part,
         vector_store::{FaissStore, VectorStoreAddInput},
     };
 
     async fn prepare_knowledge() -> anyhow::Result<Knowledge> {
-        let mut store = FaissStore::new(1024).await.unwrap();
+        let mut store = VectorStore::new_faiss(FaissStore::new(1024).await.unwrap());
         let embedding_model = EmbeddingModel::new_local("BAAI/bge-m3").await.unwrap();
 
         let doc0: String = "Ailoy is an awesome AI agent framework.".into();
@@ -95,29 +107,6 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn test_vectorstore_knowledge() -> anyhow::Result<()> {
-        let knowledge = prepare_knowledge().await?;
-
-        // Testing with renderer
-        let retrieved = knowledge.retrieve("What is Ailoy?".into(), 1).await?;
-        let renderer = SystemMessageRenderer::new();
-        let rendered = renderer
-            .render("This is a system message.".into(), Some(retrieved))
-            .unwrap();
-        println!("Rendered results: {:?}", rendered);
-
-        // Testing with tool call
-        let tool = KnowledgeTool::from(knowledge);
-        let args = serde_json::from_value::<Value>(json!({
-            "query": "What is Langchain?"
-        }))?;
-        let tool_result = tool.run(args).await?;
-        println!("Tool call results: {:?}", tool_result);
-
-        Ok(())
-    }
-
-    #[multi_platform_test]
     async fn test_vectorstore_knowledge_with_agent() -> anyhow::Result<()> {
         let knowledge = prepare_knowledge().await?;
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
@@ -128,7 +117,7 @@ mod tests {
             let mut agent_guard = agent.lock().await;
             agent_guard.set_knowledge(knowledge.clone());
 
-            let mut strm = Box::pin(agent_guard.run(vec![Part::text("What is Ailoy?")]));
+            let mut strm = Box::pin(agent_guard.run(vec![Part::text("What is Ailoy?")], None));
             while let Some(out_opt) = strm.next().await {
                 let out = out_opt.unwrap();
                 if out.aggregated.is_some() {
@@ -140,21 +129,22 @@ mod tests {
         {
             let mut agent_guard = agent.lock().await;
             agent_guard.remove_knowledge();
-            agent_guard.clear_messages().await?;
+            agent_guard.clear_messages().await;
         }
 
         // Testing as tool
         {
             let mut agent_guard = agent.lock().await;
             let tool = KnowledgeTool::from(knowledge);
-            agent_guard
-                .add_tool(Tool::new_knowledge(tool.clone()))
-                .await?;
+            agent_guard.add_tool(Tool::new_knowledge(tool.clone()));
 
-            let mut strm = Box::pin(agent_guard.run(vec![Part::text(format!(
-                "What is Ailoy? Answer by calling tool '{}'",
-                tool.get_description().name
-            ))]));
+            let mut strm = Box::pin(agent_guard.run(
+                vec![Part::text(format!(
+                    "What is Ailoy? Answer by calling tool '{}'",
+                    tool.get_description().name
+                ))],
+                None,
+            ));
             while let Some(output) = strm.next().await {
                 let output = output.unwrap();
                 if output.aggregated.is_some() {
