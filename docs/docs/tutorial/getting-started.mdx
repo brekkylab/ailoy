@@ -42,7 +42,7 @@ For using Ailoy in web browsers, see [WebAssembly Supports](./webassembly-suppor
 
 {/* prettier-ignore-end */}
 
-## Running a Language Model
+## Running a Simplest Agent
 
 The **Language Model (LM)** is the core of every agent.
 An agent system operates based on a language model and its instructions, along with various extensions that enhance its capabilities.
@@ -77,8 +77,9 @@ import asyncio
 
 async def main():
     lm = ai.LangModel.CreateStreamAPI(spec=ai.APISpecification.OpenAI, model_name="gpt-4o", api_key="YOUR_API_TOKEN_KEY")
+    agent = ai.Agent(lm)
     query = ai.Message(role=ai.Role.User, contents=[ai.Part.Text("Please give me a short poem about AI")])
-    async for resp in lm.run([query]):
+    async for resp in agent.run([query]):
         print(resp)
 
 if __name__ == "__main__":
@@ -86,13 +87,14 @@ if __name__ == "__main__":
 ```
 
 ```typescript
-import { LangModel } from "ailoy";
+import { Agent, LangModel } from "ailoy";
 import type { Message } from "ailoy";
 
 async function main() {
-    const model = await ailoy.LangModel.newStreamAPI(spec="OpenAI", modelName="gpt-4o", apiKey="YOUR_API_TOKEN_KEY");
+    const lm = await LangModel.newStreamAPI(spec="OpenAI", modelName="gpt-4o", apiKey="YOUR_API_TOKEN_KEY");
+    const agent = new Agent(lm);
     const query: Message = {role: "user", contents: [{ type: "text", text: "Please give me a short poem about AI" }]};
-    response = lm.run([query]);
+    response = agent.run([query]);
     for await (const result of model.infer([msg])) {
         console.log(result);
     }
@@ -104,17 +106,15 @@ main().catch((err) => {
 ```
 
 ```rust
-use ailoy::{model::{APISpecification, InferenceConfig, LangModel}, value::{Message, Part, Role}};
+use ailoy::{agent::Agent, model::{APISpecification, InferenceConfig, LangModel}, value::{Message, Part, Role}};
 use futures::StreamExt as _;
 
 #[tokio::main]
 async fn main() {
-    let mut model = LangModel::new_stream_api(APISpecification::OpenAI, "gpt-4o", "YOUR_API_TOKEN_KEY");
-    
+    let lm = LangModel::new_stream_api(APISpecification::OpenAI, "gpt-4o", "YOUR_API_TOKEN_KEY");
+    let mut agent = Agent::new(lm, vec![]);
     let query = Message::new(Role::User).with_contents([Part::text("Please give me a short poem about AI")]);
-    
-    let mut strm = model.infer(vec![query], vec![], vec![], InferenceConfig::default());
-    
+    let mut strm = agent.run(vec![query], vec![], vec![], InferenceConfig::default());
     while let Some(result) = strm.next().await {
         println!("{:?}", result);
     }
@@ -135,8 +135,9 @@ import asyncio
 
 async def main():
     lm = await ai.LangModel.CreateLocal(model_name="Qwen/Qwen3-0.6B", progress_callback=print)
+    const agent = new Agent(lm);
     query = ai.Message(role=ai.Role.User, contents=[ai.Part.Text("Please give me a short poem about AI")])
-    async for resp in lm.run([query]):
+    async for resp in agent.run([query]):
         print(resp)
 
 if __name__ == "__main__":
@@ -144,14 +145,15 @@ if __name__ == "__main__":
 ```
 
 ```typescript
-import { LangModel } from "ailoy";
+import { Agent, LangModel } from "ailoy";
 import type { Message } from "ailoy";
 
 async function main() {
-    const model = await ailoy.LangModel.newLocal(modelName="Qwen/Qwen3-0.6B", progressCallback=console.log);
+    const lm = await ailoy.LangModel.newLocal(modelName="Qwen/Qwen3-0.6B", progressCallback=console.log);
+    let mut agent = Agent::new(lm, vec![]);
     const query: Message = {role: "user", contents: [{ type: "text", text: "What is your name?" }]};
     response = lm.run("Please give me a short poem about AI");
-    for await (const result of model.infer([msg])) {
+    for await (const result of agent.infer([msg])) {
         console.log(result);
     }
 }
@@ -162,17 +164,15 @@ main().catch((err) => {
 ```
 
 ```rust
-use ailoy::{model::{InferenceConfig, LangModel}, value::{Message, Part, Role}};
+use ailoy::{agent::Agent, model::{InferenceConfig, LangModel}, value::{Message, Part, Role}};
 use futures::StreamExt as _;
 
 #[tokio::main]
 async fn main() {
-    let mut model = LangModel::try_new("Qwen/Qwen3-0.6B").await.unwrap();
-
+    let lm = LangModel::try_new("Qwen/Qwen3-0.6B").await.unwrap();
+    let mut agent = Agent::new(lm, vec![]);
     let query = Message::new(Role::User).with_contents([Part::text("Please give me a short poem about AI")]);
-
-    let mut strm = model.infer(vec![query], vec![], vec![], InferenceConfig::default());
-
+    let mut strm = agent.infer(vec![query], vec![], vec![], InferenceConfig::default());
     while let Some(result) = strm.next().await {
         println!("{:?}", result);
     }

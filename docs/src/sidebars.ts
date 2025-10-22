@@ -20,7 +20,7 @@ const sidebars: SidebarsConfig = {
       items: [
         "tutorial/getting-started",
         "tutorial/how-language-model-works",
-        "tutorial/overriding-system-message",
+        "tutorial/system-message",
         "tutorial/multi-turn-conversation",
         "tutorial/reasoning",
         "tutorial/using-tools",
