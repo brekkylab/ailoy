@@ -706,7 +706,6 @@ mod wasm {
         pub async fn retrieve_js(
             &self,
             query_embedding: Embedding,
-            // query_embedding: Float32Array,
             top_k: usize,
         ) -> Result<Vec<VectorStoreRetrieveResult>, js_sys::Error> {
             self.retrieve(query_embedding, top_k)
