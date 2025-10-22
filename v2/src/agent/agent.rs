@@ -310,7 +310,12 @@ mod tests {
         use futures::StreamExt;
 
         use super::*;
-        use crate::{model::LangModel, to_value, value::ToolDesc};
+        use crate::{
+            model::LangModel,
+            to_value,
+            tool::ToolFunc,
+            value::{ToolDesc, Value},
+        };
 
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
 
@@ -339,21 +344,24 @@ mod tests {
         );
         let tools = vec![Tool::new_function(
             tool_desc,
-            Arc::new(|args| {
-                if args
-                    .as_object()
-                    .unwrap()
-                    .get("unit")
-                    .unwrap()
-                    .as_str()
-                    .unwrap()
-                    == "Celsius"
-                {
-                    to_value!("40")
-                } else {
-                    to_value!("104")
-                }
-            }),
+            Arc::<Box<ToolFunc>>::new(Box::new(move |args: Value| {
+                Box::pin(async move {
+                    use anyhow::bail;
+
+                    let unit = args
+                        .as_object()
+                        .unwrap()
+                        .get("unit")
+                        .unwrap()
+                        .as_str()
+                        .unwrap();
+                    match unit {
+                        "Celsius" => Ok(to_value!("40")),
+                        "Fahrenheit" => Ok(to_value!("104")),
+                        _ => bail!(""),
+                    }
+                })
+            })),
         )];
 
         let mut agent = Agent::new(model, tools);
