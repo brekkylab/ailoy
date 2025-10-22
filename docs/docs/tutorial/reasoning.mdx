@@ -23,13 +23,6 @@ These models can switch between normal (direct-generation) and thinking (reasoni
 Ailoy fully supports this hybrid capability. You can explicitly turn the reasoning process on or off via the reasoning option.
 When enabled, the model engages in structured, step-by-step inference—producing a detailed “thinking trace” before the final answer.
 
-Note that not all models are hybrid reasoning models.
-Some models always perform reasoning(like GPT-o series), while others do not support reasoning.
-In such cases, setting `reasoning=True` will have no effect—the model’s reasoning behavior.
-
-Please check the model’s documentation to understand whether it supports explicit reasoning control.
-
-
 ### How to enable reasoning
 
 To activate reasoning mode, simply specify the reasoning option when querying the agent:
@@ -57,9 +50,17 @@ for await (const resp of agent.query(
 
 {/* prettier-ignore-start */}
 
-:::note 
-Note: Qwen3-0.6b is too small to perform effective reasoning.
-For complex tasks, we recommend using larger models.
+:::info
+Note that not all models are hybrid reasoning models.
+Some models always perform reasoning(like GPT-o series), while others do not support reasoning.
+In such cases, setting `reasoning=True` will have no effect—the model’s reasoning behavior.
+
+Please check the model’s documentation to understand whether it supports explicit reasoning control.
+:::
+
+:::info 
+Qwen3-0.6b is too small to perform effective reasoning.
+For complex tasks, we recommend using sufficiently large models.
 :::
 
 {/* prettier-ignore-end */}
