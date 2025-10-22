@@ -270,7 +270,7 @@ mod wasm {
 mod tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
-    async fn run_simple_chat() -> anyhow::Result<()> {
+    async fn run_simple_chat() {
         use futures::StreamExt;
 
         use super::*;
@@ -290,8 +290,6 @@ mod tests {
                 println!("message: {:?}", output.aggregated.unwrap());
             }
         }
-
-        Ok(())
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
