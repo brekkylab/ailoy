@@ -77,7 +77,7 @@ mod tests {
         knowledge::{Knowledge, KnowledgeTool},
         model::{EmbeddingModel, LangModel},
         tool::{Tool, ToolBehavior as _},
-        value::Part,
+        value::{Message, Part, Role},
         vector_store::{FaissStore, VectorStoreAddInput},
     };
 
@@ -117,7 +117,10 @@ mod tests {
             let mut agent_guard = agent.lock().await;
             agent_guard.set_knowledge(knowledge.clone());
 
-            let mut strm = Box::pin(agent_guard.run(vec![Part::text("What is Ailoy?")], None));
+            let mut strm = Box::pin(agent_guard.run(
+                vec![Message::new(Role::User).with_contents(vec![Part::text("What is Ailoy?")])],
+                None,
+            ));
             while let Some(out_opt) = strm.next().await {
                 let out = out_opt.unwrap();
                 if out.aggregated.is_some() {
@@ -129,7 +132,6 @@ mod tests {
         {
             let mut agent_guard = agent.lock().await;
             agent_guard.remove_knowledge();
-            agent_guard.clear_messages().await;
         }
 
         // Testing as tool
@@ -139,10 +141,12 @@ mod tests {
             agent_guard.add_tool(Tool::new_knowledge(tool.clone()));
 
             let mut strm = Box::pin(agent_guard.run(
-                vec![Part::text(format!(
-                    "What is Ailoy? Answer by calling tool '{}'",
-                    tool.get_description().name
-                ))],
+                vec![
+                    Message::new(Role::User).with_contents(vec![Part::text(format!(
+                        "What is Ailoy? Answer by calling tool '{}'",
+                        tool.get_description().name
+                    ))]),
+                ],
                 None,
             ));
             while let Some(output) = strm.next().await {
