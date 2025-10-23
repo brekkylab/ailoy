@@ -35,7 +35,7 @@ impl FaissStore {
 #[multi_platform_async_trait]
 impl VectorStoreBehavior for FaissStore {
     async fn add_vector(&mut self, input: VectorStoreAddInput) -> anyhow::Result<String> {
-        let ids: Vec<String> = self.index.add_vectors(&[input.embedding.0]).unwrap();
+        let ids: Vec<String> = self.index.add_vectors(&[input.embedding.into()]).unwrap();
         let id = ids.iter().next().unwrap().clone();
         self.doc_store.insert(
             id.clone(),
@@ -68,7 +68,7 @@ impl VectorStoreBehavior for FaissStore {
             .add_vectors(
                 embeddings
                     .into_iter()
-                    .map(|emb| emb.0)
+                    .map(|emb| emb.into())
                     .collect::<Vec<_>>()
                     .as_slice(),
             )
@@ -125,7 +125,7 @@ impl VectorStoreBehavior for FaissStore {
         query_embedding: Embedding,
         top_k: usize,
     ) -> anyhow::Result<Vec<VectorStoreRetrieveResult>> {
-        let index_results = self.index.search(&[query_embedding.0], top_k).unwrap();
+        let index_results = self.index.search(&[query_embedding.into()], top_k).unwrap();
         let index_result = index_results.into_iter().next().unwrap();
 
         Ok(index_result
@@ -156,7 +156,7 @@ impl VectorStoreBehavior for FaissStore {
             .search(
                 query_embeddings
                     .into_iter()
-                    .map(|query| query.0)
+                    .map(|query| query.into())
                     .collect::<Vec<_>>()
                     .as_slice(),
                 top_k,
@@ -286,20 +286,20 @@ mod tests {
 
         let res1 = store.get_by_id(&added_ids[0]).await?.unwrap();
         assert_eq!(res1.document, "doc1");
-        assert_eq!(res1.embedding.0, vec![1.0, 1.0, 1.0]);
+        assert_eq!(res1.embedding, vec![1.0, 1.0, 1.0].into());
 
         let res2 = store.get_by_id(&added_ids[1]).await?.unwrap();
         assert_eq!(res2.document, "doc2");
-        assert_eq!(res2.embedding.0, vec![2.0, 2.0, 2.0]);
+        assert_eq!(res2.embedding, vec![2.0, 2.0, 2.0].into());
 
         let res = store
             .get_by_ids(&added_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>())
             .await?;
         assert_eq!(res[0].document, "doc1");
-        assert_eq!(res[0].embedding.0, vec![1.0, 1.0, 1.0]);
+        assert_eq!(res[0].embedding, vec![1.0, 1.0, 1.0].into());
 
         assert_eq!(res[1].document, "doc2");
-        assert_eq!(res[1].embedding.0, vec![2.0, 2.0, 2.0]);
+        assert_eq!(res[1].embedding, vec![2.0, 2.0, 2.0].into());
 
         Ok(())
     }

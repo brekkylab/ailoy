@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::utils::Normalize;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Embedding(pub Vec<f32>);
+pub struct Embedding(Vec<f32>);
 
 impl From<Vec<f32>> for Embedding {
     fn from(value: Vec<f32>) -> Self {

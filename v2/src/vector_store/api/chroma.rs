@@ -104,7 +104,7 @@ impl VectorStoreBehavior for ChromaStore {
 
         let entry = CollectionEntries {
             ids: vec![id.as_ref()],
-            embeddings: Some(vec![input.embedding.0]),
+            embeddings: Some(vec![input.embedding.into()]),
             documents: Some(vec![input.document.as_ref()]),
             metadatas: metadatas,
         };
@@ -119,7 +119,7 @@ impl VectorStoreBehavior for ChromaStore {
         let ids: Vec<String> = (0..inputs.len())
             .map(|_| Uuid::new_v4().to_string())
             .collect();
-        let embeddings: Vec<Vec<f32>> = inputs.iter().map(|i| i.embedding.0.clone()).collect();
+        let embeddings: Vec<Vec<f32>> = inputs.iter().map(|i| i.embedding.clone().into()).collect();
         let documents: Vec<String> = inputs.iter().map(|i| i.document.clone()).collect();
         let metadatas: Option<Vec<Map<String, Json>>> =
             if inputs.iter().any(|i| i.metadata.is_some()) {
@@ -198,7 +198,7 @@ impl VectorStoreBehavior for ChromaStore {
         top_k: usize,
     ) -> anyhow::Result<Vec<VectorStoreRetrieveResult>> {
         let opts = QueryOptions {
-            query_embeddings: Some(vec![query.0]),
+            query_embeddings: Some(vec![query.into()]),
             n_results: Some(top_k),
             ..Default::default()
         };
@@ -249,7 +249,12 @@ impl VectorStoreBehavior for ChromaStore {
         top_k: usize,
     ) -> anyhow::Result<Vec<Vec<VectorStoreRetrieveResult>>> {
         let opts = QueryOptions {
-            query_embeddings: Some(query_embeddings.into_iter().map(|query| query.0).collect()),
+            query_embeddings: Some(
+                query_embeddings
+                    .into_iter()
+                    .map(|query| query.into())
+                    .collect(),
+            ),
             n_results: Some(top_k),
             ..Default::default()
         };
