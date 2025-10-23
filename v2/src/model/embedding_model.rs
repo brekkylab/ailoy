@@ -4,7 +4,7 @@ use futures::{Stream, StreamExt as _};
 use crate::{
     cache::{Cache, CacheProgress},
     model::local::LocalEmbeddingModel,
-    vector_store::Embedding,
+    value::Embedding,
 };
 
 #[maybe_send_sync]
@@ -21,6 +21,7 @@ enum EmbeddingModelInner {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct EmbeddingModel {
     inner: EmbeddingModelInner,
@@ -142,6 +143,40 @@ mod py {
                 EmbeddingModelInner::Local(model) => model.infer(text),
             };
             await_future(fut).map_err(Into::into)
+        }
+    }
+}
+
+#[cfg(feature = "nodejs")]
+mod node {
+    use napi::{Status, threadsafe_function::ThreadsafeFunction};
+    use napi_derive::napi;
+
+    use super::*;
+    use crate::ffi::node::cache::{JsCacheProgress, await_cache_result};
+
+    #[napi]
+    impl EmbeddingModel {
+        #[napi(js_name = "newLocal")]
+        pub async fn new_local_js(
+            model_name: String,
+            progress_callback: Option<
+                ThreadsafeFunction<JsCacheProgress, (), JsCacheProgress, Status, false>,
+            >,
+        ) -> napi::Result<EmbeddingModel> {
+            let inner = await_cache_result::<LocalEmbeddingModel>(model_name, progress_callback)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
+            Ok(EmbeddingModel {
+                inner: EmbeddingModelInner::Local(inner),
+            })
+        }
+
+        #[napi(js_name = "infer")]
+        pub async fn infer_js(&self, text: String) -> napi::Result<Embedding> {
+            self.infer(text)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
         }
     }
 }

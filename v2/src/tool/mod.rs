@@ -31,12 +31,24 @@ pub enum ToolInner {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(subclass))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Tool {
     inner: ToolInner,
 }
 
 impl Tool {
+    pub fn new_builtin(kind: BuiltinToolKind) -> anyhow::Result<Self> {
+        match kind {
+            BuiltinToolKind::Terminal => {
+                let terminal_tool = create_terminal_tool()?;
+                Ok(Self {
+                    inner: ToolInner::Function(terminal_tool),
+                })
+            }
+        }
+    }
+
     pub fn new_function(desc: ToolDesc, f: Arc<ToolFunc>) -> Self {
         Self {
             inner: ToolInner::Function(FunctionTool::new(desc, f)),
@@ -83,6 +95,7 @@ mod py {
     use ordered_float::OrderedFloat;
     use pyo3::{
         Bound, IntoPyObjectExt, Py, PyAny, PyResult, Python,
+        exceptions::PyRuntimeError,
         prelude::*,
         pymethods,
         types::{PyAnyMethods, PyBool, PyDict, PyFloat, PyList, PyListMethods, PyString, PyType},
@@ -223,6 +236,12 @@ mod py {
     #[pymethods]
     impl Tool {
         #[classmethod]
+        #[pyo3(name = "new_builtin")]
+        pub fn new_builtin_py(_cls: &Bound<'_, PyType>, kind: BuiltinToolKind) -> PyResult<Self> {
+            Self::new_builtin(kind).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        }
+
+        #[classmethod]
         #[pyo3(signature = (desc, func))]
         pub fn new_py_function(_cls: &Bound<'_, PyType>, desc: ToolDesc, func: Py<PyAny>) -> Self {
             Self {
@@ -324,10 +343,82 @@ mod py {
             // Rust Value -> Python object
             value_to_python(py, &result).map(|bound| bound.unbind())
         }
+    }
+}
 
-        #[staticmethod]
-        fn terminal() -> Self {
-            create_terminal_tool()
+#[cfg(feature = "nodejs")]
+mod node {
+    use napi::{Status, bindgen_prelude::*, threadsafe_function::ThreadsafeFunction};
+    use napi_derive::napi;
+    use rmcp::transport::ConfigureCommandExt;
+
+    use super::*;
+
+    #[napi]
+    impl Tool {
+        #[napi(js_name = "newBuiltin")]
+        pub fn new_builtin_js(kind: BuiltinToolKind) -> napi::Result<Self> {
+            Self::new_builtin(kind)
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "newFunction")]
+        pub fn new_function_js(
+            desc: ToolDesc,
+            func: ThreadsafeFunction<Value, Promise<Value>, Value, Status, false, false>,
+        ) -> Self {
+            let func = Arc::new(func);
+            let tool_func: Box<ToolFunc> = Box::new(move |value: Value| {
+                let func = func.clone();
+                Box::pin(async move {
+                    let promise = func.call_async(value).await?;
+                    match promise.await {
+                        Ok(result) => Ok(result),
+                        Err(e) => Err(anyhow::anyhow!(e.to_string())),
+                    }
+                })
+            });
+            Self::new_function(desc, Arc::new(tool_func))
+        }
+
+        #[napi(getter, js_name = "description")]
+        pub fn description_js(&self) -> ToolDesc {
+            self.get_description().clone()
+        }
+
+        #[napi(js_name = "run")]
+        pub async fn run_js(&self, args: Value) -> napi::Result<Value> {
+            self.run(args)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+    }
+
+    #[napi]
+    impl MCPClient {
+        #[napi(js_name = "newStdio")]
+        pub async fn new_stdio_js(command: String, args: Vec<String>) -> napi::Result<Self> {
+            let command = tokio::process::Command::new(command).configure(|cmd| {
+                cmd.args(args);
+            });
+            MCPClient::from_stdio(command)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "newStreamableHttp")]
+        pub async fn new_streamable_http_js(url: String) -> napi::Result<Self> {
+            Self::from_streamable_http(url)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(getter, js_name = "tools")]
+        pub fn tools_js(&self) -> Vec<Tool> {
+            self.get_tools()
+                .into_iter()
+                .map(|t| Tool::new_mcp(t.clone()))
+                .collect()
         }
     }
 }
@@ -345,6 +436,11 @@ mod wasm {
 
     #[wasm_bindgen]
     impl Tool {
+        #[wasm_bindgen(js_name = "newBuiltin")]
+        pub fn new_builtin_js(kind: BuiltinToolKind) -> Result<Self, js_sys::Error> {
+            Self::new_builtin(kind).map_err(|e| js_sys::Error::new(&e.to_string()))
+        }
+
         #[wasm_bindgen(js_name = "newFunction")]
         pub fn new_function_js(
             desc: ToolDesc,

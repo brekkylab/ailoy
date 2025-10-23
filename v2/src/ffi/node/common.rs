@@ -8,6 +8,7 @@ pub fn get_or_create_runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
 }
 
+#[allow(unused)]
 pub fn await_future<T, E: ToString + std::any::Any>(
     fut: impl Future<Output = std::result::Result<T, E>>,
 ) -> napi::Result<T> {
@@ -26,6 +27,7 @@ pub fn await_future<T, E: ToString + std::any::Any>(
     result
 }
 
+#[allow(unused)]
 pub fn get_property<T: FromNapiValue>(obj: Object, name: &str) -> NapiResult<T> {
     let prop: T = obj
         .get(name)?
@@ -33,6 +35,7 @@ pub fn get_property<T: FromNapiValue>(obj: Object, name: &str) -> NapiResult<T> 
     Ok(prop)
 }
 
+#[allow(unused)]
 pub fn json_stringify(env: Env, obj: Object) -> NapiResult<String> {
     let json_global = env.get_global()?.get_named_property::<Object>("JSON")?;
     let stringify_fn = json_global.get_named_property::<Function<Object, String>>("stringify")?;

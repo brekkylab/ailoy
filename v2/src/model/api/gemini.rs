@@ -21,18 +21,10 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
                 to_value!({"text": text})
             }
             Part::Function {
-                id,
                 function: PartFunction { name, arguments },
+                ..
             } => {
-                let mut value =
-                    to_value!({"functionCall": {"name": name, "args": arguments.clone()}});
-                if let Some(id) = id {
-                    value
-                        .as_object_mut()
-                        .unwrap()
-                        .insert("id".into(), id.into());
-                }
-                value
+                to_value!({"functionCall": {"name": name, "args": arguments.clone()}})
             }
             Part::Image { .. } => {
                 // Get image
@@ -276,7 +268,7 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                             None => Value::Null,
                         };
                         rv.tool_calls.push(PartDelta::Function {
-                            id: None,
+                            id: Some(name.clone()),
                             function: PartDeltaFunction::WithParsedArgs { name, arguments },
                         });
                     } else {

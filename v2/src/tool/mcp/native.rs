@@ -17,9 +17,11 @@ use crate::{
 #[derive(Debug)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "MCPClient"))]
 pub struct MCPClient {
-    pub service: Arc<RunningService<RoleClient, ()>>,
-    pub tools: Vec<MCPTool>,
+    #[allow(unused)]
+    service: Arc<RunningService<RoleClient, ()>>,
+    tools: Vec<MCPTool>,
 }
 
 impl MCPClient {
@@ -47,6 +49,10 @@ impl MCPClient {
                 .await?,
         )
         .await
+    }
+
+    pub fn get_tools(&self) -> &Vec<MCPTool> {
+        &self.tools
     }
 }
 
