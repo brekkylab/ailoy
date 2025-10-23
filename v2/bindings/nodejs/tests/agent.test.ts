@@ -264,17 +264,42 @@ for (const cfg of modelConfigs) {
         const knowledge = ailoy.Knowledge.newVectorStore(vs, emb);
         agent.setKnowledge(knowledge);
 
-        for await (const resp of agent.run([
+        const documentPolyfill: ailoy.DocumentPolyfill = {
+          systemMessageTemplate: `
+{{- text }}
+# Knowledges
+After the user’s question, a list of documents retrieved from the knowledge base may appear. Try to answer the user’s question based on the provided knowledges.
+            `,
+          queryMessageTemplate: `
+{{- text }}
+{%- if documents %}
+    {{- "<documents>\n" }}
+    {%- for doc in documents %}
+    {{- "<document>\n" }}
+        {{- doc.text + '\n' }}
+    {{- "</document>\n" }}
+    {%- endfor %}
+    {{- "</documents>\n" }}
+{%- endif %}
+            `,
+        };
+
+        for await (const resp of agent.run(
+          [
+            {
+              role: "user",
+              contents: [
+                {
+                  type: "text",
+                  text: "What is Ailoy?",
+                },
+              ],
+            },
+          ],
           {
-            role: "user",
-            contents: [
-              {
-                type: "text",
-                text: "What is Ailoy?",
-              },
-            ],
-          },
-        ])) {
+            documentPolyfill,
+          }
+        )) {
           if (resp.aggregated !== undefined) {
             console.log(resp.aggregated);
           }
