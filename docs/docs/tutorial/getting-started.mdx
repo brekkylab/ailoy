@@ -80,7 +80,8 @@ async def main():
     agent = ai.Agent(lm)
     query = ai.Message(role=ai.Role.User, contents=[ai.Part.Text("Please give me a short poem about AI")])
     async for resp in agent.run([query]):
-        print(resp)
+        if resp.aggregated:
+            print(resp.aggregated.contents[0].text)
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -94,9 +95,10 @@ async function main() {
     const lm = await LangModel.newStreamAPI(spec="OpenAI", modelName="gpt-4o", apiKey="YOUR_API_TOKEN_KEY");
     const agent = new Agent(lm);
     const query: Message = {role: "user", contents: [{ type: "text", text: "Please give me a short poem about AI" }]};
-    response = agent.run([query]);
-    for await (const result of model.infer([msg])) {
-        console.log(result);
+    for await (const resp of agent.run([query])) {
+        if (resp.aggregated) {
+            console.log(resp.aggregated.contents[0].text);
+        }
     }
 }
 
@@ -116,7 +118,9 @@ async fn main() {
     let query = Message::new(Role::User).with_contents([Part::text("Please give me a short poem about AI")]);
     let mut strm = agent.run(vec![query], vec![], vec![], InferenceConfig::default());
     while let Some(result) = strm.next().await {
-        println!("{:?}", result);
+        if let Some(aggregated) = resp.aggregated {
+            println!("{:?}", aggregated);
+        }
     }
 }
 ```
@@ -135,10 +139,11 @@ import asyncio
 
 async def main():
     lm = await ai.LangModel.CreateLocal(model_name="Qwen/Qwen3-0.6B", progress_callback=print)
-    const agent = new Agent(lm);
+    agent = ai.Agent(lm)
     query = ai.Message(role=ai.Role.User, contents=[ai.Part.Text("Please give me a short poem about AI")])
     async for resp in agent.run([query]):
-        print(resp)
+        if resp.aggregated:
+            print(resp.aggregated.contents[0].text)
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -152,9 +157,10 @@ async function main() {
     const lm = await ailoy.LangModel.newLocal(modelName="Qwen/Qwen3-0.6B", progressCallback=console.log);
     let mut agent = Agent::new(lm, vec![]);
     const query: Message = {role: "user", contents: [{ type: "text", text: "What is your name?" }]};
-    response = lm.run("Please give me a short poem about AI");
-    for await (const result of agent.infer([msg])) {
-        console.log(result);
+    for await (const resp of agent.run([query])) {
+        if (resp.aggregated) {
+            console.log(resp.aggregated.contents[0].text);
+        }
     }
 }
 
@@ -174,7 +180,9 @@ async fn main() {
     let query = Message::new(Role::User).with_contents([Part::text("Please give me a short poem about AI")]);
     let mut strm = agent.infer(vec![query], vec![], vec![], InferenceConfig::default());
     while let Some(result) = strm.next().await {
-        println!("{:?}", result);
+        if let Some(aggregated) = resp.aggregated {
+            println!("{:?}", aggregated);
+        }
     }
 }
 ```
