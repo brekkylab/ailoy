@@ -2723,11 +2723,11 @@ dependencies = [
 [[package]]
 name = "napi"
 version = "3.3.0"
-source = "git+https://github.com/brekkylab/napi-rs.git?rev=8ffde7b07d90cb16106de66321c1da6587ba7a5b#8ffde7b07d90cb16106de66321c1da6587ba7a5b"
+source = "git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8#694db418953181c1d41381e75cd9dc6b1918f3f8"
 dependencies = [
  "bitflags 2.9.4",
  "ctor",
- "napi-build 2.2.3 (git+https://github.com/brekkylab/napi-rs.git?rev=8ffde7b07d90cb16106de66321c1da6587ba7a5b)",
+ "napi-build 2.2.3 (git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8)",
  "napi-sys",
  "nohash-hasher",
  "rustc-hash",
@@ -2745,12 +2745,12 @@ checksum = "dcae8ad5609d14afb3a3b91dee88c757016261b151e9dcecabf1b2a31a6cab14"
 [[package]]
 name = "napi-build"
 version = "2.2.3"
-source = "git+https://github.com/brekkylab/napi-rs.git?rev=8ffde7b07d90cb16106de66321c1da6587ba7a5b#8ffde7b07d90cb16106de66321c1da6587ba7a5b"
+source = "git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8#694db418953181c1d41381e75cd9dc6b1918f3f8"
 
 [[package]]
 name = "napi-derive"
 version = "3.2.5"
-source = "git+https://github.com/brekkylab/napi-rs.git?rev=8ffde7b07d90cb16106de66321c1da6587ba7a5b#8ffde7b07d90cb16106de66321c1da6587ba7a5b"
+source = "git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8#694db418953181c1d41381e75cd9dc6b1918f3f8"
 dependencies = [
  "convert_case",
  "ctor",
@@ -2763,7 +2763,7 @@ dependencies = [
 [[package]]
 name = "napi-derive-backend"
 version = "2.2.0"
-source = "git+https://github.com/brekkylab/napi-rs.git?rev=8ffde7b07d90cb16106de66321c1da6587ba7a5b#8ffde7b07d90cb16106de66321c1da6587ba7a5b"
+source = "git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8#694db418953181c1d41381e75cd9dc6b1918f3f8"
 dependencies = [
  "convert_case",
  "proc-macro2",
@@ -2775,7 +2775,7 @@ dependencies = [
 [[package]]
 name = "napi-sys"
 version = "3.0.0"
-source = "git+https://github.com/brekkylab/napi-rs.git?rev=8ffde7b07d90cb16106de66321c1da6587ba7a5b#8ffde7b07d90cb16106de66321c1da6587ba7a5b"
+source = "git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8#694db418953181c1d41381e75cd9dc6b1918f3f8"
 dependencies = [
  "libloading",
 ]
