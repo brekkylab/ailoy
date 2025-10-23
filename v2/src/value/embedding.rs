@@ -17,7 +17,7 @@ impl Into<Vec<f32>> for Embedding {
     }
 }
 
-impl std::ops::Mul for Embedding {
+impl std::ops::Mul for &Embedding {
     type Output = f32;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -29,11 +29,11 @@ impl std::ops::Mul for Embedding {
     }
 }
 
-impl std::ops::Mul for &Embedding {
+impl std::ops::Mul for Embedding {
     type Output = f32;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        self.clone() * rhs.clone()
+        &self * &rhs
     }
 }
 
