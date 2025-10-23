@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use anyhow::Context;
-use futures::{StreamExt, lock::Mutex};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -19,7 +17,6 @@ use crate::{
 pub struct Agent {
     lm: LangModel,
     tools: Vec<Tool>,
-    messages: Arc<Mutex<Vec<Message>>>,
     knowledge: Option<Knowledge>,
 }
 
@@ -43,7 +40,6 @@ impl Agent {
         Self {
             lm,
             tools: tools.into_iter().collect(),
-            messages: Arc::new(Mutex::new(Vec::new())),
             knowledge: None,
         }
     }
@@ -63,10 +59,6 @@ impl Agent {
 
     pub fn knowledge(&self) -> Option<Knowledge> {
         self.knowledge.clone()
-    }
-
-    pub async fn clear_messages(&mut self) {
-        self.messages.lock().await.clear();
     }
 
     pub fn add_tools(&mut self, tools: Vec<Tool>) {
@@ -117,35 +109,24 @@ impl Agent {
 
     pub fn run<'a>(
         &'a mut self,
-        // messages: Vec<Message>,
-        contents: Vec<Part>,
+        messages: Vec<Message>,
         config: Option<InferenceConfig>,
     ) -> BoxStream<'a, anyhow::Result<AgentResponse>> {
-        // Messages used for the current run round
-        let mut messages: Vec<Message> = vec![];
-        // For storing message history except system message
-        let messages_history = self.messages.clone();
-
+        let last_message = messages.last().cloned();
         let tools = self.tools.clone();
+
+        let mut messages = messages.clone();
+
         let strm = async_stream::try_stream! {
             // Get documents
-            let docs = if let Some(knowledge) = self.knowledge.clone() {
-                let query_str = contents.iter().filter(|p| p.is_text()).map(|p| p.as_text().unwrap().to_owned()).collect::<Vec<_>>().join("\n\n");
+            let docs = if let Some(message) = last_message
+                && message.role == Role::User
+                && let Some(knowledge) = self.knowledge.clone() {
+                let query_str = message.contents.iter().filter(|p| p.is_text()).map(|p| p.as_text().unwrap().to_owned()).collect::<Vec<_>>().join("\n\n");
                 knowledge.retrieve(query_str, KnowledgeConfig::default()).await?
             } else {
                 vec![]
             };
-
-            // Add message histories to messages
-            for msg in messages_history.lock().await.iter() {
-                messages.push(msg.clone());
-            }
-
-            let user_message = Message::new(Role::User).with_contents(contents);
-            // Add user message to messages
-            messages.push(user_message.clone());
-            // Add user message to histories
-            messages_history.lock().await.push(user_message);
 
             let tool_descs = self
                 .tools
@@ -176,8 +157,6 @@ impl Agent {
                 let assistant_msg = assistant_msg.unwrap();
                 // Add assistant message to messages
                 messages.push(assistant_msg.clone());
-                // Add assistant message to histories
-                messages_history.lock().await.push(assistant_msg.clone());
 
                 // Handling tool calls if exist
                 if let Some(tool_calls) = assistant_msg.tool_calls && !tool_calls.is_empty() {
@@ -199,8 +178,6 @@ impl Agent {
 
                         // Add tool message to messages
                         messages.push(tool_msg.clone());
-                        // Add tool message to histories
-                        messages_history.lock().await.push(tool_msg);
                     }
                 } else {
                     break;
@@ -283,7 +260,7 @@ mod wasm {
 mod tests {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
-    async fn run_simple_chat() -> anyhow::Result<()> {
+    async fn run_simple_chat() {
         use futures::StreamExt;
 
         use super::*;
@@ -292,7 +269,10 @@ mod tests {
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
         let mut agent = Agent::new(model, Vec::new());
 
-        let mut strm = Box::pin(agent.run(vec![Part::text("Hi what's your name?")], None));
+        let mut strm = Box::pin(agent.run(
+            vec![Message::new(Role::User).with_contents(vec![Part::text("Hi, what's your name?")])],
+            None,
+        ));
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
@@ -300,8 +280,6 @@ mod tests {
                 println!("message: {:?}", output.aggregated.unwrap());
             }
         }
-
-        Ok(())
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
@@ -344,7 +322,7 @@ mod tests {
         );
         let tools = vec![Tool::new_function(
             tool_desc,
-            Arc::<Box<ToolFunc>>::new(Box::new(move |args: Value| {
+            std::sync::Arc::<Box<ToolFunc>>::new(Box::new(move |args: Value| {
                 Box::pin(async move {
                     use anyhow::bail;
 
@@ -366,8 +344,13 @@ mod tests {
 
         let mut agent = Agent::new(model, tools);
 
-        let mut strm =
-            Box::pin(agent.run(vec![Part::text("How much hot currently in Dubai?")], None));
+        let mut strm = Box::pin(agent.run(
+            vec![
+                    Message::new(Role::User)
+                        .with_contents(vec![Part::text("How much hot currently in Dubai?")]),
+                ],
+            None,
+        ));
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
@@ -406,9 +389,9 @@ mod tests {
         assert_eq!(agent_tools[1].get_description().name, "convert_time");
 
         let mut strm = Box::pin(agent.run(
-            vec![Part::text(
+            vec![Message::new(Role::User).with_contents(vec![Part::text(
                 "What time is it now in America/New_York timezone?",
-            )],
+            )])],
             None,
         ));
         while let Some(output) = strm.next().await {
@@ -435,7 +418,7 @@ mod py {
 
     fn spawn<'a>(
         mut agent: Agent,
-        contents: Vec<Part>,
+        messages: Vec<Message>,
         config: Option<InferenceConfig>,
     ) -> anyhow::Result<(
         &'a tokio::runtime::Runtime,
@@ -444,7 +427,7 @@ mod py {
         let (tx, rx) = async_channel::unbounded::<anyhow::Result<AgentResponse>>();
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         rt.spawn(async move {
-            let mut stream = agent.run(contents, config).boxed();
+            let mut stream = agent.run(messages, config).boxed();
 
             while let Some(item) = stream.next().await {
                 if tx.send(item).await.is_err() {
@@ -569,37 +552,23 @@ mod py {
             self.remove_tool(tool_name);
         }
 
-        // #[pyo3(name="run", signature = (messages, config=None))]
-        #[pyo3(name="run", signature = (contents, config=None))]
+        #[pyo3(name="run", signature = (messages, config=None))]
         fn run_py(
             &mut self,
-            // messages: Vec<Message>,
-            contents: Vec<Part>,
+            messages: Vec<Message>,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<AgentRunIterator> {
-            let (_, rx) = spawn(
-                self.clone(),
-                // messages,
-                contents,
-                config,
-            )?;
+            let (_, rx) = spawn(self.clone(), messages, config)?;
             Ok(AgentRunIterator { rx })
         }
 
-        // #[pyo3(name="run_sync", signature = (messages, config=None))]
-        #[pyo3(name="run_sync", signature = (contents, config=None))]
+        #[pyo3(name="run_sync", signature = (messages, config=None))]
         fn run_sync_py(
             &mut self,
-            // messages: Vec<Message>,
-            contents: Vec<Part>,
+            messages: Vec<Message>,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<AgentRunSyncIterator> {
-            let (rt, rx) = spawn(
-                self.clone(),
-                // messages,
-                contents,
-                config,
-            )?;
+            let (rt, rx) = spawn(self.clone(), messages, config)?;
             Ok(AgentRunSyncIterator { rt, rx })
         }
     }

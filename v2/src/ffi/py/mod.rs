@@ -16,6 +16,7 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<crate::tool::Tool>()?;
     m.add_class::<crate::tool::MCPClient>()?;
     m.add_class::<crate::value::ToolDesc>()?;
+    m.add_class::<crate::model::APISpecification>()?;
     m.add_class::<crate::model::EmbeddingModel>()?;
     m.add_class::<crate::model::ThinkEffort>()?;
     m.add_class::<crate::model::LangModel>()?;
