@@ -9,7 +9,10 @@ describe("Ailoy Agent", async () => {
     });
     const agent = new ailoy.Agent(model, []);
     for await (const response of agent.run([
-      { type: "text", text: "What is your name?" },
+      {
+        role: "user",
+        contents: [{ type: "text", text: "What is your name?" }],
+      },
     ])) {
       console.log(response);
     }
@@ -60,8 +63,13 @@ describe("Ailoy Agent", async () => {
 
     for await (const response of agent.run([
       {
-        type: "text",
-        text: "What is the temperature of Seoul in Celsius? Answer by using `temperature` tool.",
+        role: "user",
+        contents: [
+          {
+            type: "text",
+            text: "What is the temperature of Seoul in Celsius? Answer by using `temperature` tool.",
+          },
+        ],
       },
     ])) {
       console.log(response);

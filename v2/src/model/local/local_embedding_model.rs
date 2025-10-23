@@ -12,7 +12,7 @@ use crate::{
         local::{EmbeddingModelInferencer, Tokenizer},
     },
     utils::{BoxFuture, Normalize},
-    vector_store::Embedding,
+    value::Embedding,
 };
 
 #[derive(Debug, Clone)]
@@ -40,7 +40,7 @@ impl EmbeddingModelInference for LocalEmbeddingModel {
             embedding = embedding.normalized();
         }
 
-        Ok(embedding)
+        Ok(embedding.into())
     }
 }
 
@@ -132,14 +132,6 @@ mod tests {
     use super::*;
     use crate::utils::log;
 
-    fn dot(a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() {
-            panic!("Cannot dot two vectors of different lengths");
-        }
-
-        a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
-    }
-
     #[multi_platform_test]
     async fn infer_embedding() {
         let cache = crate::cache::Cache::new();
@@ -199,11 +191,7 @@ mod tests {
             .normalized();
         let answer_embedding1 = model.infer("BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.".to_owned()).await.unwrap().normalized();
         let answer_embedding2 = model.infer("BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document".to_owned()).await.unwrap().normalized();
-        assert!(
-            dot(&query_embedding1, &answer_embedding1) > dot(&query_embedding1, &answer_embedding2)
-        );
-        assert!(
-            dot(&query_embedding2, &answer_embedding1) < dot(&query_embedding2, &answer_embedding2)
-        );
+        assert!(&query_embedding1 * &answer_embedding1 > &query_embedding1 * &answer_embedding2);
+        assert!(&query_embedding2 * &answer_embedding1 < &query_embedding2 * &answer_embedding2);
     }
 }

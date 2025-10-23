@@ -1,196 +1,238 @@
-/* tslint:disable */
-/* eslint-disable */
-/**
- * The `ReadableStreamType` enum.
- *
- * *This API requires the following crate features to be activated: `ReadableStreamType`*
- */
-type ReadableStreamType = "bytes";
-export interface KnowledgeConfig {
-    topK?: number;
+export class Agent {
+  free(): void;
+  [Symbol.dispose](): void;
+  /**
+   * Construct a new Agent instance with provided `LangModel` and `Tool`s.
+   *
+   * Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after the agent is initialized.
+   * If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
+   */
+  constructor(lm: LangModel, tools?: Tool[] | null);
+  addTool(tool: Tool): void;
+  removeTool(toolName: string): void;
+  setKnowledge(knowledge: Knowledge): void;
+  removeKnowledge(): void;
+  run(
+    messages: Message[],
+    config?: InferenceConfig | null
+  ): AsyncIterable<AgentResponse>;
+}
+
+export class EmbeddingModel {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  static newLocal(
+    modelName: string,
+    progressCallback?: (progress: CacheProgress) => void | null
+  ): Promise<EmbeddingModel>;
+  infer(text: string): Promise<Float32Array>;
+}
+
+export class Knowledge {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  static newVectorStore(
+    store: VectorStore,
+    embedding_model: EmbeddingModel
+  ): Knowledge;
+  retrieve(query: string, config?: KnowledgeConfig | null): Promise<Document[]>;
+  asTool(): Tool;
+}
+
+export class LangModel {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  static newLocal(
+    modelName: string,
+    progressCallback?: (progress: CacheProgress) => void | null
+  ): Promise<LangModel>;
+  static newStreamAPI(
+    spec: APISpecification,
+    modelName: string,
+    apiKey: string
+  ): Promise<LangModel>;
+  infer(
+    msgs: Message[],
+    tools?: ToolDesc[] | null,
+    docs?: Document[] | null,
+    config?: InferenceConfig | null
+  ): AsyncIterable<MessageOutput>;
+}
+
+export class MCPClient {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  static streamableHttp(url: string): Promise<MCPClient>;
+  readonly tools: Tool[];
+}
+
+export class Tool {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  static newBuiltin(kind: BuiltinToolKind): Tool;
+  static newFunction(desc: ToolDesc, func: (args: any) => Promise<any>): Tool;
+  run(args: any): Promise<any>;
+  readonly description: ToolDesc;
+}
+
+export class VectorStore {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  static newFaiss(dim: number): Promise<VectorStore>;
+  static newChroma(
+    url: string,
+    collectionName?: string | null
+  ): Promise<VectorStore>;
+  addVector(input: VectorStoreAddInput): Promise<string>;
+  addVectors(inputs: VectorStoreAddInput[]): Promise<string[]>;
+  getById(id: string): Promise<VectorStoreGetResult | undefined>;
+  getByIds(ids: string[]): Promise<VectorStoreGetResult[]>;
+  retrieve(
+    query_embedding: Float32Array,
+    top_k: number
+  ): Promise<VectorStoreRetrieveResult[]>;
+  removeVector(id: string): Promise<void>;
+  removeVectors(ids: string[]): Promise<void>;
+  clear(): Promise<void>;
+  count(): Promise<number>;
 }
 
 /**
  * The yielded value from agent.run().
  */
 export interface AgentResponse {
-    /**
-     * The message delta per iteration.
-     */
-    delta: MessageDelta;
-    /**
-     * Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
-     */
-    finish_reason: FinishReason | undefined;
-    /**
-     * Optional aggregated message.
-     */
-    aggregated: Message | undefined;
+  /**
+   * The message delta per iteration.
+   */
+  delta: MessageDelta;
+  /**
+   * Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
+   */
+  finish_reason: FinishReason | undefined;
+  /**
+   * Optional aggregated message.
+   */
+  aggregated: Message | undefined;
 }
 
-export interface VectorStoreRetrieveResult {
-    id: string;
-    document: string;
-    metadata?: Metadata;
-    distance: number;
+export type APISpecification =
+  | "ChatCompletion"
+  | "OpenAI"
+  | "Gemini"
+  | "Claude"
+  | "Responses"
+  | "Grok";
+
+export type BuiltinToolKind = "terminal";
+
+export type Bytes = Uint8Array;
+
+export interface CacheProgress {
+  comment: string;
+  current: number;
+  total: number;
 }
 
-export interface VectorStoreGetResult {
-    id: string;
-    document: string;
-    metadata?: Metadata;
-    embedding: Embedding;
-}
-
-export interface VectorStoreAddInput {
-    embedding: Embedding;
-    document: string;
-    metadata?: Metadata;
-}
-
-/**
- * Represents a partial or incremental update (delta) of a [`Part`].
- *
- * This type enables composable, streaming updates to message parts.
- * For example, text may be produced token-by-token, or a function call
- * may be emitted gradually as its arguments stream in.
- *
- * # Example
- *
- * ## Rust
- * ```rust
- * let d1 = PartDelta::Text { text: \"Hel\".into() };
- * let d2 = PartDelta::Text { text: \"lo\".into() };
- * let merged = d1.aggregate(d2).unwrap();
- * assert_eq!(merged.to_text().unwrap(), \"Hello\");
- * ```
- *
- * # Error Handling
- * Aggregation or finalization may return an error if incompatible deltas
- * (e.g. mismatched function IDs) are combined or invalid JSON arguments are given.
- */
-export type PartDelta = { type: "text"; text: string } | { type: "function"; id: string | undefined; function: PartDeltaFunction } | { type: "value"; value: Value } | { type: "null" };
-
-/**
- * Represents an incremental update (delta) of a function part.
- *
- * This type is used during streaming or partial message generation, when function calls are being streamed as text chunks or partial JSON fragments.
- *
- * # Variants
- * * `Verbatim(String)` — Raw text content, typically a partial JSON fragment.
- * * `WithStringArgs { name, arguments }` — Function name and its serialized arguments as strings.
- * * `WithParsedArgs { name, arguments }` — Function name and parsed arguments as a `Value`.
- *
- * # Use Case
- * When the model streams out a function call response (e.g., `\"function_call\":{\"name\":...}`),
- * the incremental deltas can be aggregated until the full function payload is formed.
- *
- * # Example
- * ```rust
- * let delta = PartDeltaFunction::WithStringArgs {
- *     name: \"translate\".into(),
- *     arguments: r#\"{\"text\":\"hi\"}\"#.into(),
- * };
- * `
- */
-export type PartDeltaFunction = { type: "verbatim"; text: string } | { type: "with_string_args"; name: string; arguments: string } | { type: "with_parsed_args"; name: string; arguments: Value };
-
-/**
- * Represents a semantically meaningful content unit exchanged between the model and the user.
- *
- * Conceptually, each `Part` encapsulates a piece of **data** that contributes
- * to a chat message — such as text, a function invocation, or an image.  
- *
- * For example, a single message consisting of a sequence like  
- * `(text..., image, text...)` is represented as a `Message` containing
- * an array of three `Part` elements.
- *
- * Note that a `Part` does **not** carry \"intent\", such as \"reasoning\" or \"tool call\".
- * These higher-level semantics are determined by the context of a [`Message`].
- *
- * # Example
- *
- * ## Rust
- * ```rust
- * let part = Part::text(\"Hello, world!\");
- * assert!(part.is_text());
- * ```
- *
- */
-export type Part = { type: "text"; text: string } | { type: "function"; id: string | undefined; function: PartFunction } | { type: "value"; value: Value } | { type: "image"; image: PartImage };
-
-/**
- * Represents the image data contained in a [`Part`].
- *
- * `PartImage` provides structured access to image data.
- * Currently, it only implments \"binary\" types.
- *
- * # Example
- * ```rust
- * let part = Part::image_binary(640, 480, \"rgb\", (0..640*480*3).map(|i| (i % 255) as u8)).unwrap();
- *
- * if let Some(img) = part.as_image() {
- *     assert_eq!(img.height(), 640);
- *     assert_eq!(img.width(), 480);
- * }
- * ```
- */
-export type PartImage = { type: "binary"; height: number; width: number; colorspace: PartImageColorspace; data: Bytes };
-
-/**
- * Represents the color space of an image part.
- *
- * This enum defines the supported pixel formats of image data. It determines
- * how many channels each pixel has and how the image should be interpreted.
- *
- * # Examples
- * ```rust
- * let c = PartImageColorspace::RGB;
- * assert_eq!(c.channel(), 3);
- * ```
- */
-export type PartImageColorspace = "grayscale" | "rgb" | "rgba";
-
-/**
- * Represents a function call contained within a message part.
- */
-export interface PartFunction {
-    /**
-     * The name of the function
-     */
-    name: string;
-    /**
-     * The arguments of the function, usually represented as a JSON object.
-     */
-    arguments: Value;
+export interface Document {
+  id: string;
+  title: string | undefined;
+  text: string;
 }
 
 /**
- * A container for a streamed message delta and its termination signal.
- *
- * During streaming, `delta` carries the incremental payload; once a terminal
- * condition is reached, `finish_reason` may be populated to explain why.
- *
- * # Examples
- * ```rust
- * let mut out = MessageOutput::new();
- * out.delta = MessageDelta::new().with_role(Role::Assistant).with_contents([PartDelta::Text { text: \"Hi\".into() }]);
- * assert!(out.finish_reason.is_none());
- * ```
- *
- * # Lifecycle
- * - While streaming: `finish_reason` is typically `None`.
- * - On completion: `finish_reason` is set; callers can then `finish()` the delta to obtain a concrete [`Message`].
+ * Provides a polyfill for LLMs that do not natively support the Document feature.
  */
-export interface MessageOutput {
-    delta: MessageDelta;
-    finish_reason: FinishReason | undefined;
+export interface DocumentPolyfill {
+  system_message_template?: string;
+  query_message_template?: string;
 }
+
+type Embedding = Float32Array;
 
 /**
  * Explains why a language model\'s streamed generation finished.
  */
-export type FinishReason = { type: "stop" } | { type: "length" } | { type: "tool_call" } | { type: "refusal"; reason: string };
+export type FinishReason =
+  | { type: "stop" }
+  | { type: "length" }
+  | { type: "tool_call" }
+  | { type: "refusal"; reason: string };
+
+export type Grammar =
+  | { type: "plain" }
+  | { type: "json" }
+  | { type: "jsonschema"; schema: string }
+  | { type: "regex"; regex: string }
+  | { type: "cfg"; cfg: string };
+
+export interface InferenceConfig {
+  documentPolyfill?: DocumentPolyfill;
+  thinkEffort?: ThinkEffort;
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  grammar?: Grammar;
+}
+
+export interface KnowledgeConfig {
+  topK?: number;
+}
+
+/**
+ * A chat message generated by a user, model, or tool.
+ *
+ * `Message` is the concrete, non-streaming container used by the application to store, transmit, or feed structured content into models or tools.
+ * It can represent various kinds of messages, including user input, assistant responses, tool-call outputs, or signed *thinking* metadata.
+ *
+ * Note that many different kinds of messages can be produced.
+ * For example, a language model may internally generate a `thinking` trace before emitting its final output, in order to improve reasoning accuracy.
+ * In other cases, a model may produce *function calls* — structured outputs that instruct external tools to perform specific actions.
+ *
+ * This struct is designed to handle all of these situations in a unified way.
+ *
+ * # Example
+ *
+ * ## Rust
+ * ```rust
+ * let msg = Message::new(Role::User).with_contents([Part::text(\"hello\")]);
+ * assert_eq!(msg.role, Role::User);
+ * assert_eq!(msg.contents.len(), 1);
+ * ```
+ */
+export interface Message {
+  /**
+   * Author of the message.
+   */
+  role: Role;
+  /**
+   * Primary message parts (e.g., text, image, value, or function).
+   */
+  contents: Part[];
+  /**
+   * Optional stable identifier for deduplication or threading.
+   */
+  id?: string;
+  /**
+   * Internal “thinking” text used by some models before producing final output.
+   */
+  thinking?: string;
+  /**
+   * Tool-call parts emitted alongside the main contents.
+   */
+  tool_calls?: Part[];
+  /**
+   * Optional signature for the `thinking` field.
+   *
+   * This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
+   */
+  signature?: string;
+}
 
 /**
  * A streaming, incremental update to a [`Message`].
@@ -219,102 +261,176 @@ export type FinishReason = { type: "stop" } | { type: "length" } | { type: "tool
  * ```
  */
 export interface MessageDelta {
-    role: Role | undefined;
-    id: string | undefined;
-    thinking: string | undefined;
-    contents: PartDelta[];
-    tool_calls: PartDelta[];
-    signature: string | undefined;
+  role: Role | undefined;
+  id: string | undefined;
+  thinking: string | undefined;
+  contents: PartDelta[];
+  tool_calls: PartDelta[];
+  signature: string | undefined;
 }
 
 /**
- * A chat message generated by a user, model, or tool.
+ * A container for a streamed message delta and its termination signal.
  *
- * `Message` is the concrete, non-streaming container used by the application to store, transmit, or feed structured content into models or tools.
- * It can represent various kinds of messages, including user input, assistant responses, tool-call outputs, or signed *thinking* metadata.
+ * During streaming, `delta` carries the incremental payload; once a terminal
+ * condition is reached, `finish_reason` may be populated to explain why.
  *
- * Note that many different kinds of messages can be produced.
- * For example, a language model may internally generate a `thinking` trace before emitting its final output, in order to improve reasoning accuracy.
- * In other cases, a model may produce *function calls* — structured outputs that instruct external tools to perform specific actions.
+ * # Examples
+ * ```rust
+ * let mut out = MessageOutput::new();
+ * out.delta = MessageDelta::new().with_role(Role::Assistant).with_contents([PartDelta::Text { text: \"Hi\".into() }]);
+ * assert!(out.finish_reason.is_none());
+ * ```
  *
- * This struct is designed to handle all of these situations in a unified way.
+ * # Lifecycle
+ * - While streaming: `finish_reason` is typically `None`.
+ * - On completion: `finish_reason` is set; callers can then `finish()` the delta to obtain a concrete [`Message`].
+ */
+export interface MessageOutput {
+  delta: MessageDelta;
+  finish_reason: FinishReason | undefined;
+}
+
+type Metadata = Record<string, any>;
+
+/**
+ * Represents a semantically meaningful content unit exchanged between the model and the user.
+ *
+ * Conceptually, each `Part` encapsulates a piece of **data** that contributes
+ * to a chat message — such as text, a function invocation, or an image.
+ *
+ * For example, a single message consisting of a sequence like
+ * `(text..., image, text...)` is represented as a `Message` containing
+ * an array of three `Part` elements.
+ *
+ * Note that a `Part` does **not** carry \"intent\", such as \"reasoning\" or \"tool call\".
+ * These higher-level semantics are determined by the context of a [`Message`].
  *
  * # Example
  *
  * ## Rust
  * ```rust
- * let msg = Message::new(Role::User).with_contents([Part::text(\"hello\")]);
- * assert_eq!(msg.role, Role::User);
- * assert_eq!(msg.contents.len(), 1);
+ * let part = Part::text(\"Hello, world!\");
+ * assert!(part.is_text());
+ * ```
+ *
+ */
+export type Part =
+  | { type: "text"; text: string }
+  | { type: "function"; id: string | undefined; function: PartFunction }
+  | { type: "value"; value: Value }
+  | { type: "image"; image: PartImage };
+
+/**
+ * Represents a partial or incremental update (delta) of a [`Part`].
+ *
+ * This type enables composable, streaming updates to message parts.
+ * For example, text may be produced token-by-token, or a function call
+ * may be emitted gradually as its arguments stream in.
+ *
+ * # Example
+ *
+ * ## Rust
+ * ```rust
+ * let d1 = PartDelta::Text { text: \"Hel\".into() };
+ * let d2 = PartDelta::Text { text: \"lo\".into() };
+ * let merged = d1.aggregate(d2).unwrap();
+ * assert_eq!(merged.to_text().unwrap(), \"Hello\");
+ * ```
+ *
+ * # Error Handling
+ * Aggregation or finalization may return an error if incompatible deltas
+ * (e.g. mismatched function IDs) are combined or invalid JSON arguments are given.
+ */
+export type PartDelta =
+  | { type: "text"; text: string }
+  | { type: "function"; id: string | undefined; function: PartDeltaFunction }
+  | { type: "value"; value: Value }
+  | { type: "null" };
+
+/**
+ * Represents an incremental update (delta) of a function part.
+ *
+ * This type is used during streaming or partial message generation, when function calls are being streamed as text chunks or partial JSON fragments.
+ *
+ * # Variants
+ * * `Verbatim(String)` — Raw text content, typically a partial JSON fragment.
+ * * `WithStringArgs { name, arguments }` — Function name and its serialized arguments as strings.
+ * * `WithParsedArgs { name, arguments }` — Function name and parsed arguments as a `Value`.
+ *
+ * # Use Case
+ * When the model streams out a function call response (e.g., `\"function_call\":{\"name\":...}`),
+ * the incremental deltas can be aggregated until the full function payload is formed.
+ *
+ * # Example
+ * ```rust
+ * let delta = PartDeltaFunction::WithStringArgs {
+ *     name: \"translate\".into(),
+ *     arguments: r#\"{\"text\":\"hi\"}\"#.into(),
+ * };
+ * `
+ */
+export type PartDeltaFunction =
+  | { type: "verbatim"; text: string }
+  | { type: "with_string_args"; name: string; arguments: string }
+  | { type: "with_parsed_args"; name: string; arguments: Value };
+
+/**
+ * Represents a function call contained within a message part.
+ */
+export interface PartFunction {
+  /**
+   * The name of the function
+   */
+  name: string;
+  /**
+   * The arguments of the function, usually represented as a JSON object.
+   */
+  arguments: Value;
+}
+
+/**
+ * Represents the image data contained in a [`Part`].
+ *
+ * `PartImage` provides structured access to image data.
+ * Currently, it only implments \"binary\" types.
+ *
+ * # Example
+ * ```rust
+ * let part = Part::image_binary(640, 480, \"rgb\", (0..640*480*3).map(|i| (i % 255) as u8)).unwrap();
+ *
+ * if let Some(img) = part.as_image() {
+ *     assert_eq!(img.height(), 640);
+ *     assert_eq!(img.width(), 480);
+ * }
  * ```
  */
-export interface Message {
-    /**
-     * Author of the message.
-     */
-    role: Role;
-    /**
-     * Primary message parts (e.g., text, image, value, or function).
-     */
-    contents: Part[];
-    /**
-     * Optional stable identifier for deduplication or threading.
-     */
-    id?: string;
-    /**
-     * Internal “thinking” text used by some models before producing final output.
-     */
-    thinking?: string;
-    /**
-     * Tool-call parts emitted alongside the main contents.
-     */
-    tool_calls?: Part[];
-    /**
-     * Optional signature for the `thinking` field.
-     *
-     * This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
-     */
-    signature?: string;
-}
+export type PartImage = {
+  type: "binary";
+  height: number;
+  width: number;
+  colorspace: PartImageColorspace;
+  data: Bytes;
+};
+
+/**
+ * Represents the color space of an image part.
+ *
+ * This enum defines the supported pixel formats of image data. It determines
+ * how many channels each pixel has and how the image should be interpreted.
+ *
+ * # Examples
+ * ```rust
+ * let c = PartImageColorspace::RGB;
+ * assert_eq!(c.channel(), 3);
+ * ```
+ */
+export type PartImageColorspace = "grayscale" | "rgb" | "rgba";
 
 /**
  * The author of a message (or streaming delta) in a chat.
  */
 export type Role = "system" | "user" | "assistant" | "tool";
-
-type Embedding = Float32Array;
-type Metadata = Record<string, any>;
-
-export type Value = undefined | boolean | number | number | number | string | Record<string, any> | Value[];
-
-export type Bytes = Uint8Array;
-
-export interface CacheProgress {
-    comment: string;
-    current: number;
-    total: number;
-}
-
-/**
- * Provides a polyfill for LLMs that do not natively support the Document feature.
- */
-export interface DocumentPolyfill {
-    system_message_template?: string;
-    query_message_template?: string;
-}
-
-export type APISpecification = "ChatCompletion" | "OpenAI" | "Gemini" | "Claude" | "Responses" | "Grok";
-
-export interface InferenceConfig {
-    documentPolyfill?: DocumentPolyfill;
-    thinkEffort?: ThinkEffort;
-    temperature?: number;
-    topP?: number;
-    maxTokens?: number;
-    grammar?: Grammar;
-}
-
-export type Grammar = { type: "plain" } | { type: "json" } | { type: "jsonschema"; schema: string } | { type: "regex"; regex: string } | { type: "cfg"; cfg: string };
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
 
@@ -364,124 +480,52 @@ export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
  * ```
  */
 export interface ToolDesc {
-    /**
-     * The unique name of the tool or function.
-     */
-    name: string;
-    /**
-     * A natural-language description of what the tool does.
-     */
-    description?: string;
-    /**
-     * A [`Value`] describing the JSON Schema of the expected parameters.
-     * Typically an object schema such as `{ \"type\": \"object\", \"properties\": ... }`.
-     */
-    parameters: Value;
-    /**
-     * An optional [`Value`] that defines the return value schema.  
-     * If omitted, the tool is assumed to return free-form text or JSON.
-     */
-    returns?: Value;
-}
-
-export interface Document {
-    id: string;
-    title: string | undefined;
-    text: string;
-}
-
-export class Agent {
-  free(): void;
-  [Symbol.dispose](): void;
   /**
-   * Construct a new Agent instance with provided `LangModel` and `Tool`s.
-   *
-   * Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after the agent is initialized.
-   * If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
+   * The unique name of the tool or function.
    */
-  constructor(lm: LangModel, tools?: Tool[] | null);
-  addTool(tool: Tool): Promise<void>;
-  removeTool(toolName: string): Promise<void>;
-  setKnowledge(knowledge: Knowledge): void;
-  removeKnowledge(): void;
-  run(contents: Part[]): AsyncIterable<AgentResponse>;
+  name: string;
+  /**
+   * A natural-language description of what the tool does.
+   */
+  description?: string;
+  /**
+   * A [`Value`] describing the JSON Schema of the expected parameters.
+   * Typically an object schema such as `{ \"type\": \"object\", \"properties\": ... }`.
+   */
+  parameters: Value;
+  /**
+   * An optional [`Value`] that defines the return value schema.
+   * If omitted, the tool is assumed to return free-form text or JSON.
+   */
+  returns?: Value;
 }
-export class EmbeddingModel {
-  private constructor();
-  free(): void;
-  [Symbol.dispose](): void;
-  static newLocal(modelName: string, progressCallback?: (progress: CacheProgress) => void | null): Promise<EmbeddingModel>;
-  infer(text: string): Promise<Float32Array>;
+
+export type Value =
+  | undefined
+  | boolean
+  | number
+  | number
+  | number
+  | string
+  | Record<string, any>
+  | Value[];
+
+export interface VectorStoreAddInput {
+  embedding: Embedding;
+  document: string;
+  metadata?: Metadata;
 }
-export class IntoUnderlyingByteSource {
-  private constructor();
-  free(): void;
-  [Symbol.dispose](): void;
-  start(controller: ReadableByteStreamController): void;
-  pull(controller: ReadableByteStreamController): Promise<any>;
-  cancel(): void;
-  readonly type: ReadableStreamType;
-  readonly autoAllocateChunkSize: number;
+
+export interface VectorStoreGetResult {
+  id: string;
+  document: string;
+  metadata?: Metadata;
+  embedding: Embedding;
 }
-export class IntoUnderlyingSink {
-  private constructor();
-  free(): void;
-  [Symbol.dispose](): void;
-  write(chunk: any): Promise<any>;
-  close(): Promise<any>;
-  abort(reason: any): Promise<any>;
-}
-export class IntoUnderlyingSource {
-  private constructor();
-  free(): void;
-  [Symbol.dispose](): void;
-  pull(controller: ReadableStreamDefaultController): Promise<any>;
-  cancel(): void;
-}
-export class Knowledge {
-  private constructor();
-  free(): void;
-  [Symbol.dispose](): void;
-  static newVectorStore(store: VectorStore, embedding_model: EmbeddingModel): Knowledge;
-  retrieve(query: string, config?: KnowledgeConfig | null): Promise<Document[]>;
-  asTool(): Tool;
-}
-export class LangModel {
-  private constructor();
-  free(): void;
-  [Symbol.dispose](): void;
-  static newLocal(modelName: string, progressCallback?: (progress: CacheProgress) => void | null): Promise<LangModel>;
-  static newStreamAPI(spec: APISpecification, modelName: string, apiKey: string): Promise<LangModel>;
-  infer(msgs: Message[], tools?: ToolDesc[] | null, docs?: Document[] | null, config?: InferenceConfig | null): AsyncIterable<MessageOutput>;
-}
-export class MCPClient {
-  private constructor();
-  free(): void;
-  [Symbol.dispose](): void;
-  static streamableHttp(url: string): Promise<MCPClient>;
-  readonly tools: Tool[];
-}
-export class Tool {
-  private constructor();
-  free(): void;
-  [Symbol.dispose](): void;
-  static newFunction(desc: ToolDesc, func: (args: any) => Promise<any>): Tool;
-  run(args: any): Promise<any>;
-  readonly description: ToolDesc;
-}
-export class VectorStore {
-  private constructor();
-  free(): void;
-  [Symbol.dispose](): void;
-  static newFaiss(dim: number): Promise<VectorStore>;
-  static newChroma(url: string, collectionName?: string | null): Promise<VectorStore>;
-  addVector(input: VectorStoreAddInput): Promise<string>;
-  addVectors(inputs: VectorStoreAddInput[]): Promise<string[]>;
-  getById(id: string): Promise<VectorStoreGetResult | undefined>;
-  getByIds(ids: string[]): Promise<VectorStoreGetResult[]>;
-  retrieve(query_embedding: Float32Array, top_k: number): Promise<VectorStoreRetrieveResult[]>;
-  removeVector(id: string): Promise<void>;
-  removeVectors(ids: string[]): Promise<void>;
-  clear(): Promise<void>;
-  count(): Promise<number>;
+
+export interface VectorStoreRetrieveResult {
+  id: string;
+  document: string;
+  metadata?: Metadata;
+  distance: number;
 }

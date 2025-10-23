@@ -13,6 +13,7 @@ use crate::{
 #[derive(Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Agent {
     lm: LangModel,
@@ -21,9 +22,10 @@ pub struct Agent {
 }
 
 /// The yielded value from agent.run().
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct AgentResponse {
@@ -188,6 +190,145 @@ impl Agent {
     }
 }
 
+#[cfg(feature = "nodejs")]
+mod node {
+    use std::sync::Arc;
+
+    use futures::lock::Mutex;
+    use napi::{JsSymbol, Status, bindgen_prelude::*};
+    use napi_derive::napi;
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::ffi::node::common::get_or_create_runtime;
+
+    #[napi(object)]
+    pub struct AgentRunIteratorResult {
+        pub value: AgentResponse,
+        pub done: bool,
+    }
+
+    #[derive(Clone)]
+    #[napi]
+    pub struct AgentRunIterator {
+        rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<AgentResponse>>>>,
+    }
+
+    #[napi]
+    impl AgentRunIterator {
+        #[napi(js_name = "[Symbol.asyncIterator]")]
+        pub fn async_iterator(&self) -> &Self {
+            // This is a dummy function to add typing for Symbol.asyncIterator
+            self
+        }
+
+        #[napi]
+        pub async unsafe fn next(&mut self) -> napi::Result<AgentRunIteratorResult> {
+            let mut rx = self.rx.lock().await;
+            match rx.recv().await {
+                Some(Ok(response)) => Ok(AgentRunIteratorResult {
+                    value: response,
+                    done: false,
+                }),
+                Some(Err(e)) => Err(napi::Error::new(Status::GenericFailure, e)),
+                None => Ok(AgentRunIteratorResult {
+                    value: AgentResponse::default(),
+                    done: true,
+                }),
+            }
+        }
+    }
+
+    impl AgentRunIterator {
+        fn to_async_iterator<'a>(self, env: Env) -> napi::Result<Object<'a>> {
+            let mut obj = Object::new(&env)?;
+
+            let global = env.get_global()?;
+            let symbol: Function = global.get_named_property("Symbol")?;
+            let symbol_async_iterator: JsSymbol = symbol.get_named_property("asyncIterator")?;
+
+            let func: Function<(), AgentRunIterator> =
+                env.create_function_from_closure("asyncIterator", move |_| Ok(self.clone()))?;
+
+            obj.set_property(symbol_async_iterator, func)?;
+
+            Ok(obj)
+        }
+    }
+
+    #[napi]
+    impl Agent {
+        #[napi(constructor)]
+        pub fn new_js(lm: &LangModel, tools: Option<Vec<&Tool>>) -> Self {
+            Self::new(
+                lm.clone(),
+                tools.unwrap_or(vec![]).iter().map(|&t| t.clone()),
+            )
+        }
+
+        #[napi(js_name = "addTool")]
+        pub unsafe fn add_tool_js(&mut self, tool: &Tool) {
+            self.add_tool(tool.clone())
+        }
+
+        #[napi(js_name = "addTools")]
+        pub unsafe fn add_tools_js(&mut self, tools: Vec<&Tool>) {
+            self.add_tools(tools.iter().map(|&t| t.clone()).collect())
+        }
+
+        #[napi(js_name = "removeTool")]
+        pub unsafe fn remove_tool_js(&mut self, tool_name: String) {
+            self.remove_tool(tool_name)
+        }
+
+        #[napi(js_name = "removeTools")]
+        pub unsafe fn remove_tools_js(&mut self, tool_names: Vec<String>) {
+            self.remove_tools(tool_names)
+        }
+
+        #[napi(js_name = "setKnowledge")]
+        pub unsafe fn set_knowledge_js(&mut self, knowledge: &Knowledge) {
+            self.set_knowledge(knowledge.clone())
+        }
+
+        #[napi(js_name = "removeKnowledge")]
+        pub unsafe fn remove_knowledge_js(&mut self) {
+            self.remove_knowledge()
+        }
+
+        #[napi(js_name = "run", ts_return_type = "AgentRunIterator")]
+        pub fn run_js<'a>(
+            &'a mut self,
+            env: Env,
+            messages: Vec<Message>,
+            config: Option<InferenceConfig>,
+        ) -> napi::Result<Object<'a>> {
+            let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<AgentResponse>>();
+            let rt = get_or_create_runtime();
+            let mut agent = self.clone();
+
+            rt.spawn(async move {
+                let mut stream = agent.run(messages, config).boxed();
+
+                while let Some(item) = stream.next().await {
+                    if tx
+                        .send(item.map_err(|e| anyhow::anyhow!(e.to_string())))
+                        .is_err()
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            });
+
+            let it = AgentRunIterator {
+                rx: Arc::new(Mutex::new(rx)),
+            };
+            it.to_async_iterator(env)
+        }
+    }
+}
+
 #[cfg(feature = "wasm")]
 mod wasm {
     use wasm_bindgen::prelude::*;
@@ -207,40 +348,33 @@ mod wasm {
         }
 
         #[wasm_bindgen(js_name = "addTool")]
-        pub async fn add_tool_js(&mut self, tool: &Tool) -> Result<(), js_sys::Error> {
+        pub fn add_tool_js(&mut self, tool: &Tool) {
             self.add_tool(tool.clone())
-                .await
-                .map_err(|e| js_sys::Error::new(&e.to_string()))
         }
 
         #[wasm_bindgen(js_name = "removeTool")]
-        pub async fn remove_tool_js(
-            &mut self,
-            #[wasm_bindgen(js_name = "toolName")] tool_name: String,
-        ) -> Result<(), js_sys::Error> {
+        pub fn remove_tool_js(&mut self, #[wasm_bindgen(js_name = "toolName")] tool_name: String) {
             self.remove_tool(tool_name)
-                .await
-                .map_err(|e| js_sys::Error::new(&e.to_string()))
         }
 
         #[wasm_bindgen(js_name = "setKnowledge")]
         pub fn set_knowledge_js(&mut self, knowledge: &Knowledge) {
-            self.set_knowledge(knowledge.clone());
+            self.set_knowledge(knowledge.clone())
         }
 
         #[wasm_bindgen(js_name = "removeKnowledge")]
         pub fn remove_knowledge_js(&mut self) {
-            self.remove_knowledge();
+            self.remove_knowledge()
         }
 
         #[wasm_bindgen(
             js_name = "run",
             unchecked_return_type = "AsyncIterable<AgentResponse>"
         )]
-        pub fn run_js(&self, contents: Vec<Part>) -> JsValue {
+        pub fn run_js(&self, messages: Vec<Message>, config: Option<InferenceConfig>) -> JsValue {
             let mut agent = self.clone();
             let stream = async_stream::stream! {
-                let mut inner_stream = agent.run(contents);
+                let mut inner_stream = agent.run(messages, config);
                 while let Some(item) = inner_stream.next().await {
                     yield item;
                 }
@@ -377,9 +511,9 @@ mod tests {
         });
         let mcp_client = MCPClient::from_stdio(command).await.unwrap();
         let mcp_tools = mcp_client
-            .tools
-            .into_iter()
-            .map(|tool| Tool::new_mcp(tool))
+            .get_tools()
+            .iter()
+            .map(|tool| Tool::new_mcp(tool.clone()))
             .collect();
         agent.add_tools(mcp_tools);
 

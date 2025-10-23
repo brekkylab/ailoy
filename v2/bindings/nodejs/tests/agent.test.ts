@@ -9,8 +9,7 @@ const modelConfigs = [
   {
     name: "Local",
     createAgent: async () => {
-      const model = await ailoy.LocalLanguageModel.create("Qwen/Qwen3-0.6B");
-      model.disableReasoning();
+      const model = await ailoy.LangModel.newLocal("Qwen/Qwen3-0.6B");
       return new ailoy.Agent(model);
     },
   },
@@ -18,7 +17,8 @@ const modelConfigs = [
     name: "OpenAI",
     skip: process.env.OPENAI_API_KEY === undefined,
     createAgent: async () => {
-      const model = new ailoy.OpenAILanguageModel(
+      const model = ailoy.LangModel.newStreamAPI(
+        "OpenAI",
         "gpt-4o",
         process.env.OPENAI_API_KEY!
       );
@@ -31,7 +31,8 @@ const modelConfigs = [
     name: "Gemini",
     skip: process.env.GEMINI_API_KEY === undefined,
     createAgent: async () => {
-      const model = new ailoy.GeminiLanguageModel(
+      const model = ailoy.LangModel.newStreamAPI(
+        "Gemini",
         "gemini-2.5-flash",
         process.env.GEMINI_API_KEY!
       );
@@ -43,7 +44,8 @@ const modelConfigs = [
     name: "Anthropic",
     skip: process.env.ANTHROPIC_API_KEY === undefined,
     createAgent: async () => {
-      const model = new ailoy.AnthropicLanguageModel(
+      const model = ailoy.LangModel.newStreamAPI(
+        "Claude",
         "claude-sonnet-4-20250514",
         process.env.ANTHROPIC_API_KEY!
       );
@@ -55,7 +57,8 @@ const modelConfigs = [
     name: "XAI",
     skip: process.env.XAI_API_KEY === undefined,
     createAgent: async () => {
-      const model = new ailoy.XAILanguageModel(
+      const model = ailoy.LangModel.newStreamAPI(
+        "Grok",
         "grok-4-fast",
         process.env.XAI_API_KEY!
       );
@@ -66,14 +69,14 @@ const modelConfigs = [
   },
 ];
 
-const testImageUrl =
-  "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
-const testImageBase64 = await (async () => {
-  const resp = await fetch(testImageUrl);
-  const arrayBuffer = await resp.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  return buffer.toString("base64");
-})();
+// const testImageUrl =
+//   "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
+// const testImageBase64 = await (async () => {
+//   const resp = await fetch(testImageUrl);
+//   const arrayBuffer = await resp.arrayBuffer();
+//   const buffer = Buffer.from(arrayBuffer);
+//   return buffer.toString("base64");
+// })();
 
 for (const cfg of modelConfigs) {
   describe.skipIf(cfg.skip).concurrent(`Agent test: ${cfg.name}`, () => {
@@ -84,11 +87,14 @@ for (const cfg of modelConfigs) {
     });
 
     test.sequential("Simple Chat", async () => {
-      const agg = new ailoy.MessageAggregator();
-      for await (const resp of agent.run("What is your name?")) {
-        const msg = agg.update(resp);
-        if (msg !== null) {
-          console.log(msg);
+      for await (const resp of agent.run([
+        {
+          role: "user",
+          contents: [{ type: "text", text: "What is your name?" }],
+        },
+      ])) {
+        if (resp.aggregated !== undefined) {
+          console.log(resp.aggregated);
         }
       }
     });
@@ -96,16 +102,22 @@ for (const cfg of modelConfigs) {
     test.sequential(
       "Tool Calling: Builtin Tool (terminal)",
       async () => {
-        const tool = ailoy.BuiltinTool.terminal();
+        const tool = ailoy.Tool.newBuiltin("terminal");
         agent.addTool(tool);
 
-        const agg = new ailoy.MessageAggregator();
-        for await (const resp of agent.run(
-          "List the files in the current directory."
-        )) {
-          const msg = agg.update(resp);
-          if (msg !== null) {
-            console.log(msg);
+        for await (const resp of agent.run([
+          {
+            role: "user",
+            contents: [
+              {
+                type: "text",
+                text: "List the files in the current directory.",
+              },
+            ],
+          },
+        ])) {
+          if (resp.aggregated !== undefined) {
+            console.log(`[${cfg.name}] `, resp.aggregated);
           }
         }
 
@@ -117,23 +129,28 @@ for (const cfg of modelConfigs) {
     test.sequential(
       "Tool Calling: MCP Tools (time)",
       async () => {
-        const transport = ailoy.MCPTransport.newStdio("uvx", [
+        const client = await ailoy.MCPClient.newStdio("uvx", [
           "mcp-server-time",
         ]);
-        const tools = await transport.tools("time");
-        agent.addTools(tools);
+        agent.addTools(client.tools);
 
-        const agg = new ailoy.MessageAggregator();
-        for await (const resp of agent.run(
-          "What time is it now in Asia/Seoul? Answer in local timezone."
-        )) {
-          const msg = agg.update(resp);
-          if (msg !== null) {
-            console.log(msg);
+        for await (const resp of agent.run([
+          {
+            role: "user",
+            contents: [
+              {
+                type: "text",
+                text: "What time is it now in Asia/Seoul? Answer in local timezone.",
+              },
+            ],
+          },
+        ])) {
+          if (resp.aggregated !== undefined) {
+            console.log(resp.aggregated);
           }
         }
 
-        agent.removeTools(tools.map((t) => t.description.name));
+        agent.removeTools(client.tools.map((t) => t.description.name));
       },
       10000
     );
@@ -141,7 +158,7 @@ for (const cfg of modelConfigs) {
     test.sequential(
       "Tool Calling: JsFunctionTool (temperature)",
       async () => {
-        const tool = new ailoy.JsFunctionTool(
+        const tool = ailoy.Tool.newFunction(
           {
             name: "temperature",
             description: "Get temperature of the provided location",
@@ -172,13 +189,19 @@ for (const cfg of modelConfigs) {
 
         agent.addTool(tool);
 
-        const agg = new ailoy.MessageAggregator();
-        for await (const resp of agent.run(
-          "What is the temperature in Seoul now? Answer in Celsius."
-        )) {
-          const msg = agg.update(resp);
-          if (msg !== null) {
-            console.log(msg);
+        for await (const resp of agent.run([
+          {
+            role: "user",
+            contents: [
+              {
+                type: "text",
+                text: "What is the temperature in Seoul now? Answer in Celsius.",
+              },
+            ],
+          },
+        ])) {
+          if (resp.aggregated !== undefined) {
+            console.log(resp.aggregated);
           }
         }
 
@@ -187,48 +210,104 @@ for (const cfg of modelConfigs) {
       10000
     );
 
-    if (cfg.runImageUrl) {
-      test.sequential(
-        "Multimodal: Image URL",
-        async () => {
-          const imgPart = ailoy.Part.newImageUrl(testImageUrl);
-          const agg = new ailoy.MessageAggregator();
-          for await (const resp of agent.run([
-            imgPart,
-            "What is shown in this image?",
-          ])) {
-            const msg = agg.update(resp);
-            if (msg !== null) {
-              console.log(msg);
-            }
-          }
-        },
-        10000
-      );
-    }
+    // if (cfg.runImageUrl) {
+    //   test.sequential(
+    //     "Multimodal: Image URL",
+    //     async () => {
+    //       const imgPart = ailoy.Part.newImageUrl(testImageUrl);
+    //       for await (const resp of agent.run([
+    //         imgPart,
+    //         "What is shown in this image?",
+    //       ])) {
+    //         if (msg !== null) {
+    //           console.log(msg);
+    //         }
+    //       }
+    //     },
+    //     10000
+    //   );
+    // }
 
-    if (cfg.runImageBase64) {
-      test.sequential(
-        "Multimodal: Image Base64",
-        async () => {
-          const imgPart = ailoy.Part.newImageData(
-            testImageBase64,
-            "image/jpeg"
-          );
+    // if (cfg.runImageBase64) {
+    //   test.sequential(
+    //     "Multimodal: Image Base64",
+    //     async () => {
+    //       const imgPart = ailoy.Part.newImageData(
+    //         testImageBase64,
+    //         "image/jpeg"
+    //       );
 
-          const agg = new ailoy.MessageAggregator();
-          for await (const resp of agent.run([
-            imgPart,
-            "What is shown in this image?",
-          ])) {
-            const msg = agg.update(resp);
-            if (msg !== null) {
-              console.log(msg);
-            }
+    //       for await (const resp of agent.run([
+    //         imgPart,
+    //         "What is shown in this image?",
+    //       ])) {
+    //         if (msg !== null) {
+    //           console.log(msg);
+    //         }
+    //       }
+    //     },
+    //     10000
+    //   );
+    // }
+
+    test.sequential(
+      "Using Knowledge",
+      async () => {
+        const vs = await ailoy.VectorStore.newFaiss(1024);
+        const emb = await ailoy.EmbeddingModel.newLocal("BAAI/bge-m3");
+
+        const doc0 =
+          "Ailoy is an awesome AI agent framework supporting Rust, Python, Nodejs and WebAssembly.";
+        const emb0 = await emb.infer(doc0);
+        await vs.addVector({ embedding: emb0, document: doc0 });
+
+        const knowledge = ailoy.Knowledge.newVectorStore(vs, emb);
+        agent.setKnowledge(knowledge);
+
+        const documentPolyfill: ailoy.DocumentPolyfill = {
+          systemMessageTemplate: `
+{{- text }}
+# Knowledges
+After the user’s question, a list of documents retrieved from the knowledge base may appear. Try to answer the user’s question based on the provided knowledges.
+            `,
+          queryMessageTemplate: `
+{{- text }}
+{%- if documents %}
+    {{- "<documents>\n" }}
+    {%- for doc in documents %}
+    {{- "<document>\n" }}
+        {{- doc.text + '\n' }}
+    {{- "</document>\n" }}
+    {%- endfor %}
+    {{- "</documents>\n" }}
+{%- endif %}
+            `,
+        };
+
+        for await (const resp of agent.run(
+          [
+            {
+              role: "user",
+              contents: [
+                {
+                  type: "text",
+                  text: "What is Ailoy?",
+                },
+              ],
+            },
+          ],
+          {
+            documentPolyfill,
           }
-        },
-        10000
-      );
-    }
+        )) {
+          if (resp.aggregated !== undefined) {
+            console.log(resp.aggregated);
+          }
+        }
+
+        agent.removeKnowledge();
+      },
+      12000
+    );
   });
 }

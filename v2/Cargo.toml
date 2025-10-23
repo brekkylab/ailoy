@@ -54,8 +54,8 @@ jsonschema = { version = "0.33.0", default-features = false }
 mime-infer = "4.0.0"
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json", "preserve_order"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
-napi = { git = "https://github.com/brekkylab/napi-rs.git", package = "napi", rev = "5c8991b91072b5e468b1781de5703dc8449e000a", features = ["tokio_rt", "napi8", "serde-json"], optional = true }
-napi-derive = { git = "https://github.com/brekkylab/napi-rs.git", package = "napi-derive", rev = "5c8991b91072b5e468b1781de5703dc8449e000a", optional = true }
+napi = { git = "https://github.com/napi-rs/napi-rs.git", package = "napi", rev = "694db418953181c1d41381e75cd9dc6b1918f3f8", features = ["tokio_rt", "napi8", "serde-json"], optional = true }
+napi-derive = { git = "https://github.com/napi-rs/napi-rs.git", package = "napi-derive", rev = "694db418953181c1d41381e75cd9dc6b1918f3f8", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 pyo3 = { version = "0.26", features = ["experimental-async", "macros", "anyhow"], optional = true }
 pyo3-async-runtimes = { version = "0.26", features = ["attributes", "tokio-runtime"], optional = true }
