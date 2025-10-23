@@ -17,6 +17,26 @@ impl Into<Vec<f32>> for Embedding {
     }
 }
 
+impl std::ops::Mul for Embedding {
+    type Output = f32;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        if self.len() != rhs.len() {
+            panic!("Cannot dot-product two embeddings of different lengths");
+        }
+
+        self.0.iter().zip(rhs.0.iter()).map(|(x, y)| x * y).sum()
+    }
+}
+
+impl std::ops::Mul for &Embedding {
+    type Output = f32;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        self.clone() * rhs.clone()
+    }
+}
+
 impl Normalize for Embedding {
     fn normalized(&self) -> Self {
         Self(self.0.normalized())
