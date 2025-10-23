@@ -154,7 +154,7 @@ import { Agent, LangModel } from "ailoy";
 import type { Message } from "ailoy";
 
 async function main() {
-    const lm = await ailoy.LangModel.newLocal(modelName="Qwen/Qwen3-0.6B", progressCallback=console.log);
+    const lm = await LangModel.newLocal(modelName="Qwen/Qwen3-0.6B", progressCallback=console.log);
     let mut agent = Agent::new(lm, vec![]);
     const query: Message = {role: "user", contents: [{ type: "text", text: "What is your name?" }]};
     for await (const resp of agent.run([query])) {
