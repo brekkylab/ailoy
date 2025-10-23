@@ -156,7 +156,7 @@ import type { Message } from "ailoy";
 async function main() {
     const lm = await LangModel.newLocal(modelName="Qwen/Qwen3-0.6B", progressCallback=console.log);
     const agent = new Agent(lm);
-    const query: Message = {role: "user", contents: [{ type: "text", text: "What is your name?" }]};
+    const query: Message = {role: "user", contents: [{ type: "text", text: "Please give me a short poem about AI" }]};
     for await (const resp of agent.run([query])) {
         if (resp.aggregated) {
             console.log(resp.aggregated.contents[0].text);
