@@ -149,10 +149,6 @@ export class TVMLanguageModel {
   private fPrefill: PackedFunc;
   private fDecode: PackedFunc;
   private fSampleTopPfromLogits: PackedFunc;
-  private config: {
-    temperature: number;
-    top_p: number;
-  };
 
   constructor(rt: TVMRuntime) {
     this.rt = rt;
@@ -170,11 +166,6 @@ export class TVMLanguageModel {
     this.fSampleTopPfromLogits = this.tvm.detachFromCurrentScope(
       this.tvm.getGlobalFunc("vm.builtin.sample_top_p_from_logits")
     );
-
-    this.config = {
-      temperature: 0.6,
-      top_p: 0.9,
-    };
 
     this.tvm.endScope();
   }
@@ -311,7 +302,7 @@ export class TVMLanguageModel {
     return rv;
   }
 
-  sample(logits: Float32Array): number {
+  sample(logits: Float32Array, temperature: number, top_p: number): number {
     this.tvm.beginScope();
     const logitsNDArray = this.tvm.empty(
       [logits.length],
@@ -321,9 +312,9 @@ export class TVMLanguageModel {
     logitsNDArray.copyFrom(logits);
     const sampled_token = this.fSampleTopPfromLogits(
       logitsNDArray,
-      new Scalar(this.config.temperature, "int"),
-      new Scalar(this.config.top_p, "int"),
-      new Scalar(Math.random(), "int")
+      temperature,
+      top_p,
+      Math.random()
     );
     this.tvm.endScope();
     return sampled_token;

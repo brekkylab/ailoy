@@ -183,9 +183,9 @@ mod tvm_runtime {
             self.inner.pin_mut().prefill(tokens)
         }
 
-        pub fn decode(&mut self, last_token: u32) -> u32 {
+        pub fn decode(&mut self, last_token: u32, temperature: f64, top_p: f64) -> u32 {
             let logits = self.inner.pin_mut().decode(last_token);
-            self.inner.pin_mut().sample(logits)
+            self.inner.pin_mut().sample(logits, temperature, top_p)
         }
     }
 
@@ -251,12 +251,12 @@ mod tvmjs_runtime {
             JsFuture::from(self.inner.prefill(arr)).await.unwrap();
         }
 
-        pub async fn decode(&mut self, last_token: u32) -> u32 {
+        pub async fn decode(&mut self, last_token: u32, temperature: f64, top_p: f64) -> u32 {
             let logits: Float32Array = JsFuture::from(self.inner.decode(last_token))
                 .await
                 .unwrap()
                 .into();
-            self.inner.sample(logits)
+            self.inner.sample(logits, temperature, top_p)
         }
     }
 
