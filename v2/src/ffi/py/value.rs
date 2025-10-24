@@ -3,7 +3,7 @@ use pyo3::{prelude::*, types::PyDict};
 use pyo3_stub_gen::derive::*;
 
 use crate::{
-    ffi::py::base::{json_to_pydict, pydict_to_json},
+    ffi::py::base::{PyRepr, json_to_pydict, pydict_to_json},
     value::{
         Delta, Document, FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta, Role,
         ToolDesc,
@@ -115,36 +115,36 @@ impl PartDelta {
 #[pymethods]
 impl Message {
     #[new]
-    #[pyo3(signature = (role, id = None, thinking = None, contents = None, tool_calls = None, signature = None))]
+    #[pyo3(signature = (role, contents = None, id = None, thinking = None, tool_calls = None, signature = None))]
     fn __new__(
         role: Role,
+        contents: Option<Vec<Part>>,
         id: Option<String>,
         thinking: Option<String>,
-        contents: Option<Vec<Part>>,
         tool_calls: Option<Vec<Part>>,
         signature: Option<String>,
     ) -> Self {
         Self {
             role,
-            id,
-            thinking: Some(thinking.unwrap_or_default()),
             contents: contents.unwrap_or_default(),
-            tool_calls: Some(tool_calls.unwrap_or_default()),
+            id,
+            thinking,
+            tool_calls,
             signature,
         }
     }
 
     pub fn __repr__(&self) -> String {
         format!(
-            "Message(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
+            "Message(role={}, contents=[{}], id={}, thinking={}, tool_calls=[{}], signature={})",
             self.role.to_string(),
-            self.id,
-            self.thinking,
             self.contents
                 .iter()
                 .map(|content| content.__repr__())
                 .collect::<Vec<_>>()
                 .join(", "),
+            self.id.__repr__(),
+            self.thinking.__repr__(),
             self.tool_calls.as_ref().map_or(String::new(), |calls| {
                 calls
                     .iter()
@@ -152,7 +152,7 @@ impl Message {
                     .collect::<Vec<_>>()
                     .join(", ")
             }),
-            self.signature,
+            self.signature.__repr__(),
         )
     }
 
@@ -241,20 +241,20 @@ impl Message {
 #[pymethods]
 impl MessageDelta {
     #[new]
-    #[pyo3(signature = (role=None, id = None, thinking = None, contents = None, tool_calls = None, signature = None))]
+    #[pyo3(signature = (role=None, contents = None, id = None, thinking = None, tool_calls = None, signature = None))]
     fn __new__(
         role: Option<Role>,
+        contents: Option<Vec<PartDelta>>,
         id: Option<String>,
         thinking: Option<String>,
-        contents: Option<Vec<PartDelta>>,
         tool_calls: Option<Vec<PartDelta>>,
         signature: Option<String>,
     ) -> Self {
         Self {
             role,
-            id,
-            thinking: Some(thinking.unwrap_or_default()),
             contents: contents.unwrap_or_default(),
+            id,
+            thinking,
             tool_calls: tool_calls.unwrap_or_default(),
             signature,
         }
@@ -262,24 +262,21 @@ impl MessageDelta {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "MessageDelta(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
-            self.role
-                .clone()
-                .map(|role| role.to_string())
-                .unwrap_or("None".to_owned()),
-            self.id,
-            self.thinking,
+            "MessageDelta(role={}, contents=[{}], id={}, thinking={}, tool_calls=[{}], signature={})",
+            self.role.__repr__(),
             self.contents
                 .iter()
                 .map(|content| content.__repr__())
                 .collect::<Vec<_>>()
                 .join(", "),
+            self.id.__repr__(),
+            self.thinking.__repr__(),
             self.tool_calls
                 .iter()
                 .map(|tool| tool.__repr__())
                 .collect::<Vec<_>>()
                 .join(", "),
-            self.signature,
+            self.signature.__repr__(),
         )
     }
 

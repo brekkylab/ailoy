@@ -133,3 +133,31 @@ pub fn await_future<T, E: ToString + std::any::Any>(
     });
     result
 }
+
+pub trait PyRepr<T>
+where
+    T: std::fmt::Display,
+{
+    fn __repr__(&self) -> String;
+}
+
+impl<T> PyRepr<T> for T
+where
+    T: std::fmt::Display,
+{
+    fn __repr__(&self) -> String {
+        format!(r#""{}""#, self)
+    }
+}
+
+impl<T> PyRepr<T> for Option<T>
+where
+    T: std::fmt::Display,
+{
+    fn __repr__(&self) -> String {
+        match self {
+            Some(val) => format!(r#""{}""#, val),
+            None => "None".into(),
+        }
+    }
+}
