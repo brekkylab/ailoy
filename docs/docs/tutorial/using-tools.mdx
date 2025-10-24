@@ -40,21 +40,41 @@ In this example, we’ll use the **[Frankfurter API](https://frankfurter.dev/)**
 to add functionality to lookup real-time currency exchange rates into your
 `Agent`.
 
-The Frankfurter API tool is already defined as **_preset_** and included in the
-library along with the other useful tools. So you just can call
-`add_tools_from_preset()` with the tool name to attach the tool into the
-`Agent`.
-
-Some presets can contain multiple tools which work together.
-
 <CodeTabs>
 
 ```python
-agent.add_tools_from_preset("frankfurter")
+import ailoy as ai
+
+tool_desc = ai.ToolDesc(
+    name="frankfurter",
+    description="Get the latest currency exchange rates of target currencies based on the 'base' currency",
+    parameters={
+        "type": "object",
+        "properties": {
+            "base": {
+                "type": "string",
+                "description": "The ISO 4217 currency code to be the divider of the currency rate to be got."
+            },
+            "symbols": {
+                "type": "string",
+                "description": "The target ISO 4217 currency codes separated by comma."
+            }
+        },
+    }
+)
+
+def tool_behavior(parameters):
+    # TBD
+    base = parameters["base"]
+    symbols = parameters["symbols"]
+
+lm = await ai.LangModel.CreateLocal("Qwen/Qwen3-8B")
+tools = [ai.Tool.new_py_function(tool_desc, tool_behavior)]
+agent = Agent(lm, tools)
 ```
 
 ```typescript
-agent.addToolsFromPreset("frankfurter");
+TBD
 ```
 
 </CodeTabs>
