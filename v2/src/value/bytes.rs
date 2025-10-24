@@ -42,17 +42,19 @@ impl<'de> Deserialize<'de> for Bytes {
 #[cfg(feature = "python")]
 mod py {
     use pyo3::{
-        Bound, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult,
+        Borrowed, Bound, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult,
         exceptions::PyTypeError,
-        types::{PyAnyMethods, PyBytes, PyBytesMethods as _},
+        types::{PyBytes, PyBytesMethods as _},
     };
     use pyo3_stub_gen::{PyStubType, TypeInfo};
 
     use super::*;
 
-    impl<'py> FromPyObject<'py> for Bytes {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-            if let Ok(pybytes) = ob.downcast::<PyBytes>() {
+    impl<'a, 'py> FromPyObject<'a, 'py> for Bytes {
+        type Error = PyErr;
+
+        fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+            if let Ok(pybytes) = Bound::cast::<PyBytes>(&ob) {
                 Ok(Bytes(pybytes.as_bytes().to_vec().into()))
             } else {
                 Err(PyTypeError::new_err("Expected a bytes object"))

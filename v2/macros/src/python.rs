@@ -97,7 +97,7 @@ pub fn py_string_enum(input: TokenStream) -> TokenStream {
         #[cfg(feature = "python")]
         const _: () = {
             use pyo3::{
-                Bound, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult, Python,
+                Bound, Borrowed, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult, Python,
                 exceptions::PyValueError,
                 types::{PyAnyMethods, PyString},
             };
@@ -113,8 +113,10 @@ pub fn py_string_enum(input: TokenStream) -> TokenStream {
                 }
             }
 
-            impl<'py> FromPyObject<'py> for #enum_name {
-                fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+            impl<'a, 'py> FromPyObject<'a, 'py> for #enum_name {
+                type Error = PyErr;
+
+                fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
                     let s: &str = ob.extract()?;
                     s.parse::<#enum_name>()
                         .map_err(|_| PyValueError::new_err(format!(

@@ -63,14 +63,14 @@ pub fn json_to_pydict<'py>(py: Python<'py>, value: &Value) -> PyResult<Option<Bo
 
 // Conversion from PyDict back to serde_json::Value
 #[allow(unused)]
-fn py_object_to_json_value(py: Python, obj: &Py<PyAny>) -> PyResult<Value> {
-    if obj.is_none(py) {
+fn py_object_to_json_value<'py>(py: Python, obj: &Bound<'py, PyAny>) -> PyResult<Value> {
+    if obj.is_none() {
         Ok(Value::Null)
-    } else if let Ok(b) = obj.extract::<bool>(py) {
+    } else if let Ok(b) = obj.extract::<bool>() {
         Ok(Value::Bool(b))
-    } else if let Ok(i) = obj.extract::<i64>(py) {
+    } else if let Ok(i) = obj.extract::<i64>() {
         Ok(Value::Number(serde_json::Number::from(i)))
-    } else if let Ok(f) = obj.extract::<f64>(py) {
+    } else if let Ok(f) = obj.extract::<f64>() {
         if let Some(num) = serde_json::Number::from_f64(f) {
             Ok(Value::Number(num))
         } else {
@@ -79,16 +79,16 @@ fn py_object_to_json_value(py: Python, obj: &Py<PyAny>) -> PyResult<Value> {
                 f
             )))
         }
-    } else if let Ok(s) = obj.extract::<String>(py) {
+    } else if let Ok(s) = obj.extract::<String>() {
         Ok(Value::String(s))
-    } else if let Ok(py_list) = obj.downcast_bound::<PyList>(py) {
+    } else if let Ok(py_list) = Bound::cast::<PyList>(obj) {
         let mut arr = Vec::new();
         for item in py_list.iter() {
             let json_val = py_object_to_json_value(py, &item.into())?;
             arr.push(json_val);
         }
         Ok(Value::Array(arr))
-    } else if let Ok(py_dict) = obj.downcast_bound::<PyDict>(py) {
+    } else if let Ok(py_dict) = Bound::cast::<PyDict>(obj) {
         let mut map = serde_json::Map::new();
         for (key, value) in py_dict.iter() {
             let key_str = key.extract::<String>()?;
@@ -99,7 +99,7 @@ fn py_object_to_json_value(py: Python, obj: &Py<PyAny>) -> PyResult<Value> {
     } else {
         Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "Unsupported Python type: {}",
-            obj.bind(py).get_type().name()?
+            obj.get_type().name()?
         )))
     }
 }
