@@ -41,12 +41,12 @@ const modelConfigs = [
     runImageBase64: true,
   },
   {
-    name: "Anthropic",
+    name: "Claude",
     skip: process.env.ANTHROPIC_API_KEY === undefined,
     createAgent: async () => {
       const model = ailoy.LangModel.newStreamAPI(
         "Claude",
-        "claude-sonnet-4-20250514",
+        "claude-haiku-4-5",
         process.env.ANTHROPIC_API_KEY!
       );
       return new ailoy.Agent(model);
@@ -54,7 +54,7 @@ const modelConfigs = [
     runImageBase64: true,
   },
   {
-    name: "XAI",
+    name: "Grok",
     skip: process.env.XAI_API_KEY === undefined,
     createAgent: async () => {
       const model = ailoy.LangModel.newStreamAPI(
@@ -69,14 +69,15 @@ const modelConfigs = [
   },
 ];
 
-// const testImageUrl =
-//   "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
-// const testImageBase64 = await (async () => {
-//   const resp = await fetch(testImageUrl);
-//   const arrayBuffer = await resp.arrayBuffer();
-//   const buffer = Buffer.from(arrayBuffer);
-//   return buffer.toString("base64");
-// })();
+const testImageUrl =
+  "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
+const testImageBase64 = await (async () => {
+  const resp = await fetch(testImageUrl);
+  const arrayBuffer = await resp.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const b64 = buffer.toString("base64");
+  return ailoy.imageFromBase64(b64);
+})();
 
 for (const cfg of modelConfigs) {
   describe.skipIf(cfg.skip).concurrent(`Agent test: ${cfg.name}`, () => {
@@ -210,45 +211,50 @@ for (const cfg of modelConfigs) {
       10000
     );
 
-    // if (cfg.runImageUrl) {
-    //   test.sequential(
-    //     "Multimodal: Image URL",
-    //     async () => {
-    //       const imgPart = ailoy.Part.newImageUrl(testImageUrl);
-    //       for await (const resp of agent.run([
-    //         imgPart,
-    //         "What is shown in this image?",
-    //       ])) {
-    //         if (msg !== null) {
-    //           console.log(msg);
-    //         }
-    //       }
-    //     },
-    //     10000
-    //   );
-    // }
+    if (cfg.runImageUrl) {
+      test.sequential(
+        "Multimodal: Image URL",
+        async () => {
+          const imgPart = ailoy.imageFromUrl(testImageUrl);
+          for await (const resp of agent.run([
+            {
+              role: "user",
+              contents: [
+                imgPart,
+                { type: "text", text: "What is shown in this image?" },
+              ],
+            },
+          ])) {
+            if (resp.accumulated !== undefined) {
+              console.log(resp.accumulated);
+            }
+          }
+        },
+        10000
+      );
+    }
 
-    // if (cfg.runImageBase64) {
-    //   test.sequential(
-    //     "Multimodal: Image Base64",
-    //     async () => {
-    //       const imgPart = ailoy.Part.newImageData(
-    //         testImageBase64,
-    //         "image/jpeg"
-    //       );
-
-    //       for await (const resp of agent.run([
-    //         imgPart,
-    //         "What is shown in this image?",
-    //       ])) {
-    //         if (msg !== null) {
-    //           console.log(msg);
-    //         }
-    //       }
-    //     },
-    //     10000
-    //   );
-    // }
+    if (cfg.runImageBase64) {
+      test.sequential(
+        "Multimodal: Image Base64",
+        async () => {
+          for await (const resp of agent.run([
+            {
+              role: "user",
+              contents: [
+                testImageBase64,
+                { type: "text", text: "What is shown in this image?" },
+              ],
+            },
+          ])) {
+            if (resp.accumulated !== undefined) {
+              console.log(resp.accumulated);
+            }
+          }
+        },
+        10000
+      );
+    }
 
     test.sequential(
       "Using Knowledge",

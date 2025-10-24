@@ -871,3 +871,31 @@ mod py {
         }
     }
 }
+
+#[cfg(feature = "nodejs")]
+mod node {
+    use napi::bindgen_prelude::*;
+    use napi_derive::napi;
+
+    use super::*;
+
+    #[allow(unused)]
+    #[napi]
+    pub fn image_from_bytes(data: Uint8Array) -> napi::Result<Part> {
+        Part::image_binary_from_bytes(data.to_vec().as_slice())
+            .map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
+    }
+
+    #[allow(unused)]
+    #[napi]
+    pub fn image_from_base64(data: String) -> napi::Result<Part> {
+        Part::image_binary_from_base64(data)
+            .map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
+    }
+
+    #[allow(unused)]
+    #[napi]
+    pub fn image_from_url(url: String) -> napi::Result<Part> {
+        Part::image_url(url).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
+    }
+}
