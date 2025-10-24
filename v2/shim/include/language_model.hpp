@@ -65,11 +65,6 @@ private:
 
 class tvm_language_model_t {
 public:
-  struct config_t {
-    double temperature;
-    double top_p;
-  };
-
   /**
    * Constructor
    */
@@ -88,20 +83,15 @@ public:
   DLPackTensor decode_from_rs(uint32_t last_token);
 
   /** Sample */
-  uint32_t sample(tvm::runtime::NDArray);
+  uint32_t sample(tvm::runtime::NDArray, double temperature, double top_p);
 
-  uint32_t sample_from_rs(DLPackTensor logits);
-
-  config_t config;
-
-  const config_t &get_default_config() const { return default_config_; }
+  uint32_t sample_from_rs(DLPackTensor logits, double temperature,
+                          double top_p);
 
 private:
   std::unique_ptr<tvm_runtime_t> rt_;
 
   std::unique_ptr<kv_cache_t> kv_cache_;
-
-  config_t default_config_;
 
   std::vector<uint32_t> history_;
 

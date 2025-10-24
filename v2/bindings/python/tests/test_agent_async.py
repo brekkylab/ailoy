@@ -72,7 +72,9 @@ async def test_simple_qna(agent: ai.Agent):
         )
         async for resp in agent.run(
             messages,
-            config=ai.InferenceConfig(think_effort=ai.ThinkEffort.Disable),
+            config=ai.InferenceConfig(
+                temperature=0.0, top_p=0.0, think_effort=ai.ThinkEffort.Disable
+            ),
         ):
             if resp.finish_reason is not None:
                 result = resp.aggregated
