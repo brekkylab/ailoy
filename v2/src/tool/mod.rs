@@ -143,13 +143,13 @@ mod py {
             Ok(Value::Float(OrderedFloat(f)))
         } else if let Ok(s) = obj.extract::<String>() {
             Ok(Value::String(s))
-        } else if let Ok(list) = obj.downcast::<PyList>() {
+        } else if let Ok(list) = Bound::cast::<PyList>(obj) {
             let mut arr = Vec::new();
             for item in list.iter() {
                 arr.push(python_to_value(&item)?);
             }
             Ok(Value::Array(arr))
-        } else if let Ok(dict) = obj.downcast::<PyDict>() {
+        } else if let Ok(dict) = Bound::cast::<PyDict>(obj) {
             let mut map = IndexMap::new();
             for (key, val) in dict.iter() {
                 let key_str = key.extract::<String>()?;
@@ -178,7 +178,7 @@ mod py {
                     };
 
                     // call python function
-                    let result = if let Ok(dict) = py_args.downcast::<PyDict>() {
+                    let result = if let Ok(dict) = Bound::cast::<PyDict>(&py_args) {
                         py_func.bind(py).call((), Some(&dict))
                     } else {
                         return Ok(Value::object([(

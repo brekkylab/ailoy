@@ -16,7 +16,14 @@ pub struct OpenAIMarshal;
 fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
     let part_to_value = |part: &Part| -> Value {
         match part {
-            Part::Text { text } => to_value!({"type": "input_text", "text": text}),
+            Part::Text { text } => {
+                let r#type = if msg.role == Role::Assistant {
+                    "output_text"
+                } else {
+                    "input_text"
+                };
+                to_value!({"type": r#type, "text": text})
+            }
             Part::Function {
                 id,
                 function: PartFunction { name, arguments },

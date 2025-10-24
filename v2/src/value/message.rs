@@ -4,11 +4,12 @@ use serde::{Deserialize, Serialize};
 use crate::value::{Delta, Part, PartDelta};
 
 /// The author of a message (or streaming delta) in a chat.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString,
+)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", derive(ailoy_macros::PyStringEnum))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]

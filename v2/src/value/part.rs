@@ -5,6 +5,8 @@ use crate::value::{Value, delta::Delta};
 
 /// Represents a function call contained within a message part.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -31,6 +33,7 @@ pub struct PartFunction {
 )]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
+#[cfg_attr(feature = "python", derive(ailoy_macros::PyStringEnum))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -695,91 +698,23 @@ impl Delta for PartDelta {
 
 #[cfg(feature = "python")]
 mod py {
-    use pyo3::{
-        Bound, FromPyObject, IntoPyObject, PyAny, PyErr, PyResult, Python,
-        exceptions::{PyTypeError, PyValueError},
-        types::{PyAnyMethods, PyDict, PyString},
-    };
-    use pyo3_stub_gen::{PyStubType, TypeInfo};
+    use pyo3::{Bound, IntoPyObject, PyAny, Python, pymethods};
+    use pyo3_stub_gen::derive::*;
 
     use super::*;
 
-    impl<'py> FromPyObject<'py> for PartFunction {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-            if let Ok(pydict) = ob.downcast::<PyDict>() {
-                let name_any = pydict.get_item("name")?;
-                let name: String = name_any.extract()?;
-                let args_any = pydict.get_item("arguments")?;
-                let arguments: Value = args_any.extract()?;
-                Ok(Self { name, arguments })
-            } else {
-                Err(PyTypeError::new_err(
-                    "PartFunction must be a dict with keys 'name' and 'arguments'",
-                ))
-            }
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl PartFunction {
+        #[getter]
+        fn name(&self) -> String {
+            self.name.clone()
         }
-    }
 
-    impl<'py> IntoPyObject<'py> for PartFunction {
-        type Target = PyDict;
-        type Output = Bound<'py, PyDict>;
-        type Error = PyErr;
-
-        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
-            let d = PyDict::new(py);
-            d.set_item("name", self.name)?;
-            let py_args = self.arguments.into_pyobject(py)?;
-            d.set_item("arguments", py_args)?;
-            Ok(d)
-        }
-    }
-
-    impl PyStubType for PartFunction {
-        fn type_output() -> TypeInfo {
-            let TypeInfo {
-                name: value_name,
-                import: mut imports,
-            } = Value::type_output();
-            imports.insert("builtins".into());
-            imports.insert("typing".into());
-
-            TypeInfo {
-                name: format!(
-                    "dict[typing.Literal[\"name\", \"arguments\"], typing.Union[str, {}]]",
-                    value_name
-                ),
-                import: imports,
-            }
-        }
-    }
-
-    impl<'py> IntoPyObject<'py> for PartImageColorspace {
-        type Target = PyString;
-        type Output = Bound<'py, PyString>;
-        type Error = PyErr;
-
-        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
-            Ok(PyString::new(py, &self.to_string()))
-        }
-    }
-
-    impl<'py> FromPyObject<'py> for PartImageColorspace {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-            let s: &str = ob.extract()?;
-            s.parse::<PartImageColorspace>()
-                .map_err(|_| PyValueError::new_err(format!("Invalid colorspace: {s}")))
-        }
-    }
-
-    impl PyStubType for PartImageColorspace {
-        fn type_output() -> TypeInfo {
-            let mut import = std::collections::HashSet::new();
-            import.insert("typing".into());
-
-            TypeInfo {
-                name: r#"typing.Literal["grayscale", "rgb", "rgba"]"#.into(),
-                import,
-            }
+        #[gen_stub(override_return_type(type_repr = "dict[str, typing.Any]"))]
+        #[getter]
+        fn arguments<'a>(&'a self, py: Python<'a>) -> Bound<'a, PyAny> {
+            self.arguments.clone().into_pyobject(py).unwrap()
         }
     }
 }

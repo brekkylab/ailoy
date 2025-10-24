@@ -84,8 +84,8 @@ mod py {
     impl EmbeddingModel {
         #[classmethod]
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[EmbeddingModel]"))]
-        #[pyo3(name = "CreateLocal", signature = (model_name, progress_callback = None))]
-        fn create_local<'a>(
+        #[pyo3(name = "new_local", signature = (model_name, progress_callback = None))]
+        fn new_local_py<'a>(
             _cls: &Bound<'a, PyType>,
             py: Python<'a>,
             model_name: String,
@@ -109,8 +109,8 @@ mod py {
         }
 
         #[classmethod]
-        #[pyo3(name = "CreateLocalSync", signature = (model_name, progress_callback = None))]
-        fn create_local_sync(
+        #[pyo3(name = "new_local_sync", signature = (model_name, progress_callback = None))]
+        fn new_local_sync_py(
             _cls: &Bound<'_, PyType>,
             py: Python<'_>,
             model_name: String,
