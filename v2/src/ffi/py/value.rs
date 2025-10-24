@@ -170,67 +170,8 @@ impl Message {
         )
     }
 
-    // #[getter]
-    // fn role(&self) -> Role {
-    //     self.role.clone()
-    // }
-
-    // #[setter]
-    // fn set_role(
-    //     &mut self,
-    //     #[gen_stub(override_type(
-    //         type_repr = "Role | typing.Literal[\"system\",\"user\",\"assistant\",\"tool\"]"
-    //     ))]
-    //     role: Bound<'_, PyAny>,
-    // ) -> PyResult<()> {
-    //     Python::attach(|py| {
-    //         if let Ok(role) = role.downcast::<PyString>() {
-    //             self.role = Some(
-    //                 Role::from_str(&role.to_string())
-    //                     .map_err(|e| PyValueError::new_err(e.to_string()))?,
-    //             );
-    //             Ok(())
-    //         } else if let Ok(role) = role.downcast::<Role>() {
-    //             self.role = Some(role.clone().unbind().borrow(py).clone());
-    //             Ok(())
-    //         } else {
-    //             return Err(PyTypeError::new_err("role should be either Role or str"));
-    //         }
-    //     })
-    // }
-
-    #[getter]
-    fn contents(&self) -> Vec<Part> {
-        self.contents.clone()
-    }
-
-    #[setter]
-    fn set_contents(&mut self, contents: Vec<Part>) {
-        self.contents = contents;
-    }
-
     fn append_contents(&mut self, part: Part) {
         self.contents.push(part);
-    }
-
-    #[getter]
-    fn thinking(&self) -> Option<String> {
-        self.thinking.clone()
-    }
-
-    #[setter]
-    fn set_thinking(&mut self, thinking: String) {
-        self.thinking = Some(thinking);
-    }
-
-    #[getter]
-    fn tool_calls(&self) -> Vec<Part> {
-        self.tool_calls.clone().unwrap_or_default()
-    }
-
-    #[setter]
-    fn set_tool_calls(&mut self, tool_calls: Vec<Part>) {
-        self.tool_calls = Some(tool_calls);
     }
 
     fn append_tool_call(&mut self, part: Part) {
@@ -238,16 +179,6 @@ impl Message {
             Some(tool_calls) => tool_calls.push(part),
             None => self.tool_calls = vec![part].into(),
         };
-    }
-
-    #[getter]
-    fn id(&self) -> Option<String> {
-        self.id.clone()
-    }
-
-    #[setter]
-    fn set_id(&mut self, id: Option<String>) {
-        self.id = id;
     }
 }
 
