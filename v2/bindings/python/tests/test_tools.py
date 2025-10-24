@@ -11,7 +11,7 @@ pytestmark = [pytest.mark.asyncio]
 async def test_builtin_tool():
     import subprocess
 
-    tool = ai.Tool.terminal()
+    tool = ai.Tool.new_builtin("terminal")
     command = "pwd"
 
     tool_result = await tool(command=command)

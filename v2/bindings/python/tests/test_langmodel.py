@@ -8,15 +8,15 @@ pytestmark = [pytest.mark.asyncio]
 
 @pytest_asyncio.fixture(scope="module")
 async def model():
-    model = await ai.LangModel.CreateLocal(
+    model = await ai.LangModel.new_local(
         "Qwen/Qwen3-0.6B", progress_callback=lambda prog: print(prog)
     )
     return model
 
 
 async def test_simple_chat(model: ai.LangModel):
-    msg = ai.Message(ai.Role.User, contents=[ai.Part.Text(text="Hello")])
-    msg_d = ai.MessageDelta(ai.Role.Assistant)
+    msg = ai.Message("user", contents=[ai.Part.Text(text="Hello")])
+    msg_d = ai.MessageDelta("assistant")
     async for m in model.run([msg]):
         if m.delta.thinking:
             print("thinking: ", m.delta.thinking)
@@ -27,9 +27,9 @@ async def test_simple_chat(model: ai.LangModel):
 
 
 async def test_chat_with_think(model: ai.LangModel):
-    msg = ai.Message(ai.Role.User, contents=[ai.Part.Text(text="Hello")])
-    msg_d = ai.MessageDelta(ai.Role.Assistant)
-    config = ai.InferenceConfig(think_effort=ai.ThinkEffort.Enable)
+    msg = ai.Message("user", contents=[ai.Part.Text(text="Hello")])
+    msg_d = ai.MessageDelta("assistant")
+    config = ai.InferenceConfig(think_effort="enable")
     async for m in model.run([msg], config=config):
         if m.delta.thinking:
             print("thinking: ", m.delta.thinking)

@@ -113,20 +113,6 @@ impl PartDelta {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl Role {
-    pub fn __repr__(&self) -> String {
-        match self {
-            Role::System => "Role.System",
-            Role::User => "Role.User",
-            Role::Assistant => "Role.Assistant",
-            Role::Tool => "Role.Tool",
-        }
-        .to_owned()
-    }
-}
-
-#[gen_stub_pymethods]
-#[pymethods]
 impl Message {
     #[new]
     #[pyo3(signature = (role, id = None, thinking = None, contents = None, tool_calls = None, signature = None))]
@@ -151,7 +137,7 @@ impl Message {
     pub fn __repr__(&self) -> String {
         format!(
             "Message(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
-            self.role.__repr__(),
+            self.role.to_string(),
             self.id,
             self.thinking,
             self.contents
@@ -279,7 +265,7 @@ impl MessageDelta {
             "MessageDelta(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
             self.role
                 .clone()
-                .map(|role| role.__repr__())
+                .map(|role| role.to_string())
                 .unwrap_or("None".to_owned()),
             self.id,
             self.thinking,

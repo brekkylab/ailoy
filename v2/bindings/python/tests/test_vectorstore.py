@@ -6,7 +6,7 @@ import ailoy as ai
 
 @pytest.fixture(scope="module")
 def emb():
-    return ai.EmbeddingModel.CreateLocalSync("BAAI/bge-m3")
+    return ai.EmbeddingModel.new_local_sync("BAAI/bge-m3")
 
 
 @pytest.fixture(scope="module")
