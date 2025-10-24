@@ -45,7 +45,7 @@ export default defineConfig(({ mode }) => {
     define: {
       "process.env.OPENAI_API_KEY": JSON.stringify(env.OPENAI_API_KEY),
       "process.env.GEMINI_API_KEY": JSON.stringify(env.GEMINI_API_KEY),
-      "process.env.CLAUDE_API_KEY": JSON.stringify(env.CLAUDE_API_KEY),
+      "process.env.ANTHROPIC_API_KEY": JSON.stringify(env.ANTHROPIC_API_KEY),
       "process.env.XAI_API_KEY": JSON.stringify(env.XAI_API_KEY),
     },
     test: {

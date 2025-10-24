@@ -48,7 +48,7 @@ export declare class LangModel {
     spec: APISpecification,
     modelName: string,
     apiKey: string
-  ): LangModel;
+  ): Promise<LangModel>;
   run(
     messages: Array<Message>,
     tools?: Array<ToolDesc> | undefined | null,
@@ -156,6 +156,12 @@ export type Grammar =
   | { type: "jsonschema"; schema: string }
   | { type: "regex"; regex: string }
   | { type: "cfg"; cfg: string };
+
+export declare function imageFromBase64(data: string): Part;
+
+export declare function imageFromBytes(data: Uint8Array): Part;
+
+export declare function imageFromUrl(url: string): Part;
 
 export interface InferenceConfig {
   documentPolyfill?: DocumentPolyfill;
@@ -379,13 +385,15 @@ export interface PartFunction {
  * }
  * ```
  */
-export type PartImage = {
-  type: "binary";
-  height: number;
-  width: number;
-  colorspace: PartImageColorspace;
-  data: Buffer;
-};
+export type PartImage =
+  | {
+      type: "binary";
+      height: number;
+      width: number;
+      colorspace: PartImageColorspace;
+      data: Buffer;
+    }
+  | { type: "url"; url: string };
 
 /**
  * Represents the color space of an image part.

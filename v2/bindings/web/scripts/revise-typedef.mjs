@@ -24,7 +24,10 @@ const statementData = statements
   .map((stmt) => ({
     kind: stmt.getKind(),
     name: stmt.getSymbol()?.getName() || stmt.getName?.() || "",
-    fullText: stmt.getFullText(),
+    fullText: stmt
+      .getFullText()
+      .replace("/* tslint:disable */", "") // Remove undesired tslint:disable
+      .replace("/* eslint-disable */", ""), // Remove undesired eslint-disable
     statement: stmt,
   }))
   .filter(({ name }) => {

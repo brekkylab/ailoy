@@ -149,8 +149,8 @@ export interface Document {
  * Provides a polyfill for LLMs that do not natively support the Document feature.
  */
 export interface DocumentPolyfill {
-  system_message_template?: string;
-  query_message_template?: string;
+  systemMessageTemplate?: string;
+  queryMessageTemplate?: string;
 }
 
 type Embedding = Float32Array;
@@ -405,13 +405,15 @@ export interface PartFunction {
  * }
  * ```
  */
-export type PartImage = {
-  type: "binary";
-  height: number;
-  width: number;
-  colorspace: PartImageColorspace;
-  data: Bytes;
-};
+export type PartImage =
+  | {
+      type: "binary";
+      height: number;
+      width: number;
+      colorspace: PartImageColorspace;
+      data: Bytes;
+    }
+  | { type: "url"; url: string };
 
 /**
  * Represents the color space of an image part.
@@ -529,3 +531,9 @@ export interface VectorStoreRetrieveResult {
   metadata?: Metadata;
   distance: number;
 }
+
+export function imageFromBase64(data: string): Part;
+
+export function imageFromBytes(data: Uint8Array): Part;
+
+export function imageFromUrl(url: string): Part;
