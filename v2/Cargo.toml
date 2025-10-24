@@ -57,8 +57,8 @@ minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { git = "https://github.com/napi-rs/napi-rs.git", package = "napi", rev = "694db418953181c1d41381e75cd9dc6b1918f3f8", features = ["tokio_rt", "napi8", "serde-json"], optional = true }
 napi-derive = { git = "https://github.com/napi-rs/napi-rs.git", package = "napi-derive", rev = "694db418953181c1d41381e75cd9dc6b1918f3f8", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
-pyo3 = { version = "0.26", features = ["experimental-async", "macros", "anyhow"], optional = true }
-pyo3-async-runtimes = { version = "0.26", features = ["attributes", "tokio-runtime"], optional = true }
+pyo3 = { version = "0.27.0", features = ["experimental-async", "macros", "anyhow"], optional = true }
+pyo3-async-runtimes = { version = "0.27.0", features = ["attributes", "tokio-runtime"], optional = true }
 pyo3-stub-gen = { version = "0.16.1", optional = true }
 pyo3-stub-gen-derive = { version = "0.16.1", optional = true }
 reqwest = { version = "0.12", features = ["json", "stream"] }
