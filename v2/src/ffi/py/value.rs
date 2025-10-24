@@ -298,7 +298,7 @@ impl MessageDelta {
     }
 
     fn __add__(&self, other: &Self) -> PyResult<Self> {
-        self.clone().aggregate(other.clone()).map_err(Into::into)
+        self.clone().accumulate(other.clone()).map_err(Into::into)
     }
 
     #[pyo3(name = "to_message")]

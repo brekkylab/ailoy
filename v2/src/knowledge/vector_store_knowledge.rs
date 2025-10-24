@@ -123,8 +123,8 @@ mod tests {
             ));
             while let Some(out_opt) = strm.next().await {
                 let out = out_opt.unwrap();
-                if out.aggregated.is_some() {
-                    println!("{:?}", out.aggregated.unwrap());
+                if out.accumulated.is_some() {
+                    println!("{:?}", out.accumulated.unwrap());
                 }
             }
         }
@@ -151,8 +151,8 @@ mod tests {
             ));
             while let Some(output) = strm.next().await {
                 let output = output.unwrap();
-                if output.aggregated.is_some() {
-                    println!("{:?}", output.aggregated.unwrap());
+                if output.accumulated.is_some() {
+                    println!("{:?}", output.accumulated.unwrap());
                 }
             }
         }
