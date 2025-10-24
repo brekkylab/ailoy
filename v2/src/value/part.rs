@@ -392,7 +392,7 @@ impl Part {
 ///
 /// # Use Case
 /// When the model streams out a function call response (e.g., `"function_call":{"name":...}`),
-/// the incremental deltas can be aggregated until the full function payload is formed.
+/// the incremental deltas can be accumulated until the full function payload is formed.
 ///
 /// # Example
 /// ```rust
@@ -432,12 +432,12 @@ pub enum PartDeltaFunction {
 /// ```rust
 /// let d1 = PartDelta::Text { text: "Hel".into() };
 /// let d2 = PartDelta::Text { text: "lo".into() };
-/// let merged = d1.aggregate(d2).unwrap();
+/// let merged = d1.accumulate(d2).unwrap();
 /// assert_eq!(merged.to_text().unwrap(), "Hello");
 /// ```
 ///
 /// # Error Handling
-/// Aggregation or finalization may return an error if incompatible deltas
+/// Accumulation or finalization may return an error if incompatible deltas
 /// (e.g. mismatched function IDs) are combined or invalid JSON arguments are given.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -562,7 +562,7 @@ impl Delta for PartDelta {
     type Item = Part;
     type Err = anyhow::Error; // TODO: Define custom error for this.
 
-    fn aggregate(self, other: Self) -> anyhow::Result<Self> {
+    fn accumulate(self, other: Self) -> anyhow::Result<Self> {
         match (self, other) {
             (PartDelta::Null {}, other) => Ok(other),
             (PartDelta::Text { text: mut t1 }, PartDelta::Text { text: t2 }) => {
@@ -583,7 +583,7 @@ impl Delta for PartDelta {
                     (Some(id1), Some(id2)) => {
                         if id1 != id2 {
                             bail!(
-                                "Cannot aggregate two functions with different ids. ({} != {}).",
+                                "Cannot accumulate two functions with different ids. ({} != {}).",
                                 id1,
                                 id2
                             )
@@ -637,7 +637,7 @@ impl Delta for PartDelta {
                         }
                     }
                     (f1, f2) => bail!(
-                        "Aggregation between those two function delta {:?}, {:?} is not defined.",
+                        "Accumulation between those two function delta {:?}, {:?} is not defined.",
                         f1,
                         f2
                     ),
@@ -646,7 +646,7 @@ impl Delta for PartDelta {
             }
             (pd1, pd2) => {
                 bail!(
-                    "Aggregation between those two part delta {:?}, {:?} is not defined.",
+                    "Accumulation between those two part delta {:?}, {:?} is not defined.",
                     pd1,
                     pd2
                 )

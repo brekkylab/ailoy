@@ -35,12 +35,12 @@ class AgentResponse:
     @property
     def finish_reason(self) -> typing.Optional[FinishReason]:
         r"""
-        Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
+        Optional finish reason. If this is Some, the message accumulation is finalized and stored in `accumulated`.
         """
     @property
-    def aggregated(self) -> typing.Optional[Message]:
+    def accumulated(self) -> typing.Optional[Message]:
         r"""
-        Optional aggregated message.
+        Optional accumulated message.
         """
     def __repr__(self) -> builtins.str: ...
 
@@ -262,12 +262,12 @@ class MessageDelta:
     A streaming, incremental update to a [`Message`].
     
     `MessageDelta` accumulates partial outputs (text chunks, tool-call fragments, IDs, signatures, etc.) until they can be materialized as a full [`Message`].
-    It implements [`Delta`] to support associative aggregation.
+    It implements [`Delta`] to support accumulation.
     
-    # Aggregation Rules
+    # Accumulation Rules
     - `role`: merging two distinct roles fails.
     - `thinking`: concatenated in arrival order.
-    - `contents`/`tool_calls`: last element is aggregated with the incoming delta when both are compatible (e.g., Text+Text, Function+Function with matching ID policy), otherwise appended as a new fragment.
+    - `contents`/`tool_calls`: last element is accumulated with the incoming delta when both are compatible (e.g., Text+Text, Function+Function with matching ID policy), otherwise appended as a new fragment.
     - `id`/`signature`: last-writer-wins.
     
     # Finalization
@@ -279,7 +279,7 @@ class MessageDelta:
     let d1 = MessageDelta::new().with_role(Role::Assistant).with_contents([PartDelta::Text { text: "Hel".into() }]);
     let d2 = MessageDelta::new().with_contents([PartDelta::Text { text: "lo".into() }]);
     
-    let merged = d1.aggregate(d2).unwrap();
+    let merged = d1.accumulate(d2).unwrap();
     let msg = merged.finish().unwrap();
     assert_eq!(msg.contents[0].as_text().unwrap(), "Hello");
     ```
@@ -442,12 +442,12 @@ class PartDelta:
     ```rust
     let d1 = PartDelta::Text { text: "Hel".into() };
     let d2 = PartDelta::Text { text: "lo".into() };
-    let merged = d1.aggregate(d2).unwrap();
+    let merged = d1.accumulate(d2).unwrap();
     assert_eq!(merged.to_text().unwrap(), "Hello");
     ```
     
     # Error Handling
-    Aggregation or finalization may return an error if incompatible deltas
+    Accumulation or finalization may return an error if incompatible deltas
     (e.g. mismatched function IDs) are combined or invalid JSON arguments are given.
     """
     @property
@@ -507,7 +507,7 @@ class PartDeltaFunction:
     
     # Use Case
     When the model streams out a function call response (e.g., `"function_call":{"name":...}`),
-    the incremental deltas can be aggregated until the full function payload is formed.
+    the incremental deltas can be accumulated until the full function payload is formed.
     
     # Example
     ```rust

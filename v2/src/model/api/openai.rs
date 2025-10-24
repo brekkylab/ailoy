@@ -675,7 +675,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(delta.contents.len(), 1);
@@ -701,7 +701,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(delta.contents.len(), 1);
@@ -722,7 +722,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
@@ -757,7 +757,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
@@ -781,7 +781,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.tool_calls.len(), 1);
         let tool_call = delta.tool_calls.pop().unwrap();
@@ -812,7 +812,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.tool_calls.len(), 1);
         let tool_call = delta.tool_calls.pop().unwrap();
@@ -857,7 +857,7 @@ mod api_tests {
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
         assert_eq!(finish_reason, Some(FinishReason::Stop {}));
@@ -891,7 +891,7 @@ mod api_tests {
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
         assert_eq!(finish_reason, Some(FinishReason::Stop {}));
@@ -953,7 +953,7 @@ mod api_tests {
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
         assert_eq!(finish_reason, Some(FinishReason::Stop {}));

@@ -31,10 +31,10 @@ pub struct Agent {
 pub struct AgentResponse {
     /// The message delta per iteration.
     pub delta: MessageDelta,
-    /// Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
+    /// Optional finish reason. If this is Some, the message accumulation is finalized and stored in `accumulated`.
     pub finish_reason: Option<FinishReason>,
-    /// Optional aggregated message.
-    pub aggregated: Option<Message>,
+    /// Optional accumulated message.
+    pub accumulated: Option<Message>,
 }
 
 impl Agent {
@@ -143,7 +143,7 @@ impl Agent {
                     let mut strm = model.infer(messages.clone(), tool_descs.clone(), docs.clone(), config.clone().unwrap_or_default());
                     while let Some(out) = strm.next().await {
                         let out = out?;
-                        assistant_msg_delta = assistant_msg_delta.aggregate(out.clone().delta).context("Aggregation failed")?;
+                        assistant_msg_delta = assistant_msg_delta.accumulate(out.clone().delta).context("Aggregation failed")?;
 
                         // Message aggregation is finalized if finish_reason does exist
                         if out.finish_reason.is_some() {
@@ -152,7 +152,7 @@ impl Agent {
                         yield AgentResponse {
                             delta: out.delta.clone(),
                             finish_reason: out.finish_reason.clone(),
-                            aggregated: assistant_msg.clone(),
+                            accumulated: assistant_msg.clone(),
                         };
                     }
                 }
@@ -175,7 +175,7 @@ impl Agent {
                         yield AgentResponse {
                             delta: tool_msg_delta,
                             finish_reason: Some(FinishReason::Stop{}),
-                            aggregated: Some(tool_msg.clone()),
+                            accumulated: Some(tool_msg.clone()),
                         };
 
                         // Add tool message to messages
@@ -364,15 +364,15 @@ mod py {
     impl AgentResponse {
         pub fn __repr__(&self) -> String {
             format!(
-                "AgentResponse(delta={}, finish_reason={}, aggregated={})",
+                "AgentResponse(delta={}, finish_reason={}, accumulated={})",
                 self.delta.__repr__(),
                 self.finish_reason
                     .clone()
                     .map(|finish_reason| finish_reason.__repr__())
                     .unwrap_or("None".to_owned()),
-                self.aggregated
+                self.accumulated
                     .clone()
-                    .map(|aggregated| aggregated.__repr__())
+                    .map(|accumulated| accumulated.__repr__())
                     .unwrap_or("None".to_owned()),
             )
         }
@@ -600,8 +600,8 @@ mod tests {
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            if output.aggregated.is_some() {
-                println!("message: {:?}", output.aggregated.unwrap());
+            if output.accumulated.is_some() {
+                println!("message: {:?}", output.accumulated.unwrap());
             }
         }
     }
@@ -677,8 +677,8 @@ mod tests {
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            if output.aggregated.is_some() {
-                println!("message: {:?}", output.aggregated.unwrap());
+            if output.accumulated.is_some() {
+                println!("message: {:?}", output.accumulated.unwrap());
             }
         }
     }
@@ -720,8 +720,8 @@ mod tests {
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            if output.aggregated.is_some() {
-                println!("message: {:?}", output.aggregated.unwrap());
+            if output.accumulated.is_some() {
+                println!("message: {:?}", output.accumulated.unwrap());
             }
         }
     }
