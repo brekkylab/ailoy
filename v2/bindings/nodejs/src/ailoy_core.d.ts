@@ -48,7 +48,7 @@ export declare class LangModel {
     spec: APISpecification,
     modelName: string,
     apiKey: string
-  ): LangModel;
+  ): Promise<LangModel>;
   run(
     messages: Array<Message>,
     tools?: Array<ToolDesc> | undefined | null,

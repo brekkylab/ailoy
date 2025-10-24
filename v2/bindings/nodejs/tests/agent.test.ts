@@ -17,7 +17,7 @@ const modelConfigs = [
     name: "OpenAI",
     skip: process.env.OPENAI_API_KEY === undefined,
     createAgent: async () => {
-      const model = ailoy.LangModel.newStreamAPI(
+      const model = await ailoy.LangModel.newStreamAPI(
         "OpenAI",
         "gpt-4o",
         process.env.OPENAI_API_KEY!
@@ -31,7 +31,7 @@ const modelConfigs = [
     name: "Gemini",
     skip: process.env.GEMINI_API_KEY === undefined,
     createAgent: async () => {
-      const model = ailoy.LangModel.newStreamAPI(
+      const model = await ailoy.LangModel.newStreamAPI(
         "Gemini",
         "gemini-2.5-flash",
         process.env.GEMINI_API_KEY!
@@ -44,7 +44,7 @@ const modelConfigs = [
     name: "Claude",
     skip: process.env.ANTHROPIC_API_KEY === undefined,
     createAgent: async () => {
-      const model = ailoy.LangModel.newStreamAPI(
+      const model = await ailoy.LangModel.newStreamAPI(
         "Claude",
         "claude-haiku-4-5",
         process.env.ANTHROPIC_API_KEY!
@@ -57,7 +57,7 @@ const modelConfigs = [
     name: "Grok",
     skip: process.env.XAI_API_KEY === undefined,
     createAgent: async () => {
-      const model = ailoy.LangModel.newStreamAPI(
+      const model = await ailoy.LangModel.newStreamAPI(
         "Grok",
         "grok-4-fast",
         process.env.XAI_API_KEY!

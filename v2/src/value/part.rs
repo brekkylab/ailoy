@@ -899,3 +899,27 @@ mod node {
         Part::image_url(url).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
     }
 }
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use js_sys::Uint8Array;
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+
+    #[wasm_bindgen(js_name = "imageFromBytes")]
+    pub fn image_from_bytes(data: Uint8Array) -> Result<Part, js_sys::Error> {
+        Part::image_binary_from_bytes(data.to_vec().as_slice())
+            .map_err(|e| js_sys::Error::new(&e.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = "imageFromBase64")]
+    pub fn image_from_base64(data: String) -> Result<Part, js_sys::Error> {
+        Part::image_binary_from_base64(data).map_err(|e| js_sys::Error::new(&e.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = "imageFromUrl")]
+    pub fn image_from_url(url: String) -> Result<Part, js_sys::Error> {
+        Part::image_url(url).map_err(|e| js_sys::Error::new(&e.to_string()))
+    }
+}
