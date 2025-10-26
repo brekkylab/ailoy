@@ -54,7 +54,7 @@ mod py {
         type Error = PyErr;
 
         fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-            if let Ok(pybytes) = Bound::cast::<PyBytes>(&ob) {
+            if let Ok(pybytes) = &ob.cast::<PyBytes>() {
                 Ok(Bytes(pybytes.as_bytes().to_vec().into()))
             } else {
                 Err(PyTypeError::new_err("Expected a bytes object"))
