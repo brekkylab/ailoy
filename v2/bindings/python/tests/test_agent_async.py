@@ -85,20 +85,10 @@ async def test_simple_chat(agent: ai.Agent):
             finish_reason = resp.finish_reason
             result = resp.accumulated
         else:
-            for content in resp.delta.contents:
-                if content.part_type == "text":
-                    print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
+            print(resp.delta.text, end="")
     print()
     assert finish_reason == ai.FinishReason.Stop()
-    print(f"{result.contents[0].text=}")
+    print(f"{result.text=}")
 
 
 @pytest.mark.parametrize(
@@ -127,6 +117,7 @@ async def test_simple_qna(agent: ai.Agent):
             if resp.finish_reason is not None:
                 result = resp.accumulated
         messages.append(result)
+        print(result.text)
 
         full_text = "".join(part.text for part in result.contents)
         assert answer in full_text.lower()
@@ -155,20 +146,10 @@ async def test_builtin_tool(agent: ai.Agent):
             finish_reason = resp.finish_reason
             result = resp.accumulated
         else:
-            for content in resp.delta.contents:
-                if content.part_type == "text":
-                    print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
+            print(resp.delta.text, end="")
     print()
     assert finish_reason == ai.FinishReason.Stop()
-    print(f"{result.contents[0].text=}")
+    print(f"{result.text=}")
 
 
 @pytest.mark.parametrize(
@@ -206,20 +187,10 @@ async def test_python_async_function_tool(agent: ai.Agent):
             finish_reason = resp.finish_reason
             result = resp.accumulated
         else:
-            for content in resp.delta.contents:
-                if content.part_type == "text":
-                    print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
+            print(resp.delta.text, end="")
     print()
     assert finish_reason == ai.FinishReason.Stop()
-    print(f"{result.contents[0].text=}")
+    print(f"{result.text=}")
 
     agent.remove_tool(tool.get_description().name)
 
@@ -246,17 +217,7 @@ async def test_mcp_tools(agent: ai.Agent):
             finish_reason = resp.finish_reason
             result = resp.accumulated
         else:
-            for content in resp.delta.contents:
-                if content.part_type == "text":
-                    print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
+            print(resp.delta.text, end="")
     print()
     assert finish_reason == ai.FinishReason.Stop()
     print(f"{result.contents[0].text=}")

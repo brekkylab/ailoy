@@ -1,5 +1,5 @@
 use anyhow::Ok;
-use pyo3::{prelude::*, types::PyDict};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyDict};
 use pyo3_stub_gen::derive::*;
 
 use crate::{
@@ -166,6 +166,12 @@ impl Message {
             None => self.tool_calls = vec![part].into(),
         };
     }
+
+    #[getter]
+    fn text(&self) -> PyResult<String> {
+        self.to_text()
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
 }
 
 #[gen_stub_pymethods]
@@ -213,6 +219,12 @@ impl MessageDelta {
 
     fn __add__(&self, other: &Self) -> PyResult<Self> {
         self.clone().accumulate(other.clone()).map_err(Into::into)
+    }
+
+    #[getter]
+    fn text(&self) -> PyResult<String> {
+        self.to_text()
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     #[pyo3(name = "to_message")]
