@@ -1,10 +1,8 @@
-// mod agent;
 pub(crate) mod base;
 pub(crate) mod cache_progress;
 #[cfg(feature = "ailoy-model-cli")]
 pub(crate) mod cli;
 pub(crate) mod string_enum;
-pub(crate) mod tool;
 pub(crate) mod value;
 
 use pyo3::prelude::*;
