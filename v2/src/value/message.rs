@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::value::{Delta, Part, PartDelta};
@@ -120,6 +120,21 @@ impl Message {
         self.tool_calls = Some(tool_calls.into_iter().map(|v| v.into()).collect());
         self
     }
+
+    pub fn to_text(&self) -> anyhow::Result<String> {
+        match &self.contents.len() {
+            0 => Ok("".to_owned()),
+            1 => match &self.contents[0] {
+                Part::Text { text } => Ok(text.clone()),
+                Part::Value { value } => Ok(serde_json::to_string(&value)
+                    .map_err(|e| anyhow!("Failed to convert part value to text: {}", e))?),
+                _ => {
+                    bail!("The part is not convertible to text.")
+                }
+            },
+            _ => bail!("Cannot convert multiple parts into a text."),
+        }
+    }
 }
 
 /// A streaming, incremental update to a [`Message`].
@@ -210,6 +225,25 @@ impl MessageDelta {
 
     pub fn to_message(self) -> anyhow::Result<Message> {
         self.finish()
+    }
+
+    pub fn to_text(&self) -> anyhow::Result<String> {
+        match &self.contents.len() {
+            0 => Ok("".to_owned()),
+            1 => match &self.contents[0] {
+                PartDelta::Text { text } => Ok(text.clone()),
+                PartDelta::Function { function, .. } => match function {
+                    crate::value::PartDeltaFunction::Verbatim { text } => Ok(text.clone()),
+                    _ => bail!("The part is not convertible to text."),
+                },
+                PartDelta::Value { value } => Ok(serde_json::to_string(&value)
+                    .map_err(|e| anyhow!("Failed to convert part value to text: {}", e))?),
+                PartDelta::Null {} => {
+                    bail!("The part is not convertible to text.")
+                }
+            },
+            _ => bail!("Cannot convert multiple parts into a text."),
+        }
     }
 }
 
