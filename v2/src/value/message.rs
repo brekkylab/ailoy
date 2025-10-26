@@ -154,9 +154,9 @@ impl Message {
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct MessageDelta {
     pub role: Option<Role>,
+    pub contents: Vec<PartDelta>,
     pub id: Option<String>,
     pub thinking: Option<String>,
-    pub contents: Vec<PartDelta>,
     #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
     pub tool_calls: Vec<PartDelta>,
     pub signature: Option<String>,
@@ -220,9 +220,9 @@ impl Delta for MessageDelta {
     fn accumulate(self, other: Self) -> anyhow::Result<Self> {
         let Self {
             mut role,
+            mut contents,
             mut id,
             mut thinking,
-            mut contents,
             mut tool_calls,
             mut signature,
         } = self;
@@ -307,9 +307,9 @@ impl Delta for MessageDelta {
         // Return
         Ok(Self {
             role,
-            thinking,
-            id,
             contents,
+            id,
+            thinking,
             tool_calls,
             signature,
         })
@@ -318,9 +318,9 @@ impl Delta for MessageDelta {
     fn finish(self) -> anyhow::Result<Self::Item> {
         let Self {
             role,
+            mut contents,
             id,
             thinking,
-            mut contents,
             mut tool_calls,
             signature,
         } = self;
