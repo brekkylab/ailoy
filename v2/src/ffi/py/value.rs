@@ -137,7 +137,7 @@ impl Message {
     pub fn __repr__(&self) -> String {
         format!(
             "Message(role={}, contents=[{}], id={}, thinking={}, tool_calls=[{}], signature={})",
-            self.role.to_string(),
+            self.role.__repr__(),
             self.contents
                 .iter()
                 .map(|content| content.__repr__())
