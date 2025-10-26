@@ -249,9 +249,9 @@ export interface Message {
  */
 export interface MessageDelta {
   role?: Role;
+  contents: Array<PartDelta>;
   id?: string;
   thinking?: string;
-  contents: Array<PartDelta>;
   tool_calls: Array<PartDelta>;
   signature?: string;
 }

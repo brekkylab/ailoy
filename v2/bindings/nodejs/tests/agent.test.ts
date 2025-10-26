@@ -91,7 +91,7 @@ for (const cfg of modelConfigs) {
       for await (const resp of agent.run([
         {
           role: "user",
-          contents: [{ type: "text", text: "What is your name?" }],
+          contents: "What is your name?",
         },
       ])) {
         if (resp.accumulated !== undefined) {
@@ -138,12 +138,8 @@ for (const cfg of modelConfigs) {
         for await (const resp of agent.run([
           {
             role: "user",
-            contents: [
-              {
-                type: "text",
-                text: "What time is it now in Asia/Seoul? Answer in local timezone.",
-              },
-            ],
+            contents:
+              "What time is it now in Asia/Seoul? Answer in local timezone.",
           },
         ])) {
           if (resp.accumulated !== undefined) {
@@ -193,12 +189,8 @@ for (const cfg of modelConfigs) {
         for await (const resp of agent.run([
           {
             role: "user",
-            contents: [
-              {
-                type: "text",
-                text: "What is the temperature in Seoul now? Answer in Celsius.",
-              },
-            ],
+            contents:
+              "What is the temperature in Seoul now? Answer in Celsius.",
           },
         ])) {
           if (resp.accumulated !== undefined) {
