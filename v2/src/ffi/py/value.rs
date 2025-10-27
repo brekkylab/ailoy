@@ -5,8 +5,8 @@ use pyo3_stub_gen::derive::*;
 use crate::{
     ffi::py::base::{json_to_pydict, pydict_to_json},
     value::{
-        Delta, Document, FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta, Role,
-        ToolDesc,
+        Delta, Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
+        Role, ToolDesc,
     },
 };
 
@@ -324,7 +324,7 @@ impl FinishReason {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl MessageOutput {
+impl MessageDeltaOutput {
     pub fn __repr__(&self) -> String {
         format!(
             "MessageOutput(delta={}, finish_reason={})",

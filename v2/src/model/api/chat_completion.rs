@@ -6,8 +6,8 @@ use crate::{
     model::{ServerEvent, ThinkEffort, api::RequestConfig},
     to_value,
     value::{
-        FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, Role, ToolDesc, Unmarshal, Unmarshaled, Value,
+        FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageDeltaOutput, Part,
+        PartDelta, PartDeltaFunction, PartFunction, Role, ToolDesc, Unmarshal, Unmarshaled, Value,
     },
 };
 
@@ -314,12 +314,12 @@ pub(super) fn make_request(
         .body(body.to_string())
 }
 
-pub(super) fn handle_event(evt: ServerEvent) -> MessageOutput {
+pub(super) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
     let Ok(j) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
-        return MessageOutput::default();
+        return MessageDeltaOutput::default();
     };
     let Some(choice) = j.pointer("/choices/0/delta") else {
-        return MessageOutput::default();
+        return MessageDeltaOutput::default();
     };
     let finish_reason = j
         .pointer("/choices/0/finish_reason")
@@ -345,7 +345,7 @@ pub(super) fn handle_event(evt: ServerEvent) -> MessageOutput {
             .unwrap_or_default(),
     };
 
-    MessageOutput {
+    MessageDeltaOutput {
         delta,
         finish_reason,
     }
@@ -609,7 +609,7 @@ mod openai_chatcompletion_api_tests {
             Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
         ];
         let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -643,7 +643,7 @@ mod openai_chatcompletion_api_tests {
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
         let mut assistant_msg = MessageDelta::default();
-        let mut strm = model.infer(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -704,7 +704,7 @@ mod openai_chatcompletion_api_tests {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
         ];
-        let mut strm = model.infer(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
@@ -751,7 +751,7 @@ mod grok_api_tests {
             Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
         ];
         let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -785,7 +785,7 @@ mod grok_api_tests {
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
         let mut assistant_msg = MessageDelta::default();
-        let mut strm = model.infer(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -846,7 +846,7 @@ mod grok_api_tests {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
         ];
-        let mut strm = model.infer(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {

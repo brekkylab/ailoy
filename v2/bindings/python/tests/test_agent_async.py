@@ -19,7 +19,8 @@ async def agent():
 
 
 async def test_simple_chat(agent: ai.Agent):
-    async for resp in agent.run(
+    acc = ai.MessageDelta()
+    async for resp in agent.run_delta(
         [
             ai.Message(
                 role=ai.Role.System,
@@ -36,8 +37,9 @@ async def test_simple_chat(agent: ai.Agent):
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.aggregated
+            result = acc.to_message()
         else:
+            acc += resp.delta
             for content in resp.delta.contents:
                 if content.part_type == "text":
                     print(content.text, end="")
@@ -54,12 +56,12 @@ async def test_simple_chat(agent: ai.Agent):
     print(f"{result.contents[0].text=}")
 
 
-async def test_simple_qna(agent: ai.Agent):
+async def test_simple_multiturn(agent: ai.Agent):
     qna = [
-        ("My favorite color is blue. Please remember that.", ""),
-        ("What’s my favorite color?", "blue"),
-        ("Actually, my favorite color is gray now. Don't forget this.", ""),
-        ("What’s my favorite color?", "gray"),
+        ("John's favorite color is blue. Please remember that.", ""),
+        ("What’s John's favorite color?", "blue"),
+        ("Actually, John's favorite color is gray now. Don't forget this.", ""),
+        ("What’s John's favorite color?", "gray"),
     ]
 
     messages = []
@@ -74,8 +76,7 @@ async def test_simple_qna(agent: ai.Agent):
             messages,
             config=ai.InferenceConfig(think_effort=ai.ThinkEffort.Disable),
         ):
-            if resp.finish_reason is not None:
-                result = resp.aggregated
+            result = resp.message
         messages.append(result)
 
         full_text = "".join(part.text for part in result.contents)
@@ -85,6 +86,7 @@ async def test_simple_qna(agent: ai.Agent):
 async def test_builtin_tool(agent: ai.Agent):
     tool = ai.Tool.terminal()
     agent.add_tool(tool)
+    acc = ai.MessageDelta()
     async for resp in agent.run(
         [
             ai.Message(
@@ -98,8 +100,9 @@ async def test_builtin_tool(agent: ai.Agent):
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.aggregated
+            result = acc.to_message()
         else:
+            acc += resp.delta
             for content in resp.delta.contents:
                 if content.part_type == "text":
                     print(content.text, end="")
@@ -134,7 +137,8 @@ async def test_python_async_function_tool(agent: ai.Agent):
     tool = ai.Tool.new_py_function(tool_temperature)
 
     agent.add_tool(tool)
-    async for resp in agent.run(
+    acc = ai.MessageDelta(role=ai.Role.Assistant)
+    async for resp in agent.run_delta(
         [
             ai.Message(
                 role=ai.Role.User,
@@ -145,8 +149,9 @@ async def test_python_async_function_tool(agent: ai.Agent):
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.aggregated
+            result = acc.to_message()
         else:
+            acc += resp.delta
             for content in resp.delta.contents:
                 if content.part_type == "text":
                     print(content.text, end="")
@@ -158,8 +163,8 @@ async def test_python_async_function_tool(agent: ai.Agent):
                 #     pass
                 else:
                     continue
-    print()
     assert finish_reason == ai.FinishReason.Stop()
+    print()
     print(f"{result.contents[0].text=}")
 
     agent.remove_tool(tool.get_description().name)
@@ -170,7 +175,8 @@ async def test_mcp_tools(agent: ai.Agent):
     tools = mcp_client.tools
 
     agent.add_tools(tools)
-    async for resp in agent.run(
+    acc = ai.MessageDelta(role=ai.Role.Assistant)
+    async for resp in agent.run_delta(
         [
             ai.Message(
                 role=ai.Role.User,
@@ -181,8 +187,9 @@ async def test_mcp_tools(agent: ai.Agent):
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.aggregated
+            result = acc.to_message()
         else:
+            acc += resp.delta
             for content in resp.delta.contents:
                 if content.part_type == "text":
                     print(content.text, end="")

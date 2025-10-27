@@ -93,8 +93,8 @@ for (const cfg of modelConfigs) {
           contents: [{ type: "text", text: "What is your name?" }],
         },
       ])) {
-        if (resp.aggregated !== undefined) {
-          console.log(resp.aggregated);
+        if (resp?.delta !== undefined) {
+          console.log(resp.delta);
         }
       }
     });
@@ -116,8 +116,8 @@ for (const cfg of modelConfigs) {
             ],
           },
         ])) {
-          if (resp.aggregated !== undefined) {
-            console.log(`[${cfg.name}] `, resp.aggregated);
+          if (resp?.delta !== undefined) {
+            console.log(`[${cfg.name}] `, resp.delta);
           }
         }
 
@@ -145,8 +145,8 @@ for (const cfg of modelConfigs) {
             ],
           },
         ])) {
-          if (resp.aggregated !== undefined) {
-            console.log(resp.aggregated);
+          if (resp?.delta !== undefined) {
+            console.log(resp.delta);
           }
         }
 
@@ -200,8 +200,8 @@ for (const cfg of modelConfigs) {
             ],
           },
         ])) {
-          if (resp.aggregated !== undefined) {
-            console.log(resp.aggregated);
+          if (resp?.delta !== undefined) {
+            console.log(resp.delta);
           }
         }
 
@@ -300,8 +300,8 @@ After the user’s question, a list of documents retrieved from the knowledge ba
             documentPolyfill,
           }
         )) {
-          if (resp.aggregated !== undefined) {
-            console.log(resp.aggregated);
+          if (resp?.delta !== undefined) {
+            console.log(resp.delta);
           }
         }
 

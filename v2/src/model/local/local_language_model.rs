@@ -13,8 +13,8 @@ use crate::{
     },
     utils::{BoxFuture, BoxStream},
     value::{
-        Document, FinishReason, Message, MessageDelta, MessageOutput, PartDelta, PartDeltaFunction,
-        Role, ToolDesc,
+        Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, PartDelta,
+        PartDeltaFunction, Role, ToolDesc,
     },
 };
 
@@ -23,7 +23,7 @@ struct Request {
     tools: Vec<ToolDesc>,
     docs: Vec<Document>,
     config: InferenceConfig,
-    tx_resp: mpsc::UnboundedSender<anyhow::Result<MessageOutput>>,
+    tx_resp: mpsc::UnboundedSender<anyhow::Result<MessageDeltaOutput>>,
 }
 
 #[derive(Clone, Debug)]
@@ -73,7 +73,7 @@ impl TryFromCache for LocalLangModel {
                         config,
                         tx_resp,
                     } = req;
-                    let mut strm = body.infer(msgs, tools, docs, config);
+                    let mut strm = body.infer_delta(msgs, tools, docs, config);
                     while let Some(resp) = strm.next().await {
                         if tx_resp.send(resp).is_err() {
                             break;
@@ -92,13 +92,13 @@ impl TryFromCache for LocalLangModel {
 }
 
 impl LangModelInference for LocalLangModel {
-    fn infer<'a>(
+    fn infer_delta<'a>(
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
         config: InferenceConfig,
-    ) -> crate::utils::BoxStream<'a, anyhow::Result<MessageOutput>> {
+    ) -> crate::utils::BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         let (tx_resp, mut rx_resp) = tokio::sync::mpsc::unbounded_channel();
         let req = Request {
             msgs,
@@ -128,13 +128,13 @@ struct LocalLangModelImpl {
 }
 
 impl LocalLangModelImpl {
-    pub fn infer<'a>(
+    pub fn infer_delta<'a>(
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
         config: InferenceConfig,
-    ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
+    ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         let strm = try_stream! {
             let prompt = if let Some(polyfill) = config.document_polyfill {
                 let msgs = polyfill.polyfill(msgs, docs)?;
@@ -157,14 +157,14 @@ impl LocalLangModelImpl {
             let mut mode = "content".to_owned();
             let mut finish_reason = FinishReason::Stop{};
 
-            yield MessageOutput{delta: MessageDelta::new().with_role(Role::Assistant), finish_reason: None};
+            yield MessageDeltaOutput{delta: MessageDelta::new().with_role(Role::Assistant), finish_reason: None};
 
             // @jhlee: TODO remove hard-coded token names
             loop {
                 let delta = MessageDelta::new();
                 count += 1;
                 if count > config.max_tokens.unwrap_or(16384) {
-                    yield MessageOutput{delta, finish_reason: Some(FinishReason::Length{})};
+                    yield MessageDeltaOutput{delta, finish_reason: Some(FinishReason::Length{})};
                     break;
                 }
 
@@ -185,7 +185,7 @@ impl LocalLangModelImpl {
                 agg_tokens.clear();
 
                 if s == "<|im_end|>" {
-                    yield MessageOutput{delta, finish_reason: Some(finish_reason)};
+                    yield MessageDeltaOutput{delta, finish_reason: Some(finish_reason)};
                     break;
                 } else if s == "<tool_call>" {
                     mode = "tool_call".to_owned();
@@ -210,7 +210,7 @@ impl LocalLangModelImpl {
                     } else {
                         unreachable!();
                     };
-                    yield MessageOutput{delta, finish_reason: None};
+                    yield MessageDeltaOutput{delta, finish_reason: None};
                 }
             }
             return;
@@ -366,7 +366,7 @@ mod tests {
             //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
         let mut delta = MessageDelta::new().with_role(Role::Assistant);
-        let mut strm = model.infer(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
             debug!("{:?}", out);

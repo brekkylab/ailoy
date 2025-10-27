@@ -12,8 +12,11 @@ use crate::{
         custom::{CustomLangModel, CustomLangModelInferFunc},
         polyfill::DocumentPolyfill,
     },
-    utils::BoxStream,
-    value::{Document, Message, MessageOutput, ToolDesc},
+    utils::{BoxFuture, BoxStream},
+    value::{
+        Delta, Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput,
+        ToolDesc,
+    },
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,13 +102,42 @@ impl Default for InferenceConfig {
 #[maybe_send_sync]
 pub trait LangModelInference {
     /// Runs the language model with the given tools and messages, returning a stream of `MessageOutput`s.
+    fn infer_delta<'a>(
+        &'a mut self,
+        msgs: Vec<Message>,
+        tools: Vec<ToolDesc>,
+        docs: Vec<Document>,
+        config: InferenceConfig,
+    ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>>;
+
     fn infer<'a>(
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
         config: InferenceConfig,
-    ) -> BoxStream<'a, anyhow::Result<MessageOutput>>;
+    ) -> BoxFuture<'a, anyhow::Result<MessageOutput>> {
+        Box::pin(async move {
+            let mut strm = self.infer_delta(msgs, tools, docs, config);
+            let mut acc_delta = MessageDelta::new();
+            let mut acc_finish_reason: Option<FinishReason> = None;
+            while let Some(out_opt) = strm.next().await {
+                let MessageDeltaOutput {
+                    delta,
+                    finish_reason,
+                } = out_opt?;
+                if finish_reason.is_some() {
+                    acc_finish_reason = finish_reason;
+                }
+                acc_delta = acc_delta.aggregate(delta)?;
+            }
+            Ok(MessageOutput {
+                message: acc_delta.finish()?,
+                finish_reason: acc_finish_reason
+                    .ok_or_else(|| anyhow::anyhow!("Inference finished without reason"))?,
+            })
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -167,35 +199,33 @@ impl LangModel {
 }
 
 impl LangModelInference for LangModel {
-    fn infer<'a>(
+    fn infer_delta<'a>(
         &'a mut self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
         config: InferenceConfig,
-    ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
+    ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         match &mut self.inner {
-            LangModelInner::Local(model) => model.infer(msgs, tools, docs, config),
-            LangModelInner::StreamAPI(model) => model.infer(msgs, tools, docs, config),
-            LangModelInner::Custom(model) => model.infer(msgs, tools, docs, config),
+            LangModelInner::Local(model) => model.infer_delta(msgs, tools, docs, config),
+            LangModelInner::StreamAPI(model) => model.infer_delta(msgs, tools, docs, config),
+            LangModelInner::Custom(model) => model.infer_delta(msgs, tools, docs, config),
         }
     }
 }
 
 #[cfg(feature = "python")]
 mod py {
-    use pyo3::{
-        Bound, Py, PyAny, PyRef, PyResult, Python,
-        exceptions::{PyStopAsyncIteration, PyStopIteration},
-        pyclass, pymethods,
-        types::PyType,
-    };
+    use pyo3::{Bound, Py, PyAny, PyResult, Python, pymethods, types::PyType};
     use pyo3_stub_gen_derive::*;
 
     use super::*;
-    use crate::ffi::py::{base::await_future, cache_progress::await_cache_result};
+    use crate::{
+        ffi::py::{base::await_future, cache_progress::await_cache_result},
+        value::py::{MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator},
+    };
 
-    fn spawn<'a>(
+    fn spawn_delta<'a>(
         mut model: LangModel,
         messages: Vec<Message>,
         tools: Vec<ToolDesc>,
@@ -203,12 +233,14 @@ mod py {
         config: InferenceConfig,
     ) -> anyhow::Result<(
         &'a tokio::runtime::Runtime,
-        async_channel::Receiver<anyhow::Result<MessageOutput>>,
+        async_channel::Receiver<anyhow::Result<MessageDeltaOutput>>,
     )> {
-        let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageOutput>>();
+        let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageDeltaOutput>>();
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         rt.spawn(async move {
-            let mut stream = model.infer(messages, tools, documents, config).boxed();
+            let mut stream = model
+                .infer_delta(messages, tools, documents, config)
+                .boxed();
 
             while let Some(item) = stream.next().await {
                 if tx.send(item).await.is_err() {
@@ -219,56 +251,6 @@ mod py {
             }
         });
         Ok((rt, rx))
-    }
-
-    #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
-    pub struct LangModelRunIterator {
-        rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
-    }
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl LangModelRunIterator {
-        fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-            slf
-        }
-
-        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageOutput]"))]
-        fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-            let rx: async_channel::Receiver<Result<MessageOutput, anyhow::Error>> = self.rx.clone();
-            let fut = async move {
-                match rx.recv().await {
-                    Ok(res) => res.map_err(Into::into),
-                    Err(_) => Err(PyStopAsyncIteration::new_err(())),
-                }
-            };
-            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
-            Ok(py_fut.into())
-        }
-    }
-
-    #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
-    pub struct LangModelRunSyncIterator {
-        rt: &'static tokio::runtime::Runtime,
-        rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
-    }
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl LangModelRunSyncIterator {
-        fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-            slf
-        }
-
-        fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
-            let item = py.detach(|| self.rt.block_on(self.rx.recv()));
-            match item {
-                Ok(res) => res.map_err(Into::into),
-                Err(_) => Err(PyStopIteration::new_err(())),
-            }
-        }
     }
 
     #[gen_stub_pymethods]
@@ -335,40 +317,83 @@ mod py {
             }
         }
 
-        #[pyo3(signature = (messages, tools=None, documents=None, config=None))]
-        fn run(
+        #[pyo3(name="infer_delta", signature = (messages, tools=None, documents=None, config=None))]
+        fn infer_delta_py(
             &mut self,
             messages: Vec<Message>,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
-        ) -> anyhow::Result<LangModelRunIterator> {
-            let (_, rx) = spawn(
+        ) -> anyhow::Result<MessageDeltaOutputIterator> {
+            let (_, rx) = spawn_delta(
                 self.clone(),
                 messages,
                 tools.unwrap_or_default(),
                 documents.unwrap_or_default(),
                 config.unwrap_or_default(),
             )?;
-            Ok(LangModelRunIterator { rx })
+            Ok(MessageDeltaOutputIterator { rx })
         }
 
-        #[pyo3(signature = (messages, tools=None, documents=None, config=None))]
-        fn run_sync(
+        #[pyo3(name="infer_delta_sync", signature = (messages, tools=None, documents=None, config=None))]
+        fn infer_delta_sync_py(
             &mut self,
             messages: Vec<Message>,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
-        ) -> anyhow::Result<LangModelRunSyncIterator> {
-            let (rt, rx) = spawn(
+        ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
+            let (rt, rx) = spawn_delta(
                 self.clone(),
                 messages,
                 tools.unwrap_or_default(),
                 documents.unwrap_or_default(),
                 config.unwrap_or_default(),
             )?;
-            Ok(LangModelRunSyncIterator { rt, rx })
+            Ok(MessageDeltaOutputSyncIterator { rt, rx })
+        }
+
+        #[pyo3(name="infer", signature = (messages, tools=None, documents=None, config=None))]
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageOutput]"))]
+        fn infer_py<'py>(
+            &'py self,
+            py: Python<'py>,
+            messages: Vec<Message>,
+            tools: Option<Vec<ToolDesc>>,
+            documents: Option<Vec<Document>>,
+            config: Option<InferenceConfig>,
+        ) -> PyResult<Py<PyAny>> {
+            let mut this = self.clone();
+            let fut = async move {
+                let out = this
+                    .infer(
+                        messages,
+                        tools.unwrap_or_default(),
+                        documents.unwrap_or_default(),
+                        config.unwrap_or_default(),
+                    )
+                    .await?;
+                Python::attach(|py| Py::new(py, out))
+            };
+            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
+            Ok(py_fut)
+        }
+
+        #[pyo3(name="infer_sync", signature = (messages, tools=None, documents=None, config=None))]
+        fn infer_sync_py(
+            &mut self,
+            messages: Vec<Message>,
+            tools: Option<Vec<ToolDesc>>,
+            documents: Option<Vec<Document>>,
+            config: Option<InferenceConfig>,
+        ) -> PyResult<MessageOutput> {
+            let fut = self.infer(
+                messages,
+                tools.unwrap_or_default(),
+                documents.unwrap_or_default(),
+                config.unwrap_or_default(),
+            );
+            await_future(fut)
         }
 
         pub fn __repr__(&self) -> String {
@@ -416,9 +441,7 @@ mod node {
     use std::sync::Arc;
 
     use futures::{StreamExt, lock::Mutex};
-    use napi::{
-        Error, JsSymbol, Status, bindgen_prelude::*, threadsafe_function::ThreadsafeFunction,
-    };
+    use napi::{Status, bindgen_prelude::*, threadsafe_function::ThreadsafeFunction};
     use napi_derive::napi;
     use tokio::sync::mpsc;
 
@@ -427,61 +450,6 @@ mod node {
         cache::{JsCacheProgress, await_cache_result},
         common::get_or_create_runtime,
     };
-
-    #[napi(object)]
-    pub struct LangModelRunIteratorResult {
-        pub value: MessageOutput,
-        pub done: bool,
-    }
-
-    #[derive(Clone)]
-    #[napi]
-    pub struct LangModelRunIterator {
-        rx: Arc<Mutex<mpsc::UnboundedReceiver<std::result::Result<MessageOutput, anyhow::Error>>>>,
-    }
-
-    #[napi]
-    impl LangModelRunIterator {
-        #[napi(js_name = "[Symbol.asyncIterator]")]
-        pub fn async_iterator(&self) -> &Self {
-            // This is a dummy function to add typing for Symbol.asyncIterator
-            self
-        }
-
-        #[napi]
-        pub async unsafe fn next(&mut self) -> napi::Result<LangModelRunIteratorResult> {
-            let mut rx = self.rx.lock().await;
-            match rx.recv().await {
-                Some(Ok(output)) => Ok(LangModelRunIteratorResult {
-                    value: output.into(),
-                    done: false,
-                }),
-                Some(Err(e)) => Err(Error::new(Status::GenericFailure, e)),
-                None => Ok(LangModelRunIteratorResult {
-                    value: MessageOutput::new().into(),
-                    done: true,
-                }),
-            }
-        }
-    }
-
-    impl LangModelRunIterator {
-        /// This returns an object with \[Symbol.asyncIterator\], which is not directly injected by napi-rs.
-        fn to_async_iterator<'a>(self, env: Env) -> napi::Result<Object<'a>> {
-            let mut obj = Object::new(&env)?;
-
-            let global = env.get_global()?;
-            let symbol: Function = global.get_named_property("Symbol")?;
-            let symbol_async_iterator: JsSymbol = symbol.get_named_property("asyncIterator")?;
-
-            let func: Function<(), LangModelRunIterator> =
-                env.create_function_from_closure("asyncIterator", move |_| Ok(self.clone()))?;
-
-            obj.set_property(symbol_async_iterator, func)?;
-
-            Ok(obj)
-        }
-    }
 
     #[napi]
     impl LangModel {
@@ -512,22 +480,22 @@ mod node {
             })
         }
 
-        #[napi(ts_return_type = "LangModelRunIterator")]
-        pub fn run<'a>(
+        #[napi(js_name = "infer_delta", ts_return_type = "MessageDeltaOutputIterator")]
+        pub fn infer_delta_node<'a>(
             &'a mut self,
             env: Env,
             messages: Vec<Message>,
             tools: Option<Vec<ToolDesc>>,
             docs: Option<Vec<Document>>,
         ) -> Result<Object<'a>> {
-            let (tx, rx) = mpsc::unbounded_channel::<std::result::Result<MessageOutput, _>>();
+            let (tx, rx) = mpsc::unbounded_channel::<std::result::Result<MessageDeltaOutput, _>>();
             let rt = get_or_create_runtime();
             let mut model = self.clone();
 
             rt.spawn(async move {
                 // let mut model = inner.model.lock().await;
                 let mut stream = model
-                    .infer(
+                    .infer_delta(
                         messages,
                         tools.unwrap_or(vec![]),
                         docs.unwrap_or(vec![]),
@@ -543,10 +511,29 @@ mod node {
                 }
             });
 
-            let it = LangModelRunIterator {
+            let it = crate::value::node::MessageDeltaOutputIterator {
                 rx: Arc::new(Mutex::new(rx)),
             };
             it.to_async_iterator(env)
+        }
+
+        #[napi(js_name = "infer", ts_return_type = "MessageDeltaOutput")]
+        pub async unsafe fn infer_node<'a>(
+            &mut self,
+            messages: Vec<Message>,
+            tools: Option<Vec<ToolDesc>>,
+            docs: Option<Vec<Document>>,
+        ) -> napi::Result<MessageOutput> {
+            let result = self
+                .infer(
+                    messages,
+                    tools.unwrap_or(vec![]),
+                    docs.unwrap_or(vec![]),
+                    InferenceConfig::default(),
+                )
+                .await
+                .map_err(|v| napi::Error::from_reason(v.to_string()));
+            result
         }
     }
 }

@@ -12,7 +12,6 @@ use pyo3::prelude::*;
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // Add classes in alphabetical order
     m.add_class::<crate::agent::Agent>()?;
-    m.add_class::<crate::agent::AgentResponse>()?;
     m.add_class::<crate::tool::Tool>()?;
     m.add_class::<crate::tool::MCPClient>()?;
     m.add_class::<crate::value::ToolDesc>()?;
@@ -24,6 +23,7 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<crate::value::FinishReason>()?;
     m.add_class::<crate::value::Message>()?;
     m.add_class::<crate::value::MessageDelta>()?;
+    m.add_class::<crate::value::MessageDeltaOutput>()?;
     m.add_class::<crate::value::MessageOutput>()?;
     m.add_class::<crate::value::Part>()?;
     m.add_class::<crate::value::PartDelta>()?;

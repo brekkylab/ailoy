@@ -1,13 +1,15 @@
 use anyhow::Context;
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
 
 use crate::{
     knowledge::{Knowledge, KnowledgeBehavior as _, KnowledgeConfig},
     model::{InferenceConfig, LangModel, LangModelInference as _},
     tool::{Tool, ToolBehavior as _},
-    utils::{BoxStream, log},
-    value::{Delta, FinishReason, Message, MessageDelta, Part, PartDelta, Role},
+    utils::{BoxFuture, BoxStream, log},
+    value::{
+        Delta, Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput,
+        Part, PartDelta, Role, ToolDesc,
+    },
 };
 
 #[derive(Clone)]
@@ -19,22 +21,6 @@ pub struct Agent {
     lm: LangModel,
     tools: Vec<Tool>,
     knowledge: Option<Knowledge>,
-}
-
-/// The yielded value from agent.run().
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-pub struct AgentResponse {
-    /// The message delta per iteration.
-    pub delta: MessageDelta,
-    /// Optional finish reason. If this is Some, the message aggregation is finalized and stored in `aggregated`.
-    pub finish_reason: Option<FinishReason>,
-    /// Optional aggregated message.
-    pub aggregated: Option<Message>,
 }
 
 impl Agent {
@@ -109,77 +95,130 @@ impl Agent {
         self.knowledge = None;
     }
 
-    pub fn run<'a>(
-        &'a mut self,
-        messages: Vec<Message>,
-        config: Option<InferenceConfig>,
-    ) -> BoxStream<'a, anyhow::Result<AgentResponse>> {
-        let last_message = messages.last().cloned();
-        let tools = self.tools.clone();
-
-        let mut messages = messages.clone();
-
-        let strm = async_stream::try_stream! {
-            // Get documents
-            let docs = if let Some(message) = last_message
+    fn get_docs<'a>(
+        msgs: &Vec<Message>,
+        knowledge: &Option<Knowledge>,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<Document>>> {
+        let last_msg = msgs.last().cloned();
+        let knowledge = knowledge.clone();
+        Box::pin(async move {
+            if let Some(message) = last_msg
                 && message.role == Role::User
-                && let Some(knowledge) = self.knowledge.clone() {
-                let query_str = message.contents.iter().filter(|p| p.is_text()).map(|p| p.as_text().unwrap().to_owned()).collect::<Vec<_>>().join("\n\n");
-                knowledge.retrieve(query_str, KnowledgeConfig::default()).await?
+                && let Some(knowledge) = knowledge.clone()
+            {
+                let query_str = message
+                    .contents
+                    .iter()
+                    .filter(|p| p.is_text())
+                    .map(|p| p.as_text().unwrap().to_owned())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                Ok(knowledge
+                    .retrieve(query_str, KnowledgeConfig::default())
+                    .await?)
             } else {
-                vec![]
-            };
+                Ok(vec![])
+            }
+        })
+    }
 
-            let tool_descs = self
-                .tools
+    fn get_tool_descs(tools: &Vec<Tool>) -> Vec<ToolDesc> {
+        tools
+            .iter()
+            .map(|v| v.get_description())
+            .collect::<Vec<_>>()
+    }
+
+    async fn handle_tool_calls(
+        tools: &Vec<Tool>,
+        tool_calls: Vec<Part>,
+    ) -> anyhow::Result<Vec<MessageDelta>> {
+        let mut tool_resps = Vec::new();
+        for part in &tool_calls {
+            let Some((id, name, args)) = part.as_function() else {
+                continue;
+            };
+            let tool = tools
                 .iter()
-                .map(|v| v.get_description())
-                .collect::<Vec<_>>();
+                .find(|v| v.get_description().name == name)
+                .unwrap()
+                .clone();
+            let resp = tool.run(args.clone()).await?;
+            let mut delta =
+                MessageDelta::new()
+                    .with_role(Role::Tool)
+                    .with_contents([PartDelta::Value {
+                        value: resp.clone(),
+                    }]);
+            if let Some(id) = id {
+                delta = delta.with_id(id);
+            };
+            tool_resps.push(delta);
+        }
+        Ok(tool_resps)
+    }
+
+    pub fn run_delta<'a>(
+        &'a mut self,
+        mut messages: Vec<Message>,
+        config: Option<InferenceConfig>,
+    ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
+        let knowledge = self.knowledge.clone();
+        let tools = self.tools.clone();
+        let strm = async_stream::try_stream! {
+            let docs = Self::get_docs(&messages, &knowledge).await?;
+            let tool_descs = Self::get_tool_descs(&tools);
             loop {
                 let mut assistant_msg_delta = MessageDelta::new().with_role(Role::Assistant);
-                let mut assistant_msg: Option<Message> = None;
                 {
                     let mut model = self.lm.clone();
-                    let mut strm = model.infer(messages.clone(), tool_descs.clone(), docs.clone(), config.clone().unwrap_or_default());
+                    let mut strm = model.infer_delta(messages.clone(), tool_descs.clone(), docs.clone(), config.clone().unwrap_or_default());
                     while let Some(out) = strm.next().await {
                         let out = out?;
                         assistant_msg_delta = assistant_msg_delta.aggregate(out.clone().delta).context("Aggregation failed")?;
-
-                        // Message aggregation is finalized if finish_reason does exist
                         if out.finish_reason.is_some() {
-                            assistant_msg = Some(assistant_msg_delta.clone().finish()?);
+                            yield out;
+                            break;
+                        } else {
+                            yield out;
                         }
-                        yield AgentResponse {
-                            delta: out.delta.clone(),
-                            finish_reason: out.finish_reason.clone(),
-                            aggregated: assistant_msg.clone(),
-                        };
                     }
                 }
-                let assistant_msg = assistant_msg.unwrap();
-                // Add assistant message to messages
+                let assistant_msg = assistant_msg_delta.clone().finish()?;
                 messages.push(assistant_msg.clone());
 
-                // Handling tool calls if exist
                 if let Some(tool_calls) = assistant_msg.tool_calls && !tool_calls.is_empty() {
-                    for part in &tool_calls {
-                        let Some((id, name, args)) = part.as_function() else { continue; };
-                        let tool = tools.iter().find(|v| v.get_description().name == name).unwrap().clone();
-                        let resp = tool.run(args.clone()).await?;
-                        let mut tool_msg_delta = MessageDelta::new().with_role(Role::Tool).with_contents([PartDelta::Value{value: resp.clone()}]);
-                        let mut tool_msg = Message::new(Role::Tool).with_contents([Part::Value{value: resp.clone()}]);
-                        if let Some(id) = id {
-                            tool_msg_delta = tool_msg_delta.with_id(id);
-                            tool_msg = tool_msg.with_id(id);
-                        }
-                        yield AgentResponse {
-                            delta: tool_msg_delta,
-                            finish_reason: Some(FinishReason::Stop{}),
-                            aggregated: Some(tool_msg.clone()),
-                        };
+                    for delta in Self::handle_tool_calls(&tools, tool_calls).await? {
+                        yield MessageDeltaOutput { delta, finish_reason: Some(FinishReason::Stop{}) };
+                    }
+                } else {
+                    break;
+                }
+            }
+        };
+        Box::pin(strm)
+    }
 
-                        // Add tool message to messages
-                        messages.push(tool_msg.clone());
+    pub fn run<'a>(
+        &'a mut self,
+        mut messages: Vec<Message>,
+        config: Option<InferenceConfig>,
+    ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
+        let knowledge = self.knowledge.clone();
+        let tools = self.tools.clone();
+        let strm = async_stream::try_stream! {
+            let docs = Self::get_docs(&messages, &knowledge).await?;
+            let tool_descs = Self::get_tool_descs(&tools);
+            loop {
+                let mut model = self.lm.clone();
+                let assistant_out = model.infer(messages.clone(), tool_descs.clone(), docs.clone(), config.clone().unwrap_or_default()).await?;
+                let assistant_msg = assistant_out.message.clone();
+                messages.push(assistant_msg.clone());
+                yield assistant_out;
+
+                if let Some(tool_calls) = assistant_msg.tool_calls && !tool_calls.is_empty() {
+                    for delta in Self::handle_tool_calls(&tools, tool_calls).await? {
+                        yield MessageOutput { message: delta.finish()?, finish_reason: FinishReason::Stop{} };
                     }
                 } else {
                     break;
@@ -195,66 +234,15 @@ mod node {
     use std::sync::Arc;
 
     use futures::lock::Mutex;
-    use napi::{JsSymbol, Status, bindgen_prelude::*};
+    use napi::bindgen_prelude::*;
     use napi_derive::napi;
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::ffi::node::common::get_or_create_runtime;
-
-    #[napi(object)]
-    pub struct AgentRunIteratorResult {
-        pub value: AgentResponse,
-        pub done: bool,
-    }
-
-    #[derive(Clone)]
-    #[napi]
-    pub struct AgentRunIterator {
-        rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<AgentResponse>>>>,
-    }
-
-    #[napi]
-    impl AgentRunIterator {
-        #[napi(js_name = "[Symbol.asyncIterator]")]
-        pub fn async_iterator(&self) -> &Self {
-            // This is a dummy function to add typing for Symbol.asyncIterator
-            self
-        }
-
-        #[napi]
-        pub async unsafe fn next(&mut self) -> napi::Result<AgentRunIteratorResult> {
-            let mut rx = self.rx.lock().await;
-            match rx.recv().await {
-                Some(Ok(response)) => Ok(AgentRunIteratorResult {
-                    value: response,
-                    done: false,
-                }),
-                Some(Err(e)) => Err(napi::Error::new(Status::GenericFailure, e)),
-                None => Ok(AgentRunIteratorResult {
-                    value: AgentResponse::default(),
-                    done: true,
-                }),
-            }
-        }
-    }
-
-    impl AgentRunIterator {
-        fn to_async_iterator<'a>(self, env: Env) -> napi::Result<Object<'a>> {
-            let mut obj = Object::new(&env)?;
-
-            let global = env.get_global()?;
-            let symbol: Function = global.get_named_property("Symbol")?;
-            let symbol_async_iterator: JsSymbol = symbol.get_named_property("asyncIterator")?;
-
-            let func: Function<(), AgentRunIterator> =
-                env.create_function_from_closure("asyncIterator", move |_| Ok(self.clone()))?;
-
-            obj.set_property(symbol_async_iterator, func)?;
-
-            Ok(obj)
-        }
-    }
+    use crate::{
+        ffi::node::common::get_or_create_runtime,
+        value::node::{MessageDeltaOutputIterator, MessageOutputIterator},
+    };
 
     #[napi]
     impl Agent {
@@ -296,14 +284,45 @@ mod node {
             self.remove_knowledge()
         }
 
-        #[napi(js_name = "run", ts_return_type = "AgentRunIterator")]
+        #[napi(js_name = "run_delta", ts_return_type = "MessageDeltaOutputIterator")]
+        pub fn run_delta_js<'a>(
+            &'a mut self,
+            env: Env,
+            messages: Vec<Message>,
+            config: Option<InferenceConfig>,
+        ) -> napi::Result<Object<'a>> {
+            let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
+            let rt = get_or_create_runtime();
+            let mut agent = self.clone();
+
+            rt.spawn(async move {
+                let mut stream = agent.run_delta(messages, config).boxed();
+
+                while let Some(item) = stream.next().await {
+                    if tx
+                        .send(item.map_err(|e| anyhow::anyhow!(e.to_string())))
+                        .is_err()
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            });
+
+            let it = MessageDeltaOutputIterator {
+                rx: Arc::new(Mutex::new(rx)),
+            };
+            it.to_async_iterator(env)
+        }
+
+        #[napi(js_name = "run", ts_return_type = "MessageOutputIterator")]
         pub fn run_js<'a>(
             &'a mut self,
             env: Env,
             messages: Vec<Message>,
             config: Option<InferenceConfig>,
         ) -> napi::Result<Object<'a>> {
-            let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<AgentResponse>>();
+            let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
             let rt = get_or_create_runtime();
             let mut agent = self.clone();
 
@@ -321,7 +340,7 @@ mod node {
                 }
             });
 
-            let it = AgentRunIterator {
+            let it = MessageOutputIterator {
                 rx: Arc::new(Mutex::new(rx)),
             };
             it.to_async_iterator(env)
@@ -403,17 +422,17 @@ mod tests {
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
         let mut agent = Agent::new(model, Vec::new());
 
-        let mut strm = Box::pin(agent.run(
+        let mut strm = Box::pin(agent.run_delta(
             vec![Message::new(Role::User).with_contents(vec![Part::text("Hi, what's your name?")])],
             None,
         ));
+        let mut accumulated = MessageDelta::new();
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            if output.aggregated.is_some() {
-                println!("message: {:?}", output.aggregated.unwrap());
-            }
+            accumulated = accumulated.aggregate(output.delta).unwrap();
         }
+        println!("message: {:?}", accumulated.finish().unwrap());
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
@@ -478,20 +497,20 @@ mod tests {
 
         let mut agent = Agent::new(model, tools);
 
-        let mut strm = Box::pin(agent.run(
+        let mut strm = Box::pin(agent.run_delta(
             vec![
                     Message::new(Role::User)
                         .with_contents(vec![Part::text("How much hot currently in Dubai?")]),
                 ],
             None,
         ));
+        let mut accumulated = MessageDelta::new();
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            if output.aggregated.is_some() {
-                println!("message: {:?}", output.aggregated.unwrap());
-            }
+            accumulated = accumulated.aggregate(output.delta).unwrap();
         }
+        println!("message: {:?}", accumulated.finish().unwrap());
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
@@ -522,33 +541,57 @@ mod tests {
         assert_eq!(agent_tools[0].get_description().name, "get_current_time");
         assert_eq!(agent_tools[1].get_description().name, "convert_time");
 
-        let mut strm = Box::pin(agent.run(
+        let mut strm = Box::pin(agent.run_delta(
             vec![Message::new(Role::User).with_contents(vec![Part::text(
                 "What time is it now in America/New_York timezone?",
             )])],
             None,
         ));
+        let mut accumulated = MessageDelta::new();
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            if output.aggregated.is_some() {
-                println!("message: {:?}", output.aggregated.unwrap());
-            }
+            accumulated = accumulated.aggregate(output.delta).unwrap();
         }
+        println!("message: {:?}", accumulated.finish().unwrap());
     }
 }
 
 #[cfg(feature = "python")]
 mod py {
-    use pyo3::{
-        Bound, Py, PyAny, PyRef, PyResult, Python,
-        exceptions::{PyStopAsyncIteration, PyStopIteration},
-        pyclass, pymethods,
-        types::PyType,
+    use pyo3::{Bound, Py, PyAny, PyResult, Python, pymethods, types::PyType};
+    use pyo3_stub_gen_derive::gen_stub_pymethods;
+
+    use crate::value::py::{
+        MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
+        MessageOutputSyncIterator,
     };
-    use pyo3_stub_gen_derive::{gen_stub_pyclass, gen_stub_pymethods};
 
     use super::*;
+
+    fn spawn_delta<'a>(
+        mut agent: Agent,
+        messages: Vec<Message>,
+        config: Option<InferenceConfig>,
+    ) -> anyhow::Result<(
+        &'a tokio::runtime::Runtime,
+        async_channel::Receiver<anyhow::Result<MessageDeltaOutput>>,
+    )> {
+        let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageDeltaOutput>>();
+        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        rt.spawn(async move {
+            let mut stream = agent.run_delta(messages, config).boxed();
+
+            while let Some(item) = stream.next().await {
+                if tx.send(item).await.is_err() {
+                    break; // Exit if consumer vanished
+                }
+                // Add a yield point to allow other tasks to run
+                tokio::task::yield_now().await;
+            }
+        });
+        Ok((rt, rx))
+    }
 
     fn spawn<'a>(
         mut agent: Agent,
@@ -556,9 +599,9 @@ mod py {
         config: Option<InferenceConfig>,
     ) -> anyhow::Result<(
         &'a tokio::runtime::Runtime,
-        async_channel::Receiver<anyhow::Result<AgentResponse>>,
+        async_channel::Receiver<anyhow::Result<MessageOutput>>,
     )> {
-        let (tx, rx) = async_channel::unbounded::<anyhow::Result<AgentResponse>>();
+        let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageOutput>>();
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         rt.spawn(async move {
             let mut stream = agent.run(messages, config).boxed();
@@ -572,56 +615,6 @@ mod py {
             }
         });
         Ok((rt, rx))
-    }
-
-    #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
-    pub struct AgentRunIterator {
-        rx: async_channel::Receiver<anyhow::Result<AgentResponse>>,
-    }
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl AgentRunIterator {
-        fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-            slf
-        }
-
-        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[AgentResponse]"))]
-        fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-            let rx: async_channel::Receiver<Result<AgentResponse, anyhow::Error>> = self.rx.clone();
-            let fut = async move {
-                match rx.recv().await {
-                    Ok(res) => res.map_err(Into::into),
-                    Err(_) => Err(PyStopAsyncIteration::new_err(())),
-                }
-            };
-            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
-            Ok(py_fut.into())
-        }
-    }
-
-    #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
-    pub struct AgentRunSyncIterator {
-        rt: &'static tokio::runtime::Runtime,
-        rx: async_channel::Receiver<anyhow::Result<AgentResponse>>,
-    }
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl AgentRunSyncIterator {
-        fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-            slf
-        }
-
-        fn __next__(&mut self, py: Python<'_>) -> PyResult<AgentResponse> {
-            let item = py.detach(|| self.rt.block_on(self.rx.recv()));
-            match item {
-                Ok(res) => res.map_err(Into::into),
-                Err(_) => Err(PyStopIteration::new_err(())),
-            }
-        }
     }
 
     #[gen_stub_pymethods]
@@ -686,14 +679,34 @@ mod py {
             self.remove_tool(tool_name);
         }
 
+        #[pyo3(name="run_delta", signature = (messages, config=None))]
+        fn run_delta_py(
+            &mut self,
+            messages: Vec<Message>,
+            config: Option<InferenceConfig>,
+        ) -> anyhow::Result<MessageDeltaOutputIterator> {
+            let (_, rx) = spawn_delta(self.clone(), messages, config)?;
+            Ok(MessageDeltaOutputIterator { rx })
+        }
+
+        #[pyo3(name="run_delta_sync", signature = (messages, config=None))]
+        fn run_delta_sync_py(
+            &mut self,
+            messages: Vec<Message>,
+            config: Option<InferenceConfig>,
+        ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
+            let (rt, rx) = spawn_delta(self.clone(), messages, config)?;
+            Ok(MessageDeltaOutputSyncIterator { rt, rx })
+        }
+
         #[pyo3(name="run", signature = (messages, config=None))]
         fn run_py(
             &mut self,
             messages: Vec<Message>,
             config: Option<InferenceConfig>,
-        ) -> anyhow::Result<AgentRunIterator> {
+        ) -> anyhow::Result<MessageOutputIterator> {
             let (_, rx) = spawn(self.clone(), messages, config)?;
-            Ok(AgentRunIterator { rx })
+            Ok(MessageOutputIterator { rx })
         }
 
         #[pyo3(name="run_sync", signature = (messages, config=None))]
@@ -701,28 +714,9 @@ mod py {
             &mut self,
             messages: Vec<Message>,
             config: Option<InferenceConfig>,
-        ) -> anyhow::Result<AgentRunSyncIterator> {
+        ) -> anyhow::Result<MessageOutputSyncIterator> {
             let (rt, rx) = spawn(self.clone(), messages, config)?;
-            Ok(AgentRunSyncIterator { rt, rx })
-        }
-    }
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl AgentResponse {
-        pub fn __repr__(&self) -> String {
-            format!(
-                "AgentResponse(delta={}, finish_reason={}, aggregated={})",
-                self.delta.__repr__(),
-                self.finish_reason
-                    .clone()
-                    .map(|finish_reason| finish_reason.__repr__())
-                    .unwrap_or("None".to_owned()),
-                self.aggregated
-                    .clone()
-                    .map(|aggregated| aggregated.__repr__())
-                    .unwrap_or("None".to_owned()),
-            )
+            Ok(MessageOutputSyncIterator { rt, rx })
         }
     }
 }

@@ -77,7 +77,7 @@ mod tests {
         knowledge::{Knowledge, KnowledgeTool},
         model::{EmbeddingModel, LangModel},
         tool::{Tool, ToolBehavior as _},
-        value::{Message, Part, Role},
+        value::{Delta as _, Message, MessageDelta, Part, Role},
         vector_store::{FaissStore, VectorStoreAddInput},
     };
 
@@ -117,16 +117,17 @@ mod tests {
             let mut agent_guard = agent.lock().await;
             agent_guard.set_knowledge(knowledge.clone());
 
-            let mut strm = Box::pin(agent_guard.run(
+            let mut strm = Box::pin(agent_guard.run_delta(
                 vec![Message::new(Role::User).with_contents(vec![Part::text("What is Ailoy?")])],
                 None,
             ));
-            while let Some(out_opt) = strm.next().await {
-                let out = out_opt.unwrap();
-                if out.aggregated.is_some() {
-                    println!("{:?}", out.aggregated.unwrap());
-                }
+            let mut accumulated = MessageDelta::new();
+            while let Some(output) = strm.next().await {
+                let output = output.unwrap();
+                println!("delta: {:?}", output.delta);
+                accumulated = accumulated.aggregate(output.delta).unwrap();
             }
+            println!("message: {:?}", accumulated.finish().unwrap());
         }
         // Remove knowledge
         {
@@ -140,7 +141,7 @@ mod tests {
             let tool = KnowledgeTool::from(knowledge);
             agent_guard.add_tool(Tool::new_knowledge(tool.clone()));
 
-            let mut strm = Box::pin(agent_guard.run(
+            let mut strm = Box::pin(agent_guard.run_delta(
                 vec![
                     Message::new(Role::User).with_contents(vec![Part::text(format!(
                         "What is Ailoy? Answer by calling tool '{}'",
@@ -149,12 +150,13 @@ mod tests {
                 ],
                 None,
             ));
+            let mut accumulated = MessageDelta::new();
             while let Some(output) = strm.next().await {
                 let output = output.unwrap();
-                if output.aggregated.is_some() {
-                    println!("{:?}", output.aggregated.unwrap());
-                }
+                println!("delta: {:?}", output.delta);
+                accumulated = accumulated.aggregate(output.delta).unwrap();
             }
+            println!("message: {:?}", accumulated.finish().unwrap());
         }
 
         Ok(())

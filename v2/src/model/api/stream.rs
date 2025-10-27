@@ -10,7 +10,7 @@ use crate::{
         api::{APISpecification, RequestConfig},
     },
     utils::BoxStream,
-    value::{Document, Message, MessageOutput, Role, ToolDesc},
+    value::{Document, Message, MessageDeltaOutput, Role, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
@@ -57,7 +57,7 @@ type MakeRequestFunc =
     dyn Fn(Vec<Message>, Vec<ToolDesc>, RequestConfig) -> reqwest::RequestBuilder;
 
 #[maybe_send_sync]
-type HandleRequestFunc = dyn Fn(ServerEvent) -> MessageOutput;
+type HandleRequestFunc = dyn Fn(ServerEvent) -> MessageDeltaOutput;
 
 #[derive(Clone)]
 pub(crate) struct StreamAPILangModel {
@@ -128,13 +128,13 @@ impl StreamAPILangModel {
 }
 
 impl LangModelInference for StreamAPILangModel {
-    fn infer<'a>(
+    fn infer_delta<'a>(
         self: &'a mut Self,
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
         config: InferenceConfig,
-    ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
+    ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         let strm = async_stream::try_stream! {
             // Polyfill documents
             let mut msgs = if let Some(polyfill) = config.document_polyfill {
