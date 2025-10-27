@@ -135,8 +135,8 @@ async def test_simple_multiturn(agent: ai.Agent):
 async def test_builtin_tool(agent: ai.Agent):
     tool = ai.Tool.new_builtin("terminal")
     agent.add_tool(tool)
-    acc = ai.MessageDelta()
-    async for resp in agent.run(
+    acc = ai.MessageDelta("assistant")
+    async for resp in agent.run_delta(
         [
             ai.Message(
                 role="user",
@@ -189,7 +189,7 @@ async def test_python_async_function_tool(agent: ai.Agent):
     tool = ai.Tool.new_py_function(tool_temperature)
 
     agent.add_tool(tool)
-    acc = ai.MessageDelta(role=ai.Role.Assistant)
+    acc = ai.MessageDelta(role="assistant")
     async for resp in agent.run_delta(
         [
             ai.Message(
@@ -230,7 +230,7 @@ async def test_mcp_tools(agent: ai.Agent):
     tools = mcp_client.tools
 
     agent.add_tools(tools)
-    acc = ai.MessageDelta(role=ai.Role.Assistant)
+    acc = ai.MessageDelta(role="assistant")
     async for resp in agent.run_delta(
         [
             ai.Message(
