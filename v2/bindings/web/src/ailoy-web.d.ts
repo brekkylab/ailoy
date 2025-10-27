@@ -13,7 +13,7 @@ export class Agent {
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
   run(
-    messages: string | Array<Message>,
+    messages: Array<Message> | string,
     config?: InferenceConfig | null
   ): AsyncIterable<AgentResponse>;
 }
