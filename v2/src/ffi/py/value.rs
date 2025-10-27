@@ -10,22 +10,6 @@ use crate::{
     },
 };
 
-// #[getter]
-// fn text(&self) -> Option<String> {
-//     match &self {
-//         Part::Text { .. } => Some(self.to_string()),
-//         _ => None,
-//     }
-// }
-
-// #[getter]
-// fn function(&self) -> Option<String> {
-//     match &self {
-//         Part::Function { .. } => Some(self.to_string()),
-//         _ => None,
-//     }
-// }
-
 #[gen_stub_pymethods]
 #[pymethods]
 impl PartDelta {
