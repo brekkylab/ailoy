@@ -550,8 +550,33 @@ mod wasm {
         }
 
         #[wasm_bindgen(
+            js_name = "run_delta",
+            unchecked_return_type = "AsyncIterable<MessageDeltaOutput>"
+        )]
+        pub fn run_delta_js(
+            &self,
+            messages: Vec<Message>,
+            config: Option<InferenceConfig>,
+        ) -> JsValue {
+            let mut agent = self.clone();
+            let stream = async_stream::stream! {
+                let mut inner_stream = agent.run_delta(messages, config);
+                while let Some(item) = inner_stream.next().await {
+                    yield item;
+                }
+            };
+            let js_stream = Box::pin(stream.map(|response| {
+                response
+                    .map(|resp| resp.into())
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
+            }));
+
+            stream_to_async_iterable(js_stream).into()
+        }
+
+        #[wasm_bindgen(
             js_name = "run",
-            unchecked_return_type = "AsyncIterable<AgentResponse>"
+            unchecked_return_type = "AsyncIterable<MessageOutput>"
         )]
         pub fn run_js(&self, messages: Vec<Message>, config: Option<InferenceConfig>) -> JsValue {
             let mut agent = self.clone();

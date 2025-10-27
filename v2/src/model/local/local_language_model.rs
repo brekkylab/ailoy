@@ -573,11 +573,11 @@ mod tests {
             ..Default::default()
         };
         let mut delta = MessageDelta::new();
-        let mut strm = model.infer(msgs, Vec::new(), Vec::new(), config);
+        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), config);
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
             crate::utils::log::debug(format!("{:?}", out));
-            delta = delta.aggregate(out.delta).unwrap();
+            delta = delta.accumulate(out.delta).unwrap();
         }
         crate::utils::log::info(format!("{:?}", delta.finish().unwrap()));
     }

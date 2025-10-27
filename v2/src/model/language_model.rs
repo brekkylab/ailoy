@@ -578,8 +578,8 @@ mod wasm {
             LangModel::new_stream_api(spec, model_name, api_key)
         }
 
-        #[wasm_bindgen(js_name = infer, unchecked_return_type = "AsyncIterable<MessageOutput>")]
-        pub fn infer_js(
+        #[wasm_bindgen(js_name = infer_delta, unchecked_return_type = "AsyncIterable<MessageDeltaOutput>")]
+        pub fn infer_delta_js(
             &mut self,
             msgs: Vec<Message>,
             tools: Option<Vec<ToolDesc>>,
@@ -588,7 +588,7 @@ mod wasm {
         ) -> JsValue {
             let mut model = self.clone();
             let stream = async_stream::stream! {
-                let mut inner_stream = model.infer(msgs, tools.unwrap_or(vec![]), docs.unwrap_or(vec![]), config.unwrap_or_default());
+                let mut inner_stream = model.infer_delta(msgs, tools.unwrap_or(vec![]), docs.unwrap_or(vec![]), config.unwrap_or_default());
                 while let Some(item) = inner_stream.next().await {
                     yield item;
                 }
@@ -600,6 +600,24 @@ mod wasm {
             }));
 
             stream_to_async_iterable(js_stream).into()
+        }
+
+        #[wasm_bindgen(js_name = infer)]
+        pub async fn infer_js(
+            &mut self,
+            msgs: Vec<Message>,
+            tools: Option<Vec<ToolDesc>>,
+            docs: Option<Vec<Document>>,
+            config: Option<InferenceConfig>,
+        ) -> Result<MessageOutput, JsValue> {
+            self.infer(
+                msgs,
+                tools.unwrap_or(vec![]),
+                docs.unwrap_or(vec![]),
+                config.unwrap_or_default(),
+            )
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))
         }
     }
 }
