@@ -1,4 +1,7 @@
+mod python;
+
 use proc_macro::TokenStream;
+use python::*;
 use quote::quote;
 use syn::{Item, ItemFn, Type, parse_macro_input, parse_quote};
 
@@ -141,4 +144,9 @@ pub fn multi_platform_async_trait(_attr: TokenStream, item: TokenStream) -> Toke
     };
 
     output.into()
+}
+
+#[proc_macro_derive(PyStringEnum)]
+pub fn derive_py_string_enum(input: TokenStream) -> TokenStream {
+    py_string_enum(input)
 }

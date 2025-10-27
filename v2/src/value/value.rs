@@ -856,10 +856,10 @@ mod py {
     use super::Value;
 
     fn py_any_to_indexmap<'py>(obj: &Bound<'py, PyAny>) -> PyResult<IndexMap<String, Value>> {
-        let dict: &Bound<'py, PyDict> = obj.downcast()?;
+        let dict: &Bound<'py, PyDict> = Bound::cast(obj)?;
         let mut out = IndexMap::with_capacity(dict.len());
         for (k, v) in dict.iter() {
-            let key = if let Ok(s) = k.downcast::<PyString>() {
+            let key = if let Ok(s) = Bound::cast::<PyString>(&k) {
                 s.to_str()?.to_owned()
             } else {
                 return Err(PyTypeError::new_err("dict key must be str").into());
@@ -871,13 +871,13 @@ mod py {
     }
 
     fn py_any_to_vec<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Vec<Value>> {
-        if let Ok(list) = obj.downcast::<PyList>() {
+        if let Ok(list) = Bound::cast::<PyList>(obj) {
             return list.iter().map(|it| it.extract::<Value>()).collect();
         }
-        if let Ok(tup) = obj.downcast::<PyTuple>() {
+        if let Ok(tup) = Bound::cast::<PyTuple>(obj) {
             return tup.iter().map(|it| it.extract::<Value>()).collect();
         }
-        if let Ok(seq) = obj.downcast::<PySequence>() {
+        if let Ok(seq) = Bound::cast::<PySequence>(obj) {
             let mut out = Vec::with_capacity(seq.len()? as usize);
             for item in seq.try_iter()? {
                 out.push(item?.extract::<Value>()?);
@@ -887,8 +887,10 @@ mod py {
         Err(PyTypeError::new_err("expected a sequence (list/tuple)"))
     }
 
-    impl<'py> FromPyObject<'py> for Value {
-        fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+    impl<'a, 'py> FromPyObject<'a, 'py> for Value {
+        type Error = PyErr;
+
+        fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
             if ob.is_none() {
                 return Ok(Value::Null);
             }
@@ -914,14 +916,14 @@ mod py {
                 return Ok(Value::String(ob.extract::<String>()?));
             }
             if ob.is_instance_of::<PyDict>() {
-                let m = py_any_to_indexmap(ob)?;
+                let m = py_any_to_indexmap(&ob)?;
                 return Ok(Value::Object(m));
             }
-            if ob.downcast::<PyList>().is_ok()
-                || ob.downcast::<PyTuple>().is_ok()
-                || ob.downcast::<PySequence>().is_ok()
+            if Bound::cast::<PyList>(&ob).is_ok()
+                || Bound::cast::<PyTuple>(&ob).is_ok()
+                || Bound::cast::<PySequence>(&ob).is_ok()
             {
-                let v = py_any_to_vec(ob)?;
+                let v = py_any_to_vec(&ob)?;
                 return Ok(Value::Array(v));
             }
             Err(PyTypeError::new_err("unsupported Python type for Value"))

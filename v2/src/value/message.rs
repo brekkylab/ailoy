@@ -4,11 +4,12 @@ use serde::{Deserialize, Serialize};
 use crate::value::{Delta, Part, PartDelta};
 
 /// The author of a message (or streaming delta) in a chat.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString,
+)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", derive(ailoy_macros::PyStringEnum))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -153,9 +154,9 @@ impl Message {
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct MessageDelta {
     pub role: Option<Role>,
+    pub contents: Vec<PartDelta>,
     pub id: Option<String>,
     pub thinking: Option<String>,
-    pub contents: Vec<PartDelta>,
     #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
     pub tool_calls: Vec<PartDelta>,
     pub signature: Option<String>,
@@ -219,9 +220,9 @@ impl Delta for MessageDelta {
     fn accumulate(self, other: Self) -> anyhow::Result<Self> {
         let Self {
             mut role,
+            mut contents,
             mut id,
             mut thinking,
-            mut contents,
             mut tool_calls,
             mut signature,
         } = self;
@@ -306,9 +307,9 @@ impl Delta for MessageDelta {
         // Return
         Ok(Self {
             role,
-            thinking,
-            id,
             contents,
+            id,
+            thinking,
             tool_calls,
             signature,
         })
@@ -317,9 +318,9 @@ impl Delta for MessageDelta {
     fn finish(self) -> anyhow::Result<Self::Item> {
         let Self {
             role,
+            mut contents,
             id,
             thinking,
-            mut contents,
             mut tool_calls,
             signature,
         } = self;

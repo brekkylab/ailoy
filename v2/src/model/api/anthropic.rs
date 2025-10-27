@@ -142,7 +142,6 @@ enum AnthropicModelType {
     Opus,
     Sonnet,
     Haiku,
-    Haiku3,
 }
 
 impl Marshal<RequestConfig> for AnthropicMarshal {
@@ -155,22 +154,19 @@ impl Marshal<RequestConfig> for AnthropicMarshal {
             AnthropicModelType::Opus
         } else if model.contains("sonnet") {
             AnthropicModelType::Sonnet
-        } else if model.starts_with("claude-3-5-haiku") {
+        } else if model.contains("haiku") {
             AnthropicModelType::Haiku
-        } else if model.starts_with("claude-3-haiku") {
-            AnthropicModelType::Haiku3
         } else {
             panic!("Unsupported model.");
         };
 
         let is_reasoning_model = match model_type {
             AnthropicModelType::Opus | AnthropicModelType::Sonnet => true,
-            AnthropicModelType::Haiku | AnthropicModelType::Haiku3 => false,
+            AnthropicModelType::Haiku => false,
         };
 
         let budget_tokens = match (&config.think_effort, &model_type) {
             (_, AnthropicModelType::Haiku) => 0,
-            (_, AnthropicModelType::Haiku3) => 0,
             (ThinkEffort::Disable, _) => 0,
             (ThinkEffort::Enable, _) => 8192,
             (ThinkEffort::Low, _) => 1024,
@@ -196,8 +192,15 @@ impl Marshal<RequestConfig> for AnthropicMarshal {
             Value::integer(match &model_type {
                 AnthropicModelType::Opus => 32000,
                 AnthropicModelType::Sonnet => 64000,
-                AnthropicModelType::Haiku => 8192,
-                AnthropicModelType::Haiku3 => 4096,
+                AnthropicModelType::Haiku => {
+                    if model.starts_with("claude-3-5-haiku") {
+                        8192
+                    } else if model.starts_with("claude-3-haiku") {
+                        4096
+                    } else {
+                        64000
+                    }
+                }
             })
         };
 
