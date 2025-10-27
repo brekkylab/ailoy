@@ -91,75 +91,20 @@ impl ToolBehavior for Tool {
 mod py {
     use std::sync::Arc;
 
-    use indexmap::IndexMap;
-    use ordered_float::OrderedFloat;
     use pyo3::{
-        Bound, IntoPyObjectExt, Py, PyAny, PyResult, Python,
+        Bound, Py, PyAny, PyResult, Python,
         exceptions::PyRuntimeError,
         prelude::*,
         pymethods,
-        types::{PyAnyMethods, PyBool, PyDict, PyFloat, PyList, PyListMethods, PyString, PyType},
+        types::{PyAnyMethods, PyDict, PyType},
     };
     use pyo3_stub_gen_derive::gen_stub_pymethods;
 
     use super::*;
-    use crate::value::Value;
-
-    fn value_to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
-        match value {
-            Value::Null => py.None().into_bound_py_any(py),
-            Value::Bool(b) => PyBool::new(py, *b).into_bound_py_any(py),
-            Value::Unsigned(u) => u.into_bound_py_any(py),
-            Value::Integer(i) => i.into_bound_py_any(py),
-            Value::Float(f) => PyFloat::new(py, f.0).into_bound_py_any(py),
-            Value::String(s) => PyString::new(py, s).into_bound_py_any(py),
-            Value::Array(arr) => {
-                let py_list = PyList::empty(py);
-                for item in arr {
-                    py_list.append(value_to_python(py, item)?)?;
-                }
-                py_list.into_bound_py_any(py)
-            }
-            Value::Object(map) => {
-                let py_dict = PyDict::new(py);
-                for (key, val) in map {
-                    py_dict.set_item(key, value_to_python(py, val)?)?;
-                }
-                py_dict.into_bound_py_any(py)
-            }
-        }
-    }
-
-    fn python_to_value(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
-        if obj.is_none() {
-            Ok(Value::Null)
-        } else if let Ok(b) = obj.extract::<bool>() {
-            Ok(Value::Bool(b))
-        } else if let Ok(i) = obj.extract::<i64>() {
-            Ok(Value::Integer(i))
-        } else if let Ok(u) = obj.extract::<u64>() {
-            Ok(Value::Unsigned(u))
-        } else if let Ok(f) = obj.extract::<f64>() {
-            Ok(Value::Float(OrderedFloat(f)))
-        } else if let Ok(s) = obj.extract::<String>() {
-            Ok(Value::String(s))
-        } else if let Ok(list) = Bound::cast::<PyList>(obj) {
-            let mut arr = Vec::new();
-            for item in list.iter() {
-                arr.push(python_to_value(&item)?);
-            }
-            Ok(Value::Array(arr))
-        } else if let Ok(dict) = Bound::cast::<PyDict>(obj) {
-            let mut map = IndexMap::new();
-            for (key, val) in dict.iter() {
-                let key_str = key.extract::<String>()?;
-                map.insert(key_str, python_to_value(&val)?);
-            }
-            Ok(Value::Object(map))
-        } else {
-            Ok(Value::String(obj.to_string()))
-        }
-    }
+    use crate::{
+        ffi::py::base::{python_to_value, value_to_python},
+        value::Value,
+    };
 
     pub fn wrap_python_function(py_func: Py<PyAny>) -> Arc<ToolFunc> {
         let f: Box<ToolFunc> = Box::new(move |args: Value| {
@@ -178,7 +123,7 @@ mod py {
                     };
 
                     // call python function
-                    let result = if let Ok(dict) = Bound::cast::<PyDict>(&py_args) {
+                    let result = if let Ok(dict) = &py_args.cast::<PyDict>() {
                         py_func.bind(py).call((), Some(&dict))
                     } else {
                         return Ok(Value::object([(
