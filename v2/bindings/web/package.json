@@ -19,7 +19,7 @@
     },
     "scripts": {
         "build:shim": "cd ../../shim_js && npm run build && cd ../bindings/web && mkdir -p ./src/shim_js/dist && cp ../../shim_js/dist/* ./src/shim_js/dist/",
-        "build:wasm": "wasm-pack build --out-dir ./bindings/web/src --out-name ailoy-web --no-pack && rm -f ./src/.gitignore && node scripts/revise-typedef.js",
+        "build:wasm": "wasm-pack build --out-dir ./bindings/web/src --out-name ailoy-web --no-pack && rm -f ./src/.gitignore && node scripts/revise-typedef.mjs",
         "build": "vite build",
         "test": "vitest"
     }

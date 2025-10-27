@@ -577,7 +577,7 @@ mod tests {
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
             crate::utils::log::debug(format!("{:?}", out));
-            delta = delta.aggregate(out.delta).unwrap();
+            delta = delta.accumulate(out.delta).unwrap();
         }
         crate::utils::log::info(format!("{:?}", delta.finish().unwrap()));
     }

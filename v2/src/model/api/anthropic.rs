@@ -1,12 +1,11 @@
 use anyhow::{Context, bail};
-use base64::Engine;
 
 use crate::{
     model::{ServerEvent, ThinkEffort, api::RequestConfig},
     to_value,
     value::{
         FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, Role, ToolDesc, Unmarshal, Unmarshaled, Value,
+        PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal, Unmarshaled, Value,
     },
 };
 
@@ -34,24 +33,17 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             Part::Value { value } => {
                 to_value!(serde_json::to_string(&value).unwrap())
             }
-            Part::Image { .. } => {
-                // Get image
-                let img = part.as_image().unwrap();
-                // Write PNG string
-                let mut png_buf = Vec::new();
-                img.write_to(
-                    &mut std::io::Cursor::new(&mut png_buf),
-                    image::ImageFormat::Png,
-                )
-                .unwrap();
-                // base64 encoding
-                let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
+            Part::Image { image } => {
+                let b64 = match image {
+                    PartImage::Binary { .. } => image.base64().unwrap(),
+                    PartImage::Url { .. } => panic!("Claude does not support image url inputs"),
+                };
                 to_value!({
                     "type": "image",
                     "source": {
                         "type": "base64",
                         "media_type": "image/png",
-                        "data": encoded
+                        "data": b64,
                     }
                 })
             }
