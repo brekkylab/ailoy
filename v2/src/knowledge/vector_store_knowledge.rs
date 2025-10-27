@@ -125,7 +125,7 @@ mod tests {
             while let Some(output) = strm.next().await {
                 let output = output.unwrap();
                 println!("delta: {:?}", output.delta);
-                accumulated = accumulated.aggregate(output.delta).unwrap();
+                accumulated = accumulated.accumulate(output.delta).unwrap();
             }
             println!("message: {:?}", accumulated.finish().unwrap());
         }
@@ -154,7 +154,7 @@ mod tests {
             while let Some(output) = strm.next().await {
                 let output = output.unwrap();
                 println!("delta: {:?}", output.delta);
-                accumulated = accumulated.aggregate(output.delta).unwrap();
+                accumulated = accumulated.accumulate(output.delta).unwrap();
             }
             println!("message: {:?}", accumulated.finish().unwrap());
         }

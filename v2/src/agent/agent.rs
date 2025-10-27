@@ -175,7 +175,7 @@ impl Agent {
                     let mut strm = model.infer_delta(messages.clone(), tool_descs.clone(), docs.clone(), config.clone().unwrap_or_default());
                     while let Some(out) = strm.next().await {
                         let out = out?;
-                        assistant_msg_delta = assistant_msg_delta.aggregate(out.clone().delta).context("Aggregation failed")?;
+                        assistant_msg_delta = assistant_msg_delta.accumulate(out.clone().delta).context("Aggregation failed")?;
                         if out.finish_reason.is_some() {
                             yield out;
                             break;
@@ -231,15 +231,38 @@ impl Agent {
 
 #[cfg(feature = "python")]
 mod py {
-    use pyo3::{
-        Bound, Py, PyAny, PyRef, PyResult, Python,
-        exceptions::{PyStopAsyncIteration, PyStopIteration},
-        pyclass, pymethods,
-        types::PyType,
+    use pyo3::{Bound, Py, PyAny, PyResult, Python, pymethods, types::PyType};
+    use pyo3_stub_gen_derive::gen_stub_pymethods;
+
+    use crate::value::py::{
+        MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
     };
-    use pyo3_stub_gen_derive::{gen_stub_pyclass, gen_stub_pymethods};
 
     use super::*;
+
+    fn spawn_delta<'a>(
+        mut agent: Agent,
+        messages: Vec<Message>,
+        config: Option<InferenceConfig>,
+    ) -> anyhow::Result<(
+        &'a tokio::runtime::Runtime,
+        async_channel::Receiver<anyhow::Result<MessageDeltaOutput>>,
+    )> {
+        let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageDeltaOutput>>();
+        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        rt.spawn(async move {
+            let mut stream = agent.run_delta(messages, config).boxed();
+
+            while let Some(item) = stream.next().await {
+                if tx.send(item).await.is_err() {
+                    break; // Exit if consumer vanished
+                }
+                // Add a yield point to allow other tasks to run
+                tokio::task::yield_now().await;
+            }
+        });
+        Ok((rt, rx))
+    }
 
     fn spawn<'a>(
         mut agent: Agent,
@@ -247,9 +270,9 @@ mod py {
         config: Option<InferenceConfig>,
     ) -> anyhow::Result<(
         &'a tokio::runtime::Runtime,
-        async_channel::Receiver<anyhow::Result<AgentResponse>>,
+        async_channel::Receiver<anyhow::Result<MessageOutput>>,
     )> {
-        let (tx, rx) = async_channel::unbounded::<anyhow::Result<AgentResponse>>();
+        let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageOutput>>();
         let rt = pyo3_async_runtimes::tokio::get_runtime();
         rt.spawn(async move {
             let mut stream = agent.run(messages, config).boxed();
@@ -263,56 +286,6 @@ mod py {
             }
         });
         Ok((rt, rx))
-    }
-
-    #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
-    pub struct AgentRunIterator {
-        rx: async_channel::Receiver<anyhow::Result<AgentResponse>>,
-    }
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl AgentRunIterator {
-        fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-            slf
-        }
-
-        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[AgentResponse]"))]
-        fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-            let rx: async_channel::Receiver<Result<AgentResponse, anyhow::Error>> = self.rx.clone();
-            let fut = async move {
-                match rx.recv().await {
-                    Ok(res) => res.map_err(Into::into),
-                    Err(_) => Err(PyStopAsyncIteration::new_err(())),
-                }
-            };
-            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
-            Ok(py_fut.into())
-        }
-    }
-
-    #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
-    pub struct AgentRunSyncIterator {
-        rt: &'static tokio::runtime::Runtime,
-        rx: async_channel::Receiver<anyhow::Result<AgentResponse>>,
-    }
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl AgentRunSyncIterator {
-        fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-            slf
-        }
-
-        fn __next__(&mut self, py: Python<'_>) -> PyResult<AgentResponse> {
-            let item = py.detach(|| self.rt.block_on(self.rx.recv()));
-            match item {
-                Ok(res) => res.map_err(Into::into),
-                Err(_) => Err(PyStopIteration::new_err(())),
-            }
-        }
     }
 
     #[gen_stub_pymethods]
@@ -377,14 +350,34 @@ mod py {
             self.remove_tool(tool_name);
         }
 
+        #[pyo3(name="run_delta", signature = (messages, config=None))]
+        fn run_delta_py(
+            &mut self,
+            messages: Vec<Message>,
+            config: Option<InferenceConfig>,
+        ) -> anyhow::Result<MessageDeltaOutputIterator> {
+            let (_, rx) = spawn_delta(self.clone(), messages, config)?;
+            Ok(MessageDeltaOutputIterator { rx })
+        }
+
+        #[pyo3(name="run_delta_sync", signature = (messages, config=None))]
+        fn run_delta_sync_py(
+            &mut self,
+            messages: Vec<Message>,
+            config: Option<InferenceConfig>,
+        ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
+            let (rt, rx) = spawn_delta(self.clone(), messages, config)?;
+            Ok(MessageDeltaOutputSyncIterator { rt, rx })
+        }
+
         #[pyo3(name="run", signature = (messages, config=None))]
         fn run_py(
             &mut self,
             messages: Vec<Message>,
             config: Option<InferenceConfig>,
-        ) -> anyhow::Result<AgentRunIterator> {
+        ) -> anyhow::Result<MessageOutputIterator> {
             let (_, rx) = spawn(self.clone(), messages, config)?;
-            Ok(AgentRunIterator { rx })
+            Ok(MessageOutputIterator { rx })
         }
 
         #[pyo3(name="run_sync", signature = (messages, config=None))]
@@ -392,28 +385,9 @@ mod py {
             &mut self,
             messages: Vec<Message>,
             config: Option<InferenceConfig>,
-        ) -> anyhow::Result<AgentRunSyncIterator> {
-            let (rt, rx) = spawn(self.clone(), messages, config)?;
-            Ok(AgentRunSyncIterator { rt, rx })
-        }
-    }
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl AgentResponse {
-        pub fn __repr__(&self) -> String {
-            format!(
-                "AgentResponse(delta={}, finish_reason={}, accumulated={})",
-                self.delta.__repr__(),
-                self.finish_reason
-                    .clone()
-                    .map(|finish_reason| finish_reason.__repr__())
-                    .unwrap_or("None".to_owned()),
-                self.accumulated
-                    .clone()
-                    .map(|accumulated| accumulated.__repr__())
-                    .unwrap_or("None".to_owned()),
-            )
+        ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
+            let (rt, rx) = spawn_delta(self.clone(), messages, config)?;
+            Ok(MessageDeltaOutputSyncIterator { rt, rx })
         }
     }
 }
@@ -620,7 +594,7 @@ mod tests {
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            accumulated = accumulated.aggregate(output.delta).unwrap();
+            accumulated = accumulated.accumulate(output.delta).unwrap();
         }
         println!("message: {:?}", accumulated.finish().unwrap());
     }
@@ -697,7 +671,7 @@ mod tests {
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            accumulated = accumulated.aggregate(output.delta).unwrap();
+            accumulated = accumulated.accumulate(output.delta).unwrap();
         }
         println!("message: {:?}", accumulated.finish().unwrap());
     }
@@ -740,7 +714,7 @@ mod tests {
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            accumulated = accumulated.aggregate(output.delta).unwrap();
+            accumulated = accumulated.accumulate(output.delta).unwrap();
         }
         println!("message: {:?}", accumulated.finish().unwrap());
     }

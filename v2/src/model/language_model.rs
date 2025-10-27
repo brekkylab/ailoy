@@ -130,7 +130,7 @@ pub trait LangModelInference {
                 if finish_reason.is_some() {
                     acc_finish_reason = finish_reason;
                 }
-                acc_delta = acc_delta.aggregate(delta)?;
+                acc_delta = acc_delta.accumulate(delta)?;
             }
             Ok(MessageOutput {
                 message: acc_delta.finish()?,

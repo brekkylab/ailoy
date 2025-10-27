@@ -8,12 +8,16 @@ pub(crate) mod value;
 use pyo3::prelude::*;
 
 use crate::{
-    agent::{Agent, AgentResponse},
+    agent::Agent,
     model::{EmbeddingModel, InferenceConfig, LangModel},
     tool::{MCPClient, Tool},
     value::{
         FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, PartImage, ToolDesc, py::MessageDeltaOutputIterator,
+        PartDeltaFunction, PartFunction, PartImage, ToolDesc,
+        py::{
+            MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
+            MessageOutputSyncIterator,
+        },
     },
     vector_store::{
         VectorStore, VectorStoreAddInput, VectorStoreGetResult, VectorStoreRetrieveResult,
