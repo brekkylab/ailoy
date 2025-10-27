@@ -7,15 +7,16 @@ from typing import (
     Callable,
     Literal,
     Optional,
-    Self,
+    Sequence,
     Union,
     get_args,
     get_origin,
     get_type_hints,
 )
 
+from ailoy._core import Message as _Message
+from ailoy._core import Part, ToolDesc
 from ailoy._core import Tool as _Tool
-from ailoy._core import ToolDesc
 
 description_re = re.compile(r"^(.*?)[\n\s]*(Args:|Returns:|Raises:|\Z)", re.DOTALL)
 # Extracts the Args: block from the docstring
@@ -243,7 +244,7 @@ def get_json_schema(func: Callable) -> dict:
 
 class Tool(_Tool):
     @classmethod
-    def new_py_function(cls, func: Any, tool_desc: Optional[ToolDesc] = None) -> Self:
+    def new_py_function(cls, func: Any, tool_desc: Optional[ToolDesc] = None) -> _Tool:
         if tool_desc is None:
             try:
                 json_schema = get_json_schema(func)
@@ -253,3 +254,18 @@ class Tool(_Tool):
             tool_desc = ToolDesc(**json_schema.get("function"))
 
         return super().new_py_function(tool_desc, func)
+
+
+class Message(_Message):
+    def __new__(
+        cls,
+        role: Literal["system", "user", "assistant", "tool"],
+        contents: Optional[str | Sequence[Part]] = None,
+        id: Optional[str] = None,
+        thinking: Optional[str] = None,
+        tool_calls: Optional[Sequence[Part]] = None,
+        signature: Optional[str] = None,
+    ) -> _Message:
+        if isinstance(contents, str):
+            contents = [Part.Text(contents)]
+        return super().__new__(cls, role, contents, id, thinking, tool_calls, signature)
