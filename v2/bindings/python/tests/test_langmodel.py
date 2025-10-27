@@ -26,7 +26,7 @@ async def test_simple_chat(model: ai.LangModel):
 
 
 async def test_chat_with_think(model: ai.LangModel):
-    msg = ai.Message("user", contents=[ai.Part.Text(text="Hello")])
+    msg = ai.Message("user", contents="Hello")
     msg_d = ai.MessageDelta("assistant")
     config = ai.InferenceConfig(think_effort="enable")
     async for m in model.run([msg], config=config):

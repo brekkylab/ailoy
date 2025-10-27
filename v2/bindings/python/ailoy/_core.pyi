@@ -226,10 +226,7 @@ class Message:
         Primary message parts (e.g., text, image, value, or function).
         """
     @contents.setter
-    def contents(self, value: builtins.list[Part]) -> None:
-        r"""
-        Primary message parts (e.g., text, image, value, or function).
-        """
+    def contents(self, value: typing.Optional[str | list[Part]]) -> None: ...
     @property
     def id(self) -> typing.Optional[builtins.str]:
         r"""
@@ -274,9 +271,8 @@ class Message:
         
         This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
         """
-    def __new__(cls, role: typing.Literal["system", "user", "assistant", "tool"], contents: typing.Optional[typing.Sequence[Part]] = None, id: typing.Optional[builtins.str] = None, thinking: typing.Optional[builtins.str] = None, tool_calls: typing.Optional[typing.Sequence[Part]] = None, signature: typing.Optional[builtins.str] = None) -> Message: ...
+    def __new__(cls, role: typing.Literal["system", "user", "assistant", "tool"], contents: typing.Optional[str | list[Part]] = None, id: typing.Optional[builtins.str] = None, thinking: typing.Optional[builtins.str] = None, tool_calls: typing.Optional[typing.Sequence[Part]] = None, signature: typing.Optional[builtins.str] = None) -> Message: ...
     def __repr__(self) -> builtins.str: ...
-    def append_contents(self, part: Part) -> None: ...
     def append_tool_call(self, part: Part) -> None: ...
 
 @typing.final

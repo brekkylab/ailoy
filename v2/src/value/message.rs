@@ -422,8 +422,69 @@ mod py {
         types::{PyList, PyString},
     };
     use pyo3_stub_gen::{PyStubType, TypeInfo};
+    use pyo3_stub_gen_derive::*;
 
     use super::*;
+    use crate::ffi::py::base::PyRepr;
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl Message {
+        #[new]
+        #[pyo3(signature = (role, contents = None, id = None, thinking = None, tool_calls = None, signature = None))]
+        fn __new__(
+            role: Role,
+            contents: Option<Contents>,
+            id: Option<String>,
+            thinking: Option<String>,
+            tool_calls: Option<Vec<Part>>,
+            signature: Option<String>,
+        ) -> Self {
+            Self {
+                role,
+                contents: contents.unwrap_or_default().into(),
+                id,
+                thinking,
+                tool_calls,
+                signature,
+            }
+        }
+
+        #[setter]
+        fn set_contents(&mut self, contents: Option<Contents>) -> PyResult<()> {
+            self.contents = contents.unwrap_or_default().into();
+            Ok(())
+        }
+
+        pub fn __repr__(&self) -> String {
+            format!(
+                "Message(role={}, contents=[{}], id={}, thinking={}, tool_calls=[{}], signature={})",
+                self.role.__repr__(),
+                self.contents
+                    .iter()
+                    .map(|content| content.__repr__())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                self.id.__repr__(),
+                self.thinking.__repr__(),
+                self.tool_calls.as_ref().map_or(String::new(), |calls| {
+                    calls
+                        .iter()
+                        .map(|tool_part| tool_part.__repr__())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }),
+                self.signature.__repr__(),
+            )
+        }
+
+        fn append_tool_call(&mut self, part: Part) {
+            match &mut self.tool_calls {
+                Some(tool_calls) => tool_calls.push(part),
+                None => self.tool_calls = vec![part].into(),
+            };
+        }
+    }
 
     /// Intermediate struct to handle "str | list[Message]"
     pub struct Messages(Vec<Message>);
@@ -452,6 +513,36 @@ mod py {
 
     impl Into<Vec<Message>> for Messages {
         fn into(self) -> Vec<Message> {
+            self.0
+        }
+    }
+
+    #[derive(Default)]
+    /// Intermediate struct to handle "str | list[Part]"
+    pub struct Contents(Vec<Part>);
+
+    impl<'a, 'py> FromPyObject<'a, 'py> for Contents {
+        type Error = PyErr;
+
+        fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+            if let Ok(text) = obj.cast::<PyString>() {
+                Ok(Self(vec![Part::text(text.to_string())]))
+            } else if let Ok(list) = obj.cast::<PyList>() {
+                Ok(Self(list.extract()?))
+            } else {
+                Err(PyTypeError::new_err("Failed to convert contents"))
+            }
+        }
+    }
+
+    impl PyStubType for Contents {
+        fn type_output() -> TypeInfo {
+            TypeInfo::unqualified("str | list[Part]")
+        }
+    }
+
+    impl Into<Vec<Part>> for Contents {
+        fn into(self) -> Vec<Part> {
             self.0
         }
     }
