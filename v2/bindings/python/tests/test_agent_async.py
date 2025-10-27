@@ -83,7 +83,7 @@ async def test_simple_chat(agent: ai.Agent):
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.aggregated
+            result = resp.accumulated
         else:
             for content in resp.delta.contents:
                 if content.part_type == "text":
@@ -125,7 +125,7 @@ async def test_simple_qna(agent: ai.Agent):
             config=ai.InferenceConfig(think_effort="disable"),
         ):
             if resp.finish_reason is not None:
-                result = resp.aggregated
+                result = resp.accumulated
         messages.append(result)
 
         full_text = "".join(part.text for part in result.contents)
@@ -153,7 +153,7 @@ async def test_builtin_tool(agent: ai.Agent):
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.aggregated
+            result = resp.accumulated
         else:
             for content in resp.delta.contents:
                 if content.part_type == "text":
@@ -204,7 +204,7 @@ async def test_python_async_function_tool(agent: ai.Agent):
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.aggregated
+            result = resp.accumulated
         else:
             for content in resp.delta.contents:
                 if content.part_type == "text":
@@ -244,7 +244,7 @@ async def test_mcp_tools(agent: ai.Agent):
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.aggregated
+            result = resp.accumulated
         else:
             for content in resp.delta.contents:
                 if content.part_type == "text":

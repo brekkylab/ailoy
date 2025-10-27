@@ -10,42 +10,74 @@ use crate::{
     },
 };
 
-// #[gen_stub_pymethods]
-// #[pymethods]
-// impl Part {
+#[gen_stub_pymethods]
+#[pymethods]
+impl Part {
+    pub fn __repr__(&self) -> String {
+        let s = match &self {
+            Part::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
+            Part::Function { .. } => {
+                format!(
+                    "Function({})",
+                    serde_json::to_string(self).unwrap_or("".to_owned())
+                )
+            }
+            Part::Value { value } => format!(
+                "Value({})",
+                serde_json::to_string(value).unwrap_or("{...}".to_owned())
+            ),
+            Part::Image { image } => {
+                format!(
+                    "Image(\"{}\")",
+                    serde_json::to_string(image).unwrap_or("".to_owned())
+                )
+            }
+        };
+        format!("Part.{}", s)
+    }
 
-// #[getter]
-// fn text(&self) -> Option<String> {
-//     match &self {
-//         Part::Text { .. } => Some(self.to_string()),
-//         _ => None,
-//     }
-// }
+    #[getter]
+    fn part_type(&self) -> &'static str {
+        match &self {
+            Part::Text { .. } => "text",
+            Part::Function { .. } => "function",
+            Part::Value { .. } => "value",
+            Part::Image { .. } => "image",
+        }
+    }
 
-// #[getter]
-// fn function(&self) -> Option<String> {
-//     match &self {
-//         Part::Function { .. } => Some(self.to_string()),
-//         _ => None,
-//     }
-// }
+    // #[getter]
+    // fn text(&self) -> Option<String> {
+    //     match &self {
+    //         Part::Text { .. } => Some(self.to_string()),
+    //         _ => None,
+    //     }
+    // }
 
-// #[getter]
-// fn image(&self) -> Option<String> {
-//     match &self {
-//         Part::Image { .. } => Some(self.to_string()),
-//         _ => None,
-//     }
-// }
+    // #[getter]
+    // fn function(&self) -> Option<String> {
+    //     match &self {
+    //         Part::Function { .. } => Some(self.to_string()),
+    //         _ => None,
+    //     }
+    // }
 
-// #[getter]
-// fn mime_type(&self) -> Option<String> {
-//     match &self {
-//         Part::ImageData { mime_type, .. } => Some(mime_type.clone()),
-//         _ => None,
-//     }
-// }
-// }
+    // #[getter]
+    // fn image(&self) -> Option<String> {
+    //     match &self {
+    //         Part::Image { .. } => Some(self.to_string()),
+    //         _ => None,
+    //     }
+    // }
+
+    // #[getter]
+    // fn mime_type(&self) -> Option<String> {
+    //     match &self {
+    //         Part::ImageData { mime_type, .. } => Some(mime_type.clone()),
+    //         _ => None,
+    //     }
+    // }
+}
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -105,7 +137,7 @@ impl Message {
     pub fn __repr__(&self) -> String {
         format!(
             "Message(role={}, contents=[{}], id={}, thinking={}, tool_calls=[{}], signature={})",
-            self.role.to_string(),
+            self.role.__repr__(),
             self.contents
                 .iter()
                 .map(|content| content.__repr__())
@@ -124,67 +156,8 @@ impl Message {
         )
     }
 
-    // #[getter]
-    // fn role(&self) -> Role {
-    //     self.role.clone()
-    // }
-
-    // #[setter]
-    // fn set_role(
-    //     &mut self,
-    //     #[gen_stub(override_type(
-    //         type_repr = "Role | typing.Literal[\"system\",\"user\",\"assistant\",\"tool\"]"
-    //     ))]
-    //     role: Bound<'_, PyAny>,
-    // ) -> PyResult<()> {
-    //     Python::attach(|py| {
-    //         if let Ok(role) = role.downcast::<PyString>() {
-    //             self.role = Some(
-    //                 Role::from_str(&role.to_string())
-    //                     .map_err(|e| PyValueError::new_err(e.to_string()))?,
-    //             );
-    //             Ok(())
-    //         } else if let Ok(role) = role.downcast::<Role>() {
-    //             self.role = Some(role.clone().unbind().borrow(py).clone());
-    //             Ok(())
-    //         } else {
-    //             return Err(PyTypeError::new_err("role should be either Role or str"));
-    //         }
-    //     })
-    // }
-
-    #[getter]
-    fn contents(&self) -> Vec<Part> {
-        self.contents.clone()
-    }
-
-    #[setter]
-    fn set_contents(&mut self, contents: Vec<Part>) {
-        self.contents = contents;
-    }
-
     fn append_contents(&mut self, part: Part) {
         self.contents.push(part);
-    }
-
-    #[getter]
-    fn thinking(&self) -> Option<String> {
-        self.thinking.clone()
-    }
-
-    #[setter]
-    fn set_thinking(&mut self, thinking: String) {
-        self.thinking = Some(thinking);
-    }
-
-    #[getter]
-    fn tool_calls(&self) -> Vec<Part> {
-        self.tool_calls.clone().unwrap_or_default()
-    }
-
-    #[setter]
-    fn set_tool_calls(&mut self, tool_calls: Vec<Part>) {
-        self.tool_calls = Some(tool_calls);
     }
 
     fn append_tool_call(&mut self, part: Part) {
@@ -192,16 +165,6 @@ impl Message {
             Some(tool_calls) => tool_calls.push(part),
             None => self.tool_calls = vec![part].into(),
         };
-    }
-
-    #[getter]
-    fn id(&self) -> Option<String> {
-        self.id.clone()
-    }
-
-    #[setter]
-    fn set_id(&mut self, id: Option<String>) {
-        self.id = id;
     }
 }
 
