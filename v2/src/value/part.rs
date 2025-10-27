@@ -790,7 +790,10 @@ impl Delta for PartDelta {
 
 #[cfg(feature = "python")]
 mod py {
-    use pyo3::{Bound, IntoPyObject, PyAny, Python, pymethods};
+    use pyo3::{
+        Bound, IntoPyObject, PyAny, PyResult, Python, exceptions::PyValueError, pymethods,
+        types::PyType,
+    };
     use pyo3_stub_gen::derive::*;
 
     use super::*;
@@ -807,6 +810,64 @@ mod py {
         #[getter]
         fn arguments<'a>(&'a self, py: Python<'a>) -> Bound<'a, PyAny> {
             self.arguments.clone().into_pyobject(py).unwrap()
+        }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl Part {
+        pub fn __repr__(&self) -> String {
+            let s = match &self {
+                Part::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
+                Part::Function { .. } => {
+                    format!(
+                        "Function({})",
+                        serde_json::to_string(self).unwrap_or("".to_owned())
+                    )
+                }
+                Part::Value { value } => format!(
+                    "Value({})",
+                    serde_json::to_string(value).unwrap_or("{...}".to_owned())
+                ),
+                Part::Image { image } => {
+                    format!(
+                        "Image(\"{}\")",
+                        serde_json::to_string(image).unwrap_or("".to_owned())
+                    )
+                }
+            };
+            format!("Part.{}", s)
+        }
+
+        #[getter]
+        fn part_type(&self) -> &'static str {
+            match &self {
+                Part::Text { .. } => "text",
+                Part::Function { .. } => "function",
+                Part::Value { .. } => "value",
+                Part::Image { .. } => "image",
+            }
+        }
+
+        #[classmethod]
+        #[pyo3(name = "image_from_bytes")]
+        pub fn image_from_bytes_py<'a>(
+            _cls: &Bound<'a, PyType>,
+            #[gen_stub(override_type(type_repr = "bytes"))] data: &[u8],
+        ) -> PyResult<Part> {
+            Part::image_binary_from_bytes(data).map_err(|e| PyValueError::new_err(e.to_string()))
+        }
+
+        #[classmethod]
+        #[pyo3(name = "image_from_base64")]
+        pub fn image_from_base64_py<'a>(_cls: &Bound<'a, PyType>, data: String) -> PyResult<Part> {
+            Part::image_binary_from_base64(data).map_err(|e| PyValueError::new_err(e.to_string()))
+        }
+
+        #[classmethod]
+        #[pyo3(name = "image_from_url")]
+        pub fn image_from_url_py<'a>(_cls: &Bound<'a, PyType>, url: String) -> PyResult<Part> {
+            Part::image_url(url).map_err(|e| PyValueError::new_err(e.to_string()))
         }
     }
 }

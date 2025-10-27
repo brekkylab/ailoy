@@ -81,8 +81,8 @@ async def test_image_base64_input(agent: ai.Agent, img_b64_part: ai.Part):
             )
         ]
     ):
-        if resp.aggregated:
-            print(resp.aggregated)
+        if resp.accumulated:
+            print(resp.accumulated)
 
 
 @pytest.mark.parametrize("agent", ["openai", "grok"], indirect=True)
@@ -96,5 +96,5 @@ async def test_image_url_input(agent: ai.Agent):
             )
         ]
     ):
-        if resp.aggregated:
-            print(resp.aggregated)
+        if resp.accumulated:
+            print(resp.accumulated)
