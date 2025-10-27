@@ -19,7 +19,6 @@ const sidebars: SidebarsConfig = {
       label: "Tutorial",
       items: [
         "tutorial/getting-started",
-        "tutorial/how-language-model-works",
         "tutorial/system-message",
         "tutorial/multi-turn-conversation",
         "tutorial/reasoning",
@@ -34,10 +33,11 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Concepts",
       items: [
+        "concepts/how-language-model-works",
         "concepts/architecture",
         "concepts/chat-completion-format",
-        "concepts/agent",
-        "concepts/tools",
+        // "concepts/agent",
+        // "concepts/tools",
         "concepts/devices-environments",
         "concepts/command-line-interfaces",
       ],
