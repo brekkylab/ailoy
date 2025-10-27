@@ -8,7 +8,7 @@ pytestmark = [pytest.mark.asyncio]
 
 @pytest_asyncio.fixture(scope="module")
 async def model():
-    model = await ai.LangModel.CreateLocal(
+    model = await ai.LangModel.new_local(
         "Qwen/Qwen3-0.6B", progress_callback=lambda prog: print(prog)
     )
     return model

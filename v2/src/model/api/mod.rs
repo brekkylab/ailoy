@@ -6,6 +6,7 @@ mod stream;
 
 use serde::{Deserialize, Serialize};
 pub(super) use stream::*;
+use strum_macros::{Display, EnumString};
 
 #[derive(Clone, Debug, PartialEq)]
 struct RequestConfig {
@@ -24,9 +25,8 @@ struct RequestConfig {
     pub max_tokens: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[derive(Debug, Clone, Serialize, Deserialize, EnumString, Display)]
+#[cfg_attr(feature = "python", derive(ailoy_macros::PyStringEnum))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]

@@ -1,119 +1,87 @@
+use indexmap::IndexMap;
+use ordered_float::OrderedFloat;
 use pyo3::{
     IntoPyObjectExt,
-    exceptions::PyRuntimeError,
+    exceptions::{PyRuntimeError, PyTypeError},
     prelude::*,
-    types::{PyDict, PyList},
+    types::{PyAny, PyBool, PyDict, PyFloat, PyList, PySequence, PyString, PyTuple},
 };
-use serde_json::{Map, Value};
 
-#[allow(unused)]
-pub fn json_value_to_py_object(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
+use crate::value::Value;
+
+pub fn value_to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
     match value {
-        Value::Null => Ok(py.None()),
-        Value::Bool(b) => Ok(b.into_py_any(py).unwrap()),
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(i.into_py_any(py).unwrap())
-            } else if let Some(u) = n.as_u64() {
-                Ok(u.into_py_any(py).unwrap())
-            } else if let Some(f) = n.as_f64() {
-                Ok(f.into_py_any(py).unwrap())
-            } else {
-                // Fallback: convert to string if number format is unexpected
-                Ok(n.to_string().into_py_any(py).unwrap())
-            }
-        }
-        Value::String(s) => Ok(s.into_py_any(py).unwrap()),
+        Value::Null => py.None().into_bound_py_any(py),
+        Value::Bool(b) => PyBool::new(py, *b).into_bound_py_any(py),
+        Value::Unsigned(u) => u.into_bound_py_any(py),
+        Value::Integer(i) => i.into_bound_py_any(py),
+        Value::Float(f) => PyFloat::new(py, f.0).into_bound_py_any(py),
+        Value::String(s) => PyString::new(py, s).into_bound_py_any(py),
         Value::Array(arr) => {
             let py_list = PyList::empty(py);
             for item in arr {
-                let py_item = json_value_to_py_object(py, item)?;
-                py_list.append(py_item)?;
+                py_list.append(value_to_python(py, item)?)?;
             }
-            Ok(py_list.into_py_any(py).unwrap())
+            py_list.into_bound_py_any(py)
         }
-        Value::Object(obj) => {
+        Value::Object(map) => {
             let py_dict = PyDict::new(py);
-            for (key, val) in obj {
-                let py_val = json_value_to_py_object(py, val)?;
-                py_dict.set_item(key, py_val)?;
+            for (key, val) in map {
+                py_dict.set_item(key, value_to_python(py, val)?)?;
             }
-            Ok(py_dict.into_py_any(py).unwrap())
+            py_dict.into_bound_py_any(py)
         }
     }
 }
 
-#[allow(unused)]
-pub fn json_to_pydict<'py>(py: Python<'py>, value: &Value) -> PyResult<Option<Bound<'py, PyDict>>> {
-    match value {
-        Value::Object(obj) => {
-            let py_dict = PyDict::new(py);
-            for (key, val) in obj {
-                let py_val = json_value_to_py_object(py, val)?;
-                py_dict.set_item(key, py_val)?;
-            }
-            Ok(Some(py_dict))
-        }
-        Value::Null => Ok(None),
-        _ => Err(pyo3::exceptions::PyTypeError::new_err(
-            "JSON value is not an object, cannot convert to PyDict",
-        )),
-    }
-}
-
-// Conversion from PyDict back to serde_json::Value
-#[allow(unused)]
-fn py_object_to_json_value(py: Python, obj: &Py<PyAny>) -> PyResult<Value> {
-    if obj.is_none(py) {
+pub fn python_to_value(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
+    if obj.is_none() {
         Ok(Value::Null)
-    } else if let Ok(b) = obj.extract::<bool>(py) {
+    } else if let Ok(b) = obj.extract::<bool>() {
         Ok(Value::Bool(b))
-    } else if let Ok(i) = obj.extract::<i64>(py) {
-        Ok(Value::Number(serde_json::Number::from(i)))
-    } else if let Ok(f) = obj.extract::<f64>(py) {
-        if let Some(num) = serde_json::Number::from_f64(f) {
-            Ok(Value::Number(num))
+    } else if let Ok(int_val) = obj.extract::<i128>() {
+        let ret = if let Ok(i) = i64::try_from(int_val) {
+            Value::Integer(i)
+        } else if int_val >= 0
+            && let Ok(u) = u64::try_from(int_val)
+        {
+            Value::Unsigned(u)
         } else {
-            Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Invalid float value: {}",
-                f
-            )))
-        }
-    } else if let Ok(s) = obj.extract::<String>(py) {
+            return Err(PyTypeError::new_err("int out of supported range (i64/u64)"));
+        };
+        Ok(ret)
+    } else if let Ok(f) = obj.extract::<f64>() {
+        Ok(Value::Float(OrderedFloat(f)))
+    } else if let Ok(s) = obj.extract::<String>() {
         Ok(Value::String(s))
-    } else if let Ok(py_list) = obj.downcast_bound::<PyList>(py) {
-        let mut arr = Vec::new();
-        for item in py_list.iter() {
-            let json_val = py_object_to_json_value(py, &item.into())?;
-            arr.push(json_val);
+    } else if let Ok(list) = obj.cast::<PyList>() {
+        let mut arr = Vec::with_capacity(list.len() as usize);
+        for item in list.iter() {
+            arr.push(python_to_value(&item)?);
         }
         Ok(Value::Array(arr))
-    } else if let Ok(py_dict) = obj.downcast_bound::<PyDict>(py) {
-        let mut map = serde_json::Map::new();
-        for (key, value) in py_dict.iter() {
+    } else if let Ok(tup) = obj.cast::<PyTuple>() {
+        let mut arr = Vec::with_capacity(tup.len() as usize);
+        for item in tup.iter() {
+            arr.push(python_to_value(&item)?);
+        }
+        Ok(Value::Array(arr))
+    } else if let Ok(seq) = obj.cast::<PySequence>() {
+        let mut arr = Vec::with_capacity(seq.len()? as usize);
+        for item in seq.try_iter()? {
+            arr.push(python_to_value(&item?)?);
+        }
+        Ok(Value::Array(arr))
+    } else if let Ok(dict) = obj.cast::<PyDict>() {
+        let mut map = IndexMap::new();
+        for (key, val) in dict.iter() {
             let key_str = key.extract::<String>()?;
-            let json_val = py_object_to_json_value(py, &value.into())?;
-            map.insert(key_str, json_val);
+            map.insert(key_str, python_to_value(&val)?);
         }
         Ok(Value::Object(map))
     } else {
-        Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "Unsupported Python type: {}",
-            obj.bind(py).get_type().name()?
-        )))
+        Ok(Value::String(obj.str()?.to_string()))
     }
-}
-
-#[allow(unused)]
-// Main conversion function from PyDict to serde_json::Map
-pub fn pydict_to_json(py: Python, py_dict: &Bound<PyDict>) -> PyResult<Map<String, Value>> {
-    let mut map = serde_json::Map::new();
-    for (key, value) in py_dict.iter() {
-        let key_str = key.extract::<String>()?;
-        let json_val = py_object_to_json_value(py, &value.into())?;
-        map.insert(key_str, json_val);
-    }
-    Ok(map)
 }
 
 pub fn await_future<T, E: ToString + std::any::Any>(
@@ -132,4 +100,32 @@ pub fn await_future<T, E: ToString + std::any::Any>(
         }
     });
     result
+}
+
+pub trait PyRepr<T>
+where
+    T: std::fmt::Display,
+{
+    fn __repr__(&self) -> String;
+}
+
+impl<T> PyRepr<T> for T
+where
+    T: std::fmt::Display,
+{
+    fn __repr__(&self) -> String {
+        format!(r#""{}""#, self)
+    }
+}
+
+impl<T> PyRepr<T> for Option<T>
+where
+    T: std::fmt::Display,
+{
+    fn __repr__(&self) -> String {
+        match self {
+            Some(val) => format!(r#""{}""#, val),
+            None => "None".into(),
+        }
+    }
 }

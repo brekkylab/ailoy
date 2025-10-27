@@ -170,9 +170,9 @@ impl LocalLangModelImpl {
 
                 {
                     #[cfg(target_family = "wasm")]
-                    let new_token = self.inferencer.decode(last_token).await;
+                    let new_token = self.inferencer.decode(last_token, config.temperature.unwrap_or(0.6), config.top_p.unwrap_or(0.9)).await;
                     #[cfg(not(target_family = "wasm"))]
-                    let new_token = self.inferencer.decode(last_token);
+                    let new_token = self.inferencer.decode(last_token, config.temperature.unwrap_or(0.6), config.top_p.unwrap_or(0.9));
 
                     agg_tokens.push(new_token);
                     last_token = new_token;
@@ -365,12 +365,17 @@ mod tests {
             // Message::with_role(Role::User)
             //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
+        let config = InferenceConfig {
+            temperature: Some(0.0),
+            top_p: Some(0.0),
+            ..Default::default()
+        };
         let mut delta = MessageDelta::new().with_role(Role::Assistant);
-        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), config);
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
             debug!("{:?}", out);
-            delta = delta.aggregate(out.delta).unwrap();
+            delta = delta.accumulate(out.delta).unwrap();
         }
         crate::utils::log::info(format!("{:?}", delta.finish().unwrap()));
     }
@@ -562,8 +567,13 @@ mod tests {
             // Message::with_role(Role::User)
             //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
+        let config = InferenceConfig {
+            temperature: Some(0.0),
+            top_p: Some(0.0),
+            ..Default::default()
+        };
         let mut delta = MessageDelta::new();
-        let mut strm = model.infer(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer(msgs, Vec::new(), Vec::new(), config);
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
             crate::utils::log::debug(format!("{:?}", out));

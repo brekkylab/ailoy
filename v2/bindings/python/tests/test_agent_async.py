@@ -1,39 +1,85 @@
 import asyncio
+import os
 from typing import Literal
 
 import pytest
-import pytest_asyncio
 
 import ailoy as ai
 
 pytestmark = [pytest.mark.asyncio]
 
 
-@pytest_asyncio.fixture(scope="module")
-async def agent():
-    model = await ai.LangModel.CreateLocal(
-        "Qwen/Qwen3-0.6B", progress_callback=lambda prog: print(prog)
+@pytest.fixture(scope="module")
+def qwen3():
+    return ai.LangModel.new_local_sync("Qwen/Qwen3-0.6B", progress_callback=print)
+
+
+@pytest.fixture(scope="module")
+def openai():
+    if os.getenv("OPENAI_API_KEY") is None:
+        pytest.skip("OPEN_API_KEY not set")
+    return ai.LangModel.new_stream_api(
+        "OpenAI",
+        model_name="gpt-4o",
+        api_key=os.getenv("OPENAI_API_KEY"),
     )
+
+
+@pytest.fixture(scope="module")
+def gemini():
+    if os.getenv("GEMINI_API_KEY") is None:
+        pytest.skip("GEMINI_API_KEY not set")
+    return ai.LangModel.new_stream_api(
+        "Gemini", model_name="gemini-2.5-flash", api_key=os.getenv("GEMINI_API_KEY")
+    )
+
+
+@pytest.fixture(scope="module")
+def claude():
+    if os.getenv("ANTHROPIC_API_KEY") is None:
+        pytest.skip("ANTHROPIC_API_KEY not set")
+    return ai.LangModel.new_stream_api(
+        "Claude",
+        model_name="claude-haiku-4-5",
+        api_key=os.getenv("ANTHROPIC_API_KEY"),
+    )
+
+
+@pytest.fixture(scope="module")
+def grok():
+    if os.getenv("XAI_API_KEY") is None:
+        pytest.skip("XAI_API_KEY not set")
+    return ai.LangModel.new_stream_api(
+        "Grok", model_name="grok-4-fast", api_key=os.getenv("XAI_API_KEY")
+    )
+
+
+@pytest.fixture(scope="module")
+def agent(request: pytest.FixtureRequest):
+    model: ai.LangModel = request.getfixturevalue(request.param)
     agent = ai.Agent(model)
     return agent
 
 
+@pytest.mark.parametrize(
+    "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
+)
 async def test_simple_chat(agent: ai.Agent):
     acc = ai.MessageDelta()
     async for resp in agent.run_delta(
         [
             ai.Message(
-                role=ai.Role.System,
+                role="system",
                 contents=[
                     ai.Part.Text(text="You are a helpful assistant with name 'Ailoy'.")
                 ],
             ),
             ai.Message(
-                role=ai.Role.User,
+                role="user",
                 contents=[ai.Part.Text(text="What is your name?")],
             ),
         ],
-        config=ai.InferenceConfig(think_effort=ai.ThinkEffort.Disable),
+        config=ai.InferenceConfig(think_effort="disable"),
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
@@ -68,13 +114,13 @@ async def test_simple_multiturn(agent: ai.Agent):
     for question, answer in qna:
         messages.append(
             ai.Message(
-                role=ai.Role.User,
+                role="user",
                 contents=[ai.Part.Text(text=question)],
             )
         )
         async for resp in agent.run(
             messages,
-            config=ai.InferenceConfig(think_effort=ai.ThinkEffort.Disable),
+            config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
         ):
             result = resp.message
         messages.append(result)
@@ -83,20 +129,23 @@ async def test_simple_multiturn(agent: ai.Agent):
         assert answer in full_text.lower()
 
 
+@pytest.mark.parametrize(
+    "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
+)
 async def test_builtin_tool(agent: ai.Agent):
-    tool = ai.Tool.terminal()
+    tool = ai.Tool.new_builtin("terminal")
     agent.add_tool(tool)
     acc = ai.MessageDelta()
     async for resp in agent.run(
         [
             ai.Message(
-                role=ai.Role.User,
+                role="user",
                 contents=[
                     ai.Part.Text(text="List the files in the current directory.")
                 ],
             )
         ],
-        config=ai.InferenceConfig(think_effort=ai.ThinkEffort.Disable),
+        config=ai.InferenceConfig(think_effort="disable"),
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
@@ -119,6 +168,9 @@ async def test_builtin_tool(agent: ai.Agent):
     print(f"{result.contents[0].text=}")
 
 
+@pytest.mark.parametrize(
+    "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
+)
 async def test_python_async_function_tool(agent: ai.Agent):
     async def tool_temperature(
         location: str, unit: Literal["Celsius", "Fahrenheit"] = "Celsius"
@@ -141,11 +193,11 @@ async def test_python_async_function_tool(agent: ai.Agent):
     async for resp in agent.run_delta(
         [
             ai.Message(
-                role=ai.Role.User,
+                role="user",
                 contents=[ai.Part.Text(text="What is the temperature in Seoul now?")],
             )
         ],
-        config=ai.InferenceConfig(think_effort=ai.ThinkEffort.Disable),
+        config=ai.InferenceConfig(think_effort="disable"),
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
@@ -170,6 +222,9 @@ async def test_python_async_function_tool(agent: ai.Agent):
     agent.remove_tool(tool.get_description().name)
 
 
+@pytest.mark.parametrize(
+    "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
+)
 async def test_mcp_tools(agent: ai.Agent):
     mcp_client = await ai.MCPClient.from_stdio("uvx", ["mcp-server-time"])
     tools = mcp_client.tools
@@ -179,11 +234,11 @@ async def test_mcp_tools(agent: ai.Agent):
     async for resp in agent.run_delta(
         [
             ai.Message(
-                role=ai.Role.User,
+                role="user",
                 contents=[ai.Part.Text(text="What time is it now in Asia/Seoul?")],
             )
         ],
-        config=ai.InferenceConfig(think_effort=ai.ThinkEffort.Disable),
+        config=ai.InferenceConfig(think_effort="disable"),
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason

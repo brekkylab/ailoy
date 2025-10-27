@@ -3,6 +3,7 @@ use std::sync::Arc;
 use ailoy_macros::maybe_send_sync;
 use futures::StreamExt as _;
 use serde::{Deserialize, Serialize};
+use strum_macros::{Display, EnumString};
 
 use crate::{
     cache::CacheProgress,
@@ -19,10 +20,10 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, EnumString, Display)]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[strum(serialize_all = "lowercase")]
+#[cfg_attr(feature = "python", derive(ailoy_macros::PyStringEnum))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -258,8 +259,8 @@ mod py {
     impl LangModel {
         #[classmethod]
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[LangModel]"))]
-        #[pyo3(name = "CreateLocal", signature = (model_name, progress_callback = None))]
-        fn create_local<'a>(
+        #[pyo3(name = "new_local", signature = (model_name, progress_callback = None))]
+        fn new_local_py<'a>(
             _cls: &Bound<'a, PyType>,
             py: Python<'a>,
             model_name: String,
@@ -282,8 +283,8 @@ mod py {
         }
 
         #[classmethod]
-        #[pyo3(name = "CreateLocalSync", signature = (model_name, progress_callback = None))]
-        fn create_local_sync(
+        #[pyo3(name = "new_local_sync", signature = (model_name, progress_callback = None))]
+        fn new_local_sync_py(
             _cls: &Bound<'_, PyType>,
             py: Python<'_>,
             model_name: String,
@@ -303,8 +304,8 @@ mod py {
         }
 
         #[classmethod]
-        #[pyo3(name = "CreateStreamAPI", signature = (spec, model_name, api_key))]
-        fn create_stream_api<'a>(
+        #[pyo3(name = "new_stream_api", signature = (spec, model_name, api_key))]
+        fn new_stream_api_py<'a>(
             _cls: &Bound<'a, PyType>,
             spec: APISpecification,
             model_name: String,

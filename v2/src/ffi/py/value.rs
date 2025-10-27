@@ -1,9 +1,9 @@
 use anyhow::Ok;
-use pyo3::{prelude::*, types::PyDict};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyDict};
 use pyo3_stub_gen::derive::*;
 
 use crate::{
-    ffi::py::base::{json_to_pydict, pydict_to_json},
+    ffi::py::base::{PyRepr, python_to_value, value_to_python},
     value::{
         Delta, Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         Role, ToolDesc,
@@ -113,52 +113,38 @@ impl PartDelta {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl Role {
-    pub fn __repr__(&self) -> String {
-        match self {
-            Role::System => "Role.System",
-            Role::User => "Role.User",
-            Role::Assistant => "Role.Assistant",
-            Role::Tool => "Role.Tool",
-        }
-        .to_owned()
-    }
-}
-
-#[gen_stub_pymethods]
-#[pymethods]
 impl Message {
     #[new]
-    #[pyo3(signature = (role, id = None, thinking = None, contents = None, tool_calls = None, signature = None))]
+    #[pyo3(signature = (role, contents = None, id = None, thinking = None, tool_calls = None, signature = None))]
     fn __new__(
         role: Role,
+        contents: Option<Vec<Part>>,
         id: Option<String>,
         thinking: Option<String>,
-        contents: Option<Vec<Part>>,
         tool_calls: Option<Vec<Part>>,
         signature: Option<String>,
     ) -> Self {
         Self {
             role,
-            id,
-            thinking: Some(thinking.unwrap_or_default()),
             contents: contents.unwrap_or_default(),
-            tool_calls: Some(tool_calls.unwrap_or_default()),
+            id,
+            thinking,
+            tool_calls,
             signature,
         }
     }
 
     pub fn __repr__(&self) -> String {
         format!(
-            "Message(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
+            "Message(role={}, contents=[{}], id={}, thinking={}, tool_calls=[{}], signature={})",
             self.role.__repr__(),
-            self.id,
-            self.thinking,
             self.contents
                 .iter()
                 .map(|content| content.__repr__())
                 .collect::<Vec<_>>()
                 .join(", "),
+            self.id.__repr__(),
+            self.thinking.__repr__(),
             self.tool_calls.as_ref().map_or(String::new(), |calls| {
                 calls
                     .iter()
@@ -166,71 +152,12 @@ impl Message {
                     .collect::<Vec<_>>()
                     .join(", ")
             }),
-            self.signature,
+            self.signature.__repr__(),
         )
-    }
-
-    // #[getter]
-    // fn role(&self) -> Role {
-    //     self.role.clone()
-    // }
-
-    // #[setter]
-    // fn set_role(
-    //     &mut self,
-    //     #[gen_stub(override_type(
-    //         type_repr = "Role | typing.Literal[\"system\",\"user\",\"assistant\",\"tool\"]"
-    //     ))]
-    //     role: Bound<'_, PyAny>,
-    // ) -> PyResult<()> {
-    //     Python::attach(|py| {
-    //         if let Ok(role) = role.downcast::<PyString>() {
-    //             self.role = Some(
-    //                 Role::from_str(&role.to_string())
-    //                     .map_err(|e| PyValueError::new_err(e.to_string()))?,
-    //             );
-    //             Ok(())
-    //         } else if let Ok(role) = role.downcast::<Role>() {
-    //             self.role = Some(role.clone().unbind().borrow(py).clone());
-    //             Ok(())
-    //         } else {
-    //             return Err(PyTypeError::new_err("role should be either Role or str"));
-    //         }
-    //     })
-    // }
-
-    #[getter]
-    fn contents(&self) -> Vec<Part> {
-        self.contents.clone()
-    }
-
-    #[setter]
-    fn set_contents(&mut self, contents: Vec<Part>) {
-        self.contents = contents;
     }
 
     fn append_contents(&mut self, part: Part) {
         self.contents.push(part);
-    }
-
-    #[getter]
-    fn thinking(&self) -> Option<String> {
-        self.thinking.clone()
-    }
-
-    #[setter]
-    fn set_thinking(&mut self, thinking: String) {
-        self.thinking = Some(thinking);
-    }
-
-    #[getter]
-    fn tool_calls(&self) -> Vec<Part> {
-        self.tool_calls.clone().unwrap_or_default()
-    }
-
-    #[setter]
-    fn set_tool_calls(&mut self, tool_calls: Vec<Part>) {
-        self.tool_calls = Some(tool_calls);
     }
 
     fn append_tool_call(&mut self, part: Part) {
@@ -239,36 +166,26 @@ impl Message {
             None => self.tool_calls = vec![part].into(),
         };
     }
-
-    #[getter]
-    fn id(&self) -> Option<String> {
-        self.id.clone()
-    }
-
-    #[setter]
-    fn set_id(&mut self, id: Option<String>) {
-        self.id = id;
-    }
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl MessageDelta {
     #[new]
-    #[pyo3(signature = (role=None, id = None, thinking = None, contents = None, tool_calls = None, signature = None))]
+    #[pyo3(signature = (role=None, contents = None, id = None, thinking = None, tool_calls = None, signature = None))]
     fn __new__(
         role: Option<Role>,
+        contents: Option<Vec<PartDelta>>,
         id: Option<String>,
         thinking: Option<String>,
-        contents: Option<Vec<PartDelta>>,
         tool_calls: Option<Vec<PartDelta>>,
         signature: Option<String>,
     ) -> Self {
         Self {
             role,
-            id,
-            thinking: Some(thinking.unwrap_or_default()),
             contents: contents.unwrap_or_default(),
+            id,
+            thinking,
             tool_calls: tool_calls.unwrap_or_default(),
             signature,
         }
@@ -276,29 +193,26 @@ impl MessageDelta {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "MessageDelta(role={}, id={:?}, thinking={:?}, contents=[{}], tool_calls=[{}], signature={:?})",
-            self.role
-                .clone()
-                .map(|role| role.__repr__())
-                .unwrap_or("None".to_owned()),
-            self.id,
-            self.thinking,
+            "MessageDelta(role={}, contents=[{}], id={}, thinking={}, tool_calls=[{}], signature={})",
+            self.role.__repr__(),
             self.contents
                 .iter()
                 .map(|content| content.__repr__())
                 .collect::<Vec<_>>()
                 .join(", "),
+            self.id.__repr__(),
+            self.thinking.__repr__(),
             self.tool_calls
                 .iter()
                 .map(|tool| tool.__repr__())
                 .collect::<Vec<_>>()
                 .join(", "),
-            self.signature,
+            self.signature.__repr__(),
         )
     }
 
     fn __add__(&self, other: &Self) -> PyResult<Self> {
-        self.clone().aggregate(other.clone()).map_err(Into::into)
+        self.clone().accumulate(other.clone()).map_err(Into::into)
     }
 
     #[pyo3(name = "to_message")]
@@ -359,22 +273,13 @@ impl ToolDesc {
         parameters: Py<PyDict>,
         returns: Option<Py<PyDict>>,
     ) -> PyResult<Self> {
-        let parameters = serde_json::Value::Object(pydict_to_json(py, parameters.bind(py))?);
+        let parameters = python_to_value(parameters.bind(py))?;
         let returns = if let Some(returns) = returns {
-            Some(serde_json::Value::Object(pydict_to_json(
-                py,
-                returns.bind(py),
-            )?))
+            Some(python_to_value(returns.bind(py))?)
         } else {
             None
         };
-        Ok(Self::new(
-            name,
-            description,
-            parameters.into(),
-            returns.map(|returns| returns.into()),
-        ))
-        .map_err(Into::into)
+        Ok(Self::new(name, description, parameters, returns)).map_err(Into::into)
     }
 
     pub fn __repr__(&self) -> String {
@@ -413,19 +318,17 @@ impl ToolDesc {
 
     #[getter]
     fn parameters<'py>(&self, py: Python<'py>) -> Bound<'py, PyDict> {
-        let json_value = serde_json::to_value(self.parameters.clone()).unwrap();
-        json_to_pydict(py, &json_value).unwrap().unwrap()
+        value_to_python(py, &self.parameters)
+            .unwrap()
+            .cast_into()
+            .unwrap()
     }
 
     #[getter]
     fn returns<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyDict>> {
-        match &self.returns {
-            Some(returns) => {
-                let json_value = serde_json::to_value(returns).unwrap();
-                Some(json_to_pydict(py, &json_value).unwrap().unwrap())
-            }
-            None => None,
-        }
+        self.returns
+            .as_ref()
+            .and_then(|returns| value_to_python(py, returns).ok()?.cast_into().ok())
     }
 }
 
