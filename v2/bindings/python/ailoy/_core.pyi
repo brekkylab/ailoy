@@ -222,21 +222,45 @@ class Message:
         Author of the message.
         """
     @property
-    def contents(self) -> builtins.list[Part]: ...
+    def contents(self) -> builtins.list[Part]:
+        r"""
+        Primary message parts (e.g., text, image, value, or function).
+        """
     @contents.setter
-    def contents(self, value: builtins.list[Part]) -> None: ...
+    def contents(self, value: builtins.list[Part]) -> None:
+        r"""
+        Primary message parts (e.g., text, image, value, or function).
+        """
     @property
-    def id(self) -> typing.Optional[builtins.str]: ...
+    def id(self) -> typing.Optional[builtins.str]:
+        r"""
+        Optional stable identifier for deduplication or threading.
+        """
     @id.setter
-    def id(self, value: typing.Optional[builtins.str]) -> None: ...
+    def id(self, value: typing.Optional[builtins.str]) -> None:
+        r"""
+        Optional stable identifier for deduplication or threading.
+        """
     @property
-    def thinking(self) -> typing.Optional[builtins.str]: ...
+    def thinking(self) -> typing.Optional[builtins.str]:
+        r"""
+        Internal “thinking” text used by some models before producing final output.
+        """
     @thinking.setter
-    def thinking(self, value: builtins.str) -> None: ...
+    def thinking(self, value: typing.Optional[builtins.str]) -> None:
+        r"""
+        Internal “thinking” text used by some models before producing final output.
+        """
     @property
-    def tool_calls(self) -> builtins.list[Part]: ...
+    def tool_calls(self) -> typing.Optional[builtins.list[Part]]:
+        r"""
+        Tool-call parts emitted alongside the main contents.
+        """
     @tool_calls.setter
-    def tool_calls(self, value: builtins.list[Part]) -> None: ...
+    def tool_calls(self, value: typing.Optional[builtins.list[Part]]) -> None:
+        r"""
+        Tool-call parts emitted alongside the main contents.
+        """
     @property
     def signature(self) -> typing.Optional[builtins.str]:
         r"""
