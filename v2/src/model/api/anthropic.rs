@@ -142,7 +142,6 @@ enum AnthropicModelType {
     Opus,
     Sonnet,
     Haiku,
-    Haiku3,
 }
 
 impl Marshal<RequestConfig> for AnthropicMarshal {
@@ -155,22 +154,19 @@ impl Marshal<RequestConfig> for AnthropicMarshal {
             AnthropicModelType::Opus
         } else if model.contains("sonnet") {
             AnthropicModelType::Sonnet
-        } else if model.starts_with("claude-3-5-haiku") {
+        } else if model.contains("haiku") {
             AnthropicModelType::Haiku
-        } else if model.starts_with("claude-3-haiku") {
-            AnthropicModelType::Haiku3
         } else {
             panic!("Unsupported model.");
         };
 
         let is_reasoning_model = match model_type {
             AnthropicModelType::Opus | AnthropicModelType::Sonnet => true,
-            AnthropicModelType::Haiku | AnthropicModelType::Haiku3 => false,
+            AnthropicModelType::Haiku => false,
         };
 
         let budget_tokens = match (&config.think_effort, &model_type) {
             (_, AnthropicModelType::Haiku) => 0,
-            (_, AnthropicModelType::Haiku3) => 0,
             (ThinkEffort::Disable, _) => 0,
             (ThinkEffort::Enable, _) => 8192,
             (ThinkEffort::Low, _) => 1024,
@@ -196,8 +192,15 @@ impl Marshal<RequestConfig> for AnthropicMarshal {
             Value::integer(match &model_type {
                 AnthropicModelType::Opus => 32000,
                 AnthropicModelType::Sonnet => 64000,
-                AnthropicModelType::Haiku => 8192,
-                AnthropicModelType::Haiku3 => 4096,
+                AnthropicModelType::Haiku => {
+                    if model.starts_with("claude-3-5-haiku") {
+                        8192
+                    } else if model.starts_with("claude-3-haiku") {
+                        4096
+                    } else {
+                        64000
+                    }
+                }
             })
         };
 
@@ -635,7 +638,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(delta.contents.len(), 1);
@@ -661,7 +664,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(delta.contents.len(), 1);
@@ -681,7 +684,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
@@ -717,7 +720,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.role, Some(Role::Assistant));
         assert_eq!(
@@ -741,7 +744,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.tool_calls.len(), 1);
         let tool_call = delta.tool_calls.pop().unwrap();
@@ -775,7 +778,7 @@ mod dialect_tests {
         for input in inputs {
             let val = serde_json::from_str::<Value>(input).unwrap();
             let cur_delta = u.unmarshal(val).unwrap();
-            delta = delta.aggregate(cur_delta).unwrap();
+            delta = delta.accumulate(cur_delta).unwrap();
         }
         assert_eq!(delta.tool_calls.len(), 1);
         let tool_call = delta.tool_calls.pop().unwrap();
@@ -823,7 +826,7 @@ mod api_tests {
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
         assert_eq!(finish_reason, Some(FinishReason::Stop {}));
@@ -863,7 +866,7 @@ mod api_tests {
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
         assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
@@ -931,7 +934,7 @@ mod api_tests {
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.aggregate(output.delta).unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
         assert_eq!(finish_reason, Some(FinishReason::Stop {}));

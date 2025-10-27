@@ -4,11 +4,12 @@ use serde::{Deserialize, Serialize};
 use crate::value::{Delta, Part, PartDelta};
 
 /// The author of a message (or streaming delta) in a chat.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString,
+)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", derive(ailoy_macros::PyStringEnum))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -124,12 +125,12 @@ impl Message {
 /// A streaming, incremental update to a [`Message`].
 ///
 /// `MessageDelta` accumulates partial outputs (text chunks, tool-call fragments, IDs, signatures, etc.) until they can be materialized as a full [`Message`].
-/// It implements [`Delta`] to support associative aggregation.
+/// It implements [`Delta`] to support accumulation.
 ///
-/// # Aggregation Rules
+/// # Accumulation Rules
 /// - `role`: merging two distinct roles fails.
 /// - `thinking`: concatenated in arrival order.
-/// - `contents`/`tool_calls`: last element is aggregated with the incoming delta when both are compatible (e.g., Text+Text, Function+Function with matching ID policy), otherwise appended as a new fragment.
+/// - `contents`/`tool_calls`: last element is accumulated with the incoming delta when both are compatible (e.g., Text+Text, Function+Function with matching ID policy), otherwise appended as a new fragment.
 /// - `id`/`signature`: last-writer-wins.
 ///
 /// # Finalization
@@ -141,7 +142,7 @@ impl Message {
 /// let d1 = MessageDelta::new().with_role(Role::Assistant).with_contents([PartDelta::Text { text: "Hel".into() }]);
 /// let d2 = MessageDelta::new().with_contents([PartDelta::Text { text: "lo".into() }]);
 ///
-/// let merged = d1.aggregate(d2).unwrap();
+/// let merged = d1.accumulate(d2).unwrap();
 /// let msg = merged.finish().unwrap();
 /// assert_eq!(msg.contents[0].as_text().unwrap(), "Hello");
 /// ```
@@ -153,9 +154,9 @@ impl Message {
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct MessageDelta {
     pub role: Option<Role>,
+    pub contents: Vec<PartDelta>,
     pub id: Option<String>,
     pub thinking: Option<String>,
-    pub contents: Vec<PartDelta>,
     #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
     pub tool_calls: Vec<PartDelta>,
     pub signature: Option<String>,
@@ -216,12 +217,12 @@ impl Delta for MessageDelta {
     type Item = Message;
     type Err = anyhow::Error; // TODO: Define custom error for this.
 
-    fn aggregate(self, other: Self) -> anyhow::Result<Self> {
+    fn accumulate(self, other: Self) -> anyhow::Result<Self> {
         let Self {
             mut role,
+            mut contents,
             mut id,
             mut thinking,
-            mut contents,
             mut tool_calls,
             mut signature,
         } = self;
@@ -232,7 +233,7 @@ impl Delta for MessageDelta {
         {
             if lhs != rhs {
                 bail!(
-                    "Cannot aggregate two message deltas with differenct roles. ({} != {})",
+                    "Cannot accumulate two message deltas with differenct roles. ({} != {})",
                     lhs,
                     rhs
                 );
@@ -262,7 +263,7 @@ impl Delta for MessageDelta {
                 match (part_last, &part_incoming) {
                     (PartDelta::Text { .. }, PartDelta::Text { .. })
                     | (PartDelta::Function { .. }, PartDelta::Function { .. }) => {
-                        let v = contents.pop().unwrap().aggregate(part_incoming)?;
+                        let v = contents.pop().unwrap().accumulate(part_incoming)?;
                         contents.push(v);
                     }
                     _ => contents.push(part_incoming),
@@ -277,7 +278,7 @@ impl Delta for MessageDelta {
             if let Some(part_last) = tool_calls.last() {
                 match (part_last, &part_incoming) {
                     (PartDelta::Text { .. }, PartDelta::Text { .. }) => {
-                        let v = tool_calls.pop().unwrap().aggregate(part_incoming)?;
+                        let v = tool_calls.pop().unwrap().accumulate(part_incoming)?;
                         tool_calls.push(v);
                     }
                     (PartDelta::Function { id: id1, .. }, PartDelta::Function { id: id2, .. }) => {
@@ -287,7 +288,7 @@ impl Delta for MessageDelta {
                         {
                             tool_calls.push(part_incoming);
                         } else {
-                            let v = tool_calls.pop().unwrap().aggregate(part_incoming)?;
+                            let v = tool_calls.pop().unwrap().accumulate(part_incoming)?;
                             tool_calls.push(v);
                         }
                     }
@@ -306,9 +307,9 @@ impl Delta for MessageDelta {
         // Return
         Ok(Self {
             role,
-            thinking,
-            id,
             contents,
+            id,
+            thinking,
             tool_calls,
             signature,
         })
@@ -317,9 +318,9 @@ impl Delta for MessageDelta {
     fn finish(self) -> anyhow::Result<Self::Item> {
         let Self {
             role,
+            mut contents,
             id,
             thinking,
-            mut contents,
             mut tool_calls,
             signature,
         } = self;

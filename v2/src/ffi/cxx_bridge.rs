@@ -164,7 +164,12 @@ mod ffi {
         pub fn decode(self: Pin<&mut TVMLanguageModel>, last_token: u32) -> DLPackTensor;
 
         #[cxx_name = "sample_from_rs"]
-        pub fn sample(self: Pin<&mut TVMLanguageModel>, logits: DLPackTensor) -> u32;
+        pub fn sample(
+            self: Pin<&mut TVMLanguageModel>,
+            logits: DLPackTensor,
+            temperature: f64,
+            top_p: f64,
+        ) -> u32;
     }
 
     #[namespace = "ailoy"]
