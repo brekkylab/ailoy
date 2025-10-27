@@ -19,7 +19,12 @@ extern "C" {
     pub fn decode(this: &JSTVMLanguageModel, last_token: u32) -> js_sys::Promise;
 
     #[wasm_bindgen(method, js_class = "TVMLanguageModel", js_name = sample)]
-    pub fn sample(this: &JSTVMLanguageModel, logits: js_sys::Float32Array) -> u32;
+    pub fn sample(
+        this: &JSTVMLanguageModel,
+        logits: js_sys::Float32Array,
+        temperature: f64,
+        top_p: f64,
+    ) -> u32;
 
     ///////////////////////
     /// Embedding Model ///

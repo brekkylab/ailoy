@@ -96,8 +96,6 @@ tvm_language_model_t::tvm_language_model_t(CacheContents &contents,
                                            DLDevice device) {
   rt_ = std::make_unique<tvm_runtime_t>(contents, device);
   kv_cache_ = std::make_unique<kv_cache_t>(*rt_);
-  config = config_t{.temperature = 0.6, .top_p = 0.9};
-  default_config_ = config;
 
   // Packed functions
   fembed_ = rt_->get_vm_function("embed");
@@ -231,10 +229,11 @@ DLPackTensor tvm_language_model_t::decode_from_rs(uint32_t last_token) {
   return DLPackTensor{std::move(safe_managed_tensor)};
 }
 
-uint32_t tvm_language_model_t::sample(NDArray logits) {
+uint32_t tvm_language_model_t::sample(NDArray logits, double temperature,
+                                      double top_p) {
   // Sample token from logits
   uint32_t sampled_token =
-      fsample_top_p_from_logits_(logits, config.temperature, config.top_p,
+      fsample_top_p_from_logits_(logits, temperature, top_p,
                                  random_float(0.0, 1.0))
           .cast<int32_t>();
 
@@ -244,10 +243,12 @@ uint32_t tvm_language_model_t::sample(NDArray logits) {
   return sampled_token;
 }
 
-uint32_t tvm_language_model_t::sample_from_rs(DLPackTensor logits) {
+uint32_t tvm_language_model_t::sample_from_rs(DLPackTensor logits,
+                                              double temperature,
+                                              double top_p) {
   auto raw_dlpack_ptr = std::move(logits.inner)->release_tensor();
   auto v = tvm::runtime::NDArray::FromDLPackVersioned(raw_dlpack_ptr);
-  return sample(v);
+  return sample(v, temperature, top_p);
 }
 
 std::unique_ptr<tvm_language_model_t>

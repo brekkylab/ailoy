@@ -1,9 +1,9 @@
 use anyhow::Ok;
-use pyo3::{prelude::*, types::PyDict};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyDict};
 use pyo3_stub_gen::derive::*;
 
 use crate::{
-    ffi::py::base::{PyRepr, json_to_pydict, pydict_to_json},
+    ffi::py::base::{PyRepr, python_to_value, value_to_python},
     value::{
         Delta, Document, FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta, Role,
         ToolDesc,
@@ -220,22 +220,13 @@ impl ToolDesc {
         parameters: Py<PyDict>,
         returns: Option<Py<PyDict>>,
     ) -> PyResult<Self> {
-        let parameters = serde_json::Value::Object(pydict_to_json(py, parameters.bind(py))?);
+        let parameters = python_to_value(parameters.bind(py))?;
         let returns = if let Some(returns) = returns {
-            Some(serde_json::Value::Object(pydict_to_json(
-                py,
-                returns.bind(py),
-            )?))
+            Some(python_to_value(returns.bind(py))?)
         } else {
             None
         };
-        Ok(Self::new(
-            name,
-            description,
-            parameters.into(),
-            returns.map(|returns| returns.into()),
-        ))
-        .map_err(Into::into)
+        Ok(Self::new(name, description, parameters, returns)).map_err(Into::into)
     }
 
     pub fn __repr__(&self) -> String {
@@ -274,19 +265,17 @@ impl ToolDesc {
 
     #[getter]
     fn parameters<'py>(&self, py: Python<'py>) -> Bound<'py, PyDict> {
-        let json_value = serde_json::to_value(self.parameters.clone()).unwrap();
-        json_to_pydict(py, &json_value).unwrap().unwrap()
+        value_to_python(py, &self.parameters)
+            .unwrap()
+            .cast_into()
+            .unwrap()
     }
 
     #[getter]
     fn returns<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyDict>> {
-        match &self.returns {
-            Some(returns) => {
-                let json_value = serde_json::to_value(returns).unwrap();
-                Some(json_to_pydict(py, &json_value).unwrap().unwrap())
-            }
-            None => None,
-        }
+        self.returns
+            .as_ref()
+            .and_then(|returns| value_to_python(py, returns).ok()?.cast_into().ok())
     }
 }
 
