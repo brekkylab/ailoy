@@ -470,7 +470,7 @@ mod node {
         }
 
         #[napi(js_name = "newStreamAPI")]
-        pub fn new_stream_api_js(
+        pub async fn new_stream_api_js(
             spec: APISpecification,
             model_name: String,
             api_key: String,

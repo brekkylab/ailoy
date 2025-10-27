@@ -1,5 +1,4 @@
 use anyhow::{Context, bail};
-use base64::Engine;
 
 use crate::{
     debug,
@@ -7,7 +6,8 @@ use crate::{
     to_value,
     value::{
         FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageDeltaOutput, Part,
-        PartDelta, PartDeltaFunction, PartFunction, Role, ToolDesc, Unmarshal, Unmarshaled, Value,
+        PartDelta, PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
+        Unmarshaled, Value,
     },
 };
 
@@ -34,20 +34,14 @@ fn marshal_message(item: &Message) -> Value {
             Part::Value { value } => {
                 to_value!({"type": "text", "text": serde_json::to_string(&value).unwrap()})
             }
-            Part::Image { .. } => {
-                // Get image
-                let img = part.as_image().unwrap();
-                // Write PNG string
-                let mut png_buf = Vec::new();
-                img.write_to(
-                    &mut std::io::Cursor::new(&mut png_buf),
-                    image::ImageFormat::Png,
-                )
-                .unwrap();
-                // base64 encoding
-                let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
-                // To value
-                to_value!({"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{}", encoded)}})
+            Part::Image { image } => {
+                let url = match image {
+                    PartImage::Binary { .. } => {
+                        format!("data:image/png;base64,{}", image.base64().unwrap())
+                    }
+                    PartImage::Url { url } => url.clone(),
+                };
+                to_value!({"type": "image_url", "image_url": {"url": url}})
             }
         }
     };

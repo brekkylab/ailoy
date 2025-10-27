@@ -1,5 +1,4 @@
 use anyhow::{Context, bail};
-use base64::Engine;
 use indexmap::IndexMap;
 
 use crate::{
@@ -7,7 +6,8 @@ use crate::{
     to_value,
     value::{
         FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageDeltaOutput, Part,
-        PartDelta, PartDeltaFunction, PartFunction, Role, ToolDesc, Unmarshal, Unmarshaled, Value,
+        PartDelta, PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
+        Unmarshaled, Value,
     },
 };
 
@@ -26,20 +26,12 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             } => {
                 to_value!({"functionCall": {"name": name, "args": arguments.clone()}})
             }
-            Part::Image { .. } => {
-                // Get image
-                let img = part.as_image().unwrap();
-                // Write PNG string
-                let mut png_buf = Vec::new();
-                img.write_to(
-                    &mut std::io::Cursor::new(&mut png_buf),
-                    image::ImageFormat::Png,
-                )
-                .unwrap();
-                // base64 encoding
-                let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
-                // Final value
-                to_value!({"inline_data": {"mime_type": "image/png", "data": encoded}})
+            Part::Image { image } => {
+                let b64 = match image {
+                    PartImage::Binary { .. } => image.base64().unwrap(),
+                    PartImage::Url { .. } => panic!("Gemini does not support image url inputs"),
+                };
+                to_value!({"inline_data": {"mime_type": "image/png", "data": b64}})
             }
             Part::Value { value } => value.to_owned(),
         }
