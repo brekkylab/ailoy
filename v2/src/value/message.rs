@@ -413,3 +413,109 @@ impl MessageOutput {
         }
     }
 }
+
+#[cfg(feature = "python")]
+mod py {
+    use pyo3::{
+        exceptions::PyTypeError,
+        prelude::*,
+        types::{PyList, PyString},
+    };
+    use pyo3_stub_gen::{PyStubType, TypeInfo};
+
+    use super::*;
+
+    /// Intermediate struct to handle "str | list[Message]"
+    pub struct Messages(Vec<Message>);
+
+    impl<'a, 'py> FromPyObject<'a, 'py> for Messages {
+        type Error = PyErr;
+
+        fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+            if let Ok(text) = obj.cast::<PyString>() {
+                Ok(Self(vec![
+                    Message::new(Role::User).with_contents(vec![Part::text(text.to_string())]),
+                ]))
+            } else if let Ok(list) = obj.cast::<PyList>() {
+                Ok(Self(list.extract()?))
+            } else {
+                Err(PyTypeError::new_err("Failed to convert messages"))
+            }
+        }
+    }
+
+    impl PyStubType for Messages {
+        fn type_output() -> TypeInfo {
+            TypeInfo::unqualified("str | list[Message]")
+        }
+    }
+
+    impl Into<Vec<Message>> for Messages {
+        fn into(self) -> Vec<Message> {
+            self.0
+        }
+    }
+}
+
+#[cfg(feature = "python")]
+pub use py::*;
+
+#[cfg(feature = "nodejs")]
+mod node {
+    use napi::bindgen_prelude::*;
+    use napi_derive::napi;
+
+    use super::*;
+
+    #[napi(transparent)]
+    pub struct Messages(Either<Vec<Message>, String>);
+
+    impl Into<Vec<Message>> for Messages {
+        fn into(self) -> Vec<Message> {
+            match self.0 {
+                Either::A(messages) => messages,
+                Either::B(text) => {
+                    vec![Message::new(Role::User).with_contents(vec![Part::text(text)])]
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "nodejs")]
+pub use node::*;
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use tsify::serde_wasm_bindgen;
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(typescript_type = "Array<Message> | string")]
+        pub type Messages;
+    }
+
+    impl TryInto<Vec<Message>> for Messages {
+        type Error = js_sys::Error;
+
+        fn try_into(self) -> Result<Vec<Message>, Self::Error> {
+            if let Some(text) = self.as_string() {
+                Ok(vec![
+                    Message::new(Role::User).with_contents(vec![Part::text(text)]),
+                ])
+            } else if self.is_array() {
+                let arr: Vec<Message> = serde_wasm_bindgen::from_value(self.into())
+                    .map_err(|e| js_sys::Error::new(&e.to_string()))?;
+                Ok(arr)
+            } else {
+                Err(js_sys::Error::new("Expected Array<Message> or string"))
+            }
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+pub use wasm::*;

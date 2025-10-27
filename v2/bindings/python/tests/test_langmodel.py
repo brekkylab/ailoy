@@ -15,9 +15,8 @@ async def model():
 
 
 async def test_simple_chat(model: ai.LangModel):
-    msg = ai.Message("user", contents=[ai.Part.Text(text="Hello")])
     msg_d = ai.MessageDelta("assistant")
-    async for m in model.run([msg]):
+    async for m in model.run("Hello"):
         if m.delta.thinking:
             print("thinking: ", m.delta.thinking)
         print(m.delta.contents)

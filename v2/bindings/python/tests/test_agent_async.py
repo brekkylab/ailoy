@@ -141,14 +141,7 @@ async def test_builtin_tool(agent: ai.Agent):
 
     finish_reason = None
     async for resp in agent.run(
-        [
-            ai.Message(
-                role="user",
-                contents=[
-                    ai.Part.Text(text="List the files in the current directory.")
-                ],
-            )
-        ],
+        "List the files in the current directory.",
         config=ai.InferenceConfig(think_effort="disable"),
     ):
         if resp.finish_reason is not None:
@@ -194,12 +187,7 @@ async def test_python_async_function_tool(agent: ai.Agent):
     agent.add_tool(tool)
     finish_reason = None
     async for resp in agent.run(
-        [
-            ai.Message(
-                role="user",
-                contents=[ai.Part.Text(text="What is the temperature in Seoul now?")],
-            )
-        ],
+        "What is the temperature in Seoul now?",
         config=ai.InferenceConfig(think_effort="disable"),
     ):
         if resp.finish_reason is not None:
@@ -234,12 +222,7 @@ async def test_mcp_tools(agent: ai.Agent):
     agent.add_tools(tools)
     finish_reason = None
     async for resp in agent.run(
-        [
-            ai.Message(
-                role="user",
-                contents=[ai.Part.Text(text="What time is it now in Asia/Seoul?")],
-            )
-        ],
+        "What time is it now in Asia/Seoul?",
         config=ai.InferenceConfig(think_effort="disable"),
     ):
         if resp.finish_reason is not None:

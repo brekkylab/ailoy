@@ -88,12 +88,7 @@ for (const cfg of modelConfigs) {
     });
 
     test.sequential("Simple Chat", async () => {
-      for await (const resp of agent.run([
-        {
-          role: "user",
-          contents: "What is your name?",
-        },
-      ])) {
+      for await (const resp of agent.run("What is your name?")) {
         if (resp.accumulated !== undefined) {
           console.log(resp.accumulated);
         }
@@ -106,17 +101,9 @@ for (const cfg of modelConfigs) {
         const tool = ailoy.Tool.newBuiltin("terminal");
         agent.addTool(tool);
 
-        for await (const resp of agent.run([
-          {
-            role: "user",
-            contents: [
-              {
-                type: "text",
-                text: "List the files in the current directory.",
-              },
-            ],
-          },
-        ])) {
+        for await (const resp of agent.run(
+          "List the files in the current directory."
+        )) {
           if (resp.accumulated !== undefined) {
             console.log(`[${cfg.name}] `, resp.accumulated);
           }
@@ -135,13 +122,9 @@ for (const cfg of modelConfigs) {
         ]);
         agent.addTools(client.tools);
 
-        for await (const resp of agent.run([
-          {
-            role: "user",
-            contents:
-              "What time is it now in Asia/Seoul? Answer in local timezone.",
-          },
-        ])) {
+        for await (const resp of agent.run(
+          "What time is it now in Asia/Seoul? Answer in local timezone."
+        )) {
           if (resp.accumulated !== undefined) {
             console.log(resp.accumulated);
           }
@@ -186,13 +169,9 @@ for (const cfg of modelConfigs) {
 
         agent.addTool(tool);
 
-        for await (const resp of agent.run([
-          {
-            role: "user",
-            contents:
-              "What is the temperature in Seoul now? Answer in Celsius.",
-          },
-        ])) {
+        for await (const resp of agent.run(
+          "What is the temperature in Seoul now? Answer in Celsius."
+        )) {
           if (resp.accumulated !== undefined) {
             console.log(resp.accumulated);
           }
@@ -282,22 +261,9 @@ After the user’s question, a list of documents retrieved from the knowledge ba
             `,
         };
 
-        for await (const resp of agent.run(
-          [
-            {
-              role: "user",
-              contents: [
-                {
-                  type: "text",
-                  text: "What is Ailoy?",
-                },
-              ],
-            },
-          ],
-          {
-            documentPolyfill,
-          }
-        )) {
+        for await (const resp of agent.run("What is Ailoy?", {
+          documentPolyfill,
+        })) {
           if (resp.accumulated !== undefined) {
             console.log(resp.accumulated);
           }

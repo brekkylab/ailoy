@@ -194,7 +194,10 @@ mod py {
     use pyo3_stub_gen_derive::*;
 
     use super::*;
-    use crate::ffi::py::{base::await_future, cache_progress::await_cache_result};
+    use crate::{
+        ffi::py::{base::await_future, cache_progress::await_cache_result},
+        value::Messages,
+    };
 
     fn spawn<'a>(
         mut model: LangModel,
@@ -339,14 +342,14 @@ mod py {
         #[pyo3(signature = (messages, tools=None, documents=None, config=None))]
         fn run(
             &mut self,
-            messages: Vec<Message>,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<LangModelRunIterator> {
             let (_, rx) = spawn(
                 self.clone(),
-                messages,
+                messages.into(),
                 tools.unwrap_or_default(),
                 documents.unwrap_or_default(),
                 config.unwrap_or_default(),
@@ -357,14 +360,14 @@ mod py {
         #[pyo3(signature = (messages, tools=None, documents=None, config=None))]
         fn run_sync(
             &mut self,
-            messages: Vec<Message>,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<LangModelRunSyncIterator> {
             let (rt, rx) = spawn(
                 self.clone(),
-                messages,
+                messages.into(),
                 tools.unwrap_or_default(),
                 documents.unwrap_or_default(),
                 config.unwrap_or_default(),
@@ -424,9 +427,12 @@ mod node {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::ffi::node::{
-        cache::{JsCacheProgress, await_cache_result},
-        common::get_or_create_runtime,
+    use crate::{
+        ffi::node::{
+            cache::{JsCacheProgress, await_cache_result},
+            common::get_or_create_runtime,
+        },
+        value::Messages,
     };
 
     #[napi(object)]
@@ -517,7 +523,7 @@ mod node {
         pub fn run<'a>(
             &'a mut self,
             env: Env,
-            messages: Vec<Message>,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             docs: Option<Vec<Document>>,
         ) -> Result<Object<'a>> {
@@ -526,10 +532,9 @@ mod node {
             let mut model = self.clone();
 
             rt.spawn(async move {
-                // let mut model = inner.model.lock().await;
                 let mut stream = model
                     .infer(
-                        messages,
+                        messages.into(),
                         tools.unwrap_or(vec![]),
                         docs.unwrap_or(vec![]),
                         InferenceConfig::default(),
@@ -560,6 +565,7 @@ mod wasm {
     use crate::{
         ffi::web::{CacheProgressCallbackFn, stream_to_async_iterable},
         model::api::APISpecification,
+        value::Messages,
     };
 
     #[wasm_bindgen]
@@ -594,14 +600,15 @@ mod wasm {
         #[wasm_bindgen(js_name = infer, unchecked_return_type = "AsyncIterable<MessageOutput>")]
         pub fn infer_js(
             &mut self,
-            msgs: Vec<Message>,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             docs: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
-        ) -> JsValue {
+        ) -> Result<JsValue, js_sys::Error> {
             let mut model = self.clone();
+            let messages: Vec<Message> = messages.try_into()?;
             let stream = async_stream::stream! {
-                let mut inner_stream = model.infer(msgs, tools.unwrap_or(vec![]), docs.unwrap_or(vec![]), config.unwrap_or_default());
+                let mut inner_stream = model.infer(messages, tools.unwrap_or(vec![]), docs.unwrap_or(vec![]), config.unwrap_or_default());
                 while let Some(item) = inner_stream.next().await {
                     yield item;
                 }
@@ -612,7 +619,7 @@ mod wasm {
                     .map_err(|e| JsValue::from_str(&e.to_string()))
             }));
 
-            stream_to_async_iterable(js_stream).into()
+            Ok(stream_to_async_iterable(js_stream).into())
         }
     }
 }

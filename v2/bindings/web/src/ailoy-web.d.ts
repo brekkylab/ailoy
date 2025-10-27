@@ -13,7 +13,7 @@ export class Agent {
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
   run(
-    messages: Message[],
+    messages: string | Array<Message>,
     config?: InferenceConfig | null
   ): AsyncIterable<AgentResponse>;
 }
@@ -55,7 +55,7 @@ export class LangModel {
     apiKey: string
   ): Promise<LangModel>;
   infer(
-    msgs: Message[],
+    messages: Array<Message> | string,
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
     config?: InferenceConfig | null
@@ -262,9 +262,9 @@ export interface Message {
  */
 export interface MessageDelta {
   role: Role | undefined;
+  contents: PartDelta[];
   id: string | undefined;
   thinking: string | undefined;
-  contents: PartDelta[];
   tool_calls: PartDelta[];
   signature: string | undefined;
 }

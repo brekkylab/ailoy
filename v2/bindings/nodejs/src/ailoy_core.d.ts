@@ -9,7 +9,7 @@ export declare class Agent {
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
   run(
-    messages: Array<Message>,
+    messages: Messages,
     config?: InferenceConfig | undefined | null
   ): AgentRunIterator;
 }
@@ -50,7 +50,7 @@ export declare class LangModel {
     apiKey: string
   ): Promise<LangModel>;
   run(
-    messages: Array<Message>,
+    messages: Messages,
     tools?: Array<ToolDesc> | undefined | null,
     docs?: Array<Document> | undefined | null
   ): LangModelRunIterator;
@@ -277,6 +277,8 @@ export interface MessageOutput {
   delta: MessageDelta;
   finish_reason?: FinishReason;
 }
+
+export type Messages = Array<Message> | string;
 
 export type Metadata = Record<string, any>;
 

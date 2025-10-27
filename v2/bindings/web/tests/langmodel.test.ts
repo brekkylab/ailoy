@@ -7,11 +7,7 @@ describe("Ailoy LangModel", async () => {
     const model = await ailoy.LangModel.newLocal("Qwen/Qwen3-0.6B", (prog) => {
       console.log(prog);
     });
-    const msg: ailoy.Message = {
-      role: "user",
-      contents: [{ type: "text", text: "What is your name?" }],
-    };
-    for await (const result of model.infer([msg])) {
+    for await (const result of model.infer("What is your name?")) {
       console.log(result);
     }
   });
@@ -23,11 +19,7 @@ describe("Ailoy LangModel", async () => {
       "gpt-4o",
       OPENAI_API_KEY
     );
-    const msg: ailoy.Message = {
-      role: "user",
-      contents: [{ type: "text", text: "What is your name?" }],
-    };
-    for await (const result of model.infer([msg])) {
+    for await (const result of model.infer("What is your name?")) {
       console.log(result);
     }
   });

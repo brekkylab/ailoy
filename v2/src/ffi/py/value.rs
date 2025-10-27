@@ -1,4 +1,3 @@
-use anyhow::Ok;
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyDict};
 use pyo3_stub_gen::derive::*;
 
@@ -210,7 +209,13 @@ impl ToolDesc {
         } else {
             None
         };
-        Ok(Self::new(name, description, parameters, returns)).map_err(Into::into)
+        anyhow::Ok(Self::new(
+            name,
+            description,
+            parameters.into(),
+            returns.map(|returns| returns.into()),
+        ))
+        .map_err(Into::into)
     }
 
     pub fn __repr__(&self) -> String {
