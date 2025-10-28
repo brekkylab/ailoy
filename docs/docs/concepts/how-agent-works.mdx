@@ -26,12 +26,6 @@ In this section, we’ll briefly explain the process how an LM operates.
 At the most basic level, a language model working with **tokens**.
 It inputs tokens and generates next token.
 
-:::note
-Ailoy uses a special text structure called the **chat completion format**.
-Please refer to [] about this format.
-:::
-
-As mentioned above, input text is broken into tokens.
 Each token corresponds to a whole word, a subword, or even a single character, depending on the model’s vocabulary.
 Each token is then mapped to a number (its ID), forming a numerical sequence that the model can process.
 
@@ -87,7 +81,7 @@ This process often referred to as **chat completion**.
 
 See the [chat completion format](./chat-completion-format) for more information.
 
-## How Tool Calling Works
+## Tool Call
 
 In most agent system, tool calling can be achieved by the following process.
 
@@ -104,6 +98,6 @@ In most agent system, tool calling can be achieved by the following process.
 5. **\[Assistant Response\]** Assistant can incorporate the tool's output to
    produce a more accurate answer.
 
-## How RAG Works
+## RAG
 
 TBD
