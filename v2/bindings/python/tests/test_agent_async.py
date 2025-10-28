@@ -141,7 +141,7 @@ async def test_builtin_tool(agent: ai.Agent):
 
     finish_reason = None
     async for resp in agent.run(
-        "List the files in the current directory.",
+        "List the files in the current directory by using `execute_command` tool.",
         config=ai.InferenceConfig(think_effort="disable"),
     ):
         if resp.finish_reason is not None:

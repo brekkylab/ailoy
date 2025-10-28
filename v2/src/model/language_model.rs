@@ -185,13 +185,15 @@ impl LangModelInference for LangModel {
 
 #[cfg(feature = "python")]
 mod py {
+    use futures::lock::Mutex;
     use pyo3::{
         Bound, Py, PyAny, PyRef, PyResult, Python,
-        exceptions::{PyStopAsyncIteration, PyStopIteration},
+        exceptions::{PyRuntimeError, PyStopAsyncIteration, PyStopIteration},
         pyclass, pymethods,
         types::PyType,
     };
     use pyo3_stub_gen_derive::*;
+    use tokio::sync::mpsc;
 
     use super::*;
     use crate::{
@@ -206,20 +208,18 @@ mod py {
         documents: Vec<Document>,
         config: InferenceConfig,
     ) -> anyhow::Result<(
-        &'a tokio::runtime::Runtime,
-        async_channel::Receiver<anyhow::Result<MessageOutput>>,
+        tokio::runtime::Runtime,
+        mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>,
     )> {
-        let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageOutput>>();
-        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
+        let rt = tokio::runtime::Runtime::new().unwrap();
         rt.spawn(async move {
             let mut stream = model.infer(messages, tools, documents, config).boxed();
 
             while let Some(item) = stream.next().await {
-                if tx.send(item).await.is_err() {
+                if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
                 }
-                // Add a yield point to allow other tasks to run
-                tokio::task::yield_now().await;
             }
         });
         Ok((rt, rx))
@@ -228,7 +228,8 @@ mod py {
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
     pub struct LangModelRunIterator {
-        rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
+        _rt: tokio::runtime::Runtime,
+        rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>>>,
     }
 
     #[gen_stub_pymethods]
@@ -240,11 +241,13 @@ mod py {
 
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageOutput]"))]
         fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-            let rx: async_channel::Receiver<Result<MessageOutput, anyhow::Error>> = self.rx.clone();
+            let rx = self.rx.clone();
             let fut = async move {
+                let mut rx = rx.lock().await;
                 match rx.recv().await {
-                    Ok(res) => res.map_err(Into::into),
-                    Err(_) => Err(PyStopAsyncIteration::new_err(())),
+                    Some(Ok(res)) => Ok(res),
+                    Some(Err(e)) => Err(PyRuntimeError::new_err(e.to_string())),
+                    None => Err(PyStopAsyncIteration::new_err(())),
                 }
             };
             let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
@@ -255,8 +258,8 @@ mod py {
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
     pub struct LangModelRunSyncIterator {
-        rt: &'static tokio::runtime::Runtime,
-        rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
+        _rt: tokio::runtime::Runtime,
+        rx: mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>,
     }
 
     #[gen_stub_pymethods]
@@ -266,11 +269,11 @@ mod py {
             slf
         }
 
-        fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
-            let item = py.detach(|| self.rt.block_on(self.rx.recv()));
-            match item {
-                Ok(res) => res.map_err(Into::into),
-                Err(_) => Err(PyStopIteration::new_err(())),
+        fn __next__(&mut self) -> PyResult<MessageOutput> {
+            match self.rx.blocking_recv() {
+                Some(Ok(res)) => Ok(res),
+                Some(Err(e)) => Err(PyRuntimeError::new_err(e.to_string())),
+                None => Err(PyStopIteration::new_err(())),
             }
         }
     }
@@ -312,10 +315,10 @@ mod py {
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Py<Self>> {
-            let inner = await_future(await_cache_result::<LocalLangModel>(
-                model_name,
-                progress_callback,
-            ))?;
+            let inner = await_future(
+                py,
+                await_cache_result::<LocalLangModel>(model_name, progress_callback),
+            )?;
             Py::new(
                 py,
                 LangModel {
@@ -347,14 +350,17 @@ mod py {
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<LangModelRunIterator> {
-            let (_, rx) = spawn(
+            let (_rt, rx) = spawn(
                 self.clone(),
                 messages.into(),
                 tools.unwrap_or_default(),
                 documents.unwrap_or_default(),
                 config.unwrap_or_default(),
             )?;
-            Ok(LangModelRunIterator { rx })
+            Ok(LangModelRunIterator {
+                _rt,
+                rx: Arc::new(Mutex::new(rx)),
+            })
         }
 
         #[pyo3(signature = (messages, tools=None, documents=None, config=None))]
@@ -365,14 +371,14 @@ mod py {
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<LangModelRunSyncIterator> {
-            let (rt, rx) = spawn(
+            let (_rt, rx) = spawn(
                 self.clone(),
                 messages.into(),
                 tools.unwrap_or_default(),
                 documents.unwrap_or_default(),
                 config.unwrap_or_default(),
             )?;
-            Ok(LangModelRunSyncIterator { rt, rx })
+            Ok(LangModelRunSyncIterator { _rt, rx })
         }
 
         pub fn __repr__(&self) -> String {

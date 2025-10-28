@@ -192,13 +192,17 @@ impl Agent {
 
 #[cfg(feature = "python")]
 mod py {
+    use std::sync::Arc;
+
+    use futures::lock::Mutex;
     use pyo3::{
         Bound, Py, PyAny, PyRef, PyResult, Python,
-        exceptions::{PyStopAsyncIteration, PyStopIteration},
+        exceptions::{PyRuntimeError, PyStopAsyncIteration, PyStopIteration},
         pyclass, pymethods,
         types::PyType,
     };
     use pyo3_stub_gen_derive::{gen_stub_pyclass, gen_stub_pymethods};
+    use tokio::sync::mpsc;
 
     use super::*;
     use crate::value::Messages;
@@ -208,20 +212,18 @@ mod py {
         messages: Vec<Message>,
         config: Option<InferenceConfig>,
     ) -> anyhow::Result<(
-        &'a tokio::runtime::Runtime,
-        async_channel::Receiver<anyhow::Result<AgentResponse>>,
+        tokio::runtime::Runtime,
+        mpsc::UnboundedReceiver<anyhow::Result<AgentResponse>>,
     )> {
-        let (tx, rx) = async_channel::unbounded::<anyhow::Result<AgentResponse>>();
-        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<AgentResponse>>();
+        let rt = tokio::runtime::Runtime::new().unwrap();
         rt.spawn(async move {
             let mut stream = agent.run(messages, config).boxed();
 
             while let Some(item) = stream.next().await {
-                if tx.send(item).await.is_err() {
+                if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
                 }
-                // Add a yield point to allow other tasks to run
-                tokio::task::yield_now().await;
             }
         });
         Ok((rt, rx))
@@ -230,7 +232,8 @@ mod py {
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
     pub struct AgentRunIterator {
-        rx: async_channel::Receiver<anyhow::Result<AgentResponse>>,
+        _rt: tokio::runtime::Runtime,
+        rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<AgentResponse>>>>,
     }
 
     #[gen_stub_pymethods]
@@ -242,11 +245,13 @@ mod py {
 
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[AgentResponse]"))]
         fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-            let rx: async_channel::Receiver<Result<AgentResponse, anyhow::Error>> = self.rx.clone();
+            let rx = self.rx.clone();
             let fut = async move {
+                let mut rx = rx.lock().await;
                 match rx.recv().await {
-                    Ok(res) => res.map_err(Into::into),
-                    Err(_) => Err(PyStopAsyncIteration::new_err(())),
+                    Some(Ok(res)) => Ok(res),
+                    Some(Err(e)) => Err(PyRuntimeError::new_err(e.to_string())),
+                    None => Err(PyStopAsyncIteration::new_err(())),
                 }
             };
             let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
@@ -257,8 +262,8 @@ mod py {
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
     pub struct AgentRunSyncIterator {
-        rt: &'static tokio::runtime::Runtime,
-        rx: async_channel::Receiver<anyhow::Result<AgentResponse>>,
+        _rt: tokio::runtime::Runtime,
+        rx: mpsc::UnboundedReceiver<anyhow::Result<AgentResponse>>,
     }
 
     #[gen_stub_pymethods]
@@ -268,11 +273,11 @@ mod py {
             slf
         }
 
-        fn __next__(&mut self, py: Python<'_>) -> PyResult<AgentResponse> {
-            let item = py.detach(|| self.rt.block_on(self.rx.recv()));
-            match item {
-                Ok(res) => res.map_err(Into::into),
-                Err(_) => Err(PyStopIteration::new_err(())),
+        fn __next__(&mut self) -> PyResult<AgentResponse> {
+            match self.rx.blocking_recv() {
+                Some(Ok(res)) => Ok(res),
+                Some(Err(e)) => Err(PyRuntimeError::new_err(e.to_string())),
+                None => Err(PyStopIteration::new_err(())),
             }
         }
     }
@@ -345,8 +350,11 @@ mod py {
             messages: Messages,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<AgentRunIterator> {
-            let (_, rx) = spawn(self.clone(), messages.into(), config)?;
-            Ok(AgentRunIterator { rx })
+            let (_rt, rx) = spawn(self.clone(), messages.into(), config)?;
+            Ok(AgentRunIterator {
+                _rt,
+                rx: Arc::new(Mutex::new(rx)),
+            })
         }
 
         #[pyo3(name="run_sync", signature = (messages, config=None))]
@@ -355,8 +363,8 @@ mod py {
             messages: Messages,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<AgentRunSyncIterator> {
-            let (rt, rx) = spawn(self.clone(), messages.into(), config)?;
-            Ok(AgentRunSyncIterator { rt, rx })
+            let (_rt, rx) = spawn(self.clone(), messages.into(), config)?;
+            Ok(AgentRunSyncIterator { _rt, rx })
         }
     }
 
