@@ -16,22 +16,22 @@ yarn add ailoy-node
 ## Quickstart
 
 ```typescript
-import * as ailoy from "ailoy-node";
+import * as ai from "ailoy-node";
 
 async function main() {
-    // Create Qwen3-0.6B LocalLanguageModel
-    const model = await ailoy.LocalLanguageModel.create("Qwen/Qwen3-0.6B");
+  // Create Qwen3-0.6B LocalLanguageModel
+  const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
 
-    // Create an agent using this model
-    const agent = new ailoy.Agent(model);
+  // Create an agent using this model
+  const agent = new ai.Agent(model);
 
-    // Ask a prompt and iterate over agent's responses
-    for await (const resp of agent.run("What is your name?")) {
-        console.log(resp)
-    }
+  // Ask a prompt and iterate over agent's responses
+  for await (const resp of agent.run("What is your name?")) {
+    console.log(resp);
+  }
 }
 
-await main()
+await main();
 ```
 
 ## Building from source

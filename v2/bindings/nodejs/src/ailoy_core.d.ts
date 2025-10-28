@@ -356,7 +356,7 @@ export type PartDelta =
  *     name: "translate".into(),
  *     arguments: r#"{"text":"hi"}"#.into(),
  * };
- * `
+ * ```
  */
 export type PartDeltaFunction =
   | { type: "verbatim"; text: string }
