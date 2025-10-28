@@ -185,24 +185,19 @@ This ensures that language models can reliably construct valid function calls â€
 
 ```
 {
-  "name": "get_weather",
-  "description": "Retrieve current weather data for a specific city.",
+  "name": "get_temperature",
+  "description": "Retrieve current temperature for a specific city.",
   "parameters": {
     "type": "object",
     "required": ["city"],
     "properties": {
       "city": { "type": "string", "description": "City name" },
-      "unit": { "type": "string", "enum": ["c", "f"], "default": "c" }
+      "unit": { "type": "string", "enum": ["celcius", "fahrenheit"], "default": "celcius" }
     },
     "additionalProperties": false
   },
   "returns": {
-    "type": "object",
-    "properties": {
-      "temp": { "type": "number" },
-      "condition": { "type": "string" }
-    },
-    "required": ["temp", "condition"]
+    "type": "number"
   }
 }
 ```
@@ -225,7 +220,7 @@ A typical tool call message looks like this:
       "type": "function",
       "function": {
         "name": "get_weather",
-        "arguments": { "city": "Seoul", "unit": "c" }
+        "arguments": { "city": "Seoul", "unit": "celcius" }
       },
       "id": "call_01HZX2..."
     }
@@ -251,7 +246,7 @@ For example
   "tool_call_id": "call_01HZX2...",
   "name": "get_weather",
   "contents": [
-    { "type": "value", "value": { "temp": 12.3, "condition": "cloudy" } }
+    { "type": "text", "text": "12.3" }
   ]
 }
 ```
@@ -264,7 +259,7 @@ When an error occurs in a tool, it should still be passed along so that the mode
   "tool_call_id": "call_01HZX2...",
   "name": "get_weather",
   "contents": [
-    { "type": "value", "value": { "error": { "code": "NOT_FOUND", "message": "Unknown city" } } }
+    { "type": "text", "text": "{ \"code\": \"NOT_FOUND\" }" }
   ]
 }
 ```
