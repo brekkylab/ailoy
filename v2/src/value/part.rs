@@ -809,10 +809,19 @@ mod py {
     use pyo3_stub_gen::derive::*;
 
     use super::*;
+    use crate::ffi::py::base::PyRepr;
 
     #[gen_stub_pymethods]
     #[pymethods]
     impl PartFunction {
+        pub fn __repr__(&self) -> String {
+            format!(
+                "PartFunction(name={}, arguments={})",
+                self.name.__repr__(),
+                serde_json::to_string(&self.arguments).unwrap_or("{...}".to_owned())
+            )
+        }
+
         #[getter]
         fn name(&self) -> String {
             self.name.clone()
@@ -831,10 +840,11 @@ mod py {
         pub fn __repr__(&self) -> String {
             let s = match &self {
                 Part::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
-                Part::Function { .. } => {
+                Part::Function { id, function } => {
                     format!(
-                        "Function({})",
-                        serde_json::to_string(self).unwrap_or("".to_owned())
+                        "Function(id={}, function={})",
+                        id.__repr__(),
+                        function.__repr__()
                     )
                 }
                 Part::Value { value } => format!(
@@ -844,7 +854,7 @@ mod py {
                 Part::Image { image } => {
                     format!(
                         "Image(\"{}\")",
-                        serde_json::to_string(image).unwrap_or("".to_owned())
+                        serde_json::to_string(image).unwrap_or("...".to_owned())
                     )
                 }
             };
