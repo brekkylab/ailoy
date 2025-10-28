@@ -90,8 +90,8 @@ for (const cfg of modelConfigs) {
           contents: [{ type: "text", text: "What is your name?" }],
         },
       ])) {
-        if (resp.accumulated !== undefined) {
-          console.log(resp.accumulated);
+        if (resp.message !== undefined) {
+          console.log(resp.message);
         }
       }
     });
@@ -141,8 +141,8 @@ for (const cfg of modelConfigs) {
             ],
           },
         ])) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
+          if (resp.message !== undefined) {
+            console.log(resp.message);
           }
         }
 
@@ -165,8 +165,8 @@ for (const cfg of modelConfigs) {
               ],
             },
           ])) {
-            if (resp.accumulated !== undefined) {
-              console.log(resp.accumulated);
+            if (resp.message !== undefined) {
+              console.log(resp.message);
             }
           }
         },
@@ -187,8 +187,8 @@ for (const cfg of modelConfigs) {
               ],
             },
           ])) {
-            if (resp.accumulated !== undefined) {
-              console.log(resp.accumulated);
+            if (resp.message !== undefined) {
+              console.log(resp.message);
             }
           }
         },
@@ -243,11 +243,13 @@ for (const cfg of modelConfigs) {
             },
           ],
           {
-            documentPolyfill,
+            inference: {
+              documentPolyfill,
+            },
           }
         )) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
+          if (resp.message !== undefined) {
+            console.log(resp.message);
           }
         }
 

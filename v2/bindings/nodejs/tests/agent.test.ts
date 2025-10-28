@@ -88,7 +88,7 @@ for (const cfg of modelConfigs) {
     });
 
     test.sequential("Simple Chat", async () => {
-      for await (const resp of agent.run_delta([
+      for await (const resp of agent.runDelta([
         {
           role: "user",
           contents: [{ type: "text", text: "What is your name?" }],
@@ -106,7 +106,7 @@ for (const cfg of modelConfigs) {
         const tool = ailoy.Tool.newBuiltin("terminal");
         agent.addTool(tool);
 
-        for await (const resp of agent.run_delta([
+        for await (const resp of agent.runDelta([
           {
             role: "user",
             contents: [
@@ -135,7 +135,7 @@ for (const cfg of modelConfigs) {
         ]);
         agent.addTools(client.tools);
 
-        for await (const resp of agent.run_delta([
+        for await (const resp of agent.runDelta([
           {
             role: "user",
             contents: [
@@ -190,7 +190,7 @@ for (const cfg of modelConfigs) {
 
         agent.addTool(tool);
 
-        for await (const resp of agent.run_delta([
+        for await (const resp of agent.runDelta([
           {
             role: "user",
             contents: [
@@ -225,8 +225,8 @@ for (const cfg of modelConfigs) {
               ],
             },
           ])) {
-            if (resp.accumulated !== undefined) {
-              console.log(resp.accumulated);
+            if (resp?.message !== undefined) {
+              console.log(resp.message);
             }
           }
         },
@@ -247,8 +247,8 @@ for (const cfg of modelConfigs) {
               ],
             },
           ])) {
-            if (resp.accumulated !== undefined) {
-              console.log(resp.accumulated);
+            if (resp?.message !== undefined) {
+              console.log(resp.message);
             }
           }
         },
@@ -290,7 +290,7 @@ After the user’s question, a list of documents retrieved from the knowledge ba
             `,
         };
 
-        for await (const resp of agent.run_delta(
+        for await (const resp of agent.runDelta(
           [
             {
               role: "user",
@@ -303,7 +303,9 @@ After the user’s question, a list of documents retrieved from the knowledge ba
             },
           ],
           {
-            documentPolyfill,
+            inference: {
+              documentPolyfill,
+            },
           }
         )) {
           if (resp?.delta !== undefined) {

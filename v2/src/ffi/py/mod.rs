@@ -8,7 +8,7 @@ pub(crate) mod value;
 use pyo3::prelude::*;
 
 use crate::{
-    agent::Agent,
+    agent::{Agent, AgentConfig},
     model::{EmbeddingModel, InferenceConfig, LangModel},
     tool::{MCPClient, Tool},
     value::{
@@ -28,6 +28,7 @@ use crate::{
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // Add classes in alphabetical order
     m.add_class::<Agent>()?;
+    m.add_class::<AgentConfig>()?;
     m.add_class::<EmbeddingModel>()?;
     m.add_class::<FinishReason>()?;
     m.add_class::<InferenceConfig>()?;

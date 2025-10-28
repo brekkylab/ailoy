@@ -1,5 +1,6 @@
 use anyhow::Context;
 use futures::StreamExt;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     knowledge::{Knowledge, KnowledgeBehavior as _, KnowledgeConfig},
@@ -11,6 +12,22 @@ use crate::{
         Part, PartDelta, Role, ToolDesc,
     },
 };
+
+/// Configuration for agents
+/// See `InferenceConfig` and `KnowledgeConfig` for more details.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub struct AgentConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inference: Option<InferenceConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub knowledge: Option<KnowledgeConfig>,
+}
 
 /// The Agent is the central orchestrator that connects the **language model**, **tools**, and **knowledge** components.
 /// It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
@@ -125,6 +142,7 @@ impl Agent {
     fn get_docs<'a>(
         msgs: &Vec<Message>,
         knowledge: &Option<Knowledge>,
+        knowledge_config: KnowledgeConfig,
     ) -> BoxFuture<'a, anyhow::Result<Vec<Document>>> {
         let last_msg = msgs.last().cloned();
         let knowledge = knowledge.clone();
@@ -140,9 +158,7 @@ impl Agent {
                     .map(|p| p.as_text().unwrap().to_owned())
                     .collect::<Vec<_>>()
                     .join("\n\n");
-                Ok(knowledge
-                    .retrieve(query_str, KnowledgeConfig::default())
-                    .await?)
+                Ok(knowledge.retrieve(query_str, knowledge_config).await?)
             } else {
                 Ok(vec![])
             }
@@ -188,18 +204,27 @@ impl Agent {
     pub fn run_delta<'a>(
         &'a mut self,
         mut messages: Vec<Message>,
-        config: Option<InferenceConfig>,
+        config: Option<AgentConfig>,
     ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         let knowledge = self.knowledge.clone();
         let tools = self.tools.clone();
         let strm = async_stream::try_stream! {
-            let docs = Self::get_docs(&messages, &knowledge).await?;
+            let docs = Self::get_docs(
+                &messages,
+                &knowledge,
+                config.clone().unwrap_or_default().knowledge.unwrap_or_default()
+            ).await?;
             let tool_descs = Self::get_tool_descs(&tools);
             loop {
                 let mut assistant_msg_delta = MessageDelta::new().with_role(Role::Assistant);
                 {
                     let mut model = self.lm.clone();
-                    let mut strm = model.infer_delta(messages.clone(), tool_descs.clone(), docs.clone(), config.clone().unwrap_or_default());
+                    let mut strm = model.infer_delta(
+                        messages.clone(),
+                        tool_descs.clone(),
+                        docs.clone(),
+                        config.clone().unwrap_or_default().inference.unwrap_or_default()
+                    );
                     while let Some(out) = strm.next().await {
                         let out = out?;
                         assistant_msg_delta = assistant_msg_delta.accumulate(out.clone().delta).context("Aggregation failed")?;
@@ -231,16 +256,25 @@ impl Agent {
     pub fn run<'a>(
         &'a mut self,
         mut messages: Vec<Message>,
-        config: Option<InferenceConfig>,
+        config: Option<AgentConfig>,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         let knowledge = self.knowledge.clone();
         let tools = self.tools.clone();
         let strm = async_stream::try_stream! {
-            let docs = Self::get_docs(&messages, &knowledge).await?;
+            let docs = Self::get_docs(
+                &messages,
+                &knowledge,
+                config.clone().unwrap_or_default().knowledge.unwrap_or_default()
+            ).await?;
             let tool_descs = Self::get_tool_descs(&tools);
             loop {
                 let mut model = self.lm.clone();
-                let assistant_out = model.infer(messages.clone(), tool_descs.clone(), docs.clone(), config.clone().unwrap_or_default()).await?;
+                let assistant_out = model.infer(
+                    messages.clone(),
+                    tool_descs.clone(),
+                    docs.clone(),
+                    config.clone().unwrap_or_default().inference.unwrap_or_default()
+                ).await?;
                 let assistant_msg = assistant_out.message.clone();
                 messages.push(assistant_msg.clone());
                 yield assistant_out;
@@ -274,7 +308,7 @@ mod py {
     fn spawn_delta<'a>(
         mut agent: Agent,
         messages: Vec<Message>,
-        config: Option<InferenceConfig>,
+        config: Option<AgentConfig>,
     ) -> anyhow::Result<(
         &'a tokio::runtime::Runtime,
         async_channel::Receiver<anyhow::Result<MessageDeltaOutput>>,
@@ -298,7 +332,7 @@ mod py {
     fn spawn<'a>(
         mut agent: Agent,
         messages: Vec<Message>,
-        config: Option<InferenceConfig>,
+        config: Option<AgentConfig>,
     ) -> anyhow::Result<(
         &'a tokio::runtime::Runtime,
         async_channel::Receiver<anyhow::Result<MessageOutput>>,
@@ -317,6 +351,19 @@ mod py {
             }
         });
         Ok((rt, rx))
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl AgentConfig {
+        #[new]
+        #[pyo3(signature = (inference=None, knowledge=None))]
+        fn __new__(inference: Option<InferenceConfig>, knowledge: Option<KnowledgeConfig>) -> Self {
+            Self {
+                inference,
+                knowledge,
+            }
+        }
     }
 
     #[gen_stub_pymethods]
@@ -385,7 +432,7 @@ mod py {
         fn run_delta_py(
             &mut self,
             messages: Vec<Message>,
-            config: Option<InferenceConfig>,
+            config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputIterator> {
             let (_, rx) = spawn_delta(self.clone(), messages, config)?;
             Ok(MessageDeltaOutputIterator { rx })
@@ -395,7 +442,7 @@ mod py {
         fn run_delta_sync_py(
             &mut self,
             messages: Vec<Message>,
-            config: Option<InferenceConfig>,
+            config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
             let (rt, rx) = spawn_delta(self.clone(), messages, config)?;
             Ok(MessageDeltaOutputSyncIterator { rt, rx })
@@ -405,7 +452,7 @@ mod py {
         fn run_py(
             &mut self,
             messages: Vec<Message>,
-            config: Option<InferenceConfig>,
+            config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageOutputIterator> {
             let (_, rx) = spawn(self.clone(), messages, config)?;
             Ok(MessageOutputIterator { rx })
@@ -415,7 +462,7 @@ mod py {
         fn run_sync_py(
             &mut self,
             messages: Vec<Message>,
-            config: Option<InferenceConfig>,
+            config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
             let (rt, rx) = spawn_delta(self.clone(), messages, config)?;
             Ok(MessageDeltaOutputSyncIterator { rt, rx })
@@ -483,7 +530,7 @@ mod node {
             &'a mut self,
             env: Env,
             messages: Vec<Message>,
-            config: Option<InferenceConfig>,
+            config: Option<AgentConfig>,
         ) -> napi::Result<Object<'a>> {
             let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
             let rt = get_or_create_runtime();
@@ -514,7 +561,7 @@ mod node {
             &'a mut self,
             env: Env,
             messages: Vec<Message>,
-            config: Option<InferenceConfig>,
+            config: Option<AgentConfig>,
         ) -> napi::Result<Object<'a>> {
             let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
             let rt = get_or_create_runtime();
@@ -584,11 +631,7 @@ mod wasm {
             js_name = "runDelta",
             unchecked_return_type = "AsyncIterable<MessageDeltaOutput>"
         )]
-        pub fn run_delta_js(
-            &self,
-            messages: Vec<Message>,
-            config: Option<InferenceConfig>,
-        ) -> JsValue {
+        pub fn run_delta_js(&self, messages: Vec<Message>, config: Option<AgentConfig>) -> JsValue {
             let mut agent = self.clone();
             let stream = async_stream::stream! {
                 let mut inner_stream = agent.run_delta(messages, config);
@@ -609,7 +652,7 @@ mod wasm {
             js_name = "run",
             unchecked_return_type = "AsyncIterable<MessageOutput>"
         )]
-        pub fn run_js(&self, messages: Vec<Message>, config: Option<InferenceConfig>) -> JsValue {
+        pub fn run_js(&self, messages: Vec<Message>, config: Option<AgentConfig>) -> JsValue {
             let mut agent = self.clone();
             let stream = async_stream::stream! {
                 let mut inner_stream = agent.run(messages, config);

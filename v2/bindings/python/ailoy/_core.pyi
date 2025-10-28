@@ -7,6 +7,35 @@ import typing
 
 @typing.final
 class Agent:
+    r"""
+    The Agent is the central orchestrator that connects the **language model**, **tools**, and **knowledge** components.
+    It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
+    
+    In essence, the Agent:
+    - Understands user input
+    - Interprets structured responses from the language model (such as tool calls)
+    - Executes tools as needed
+    - Retrieves and integrates contextual knowledge before or during inference
+    
+    # Public APIs
+    - `run_delta`: Runs a user query and streams incremental deltas (partial outputs)
+    - `run`: Runs a user query and returns a complete message once all deltas are accumulated
+    
+    ## Delta vs. Complete Message
+    A *delta* represents a partial piece of model output, such as a text fragment or intermediate reasoning step.
+    Deltas can be accumulated into a full message using the provided accumulation utilities.
+    This allows real-time streaming while preserving the ability to reconstruct the final structured result.
+    
+    See `MessageDelta`.
+    
+    # Components
+    - **Language Model**: Generates natural language and structured outputs.
+      It interprets the conversation context and predicts the assistant’s next action.
+    - **Tool**: Represents external functions or APIs that the model can dynamically invoke.
+      The `Agent`` detects tool calls and automatically executes them during the reasoning loop.
+    - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases.
+      When available, the `Agent`` enriches model input with these results before generating an answer.
+    """
     @property
     def lm(self) -> LangModel: ...
     @property
@@ -19,10 +48,26 @@ class Agent:
     def add_tool(self, tool: Tool) -> None: ...
     def remove_tools(self, tool_names: typing.Sequence[builtins.str]) -> None: ...
     def remove_tool(self, tool_name: builtins.str) -> None: ...
-    def run_delta(self, messages: typing.Sequence[Message], config: typing.Optional[InferenceConfig] = None) -> MessageDeltaOutputIterator: ...
-    def run_delta_sync(self, messages: typing.Sequence[Message], config: typing.Optional[InferenceConfig] = None) -> MessageDeltaOutputSyncIterator: ...
-    def run(self, messages: typing.Sequence[Message], config: typing.Optional[InferenceConfig] = None) -> MessageOutputIterator: ...
-    def run_sync(self, messages: typing.Sequence[Message], config: typing.Optional[InferenceConfig] = None) -> MessageDeltaOutputSyncIterator: ...
+    def run_delta(self, messages: typing.Sequence[Message], config: typing.Optional[AgentConfig] = None) -> MessageDeltaOutputIterator: ...
+    def run_delta_sync(self, messages: typing.Sequence[Message], config: typing.Optional[AgentConfig] = None) -> MessageDeltaOutputSyncIterator: ...
+    def run(self, messages: typing.Sequence[Message], config: typing.Optional[AgentConfig] = None) -> MessageOutputIterator: ...
+    def run_sync(self, messages: typing.Sequence[Message], config: typing.Optional[AgentConfig] = None) -> MessageDeltaOutputSyncIterator: ...
+
+@typing.final
+class AgentConfig:
+    r"""
+    Configuration for agents
+    See `InferenceConfig` and `KnowledgeConfig` for more details.
+    """
+    @property
+    def inference(self) -> typing.Optional[InferenceConfig]: ...
+    @inference.setter
+    def inference(self, value: typing.Optional[InferenceConfig]) -> None: ...
+    @property
+    def knowledge(self) -> typing.Optional[KnowledgeConfig]: ...
+    @knowledge.setter
+    def knowledge(self, value: typing.Optional[KnowledgeConfig]) -> None: ...
+    def __new__(cls, inference: typing.Optional[InferenceConfig] = None, knowledge: typing.Optional[KnowledgeConfig] = None) -> AgentConfig: ...
 
 @typing.final
 class CacheProgress:
@@ -124,6 +169,13 @@ class InferenceConfig:
     @grammar.setter
     def grammar(self, value: typing.Optional[Grammar]) -> None: ...
     def __new__(cls, document_polyfill: typing.Optional[DocumentPolyfill] = None, think_effort: typing.Optional[typing.Literal["disable", "enable", "low", "medium", "high"]] = None, temperature: typing.Optional[builtins.float] = None, top_p: typing.Optional[builtins.float] = None, max_tokens: typing.Optional[builtins.int] = None) -> InferenceConfig: ...
+
+@typing.final
+class KnowledgeConfig:
+    @property
+    def top_k(self) -> typing.Optional[builtins.int]: ...
+    @top_k.setter
+    def top_k(self, value: typing.Optional[builtins.int]) -> None: ...
 
 @typing.final
 class LangModel:
