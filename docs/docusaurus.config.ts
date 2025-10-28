@@ -47,7 +47,13 @@ const config: Config = {
     ],
   ],
 
+  markdown: {
+    mermaid: true,
+  },
+
   plugins: ["docusaurus-plugin-sass"],
+
+  themes: ["@docusaurus/theme-mermaid"],
 
   themeConfig: {
     // Replace with your project's social card
