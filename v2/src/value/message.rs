@@ -399,17 +399,264 @@ pub enum FinishReason {
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-pub struct MessageOutput {
+pub struct MessageDeltaOutput {
     pub delta: MessageDelta,
     #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "finish_reason"))]
     pub finish_reason: Option<FinishReason>,
 }
 
-impl MessageOutput {
+impl MessageDeltaOutput {
     pub fn new() -> Self {
         Self {
             delta: MessageDelta::new(),
             finish_reason: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub struct MessageOutput {
+    pub message: Message,
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "finish_reason"))]
+    pub finish_reason: FinishReason,
+}
+
+#[cfg(feature = "python")]
+pub(crate) mod py {
+    use pyo3::{
+        Py, PyAny, PyRef, PyResult, Python,
+        exceptions::{PyStopAsyncIteration, PyStopIteration},
+        pyclass, pymethods,
+    };
+    use pyo3_stub_gen_derive::*;
+
+    use super::*;
+
+    #[gen_stub_pyclass]
+    #[pyclass(unsendable)]
+    pub(crate) struct MessageDeltaOutputIterator {
+        pub(crate) rx: async_channel::Receiver<anyhow::Result<MessageDeltaOutput>>,
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MessageDeltaOutputIterator {
+        fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+            slf
+        }
+
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageDeltaOutput]"))]
+        fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+            let rx: async_channel::Receiver<Result<MessageDeltaOutput, anyhow::Error>> =
+                self.rx.clone();
+            let fut = async move {
+                match rx.recv().await {
+                    Ok(res) => res.map_err(Into::into),
+                    Err(_) => Err(PyStopAsyncIteration::new_err(())),
+                }
+            };
+            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
+            Ok(py_fut.into())
+        }
+    }
+
+    #[gen_stub_pyclass]
+    #[pyclass(unsendable)]
+    pub(crate) struct MessageDeltaOutputSyncIterator {
+        pub(crate) rt: &'static tokio::runtime::Runtime,
+        pub(crate) rx: async_channel::Receiver<anyhow::Result<MessageDeltaOutput>>,
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MessageDeltaOutputSyncIterator {
+        fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+            slf
+        }
+
+        fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageDeltaOutput> {
+            let item = py.detach(|| self.rt.block_on(self.rx.recv()));
+            match item {
+                Ok(res) => res.map_err(Into::into),
+                Err(_) => Err(PyStopIteration::new_err(())),
+            }
+        }
+    }
+
+    #[gen_stub_pyclass]
+    #[pyclass(unsendable)]
+    pub(crate) struct MessageOutputIterator {
+        pub(crate) rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MessageOutputIterator {
+        fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+            slf
+        }
+
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageOutput]"))]
+        fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+            let rx: async_channel::Receiver<Result<MessageOutput, anyhow::Error>> = self.rx.clone();
+            let fut = async move {
+                match rx.recv().await {
+                    Ok(res) => res.map_err(Into::into),
+                    Err(_) => Err(PyStopAsyncIteration::new_err(())),
+                }
+            };
+            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
+            Ok(py_fut.into())
+        }
+    }
+
+    #[gen_stub_pyclass]
+    #[pyclass(unsendable)]
+    pub(crate) struct MessageOutputSyncIterator {
+        pub(crate) rt: &'static tokio::runtime::Runtime,
+        pub(crate) rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MessageOutputSyncIterator {
+        fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+            slf
+        }
+
+        fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
+            let item = py.detach(|| self.rt.block_on(self.rx.recv()));
+            match item {
+                Ok(res) => res.map_err(Into::into),
+                Err(_) => Err(PyStopIteration::new_err(())),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "nodejs")]
+pub(crate) mod node {
+    use std::sync::Arc;
+
+    use futures::lock::Mutex;
+    use napi::{Error, JsSymbol, Status, bindgen_prelude::*};
+    use napi_derive::napi;
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    #[derive(Clone)]
+    #[napi]
+    pub struct MessageDeltaOutputIterator {
+        pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>>>,
+    }
+
+    #[napi(object)]
+    pub struct MessageDeltaOutputIteratorResult {
+        pub value: Option<MessageDeltaOutput>,
+        pub done: bool,
+    }
+
+    #[napi]
+    impl MessageDeltaOutputIterator {
+        #[napi(js_name = "[Symbol.asyncIterator]")]
+        pub fn async_iterator(&self) -> &Self {
+            // This is a dummy function to add typing for Symbol.asyncIterator
+            self
+        }
+
+        #[napi]
+        pub async unsafe fn next(&mut self) -> napi::Result<MessageDeltaOutputIteratorResult> {
+            let mut rx = self.rx.lock().await;
+            match rx.recv().await {
+                Some(Ok(output)) => Ok(MessageDeltaOutputIteratorResult {
+                    value: Some(output.into()),
+                    done: false,
+                }),
+                Some(Err(e)) => Err(Error::new(Status::GenericFailure, e)),
+                None => Ok(MessageDeltaOutputIteratorResult {
+                    value: None,
+                    done: true,
+                }),
+            }
+        }
+    }
+
+    impl MessageDeltaOutputIterator {
+        /// This returns an object with \[Symbol.asyncIterator\], which is not directly injected by napi-rs.
+        pub(crate) fn to_async_iterator<'a>(self, env: Env) -> napi::Result<Object<'a>> {
+            let mut obj = Object::new(&env)?;
+
+            let global = env.get_global()?;
+            let symbol: Function = global.get_named_property("Symbol")?;
+            let symbol_async_iterator: JsSymbol = symbol.get_named_property("asyncIterator")?;
+
+            let func: Function<(), MessageDeltaOutputIterator> =
+                env.create_function_from_closure("asyncIterator", move |_| Ok(self.clone()))?;
+
+            obj.set_property(symbol_async_iterator, func)?;
+
+            Ok(obj)
+        }
+    }
+
+    #[derive(Clone)]
+    #[napi]
+    pub struct MessageOutputIterator {
+        pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>>>,
+    }
+
+    #[napi(object)]
+    pub struct MessageOutputIteratorResult {
+        pub value: Option<MessageOutput>,
+        pub done: bool,
+    }
+
+    #[napi]
+    impl MessageOutputIterator {
+        #[napi(js_name = "[Symbol.asyncIterator]")]
+        pub fn async_iterator(&self) -> &Self {
+            // This is a dummy function to add typing for Symbol.asyncIterator
+            self
+        }
+
+        #[napi]
+        pub async unsafe fn next(&mut self) -> napi::Result<MessageOutputIteratorResult> {
+            let mut rx = self.rx.lock().await;
+            match rx.recv().await {
+                Some(Ok(output)) => Ok(MessageOutputIteratorResult {
+                    value: Some(output.into()),
+                    done: false,
+                }),
+                Some(Err(e)) => Err(Error::new(Status::GenericFailure, e)),
+                None => Ok(MessageOutputIteratorResult {
+                    value: None,
+                    done: true,
+                }),
+            }
+        }
+    }
+
+    impl MessageOutputIterator {
+        /// This returns an object with \[Symbol.asyncIterator\], which is not directly injected by napi-rs.
+        pub(crate) fn to_async_iterator<'a>(self, env: Env) -> napi::Result<Object<'a>> {
+            let mut obj = Object::new(&env)?;
+
+            let global = env.get_global()?;
+            let symbol: Function = global.get_named_property("Symbol")?;
+            let symbol_async_iterator: JsSymbol = symbol.get_named_property("asyncIterator")?;
+
+            let func: Function<(), MessageOutputIterator> =
+                env.create_function_from_closure("asyncIterator", move |_| Ok(self.clone()))?;
+
+            obj.set_property(symbol_async_iterator, func)?;
+
+            Ok(obj)
         }
     }
 }

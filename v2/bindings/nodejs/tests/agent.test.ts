@@ -88,14 +88,14 @@ for (const cfg of modelConfigs) {
     });
 
     test.sequential("Simple Chat", async () => {
-      for await (const resp of agent.run([
+      for await (const resp of agent.run_delta([
         {
           role: "user",
           contents: [{ type: "text", text: "What is your name?" }],
         },
       ])) {
-        if (resp.accumulated !== undefined) {
-          console.log(resp.accumulated);
+        if (resp?.delta !== undefined) {
+          console.log(resp.delta);
         }
       }
     });
@@ -106,7 +106,7 @@ for (const cfg of modelConfigs) {
         const tool = ailoy.Tool.newBuiltin("terminal");
         agent.addTool(tool);
 
-        for await (const resp of agent.run([
+        for await (const resp of agent.run_delta([
           {
             role: "user",
             contents: [
@@ -117,8 +117,8 @@ for (const cfg of modelConfigs) {
             ],
           },
         ])) {
-          if (resp.accumulated !== undefined) {
-            console.log(`[${cfg.name}] `, resp.accumulated);
+          if (resp?.delta !== undefined) {
+            console.log(`[${cfg.name}] `, resp.delta);
           }
         }
 
@@ -135,7 +135,7 @@ for (const cfg of modelConfigs) {
         ]);
         agent.addTools(client.tools);
 
-        for await (const resp of agent.run([
+        for await (const resp of agent.run_delta([
           {
             role: "user",
             contents: [
@@ -146,8 +146,8 @@ for (const cfg of modelConfigs) {
             ],
           },
         ])) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
+          if (resp?.delta !== undefined) {
+            console.log(resp.delta);
           }
         }
 
@@ -190,7 +190,7 @@ for (const cfg of modelConfigs) {
 
         agent.addTool(tool);
 
-        for await (const resp of agent.run([
+        for await (const resp of agent.run_delta([
           {
             role: "user",
             contents: [
@@ -201,8 +201,8 @@ for (const cfg of modelConfigs) {
             ],
           },
         ])) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
+          if (resp?.delta !== undefined) {
+            console.log(resp.delta);
           }
         }
 
@@ -290,7 +290,7 @@ After the user’s question, a list of documents retrieved from the knowledge ba
             `,
         };
 
-        for await (const resp of agent.run(
+        for await (const resp of agent.run_delta(
           [
             {
               role: "user",
@@ -306,8 +306,8 @@ After the user’s question, a list of documents retrieved from the knowledge ba
             documentPolyfill,
           }
         )) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
+          if (resp?.delta !== undefined) {
+            console.log(resp.delta);
           }
         }
 

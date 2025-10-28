@@ -8,15 +8,14 @@ export declare class Agent {
   removeTools(toolNames: Array<string>): void;
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
+  runDelta(
+    messages: Array<Message>,
+    config?: InferenceConfig | undefined | null
+  ): MessageDeltaOutputIterator;
   run(
     messages: Array<Message>,
     config?: InferenceConfig | undefined | null
-  ): AgentRunIterator;
-}
-
-export declare class AgentRunIterator {
-  [Symbol.asyncIterator](): this;
-  next(): Promise<AgentRunIteratorResult>;
+  ): MessageOutputIterator;
 }
 
 export declare class EmbeddingModel {
@@ -49,22 +48,32 @@ export declare class LangModel {
     modelName: string,
     apiKey: string
   ): Promise<LangModel>;
-  run(
+  inferDelta(
     messages: Array<Message>,
     tools?: Array<ToolDesc> | undefined | null,
     docs?: Array<Document> | undefined | null
-  ): LangModelRunIterator;
-}
-
-export declare class LangModelRunIterator {
-  [Symbol.asyncIterator](): this;
-  next(): Promise<LangModelRunIteratorResult>;
+  ): MessageDeltaOutputIterator;
+  infer(
+    messages: Array<Message>,
+    tools?: Array<ToolDesc> | undefined | null,
+    docs?: Array<Document> | undefined | null
+  ): MessageDeltaOutput;
 }
 
 export declare class MCPClient {
   static newStdio(command: string, args: Array<string>): Promise<MCPClient>;
   static newStreamableHttp(url: string): Promise<MCPClient>;
   get tools(): Array<Tool>;
+}
+
+export declare class MessageDeltaOutputIterator {
+  [Symbol.asyncIterator](): this;
+  next(): Promise<MessageDeltaOutputIteratorResult>;
+}
+
+export declare class MessageOutputIterator {
+  [Symbol.asyncIterator](): this;
+  next(): Promise<MessageOutputIteratorResult>;
 }
 
 export declare class Tool {
@@ -96,21 +105,6 @@ export declare class VectorStore {
   removeVectors(ids: Array<string>): Promise<void>;
   clear(): Promise<void>;
   count(): Promise<number>;
-}
-
-/** The yielded value from agent.run(). */
-export interface AgentResponse {
-  /** The message delta per iteration. */
-  delta: MessageDelta;
-  /** Optional finish reason. If this is Some, the message accumulation is finalized and stored in `accumulated`. */
-  finishReason?: FinishReason;
-  /** Optional accumulated message. */
-  accumulated?: Message;
-}
-
-export interface AgentRunIteratorResult {
-  value: AgentResponse;
-  done: boolean;
 }
 
 export type APISpecification =
@@ -174,11 +168,6 @@ export interface InferenceConfig {
 
 export interface KnowledgeConfig {
   topK?: number;
-}
-
-export interface LangModelRunIteratorResult {
-  value: MessageOutput;
-  done: boolean;
 }
 
 /**
@@ -249,9 +238,9 @@ export interface Message {
  */
 export interface MessageDelta {
   role?: Role;
+  contents: Array<PartDelta>;
   id?: string;
   thinking?: string;
-  contents: Array<PartDelta>;
   tool_calls: Array<PartDelta>;
   signature?: string;
 }
@@ -273,9 +262,24 @@ export interface MessageDelta {
  * - While streaming: `finish_reason` is typically `None`.
  * - On completion: `finish_reason` is set; callers can then `finish()` the delta to obtain a concrete [`Message`].
  */
-export interface MessageOutput {
+export interface MessageDeltaOutput {
   delta: MessageDelta;
   finish_reason?: FinishReason;
+}
+
+export interface MessageDeltaOutputIteratorResult {
+  value?: MessageDeltaOutput;
+  done: boolean;
+}
+
+export interface MessageOutput {
+  message: Message;
+  finish_reason: FinishReason;
+}
+
+export interface MessageOutputIteratorResult {
+  value?: MessageOutput;
+  done: boolean;
 }
 
 export type Metadata = Record<string, any>;

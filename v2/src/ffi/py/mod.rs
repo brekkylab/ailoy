@@ -8,12 +8,16 @@ pub(crate) mod value;
 use pyo3::prelude::*;
 
 use crate::{
-    agent::{Agent, AgentResponse},
+    agent::Agent,
     model::{EmbeddingModel, InferenceConfig, LangModel},
     tool::{MCPClient, Tool},
     value::{
-        FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta, PartDeltaFunction,
-        PartFunction, PartImage, ToolDesc,
+        FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part, PartDelta,
+        PartDeltaFunction, PartFunction, PartImage, ToolDesc,
+        py::{
+            MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
+            MessageOutputSyncIterator,
+        },
     },
     vector_store::{
         VectorStore, VectorStoreAddInput, VectorStoreGetResult, VectorStoreRetrieveResult,
@@ -24,7 +28,6 @@ use crate::{
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // Add classes in alphabetical order
     m.add_class::<Agent>()?;
-    m.add_class::<AgentResponse>()?;
     m.add_class::<EmbeddingModel>()?;
     m.add_class::<FinishReason>()?;
     m.add_class::<InferenceConfig>()?;
@@ -32,7 +35,12 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<MCPClient>()?;
     m.add_class::<Message>()?;
     m.add_class::<MessageDelta>()?;
+    m.add_class::<MessageDeltaOutput>()?;
+    m.add_class::<MessageDeltaOutputIterator>()?;
+    m.add_class::<MessageDeltaOutputSyncIterator>()?;
     m.add_class::<MessageOutput>()?;
+    m.add_class::<MessageOutputIterator>()?;
+    m.add_class::<MessageOutputSyncIterator>()?;
     m.add_class::<Part>()?;
     m.add_class::<PartDelta>()?;
     m.add_class::<PartDeltaFunction>()?;

@@ -12,10 +12,14 @@ export class Agent {
   removeTool(toolName: string): void;
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
+  runDelta(
+    messages: Message[],
+    config?: InferenceConfig | null
+  ): AsyncIterable<MessageDeltaOutput>;
   run(
     messages: Message[],
     config?: InferenceConfig | null
-  ): AsyncIterable<AgentResponse>;
+  ): AsyncIterable<MessageOutput>;
 }
 
 export class EmbeddingModel {
@@ -54,12 +58,18 @@ export class LangModel {
     modelName: string,
     apiKey: string
   ): Promise<LangModel>;
+  inferDelta(
+    msgs: Message[],
+    tools?: ToolDesc[] | null,
+    docs?: Document[] | null,
+    config?: InferenceConfig | null
+  ): AsyncIterable<MessageDeltaOutput>;
   infer(
     msgs: Message[],
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
     config?: InferenceConfig | null
-  ): AsyncIterable<MessageOutput>;
+  ): Promise<MessageOutput>;
 }
 
 export class MCPClient {
@@ -101,24 +111,6 @@ export class VectorStore {
   removeVectors(ids: string[]): Promise<void>;
   clear(): Promise<void>;
   count(): Promise<number>;
-}
-
-/**
- * The yielded value from agent.run().
- */
-export interface AgentResponse {
-  /**
-   * The message delta per iteration.
-   */
-  delta: MessageDelta;
-  /**
-   * Optional finish reason. If this is Some, the message accumulation is finalized and stored in `accumulated`.
-   */
-  finish_reason: FinishReason | undefined;
-  /**
-   * Optional accumulated message.
-   */
-  accumulated: Message | undefined;
 }
 
 export type APISpecification =
@@ -262,9 +254,9 @@ export interface Message {
  */
 export interface MessageDelta {
   role: Role | undefined;
+  contents: PartDelta[];
   id: string | undefined;
   thinking: string | undefined;
-  contents: PartDelta[];
   tool_calls: PartDelta[];
   signature: string | undefined;
 }
@@ -286,9 +278,14 @@ export interface MessageDelta {
  * - While streaming: `finish_reason` is typically `None`.
  * - On completion: `finish_reason` is set; callers can then `finish()` the delta to obtain a concrete [`Message`].
  */
-export interface MessageOutput {
+export interface MessageDeltaOutput {
   delta: MessageDelta;
   finish_reason: FinishReason | undefined;
+}
+
+export interface MessageOutput {
+  message: Message;
+  finish_reason: FinishReason;
 }
 
 type Metadata = Record<string, any>;
