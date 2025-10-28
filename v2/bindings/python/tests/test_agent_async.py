@@ -81,11 +81,12 @@ async def test_simple_chat(agent: ai.Agent):
         ],
         config=ai.InferenceConfig(think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
             result = acc.to_message()
+            acc = ai.MessageDelta()
         else:
-            acc += resp.delta
             for content in resp.delta.contents:
                 if content.part_type == "text":
                     print(content.text, end="")
@@ -102,6 +103,9 @@ async def test_simple_chat(agent: ai.Agent):
     print(f"{result.contents[0].text=}")
 
 
+@pytest.mark.parametrize(
+    "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
+)
 async def test_simple_multiturn(agent: ai.Agent):
     qna = [
         ("John's favorite color is blue. Please remember that.", ""),
@@ -135,7 +139,7 @@ async def test_simple_multiturn(agent: ai.Agent):
 async def test_builtin_tool(agent: ai.Agent):
     tool = ai.Tool.new_builtin("terminal")
     agent.add_tool(tool)
-    acc = ai.MessageDelta("assistant")
+    acc = ai.MessageDelta()
     async for resp in agent.run_delta(
         [
             ai.Message(
@@ -147,11 +151,12 @@ async def test_builtin_tool(agent: ai.Agent):
         ],
         config=ai.InferenceConfig(think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
             result = acc.to_message()
+            acc = ai.MessageDelta()
         else:
-            acc += resp.delta
             for content in resp.delta.contents:
                 if content.part_type == "text":
                     print(content.text, end="")
@@ -189,7 +194,7 @@ async def test_python_async_function_tool(agent: ai.Agent):
     tool = ai.Tool.new_py_function(tool_temperature)
 
     agent.add_tool(tool)
-    acc = ai.MessageDelta(role="assistant")
+    acc = ai.MessageDelta()
     async for resp in agent.run_delta(
         [
             ai.Message(
@@ -199,11 +204,12 @@ async def test_python_async_function_tool(agent: ai.Agent):
         ],
         config=ai.InferenceConfig(think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
             result = acc.to_message()
+            acc = ai.MessageDelta()
         else:
-            acc += resp.delta
             for content in resp.delta.contents:
                 if content.part_type == "text":
                     print(content.text, end="")
@@ -230,7 +236,7 @@ async def test_mcp_tools(agent: ai.Agent):
     tools = mcp_client.tools
 
     agent.add_tools(tools)
-    acc = ai.MessageDelta(role="assistant")
+    acc = ai.MessageDelta()
     async for resp in agent.run_delta(
         [
             ai.Message(
@@ -240,11 +246,12 @@ async def test_mcp_tools(agent: ai.Agent):
         ],
         config=ai.InferenceConfig(think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
             result = acc.to_message()
+            acc = ai.MessageDelta()
         else:
-            acc += resp.delta
             for content in resp.delta.contents:
                 if content.part_type == "text":
                     print(content.text, end="")
