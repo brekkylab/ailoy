@@ -31,7 +31,7 @@ plugins:
           paths: [.]
           options:
             docstring_style: google
-            docstring_section_style: spacy  # or "table", "list"
+            docstring_section_style: spacy
             show_source: true
             find_stubs_package: true
             allow_inspection: false
@@ -72,6 +72,3 @@ markdown_extensions:
       custom_checkbox: true
   - tables
   - md_in_html
-
-# nav:
-#   - API Reference: index.md
