@@ -93,13 +93,16 @@ def simple_chat_messages(request: pytest.FixtureRequest):
 )
 async def test_simple_chat(agent: ai.Agent, simple_chat_messages):
     finish_reason = None
-    async for resp in agent.run(
+    acc = ai.MessageDelta()
+    async for resp in agent.run_delta(
         simple_chat_messages,
         config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.accumulated
+            result = acc.to_message()
+            acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
@@ -113,12 +116,12 @@ async def test_simple_chat(agent: ai.Agent, simple_chat_messages):
 @pytest.mark.parametrize(
     "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
 )
-async def test_simple_qna(agent: ai.Agent):
+async def test_simple_multiturn(agent: ai.Agent):
     qna = [
-        ("My favorite color is blue. Please remember that.", ""),
-        ("What’s my favorite color?", "blue"),
-        ("Actually, my favorite color is gray now. Don't forget this.", ""),
-        ("What’s my favorite color?", "gray"),
+        ("John's favorite color is blue. Please remember that.", ""),
+        ("What’s John's favorite color?", "blue"),
+        ("Actually, John's favorite color is gray now. Don't forget this.", ""),
+        ("What’s John's favorite color?", "gray"),
     ]
 
     messages = []
@@ -133,8 +136,7 @@ async def test_simple_qna(agent: ai.Agent):
             messages,
             config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
         ):
-            if resp.finish_reason is not None:
-                result = resp.accumulated
+            result = resp.message
         messages.append(result)
 
         full_text = "".join(part.text for part in result.contents)
@@ -147,16 +149,17 @@ async def test_simple_qna(agent: ai.Agent):
 async def test_builtin_tool(agent: ai.Agent):
     tool = ai.Tool.new_builtin("terminal")
     agent.add_tool(tool)
-
-    finish_reason = None
+    acc = ai.MessageDelta()
     results = []
-    async for resp in agent.run(
+    async for resp in agent.run_delta(
         "List the files in the current directory.",
         config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            results.append(resp.accumulated)
+            results.append(acc.to_message())
+            acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
@@ -192,15 +195,17 @@ async def test_python_async_function_tool(agent: ai.Agent):
     tool = ai.Tool.new_py_function(tool_temperature)
 
     agent.add_tool(tool)
-    finish_reason = None
+    acc = ai.MessageDelta()
     results = []
-    async for resp in agent.run(
+    async for resp in agent.run_delta(
         "What is the temperature in Seoul now?",
         config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            results.append(resp.accumulated)
+            results.append(acc.to_message())
+            acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
@@ -223,15 +228,17 @@ async def test_mcp_tools(agent: ai.Agent):
     tools = mcp_client.tools
 
     agent.add_tools(tools)
-    finish_reason = None
+    acc = ai.MessageDelta()
     results = []
-    async for resp in agent.run(
+    async for resp in agent.run_delta(
         "What time is it currently in Asia/Seoul?",
         config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            results.append(resp.accumulated)
+            results.append(acc.to_message())
+            acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):

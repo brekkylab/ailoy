@@ -89,8 +89,8 @@ for (const cfg of modelConfigs) {
 
     test.sequential("Simple Chat(single string)", async () => {
       for await (const resp of agent.run("What is your name?")) {
-        if (resp.accumulated !== undefined) {
-          console.log(resp.accumulated);
+        if (resp?.message !== undefined) {
+          console.log(resp?.message);
         }
       }
     });
@@ -99,8 +99,8 @@ for (const cfg of modelConfigs) {
       for await (const resp of agent.run([
         { role: "user", contents: "What is your name?" },
       ])) {
-        if (resp.accumulated !== undefined) {
-          console.log(resp.accumulated);
+        if (resp?.message !== undefined) {
+          console.log(resp?.message);
         }
       }
     });
@@ -112,8 +112,8 @@ for (const cfg of modelConfigs) {
           contents: [{ type: "text", text: "What is your name?" }],
         },
       ])) {
-        if (resp.accumulated !== undefined) {
-          console.log(resp.accumulated);
+        if (resp?.message !== undefined) {
+          console.log(resp.message);
         }
       }
     });
@@ -124,11 +124,11 @@ for (const cfg of modelConfigs) {
         const tool = ailoy.Tool.newBuiltin("terminal");
         agent.addTool(tool);
 
-        for await (const resp of agent.run(
+        for await (const resp of agent.runDelta(
           "List the files in the current directory."
         )) {
-          if (resp.accumulated !== undefined) {
-            console.log(`[${cfg.name}] `, resp.accumulated);
+          if (resp?.delta !== undefined) {
+            console.log(`[${cfg.name}] `, resp.delta);
           }
         }
 
@@ -145,11 +145,11 @@ for (const cfg of modelConfigs) {
         ]);
         agent.addTools(client.tools);
 
-        for await (const resp of agent.run(
+        for await (const resp of agent.runDelta(
           "What time is it now in Asia/Seoul? Answer in local timezone."
         )) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
+          if (resp?.delta !== undefined) {
+            console.log(resp.delta);
           }
         }
 
@@ -192,11 +192,11 @@ for (const cfg of modelConfigs) {
 
         agent.addTool(tool);
 
-        for await (const resp of agent.run(
+        for await (const resp of agent.runDelta(
           "What is the temperature in Seoul now? Answer in Celsius."
         )) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
+          if (resp?.delta !== undefined) {
+            console.log(resp.delta);
           }
         }
 
@@ -284,11 +284,11 @@ After the user’s question, a list of documents retrieved from the knowledge ba
             `,
         };
 
-        for await (const resp of agent.run("What is Ailoy?", {
+        for await (const resp of agent.runDelta("What is Ailoy?", {
           documentPolyfill,
         })) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
+          if (resp?.delta !== undefined) {
+            console.log(resp.delta);
           }
         }
 
