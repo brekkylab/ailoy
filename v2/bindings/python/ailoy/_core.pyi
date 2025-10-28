@@ -224,7 +224,7 @@ class Message:
     @property
     def contents(self) -> builtins.list[Part]:
         r"""
-        Primary message parts (e.g., text, image, value, or function).
+        Primary parts of the message (e.g., text, image, value, or function).
         """
     @contents.setter
     def contents(self, value: typing.Optional[str | list[Part]]) -> None: ...

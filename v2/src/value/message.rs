@@ -53,7 +53,7 @@ pub struct Message {
     /// Author of the message.
     pub role: Role,
 
-    /// Primary message parts (e.g., text, image, value, or function).
+    /// Primary parts of the message (e.g., text, image, value, or function).
     pub contents: Vec<Part>,
 
     /// Optional stable identifier for deduplication or threading.
@@ -122,25 +122,36 @@ impl Message {
     }
 }
 
+/// A simplified form of [Message] for concise definition.
+/// All other members are identical to [Message], but `contents` is a `String` instead of `Vec<Part>`.
+/// This can be converted to Message via `.into()`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 struct SingleTextMessage {
+    /// Author of the message.
     pub role: Role,
 
+    /// Primary part of message in text.
     pub contents: String,
 
+    /// Optional stable identifier for deduplication or threading.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 
+    /// Internal “thinking” text used by some models before producing final output.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
 
+    /// Tool-call parts emitted alongside the main contents.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
     pub tool_calls: Option<Vec<Part>>,
 
+    /// Optional signature for the `thinking` field.
+    ///
+    /// This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
 }
