@@ -122,6 +122,42 @@ impl Message {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+struct SingleTextMessage {
+    pub role: Role,
+
+    pub contents: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
+    pub tool_calls: Option<Vec<Part>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+impl Into<Message> for SingleTextMessage {
+    fn into(self) -> Message {
+        Message {
+            role: self.role,
+            contents: vec![Part::text(self.contents)],
+            id: self.id,
+            thinking: self.thinking,
+            tool_calls: self.tool_calls,
+            signature: self.signature,
+        }
+    }
+}
+
 /// A streaming, incremental update to a [`Message`].
 ///
 /// `MessageDelta` accumulates partial outputs (text chunks, tool-call fragments, IDs, signatures, etc.) until they can be materialized as a full [`Message`].
@@ -559,13 +595,16 @@ mod node {
     use super::*;
 
     #[napi(transparent)]
-    pub struct Messages(Either<Vec<Message>, String>);
+    pub struct Messages(Either3<Vec<Message>, Vec<SingleTextMessage>, String>);
 
     impl Into<Vec<Message>> for Messages {
         fn into(self) -> Vec<Message> {
             match self.0 {
-                Either::A(messages) => messages,
-                Either::B(text) => {
+                Either3::A(messages) => messages,
+                Either3::B(messages) => {
+                    messages.into_iter().map(|message| message.into()).collect()
+                }
+                Either3::C(text) => {
                     vec![Message::new(Role::User).with_contents(vec![Part::text(text)])]
                 }
             }
@@ -585,7 +624,7 @@ mod wasm {
 
     #[wasm_bindgen]
     extern "C" {
-        #[wasm_bindgen(typescript_type = "Array<Message> | string")]
+        #[wasm_bindgen(typescript_type = "Array<Message> | Array<SingleTextMessage> | string")]
         pub type Messages;
     }
 
@@ -598,9 +637,23 @@ mod wasm {
                     Message::new(Role::User).with_contents(vec![Part::text(text)]),
                 ])
             } else if self.is_array() {
-                let arr: Vec<Message> = serde_wasm_bindgen::from_value(self.into())
-                    .map_err(|e| js_sys::Error::new(&e.to_string()))?;
-                Ok(arr)
+                // Try deserializing as Vec<Message> first
+                match serde_wasm_bindgen::from_value::<Vec<Message>>(self.clone().into()) {
+                    Ok(messages) => Ok(messages),
+                    Err(e_message) => {
+                        // Fallback: try deserializing as Vec<SingleTextMessage>
+                        let text_messages: Vec<SingleTextMessage> = serde_wasm_bindgen::from_value(
+                            self.into(),
+                        )
+                        .map_err(|e_text_message| {
+                            js_sys::Error::new(&format!(
+                                "Failed to deserialize as Array<Message>:\n- {}\n- {}",
+                                e_message, e_text_message,
+                            ))
+                        })?;
+                        Ok(text_messages.into_iter().map(Into::into).collect())
+                    }
+                }
             } else {
                 Err(js_sys::Error::new("Expected Array<Message> or string"))
             }
