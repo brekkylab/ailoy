@@ -33,6 +33,8 @@ plugins:
             docstring_style: google
             docstring_section_style: spacy  # or "table", "list"
             show_source: true
+            find_stubs_package: true
+            allow_inspection: false
             show_root_heading: false
             show_root_full_path: false
             show_symbol_type_heading: true
@@ -49,7 +51,6 @@ plugins:
               - "__call__"
               - "__add__"
               - "__radd__"
-            find_stubs_package: true
             # Type hint settings
             show_signature: true
             show_signature_annotations: true
