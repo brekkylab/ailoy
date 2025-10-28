@@ -189,7 +189,9 @@ impl Agent {
 
                 if let Some(tool_calls) = assistant_msg.tool_calls && !tool_calls.is_empty() {
                     for delta in Self::handle_tool_calls(&tools, tool_calls).await? {
-                        yield MessageDeltaOutput { delta, finish_reason: Some(FinishReason::Stop{}) };
+                        let message_delta_output = MessageDeltaOutput { delta, finish_reason: Some(FinishReason::Stop{}) };
+                        yield message_delta_output.clone();
+                        messages.push(message_delta_output.delta.finish().unwrap());
                     }
                 } else {
                     break;
@@ -218,7 +220,9 @@ impl Agent {
 
                 if let Some(tool_calls) = assistant_msg.tool_calls && !tool_calls.is_empty() {
                     for delta in Self::handle_tool_calls(&tools, tool_calls).await? {
-                        yield MessageOutput { message: delta.finish()?, finish_reason: FinishReason::Stop{} };
+                        let message_output = MessageOutput { message: delta.finish()?, finish_reason: FinishReason::Stop{} };
+                        yield message_output.clone();
+                        messages.push(message_output.message);
                     }
                 } else {
                     break;
