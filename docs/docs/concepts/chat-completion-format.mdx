@@ -265,3 +265,36 @@ When an error occurs in a tool, it should still be passed along so that the mode
 ```
 
 ## Document
+
+A **Document** is the normalized representation of any retrievable knowledge item.
+It consists of two components: a **title** and a **text body**.
+
+```json
+{
+  "title": "...",
+  "text": "..."
+}
+```
+
+* **`title`**
+  A short, descriptive label that helps identify the document.
+  The title is **not used as part of model inference** — it is primarily for indexing, display, and retrieval ranking.
+  You can think of it as metadata or a summary, similar to a filename or headline.
+
+* **`text`**
+  The actual **content** of the document.
+  This field is fed directly into the language model during retrieval-augmented inference.
+  It contains the meaningful information that the model can read, reason about, and use to generate responses.
+
+All retrieved knowledge sources (e.g., from vector databases, APIs, or local files) are normalized into this unified `"document"` format before being passed to the model.
+This ensures that, regardless of the original source or schema, the model always receives consistent input.
+
+For example:
+
+|Source| Normalized as|
+|---|---|
+|Web article|`{ "title": "Article Title", "text": "Full article content..." }`|
+|PDF extract|`{ "title": "File: research.pdf", "text": "Extracted paragraph..." }`|
+|Knowledge base entry|`{ "title": "FAQ: Model Loading", "text": "To load a model, use..." }`|
+
+This design simplifies retrieval and unifies downstream processing within Ailoy’s knowledge pipeline.
