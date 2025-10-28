@@ -61,12 +61,15 @@ def agent(request: pytest.FixtureRequest):
     return agent
 
 
-@pytest.mark.parametrize(
-    "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
-)
-async def test_simple_chat(agent: ai.Agent):
-    finish_reason = None
-    async for resp in agent.run(
+@pytest.fixture(
+    params=[
+        "What is your name?",
+        [
+            ai.Message(
+                role="system", contents="You are a helpful assistant with name 'Ailoy'."
+            ),
+            ai.Message(role="user", contents="What is your name?"),
+        ],
         [
             ai.Message(
                 role="system",
@@ -79,6 +82,19 @@ async def test_simple_chat(agent: ai.Agent):
                 contents=[ai.Part.Text(text="What is your name?")],
             ),
         ],
+    ]
+)
+def simple_chat_messages(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.mark.parametrize(
+    "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
+)
+async def test_simple_chat(agent: ai.Agent, simple_chat_messages):
+    finish_reason = None
+    async for resp in agent.run(
+        simple_chat_messages,
         config=ai.InferenceConfig(think_effort="disable"),
     ):
         if resp.finish_reason is not None:
