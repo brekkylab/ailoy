@@ -8,7 +8,7 @@ export declare class Agent {
   removeTools(toolNames: Array<string>): void;
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
-  run_delta(
+  runDelta(
     messages: Array<Message>,
     config?: InferenceConfig | undefined | null
   ): MessageDeltaOutputIterator;
@@ -48,7 +48,7 @@ export declare class LangModel {
     modelName: string,
     apiKey: string
   ): Promise<LangModel>;
-  infer_delta(
+  inferDelta(
     messages: Array<Message>,
     tools?: Array<ToolDesc> | undefined | null,
     docs?: Array<Document> | undefined | null

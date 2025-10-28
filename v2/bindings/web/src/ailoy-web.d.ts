@@ -12,7 +12,7 @@ export class Agent {
   removeTool(toolName: string): void;
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
-  run_delta(
+  runDelta(
     messages: Message[],
     config?: InferenceConfig | null
   ): AsyncIterable<MessageDeltaOutput>;
@@ -58,7 +58,7 @@ export class LangModel {
     modelName: string,
     apiKey: string
   ): Promise<LangModel>;
-  infer_delta(
+  inferDelta(
     msgs: Message[],
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
