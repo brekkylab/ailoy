@@ -33,7 +33,7 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Concepts",
       items: [
-        "concepts/how-language-model-works",
+        "concepts/how-agent-works",
         "concepts/architecture",
         "concepts/chat-completion-format",
         // "concepts/agent",
