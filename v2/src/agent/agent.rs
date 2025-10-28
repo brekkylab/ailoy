@@ -12,6 +12,33 @@ use crate::{
     },
 };
 
+/// The Agent is the central orchestrator that connects the **language model**, **tools**, and **knowledge** components.
+/// It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
+///
+/// In essence, the Agent:
+/// - Understands user input
+/// - Interprets structured responses from the language model (such as tool calls)
+/// - Executes tools as needed
+/// - Retrieves and integrates contextual knowledge before or during inference
+///
+/// # Public APIs
+/// - `run_delta`: Runs a user query and streams incremental deltas (partial outputs)
+/// - `run`: Runs a user query and returns a complete message once all deltas are accumulated
+///
+/// ## Delta vs. Complete Message
+/// A *delta* represents a partial piece of model output, such as a text fragment or intermediate reasoning step.
+/// Deltas can be accumulated into a full message using the provided accumulation utilities.
+/// This allows real-time streaming while preserving the ability to reconstruct the final structured result.
+///
+/// See `MessageDelta`.
+///
+/// # Components
+/// - **Language Model**: Generates natural language and structured outputs.
+///   It interprets the conversation context and predicts the assistant’s next action.
+/// - **Tool**: Represents external functions or APIs that the model can dynamically invoke.
+///   The `Agent`` detects tool calls and automatically executes them during the reasoning loop.
+/// - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases.
+///   When available, the `Agent`` enriches model input with these results before generating an answer.
 #[derive(Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
