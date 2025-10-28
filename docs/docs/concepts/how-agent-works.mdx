@@ -1,6 +1,16 @@
+import AgentComponentsSvg from "./img/agent-components.svg";
 import ToolStructureSvg from "./img/tool-structure.svg";
 
 # How Agent Works
+
+<p align="center">
+  <AgentComponentsSvg style={{ width: "60%", height: "60%" }} />
+</p>
+
+The Agent is composed of a **language model** and various components like **tools** and **knowledge**, augmenting the functionality of the language model.
+Each component communicates with one another through a unified format called **message**.
+
+## Language Model
 
 A **language model(LM)** is a type of AI system that can understand and generate natural language.
 You can think of it as a highly advanced autocomplete engine.
@@ -11,19 +21,15 @@ Yet, in a way, it’s a simple system at its core.
 To use Ailoy effectively, it helps to have a clear understanding of how a language model works.
 In this section, we’ll briefly explain the process how an LM operates.
 
-## Input & Output
+### Step 1: Tokenization
 
 At the most basic level, a language model working with **tokens**.
 It inputs tokens and generates next token.
 
-Since tokens are just numbers that represent pieces of text, You don’t need to worry about them unless you’re researching AI fundamentals.
-You can simply think of **the input is text**.
-(Ailoy inputs text and automatically converts into tokens internally.)
-
-Note that Ailoy uses a special text structure called the **chat completion format**.
+:::note
+Ailoy uses a special text structure called the **chat completion format**.
 Please refer to [] about this format.
-
-## Step 1: Tokenization
+:::
 
 As mentioned above, input text is broken into tokens.
 Each token corresponds to a whole word, a subword, or even a single character, depending on the model’s vocabulary.
@@ -37,9 +43,10 @@ Tokens (string): ["The", " sky", " is", " blue", "today", "."]
 Tokens (IDs): [172,  10400,  8172,  404, 629, 100]
 ```
 
-## Step 2: Predicting the Next Token
+### Step 2: Inference
 
-Once the input sequence is encoded, the model estimates a probability distribution over all possible next tokens.
+Once the input sequence is encoded, the model predicts next token.
+It estimates a probability distribution over all possible next tokens.
 In simple terms, it answers the question:
 
 > “Given what I’ve seen so far, what is the most likely next token?”
@@ -56,7 +63,7 @@ For example:
 The model then chooses one token based on these probabilities.
 It might take the most likely one (for accurate results) or sample randomly among several (for more creative outputs).
 
-## Step 3: Iterative Generation
+### Step 3: Iterative Generation
 
 After generating a token, the model appends it to the input sequence and repeats the same process again.
 It re-encodes the new sequence, computes attention, predicts the next token, and continues this loop.
@@ -72,9 +79,16 @@ Then it emits a stop token and finishes.
 This iterative process continues until the model decides the text is complete or reaches a set limit.
 The result is a coherent and contextually consistent piece of text.
 
+## Message
+
+Many language models are fine-tuned for chat-based interactions, enabling them to engage in natural conversations with users.
+Through the conversation format, the model can understand a user’s natural-language query and generate an appropriate, context-aware response.
+This process often referred to as **chat completion**.
+
+See the [chat completion format](./chat-completion-format) for more information.
+
 ## How Tool Calling Works
 
-Let's take a quick look at how tool calling works in general.
 In most agent system, tool calling can be achieved by the following process.
 
 <p align="center">
