@@ -550,7 +550,7 @@ mod wasm {
         }
 
         #[wasm_bindgen(
-            js_name = "run_delta",
+            js_name = "runDelta",
             unchecked_return_type = "AsyncIterable<MessageDeltaOutput>"
         )]
         pub fn run_delta_js(
