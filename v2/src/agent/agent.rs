@@ -447,7 +447,7 @@ mod node {
             self.remove_knowledge()
         }
 
-        #[napi(js_name = "run_delta", ts_return_type = "MessageDeltaOutputIterator")]
+        #[napi(js_name = "runDelta", ts_return_type = "MessageDeltaOutputIterator")]
         pub fn run_delta_js<'a>(
             &'a mut self,
             env: Env,
