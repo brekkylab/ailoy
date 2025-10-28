@@ -53,7 +53,7 @@ pub struct Message {
     /// Author of the message.
     pub role: Role,
 
-    /// Primary message parts (e.g., text, image, value, or function).
+    /// Primary parts of the message (e.g., text, image, value, or function).
     pub contents: Vec<Part>,
 
     /// Optional stable identifier for deduplication or threading.
@@ -119,6 +119,53 @@ impl Message {
     ) -> Self {
         self.tool_calls = Some(tool_calls.into_iter().map(|v| v.into()).collect());
         self
+    }
+}
+
+/// A simplified form of [Message] for concise definition.
+/// All other members are identical to [Message], but `contents` is a `String` instead of `Vec<Part>`.
+/// This can be converted to Message via `.into()`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+struct SingleTextMessage {
+    /// Author of the message.
+    pub role: Role,
+
+    /// Primary part of message in text.
+    pub contents: String,
+
+    /// Optional stable identifier for deduplication or threading.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
+    /// Internal “thinking” text used by some models before producing final output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+
+    /// Tool-call parts emitted alongside the main contents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
+    pub tool_calls: Option<Vec<Part>>,
+
+    /// Optional signature for the `thinking` field.
+    ///
+    /// This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+impl Into<Message> for SingleTextMessage {
+    fn into(self) -> Message {
+        Message {
+            role: self.role,
+            contents: vec![Part::text(self.contents)],
+            id: self.id,
+            thinking: self.thinking,
+            tool_calls: self.tool_calls,
+            signature: self.signature,
+        }
     }
 }
 
@@ -430,12 +477,136 @@ pub struct MessageOutput {
 pub(crate) mod py {
     use pyo3::{
         Py, PyAny, PyRef, PyResult, Python,
-        exceptions::{PyStopAsyncIteration, PyStopIteration},
+        exceptions::{PyStopAsyncIteration, PyStopIteration, PyTypeError},
+        prelude::*,
         pyclass, pymethods,
+        types::{PyList, PyString},
     };
+    use pyo3_stub_gen::{PyStubType, TypeInfo};
     use pyo3_stub_gen_derive::*;
 
     use super::*;
+    use crate::ffi::py::base::PyRepr;
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl Message {
+        #[new]
+        #[pyo3(signature = (role, contents = None, id = None, thinking = None, tool_calls = None, signature = None))]
+        fn __new__(
+            role: Role,
+            contents: Option<Contents>,
+            id: Option<String>,
+            thinking: Option<String>,
+            tool_calls: Option<Vec<Part>>,
+            signature: Option<String>,
+        ) -> Self {
+            Self {
+                role,
+                contents: contents.unwrap_or_default().into(),
+                id,
+                thinking,
+                tool_calls,
+                signature,
+            }
+        }
+
+        #[setter]
+        fn set_contents(&mut self, contents: Option<Contents>) -> PyResult<()> {
+            self.contents = contents.unwrap_or_default().into();
+            Ok(())
+        }
+
+        pub fn __repr__(&self) -> String {
+            format!(
+                "Message(role={}, contents=[{}], id={}, thinking={}, tool_calls=[{}], signature={})",
+                self.role.__repr__(),
+                self.contents
+                    .iter()
+                    .map(|content| content.__repr__())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                self.id.__repr__(),
+                self.thinking.__repr__(),
+                self.tool_calls.as_ref().map_or(String::new(), |calls| {
+                    calls
+                        .iter()
+                        .map(|tool_part| tool_part.__repr__())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }),
+                self.signature.__repr__(),
+            )
+        }
+
+        fn append_tool_call(&mut self, part: Part) {
+            match &mut self.tool_calls {
+                Some(tool_calls) => tool_calls.push(part),
+                None => self.tool_calls = vec![part].into(),
+            };
+        }
+    }
+
+    /// Intermediate struct to handle "str | list[Message]"
+    pub struct Messages(Vec<Message>);
+
+    impl<'a, 'py> FromPyObject<'a, 'py> for Messages {
+        type Error = PyErr;
+
+        fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+            if let Ok(text) = obj.cast::<PyString>() {
+                Ok(Self(vec![
+                    Message::new(Role::User).with_contents(vec![Part::text(text.to_string())]),
+                ]))
+            } else if let Ok(list) = obj.cast::<PyList>() {
+                Ok(Self(list.extract()?))
+            } else {
+                Err(PyTypeError::new_err("Failed to convert messages"))
+            }
+        }
+    }
+
+    impl PyStubType for Messages {
+        fn type_output() -> TypeInfo {
+            TypeInfo::unqualified("str | list[Message]")
+        }
+    }
+
+    impl Into<Vec<Message>> for Messages {
+        fn into(self) -> Vec<Message> {
+            self.0
+        }
+    }
+
+    #[derive(Default)]
+    /// Intermediate struct to handle "str | list[Part]"
+    pub struct Contents(Vec<Part>);
+
+    impl<'a, 'py> FromPyObject<'a, 'py> for Contents {
+        type Error = PyErr;
+
+        fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+            if let Ok(text) = obj.cast::<PyString>() {
+                Ok(Self(vec![Part::text(text.to_string())]))
+            } else if let Ok(list) = obj.cast::<PyList>() {
+                Ok(Self(list.extract()?))
+            } else {
+                Err(PyTypeError::new_err("Failed to convert contents"))
+            }
+        }
+    }
+
+    impl PyStubType for Contents {
+        fn type_output() -> TypeInfo {
+            TypeInfo::unqualified("str | list[Part]")
+        }
+    }
+
+    impl Into<Vec<Part>> for Contents {
+        fn into(self) -> Vec<Part> {
+            self.0
+        }
+    }
 
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
@@ -539,6 +710,9 @@ pub(crate) mod py {
     }
 }
 
+#[cfg(feature = "python")]
+pub use py::*;
+
 #[cfg(feature = "nodejs")]
 pub(crate) mod node {
     use std::sync::Arc;
@@ -549,6 +723,23 @@ pub(crate) mod node {
     use tokio::sync::mpsc;
 
     use super::*;
+
+    #[napi(transparent)]
+    pub struct Messages(Either3<Vec<Message>, Vec<SingleTextMessage>, String>);
+
+    impl Into<Vec<Message>> for Messages {
+        fn into(self) -> Vec<Message> {
+            match self.0 {
+                Either3::A(messages) => messages,
+                Either3::B(messages) => {
+                    messages.into_iter().map(|message| message.into()).collect()
+                }
+                Either3::C(text) => {
+                    vec![Message::new(Role::User).with_contents(vec![Part::text(text)])]
+                }
+            }
+        }
+    }
 
     #[derive(Clone)]
     #[napi]
@@ -660,3 +851,55 @@ pub(crate) mod node {
         }
     }
 }
+
+#[cfg(feature = "nodejs")]
+pub use node::*;
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use tsify::serde_wasm_bindgen;
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(typescript_type = "Array<Message> | Array<SingleTextMessage> | string")]
+        pub type Messages;
+    }
+
+    impl TryInto<Vec<Message>> for Messages {
+        type Error = js_sys::Error;
+
+        fn try_into(self) -> Result<Vec<Message>, Self::Error> {
+            if let Some(text) = self.as_string() {
+                Ok(vec![
+                    Message::new(Role::User).with_contents(vec![Part::text(text)]),
+                ])
+            } else if self.is_array() {
+                // Try deserializing as Vec<Message> first
+                match serde_wasm_bindgen::from_value::<Vec<Message>>(self.clone().into()) {
+                    Ok(messages) => Ok(messages),
+                    Err(e_message) => {
+                        // Fallback: try deserializing as Vec<SingleTextMessage>
+                        let text_messages: Vec<SingleTextMessage> = serde_wasm_bindgen::from_value(
+                            self.into(),
+                        )
+                        .map_err(|e_text_message| {
+                            js_sys::Error::new(&format!(
+                                "Failed to deserialize as Array<Message>:\n- {}\n- {}",
+                                e_message, e_text_message,
+                            ))
+                        })?;
+                        Ok(text_messages.into_iter().map(Into::into).collect())
+                    }
+                }
+            } else {
+                Err(js_sys::Error::new("Expected Array<Message> or string"))
+            }
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+pub use wasm::*;
