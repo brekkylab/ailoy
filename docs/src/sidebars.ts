@@ -36,8 +36,6 @@ const sidebars: SidebarsConfig = {
         "concepts/how-agent-works",
         "concepts/architecture",
         "concepts/chat-completion-format",
-        // "concepts/agent",
-        // "concepts/tools",
         "concepts/devices-environments",
         "concepts/command-line-interfaces",
       ],
