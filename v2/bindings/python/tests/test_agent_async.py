@@ -95,24 +95,17 @@ async def test_simple_chat(agent: ai.Agent, simple_chat_messages):
     finish_reason = None
     async for resp in agent.run(
         simple_chat_messages,
-        config=ai.InferenceConfig(think_effort="disable"),
+        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
             result = resp.accumulated
         else:
             for content in resp.delta.contents:
-                if content.part_type == "text":
+                if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
     print()
+
     assert finish_reason == ai.FinishReason.Stop()
     print(f"{result.contents[0].text=}")
 
@@ -156,28 +149,26 @@ async def test_builtin_tool(agent: ai.Agent):
     agent.add_tool(tool)
 
     finish_reason = None
+    results = []
     async for resp in agent.run(
         "List the files in the current directory.",
-        config=ai.InferenceConfig(think_effort="disable"),
+        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.accumulated
+            results.append(resp.accumulated)
         else:
             for content in resp.delta.contents:
-                if content.part_type == "text":
+                if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
     print()
+
     assert finish_reason == ai.FinishReason.Stop()
-    print(f"{result.contents[0].text=}")
+    if finish_reason == ai.FinishReason.ToolCall():
+        print(results)
+    assert results[0].tool_calls[0].function.name == "execute_command"
+    print(f"{results[1].contents[0].value=}")
+    print(f"{results[2].contents[0].text=}")
 
 
 @pytest.mark.parametrize(
@@ -202,28 +193,24 @@ async def test_python_async_function_tool(agent: ai.Agent):
 
     agent.add_tool(tool)
     finish_reason = None
+    results = []
     async for resp in agent.run(
         "What is the temperature in Seoul now?",
-        config=ai.InferenceConfig(think_effort="disable"),
+        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.accumulated
+            results.append(resp.accumulated)
         else:
             for content in resp.delta.contents:
-                if content.part_type == "text":
+                if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
     print()
+
     assert finish_reason == ai.FinishReason.Stop()
-    print(f"{result.contents[0].text=}")
+    assert results[0].tool_calls[0].function.name == "tool_temperature"
+    print(f"{results[1].contents[0].value=}")
+    print(f"{results[2].contents[0].text=}")
 
     agent.remove_tool(tool.get_description().name)
 
@@ -237,27 +224,26 @@ async def test_mcp_tools(agent: ai.Agent):
 
     agent.add_tools(tools)
     finish_reason = None
+    results = []
     async for resp in agent.run(
-        "What time is it now in Asia/Seoul?",
-        config=ai.InferenceConfig(think_effort="disable"),
+        "What time is it currently in Asia/Seoul?",
+        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.accumulated
+            results.append(resp.accumulated)
         else:
             for content in resp.delta.contents:
-                if content.part_type == "text":
+                if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
     print()
+
     assert finish_reason == ai.FinishReason.Stop()
-    print(f"{result.contents[0].text=}")
+    if results[0].tool_calls[0].function.name != "get_current_time":
+        print(results)
+
+    assert results[0].tool_calls[0].function.name == "get_current_time"
+    print(f"{results[1].contents[0].value=}")
+    print(f"{results[2].contents[0].text=}")
 
     agent.remove_tools([t.get_description().name for t in tools])
