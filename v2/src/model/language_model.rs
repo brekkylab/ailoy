@@ -481,7 +481,7 @@ mod node {
             })
         }
 
-        #[napi(js_name = "infer_delta", ts_return_type = "MessageDeltaOutputIterator")]
+        #[napi(js_name = "inferDelta", ts_return_type = "MessageDeltaOutputIterator")]
         pub fn infer_delta_node<'a>(
             &'a mut self,
             env: Env,
