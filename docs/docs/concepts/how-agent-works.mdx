@@ -160,14 +160,14 @@ flowchart LR
   U[User Query] --> E[Embed Query]
   E --> R["Vector Search"]
   R -->|top-k chunks| C["Context Assembly"]
-  C --> L["LM Inference"]
-  L --> O[Answer to User]
+  C --> I["Augmented Inference"]
+  I --> O[Answer to User]
 
   subgraph Ailoy
     direction LR
     AG["Agent.run()"] --> C
     K["Knowledge Component"] --> R
-    AG --> L
+    AG --> I
   end
 
   U -. optional feedback .-> UPD["Update Knowledge Base"]
@@ -182,8 +182,8 @@ The system converts the query into a vector embedding—a numerical representati
 It then searches a vector database (such as Faiss, Chroma, or Milvus) for the most semantically similar documents or passages.
 3. **\[Context Assembly\]**
 The retrieved chunks of information are wrapped as Document objects.
-4. **\[Model Generation (Augmented Inference)\]**
+4. **\[Augmented Inference\]**
 The language model receives both the user’s query and the retrieved context.
 It integrates the retrieved information into its reasoning chain and produces a grounded, factual response.
-5. **\[(Optional) Feedback or Update\]**
-Retrieved documents or embeddings can be refreshed periodically, allowing the system to stay synchronized with your latest data.
+5. **\[Feedback or Update\]**
+Optionally, Retrieved documents or embeddings can be refreshed periodically, allowing the system to stay synchronized with your latest data.
