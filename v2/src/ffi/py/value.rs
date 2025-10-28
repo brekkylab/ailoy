@@ -1,5 +1,5 @@
 use anyhow::Ok;
-use pyo3::{exceptions::PyValueError, prelude::*, types::PyDict};
+use pyo3::{prelude::*, types::PyDict};
 use pyo3_stub_gen::derive::*;
 
 use crate::{
