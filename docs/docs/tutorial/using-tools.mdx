@@ -1,28 +1,8 @@
-import ToolStructureSvg from "./img/tool-structure.svg";
-
 # Using Tools
 
 One of the most powerful features in Ailoy is the tool calling system.
 It allows you to extend the capabilities of your LLM by connecting it to external tools or APIs.
 This way, the agent can access real-time or domain-specific information, even if it wasn’t part of the model’s training data.
-
-## How Tool Calling Works
-
-Let's take a quick look at how tool calling works in general.
-In most agent system, tool calling can be achieved by the following process.
-
-<p align="center">
-  <ToolStructureSvg style={{ width: "40%", height: "40%" }} />
-</p>
-
-1. **\[Tool Description\]** Assistant (or LLM) can recognize a tool based on its
-   description.
-2. **\[User Query\]** User provides an input prompt to the assistant.
-3. **\[Tool Call\]** If that query is related to a tool, assistant can invoke
-   the tool through a specified format.
-4. **\[Tool Result\]** Tool performs its task as invoked and returns the result.
-5. **\[Assistant Response\]** Assistant can incorporate the tool's output to
-   produce a more accurate answer.
 
 To use a Tool, two features must be defined.
 
