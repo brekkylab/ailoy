@@ -1,0 +1,76 @@
+site_name: Ailoy Python API Documentation
+site_description: Ailoy Python API Documentation
+site_author: Brekkylab Inc.
+site_url: https://brekkylab.github.io/ailoy
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            docstring_section_style: spacy  # or "table", "list"
+            show_source: true
+            show_root_heading: false
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: alphabetical
+            group_by_category: true
+            show_if_no_docstring: true
+            filters:
+              - "!^__"
+              - "__iter__"
+              - "__next__"
+              - "__aiter__"
+              - "__anext__"
+              - "__call__"
+              - "__add__"
+              - "__radd__"
+            find_stubs_package: true
+            # Type hint settings
+            show_signature: true
+            show_signature_annotations: true
+            separate_signature: true
+            signature_crossrefs: true
+            annotations_path: brief
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - tables
+  - md_in_html
+
+# nav:
+#   - API Reference: index.md

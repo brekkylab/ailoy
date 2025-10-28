@@ -45,7 +45,10 @@ pub enum Role {
 /// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -148,7 +151,10 @@ impl Message {
 /// ```
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -357,7 +363,7 @@ impl Delta for MessageDelta {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
 #[cfg_attr(
     feature = "nodejs",
     napi_derive::napi(discriminant_case = "snake_case")
@@ -395,7 +401,10 @@ pub enum FinishReason {
 /// - On completion: `finish_reason` is set; callers can then `finish()` the delta to obtain a concrete [`Message`].
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]

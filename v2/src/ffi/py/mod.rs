@@ -8,12 +8,17 @@ pub(crate) mod value;
 use pyo3::prelude::*;
 
 use crate::{
-    agent::{Agent, AgentResponse},
-    model::{EmbeddingModel, InferenceConfig, LangModel},
+    agent::{Agent, AgentResponse, AgentRunIterator, AgentRunSyncIterator},
+    ffi::py::cache_progress::PyCacheProgress as CacheProgress,
+    knowledge::{Knowledge, KnowledgeConfig},
+    model::{
+        DocumentPolyfill, EmbeddingModel, Grammar, InferenceConfig, LangModel,
+        LangModelRunIterator, LangModelRunSyncIterator,
+    },
     tool::{MCPClient, Tool},
     value::{
-        FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta, PartDeltaFunction,
-        PartFunction, PartImage, ToolDesc,
+        Document, FinishReason, Message, MessageDelta, MessageOutput, Part, PartDelta,
+        PartDeltaFunction, PartFunction, PartImage, ToolDesc,
     },
     vector_store::{
         VectorStore, VectorStoreAddInput, VectorStoreGetResult, VectorStoreRetrieveResult,
@@ -25,10 +30,20 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // Add classes in alphabetical order
     m.add_class::<Agent>()?;
     m.add_class::<AgentResponse>()?;
+    m.add_class::<AgentRunIterator>()?;
+    m.add_class::<AgentRunSyncIterator>()?;
+    m.add_class::<CacheProgress>()?;
+    m.add_class::<Document>()?;
+    m.add_class::<DocumentPolyfill>()?;
     m.add_class::<EmbeddingModel>()?;
     m.add_class::<FinishReason>()?;
+    m.add_class::<Grammar>()?;
     m.add_class::<InferenceConfig>()?;
+    m.add_class::<Knowledge>()?;
+    m.add_class::<KnowledgeConfig>()?;
     m.add_class::<LangModel>()?;
+    m.add_class::<LangModelRunIterator>()?;
+    m.add_class::<LangModelRunSyncIterator>()?;
     m.add_class::<MCPClient>()?;
     m.add_class::<Message>()?;
     m.add_class::<MessageDelta>()?;

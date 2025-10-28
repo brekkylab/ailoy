@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]

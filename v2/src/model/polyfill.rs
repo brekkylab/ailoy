@@ -7,7 +7,10 @@ use crate::value::{Document, Message, Part, Role};
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]

@@ -16,7 +16,7 @@ use crate::{
 
 #[derive(Debug)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "MCPClient"))]
 pub struct MCPClient {
     #[allow(unused)]

@@ -20,7 +20,7 @@ enum EmbeddingModelInner {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct EmbeddingModel {

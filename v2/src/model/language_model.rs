@@ -39,7 +39,7 @@ pub enum ThinkEffort {
     feature = "python",
     pyo3_stub_gen::derive::gen_stub_pyclass_complex_enum
 )]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(discriminant_case = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -60,7 +60,10 @@ impl Default for Grammar {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -118,7 +121,7 @@ enum LangModelInner {
 
 #[derive(Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct LangModel {
@@ -226,7 +229,7 @@ mod py {
     }
 
     #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
+    #[pyclass(module = "ailoy._core", unsendable)]
     pub struct LangModelRunIterator {
         _rt: tokio::runtime::Runtime,
         rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>>>,
@@ -256,7 +259,7 @@ mod py {
     }
 
     #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
+    #[pyclass(module = "ailoy._core", unsendable)]
     pub struct LangModelRunSyncIterator {
         _rt: tokio::runtime::Runtime,
         rx: mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>,
@@ -420,6 +423,9 @@ mod py {
         // fn from_dict(d: Py<PyDict>)
     }
 }
+
+#[cfg(feature = "python")]
+pub use py::*;
 
 #[cfg(feature = "nodejs")]
 mod node {
