@@ -149,6 +149,7 @@ async def test_simple_multiturn(agent: ai.Agent):
 async def test_builtin_tool(agent: ai.Agent):
     tool = ai.Tool.new_builtin("terminal")
     agent.add_tool(tool)
+
     acc = ai.MessageDelta()
     results = []
     async for resp in agent.run_delta(
@@ -164,6 +165,19 @@ async def test_builtin_tool(agent: ai.Agent):
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
+                elif content.part_type == "value":
+                    print(content.value)
+                else:
+                    raise ValueError(
+                        f"Content has invalid part_type: {content.part_type}"
+                    )
+            for tool_call in resp.delta.tool_calls:
+                if tool_call.part_type == "function":
+                    print(tool_call.function.text, end="")
+                else:
+                    raise ValueError(
+                        f"Tool call has invalid part_type: {content.part_type}"
+                    )
     print()
 
     assert finish_reason == ai.FinishReason.Stop()
@@ -193,8 +207,8 @@ async def test_python_async_function_tool(agent: ai.Agent):
         return 35 if unit == "Celsius" else 95
 
     tool = ai.Tool.new_py_function(tool_temperature)
-
     agent.add_tool(tool)
+
     acc = ai.MessageDelta()
     results = []
     async for resp in agent.run_delta(
@@ -210,6 +224,19 @@ async def test_python_async_function_tool(agent: ai.Agent):
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
+                elif content.part_type == "value":
+                    print(content.value)
+                else:
+                    raise ValueError(
+                        f"Content has invalid part_type: {content.part_type}"
+                    )
+            for tool_call in resp.delta.tool_calls:
+                if tool_call.part_type == "function":
+                    print(tool_call.function.text, end="")
+                else:
+                    raise ValueError(
+                        f"Tool call has invalid part_type: {content.part_type}"
+                    )
     print()
 
     assert finish_reason == ai.FinishReason.Stop()
@@ -285,8 +312,8 @@ async def test_parallel_tool_call(agent: ai.Agent):
 async def test_mcp_tools(agent: ai.Agent):
     mcp_client = await ai.MCPClient.from_stdio("uvx", ["mcp-server-time"])
     tools = mcp_client.tools
-
     agent.add_tools(tools)
+
     acc = ai.MessageDelta()
     results = []
     async for resp in agent.run_delta(
@@ -302,6 +329,19 @@ async def test_mcp_tools(agent: ai.Agent):
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
+                elif content.part_type == "value":
+                    print(content.value)
+                else:
+                    raise ValueError(
+                        f"Content has invalid part_type: {content.part_type}"
+                    )
+            for tool_call in resp.delta.tool_calls:
+                if tool_call.part_type == "function":
+                    print(tool_call.function.text, end="")
+                else:
+                    raise ValueError(
+                        f"Tool call has invalid part_type: {content.part_type}"
+                    )
     print()
 
     assert finish_reason == ai.FinishReason.Stop()
