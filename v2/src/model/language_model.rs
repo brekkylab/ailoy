@@ -578,7 +578,7 @@ mod wasm {
             LangModel::new_stream_api(spec, model_name, api_key)
         }
 
-        #[wasm_bindgen(js_name = infer_delta, unchecked_return_type = "AsyncIterable<MessageDeltaOutput>")]
+        #[wasm_bindgen(js_name = inferDelta, unchecked_return_type = "AsyncIterable<MessageDeltaOutput>")]
         pub fn infer_delta_js(
             &mut self,
             msgs: Vec<Message>,
