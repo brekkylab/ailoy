@@ -50,7 +50,6 @@ plugins:
               - "__anext__"
               - "__call__"
               - "__add__"
-              - "__radd__"
             # Type hint settings
             show_signature: true
             show_signature_annotations: true
