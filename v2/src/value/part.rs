@@ -641,6 +641,22 @@ impl PartDelta {
                 id,
                 function: PartDeltaFunction::WithParsedArgs { name, arguments },
             } => Some((id, name, arguments)),
+            Self::Function {
+                id,
+                function: PartDeltaFunction::WithStringArgs { name, arguments },
+            } => serde_json::from_str::<Value>(&arguments)
+                .ok()
+                .and_then(|arguments| Some((id, name, arguments))),
+            Self::Function {
+                id,
+                function: PartDeltaFunction::Verbatim { text },
+            } => serde_json::from_str::<Value>(&text).ok().and_then(|root| {
+                Some((
+                    id,
+                    root.pointer_as::<str>("/name")?.to_owned(),
+                    root.pointer("/arguments")?.to_owned(),
+                ))
+            }),
             _ => None,
         }
     }
