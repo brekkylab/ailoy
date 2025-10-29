@@ -17,7 +17,7 @@ const modelConfigs = [
     name: "OpenAI",
     skip: process.env.OPENAI_API_KEY === undefined,
     createAgent: async () => {
-      const model = ailoy.LangModel.newStreamAPI(
+      const model = await ailoy.LangModel.newStreamAPI(
         "OpenAI",
         "gpt-4o",
         process.env.OPENAI_API_KEY!
@@ -31,7 +31,7 @@ const modelConfigs = [
     name: "Gemini",
     skip: process.env.GEMINI_API_KEY === undefined,
     createAgent: async () => {
-      const model = ailoy.LangModel.newStreamAPI(
+      const model = await ailoy.LangModel.newStreamAPI(
         "Gemini",
         "gemini-2.5-flash",
         process.env.GEMINI_API_KEY!
@@ -41,12 +41,12 @@ const modelConfigs = [
     runImageBase64: true,
   },
   {
-    name: "Anthropic",
+    name: "Claude",
     skip: process.env.ANTHROPIC_API_KEY === undefined,
     createAgent: async () => {
-      const model = ailoy.LangModel.newStreamAPI(
+      const model = await ailoy.LangModel.newStreamAPI(
         "Claude",
-        "claude-sonnet-4-20250514",
+        "claude-haiku-4-5",
         process.env.ANTHROPIC_API_KEY!
       );
       return new ailoy.Agent(model);
@@ -54,10 +54,10 @@ const modelConfigs = [
     runImageBase64: true,
   },
   {
-    name: "XAI",
+    name: "Grok",
     skip: process.env.XAI_API_KEY === undefined,
     createAgent: async () => {
-      const model = ailoy.LangModel.newStreamAPI(
+      const model = await ailoy.LangModel.newStreamAPI(
         "Grok",
         "grok-4-fast",
         process.env.XAI_API_KEY!
@@ -69,14 +69,15 @@ const modelConfigs = [
   },
 ];
 
-// const testImageUrl =
-//   "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
-// const testImageBase64 = await (async () => {
-//   const resp = await fetch(testImageUrl);
-//   const arrayBuffer = await resp.arrayBuffer();
-//   const buffer = Buffer.from(arrayBuffer);
-//   return buffer.toString("base64");
-// })();
+const testImageUrl =
+  "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg?w=385";
+const testImageBase64 = await (async () => {
+  const resp = await fetch(testImageUrl);
+  const arrayBuffer = await resp.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const b64 = buffer.toString("base64");
+  return ailoy.imageFromBase64(b64);
+})();
 
 for (const cfg of modelConfigs) {
   describe.skipIf(cfg.skip).concurrent(`Agent test: ${cfg.name}`, () => {
@@ -86,16 +87,28 @@ for (const cfg of modelConfigs) {
       agent = await cfg.createAgent();
     });
 
-    test.sequential("Simple Chat", async () => {
+    test.sequential("Simple Chat(single string)", async () => {
+      for await (const resp of agent.run("What is your name?")) {
+        console.log(resp.message);
+      }
+    });
+
+    test.sequential("Simple Chat(string contents)", async () => {
+      for await (const resp of agent.run([
+        { role: "user", contents: "What is your name?" },
+      ])) {
+        console.log(resp.message);
+      }
+    });
+
+    test.sequential("Simple Chat(normal form)", async () => {
       for await (const resp of agent.run([
         {
           role: "user",
           contents: [{ type: "text", text: "What is your name?" }],
         },
       ])) {
-        if (resp.accumulated !== undefined) {
-          console.log(resp.accumulated);
-        }
+        console.log(resp.message);
       }
     });
 
@@ -105,20 +118,10 @@ for (const cfg of modelConfigs) {
         const tool = ailoy.Tool.newBuiltin("terminal");
         agent.addTool(tool);
 
-        for await (const resp of agent.run([
-          {
-            role: "user",
-            contents: [
-              {
-                type: "text",
-                text: "List the files in the current directory.",
-              },
-            ],
-          },
-        ])) {
-          if (resp.accumulated !== undefined) {
-            console.log(`[${cfg.name}] `, resp.accumulated);
-          }
+        for await (const resp of agent.runDelta(
+          "List the files in the current directory."
+        )) {
+          console.log(`[${cfg.name}] `, resp.delta);
         }
 
         agent.removeTool(tool.description.name);
@@ -134,20 +137,10 @@ for (const cfg of modelConfigs) {
         ]);
         agent.addTools(client.tools);
 
-        for await (const resp of agent.run([
-          {
-            role: "user",
-            contents: [
-              {
-                type: "text",
-                text: "What time is it now in Asia/Seoul? Answer in local timezone.",
-              },
-            ],
-          },
-        ])) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
-          }
+        for await (const resp of agent.runDelta(
+          "What time is it now in Asia/Seoul? Answer in local timezone."
+        )) {
+          console.log(resp.delta);
         }
 
         agent.removeTools(client.tools.map((t) => t.description.name));
@@ -189,20 +182,10 @@ for (const cfg of modelConfigs) {
 
         agent.addTool(tool);
 
-        for await (const resp of agent.run([
-          {
-            role: "user",
-            contents: [
-              {
-                type: "text",
-                text: "What is the temperature in Seoul now? Answer in Celsius.",
-              },
-            ],
-          },
-        ])) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
-          }
+        for await (const resp of agent.runDelta(
+          "What is the temperature in Seoul now? Answer in Celsius."
+        )) {
+          console.log(resp.delta);
         }
 
         agent.removeTool(tool.description.name);
@@ -210,45 +193,46 @@ for (const cfg of modelConfigs) {
       10000
     );
 
-    // if (cfg.runImageUrl) {
-    //   test.sequential(
-    //     "Multimodal: Image URL",
-    //     async () => {
-    //       const imgPart = ailoy.Part.newImageUrl(testImageUrl);
-    //       for await (const resp of agent.run([
-    //         imgPart,
-    //         "What is shown in this image?",
-    //       ])) {
-    //         if (msg !== null) {
-    //           console.log(msg);
-    //         }
-    //       }
-    //     },
-    //     10000
-    //   );
-    // }
+    if (cfg.runImageUrl) {
+      test.sequential(
+        "Multimodal: Image URL",
+        async () => {
+          const imgPart = ailoy.imageFromUrl(testImageUrl);
+          for await (const resp of agent.run([
+            {
+              role: "user",
+              contents: [
+                imgPart,
+                { type: "text", text: "What is shown in this image?" },
+              ],
+            },
+          ])) {
+            console.log(resp.message);
+          }
+        },
+        10000
+      );
+    }
 
-    // if (cfg.runImageBase64) {
-    //   test.sequential(
-    //     "Multimodal: Image Base64",
-    //     async () => {
-    //       const imgPart = ailoy.Part.newImageData(
-    //         testImageBase64,
-    //         "image/jpeg"
-    //       );
-
-    //       for await (const resp of agent.run([
-    //         imgPart,
-    //         "What is shown in this image?",
-    //       ])) {
-    //         if (msg !== null) {
-    //           console.log(msg);
-    //         }
-    //       }
-    //     },
-    //     10000
-    //   );
-    // }
+    if (cfg.runImageBase64) {
+      test.sequential(
+        "Multimodal: Image Base64",
+        async () => {
+          for await (const resp of agent.run([
+            {
+              role: "user",
+              contents: [
+                testImageBase64,
+                { type: "text", text: "What is shown in this image?" },
+              ],
+            },
+          ])) {
+            console.log(resp.message);
+          }
+        },
+        10000
+      );
+    }
 
     test.sequential(
       "Using Knowledge",
@@ -284,25 +268,10 @@ After the user’s question, a list of documents retrieved from the knowledge ba
             `,
         };
 
-        for await (const resp of agent.run(
-          [
-            {
-              role: "user",
-              contents: [
-                {
-                  type: "text",
-                  text: "What is Ailoy?",
-                },
-              ],
-            },
-          ],
-          {
-            documentPolyfill,
-          }
-        )) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
-          }
+        for await (const resp of agent.runDelta("What is Ailoy?", {
+          documentPolyfill,
+        })) {
+          console.log(resp.delta);
         }
 
         agent.removeKnowledge();

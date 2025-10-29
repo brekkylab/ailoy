@@ -1,3 +1,5 @@
+use std::fmt;
+
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
@@ -45,7 +47,10 @@ pub enum Role {
 /// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -53,7 +58,7 @@ pub struct Message {
     /// Author of the message.
     pub role: Role,
 
-    /// Primary message parts (e.g., text, image, value, or function).
+    /// Primary parts of the message (e.g., text, image, value, or function).
     pub contents: Vec<Part>,
 
     /// Optional stable identifier for deduplication or threading.
@@ -122,6 +127,60 @@ impl Message {
     }
 }
 
+impl fmt::Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "Message {}", s)
+    }
+}
+
+/// A simplified form of [Message] for concise definition.
+/// All other members are identical to [Message], but `contents` is a `String` instead of `Vec<Part>`.
+/// This can be converted to Message via `.into()`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+struct SingleTextMessage {
+    /// Author of the message.
+    pub role: Role,
+
+    /// Primary part of message in text.
+    pub contents: String,
+
+    /// Optional stable identifier for deduplication or threading.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
+    /// Internal “thinking” text used by some models before producing final output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+
+    /// Tool-call parts emitted alongside the main contents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
+    pub tool_calls: Option<Vec<Part>>,
+
+    /// Optional signature for the `thinking` field.
+    ///
+    /// This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+impl Into<Message> for SingleTextMessage {
+    fn into(self) -> Message {
+        Message {
+            role: self.role,
+            contents: vec![Part::text(self.contents)],
+            id: self.id,
+            thinking: self.thinking,
+            tool_calls: self.tool_calls,
+            signature: self.signature,
+        }
+    }
+}
+
 /// A streaming, incremental update to a [`Message`].
 ///
 /// `MessageDelta` accumulates partial outputs (text chunks, tool-call fragments, IDs, signatures, etc.) until they can be materialized as a full [`Message`].
@@ -148,7 +207,10 @@ impl Message {
 /// ```
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -353,11 +415,18 @@ impl Delta for MessageDelta {
     }
 }
 
+impl fmt::Display for MessageDelta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "MessageDelta {}", s)
+    }
+}
+
 /// Explains why a language model's streamed generation finished.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
 #[cfg_attr(
     feature = "nodejs",
     napi_derive::napi(discriminant_case = "snake_case")
@@ -378,6 +447,13 @@ pub enum FinishReason {
     Refusal { reason: String },
 }
 
+impl fmt::Display for FinishReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "FinishReason {}", s)
+    }
+}
+
 /// A container for a streamed message delta and its termination signal.
 ///
 /// During streaming, `delta` carries the incremental payload; once a terminal
@@ -395,17 +471,20 @@ pub enum FinishReason {
 /// - On completion: `finish_reason` is set; callers can then `finish()` the delta to obtain a concrete [`Message`].
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-pub struct MessageOutput {
+pub struct MessageDeltaOutput {
     pub delta: MessageDelta,
     #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "finish_reason"))]
     pub finish_reason: Option<FinishReason>,
 }
 
-impl MessageOutput {
+impl MessageDeltaOutput {
     pub fn new() -> Self {
         Self {
             delta: MessageDelta::new(),
@@ -413,3 +492,471 @@ impl MessageOutput {
         }
     }
 }
+
+impl fmt::Display for MessageDeltaOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "MessageDeltaOutput {}", s)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub struct MessageOutput {
+    pub message: Message,
+    #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "finish_reason"))]
+    pub finish_reason: FinishReason,
+}
+
+impl fmt::Display for MessageOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "MessageOutput {}", s)
+    }
+}
+
+#[cfg(feature = "python")]
+pub(crate) mod py {
+    use std::sync::Arc;
+
+    use futures::lock::Mutex;
+    use pyo3::{
+        Py, PyAny, PyRef, PyResult, Python,
+        exceptions::{PyStopAsyncIteration, PyStopIteration, PyTypeError},
+        prelude::*,
+        pyclass, pymethods,
+        types::{PyList, PyString},
+    };
+    use pyo3_stub_gen::{PyStubType, TypeInfo};
+    use pyo3_stub_gen_derive::*;
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::ffi::py::base::PyRepr;
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl Message {
+        #[new]
+        #[pyo3(signature = (role, contents = None, id = None, thinking = None, tool_calls = None, signature = None))]
+        fn __new__(
+            role: Role,
+            contents: Option<Contents>,
+            id: Option<String>,
+            thinking: Option<String>,
+            tool_calls: Option<Vec<Part>>,
+            signature: Option<String>,
+        ) -> Self {
+            Self {
+                role,
+                contents: contents.unwrap_or_default().into(),
+                id,
+                thinking,
+                tool_calls,
+                signature,
+            }
+        }
+
+        #[setter]
+        fn set_contents(&mut self, contents: Option<Contents>) -> PyResult<()> {
+            self.contents = contents.unwrap_or_default().into();
+            Ok(())
+        }
+
+        pub fn __repr__(&self) -> String {
+            format!(
+                "Message(role={}, contents=[{}], id={}, thinking={}, tool_calls=[{}], signature={})",
+                self.role.__repr__(),
+                self.contents
+                    .iter()
+                    .map(|content| content.__repr__())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                self.id.__repr__(),
+                self.thinking.__repr__(),
+                self.tool_calls.as_ref().map_or(String::new(), |calls| {
+                    calls
+                        .iter()
+                        .map(|tool_part| tool_part.__repr__())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }),
+                self.signature.__repr__(),
+            )
+        }
+
+        fn append_tool_call(&mut self, part: Part) {
+            match &mut self.tool_calls {
+                Some(tool_calls) => tool_calls.push(part),
+                None => self.tool_calls = vec![part].into(),
+            };
+        }
+    }
+
+    /// Intermediate struct to handle "str | list[Message]"
+    pub struct Messages(Vec<Message>);
+
+    impl<'a, 'py> FromPyObject<'a, 'py> for Messages {
+        type Error = PyErr;
+
+        fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+            if let Ok(text) = obj.cast::<PyString>() {
+                Ok(Self(vec![
+                    Message::new(Role::User).with_contents(vec![Part::text(text.to_string())]),
+                ]))
+            } else if let Ok(list) = obj.cast::<PyList>() {
+                Ok(Self(list.extract()?))
+            } else {
+                Err(PyTypeError::new_err("Failed to convert messages"))
+            }
+        }
+    }
+
+    impl PyStubType for Messages {
+        fn type_output() -> TypeInfo {
+            TypeInfo::unqualified("str | list[Message]")
+        }
+    }
+
+    impl Into<Vec<Message>> for Messages {
+        fn into(self) -> Vec<Message> {
+            self.0
+        }
+    }
+
+    #[derive(Default)]
+    /// Intermediate struct to handle "str | list[Part]"
+    pub struct Contents(Vec<Part>);
+
+    impl<'a, 'py> FromPyObject<'a, 'py> for Contents {
+        type Error = PyErr;
+
+        fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+            if let Ok(text) = obj.cast::<PyString>() {
+                Ok(Self(vec![Part::text(text.to_string())]))
+            } else if let Ok(list) = obj.cast::<PyList>() {
+                Ok(Self(list.extract()?))
+            } else {
+                Err(PyTypeError::new_err("Failed to convert contents"))
+            }
+        }
+    }
+
+    impl PyStubType for Contents {
+        fn type_output() -> TypeInfo {
+            TypeInfo::unqualified("str | list[Part]")
+        }
+    }
+
+    impl Into<Vec<Part>> for Contents {
+        fn into(self) -> Vec<Part> {
+            self.0
+        }
+    }
+
+    #[gen_stub_pyclass]
+    #[pyclass(module = "ailoy._core", unsendable)]
+    pub(crate) struct MessageDeltaOutputIterator {
+        pub(crate) _rt: tokio::runtime::Runtime,
+        pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>>>,
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MessageDeltaOutputIterator {
+        fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+            slf
+        }
+
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageDeltaOutput]"))]
+        fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+            let rx = self.rx.clone();
+            let fut = async move {
+                let mut rx = rx.lock().await;
+                match rx.recv().await {
+                    Some(res) => res.map_err(Into::into),
+                    None => Err(PyStopAsyncIteration::new_err(())),
+                }
+            };
+            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
+            Ok(py_fut.into())
+        }
+    }
+
+    #[gen_stub_pyclass]
+    #[pyclass(module = "ailoy._core", unsendable)]
+    pub(crate) struct MessageDeltaOutputSyncIterator {
+        pub(crate) _rt: tokio::runtime::Runtime,
+        pub(crate) rx: mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>,
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MessageDeltaOutputSyncIterator {
+        fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+            slf
+        }
+
+        fn __next__(&mut self) -> PyResult<MessageDeltaOutput> {
+            match self.rx.blocking_recv() {
+                Some(res) => res.map_err(Into::into),
+                None => Err(PyStopIteration::new_err(())),
+            }
+        }
+    }
+
+    #[gen_stub_pyclass]
+    #[pyclass(module = "ailoy._core", unsendable)]
+    pub(crate) struct MessageOutputIterator {
+        pub(crate) _rt: tokio::runtime::Runtime,
+        pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>>>,
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MessageOutputIterator {
+        fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+            slf
+        }
+
+        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageOutput]"))]
+        fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+            let rx = self.rx.clone();
+            let fut = async move {
+                let mut rx = rx.lock().await;
+                match rx.recv().await {
+                    Some(res) => res.map_err(Into::into),
+                    None => Err(PyStopAsyncIteration::new_err(())),
+                }
+            };
+            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
+            Ok(py_fut.into())
+        }
+    }
+
+    #[gen_stub_pyclass]
+    #[pyclass(module = "ailoy._core", unsendable)]
+    pub(crate) struct MessageOutputSyncIterator {
+        pub(crate) _rt: tokio::runtime::Runtime,
+        pub(crate) rx: mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>,
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MessageOutputSyncIterator {
+        fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+            slf
+        }
+
+        fn __next__(&mut self) -> PyResult<MessageOutput> {
+            match self.rx.blocking_recv() {
+                Some(res) => res.map_err(Into::into),
+                None => Err(PyStopIteration::new_err(())),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "python")]
+pub use py::*;
+
+#[cfg(feature = "nodejs")]
+pub(crate) mod node {
+    use std::sync::Arc;
+
+    use futures::lock::Mutex;
+    use napi::{Error, JsSymbol, Status, bindgen_prelude::*};
+    use napi_derive::napi;
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    #[napi(transparent)]
+    pub struct Messages(Either3<Vec<Message>, Vec<SingleTextMessage>, String>);
+
+    impl Into<Vec<Message>> for Messages {
+        fn into(self) -> Vec<Message> {
+            match self.0 {
+                Either3::A(messages) => messages,
+                Either3::B(messages) => {
+                    messages.into_iter().map(|message| message.into()).collect()
+                }
+                Either3::C(text) => {
+                    vec![Message::new(Role::User).with_contents(vec![Part::text(text)])]
+                }
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    #[napi]
+    pub struct MessageDeltaOutputIterator {
+        pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>>>,
+    }
+
+    #[napi(object)]
+    pub struct MessageDeltaOutputIteratorResult {
+        pub value: MessageDeltaOutput,
+        pub done: bool,
+    }
+
+    #[napi]
+    impl MessageDeltaOutputIterator {
+        #[napi(js_name = "[Symbol.asyncIterator]")]
+        pub fn async_iterator(&self) -> &Self {
+            // This is a dummy function to add typing for Symbol.asyncIterator
+            self
+        }
+
+        #[napi]
+        pub async unsafe fn next(&mut self) -> napi::Result<MessageDeltaOutputIteratorResult> {
+            let mut rx = self.rx.lock().await;
+            match rx.recv().await {
+                Some(Ok(output)) => Ok(MessageDeltaOutputIteratorResult {
+                    value: output.into(),
+                    done: false,
+                }),
+                Some(Err(e)) => Err(Error::new(Status::GenericFailure, e)),
+                None => Ok(MessageDeltaOutputIteratorResult {
+                    value: MessageDeltaOutput::new(),
+                    done: true,
+                }),
+            }
+        }
+    }
+
+    impl MessageDeltaOutputIterator {
+        /// This returns an object with \[Symbol.asyncIterator\], which is not directly injected by napi-rs.
+        pub(crate) fn to_async_iterator<'a>(self, env: Env) -> napi::Result<Object<'a>> {
+            let mut obj = Object::new(&env)?;
+
+            let global = env.get_global()?;
+            let symbol: Function = global.get_named_property("Symbol")?;
+            let symbol_async_iterator: JsSymbol = symbol.get_named_property("asyncIterator")?;
+
+            let func: Function<(), MessageDeltaOutputIterator> =
+                env.create_function_from_closure("asyncIterator", move |_| Ok(self.clone()))?;
+
+            obj.set_property(symbol_async_iterator, func)?;
+
+            Ok(obj)
+        }
+    }
+
+    #[derive(Clone)]
+    #[napi]
+    pub struct MessageOutputIterator {
+        pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>>>,
+    }
+
+    #[napi(object)]
+    pub struct MessageOutputIteratorResult {
+        pub value: MessageOutput,
+        pub done: bool,
+    }
+
+    #[napi]
+    impl MessageOutputIterator {
+        #[napi(js_name = "[Symbol.asyncIterator]")]
+        pub fn async_iterator(&self) -> &Self {
+            // This is a dummy function to add typing for Symbol.asyncIterator
+            self
+        }
+
+        #[napi]
+        pub async unsafe fn next(&mut self) -> napi::Result<MessageOutputIteratorResult> {
+            let mut rx = self.rx.lock().await;
+            match rx.recv().await {
+                Some(Ok(output)) => Ok(MessageOutputIteratorResult {
+                    value: output.into(),
+                    done: false,
+                }),
+                Some(Err(e)) => Err(Error::new(Status::GenericFailure, e)),
+                None => Ok(MessageOutputIteratorResult {
+                    value: MessageOutput {
+                        message: Message::new(Role::Assistant),
+                        finish_reason: FinishReason::Stop {},
+                    },
+                    done: true,
+                }),
+            }
+        }
+    }
+
+    impl MessageOutputIterator {
+        /// This returns an object with \[Symbol.asyncIterator\], which is not directly injected by napi-rs.
+        pub(crate) fn to_async_iterator<'a>(self, env: Env) -> napi::Result<Object<'a>> {
+            let mut obj = Object::new(&env)?;
+
+            let global = env.get_global()?;
+            let symbol: Function = global.get_named_property("Symbol")?;
+            let symbol_async_iterator: JsSymbol = symbol.get_named_property("asyncIterator")?;
+
+            let func: Function<(), MessageOutputIterator> =
+                env.create_function_from_closure("asyncIterator", move |_| Ok(self.clone()))?;
+
+            obj.set_property(symbol_async_iterator, func)?;
+
+            Ok(obj)
+        }
+    }
+}
+
+#[cfg(feature = "nodejs")]
+pub use node::*;
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use tsify::serde_wasm_bindgen;
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(typescript_type = "Array<Message> | Array<SingleTextMessage> | string")]
+        pub type Messages;
+    }
+
+    impl TryInto<Vec<Message>> for Messages {
+        type Error = js_sys::Error;
+
+        fn try_into(self) -> Result<Vec<Message>, Self::Error> {
+            if let Some(text) = self.as_string() {
+                Ok(vec![
+                    Message::new(Role::User).with_contents(vec![Part::text(text)]),
+                ])
+            } else if self.is_array() {
+                // Try deserializing as Vec<Message> first
+                match serde_wasm_bindgen::from_value::<Vec<Message>>(self.clone().into()) {
+                    Ok(messages) => Ok(messages),
+                    Err(e_message) => {
+                        // Fallback: try deserializing as Vec<SingleTextMessage>
+                        let text_messages: Vec<SingleTextMessage> = serde_wasm_bindgen::from_value(
+                            self.into(),
+                        )
+                        .map_err(|e_text_message| {
+                            js_sys::Error::new(&format!(
+                                "Failed to deserialize as Array<Message>:\n- {}\n- {}",
+                                e_message, e_text_message,
+                            ))
+                        })?;
+                        Ok(text_messages.into_iter().map(Into::into).collect())
+                    }
+                }
+            } else {
+                Err(js_sys::Error::new("Expected Array<Message> or string"))
+            }
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+pub use wasm::*;

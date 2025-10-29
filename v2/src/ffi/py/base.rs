@@ -84,11 +84,13 @@ pub fn python_to_value(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
     }
 }
 
-pub fn await_future<T, E: ToString + std::any::Any>(
-    fut: impl Future<Output = Result<T, E>>,
+pub fn await_future<T: Send, E: ToString + std::any::Any + Send>(
+    py: Python<'_>,
+    fut: impl Future<Output = Result<T, E>> + Send,
 ) -> PyResult<T> {
     let rt = pyo3_async_runtimes::tokio::get_runtime();
-    let result = rt.block_on(fut).map_err(|e| {
+    // Release the GIL while waiting
+    let result = py.detach(|| rt.block_on(fut)).map_err(|e| {
         if std::any::TypeId::of::<E>() == std::any::TypeId::of::<PyErr>() {
             // PyErr is returned as-is
             let any_err = Box::new(e) as Box<dyn std::any::Any>;

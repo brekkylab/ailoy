@@ -1,12 +1,12 @@
 use anyhow::{Context, bail};
-use base64::Engine;
 
 use crate::{
     model::{ServerEvent, ThinkEffort, api::RequestConfig},
     to_value,
     value::{
-        FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, Role, ToolDesc, Unmarshal, Unmarshaled, Value,
+        FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageDeltaOutput, Part,
+        PartDelta, PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
+        Unmarshaled, Value,
     },
 };
 
@@ -34,24 +34,17 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             Part::Value { value } => {
                 to_value!(serde_json::to_string(&value).unwrap())
             }
-            Part::Image { .. } => {
-                // Get image
-                let img = part.as_image().unwrap();
-                // Write PNG string
-                let mut png_buf = Vec::new();
-                img.write_to(
-                    &mut std::io::Cursor::new(&mut png_buf),
-                    image::ImageFormat::Png,
-                )
-                .unwrap();
-                // base64 encoding
-                let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf);
+            Part::Image { image } => {
+                let b64 = match image {
+                    PartImage::Binary { .. } => image.base64().unwrap(),
+                    PartImage::Url { .. } => panic!("Claude does not support image url inputs"),
+                };
                 to_value!({
                     "type": "image",
                     "source": {
                         "type": "base64",
                         "media_type": "image/png",
-                        "data": encoded
+                        "data": b64,
                     }
                 })
             }
@@ -457,9 +450,9 @@ pub(super) fn make_request(
     builder
 }
 
-pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
+pub(crate) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
     let Ok(val) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
-        return MessageOutput::default();
+        return MessageDeltaOutput::default();
     };
 
     let finish_reason = val
@@ -486,7 +479,7 @@ pub(crate) fn handle_event(evt: ServerEvent) -> MessageOutput {
             .unwrap_or_default(),
     };
 
-    MessageOutput {
+    MessageDeltaOutput {
         delta,
         finish_reason,
     }
@@ -822,7 +815,7 @@ mod api_tests {
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
         let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -861,7 +854,7 @@ mod api_tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let mut strm = model.infer(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
@@ -929,7 +922,7 @@ mod api_tests {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
         ];
-        let mut strm = model.infer(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {

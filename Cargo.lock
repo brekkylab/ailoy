@@ -46,7 +46,6 @@ version = "0.1.0"
 dependencies = [
  "ailoy-macros",
  "anyhow",
- "async-channel",
  "async-stream",
  "async-trait",
  "aws-config",
@@ -73,7 +72,7 @@ dependencies = [
  "minijinja",
  "minijinja-contrib",
  "napi",
- "napi-build 2.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "napi-build",
  "napi-derive",
  "onig",
  "ordered-float",
@@ -184,18 +183,6 @@ name = "anyhow"
 version = "1.0.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
-
-[[package]]
-name = "async-channel"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "924ed96dd52d1b75e9c1a3e6275715fd320f5f9439fb5a4a11fa51f4221158d2"
-dependencies = [
- "concurrent-queue",
- "event-listener-strategy",
- "futures-core",
- "pin-project-lite",
-]
 
 [[package]]
 name = "async-stream"
@@ -1012,15 +999,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "concurrent-queue"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "console"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1590,27 +1568,6 @@ name = "esaxx-rs"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d817e038c30374a4bcb22f94d0a8a0e216958d4c3dcde369b1439fec4bdda6e6"
-
-[[package]]
-name = "event-listener"
-version = "5.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"
-dependencies = [
- "concurrent-queue",
- "parking",
- "pin-project-lite",
-]
-
-[[package]]
-name = "event-listener-strategy"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
-dependencies = [
- "event-listener",
- "pin-project-lite",
-]
 
 [[package]]
 name = "fancy-regex"
@@ -2859,12 +2816,13 @@ dependencies = [
 
 [[package]]
 name = "napi"
-version = "3.3.0"
-source = "git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8#694db418953181c1d41381e75cd9dc6b1918f3f8"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3a1135cfe16ca43ac82ac05858554fc39c037d8e4592f2b4a83d7ef8e822f43"
 dependencies = [
  "bitflags 2.9.4",
  "ctor",
- "napi-build 2.2.3 (git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8)",
+ "napi-build",
  "napi-sys",
  "nohash-hasher",
  "rustc-hash 2.1.1",
@@ -2875,19 +2833,15 @@ dependencies = [
 
 [[package]]
 name = "napi-build"
-version = "2.2.3"
+version = "2.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcae8ad5609d14afb3a3b91dee88c757016261b151e9dcecabf1b2a31a6cab14"
-
-[[package]]
-name = "napi-build"
-version = "2.2.3"
-source = "git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8#694db418953181c1d41381e75cd9dc6b1918f3f8"
+checksum = "3ae82775d1b06f3f07efd0666e59bbc175da8383bc372051031d7a447e94fbea"
 
 [[package]]
 name = "napi-derive"
-version = "3.2.5"
-source = "git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8#694db418953181c1d41381e75cd9dc6b1918f3f8"
+version = "3.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78665d6bdf10e9a4e6b38123efb0f66962e6197c1aea2f07cff3f159a374696d"
 dependencies = [
  "convert_case",
  "ctor",
@@ -2899,8 +2853,9 @@ dependencies = [
 
 [[package]]
 name = "napi-derive-backend"
-version = "2.2.0"
-source = "git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8#694db418953181c1d41381e75cd9dc6b1918f3f8"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42d55d01423e7264de3acc13b258fa48ca7cf38a4d25db848908ec3c1304a85a"
 dependencies = [
  "convert_case",
  "proc-macro2",
@@ -2911,8 +2866,9 @@ dependencies = [
 
 [[package]]
 name = "napi-sys"
-version = "3.0.0"
-source = "git+https://github.com/napi-rs/napi-rs.git?rev=694db418953181c1d41381e75cd9dc6b1918f3f8#694db418953181c1d41381e75cd9dc6b1918f3f8"
+version = "3.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ed8f0e23a62a3ce0fbb6527cdc056e9282ddd9916b068c46f8923e18eed5ee6"
 dependencies = [
  "libloading",
 ]
@@ -3193,12 +3149,6 @@ dependencies = [
  "elliptic-curve",
  "sha2",
 ]
-
-[[package]]
-name = "parking"
-version = "2.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "parking_lot"

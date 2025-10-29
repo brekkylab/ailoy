@@ -7,52 +7,50 @@ import typing
 
 @typing.final
 class Agent:
+    r"""
+    The Agent is the central orchestrator that connects the **language model**, **tools**, and **knowledge** components.
+    It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
+    
+    In essence, the Agent:
+    
+    - Understands user input
+    - Interprets structured responses from the language model (such as tool calls)
+    - Executes tools as needed
+    - Retrieves and integrates contextual knowledge before or during inference
+    
+    # Public APIs
+    - `run_delta`: Runs a user query and streams incremental deltas (partial outputs)
+    - `run`: Runs a user query and returns a complete message once all deltas are accumulated
+    
+    ## Delta vs. Complete Message
+    A *delta* represents a partial piece of model output, such as a text fragment or intermediate reasoning step.
+    Deltas can be accumulated into a full message using the provided accumulation utilities.
+    This allows real-time streaming while preserving the ability to reconstruct the final structured result.
+    
+    See `MessageDelta`.
+    
+    # Components
+    - **Language Model**: Generates natural language and structured outputs.
+      It interprets the conversation context and predicts the assistant’s next action.
+    - **Tool**: Represents external functions or APIs that the model can dynamically invoke.
+      The `Agent`` detects tool calls and automatically executes them during the reasoning loop.
+    - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases.
+      When available, the `Agent`` enriches model input with these results before generating an answer.
+    """
     @property
     def lm(self) -> LangModel: ...
     @property
     def tools(self) -> builtins.list[Tool]: ...
     def __new__(cls, lm: LangModel, tools: typing.Optional[typing.Sequence[Tool]] = None) -> Agent: ...
-    @classmethod
-    def create(cls, lm: LangModel, tools: typing.Optional[typing.Sequence[Tool]] = None) -> typing.Awaitable[Agent]: ...
     def __repr__(self) -> builtins.str: ...
     def add_tools(self, tools: typing.Sequence[Tool]) -> None: ...
     def add_tool(self, tool: Tool) -> None: ...
     def remove_tools(self, tool_names: typing.Sequence[builtins.str]) -> None: ...
     def remove_tool(self, tool_name: builtins.str) -> None: ...
-    def run(self, messages: typing.Sequence[Message], config: typing.Optional[InferenceConfig] = None) -> AgentRunIterator: ...
-    def run_sync(self, messages: typing.Sequence[Message], config: typing.Optional[InferenceConfig] = None) -> AgentRunSyncIterator: ...
-
-@typing.final
-class AgentResponse:
-    r"""
-    The yielded value from agent.run().
-    """
-    @property
-    def delta(self) -> MessageDelta:
-        r"""
-        The message delta per iteration.
-        """
-    @property
-    def finish_reason(self) -> typing.Optional[FinishReason]:
-        r"""
-        Optional finish reason. If this is Some, the message accumulation is finalized and stored in `accumulated`.
-        """
-    @property
-    def accumulated(self) -> typing.Optional[Message]:
-        r"""
-        Optional accumulated message.
-        """
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class AgentRunIterator:
-    def __aiter__(self) -> AgentRunIterator: ...
-    def __anext__(self) -> typing.Awaitable[AgentResponse]: ...
-
-@typing.final
-class AgentRunSyncIterator:
-    def __iter__(self) -> AgentRunSyncIterator: ...
-    def __next__(self) -> AgentResponse: ...
+    def run_delta(self, messages: str | list[Message], config: typing.Optional[InferenceConfig] = None) -> MessageDeltaOutputIterator: ...
+    def run_delta_sync(self, messages: str | list[Message], config: typing.Optional[InferenceConfig] = None) -> MessageDeltaOutputSyncIterator: ...
+    def run(self, messages: str | list[Message], config: typing.Optional[InferenceConfig] = None) -> MessageOutputIterator: ...
+    def run_sync(self, messages: str | list[Message], config: typing.Optional[InferenceConfig] = None) -> MessageDeltaOutputSyncIterator: ...
 
 @typing.final
 class CacheProgress:
@@ -156,6 +154,17 @@ class InferenceConfig:
     def __new__(cls, document_polyfill: typing.Optional[DocumentPolyfill] = None, think_effort: typing.Optional[typing.Literal["disable", "enable", "low", "medium", "high"]] = None, temperature: typing.Optional[builtins.float] = None, top_p: typing.Optional[builtins.float] = None, max_tokens: typing.Optional[builtins.int] = None) -> InferenceConfig: ...
 
 @typing.final
+class Knowledge:
+    @classmethod
+    def new_vector_store(cls, store: VectorStore, embedding_model: EmbeddingModel) -> Knowledge: ...
+    async def retrieve(self, query: builtins.str, config: KnowledgeConfig) -> builtins.list[Document]: ...
+    def as_tool(self) -> Tool: ...
+
+@typing.final
+class KnowledgeConfig:
+    ...
+
+@typing.final
 class LangModel:
     @classmethod
     def new_local(cls, model_name: builtins.str, progress_callback: typing.Callable[[CacheProgress], None] = None) -> typing.Awaitable[LangModel]: ...
@@ -163,19 +172,11 @@ class LangModel:
     def new_local_sync(cls, model_name: builtins.str, progress_callback: typing.Callable[[CacheProgress], None] = None) -> LangModel: ...
     @classmethod
     def new_stream_api(cls, spec: typing.Literal["ChatCompletion", "OpenAI", "Gemini", "Claude", "Responses", "Grok"], model_name: builtins.str, api_key: builtins.str) -> LangModel: ...
-    def run(self, messages: typing.Sequence[Message], tools: typing.Optional[typing.Sequence[ToolDesc]] = None, documents: typing.Optional[typing.Sequence[Document]] = None, config: typing.Optional[InferenceConfig] = None) -> LangModelRunIterator: ...
-    def run_sync(self, messages: typing.Sequence[Message], tools: typing.Optional[typing.Sequence[ToolDesc]] = None, documents: typing.Optional[typing.Sequence[Document]] = None, config: typing.Optional[InferenceConfig] = None) -> LangModelRunSyncIterator: ...
+    def infer_delta(self, messages: str | list[Message], tools: typing.Optional[typing.Sequence[ToolDesc]] = None, documents: typing.Optional[typing.Sequence[Document]] = None, config: typing.Optional[InferenceConfig] = None) -> MessageDeltaOutputIterator: ...
+    def infer_delta_sync(self, messages: str | list[Message], tools: typing.Optional[typing.Sequence[ToolDesc]] = None, documents: typing.Optional[typing.Sequence[Document]] = None, config: typing.Optional[InferenceConfig] = None) -> MessageDeltaOutputSyncIterator: ...
+    def infer(self, messages: str | list[Message], tools: typing.Optional[typing.Sequence[ToolDesc]] = None, documents: typing.Optional[typing.Sequence[Document]] = None, config: typing.Optional[InferenceConfig] = None) -> typing.Awaitable[MessageOutput]: ...
+    def infer_sync(self, messages: str | list[Message], tools: typing.Optional[typing.Sequence[ToolDesc]] = None, documents: typing.Optional[typing.Sequence[Document]] = None, config: typing.Optional[InferenceConfig] = None) -> MessageOutput: ...
     def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class LangModelRunIterator:
-    def __aiter__(self) -> LangModelRunIterator: ...
-    def __anext__(self) -> typing.Awaitable[MessageOutput]: ...
-
-@typing.final
-class LangModelRunSyncIterator:
-    def __iter__(self) -> LangModelRunSyncIterator: ...
-    def __next__(self) -> MessageOutput: ...
 
 @typing.final
 class MCPClient:
@@ -224,13 +225,10 @@ class Message:
     @property
     def contents(self) -> builtins.list[Part]:
         r"""
-        Primary message parts (e.g., text, image, value, or function).
+        Primary parts of the message (e.g., text, image, value, or function).
         """
     @contents.setter
-    def contents(self, value: builtins.list[Part]) -> None:
-        r"""
-        Primary message parts (e.g., text, image, value, or function).
-        """
+    def contents(self, value: typing.Optional[str | list[Part]]) -> None: ...
     @property
     def id(self) -> typing.Optional[builtins.str]:
         r"""
@@ -275,9 +273,8 @@ class Message:
         
         This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
         """
-    def __new__(cls, role: typing.Literal["system", "user", "assistant", "tool"], contents: typing.Optional[typing.Sequence[Part]] = None, id: typing.Optional[builtins.str] = None, thinking: typing.Optional[builtins.str] = None, tool_calls: typing.Optional[typing.Sequence[Part]] = None, signature: typing.Optional[builtins.str] = None) -> Message: ...
+    def __new__(cls, role: typing.Literal["system", "user", "assistant", "tool"], contents: typing.Optional[str | list[Part]] = None, id: typing.Optional[builtins.str] = None, thinking: typing.Optional[builtins.str] = None, tool_calls: typing.Optional[typing.Sequence[Part]] = None, signature: typing.Optional[builtins.str] = None) -> Message: ...
     def __repr__(self) -> builtins.str: ...
-    def append_contents(self, part: Part) -> None: ...
     def append_tool_call(self, part: Part) -> None: ...
 
 @typing.final
@@ -338,7 +335,7 @@ class MessageDelta:
     def to_message(self) -> Message: ...
 
 @typing.final
-class MessageOutput:
+class MessageDeltaOutput:
     r"""
     A container for a streamed message delta and its termination signal.
     
@@ -366,6 +363,37 @@ class MessageOutput:
     def finish_reason(self, value: typing.Optional[FinishReason]) -> None: ...
     def __repr__(self) -> builtins.str: ...
 
+@typing.final
+class MessageDeltaOutputIterator:
+    def __aiter__(self) -> MessageDeltaOutputIterator: ...
+    def __anext__(self) -> typing.Awaitable[MessageDeltaOutput]: ...
+
+@typing.final
+class MessageDeltaOutputSyncIterator:
+    def __iter__(self) -> MessageDeltaOutputSyncIterator: ...
+    def __next__(self) -> MessageDeltaOutput: ...
+
+@typing.final
+class MessageOutput:
+    @property
+    def message(self) -> Message: ...
+    @message.setter
+    def message(self, value: Message) -> None: ...
+    @property
+    def finish_reason(self) -> FinishReason: ...
+    @finish_reason.setter
+    def finish_reason(self, value: FinishReason) -> None: ...
+
+@typing.final
+class MessageOutputIterator:
+    def __aiter__(self) -> MessageOutputIterator: ...
+    def __anext__(self) -> typing.Awaitable[MessageOutput]: ...
+
+@typing.final
+class MessageOutputSyncIterator:
+    def __iter__(self) -> MessageOutputSyncIterator: ...
+    def __next__(self) -> MessageOutput: ...
+
 class Part:
     r"""
     Represents a semantically meaningful content unit exchanged between the model and the user.
@@ -391,6 +419,12 @@ class Part:
     @property
     def part_type(self) -> builtins.str: ...
     def __repr__(self) -> builtins.str: ...
+    @classmethod
+    def image_from_bytes(cls, data: bytes) -> Part: ...
+    @classmethod
+    def image_from_base64(cls, data: builtins.str) -> Part: ...
+    @classmethod
+    def image_from_url(cls, url: builtins.str) -> Part: ...
     @typing.final
     class Text(Part):
         r"""
@@ -539,7 +573,7 @@ class PartDeltaFunction:
         name: "translate".into(),
         arguments: r#"{"text":"hi"}"#.into(),
     };
-    `
+    ```
     """
     @typing.final
     class Verbatim(PartDeltaFunction):
@@ -608,6 +642,13 @@ class PartImage:
         @property
         def data(self) -> typing.Any: ...
         def __new__(cls, height: builtins.int, width: builtins.int, colorspace: typing.Literal["grayscale", "rgb", "rgba"], data: typing.Any) -> PartImage.Binary: ...
+    
+    @typing.final
+    class Url(PartImage):
+        __match_args__ = ("url",)
+        @property
+        def url(self) -> builtins.str: ...
+        def __new__(cls, url: builtins.str) -> PartImage.Url: ...
     
     ...
 

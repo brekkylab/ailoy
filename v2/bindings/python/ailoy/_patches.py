@@ -7,15 +7,13 @@ from typing import (
     Callable,
     Literal,
     Optional,
-    Self,
     Union,
     get_args,
     get_origin,
     get_type_hints,
 )
 
-from ailoy._core import Tool as _Tool
-from ailoy._core import ToolDesc
+from ailoy._core import Tool, ToolDesc
 
 description_re = re.compile(r"^(.*?)[\n\s]*(Args:|Returns:|Raises:|\Z)", re.DOTALL)
 # Extracts the Args: block from the docstring
@@ -241,15 +239,18 @@ def get_json_schema(func: Callable) -> dict:
     return {"type": "function", "function": output}
 
 
-class Tool(_Tool):
-    @classmethod
-    def new_py_function(cls, func: Any, tool_desc: Optional[ToolDesc] = None) -> Self:
-        if tool_desc is None:
-            try:
-                json_schema = get_json_schema(func)
-            except (TypeHintParsingException, DocstringParsingException) as e:
-                raise ValueError("Failed to parse docstring", e)
+def new_py_function(
+    cls: Tool, func: Callable, tool_desc: Optional[ToolDesc] = None
+) -> Tool:
+    if tool_desc is None:
+        try:
+            json_schema = get_json_schema(func)
+        except (TypeHintParsingException, DocstringParsingException) as e:
+            raise ValueError("Failed to parse docstring", e)
 
-            tool_desc = ToolDesc(**json_schema.get("function"))
+        tool_desc = ToolDesc(**json_schema.get("function"))
 
-        return super().new_py_function(tool_desc, func)
+    return cls.__new_py_function__(tool_desc, func)
+
+
+setattr(Tool, "new_py_function", classmethod(new_py_function))

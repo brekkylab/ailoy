@@ -30,7 +30,7 @@ pub enum ToolInner {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(subclass))]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", subclass))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Tool {
@@ -186,12 +186,24 @@ mod py {
             Self::new_builtin(kind).map_err(|e| PyRuntimeError::new_err(e.to_string()))
         }
 
+        #[gen_stub(skip)]
         #[classmethod]
-        #[pyo3(signature = (desc, func))]
-        pub fn new_py_function(_cls: &Bound<'_, PyType>, desc: ToolDesc, func: Py<PyAny>) -> Self {
+        #[pyo3(name = "__new_py_function__", signature = (desc, func))]
+        pub fn __new_py_function__(
+            _cls: &Bound<'_, PyType>,
+            desc: ToolDesc,
+            func: Py<PyAny>,
+        ) -> Self {
             Self {
                 inner: ToolInner::Function(FunctionTool::new(desc, wrap_python_function(func))),
             }
+        }
+
+        #[allow(unused_variables)]
+        #[classmethod]
+        #[pyo3(name = "new_py_function", signature = (desc, func))]
+        pub fn new_py_function(_cls: &Bound<'_, PyType>, desc: ToolDesc, func: Py<PyAny>) -> Self {
+            unimplemented!("This classmethod will be monkeypatched in Python")
         }
 
         fn __repr__(&self) -> String {

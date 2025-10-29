@@ -1,12 +1,16 @@
-use anyhow::{Context, bail};
-use serde::{Deserialize, Serialize};
+use std::fmt;
 
-use crate::value::{Value, delta::Delta};
+use anyhow::{Context, bail};
+use base64::Engine;
+use serde::{Deserialize, Serialize};
+use url::Url;
+
+use crate::value::{Value, bytes::Bytes, delta::Delta};
 
 /// Represents a function call contained within a message part.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -48,6 +52,24 @@ pub enum PartImageColorspace {
     RGBA,
 }
 
+impl From<image::ColorType> for PartImageColorspace {
+    fn from(value: image::ColorType) -> Self {
+        match value {
+            image::ColorType::L8
+            | image::ColorType::La8
+            | image::ColorType::L16
+            | image::ColorType::La16 => PartImageColorspace::Grayscale,
+            image::ColorType::Rgb8 | image::ColorType::Rgb16 | image::ColorType::Rgb32F => {
+                PartImageColorspace::RGB
+            }
+            image::ColorType::Rgba8 | image::ColorType::Rgba16 | image::ColorType::Rgba32F => {
+                PartImageColorspace::RGBA
+            }
+            _ => panic!("invalid color type"),
+        }
+    }
+}
+
 impl PartImageColorspace {
     pub fn channel(&self) -> u32 {
         match self {
@@ -86,7 +108,7 @@ impl TryFrom<String> for PartImageColorspace {
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(discriminant_case = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -98,6 +120,119 @@ pub enum PartImage {
         #[cfg_attr(feature = "nodejs", napi_derive::napi(ts_type = "Buffer"))]
         data: super::bytes::Bytes,
     },
+    Url {
+        url: String,
+    },
+}
+
+impl TryInto<image::DynamicImage> for &PartImage {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<image::DynamicImage, Self::Error> {
+        match self {
+            PartImage::Binary {
+                height,
+                width,
+                colorspace,
+                data: Bytes(buf),
+            } => {
+                fn bytes_to_u16_ne(b: &[u8]) -> anyhow::Result<Vec<u16>> {
+                    if b.len() % 2 != 0 {
+                        return Err(anyhow::anyhow!("bytes should be even"));
+                    }
+                    let mut v = Vec::with_capacity(b.len() / 2);
+                    for ch in b.chunks_exact(2) {
+                        v.push(u16::from_ne_bytes([ch[0], ch[1]]));
+                    }
+                    Ok(v)
+                }
+
+                let height = *height as u32;
+                let width = *width as u32;
+                let nbytes = buf.len() as u32 / height / width / colorspace.channel();
+                match (colorspace, nbytes) {
+                    // Grayscale 8-bit
+                    (PartImageColorspace::Grayscale, 1) => {
+                        let buf = image::GrayImage::from_raw(width, height, buf.to_vec())
+                            .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
+                        Ok(image::DynamicImage::ImageLuma8(buf))
+                    }
+                    // Grayscale 16-bit
+                    (PartImageColorspace::Grayscale, 2) => {
+                        let buf = image::ImageBuffer::<image::Luma<u16>, _>::from_raw(
+                            width,
+                            height,
+                            bytes_to_u16_ne(&buf)?,
+                        )
+                        .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
+                        Ok(image::DynamicImage::ImageLuma16(buf))
+                    }
+                    // RGB 8-bit
+                    (PartImageColorspace::RGB, 1) => {
+                        let buf = image::RgbImage::from_raw(width, height, buf.to_vec())
+                            .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
+                        Ok(image::DynamicImage::ImageRgb8(buf))
+                    }
+                    // RGBA 8-bit
+                    (PartImageColorspace::RGBA, 1) => {
+                        let buf = image::RgbaImage::from_raw(width, height, buf.to_vec())
+                            .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
+                        Ok(image::DynamicImage::ImageRgba8(buf))
+                    }
+                    // RGB 16-bit
+                    (PartImageColorspace::RGB, 2) => {
+                        let buf = image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(
+                            width,
+                            height,
+                            bytes_to_u16_ne(&buf)?,
+                        )
+                        .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
+                        Ok(image::DynamicImage::ImageRgb16(buf))
+                    }
+                    // RGBA 16-bit
+                    (PartImageColorspace::RGBA, 2) => {
+                        let buf = image::ImageBuffer::<image::Rgba<u16>, _>::from_raw(
+                            width,
+                            height,
+                            bytes_to_u16_ne(&buf)?,
+                        )
+                        .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
+                        Ok(image::DynamicImage::ImageRgba16(buf))
+                    }
+                    _ => Err(anyhow::anyhow!("Invalid colorspace or channel")),
+                }
+            }
+            PartImage::Url { .. } => {
+                todo!("Request to url and get the data, and load to DynamicImage")
+            }
+        }
+    }
+}
+
+impl PartImage {
+    /// Returns base64 encoded string with PNG format
+    pub fn base64(&self) -> anyhow::Result<String> {
+        match self {
+            PartImage::Binary { .. } => {
+                let img: image::DynamicImage = self.try_into()?;
+
+                // dump as PNG
+                let mut png_bytes: Vec<u8> = Vec::new();
+                img.write_to(
+                    &mut std::io::Cursor::new(&mut png_bytes),
+                    image::ImageFormat::Png,
+                )?;
+
+                // base64 encoding
+                let encoded =
+                    base64::engine::general_purpose::STANDARD.encode(png_bytes.as_slice());
+                Ok(encoded)
+            }
+            _ => Err(anyhow::anyhow!(
+                "base64 is available for PartImage::Binary only"
+            )),
+        }
+    }
 }
 
 /// Represents a semantically meaningful content unit exchanged between the model and the user.
@@ -126,7 +261,7 @@ pub enum PartImage {
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(discriminant_case = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -203,6 +338,32 @@ impl Part {
                 colorspace,
                 data: super::bytes::Bytes(data.into()),
             },
+        })
+    }
+
+    pub fn image_binary_from_bytes(data: &[u8]) -> anyhow::Result<Self> {
+        let img = image::load_from_memory(data).expect("Failed to load image from base64 data");
+        Ok(Self::Image {
+            image: PartImage::Binary {
+                height: img.height(),
+                width: img.width(),
+                colorspace: img.color().into(),
+                data: super::bytes::Bytes(img.into_bytes().into()),
+            },
+        })
+    }
+
+    pub fn image_binary_from_base64(data: impl Into<String>) -> anyhow::Result<Self> {
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(data.into().as_bytes())
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Self::image_binary_from_bytes(data.as_slice())
+    }
+
+    pub fn image_url(url: String) -> anyhow::Result<Self> {
+        let url = Url::parse(&url).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(Part::Image {
+            image: PartImage::Url { url: url.into() },
         })
     }
 
@@ -307,77 +468,17 @@ impl Part {
     }
 
     pub fn as_image(&self) -> Option<image::DynamicImage> {
-        fn bytes_to_u16_ne(b: &[u8]) -> Option<Vec<u16>> {
-            if b.len() % 2 != 0 {
-                return None;
-            }
-            let mut v = Vec::with_capacity(b.len() / 2);
-            for ch in b.chunks_exact(2) {
-                v.push(u16::from_ne_bytes([ch[0], ch[1]]));
-            }
-            Some(v)
-        }
-
         match self {
-            Self::Image {
-                image:
-                    PartImage::Binary {
-                        height,
-                        width,
-                        colorspace,
-                        data: super::bytes::Bytes(buf),
-                    },
-            } => {
-                let (h, w) = (*height as u32, *width as u32);
-                let nbytes = buf.len() as u32 / h / w / colorspace.channel();
-                match (colorspace, nbytes) {
-                    // Grayscale 8-bit
-                    (&PartImageColorspace::Grayscale, 1) => {
-                        let buf = image::GrayImage::from_raw(w, h, buf.to_vec())?;
-                        Some(image::DynamicImage::ImageLuma8(buf))
-                    }
-                    // Grayscale 16-bit
-                    (&PartImageColorspace::Grayscale, 2) => {
-                        let buf = image::ImageBuffer::<image::Luma<u16>, _>::from_raw(
-                            w,
-                            h,
-                            bytes_to_u16_ne(buf)?,
-                        )?;
-                        Some(image::DynamicImage::ImageLuma16(buf))
-                    }
-                    // RGB 8-bit
-                    (&PartImageColorspace::RGB, 1) => {
-                        let buf = image::RgbImage::from_raw(w, h, buf.to_vec())?;
-                        Some(image::DynamicImage::ImageRgb8(buf))
-                    }
-                    // RGBA 8-bit
-                    (&PartImageColorspace::RGBA, 1) => {
-                        let buf = image::RgbaImage::from_raw(w, h, buf.to_vec())?;
-                        Some(image::DynamicImage::ImageRgba8(buf))
-                    }
-                    // RGB 16-bit
-                    (&PartImageColorspace::RGB, 2) => {
-                        let buf = image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(
-                            w,
-                            h,
-                            bytes_to_u16_ne(buf)?,
-                        )?;
-                        Some(image::DynamicImage::ImageRgb16(buf))
-                    }
-                    // RGBA 16-bit
-                    (&PartImageColorspace::RGBA, 2) => {
-                        let buf = image::ImageBuffer::<image::Rgba<u16>, _>::from_raw(
-                            w,
-                            h,
-                            bytes_to_u16_ne(buf)?,
-                        )?;
-                        Some(image::DynamicImage::ImageRgba16(buf))
-                    }
-                    _ => None,
-                }
-            }
+            Self::Image { image } => image.try_into().ok(),
             _ => None,
         }
+    }
+}
+
+impl fmt::Display for Part {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "Part {}", s)
     }
 }
 
@@ -400,14 +501,14 @@ impl Part {
 ///     name: "translate".into(),
 ///     arguments: r#"{"text":"hi"}"#.into(),
 /// };
-/// `
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
 #[cfg_attr(
     feature = "nodejs",
     napi_derive::napi(discriminant_case = "snake_case")
@@ -445,7 +546,7 @@ pub enum PartDeltaFunction {
     feature = "python",
     pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
 )]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
 #[cfg_attr(
     feature = "nodejs",
     napi_derive::napi(discriminant_case = "snake_case")
@@ -696,9 +797,19 @@ impl Delta for PartDelta {
     }
 }
 
+impl fmt::Display for PartDelta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "PartDelta {}", s)
+    }
+}
+
 #[cfg(feature = "python")]
 mod py {
-    use pyo3::{Bound, IntoPyObject, PyAny, Python, pymethods};
+    use pyo3::{
+        Bound, IntoPyObject, PyAny, PyResult, Python, exceptions::PyValueError, pymethods,
+        types::PyType,
+    };
     use pyo3_stub_gen::derive::*;
 
     use super::*;
@@ -716,5 +827,115 @@ mod py {
         fn arguments<'a>(&'a self, py: Python<'a>) -> Bound<'a, PyAny> {
             self.arguments.clone().into_pyobject(py).unwrap()
         }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl Part {
+        pub fn __repr__(&self) -> String {
+            let s = match &self {
+                Part::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
+                Part::Function { .. } => {
+                    format!(
+                        "Function({})",
+                        serde_json::to_string(self).unwrap_or("".to_owned())
+                    )
+                }
+                Part::Value { value } => format!(
+                    "Value({})",
+                    serde_json::to_string(value).unwrap_or("{...}".to_owned())
+                ),
+                Part::Image { image } => {
+                    format!(
+                        "Image(\"{}\")",
+                        serde_json::to_string(image).unwrap_or("".to_owned())
+                    )
+                }
+            };
+            format!("Part.{}", s)
+        }
+
+        #[getter]
+        fn part_type(&self) -> &'static str {
+            match &self {
+                Part::Text { .. } => "text",
+                Part::Function { .. } => "function",
+                Part::Value { .. } => "value",
+                Part::Image { .. } => "image",
+            }
+        }
+
+        #[classmethod]
+        #[pyo3(name = "image_from_bytes")]
+        pub fn image_from_bytes_py<'a>(
+            _cls: &Bound<'a, PyType>,
+            #[gen_stub(override_type(type_repr = "bytes"))] data: &[u8],
+        ) -> PyResult<Part> {
+            Part::image_binary_from_bytes(data).map_err(|e| PyValueError::new_err(e.to_string()))
+        }
+
+        #[classmethod]
+        #[pyo3(name = "image_from_base64")]
+        pub fn image_from_base64_py<'a>(_cls: &Bound<'a, PyType>, data: String) -> PyResult<Part> {
+            Part::image_binary_from_base64(data).map_err(|e| PyValueError::new_err(e.to_string()))
+        }
+
+        #[classmethod]
+        #[pyo3(name = "image_from_url")]
+        pub fn image_from_url_py<'a>(_cls: &Bound<'a, PyType>, url: String) -> PyResult<Part> {
+            Part::image_url(url).map_err(|e| PyValueError::new_err(e.to_string()))
+        }
+    }
+}
+
+#[cfg(feature = "nodejs")]
+mod node {
+    use napi::bindgen_prelude::*;
+    use napi_derive::napi;
+
+    use super::*;
+
+    #[allow(unused)]
+    #[napi]
+    pub fn image_from_bytes(data: Uint8Array) -> napi::Result<Part> {
+        Part::image_binary_from_bytes(data.to_vec().as_slice())
+            .map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
+    }
+
+    #[allow(unused)]
+    #[napi]
+    pub fn image_from_base64(data: String) -> napi::Result<Part> {
+        Part::image_binary_from_base64(data)
+            .map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
+    }
+
+    #[allow(unused)]
+    #[napi]
+    pub fn image_from_url(url: String) -> napi::Result<Part> {
+        Part::image_url(url).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use js_sys::Uint8Array;
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+
+    #[wasm_bindgen(js_name = "imageFromBytes")]
+    pub fn image_from_bytes(data: Uint8Array) -> Result<Part, js_sys::Error> {
+        Part::image_binary_from_bytes(data.to_vec().as_slice())
+            .map_err(|e| js_sys::Error::new(&e.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = "imageFromBase64")]
+    pub fn image_from_base64(data: String) -> Result<Part, js_sys::Error> {
+        Part::image_binary_from_base64(data).map_err(|e| js_sys::Error::new(&e.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = "imageFromUrl")]
+    pub fn image_from_url(url: String) -> Result<Part, js_sys::Error> {
+        Part::image_url(url).map_err(|e| js_sys::Error::new(&e.to_string()))
     }
 }

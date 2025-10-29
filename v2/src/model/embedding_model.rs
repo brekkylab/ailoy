@@ -20,7 +20,7 @@ enum EmbeddingModelInner {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct EmbeddingModel {
@@ -117,10 +117,10 @@ mod py {
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Py<Self>> {
-            let inner = await_future(await_cache_result::<LocalEmbeddingModel>(
-                model_name,
-                progress_callback,
-            ))?;
+            let inner = await_future(
+                py,
+                await_cache_result::<LocalEmbeddingModel>(model_name, progress_callback),
+            )?;
             Py::new(
                 py,
                 EmbeddingModel {
@@ -138,11 +138,11 @@ mod py {
         }
 
         #[pyo3(signature = (text))]
-        fn run_sync(&mut self, text: String) -> PyResult<Embedding> {
+        fn run_sync(&mut self, py: Python<'_>, text: String) -> PyResult<Embedding> {
             let fut = match &mut self.inner {
                 EmbeddingModelInner::Local(model) => model.infer(text),
             };
-            await_future(fut).map_err(Into::into)
+            await_future(py, fut).map_err(Into::into)
         }
     }
 }
