@@ -84,35 +84,44 @@ response.
 <CodeTabs>
 
 ```python
-import ailoy as ai
 import asyncio
 
+import ailoy as ai
+
+
 async def main():
-    model = ai.LangModel.new_stream_api(spec="OpenAI", model_name="gpt-4o", api_key="YOUR_API_TOKEN_KEY")
-    agent = ai.Agent(model)
-    query = ai.Message(role="user", contents="Please give me a short poem about AI")
-    async for resp in agent.run([query]):
-        if resp.aggregated:
-            print(resp.aggregated.contents[0].text)
+    lm = ai.LangModel.new_stream_api(
+        "OpenAI", 
+        model_name="gpt-4o", 
+        api_key="YOUR_OPENAI_API_KEY"
+    )
+    agent = ai.Agent(lm)
+    async for resp in agent.run("Please give me a short poem about AI."):
+        if isinstance(resp.message.contents[0], ai.Part.Text):
+            print(resp.message.contents[0].text)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
 ```typescript
-import { Agent, LangModel } from "ailoy-node";
-import type { Message } from "ailoy-node";
+import * as ai from "ailoy-node";
 
 async function main() {
-  const lm = await LangModel.newStreamAPI(/* spec: */ "OpenAI", /* modelName: */ "gpt-5", /* apiKey: */ "YOUR_API_KEY");
-  const agent = new Agent(lm);
-  const query: Message = {
+  const lm = await ai.LangModel.newStreamAPI(
+    "OpenAI", /* spec: */ 
+    "gpt-5", /* modelName: */ 
+    "YOUR_OPENAI_API_KEY", /* apiKey: */ 
+  );
+  const agent = new ai.Agent(lm);
+  const query: ai.Message = {
     role: "user",
     contents: [{ type: "text", text: "Please give me a short poem about AI" }],
   };
   for await (const resp of agent.run([query])) {
-    if (resp.aggregated) {
-      console.log(resp.aggregated.contents[0].text);
+    if (resp.message.contents[0].type === "text") {
+      console.log(resp.message.contents[0].text); 
     }
   }
 }
@@ -123,19 +132,22 @@ main().catch((err) => {
 ```
 
 ```typescript web
-import { Agent, LangModel } from "ailoy-web";
-import type { Message } from "ailoy-web";
+import * as ai from "ailoy-web";
 
 async function main() {
-  const lm = await LangModel.newStreamAPI(/* spec: */ "OpenAI", /* modelName: */ "gpt-5", /* apiKey: */ "YOUR_API_KEY");
-  const agent = new Agent(lm);
-  const query: Message = {
+  const lm = await ai.LangModel.newStreamAPI(
+    "OpenAI", /* spec: */ 
+    "gpt-5", /* modelName: */ 
+    "YOUR_OPENAI_API_KEY", /* apiKey: */ 
+  );
+  const agent = new ai.Agent(lm);
+  const query: ai.Message = {
     role: "user",
     contents: [{ type: "text", text: "Please give me a short poem about AI" }],
   };
   for await (const resp of agent.run([query])) {
-    if (resp.aggregated) {
-      console.log(resp.aggregated.contents[0].text);
+    if (resp.message.contents[0].type === "text") {
+      console.log(resp.message.contents[0].text); 
     }
   }
 }
@@ -159,37 +171,65 @@ device — no API keys or internet connection required.
 <CodeTabs>
 
 ```python
-import ailoy as ai
 import asyncio
 
+import ailoy as ai
+
+
 async def main():
-    lm = await ai.LangModel.CreateLocal(model_name="Qwen/Qwen3-0.6B", progress_callback=print)
+    lm = await ai.LangModel.new_local(
+        model_name="Qwen/Qwen3-0.6B", 
+        progress_callback=print
+    )
     agent = ai.Agent(lm)
-    query = ai.Message(role="user", contents="Please give me a short poem about AI")
-    async for resp in agent.run([query]):
-        if resp.aggregated:
-            print(resp.aggregated.contents[0].text)
+    async for resp in agent.run("Please give me a short poem about AI"):
+        if isinstance(resp.message.contents[0], ai.Part.Text):
+            print(resp.message.contents[0].text)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
 ```typescript
-import { Agent, LangModel } from "ailoy-node";
-import type { Message } from "ailoy-node";
+import * as ai from "ailoy-node";
 
 async function main() {
-  const lm = await LangModel.newLocal(
+  const lm = await ai.LangModel.newLocal(
     "Qwen/Qwen3-0.6B", console.log
   );
-  const agent = new Agent(lm);
-  const query: Message = {
+  const agent = new ai.Agent(lm);
+  const query: ai.Message = {
     role: "user",
     contents: "Please give me a short poem about AI",
   };
   for await (const resp of agent.run([query])) {
-    if (resp.aggregated) {
-      console.log(resp.aggregated.contents[0].text);
+    if (resp.message.contents[0].type === "text") {
+      console.log(resp.message.contents[0].text); 
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal(
+    "Qwen/Qwen3-0.6B", console.log
+  );
+  const agent = new ai.Agent(lm);
+  const query: ai.Message = {
+    role: "user",
+    contents: "Please give me a short poem about AI",
+  };
+  for await (const resp of agent.run([query])) {
+    if (resp.message.contents[0].type === "text") {
+      console.log(resp.message.contents[0].text); 
     }
   }
 }
@@ -241,9 +281,9 @@ For a detailed explanation of the input and output formats in Ailoy, please refe
 Don't be surprised if the output changes each time you run it.
 
 An LLM's output includes a certain level of randomness, controlled by the `temperature` and `top_p`.
-In ailoy, it can be adjusted with `InferenceConfig`.
+In ailoy, it can be adjusted with `InferenceConfig` in `AgentConfig`.
 
-If both `temperature` and `top_p` are set to 0, no randomness will occur.
+If both `temperature` and `top_p` are set to 0, the answer becomes deterministic.
 :::
 
 {/* prettier-ignore-end */}

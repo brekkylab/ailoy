@@ -44,7 +44,6 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "API References",
       items: [
-        "api-references/internal-runtime-apis",
         {
           type: "html",
           value: `<a href="/ailoy/api-references/python/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Python API References</a>`,
@@ -52,12 +51,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: "html",
-          value: `<a href="/ailoy/api-references/nodejs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Node.js) API References</a>`,
+          value: `<a href="/ailoy/api-references/nodejs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">JavaScript(Node.js) API References</a>`,
           defaultStyle: true,
         },
         {
           type: "html",
-          value: `<a href="/ailoy/api-references/js-web/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Web) API References</a>`,
+          value: `<a href="/ailoy/api-references/js-web/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">JavaScript(Web) API References</a>`,
           defaultStyle: true,
         },
       ],

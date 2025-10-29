@@ -1,7 +1,8 @@
 # Multi-Turn Conversation
 
 Ailoy's `Agent` is designed to be stateless. It does not keep track of
-conversations. Each time you call the model, Ailoy treats it as an new request.
+conversation histories. Each time you call the model, agent treats it as a new
+request.
 
 If you want to create a multi-turn chat — for example, a back-and-forth
 conversation with the assistant — you must include the entire conversation
@@ -9,7 +10,7 @@ history (all previous messages) in the request.
 
 ## Example
 
-Let’s start with a simple one-turn conversation:
+Let’s start with a single-turn conversation:
 
 {/* prettier-ignore-start */}
 
