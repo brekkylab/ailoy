@@ -165,18 +165,18 @@ async def test_builtin_tool(agent: ai.Agent):
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
-                elif content.part_type == "value":
+                elif isinstance(content, ai.PartDelta.Value):
                     print(content.value)
                 else:
                     raise ValueError(
                         f"Content has invalid part_type: {content.part_type}"
                     )
             for tool_call in resp.delta.tool_calls:
-                if tool_call.part_type == "function":
+                if isinstance(tool_call, ai.PartDelta.Function):
                     print(tool_call.function.text, end="")
                 else:
                     raise ValueError(
-                        f"Tool call has invalid part_type: {content.part_type}"
+                        f"Tool call has invalid part_type: {tool_call.part_type}"
                     )
     print()
 
@@ -224,18 +224,18 @@ async def test_python_async_function_tool(agent: ai.Agent):
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
-                elif content.part_type == "value":
+                elif isinstance(content, ai.PartDelta.Value):
                     print(content.value)
                 else:
                     raise ValueError(
                         f"Content has invalid part_type: {content.part_type}"
                     )
             for tool_call in resp.delta.tool_calls:
-                if tool_call.part_type == "function":
+                if isinstance(tool_call, ai.PartDelta.Function):
                     print(tool_call.function.text, end="")
                 else:
                     raise ValueError(
-                        f"Tool call has invalid part_type: {content.part_type}"
+                        f"Tool call has invalid part_type: {tool_call.part_type}"
                     )
     print()
 
@@ -287,20 +287,20 @@ async def test_parallel_tool_call(agent: ai.Agent):
         config=ai.InferenceConfig(think_effort="disable"),
     ):
         for content in resp.message.contents:
-            if content.part_type == "text":
+            if isinstance(content, ai.PartDelta.Text):
                 print(f"{content.text=}")
-            elif content.part_type == "value":
+            elif isinstance(content, ai.PartDelta.Value):
                 print(f"{content.value=}")
             else:
                 raise ValueError(f"Content has invalid part_type: {content.part_type}")
         for tool_call in resp.message.tool_calls:
-            if tool_call.part_type == "function":
+            if isinstance(tool_call, ai.PartDelta.Function):
                 print(
                     f"function_call={tool_call.function.name}(**{tool_call.function.arguments})"
                 )
             else:
                 raise ValueError(
-                    f"Tool call has invalid part_type: {content.part_type}"
+                    f"Tool call has invalid part_type: {tool_call.part_type}"
                 )
 
     agent.remove_tools([t.get_description().name for t in tools])
@@ -329,18 +329,18 @@ async def test_mcp_tools(agent: ai.Agent):
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
-                elif content.part_type == "value":
+                elif isinstance(content, ai.PartDelta.Value):
                     print(content.value)
                 else:
                     raise ValueError(
                         f"Content has invalid part_type: {content.part_type}"
                     )
             for tool_call in resp.delta.tool_calls:
-                if tool_call.part_type == "function":
+                if isinstance(tool_call, ai.PartDelta.Function):
                     print(tool_call.function.text, end="")
                 else:
                     raise ValueError(
-                        f"Tool call has invalid part_type: {content.part_type}"
+                        f"Tool call has invalid part_type: {tool_call.part_type}"
                     )
     print()
 
