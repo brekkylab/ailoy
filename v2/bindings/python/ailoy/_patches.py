@@ -7,7 +7,6 @@ from typing import (
     Callable,
     Literal,
     Optional,
-    Self,
     Union,
     get_args,
     get_origin,
@@ -243,7 +242,7 @@ def get_json_schema(func: Callable) -> dict:
 
 class Tool(_Tool):
     @classmethod
-    def new_py_function(cls, func: Any, tool_desc: Optional[ToolDesc] = None) -> Self:
+    def new_py_function(cls, func: Any, tool_desc: Optional[ToolDesc] = None) -> _Tool:
         if tool_desc is None:
             try:
                 json_schema = get_json_schema(func)

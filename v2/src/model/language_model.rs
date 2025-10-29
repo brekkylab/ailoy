@@ -223,7 +223,10 @@ mod py {
     use super::*;
     use crate::{
         ffi::py::{base::await_future, cache_progress::await_cache_result},
-        value::py::{MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator},
+        value::{
+            Messages,
+            py::{MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator},
+        },
     };
 
     fn spawn_delta<'a>(
@@ -321,14 +324,14 @@ mod py {
         #[pyo3(name="infer_delta", signature = (messages, tools=None, documents=None, config=None))]
         fn infer_delta_py(
             &mut self,
-            messages: Vec<Message>,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<MessageDeltaOutputIterator> {
             let (_, rx) = spawn_delta(
                 self.clone(),
-                messages,
+                messages.into(),
                 tools.unwrap_or_default(),
                 documents.unwrap_or_default(),
                 config.unwrap_or_default(),
@@ -339,14 +342,14 @@ mod py {
         #[pyo3(name="infer_delta_sync", signature = (messages, tools=None, documents=None, config=None))]
         fn infer_delta_sync_py(
             &mut self,
-            messages: Vec<Message>,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
             let (rt, rx) = spawn_delta(
                 self.clone(),
-                messages,
+                messages.into(),
                 tools.unwrap_or_default(),
                 documents.unwrap_or_default(),
                 config.unwrap_or_default(),
@@ -359,7 +362,7 @@ mod py {
         fn infer_py<'py>(
             &'py self,
             py: Python<'py>,
-            messages: Vec<Message>,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
@@ -368,7 +371,7 @@ mod py {
             let fut = async move {
                 let out = this
                     .infer(
-                        messages,
+                        messages.into(),
                         tools.unwrap_or_default(),
                         documents.unwrap_or_default(),
                         config.unwrap_or_default(),
@@ -381,19 +384,25 @@ mod py {
         }
 
         #[pyo3(name="infer_sync", signature = (messages, tools=None, documents=None, config=None))]
-        fn infer_sync_py(
-            &mut self,
-            messages: Vec<Message>,
+        fn infer_sync_py<'py>(
+            &'py self,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
-        ) -> PyResult<MessageOutput> {
-            let fut = self.infer(
-                messages,
-                tools.unwrap_or_default(),
-                documents.unwrap_or_default(),
-                config.unwrap_or_default(),
-            );
+        ) -> PyResult<Py<MessageOutput>> {
+            let mut this = self.clone();
+            let fut = async move {
+                let out = this
+                    .infer(
+                        messages.into(),
+                        tools.unwrap_or_default(),
+                        documents.unwrap_or_default(),
+                        config.unwrap_or_default(),
+                    )
+                    .await?;
+                Python::attach(|py| Py::new(py, out))
+            };
             await_future(fut)
         }
 
@@ -447,9 +456,12 @@ mod node {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::ffi::node::{
-        cache::{JsCacheProgress, await_cache_result},
-        common::get_or_create_runtime,
+    use crate::{
+        ffi::node::{
+            cache::{JsCacheProgress, await_cache_result},
+            common::get_or_create_runtime,
+        },
+        value::Messages,
     };
 
     #[napi]
@@ -485,7 +497,7 @@ mod node {
         pub fn infer_delta_node<'a>(
             &'a mut self,
             env: Env,
-            messages: Vec<Message>,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             docs: Option<Vec<Document>>,
         ) -> Result<Object<'a>> {
@@ -494,10 +506,9 @@ mod node {
             let mut model = self.clone();
 
             rt.spawn(async move {
-                // let mut model = inner.model.lock().await;
                 let mut stream = model
                     .infer_delta(
-                        messages,
+                        messages.into(),
                         tools.unwrap_or(vec![]),
                         docs.unwrap_or(vec![]),
                         InferenceConfig::default(),
@@ -521,13 +532,13 @@ mod node {
         #[napi(js_name = "infer", ts_return_type = "MessageDeltaOutput")]
         pub async unsafe fn infer_node<'a>(
             &mut self,
-            messages: Vec<Message>,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             docs: Option<Vec<Document>>,
         ) -> napi::Result<MessageOutput> {
             let result = self
                 .infer(
-                    messages,
+                    messages.into(),
                     tools.unwrap_or(vec![]),
                     docs.unwrap_or(vec![]),
                     InferenceConfig::default(),
@@ -547,6 +558,7 @@ mod wasm {
     use crate::{
         ffi::web::{CacheProgressCallbackFn, stream_to_async_iterable},
         model::api::APISpecification,
+        value::Messages,
     };
 
     #[wasm_bindgen]
@@ -581,14 +593,15 @@ mod wasm {
         #[wasm_bindgen(js_name = inferDelta, unchecked_return_type = "AsyncIterable<MessageDeltaOutput>")]
         pub fn infer_delta_js(
             &mut self,
-            msgs: Vec<Message>,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             docs: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
-        ) -> JsValue {
+        ) -> Result<JsValue, js_sys::Error> {
             let mut model = self.clone();
+            let messages: Vec<Message> = messages.try_into()?;
             let stream = async_stream::stream! {
-                let mut inner_stream = model.infer_delta(msgs, tools.unwrap_or(vec![]), docs.unwrap_or(vec![]), config.unwrap_or_default());
+                let mut inner_stream = model.infer_delta(messages, tools.unwrap_or(vec![]), docs.unwrap_or(vec![]), config.unwrap_or_default());
                 while let Some(item) = inner_stream.next().await {
                     yield item;
                 }
@@ -599,19 +612,20 @@ mod wasm {
                     .map_err(|e| JsValue::from_str(&e.to_string()))
             }));
 
-            stream_to_async_iterable(js_stream).into()
+            Ok(stream_to_async_iterable(js_stream).into())
         }
 
         #[wasm_bindgen(js_name = infer)]
         pub async fn infer_js(
             &mut self,
-            msgs: Vec<Message>,
+            messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             docs: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
         ) -> Result<MessageOutput, JsValue> {
+            let messages = messages.try_into()?;
             self.infer(
-                msgs,
+                messages,
                 tools.unwrap_or(vec![]),
                 docs.unwrap_or(vec![]),
                 config.unwrap_or_default(),

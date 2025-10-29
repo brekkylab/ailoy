@@ -1,3 +1,32 @@
+/**
+ * The Agent is the central orchestrator that connects the **language model**, **tools**, and **knowledge** components.
+ * It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
+ *
+ * In essence, the Agent:
+ * - Understands user input
+ * - Interprets structured responses from the language model (such as tool calls)
+ * - Executes tools as needed
+ * - Retrieves and integrates contextual knowledge before or during inference
+ *
+ * # Public APIs
+ * - `run_delta`: Runs a user query and streams incremental deltas (partial outputs)
+ * - `run`: Runs a user query and returns a complete message once all deltas are accumulated
+ *
+ * ## Delta vs. Complete Message
+ * A *delta* represents a partial piece of model output, such as a text fragment or intermediate reasoning step.
+ * Deltas can be accumulated into a full message using the provided accumulation utilities.
+ * This allows real-time streaming while preserving the ability to reconstruct the final structured result.
+ *
+ * See `MessageDelta`.
+ *
+ * # Components
+ * - **Language Model**: Generates natural language and structured outputs.
+ *   It interprets the conversation context and predicts the assistant’s next action.
+ * - **Tool**: Represents external functions or APIs that the model can dynamically invoke.
+ *   The `Agent`` detects tool calls and automatically executes them during the reasoning loop.
+ * - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases.
+ *   When available, the `Agent`` enriches model input with these results before generating an answer.
+ */
 export class Agent {
   free(): void;
   [Symbol.dispose](): void;
@@ -13,11 +42,11 @@ export class Agent {
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
   runDelta(
-    messages: Message[],
+    messages: Array<Message> | Array<SingleTextMessage> | string,
     config?: InferenceConfig | null
   ): AsyncIterable<MessageDeltaOutput>;
   run(
-    messages: Message[],
+    messages: Array<Message> | Array<SingleTextMessage> | string,
     config?: InferenceConfig | null
   ): AsyncIterable<MessageOutput>;
 }
@@ -59,13 +88,13 @@ export class LangModel {
     apiKey: string
   ): Promise<LangModel>;
   inferDelta(
-    msgs: Message[],
+    messages: Array<Message> | Array<SingleTextMessage> | string,
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
     config?: InferenceConfig | null
   ): AsyncIterable<MessageDeltaOutput>;
   infer(
-    msgs: Message[],
+    messages: Array<Message> | Array<SingleTextMessage> | string,
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
     config?: InferenceConfig | null
@@ -203,7 +232,7 @@ export interface Message {
    */
   role: Role;
   /**
-   * Primary message parts (e.g., text, image, value, or function).
+   * Primary parts of the message (e.g., text, image, value, or function).
    */
   contents: Part[];
   /**
@@ -430,6 +459,40 @@ export type PartImageColorspace = "grayscale" | "rgb" | "rgba";
  * The author of a message (or streaming delta) in a chat.
  */
 export type Role = "system" | "user" | "assistant" | "tool";
+
+/**
+ * A simplified form of [Message] for concise definition.
+ * All other members are identical to [Message], but `contents` is a `String` instead of `Vec<Part>`.
+ * This can be converted to Message via `.into()`.
+ */
+export interface SingleTextMessage {
+  /**
+   * Author of the message.
+   */
+  role: Role;
+  /**
+   * Primary part of message in text.
+   */
+  contents: string;
+  /**
+   * Optional stable identifier for deduplication or threading.
+   */
+  id?: string;
+  /**
+   * Internal “thinking” text used by some models before producing final output.
+   */
+  thinking?: string;
+  /**
+   * Tool-call parts emitted alongside the main contents.
+   */
+  tool_calls?: Part[];
+  /**
+   * Optional signature for the `thinking` field.
+   *
+   * This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
+   */
+  signature?: string;
+}
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
 

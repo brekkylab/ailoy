@@ -1,12 +1,11 @@
-use anyhow::Ok;
 use pyo3::{prelude::*, types::PyDict};
 use pyo3_stub_gen::derive::*;
 
 use crate::{
     ffi::py::base::{PyRepr, python_to_value, value_to_python},
     value::{
-        Delta, Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
-        Role, ToolDesc,
+        Delta, Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, PartDelta, Role,
+        ToolDesc,
     },
 };
 
@@ -39,63 +38,6 @@ impl PartDelta {
             PartDelta::Value { .. } => "value",
             PartDelta::Null {} => "null",
         }
-    }
-}
-
-#[gen_stub_pymethods]
-#[pymethods]
-impl Message {
-    #[new]
-    #[pyo3(signature = (role, contents = None, id = None, thinking = None, tool_calls = None, signature = None))]
-    fn __new__(
-        role: Role,
-        contents: Option<Vec<Part>>,
-        id: Option<String>,
-        thinking: Option<String>,
-        tool_calls: Option<Vec<Part>>,
-        signature: Option<String>,
-    ) -> Self {
-        Self {
-            role,
-            contents: contents.unwrap_or_default(),
-            id,
-            thinking,
-            tool_calls,
-            signature,
-        }
-    }
-
-    pub fn __repr__(&self) -> String {
-        format!(
-            "Message(role={}, contents=[{}], id={}, thinking={}, tool_calls=[{}], signature={})",
-            self.role.__repr__(),
-            self.contents
-                .iter()
-                .map(|content| content.__repr__())
-                .collect::<Vec<_>>()
-                .join(", "),
-            self.id.__repr__(),
-            self.thinking.__repr__(),
-            self.tool_calls.as_ref().map_or(String::new(), |calls| {
-                calls
-                    .iter()
-                    .map(|tool_part| tool_part.__repr__())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            }),
-            self.signature.__repr__(),
-        )
-    }
-
-    fn append_contents(&mut self, part: Part) {
-        self.contents.push(part);
-    }
-
-    fn append_tool_call(&mut self, part: Part) {
-        match &mut self.tool_calls {
-            Some(tool_calls) => tool_calls.push(part),
-            None => self.tool_calls = vec![part].into(),
-        };
     }
 }
 
@@ -210,7 +152,13 @@ impl ToolDesc {
         } else {
             None
         };
-        Ok(Self::new(name, description, parameters, returns)).map_err(Into::into)
+        anyhow::Ok(Self::new(
+            name,
+            description,
+            parameters.into(),
+            returns.map(|returns| returns.into()),
+        ))
+        .map_err(Into::into)
     }
 
     pub fn __repr__(&self) -> String {

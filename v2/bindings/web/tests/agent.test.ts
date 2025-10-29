@@ -83,7 +83,25 @@ for (const cfg of modelConfigs) {
       agent = await cfg.createAgent();
     });
 
-    test.sequential("Simple Chat", async () => {
+    test.sequential("Simple Chat(single string)", async () => {
+      for await (const resp of agent.run("What is your name?")) {
+        if (resp.accumulated !== undefined) {
+          console.log(resp.accumulated);
+        }
+      }
+    });
+
+    test.sequential("Simple Chat(string contents)", async () => {
+      for await (const resp of agent.run([
+        { role: "user", contents: "What is your name?" },
+      ])) {
+        if (resp.accumulated !== undefined) {
+          console.log(resp.accumulated);
+        }
+      }
+    });
+
+    test.sequential("Simple Chat(string contents)", async () => {
       for await (const resp of agent.run([
         {
           role: "user",
@@ -130,17 +148,9 @@ for (const cfg of modelConfigs) {
 
         agent.addTool(tool);
 
-        for await (const resp of agent.run([
-          {
-            role: "user",
-            contents: [
-              {
-                type: "text",
-                text: "What is the temperature in Seoul now? Answer in Celsius.",
-              },
-            ],
-          },
-        ])) {
+        for await (const resp of agent.run(
+          "What is the temperature in Seoul now? Answer in Celsius."
+        )) {
           if (resp.accumulated !== undefined) {
             console.log(resp.accumulated);
           }
@@ -230,22 +240,9 @@ for (const cfg of modelConfigs) {
                 `,
         };
 
-        for await (const resp of agent.run(
-          [
-            {
-              role: "user",
-              contents: [
-                {
-                  type: "text",
-                  text: "What is Ailoy?",
-                },
-              ],
-            },
-          ],
-          {
-            documentPolyfill,
-          }
-        )) {
+        for await (const resp of agent.run("What is Ailoy?", {
+          documentPolyfill,
+        })) {
           if (resp.accumulated !== undefined) {
             console.log(resp.accumulated);
           }
