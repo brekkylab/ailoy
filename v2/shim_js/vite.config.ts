@@ -2,8 +2,15 @@ import { defineConfig } from "vitest/config";
 
 const SAFARI = process.env.BROWSER === "safari";
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({}) => {
   return {
+    build: {
+      lib: {
+        entry: ["src/index.ts"],
+        formats: ["es"],
+      },
+    },
+    plugins: [],
     test: {
       exclude: ["**/node_modules/**"],
       include: ["**/tests/*.test.**"],

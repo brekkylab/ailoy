@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         external: [
           "./ailoy-web_bg.js",
-          "./ailoy-web.js",
+          "./ailoy-web_bg.wasm",
           "./shim_js/dist/index.js",
         ],
       },
@@ -33,7 +33,6 @@ export default defineConfig(({ mode }) => {
             src: [
               "./src/ailoy-web_bg.js",
               "./src/ailoy-web_bg.wasm",
-              "./src/ailoy-web.js",
               "./src/shim_js",
             ],
             dest: "./",
