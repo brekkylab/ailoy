@@ -208,11 +208,15 @@ impl Agent {
     ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         let knowledge = self.knowledge.clone();
         let tools = self.tools.clone();
+        let AgentConfig {
+            inference: inference_config,
+            knowledge: knowledge_config,
+        } = config.unwrap_or_default();
         let strm = async_stream::try_stream! {
             let docs = Self::get_docs(
                 &messages,
                 &knowledge,
-                config.clone().unwrap_or_default().knowledge.unwrap_or_default()
+                knowledge_config.unwrap_or_default()
             ).await?;
             let tool_descs = Self::get_tool_descs(&tools);
             loop {
@@ -223,7 +227,7 @@ impl Agent {
                         messages.clone(),
                         tool_descs.clone(),
                         docs.clone(),
-                        config.clone().unwrap_or_default().inference.unwrap_or_default()
+                        inference_config.clone().unwrap_or_default()
                     );
                     while let Some(out) = strm.next().await {
                         let out = out?;
@@ -260,11 +264,15 @@ impl Agent {
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
         let knowledge = self.knowledge.clone();
         let tools = self.tools.clone();
+        let AgentConfig {
+            inference: inference_config,
+            knowledge: knowledge_config,
+        } = config.unwrap_or_default();
         let strm = async_stream::try_stream! {
             let docs = Self::get_docs(
                 &messages,
                 &knowledge,
-                config.clone().unwrap_or_default().knowledge.unwrap_or_default()
+                knowledge_config.unwrap_or_default()
             ).await?;
             let tool_descs = Self::get_tool_descs(&tools);
             loop {
@@ -273,7 +281,7 @@ impl Agent {
                     messages.clone(),
                     tool_descs.clone(),
                     docs.clone(),
-                    config.clone().unwrap_or_default().inference.unwrap_or_default()
+                    inference_config.clone().unwrap_or_default()
                 ).await?;
                 let assistant_msg = assistant_out.message.clone();
                 messages.push(assistant_msg.clone());
