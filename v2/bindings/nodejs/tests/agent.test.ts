@@ -89,9 +89,7 @@ for (const cfg of modelConfigs) {
 
     test.sequential("Simple Chat(single string)", async () => {
       for await (const resp of agent.run("What is your name?")) {
-        if (resp?.message !== undefined) {
-          console.log(resp?.message);
-        }
+        console.log(resp.message);
       }
     });
 
@@ -99,9 +97,7 @@ for (const cfg of modelConfigs) {
       for await (const resp of agent.run([
         { role: "user", contents: "What is your name?" },
       ])) {
-        if (resp?.message !== undefined) {
-          console.log(resp?.message);
-        }
+        console.log(resp.message);
       }
     });
 
@@ -112,9 +108,7 @@ for (const cfg of modelConfigs) {
           contents: [{ type: "text", text: "What is your name?" }],
         },
       ])) {
-        if (resp?.message !== undefined) {
-          console.log(resp.message);
-        }
+        console.log(resp.message);
       }
     });
 
@@ -127,9 +121,7 @@ for (const cfg of modelConfigs) {
         for await (const resp of agent.runDelta(
           "List the files in the current directory."
         )) {
-          if (resp?.delta !== undefined) {
-            console.log(`[${cfg.name}] `, resp.delta);
-          }
+          console.log(`[${cfg.name}] `, resp.delta);
         }
 
         agent.removeTool(tool.description.name);
@@ -148,9 +140,7 @@ for (const cfg of modelConfigs) {
         for await (const resp of agent.runDelta(
           "What time is it now in Asia/Seoul? Answer in local timezone."
         )) {
-          if (resp?.delta !== undefined) {
-            console.log(resp.delta);
-          }
+          console.log(resp.delta);
         }
 
         agent.removeTools(client.tools.map((t) => t.description.name));
@@ -195,9 +185,7 @@ for (const cfg of modelConfigs) {
         for await (const resp of agent.runDelta(
           "What is the temperature in Seoul now? Answer in Celsius."
         )) {
-          if (resp?.delta !== undefined) {
-            console.log(resp.delta);
-          }
+          console.log(resp.delta);
         }
 
         agent.removeTool(tool.description.name);
@@ -219,9 +207,7 @@ for (const cfg of modelConfigs) {
               ],
             },
           ])) {
-            if (resp?.message !== undefined) {
-              console.log(resp.message);
-            }
+            console.log(resp.message);
           }
         },
         10000
@@ -241,9 +227,7 @@ for (const cfg of modelConfigs) {
               ],
             },
           ])) {
-            if (resp?.message !== undefined) {
-              console.log(resp.message);
-            }
+            console.log(resp.message);
           }
         },
         10000
@@ -285,11 +269,9 @@ After the user’s question, a list of documents retrieved from the knowledge ba
         };
 
         for await (const resp of agent.runDelta("What is Ailoy?", {
-          documentPolyfill,
+          inference: { documentPolyfill },
         })) {
-          if (resp?.delta !== undefined) {
-            console.log(resp.delta);
-          }
+          console.log(resp.delta);
         }
 
         agent.removeKnowledge();

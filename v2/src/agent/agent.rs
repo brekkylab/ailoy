@@ -13,7 +13,8 @@ use crate::{
     },
 };
 
-/// Configuration for agents
+/// Configuration for running the agent.
+///
 /// See `InferenceConfig` and `KnowledgeConfig` for more details.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +34,7 @@ pub struct AgentConfig {
 /// It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
 ///
 /// In essence, the Agent:
+///
 /// - Understands user input
 /// - Interprets structured responses from the language model (such as tool calls)
 /// - Executes tools as needed
@@ -51,11 +53,11 @@ pub struct AgentConfig {
 ///
 /// # Components
 /// - **Language Model**: Generates natural language and structured outputs. It interprets the conversation context and predicts the assistant’s next action.
-/// - **Tool**: Represents external functions or APIs that the model can dynamically invoke. The `Agent`` detects tool calls and automatically executes them during the reasoning loop.
-/// - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases. When available, the `Agent`` enriches model input with these results before generating an answer.
+/// - **Tool**: Represents external functions or APIs that the model can dynamically invoke. The `Agent` detects tool calls and automatically executes them during the reasoning loop.
+/// - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases. When available, the `Agent` enriches model input with these results before generating an answer.
 #[derive(Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Agent {
@@ -301,8 +303,12 @@ impl Agent {
 
 #[cfg(feature = "python")]
 mod py {
-    use pyo3::{Bound, Py, PyAny, PyResult, Python, pymethods, types::PyType};
+    use std::sync::Arc;
+
+    use futures::lock::Mutex;
+    use pyo3::pymethods;
     use pyo3_stub_gen_derive::gen_stub_pymethods;
+    use tokio::sync::mpsc;
 
     use super::*;
     use crate::value::{
@@ -315,20 +321,18 @@ mod py {
         messages: Vec<Message>,
         config: Option<AgentConfig>,
     ) -> anyhow::Result<(
-        &'a tokio::runtime::Runtime,
-        async_channel::Receiver<anyhow::Result<MessageDeltaOutput>>,
+        tokio::runtime::Runtime,
+        mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>,
     )> {
-        let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageDeltaOutput>>();
-        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
+        let rt = tokio::runtime::Runtime::new().unwrap();
         rt.spawn(async move {
             let mut stream = agent.run_delta(messages, config).boxed();
 
             while let Some(item) = stream.next().await {
-                if tx.send(item).await.is_err() {
+                if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
                 }
-                // Add a yield point to allow other tasks to run
-                tokio::task::yield_now().await;
             }
         });
         Ok((rt, rx))
@@ -339,20 +343,18 @@ mod py {
         messages: Vec<Message>,
         config: Option<AgentConfig>,
     ) -> anyhow::Result<(
-        &'a tokio::runtime::Runtime,
-        async_channel::Receiver<anyhow::Result<MessageOutput>>,
+        tokio::runtime::Runtime,
+        mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>,
     )> {
-        let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageOutput>>();
-        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
+        let rt = tokio::runtime::Runtime::new().unwrap();
         rt.spawn(async move {
             let mut stream = agent.run(messages, config).boxed();
 
             while let Some(item) = stream.next().await {
-                if tx.send(item).await.is_err() {
+                if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
                 }
-                // Add a yield point to allow other tasks to run
-                tokio::task::yield_now().await;
             }
         });
         Ok((rt, rx))
@@ -378,21 +380,6 @@ mod py {
         #[pyo3(signature = (lm, tools = None))]
         fn __new__(lm: LangModel, tools: Option<Vec<Tool>>) -> Self {
             Agent::new(lm, tools.unwrap_or_default())
-        }
-
-        #[classmethod]
-        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[Agent]"))]
-        #[pyo3(signature = (lm, tools = None))]
-        fn create<'py>(
-            _cls: &Bound<'py, PyType>,
-            py: Python<'py>,
-            lm: LangModel,
-            tools: Option<Vec<Tool>>,
-        ) -> PyResult<Bound<'py, PyAny>> {
-            let fut = async move {
-                Python::attach(|py| Py::new(py, Agent::new(lm, tools.unwrap_or(vec![]))))
-            };
-            pyo3_async_runtimes::tokio::future_into_py(py, fut)
         }
 
         pub fn __repr__(&self) -> String {
@@ -439,8 +426,11 @@ mod py {
             messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputIterator> {
-            let (_, rx) = spawn_delta(self.clone(), messages.into(), config)?;
-            Ok(MessageDeltaOutputIterator { rx })
+            let (_rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
+            Ok(MessageDeltaOutputIterator {
+                _rt,
+                rx: Arc::new(Mutex::new(rx)),
+            })
         }
 
         #[pyo3(name="run_delta_sync", signature = (messages, config=None))]
@@ -449,8 +439,8 @@ mod py {
             messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
-            let (rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
-            Ok(MessageDeltaOutputSyncIterator { rt, rx })
+            let (_rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
+            Ok(MessageDeltaOutputSyncIterator { _rt, rx })
         }
 
         #[pyo3(name="run", signature = (messages, config=None))]
@@ -459,8 +449,11 @@ mod py {
             messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageOutputIterator> {
-            let (_, rx) = spawn(self.clone(), messages.into(), config)?;
-            Ok(MessageOutputIterator { rx })
+            let (_rt, rx) = spawn(self.clone(), messages.into(), config)?;
+            Ok(MessageOutputIterator {
+                _rt,
+                rx: Arc::new(Mutex::new(rx)),
+            })
         }
 
         #[pyo3(name="run_sync", signature = (messages, config=None))]
@@ -469,8 +462,8 @@ mod py {
             messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
-            let (rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
-            Ok(MessageDeltaOutputSyncIterator { rt, rx })
+            let (_rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
+            Ok(MessageDeltaOutputSyncIterator { _rt, rx })
         }
     }
 }

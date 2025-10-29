@@ -15,7 +15,10 @@ pub type Metadata = HashMap<String, Value>;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(
@@ -31,7 +34,10 @@ pub struct VectorStoreAddInput {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(
@@ -48,7 +54,10 @@ pub struct VectorStoreGetResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(
@@ -98,7 +107,7 @@ pub enum VectorStoreInner {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct VectorStore {
@@ -261,7 +270,7 @@ mod py {
             py: Python<'a>,
             dim: i32,
         ) -> PyResult<Py<Self>> {
-            let store = await_future(FaissStore::new(dim))?;
+            let store = await_future(py, FaissStore::new(dim))?;
             Py::new(py, Self::new_faiss(store))
         }
 
@@ -273,26 +282,38 @@ mod py {
             url: String,
             collection_name: Option<String>,
         ) -> PyResult<Py<Self>> {
-            let store = await_future(ChromaStore::new(&url, collection_name.as_deref()))?;
+            let store = await_future(py, ChromaStore::new(&url, collection_name.as_deref()))?;
             Py::new(py, Self::new_chroma(store))
         }
 
         #[pyo3(name = "add_vector")]
-        fn add_vector_py(&mut self, input: Py<VectorStoreAddInput>) -> PyResult<String> {
-            await_future(self.add_vector(input.into()))
+        fn add_vector_py(
+            &mut self,
+            py: Python<'_>,
+            input: Py<VectorStoreAddInput>,
+        ) -> PyResult<String> {
+            await_future(py, self.add_vector(input.into()))
         }
 
         #[pyo3(name = "add_vectors")]
         fn add_vectors_py(
             &mut self,
+            py: Python<'_>,
             inputs: Vec<Py<VectorStoreAddInput>>,
         ) -> PyResult<Vec<String>> {
-            await_future(self.add_vectors(inputs.into_iter().map(|input| input.into()).collect()))
+            await_future(
+                py,
+                self.add_vectors(inputs.into_iter().map(|input| input.into()).collect()),
+            )
         }
 
         #[pyo3(name = "get_by_id")]
-        fn get_by_id_py(&self, id: String) -> PyResult<Option<VectorStoreGetResult>> {
-            let result = await_future(self.get_by_id(&id))?;
+        fn get_by_id_py(
+            &self,
+            py: Python<'_>,
+            id: String,
+        ) -> PyResult<Option<VectorStoreGetResult>> {
+            let result = await_future(py, self.get_by_id(&id))?;
             match result {
                 Some(result) => Ok(Some(result.into())),
                 None => Ok(None),
@@ -300,8 +321,13 @@ mod py {
         }
 
         #[pyo3(name = "get_by_ids")]
-        fn get_by_ids_py(&self, ids: Vec<String>) -> PyResult<Vec<VectorStoreGetResult>> {
+        fn get_by_ids_py(
+            &self,
+            py: Python<'_>,
+            ids: Vec<String>,
+        ) -> PyResult<Vec<VectorStoreGetResult>> {
             Ok(await_future(
+                py,
                 self.get_by_ids(&ids.iter().map(|id| id.as_str()).collect::<Vec<_>>()),
             )?
             .into_iter()
@@ -312,10 +338,11 @@ mod py {
         #[pyo3(name = "retrieve")]
         fn retrieve_py(
             &self,
+            py: Python<'_>,
             query_embedding: Embedding,
             top_k: usize,
         ) -> PyResult<Vec<VectorStoreRetrieveResult>> {
-            Ok(await_future(self.retrieve(query_embedding, top_k))?
+            Ok(await_future(py, self.retrieve(query_embedding, top_k))?
                 .into_iter()
                 .map(|result| result.into())
                 .collect::<Vec<_>>())
@@ -324,33 +351,39 @@ mod py {
         #[pyo3(name = "batch_retrieve")]
         fn batch_retrieve_py(
             &self,
+            py: Python<'_>,
             query_embeddings: Vec<Embedding>,
             top_k: usize,
         ) -> PyResult<Vec<Vec<VectorStoreRetrieveResult>>> {
-            Ok(await_future(self.batch_retrieve(query_embeddings, top_k))?
-                .into_iter()
-                .map(|batch| batch.into_iter().map(|item| item.into()).collect())
-                .collect())
+            Ok(
+                await_future(py, self.batch_retrieve(query_embeddings, top_k))?
+                    .into_iter()
+                    .map(|batch| batch.into_iter().map(|item| item.into()).collect())
+                    .collect(),
+            )
         }
 
         #[pyo3(name = "remove_vector")]
-        fn remove_vector_py(&mut self, id: String) -> PyResult<()> {
-            await_future(self.remove_vector(&id))
+        fn remove_vector_py(&mut self, py: Python<'_>, id: String) -> PyResult<()> {
+            await_future(py, self.remove_vector(&id))
         }
 
         #[pyo3(name = "remove_vectors")]
-        fn remove_vectors_py(&mut self, ids: Vec<String>) -> PyResult<()> {
-            await_future(self.remove_vectors(&ids.iter().map(|id| id.as_str()).collect::<Vec<_>>()))
+        fn remove_vectors_py(&mut self, py: Python<'_>, ids: Vec<String>) -> PyResult<()> {
+            await_future(
+                py,
+                self.remove_vectors(&ids.iter().map(|id| id.as_str()).collect::<Vec<_>>()),
+            )
         }
 
         #[pyo3(name = "clear")]
-        fn clear_py(&mut self) -> PyResult<()> {
-            await_future(self.clear())
+        fn clear_py(&mut self, py: Python<'_>) -> PyResult<()> {
+            await_future(py, self.clear())
         }
 
         #[pyo3(name = "count")]
-        fn count_py(&self) -> PyResult<usize> {
-            await_future(self.count())
+        fn count_py(&self, py: Python<'_>) -> PyResult<usize> {
+            await_future(py, self.count())
         }
     }
 }

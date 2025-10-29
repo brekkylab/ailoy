@@ -5,6 +5,7 @@
  * It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
  *
  * In essence, the Agent:
+ *
  * - Understands user input
  * - Interprets structured responses from the language model (such as tool calls)
  * - Executes tools as needed
@@ -23,8 +24,8 @@
  *
  * # Components
  * - **Language Model**: Generates natural language and structured outputs. It interprets the conversation context and predicts the assistant’s next action.
- * - **Tool**: Represents external functions or APIs that the model can dynamically invoke. The `Agent`` detects tool calls and automatically executes them during the reasoning loop.
- * - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases. When available, the `Agent`` enriches model input with these results before generating an answer.
+ * - **Tool**: Represents external functions or APIs that the model can dynamically invoke. The `Agent` detects tool calls and automatically executes them during the reasoning loop.
+ * - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases. When available, the `Agent` enriches model input with these results before generating an answer.
  */
 export declare class Agent {
   constructor(lm: LangModel, tools?: Array<Tool> | undefined | null);
@@ -134,7 +135,8 @@ export declare class VectorStore {
 }
 
 /**
- * Configuration for agents
+ * Configuration for running the agent.
+ *
  * See `InferenceConfig` and `KnowledgeConfig` for more details.
  */
 export interface AgentConfig {
@@ -303,7 +305,7 @@ export interface MessageDeltaOutput {
 }
 
 export interface MessageDeltaOutputIteratorResult {
-  value?: MessageDeltaOutput;
+  value: MessageDeltaOutput;
   done: boolean;
 }
 
@@ -313,7 +315,7 @@ export interface MessageOutput {
 }
 
 export interface MessageOutputIteratorResult {
-  value?: MessageOutput;
+  value: MessageOutput;
   done: boolean;
 }
 
@@ -395,7 +397,7 @@ export type PartDelta =
  *     name: "translate".into(),
  *     arguments: r#"{"text":"hi"}"#.into(),
  * };
- * `
+ * ```
  */
 export type PartDeltaFunction =
   | { type: "verbatim"; text: string }

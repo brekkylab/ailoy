@@ -42,7 +42,7 @@ pub enum ThinkEffort {
     feature = "python",
     pyo3_stub_gen::derive::gen_stub_pyclass_complex_enum
 )]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(discriminant_case = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -63,7 +63,10 @@ impl Default for Grammar {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -150,7 +153,7 @@ enum LangModelInner {
 
 #[derive(Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct LangModel {
@@ -217,8 +220,10 @@ impl LangModelInference for LangModel {
 
 #[cfg(feature = "python")]
 mod py {
+    use futures::lock::Mutex;
     use pyo3::{Bound, Py, PyAny, PyResult, Python, pymethods, types::PyType};
     use pyo3_stub_gen_derive::*;
+    use tokio::sync::mpsc;
 
     use super::*;
     use crate::{
@@ -236,22 +241,20 @@ mod py {
         documents: Vec<Document>,
         config: InferenceConfig,
     ) -> anyhow::Result<(
-        &'a tokio::runtime::Runtime,
-        async_channel::Receiver<anyhow::Result<MessageDeltaOutput>>,
+        tokio::runtime::Runtime,
+        mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>,
     )> {
-        let (tx, rx) = async_channel::unbounded::<anyhow::Result<MessageDeltaOutput>>();
-        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
+        let rt = tokio::runtime::Runtime::new().unwrap();
         rt.spawn(async move {
             let mut stream = model
                 .infer_delta(messages, tools, documents, config)
                 .boxed();
 
             while let Some(item) = stream.next().await {
-                if tx.send(item).await.is_err() {
+                if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
                 }
-                // Add a yield point to allow other tasks to run
-                tokio::task::yield_now().await;
             }
         });
         Ok((rt, rx))
@@ -294,10 +297,10 @@ mod py {
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Py<Self>> {
-            let inner = await_future(await_cache_result::<LocalLangModel>(
-                model_name,
-                progress_callback,
-            ))?;
+            let inner = await_future(
+                py,
+                await_cache_result::<LocalLangModel>(model_name, progress_callback),
+            )?;
             Py::new(
                 py,
                 LangModel {
@@ -329,14 +332,17 @@ mod py {
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<MessageDeltaOutputIterator> {
-            let (_, rx) = spawn_delta(
+            let (_rt, rx) = spawn_delta(
                 self.clone(),
                 messages.into(),
                 tools.unwrap_or_default(),
                 documents.unwrap_or_default(),
                 config.unwrap_or_default(),
             )?;
-            Ok(MessageDeltaOutputIterator { rx })
+            Ok(MessageDeltaOutputIterator {
+                _rt,
+                rx: Arc::new(Mutex::new(rx)),
+            })
         }
 
         #[pyo3(name="infer_delta_sync", signature = (messages, tools=None, documents=None, config=None))]
@@ -347,14 +353,14 @@ mod py {
             documents: Option<Vec<Document>>,
             config: Option<InferenceConfig>,
         ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
-            let (rt, rx) = spawn_delta(
+            let (_rt, rx) = spawn_delta(
                 self.clone(),
                 messages.into(),
                 tools.unwrap_or_default(),
                 documents.unwrap_or_default(),
                 config.unwrap_or_default(),
             )?;
-            Ok(MessageDeltaOutputSyncIterator { rt, rx })
+            Ok(MessageDeltaOutputSyncIterator { _rt, rx })
         }
 
         #[pyo3(name="infer", signature = (messages, tools=None, documents=None, config=None))]
@@ -386,6 +392,7 @@ mod py {
         #[pyo3(name="infer_sync", signature = (messages, tools=None, documents=None, config=None))]
         fn infer_sync_py<'py>(
             &'py self,
+            py: Python<'_>,
             messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
@@ -403,7 +410,7 @@ mod py {
                     .await?;
                 Python::attach(|py| Py::new(py, out))
             };
-            await_future(fut)
+            await_future(py, fut)
         }
 
         pub fn __repr__(&self) -> String {

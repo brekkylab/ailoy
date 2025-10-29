@@ -35,7 +35,6 @@ default = []
 [dependencies]
 ailoy-macros = { path = "./macros" }
 anyhow = "1"
-async-channel = "2.5"
 async-stream = "0.3"
 async-trait = "0.1.89"
 aws-config = { version = "1.8.6", optional = true }

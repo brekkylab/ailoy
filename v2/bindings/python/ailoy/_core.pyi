@@ -12,6 +12,7 @@ class Agent:
     It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
     
     In essence, the Agent:
+    
     - Understands user input
     - Interprets structured responses from the language model (such as tool calls)
     - Executes tools as needed
@@ -30,16 +31,14 @@ class Agent:
     
     # Components
     - **Language Model**: Generates natural language and structured outputs. It interprets the conversation context and predicts the assistant’s next action.
-    - **Tool**: Represents external functions or APIs that the model can dynamically invoke. The `Agent`` detects tool calls and automatically executes them during the reasoning loop.
-    - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases. When available, the `Agent`` enriches model input with these results before generating an answer.
+    - **Tool**: Represents external functions or APIs that the model can dynamically invoke. The `Agent` detects tool calls and automatically executes them during the reasoning loop.
+    - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases. When available, the `Agent` enriches model input with these results before generating an answer.
     """
     @property
     def lm(self) -> LangModel: ...
     @property
     def tools(self) -> builtins.list[Tool]: ...
     def __new__(cls, lm: LangModel, tools: typing.Optional[typing.Sequence[Tool]] = None) -> Agent: ...
-    @classmethod
-    def create(cls, lm: LangModel, tools: typing.Optional[typing.Sequence[Tool]] = None) -> typing.Awaitable[Agent]: ...
     def __repr__(self) -> builtins.str: ...
     def add_tools(self, tools: typing.Sequence[Tool]) -> None: ...
     def add_tool(self, tool: Tool) -> None: ...
@@ -53,7 +52,8 @@ class Agent:
 @typing.final
 class AgentConfig:
     r"""
-    Configuration for agents
+    Configuration for running the agent.
+    
     See `InferenceConfig` and `KnowledgeConfig` for more details.
     """
     @property
@@ -166,6 +166,13 @@ class InferenceConfig:
     @grammar.setter
     def grammar(self, value: typing.Optional[Grammar]) -> None: ...
     def __new__(cls, document_polyfill: typing.Optional[DocumentPolyfill] = None, think_effort: typing.Optional[typing.Literal["disable", "enable", "low", "medium", "high"]] = None, temperature: typing.Optional[builtins.float] = None, top_p: typing.Optional[builtins.float] = None, max_tokens: typing.Optional[builtins.int] = None) -> InferenceConfig: ...
+
+@typing.final
+class Knowledge:
+    @classmethod
+    def new_vector_store(cls, store: VectorStore, embedding_model: EmbeddingModel) -> Knowledge: ...
+    async def retrieve(self, query: builtins.str, config: KnowledgeConfig) -> builtins.list[Document]: ...
+    def as_tool(self) -> Tool: ...
 
 @typing.final
 class KnowledgeConfig:
@@ -583,7 +590,7 @@ class PartDeltaFunction:
         name: "translate".into(),
         arguments: r#"{"text":"hi"}"#.into(),
     };
-    `
+    ```
     """
     @typing.final
     class Verbatim(PartDeltaFunction):

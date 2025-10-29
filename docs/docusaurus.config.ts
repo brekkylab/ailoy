@@ -115,7 +115,7 @@ const config: Config = {
               html: `<a class="footer__link-item" href="/ailoy/api-references/python/index.html" target="_blank" rel="noopener noreferrer">Python API References</a>`,
             },
             {
-              html: `<a class="footer__link-item" href="/ailoy/api-references/js-node/index.html" target="_blank" rel="noopener noreferrer">Javascript(Node.js) API References</a>`,
+              html: `<a class="footer__link-item" href="/ailoy/api-references/nodejs/index.html" target="_blank" rel="noopener noreferrer">Javascript(Node.js) API References</a>`,
             },
             {
               html: `<a class="footer__link-item" href="/ailoy/api-references/js-web/index.html" target="_blank" rel="noopener noreferrer">Javascript(Web) API References</a>`,
