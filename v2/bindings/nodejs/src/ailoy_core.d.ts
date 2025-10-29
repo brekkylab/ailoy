@@ -5,6 +5,7 @@
  * It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
  *
  * In essence, the Agent:
+ *
  * - Understands user input
  * - Interprets structured responses from the language model (such as tool calls)
  * - Executes tools as needed
@@ -389,7 +390,7 @@ export type PartDelta =
  *     name: "translate".into(),
  *     arguments: r#"{"text":"hi"}"#.into(),
  * };
- * `
+ * ```
  */
 export type PartDeltaFunction =
   | { type: "verbatim"; text: string }

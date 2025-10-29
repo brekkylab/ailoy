@@ -51,7 +51,7 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: "html",
-          value: `<a href="/ailoy/api-references/js-node/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Node.js) API References</a>`,
+          value: `<a href="/ailoy/api-references/nodejs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Node.js) API References</a>`,
           defaultStyle: true,
         },
         {
