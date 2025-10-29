@@ -85,9 +85,7 @@ for (const cfg of modelConfigs) {
 
     test.sequential("Simple Chat(single string)", async () => {
       for await (const resp of agent.run("What is your name?")) {
-        if (resp.accumulated !== undefined) {
-          console.log(resp.accumulated);
-        }
+        console.log(resp.message);
       }
     });
 
@@ -95,9 +93,7 @@ for (const cfg of modelConfigs) {
       for await (const resp of agent.run([
         { role: "user", contents: "What is your name?" },
       ])) {
-        if (resp.accumulated !== undefined) {
-          console.log(resp.accumulated);
-        }
+        console.log(resp.message);
       }
     });
 
@@ -108,9 +104,7 @@ for (const cfg of modelConfigs) {
           contents: [{ type: "text", text: "What is your name?" }],
         },
       ])) {
-        if (resp.accumulated !== undefined) {
-          console.log(resp.accumulated);
-        }
+        console.log(resp.message);
       }
     });
 
@@ -151,9 +145,7 @@ for (const cfg of modelConfigs) {
         for await (const resp of agent.run(
           "What is the temperature in Seoul now? Answer in Celsius."
         )) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
-          }
+          console.log(resp.message);
         }
 
         agent.removeTool(tool.description.name);
@@ -175,9 +167,7 @@ for (const cfg of modelConfigs) {
               ],
             },
           ])) {
-            if (resp.accumulated !== undefined) {
-              console.log(resp.accumulated);
-            }
+            console.log(resp.message);
           }
         },
         10000
@@ -197,9 +187,7 @@ for (const cfg of modelConfigs) {
               ],
             },
           ])) {
-            if (resp.accumulated !== undefined) {
-              console.log(resp.accumulated);
-            }
+            console.log(resp.message);
           }
         },
         10000
@@ -243,9 +231,7 @@ for (const cfg of modelConfigs) {
         for await (const resp of agent.run("What is Ailoy?", {
           documentPolyfill,
         })) {
-          if (resp.accumulated !== undefined) {
-            console.log(resp.accumulated);
-          }
+          console.log(resp.message);
         }
 
         agent.removeKnowledge();

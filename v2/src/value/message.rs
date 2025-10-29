@@ -512,6 +512,9 @@ impl fmt::Display for MessageOutput {
 
 #[cfg(feature = "python")]
 pub(crate) mod py {
+    use std::sync::Arc;
+
+    use futures::lock::Mutex;
     use pyo3::{
         Py, PyAny, PyRef, PyResult, Python,
         exceptions::{PyStopAsyncIteration, PyStopIteration, PyTypeError},
@@ -521,6 +524,7 @@ pub(crate) mod py {
     };
     use pyo3_stub_gen::{PyStubType, TypeInfo};
     use pyo3_stub_gen_derive::*;
+    use tokio::sync::mpsc;
 
     use super::*;
     use crate::ffi::py::base::PyRepr;
@@ -648,7 +652,8 @@ pub(crate) mod py {
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
     pub(crate) struct MessageDeltaOutputIterator {
-        pub(crate) rx: async_channel::Receiver<anyhow::Result<MessageDeltaOutput>>,
+        pub(crate) _rt: tokio::runtime::Runtime,
+        pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>>>,
     }
 
     #[gen_stub_pymethods]
@@ -660,12 +665,12 @@ pub(crate) mod py {
 
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageDeltaOutput]"))]
         fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-            let rx: async_channel::Receiver<Result<MessageDeltaOutput, anyhow::Error>> =
-                self.rx.clone();
+            let rx = self.rx.clone();
             let fut = async move {
+                let mut rx = rx.lock().await;
                 match rx.recv().await {
-                    Ok(res) => res.map_err(Into::into),
-                    Err(_) => Err(PyStopAsyncIteration::new_err(())),
+                    Some(res) => res.map_err(Into::into),
+                    None => Err(PyStopAsyncIteration::new_err(())),
                 }
             };
             let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
@@ -676,8 +681,8 @@ pub(crate) mod py {
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
     pub(crate) struct MessageDeltaOutputSyncIterator {
-        pub(crate) rt: &'static tokio::runtime::Runtime,
-        pub(crate) rx: async_channel::Receiver<anyhow::Result<MessageDeltaOutput>>,
+        pub(crate) _rt: tokio::runtime::Runtime,
+        pub(crate) rx: mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>,
     }
 
     #[gen_stub_pymethods]
@@ -687,11 +692,10 @@ pub(crate) mod py {
             slf
         }
 
-        fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageDeltaOutput> {
-            let item = py.detach(|| self.rt.block_on(self.rx.recv()));
-            match item {
-                Ok(res) => res.map_err(Into::into),
-                Err(_) => Err(PyStopIteration::new_err(())),
+        fn __next__(&mut self) -> PyResult<MessageDeltaOutput> {
+            match self.rx.blocking_recv() {
+                Some(res) => res.map_err(Into::into),
+                None => Err(PyStopIteration::new_err(())),
             }
         }
     }
@@ -699,7 +703,8 @@ pub(crate) mod py {
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
     pub(crate) struct MessageOutputIterator {
-        pub(crate) rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
+        pub(crate) _rt: tokio::runtime::Runtime,
+        pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>>>,
     }
 
     #[gen_stub_pymethods]
@@ -711,11 +716,12 @@ pub(crate) mod py {
 
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MessageOutput]"))]
         fn __anext__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-            let rx: async_channel::Receiver<Result<MessageOutput, anyhow::Error>> = self.rx.clone();
+            let rx = self.rx.clone();
             let fut = async move {
+                let mut rx = rx.lock().await;
                 match rx.recv().await {
-                    Ok(res) => res.map_err(Into::into),
-                    Err(_) => Err(PyStopAsyncIteration::new_err(())),
+                    Some(res) => res.map_err(Into::into),
+                    None => Err(PyStopAsyncIteration::new_err(())),
                 }
             };
             let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
@@ -726,8 +732,8 @@ pub(crate) mod py {
     #[gen_stub_pyclass]
     #[pyclass(unsendable)]
     pub(crate) struct MessageOutputSyncIterator {
-        pub(crate) rt: &'static tokio::runtime::Runtime,
-        pub(crate) rx: async_channel::Receiver<anyhow::Result<MessageOutput>>,
+        pub(crate) _rt: tokio::runtime::Runtime,
+        pub(crate) rx: mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>,
     }
 
     #[gen_stub_pymethods]
@@ -737,11 +743,10 @@ pub(crate) mod py {
             slf
         }
 
-        fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
-            let item = py.detach(|| self.rt.block_on(self.rx.recv()));
-            match item {
-                Ok(res) => res.map_err(Into::into),
-                Err(_) => Err(PyStopIteration::new_err(())),
+        fn __next__(&mut self) -> PyResult<MessageOutput> {
+            match self.rx.blocking_recv() {
+                Some(res) => res.map_err(Into::into),
+                None => Err(PyStopIteration::new_err(())),
             }
         }
     }
@@ -786,7 +791,7 @@ pub(crate) mod node {
 
     #[napi(object)]
     pub struct MessageDeltaOutputIteratorResult {
-        pub value: Option<MessageDeltaOutput>,
+        pub value: MessageDeltaOutput,
         pub done: bool,
     }
 
@@ -803,12 +808,12 @@ pub(crate) mod node {
             let mut rx = self.rx.lock().await;
             match rx.recv().await {
                 Some(Ok(output)) => Ok(MessageDeltaOutputIteratorResult {
-                    value: Some(output.into()),
+                    value: output.into(),
                     done: false,
                 }),
                 Some(Err(e)) => Err(Error::new(Status::GenericFailure, e)),
                 None => Ok(MessageDeltaOutputIteratorResult {
-                    value: None,
+                    value: MessageDeltaOutput::new(),
                     done: true,
                 }),
             }
@@ -841,7 +846,7 @@ pub(crate) mod node {
 
     #[napi(object)]
     pub struct MessageOutputIteratorResult {
-        pub value: Option<MessageOutput>,
+        pub value: MessageOutput,
         pub done: bool,
     }
 
@@ -858,12 +863,15 @@ pub(crate) mod node {
             let mut rx = self.rx.lock().await;
             match rx.recv().await {
                 Some(Ok(output)) => Ok(MessageOutputIteratorResult {
-                    value: Some(output.into()),
+                    value: output.into(),
                     done: false,
                 }),
                 Some(Err(e)) => Err(Error::new(Status::GenericFailure, e)),
                 None => Ok(MessageOutputIteratorResult {
-                    value: None,
+                    value: MessageOutput {
+                        message: Message::new(Role::Assistant),
+                        finish_reason: FinishReason::Stop {},
+                    },
                     done: true,
                 }),
             }

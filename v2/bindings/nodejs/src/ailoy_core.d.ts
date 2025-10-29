@@ -297,7 +297,7 @@ export interface MessageDeltaOutput {
 }
 
 export interface MessageDeltaOutputIteratorResult {
-  value?: MessageDeltaOutput;
+  value: MessageDeltaOutput;
   done: boolean;
 }
 
@@ -307,7 +307,7 @@ export interface MessageOutput {
 }
 
 export interface MessageOutputIteratorResult {
-  value?: MessageOutput;
+  value: MessageOutput;
   done: boolean;
 }
 
