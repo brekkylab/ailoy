@@ -47,7 +47,10 @@ pub enum Role {
 /// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -204,7 +207,10 @@ impl Into<Message> for SingleTextMessage {
 /// ```
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -420,7 +426,7 @@ impl fmt::Display for MessageDelta {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyo3::pyclass(eq))]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
 #[cfg_attr(
     feature = "nodejs",
     napi_derive::napi(discriminant_case = "snake_case")
@@ -465,7 +471,10 @@ impl fmt::Display for FinishReason {
 /// - On completion: `finish_reason` is set; callers can then `finish()` the delta to obtain a concrete [`Message`].
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -493,7 +502,10 @@ impl fmt::Display for MessageDeltaOutput {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
@@ -650,7 +662,7 @@ pub(crate) mod py {
     }
 
     #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
+    #[pyclass(module = "ailoy._core", unsendable)]
     pub(crate) struct MessageDeltaOutputIterator {
         pub(crate) _rt: tokio::runtime::Runtime,
         pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>>>,
@@ -679,7 +691,7 @@ pub(crate) mod py {
     }
 
     #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
+    #[pyclass(module = "ailoy._core", unsendable)]
     pub(crate) struct MessageDeltaOutputSyncIterator {
         pub(crate) _rt: tokio::runtime::Runtime,
         pub(crate) rx: mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>,
@@ -701,7 +713,7 @@ pub(crate) mod py {
     }
 
     #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
+    #[pyclass(module = "ailoy._core", unsendable)]
     pub(crate) struct MessageOutputIterator {
         pub(crate) _rt: tokio::runtime::Runtime,
         pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>>>,
@@ -730,7 +742,7 @@ pub(crate) mod py {
     }
 
     #[gen_stub_pyclass]
-    #[pyclass(unsendable)]
+    #[pyclass(module = "ailoy._core", unsendable)]
     pub(crate) struct MessageOutputSyncIterator {
         pub(crate) _rt: tokio::runtime::Runtime,
         pub(crate) rx: mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>,

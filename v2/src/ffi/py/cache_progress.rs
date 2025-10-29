@@ -40,7 +40,7 @@ impl PyStubType for CacheResultT {
 }
 
 #[gen_stub_pyclass]
-#[pyclass(name = "CacheProgress")]
+#[pyclass(module = "ailoy._core", name = "CacheProgress")]
 pub struct PyCacheProgress {
     #[pyo3(get)]
     pub comment: String,

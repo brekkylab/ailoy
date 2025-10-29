@@ -14,6 +14,8 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
@@ -129,6 +131,8 @@ pub enum KnowledgeInner {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Knowledge {
@@ -159,6 +163,46 @@ impl KnowledgeBehavior for Knowledge {
         match &self.inner {
             KnowledgeInner::VectorStore(knowledge) => knowledge.retrieve(query, config).await,
             KnowledgeInner::Custom(knowledge) => knowledge.retrieve(query, config).await,
+        }
+    }
+}
+
+#[cfg(feature = "python")]
+mod py {
+    use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyType};
+    use pyo3_stub_gen_derive::*;
+
+    use super::*;
+    use crate::tool::Tool;
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl Knowledge {
+        #[classmethod]
+        #[pyo3(name = "new_vector_store")]
+        pub fn new_vector_store_py<'a>(
+            _cls: &Bound<'a, PyType>,
+            store: &VectorStore,
+            embedding_model: &EmbeddingModel,
+        ) -> Self {
+            Self::new_vector_store(store.clone(), embedding_model.clone())
+        }
+
+        #[pyo3(name = "retrieve")]
+        pub async fn retrieve_py(
+            &self,
+            query: String,
+            config: KnowledgeConfig,
+        ) -> PyResult<Vec<Document>> {
+            self.retrieve(query, config)
+                .await
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        }
+
+        #[pyo3(name = "as_tool")]
+        pub fn as_tool(&self) -> Tool {
+            let tool = KnowledgeTool::from(self.clone());
+            Tool::new_knowledge(tool)
         }
     }
 }

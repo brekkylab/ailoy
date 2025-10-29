@@ -16,6 +16,7 @@ use crate::{
 /// It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
 ///
 /// In essence, the Agent:
+///
 /// - Understands user input
 /// - Interprets structured responses from the language model (such as tool calls)
 /// - Executes tools as needed
@@ -41,7 +42,7 @@ use crate::{
 ///   When available, the `Agent`` enriches model input with these results before generating an answer.
 #[derive(Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass)]
+#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi)]
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Agent {
@@ -265,7 +266,7 @@ mod py {
     use std::sync::Arc;
 
     use futures::lock::Mutex;
-    use pyo3::{Bound, Py, PyAny, PyResult, Python, pymethods, types::PyType};
+    use pyo3::pymethods;
     use pyo3_stub_gen_derive::gen_stub_pymethods;
     use tokio::sync::mpsc;
 
@@ -326,21 +327,6 @@ mod py {
         #[pyo3(signature = (lm, tools = None))]
         fn __new__(lm: LangModel, tools: Option<Vec<Tool>>) -> Self {
             Agent::new(lm, tools.unwrap_or_default())
-        }
-
-        #[classmethod]
-        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[Agent]"))]
-        #[pyo3(signature = (lm, tools = None))]
-        fn create<'py>(
-            _cls: &Bound<'py, PyType>,
-            py: Python<'py>,
-            lm: LangModel,
-            tools: Option<Vec<Tool>>,
-        ) -> PyResult<Bound<'py, PyAny>> {
-            let fut = async move {
-                Python::attach(|py| Py::new(py, Agent::new(lm, tools.unwrap_or(vec![]))))
-            };
-            pyo3_async_runtimes::tokio::future_into_py(py, fut)
         }
 
         pub fn __repr__(&self) -> String {
