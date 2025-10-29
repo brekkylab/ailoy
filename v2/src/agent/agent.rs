@@ -50,12 +50,9 @@ pub struct AgentConfig {
 /// See `MessageDelta`.
 ///
 /// # Components
-/// - **Language Model**: Generates natural language and structured outputs.
-///   It interprets the conversation context and predicts the assistant’s next action.
-/// - **Tool**: Represents external functions or APIs that the model can dynamically invoke.
-///   The `Agent`` detects tool calls and automatically executes them during the reasoning loop.
-/// - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases.
-///   When available, the `Agent`` enriches model input with these results before generating an answer.
+/// - **Language Model**: Generates natural language and structured outputs. It interprets the conversation context and predicts the assistant’s next action.
+/// - **Tool**: Represents external functions or APIs that the model can dynamically invoke. The `Agent`` detects tool calls and automatically executes them during the reasoning loop.
+/// - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases. When available, the `Agent`` enriches model input with these results before generating an answer.
 #[derive(Clone)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass)]
