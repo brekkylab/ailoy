@@ -2,11 +2,15 @@
 
 **_Welcome to Ailoy’s Tutorial!_** 🤗
 
-In this tutorial, we’ll explore how to run LLMs in Ailoy and extend their capabilities to build agent systems.
+In this tutorial, we’ll explore how to run LLMs in Ailoy and extend their
+capabilities to build agent systems.
 
 ## Installation
 
-You can install Ailoy via a package manager. Just type the following command in your shell:
+You can install Ailoy via a package manager. Just type the following command in
+your shell:
+
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -28,11 +32,9 @@ npm install ailoy-web
 yarn add ailoy-web
 ```
 
-```rust
-cargo add ailoy
-```
-
 </CodeTabs>
+
+{/* prettier-ignore-end */}
 
 {/* prettier-ignore-start */}
 
@@ -44,30 +46,40 @@ For using Ailoy in web browsers, see [WebAssembly Supports](./webassembly-suppor
 
 ## Running a Simplest Agent
 
-The **Language Model (LM)** is the core of every agent.
-An agent system operates based on a language model and its instructions, along with various extensions that enhance its capabilities.
+The **Language Model (LM)** is the core of every agent.  
+An agent system operates based on a language model and its instructions, along
+with various extensions that enhance its capabilities.
 
 ### Choosing Between API and Local Models
 
 Ailoy lets you run language model in two different modes:
 
-- **API Models** – run models hosted by AI vendors (like OpenAI GPT or Anthropic Claude)
+- **API Models** – run models hosted by AI vendors (like OpenAI GPT or Anthropic
+  Claude)
 - **Local Models** – run open-source models directly on your own machine
 
 Each approach has its own strengths and trade-offs:
 
-- **API Models**: These connect to external AI services over the internet. If you’re fine with token costs and prefer cloud-hosted models, this is the simplest option.
-- **Local Models**: These run entirely on your own device, using open-source models. Choose this if you want full control, offline availability, or privacy.
+- **API Models**: These connect to external AI services over the internet. If
+  you’re fine with token costs and prefer cloud-hosted models, this is the
+  simplest option.
+- **Local Models**: These run entirely on your own device, using open-source
+  models. Choose this if you want full control, offline availability, or
+  privacy.
 
-Ailoy supports both seamlessly — you can switch between them anytime with minimal changes.
+Ailoy supports both seamlessly — you can switch between them anytime with
+minimal changes.
 
 ## Example
 
 Let’s start with a simple example — Ailoy’s version of “Hello, World!” for LLMs.
 
-In just a few lines of code, you’ll run a model, send it a prompt, and print the response.
+In just a few lines of code, you’ll run a model, send it a prompt, and print the
+response.
 
 ### Using API models
+
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -76,9 +88,9 @@ import ailoy as ai
 import asyncio
 
 async def main():
-    lm = ai.LangModel.CreateStreamAPI(spec=ai.APISpecification.OpenAI, model_name="gpt-4o", api_key="YOUR_API_TOKEN_KEY")
-    agent = ai.Agent(lm)
-    query = ai.Message(role=ai.Role.User, contents=[ai.Part.Text("Please give me a short poem about AI")])
+    model = ai.LangModel.new_stream_api(spec="OpenAI", model_name="gpt-4o", api_key="YOUR_API_TOKEN_KEY")
+    agent = ai.Agent(model)
+    query = ai.Message(role="user", contents="Please give me a short poem about AI")
     async for resp in agent.run([query]):
         if resp.aggregated:
             print(resp.aggregated.contents[0].text)
@@ -88,18 +100,21 @@ if __name__ == "__main__":
 ```
 
 ```typescript
-import { Agent, LangModel } from "ailoy";
-import type { Message } from "ailoy";
+import { Agent, LangModel } from "ailoy-node";
+import type { Message } from "ailoy-node";
 
 async function main() {
-    const lm = await LangModel.newStreamAPI(spec="OpenAI", modelName="gpt-4o", apiKey="YOUR_API_TOKEN_KEY");
-    const agent = new Agent(lm);
-    const query: Message = {role: "user", contents: [{ type: "text", text: "Please give me a short poem about AI" }]};
-    for await (const resp of agent.run([query])) {
-        if (resp.aggregated) {
-            console.log(resp.aggregated.contents[0].text);
-        }
+  const lm = await LangModel.newStreamAPI(/* spec: */ "OpenAI", /* modelName: */ "gpt-5", /* apiKey: */ "YOUR_API_KEY");
+  const agent = new Agent(lm);
+  const query: Message = {
+    role: "user",
+    contents: [{ type: "text", text: "Please give me a short poem about AI" }],
+  };
+  for await (const resp of agent.run([query])) {
+    if (resp.aggregated) {
+      console.log(resp.aggregated.contents[0].text);
     }
+  }
 }
 
 main().catch((err) => {
@@ -107,29 +122,39 @@ main().catch((err) => {
 });
 ```
 
-```rust
-use ailoy::{agent::Agent, model::{APISpecification, InferenceConfig, LangModel}, value::{Message, Part, Role}};
-use futures::StreamExt as _;
+```typescript web
+import { Agent, LangModel } from "ailoy-web";
+import type { Message } from "ailoy-web";
 
-#[tokio::main]
-async fn main() {
-    let lm = LangModel::new_stream_api(APISpecification::OpenAI, "gpt-4o", "YOUR_API_TOKEN_KEY");
-    let mut agent = Agent::new(lm, vec![]);
-    let query = Message::new(Role::User).with_contents([Part::text("Please give me a short poem about AI")]);
-    let mut strm = agent.run(vec![query], vec![], vec![], InferenceConfig::default());
-    while let Some(result) = strm.next().await {
-        if let Some(aggregated) = resp.aggregated {
-            println!("{:?}", aggregated);
-        }
+async function main() {
+  const lm = await LangModel.newStreamAPI(/* spec: */ "OpenAI", /* modelName: */ "gpt-5", /* apiKey: */ "YOUR_API_KEY");
+  const agent = new Agent(lm);
+  const query: Message = {
+    role: "user",
+    contents: [{ type: "text", text: "Please give me a short poem about AI" }],
+  };
+  for await (const resp of agent.run([query])) {
+    if (resp.aggregated) {
+      console.log(resp.aggregated.contents[0].text);
     }
+  }
 }
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
 ```
 
 </CodeTabs>
 
+{/* prettier-ignore-end */}
+
 ### Using local models
 
-Here, we use the open-source model `Qwen3-0.6B`, running entirely on your own device — no API keys or internet connection required.
+Here, we use the open-source model `Qwen3-0.6B`, running entirely on your own
+device — no API keys or internet connection required.
+
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -140,7 +165,7 @@ import asyncio
 async def main():
     lm = await ai.LangModel.CreateLocal(model_name="Qwen/Qwen3-0.6B", progress_callback=print)
     agent = ai.Agent(lm)
-    query = ai.Message(role=ai.Role.User, contents=[ai.Part.Text("Please give me a short poem about AI")])
+    query = ai.Message(role="user", contents="Please give me a short poem about AI")
     async for resp in agent.run([query]):
         if resp.aggregated:
             print(resp.aggregated.contents[0].text)
@@ -150,18 +175,23 @@ if __name__ == "__main__":
 ```
 
 ```typescript
-import { Agent, LangModel } from "ailoy";
-import type { Message } from "ailoy";
+import { Agent, LangModel } from "ailoy-node";
+import type { Message } from "ailoy-node";
 
 async function main() {
-    const lm = await LangModel.newLocal(modelName="Qwen/Qwen3-0.6B", progressCallback=console.log);
-    const agent = new Agent(lm);
-    const query: Message = {role: "user", contents: [{ type: "text", text: "Please give me a short poem about AI" }]};
-    for await (const resp of agent.run([query])) {
-        if (resp.aggregated) {
-            console.log(resp.aggregated.contents[0].text);
-        }
+  const lm = await LangModel.newLocal(
+    "Qwen/Qwen3-0.6B", console.log
+  );
+  const agent = new Agent(lm);
+  const query: Message = {
+    role: "user",
+    contents: "Please give me a short poem about AI",
+  };
+  for await (const resp of agent.run([query])) {
+    if (resp.aggregated) {
+      console.log(resp.aggregated.contents[0].text);
     }
+  }
 }
 
 main().catch((err) => {
@@ -169,25 +199,9 @@ main().catch((err) => {
 });
 ```
 
-```rust
-use ailoy::{agent::Agent, model::{InferenceConfig, LangModel}, value::{Message, Part, Role}};
-use futures::StreamExt as _;
-
-#[tokio::main]
-async fn main() {
-    let lm = LangModel::try_new("Qwen/Qwen3-0.6B").await.unwrap();
-    let mut agent = Agent::new(lm, vec![]);
-    let query = Message::new(Role::User).with_contents([Part::text("Please give me a short poem about AI")]);
-    let mut strm = agent.infer(vec![query], vec![], vec![], InferenceConfig::default());
-    while let Some(result) = strm.next().await {
-        if let Some(aggregated) = resp.aggregated {
-            println!("{:?}", aggregated);
-        }
-    }
-}
-```
-
 </CodeTabs>
+
+{/* prettier-ignore-end */}
 
 {/* prettier-ignore-start */}
 
@@ -201,7 +215,8 @@ files.
 
 ### Output
 
-Since the model needs to be downloaded and initialized, the first run may take a little time.
+Since the model needs to be downloaded and initialized, the first run may take a
+little time.  
 After a short wait, you may see an output similar to this.
 
 <TerminalBox>
@@ -213,7 +228,7 @@ But dreams, still, run in hearts, in minds.
 
 </TerminalBox>
 
-That’s it! 🎉
+That’s it! 🎉  
 You’ve just run your first AI model with Ailoy.
 
 {/* prettier-ignore-start */}
