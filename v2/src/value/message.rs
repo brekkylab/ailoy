@@ -1,3 +1,5 @@
+use std::fmt;
+
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
@@ -119,6 +121,13 @@ impl Message {
     ) -> Self {
         self.tool_calls = Some(tool_calls.into_iter().map(|v| v.into()).collect());
         self
+    }
+}
+
+impl fmt::Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "Message {}", s)
     }
 }
 
@@ -400,6 +409,13 @@ impl Delta for MessageDelta {
     }
 }
 
+impl fmt::Display for MessageDelta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "MessageDelta {}", s)
+    }
+}
+
 /// Explains why a language model's streamed generation finished.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -423,6 +439,13 @@ pub enum FinishReason {
 
     /// Content was refused/filtered; string provides reason.
     Refusal { reason: String },
+}
+
+impl fmt::Display for FinishReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "FinishReason {}", s)
+    }
 }
 
 /// A container for a streamed message delta and its termination signal.
@@ -461,6 +484,13 @@ impl MessageDeltaOutput {
     }
 }
 
+impl fmt::Display for MessageDeltaOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "MessageDeltaOutput {}", s)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
@@ -471,6 +501,13 @@ pub struct MessageOutput {
     pub message: Message,
     #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "finish_reason"))]
     pub finish_reason: FinishReason,
+}
+
+impl fmt::Display for MessageOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "MessageOutput {}", s)
+    }
 }
 
 #[cfg(feature = "python")]

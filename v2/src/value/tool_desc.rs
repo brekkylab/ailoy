@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 use crate::value::Value;
@@ -82,6 +84,13 @@ impl ToolDesc {
             parameters,
             returns,
         }
+    }
+}
+
+impl fmt::Display for ToolDesc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "ToolDesc {}", s)
     }
 }
 

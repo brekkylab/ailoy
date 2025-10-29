@@ -1,3 +1,5 @@
+use std::fmt;
+
 use anyhow::{Context, bail};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -473,6 +475,13 @@ impl Part {
     }
 }
 
+impl fmt::Display for Part {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "Part {}", s)
+    }
+}
+
 /// Represents an incremental update (delta) of a function part.
 ///
 /// This type is used during streaming or partial message generation, when function calls are being streamed as text chunks or partial JSON fragments.
@@ -785,6 +794,13 @@ impl Delta for PartDelta {
             }
             PartDelta::Value { value } => Ok(Part::Value { value }),
         }
+    }
+}
+
+impl fmt::Display for PartDelta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "PartDelta {}", s)
     }
 }
 
