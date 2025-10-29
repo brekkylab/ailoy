@@ -772,43 +772,23 @@ impl Delta for PartDelta {
     }
 
     fn finish(self) -> anyhow::Result<Self::Item> {
-        match self {
+        match &self {
             PartDelta::Null {} => Ok(Part::Text {
                 text: String::new(),
             }),
-            PartDelta::Text { text } => Ok(Part::Text { text }),
-            PartDelta::Function { id, function } => {
-                let function = match function {
-                    // Try json deserialization if verbatim
-                    PartDeltaFunction::Verbatim { text } => {
-                        match serde_json::from_str::<Value>(&text) {
-                            Ok(root) => {
-                                match (root.pointer_as::<str>("/name"), root.pointer("/arguments"))
-                                {
-                                    (Some(name), Some(args)) => PartFunction {
-                                        name: name.to_owned(),
-                                        arguments: args.to_owned(),
-                                    },
-                                    _ => bail!("Invalid function JSON"),
-                                }
-                            }
-                            Err(_) => bail!("Invalid JSON"),
-                        }
-                    }
-                    // Try json deserialization for args
-                    PartDeltaFunction::WithStringArgs { name, arguments } => {
-                        let arguments =
-                            serde_json::from_str::<Value>(&arguments).context("Invalid JSON")?;
-                        PartFunction { name, arguments }
-                    }
-                    // As-is
-                    PartDeltaFunction::WithParsedArgs { name, arguments } => {
-                        PartFunction { name, arguments }
-                    }
-                };
-                Ok(Part::Function { id, function })
+            PartDelta::Text { text } => Ok(Part::Text {
+                text: text.to_owned(),
+            }),
+            PartDelta::Function { .. } => {
+                let (id, name, arguments) = self.to_parsed_function().unwrap();
+                Ok(Part::Function {
+                    id,
+                    function: PartFunction { name, arguments },
+                })
             }
-            PartDelta::Value { value } => Ok(Part::Value { value }),
+            PartDelta::Value { value } => Ok(Part::Value {
+                value: value.to_owned(),
+            }),
         }
     }
 }
