@@ -85,7 +85,7 @@ mod tests {
 
         agent.set_knowledge(knowledge);
 
-        let mut strm = Box::pin(agent.run(
+        let mut strm = Box::pin(agent.run_delta(
             vec![Message::new(Role::User).with_contents(vec![Part::Text {
                 text: "What is Ailoy?".into(),
             }])],

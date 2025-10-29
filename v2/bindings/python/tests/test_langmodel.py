@@ -14,9 +14,9 @@ async def model():
     return model
 
 
-async def test_simple_chat(model: ai.LangModel):
-    msg_d = ai.MessageDelta("assistant")
-    async for m in model.run("Hello"):
+async def test_simple_chat_delta(model: ai.LangModel):
+    msg_d = ai.MessageDelta()
+    async for m in model.infer_delta("Hello"):
         if m.delta.thinking:
             print("thinking: ", m.delta.thinking)
         print(m.delta.contents)
@@ -25,11 +25,17 @@ async def test_simple_chat(model: ai.LangModel):
     print(msg_d.to_message())
 
 
-async def test_chat_with_think(model: ai.LangModel):
+async def test_simple_chat(model: ai.LangModel):
     msg = ai.Message("user", contents="Hello")
-    msg_d = ai.MessageDelta("assistant")
+    msg_r = await model.infer([msg])
+    print(msg_r)
+
+
+async def test_chat_with_think(model: ai.LangModel):
+    msg = ai.Message("user", contents=[ai.Part.Text(text="Hello")])
+    msg_d = ai.MessageDelta()
     config = ai.InferenceConfig(think_effort="enable")
-    async for m in model.run([msg], config=config):
+    async for m in model.infer_delta([msg], config=config):
         if m.delta.thinking:
             print("thinking: ", m.delta.thinking)
         print(m.delta.contents)

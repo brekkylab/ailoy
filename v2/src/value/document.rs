@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,5 +26,12 @@ impl Document {
     pub fn with_title(mut self, title: String) -> Self {
         self.title = Some(title);
         self
+    }
+}
+
+impl fmt::Display for Document {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "Document {}", s)
     }
 }

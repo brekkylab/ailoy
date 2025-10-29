@@ -61,12 +61,15 @@ def agent(request: pytest.FixtureRequest):
     return agent
 
 
-@pytest.mark.parametrize(
-    "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
-)
-async def test_simple_chat(agent: ai.Agent):
-    finish_reason = None
-    async for resp in agent.run(
+@pytest.fixture(
+    params=[
+        "What is your name?",
+        [
+            ai.Message(
+                role="system", contents="You are a helpful assistant with name 'Ailoy'."
+            ),
+            ai.Message(role="user", contents="What is your name?"),
+        ],
         [
             ai.Message(
                 role="system",
@@ -79,24 +82,33 @@ async def test_simple_chat(agent: ai.Agent):
                 contents=[ai.Part.Text(text="What is your name?")],
             ),
         ],
-        config=ai.InferenceConfig(think_effort="disable"),
+    ]
+)
+def simple_chat_messages(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.mark.parametrize(
+    "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
+)
+async def test_simple_chat(agent: ai.Agent, simple_chat_messages):
+    finish_reason = None
+    acc = ai.MessageDelta()
+    async for resp in agent.run_delta(
+        simple_chat_messages,
+        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.accumulated
+            result = acc.to_message()
+            acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
-                if content.part_type == "text":
+                if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
     print()
+
     assert finish_reason == ai.FinishReason.Stop()
     print(f"{result.contents[0].text=}")
 
@@ -104,12 +116,12 @@ async def test_simple_chat(agent: ai.Agent):
 @pytest.mark.parametrize(
     "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
 )
-async def test_simple_qna(agent: ai.Agent):
+async def test_simple_multiturn(agent: ai.Agent):
     qna = [
-        ("My favorite color is blue. Please remember that.", ""),
-        ("What’s my favorite color?", "blue"),
-        ("Actually, my favorite color is gray now. Don't forget this.", ""),
-        ("What’s my favorite color?", "gray"),
+        ("John's favorite color is blue. Please remember that.", ""),
+        ("What’s John's favorite color?", "blue"),
+        ("Actually, John's favorite color is gray now. Don't forget this.", ""),
+        ("What’s John's favorite color?", "gray"),
     ]
 
     messages = []
@@ -124,8 +136,7 @@ async def test_simple_qna(agent: ai.Agent):
             messages,
             config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
         ):
-            if resp.finish_reason is not None:
-                result = resp.accumulated
+            result = resp.message
         messages.append(result)
 
         full_text = "".join(part.text for part in result.contents)
@@ -138,30 +149,29 @@ async def test_simple_qna(agent: ai.Agent):
 async def test_builtin_tool(agent: ai.Agent):
     tool = ai.Tool.new_builtin("terminal")
     agent.add_tool(tool)
-
-    finish_reason = None
-    async for resp in agent.run(
-        "List the files in the current directory by using `execute_command` tool.",
-        config=ai.InferenceConfig(think_effort="disable"),
+    acc = ai.MessageDelta()
+    results = []
+    async for resp in agent.run_delta(
+        "List the files in the current directory.",
+        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.accumulated
+            results.append(acc.to_message())
+            acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
-                if content.part_type == "text":
+                if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
     print()
+
     assert finish_reason == ai.FinishReason.Stop()
-    print(f"{result.contents[0].text=}")
+    if finish_reason == ai.FinishReason.ToolCall():
+        print(results)
+    assert results[0].tool_calls[0].function.name == "execute_command"
+    print(f"{results[1].contents[0].value=}")
+    print(f"{results[2].contents[0].text=}")
 
 
 @pytest.mark.parametrize(
@@ -185,29 +195,27 @@ async def test_python_async_function_tool(agent: ai.Agent):
     tool = ai.Tool.new_py_function(tool_temperature)
 
     agent.add_tool(tool)
-    finish_reason = None
-    async for resp in agent.run(
+    acc = ai.MessageDelta()
+    results = []
+    async for resp in agent.run_delta(
         "What is the temperature in Seoul now?",
-        config=ai.InferenceConfig(think_effort="disable"),
+        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.accumulated
+            results.append(acc.to_message())
+            acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
-                if content.part_type == "text":
+                if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
     print()
+
     assert finish_reason == ai.FinishReason.Stop()
-    print(f"{result.contents[0].text=}")
+    assert results[0].tool_calls[0].function.name == "tool_temperature"
+    print(f"{results[1].contents[0].value=}")
+    print(f"{results[2].contents[0].text=}")
 
     agent.remove_tool(tool.get_description().name)
 
@@ -220,28 +228,29 @@ async def test_mcp_tools(agent: ai.Agent):
     tools = mcp_client.tools
 
     agent.add_tools(tools)
-    finish_reason = None
-    async for resp in agent.run(
-        "What time is it now in Asia/Seoul?",
-        config=ai.InferenceConfig(think_effort="disable"),
+    acc = ai.MessageDelta()
+    results = []
+    async for resp in agent.run_delta(
+        "What time is it currently in Asia/Seoul?",
+        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
     ):
+        acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = resp.accumulated
+            results.append(acc.to_message())
+            acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
-                if content.part_type == "text":
+                if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
-                elif content.part_type == "function":
-                    print(content.function.text, end="")
-                elif content.part_type == "value":
-                    print(content.value)
-                # elif content.part_type == "image":
-                #     pass
-                else:
-                    continue
     print()
+
     assert finish_reason == ai.FinishReason.Stop()
-    print(f"{result.contents[0].text=}")
+    if results[0].tool_calls[0].function.name != "get_current_time":
+        print(results)
+
+    assert results[0].tool_calls[0].function.name == "get_current_time"
+    print(f"{results[1].contents[0].value=}")
+    print(f"{results[2].contents[0].text=}")
 
     agent.remove_tools([t.get_description().name for t in tools])
