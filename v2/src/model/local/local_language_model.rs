@@ -155,6 +155,7 @@ impl LocalLangModelImpl {
             let mut agg_tokens = Vec::<u32>::new();
             let mut count = 0;
             let mut mode = "content".to_owned();
+            let mut last_s = "".to_owned();
 
             yield MessageDeltaOutput{delta: MessageDelta::new().with_role(Role::Assistant), finish_reason: None};
 
@@ -182,6 +183,10 @@ impl LocalLangModelImpl {
                     continue;
                 }
                 agg_tokens.clear();
+                if last_s == "</tool_call>" && s == "\n" {
+                    continue;
+                }
+                last_s = s.clone();
 
                 if s == "<|im_end|>" {
                     yield MessageDeltaOutput{delta, finish_reason: Some(FinishReason::Stop{})};
