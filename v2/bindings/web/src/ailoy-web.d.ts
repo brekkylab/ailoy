@@ -39,11 +39,11 @@ export class Agent {
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
   runDelta(
-    messages: Message[],
+    messages: Array<Message> | Array<SingleTextMessage> | string,
     config?: AgentConfig | null
   ): AsyncIterable<MessageDeltaOutput>;
   run(
-    messages: Message[],
+    messages: Array<Message> | Array<SingleTextMessage> | string,
     config?: AgentConfig | null
   ): AsyncIterable<MessageOutput>;
 }
@@ -85,13 +85,13 @@ export class LangModel {
     apiKey: string
   ): Promise<LangModel>;
   inferDelta(
-    msgs: Message[],
+    messages: Array<Message> | Array<SingleTextMessage> | string,
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
     config?: InferenceConfig | null
   ): AsyncIterable<MessageDeltaOutput>;
   infer(
-    msgs: Message[],
+    messages: Array<Message> | Array<SingleTextMessage> | string,
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
     config?: InferenceConfig | null
@@ -238,7 +238,7 @@ export interface Message {
    */
   role: Role;
   /**
-   * Primary message parts (e.g., text, image, value, or function).
+   * Primary parts of the message (e.g., text, image, value, or function).
    */
   contents: Part[];
   /**
@@ -465,6 +465,40 @@ export type PartImageColorspace = "grayscale" | "rgb" | "rgba";
  * The author of a message (or streaming delta) in a chat.
  */
 export type Role = "system" | "user" | "assistant" | "tool";
+
+/**
+ * A simplified form of [Message] for concise definition.
+ * All other members are identical to [Message], but `contents` is a `String` instead of `Vec<Part>`.
+ * This can be converted to Message via `.into()`.
+ */
+export interface SingleTextMessage {
+  /**
+   * Author of the message.
+   */
+  role: Role;
+  /**
+   * Primary part of message in text.
+   */
+  contents: string;
+  /**
+   * Optional stable identifier for deduplication or threading.
+   */
+  id?: string;
+  /**
+   * Internal “thinking” text used by some models before producing final output.
+   */
+  thinking?: string;
+  /**
+   * Tool-call parts emitted alongside the main contents.
+   */
+  tool_calls?: Part[];
+  /**
+   * Optional signature for the `thinking` field.
+   *
+   * This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
+   */
+  signature?: string;
+}
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
 

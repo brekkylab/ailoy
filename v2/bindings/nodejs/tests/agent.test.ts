@@ -87,15 +87,33 @@ for (const cfg of modelConfigs) {
       agent = await cfg.createAgent();
     });
 
-    test.sequential("Simple Chat", async () => {
-      for await (const resp of agent.runDelta([
+    test.sequential("Simple Chat(single string)", async () => {
+      for await (const resp of agent.run("What is your name?")) {
+        if (resp?.message !== undefined) {
+          console.log(resp?.message);
+        }
+      }
+    });
+
+    test.sequential("Simple Chat(string contents)", async () => {
+      for await (const resp of agent.run([
+        { role: "user", contents: "What is your name?" },
+      ])) {
+        if (resp?.message !== undefined) {
+          console.log(resp?.message);
+        }
+      }
+    });
+
+    test.sequential("Simple Chat(normal form)", async () => {
+      for await (const resp of agent.run([
         {
           role: "user",
           contents: [{ type: "text", text: "What is your name?" }],
         },
       ])) {
-        if (resp?.delta !== undefined) {
-          console.log(resp.delta);
+        if (resp?.message !== undefined) {
+          console.log(resp.message);
         }
       }
     });
@@ -106,17 +124,9 @@ for (const cfg of modelConfigs) {
         const tool = ailoy.Tool.newBuiltin("terminal");
         agent.addTool(tool);
 
-        for await (const resp of agent.runDelta([
-          {
-            role: "user",
-            contents: [
-              {
-                type: "text",
-                text: "List the files in the current directory.",
-              },
-            ],
-          },
-        ])) {
+        for await (const resp of agent.runDelta(
+          "List the files in the current directory."
+        )) {
           if (resp?.delta !== undefined) {
             console.log(`[${cfg.name}] `, resp.delta);
           }
@@ -135,17 +145,9 @@ for (const cfg of modelConfigs) {
         ]);
         agent.addTools(client.tools);
 
-        for await (const resp of agent.runDelta([
-          {
-            role: "user",
-            contents: [
-              {
-                type: "text",
-                text: "What time is it now in Asia/Seoul? Answer in local timezone.",
-              },
-            ],
-          },
-        ])) {
+        for await (const resp of agent.runDelta(
+          "What time is it now in Asia/Seoul? Answer in local timezone."
+        )) {
           if (resp?.delta !== undefined) {
             console.log(resp.delta);
           }
@@ -190,17 +192,9 @@ for (const cfg of modelConfigs) {
 
         agent.addTool(tool);
 
-        for await (const resp of agent.runDelta([
-          {
-            role: "user",
-            contents: [
-              {
-                type: "text",
-                text: "What is the temperature in Seoul now? Answer in Celsius.",
-              },
-            ],
-          },
-        ])) {
+        for await (const resp of agent.runDelta(
+          "What is the temperature in Seoul now? Answer in Celsius."
+        )) {
           if (resp?.delta !== undefined) {
             console.log(resp.delta);
           }
@@ -290,24 +284,9 @@ After the user’s question, a list of documents retrieved from the knowledge ba
             `,
         };
 
-        for await (const resp of agent.runDelta(
-          [
-            {
-              role: "user",
-              contents: [
-                {
-                  type: "text",
-                  text: "What is Ailoy?",
-                },
-              ],
-            },
-          ],
-          {
-            inference: {
-              documentPolyfill,
-            },
-          }
-        )) {
+        for await (const resp of agent.runDelta("What is Ailoy?", {
+          documentPolyfill,
+        })) {
           if (resp?.delta !== undefined) {
             console.log(resp.delta);
           }

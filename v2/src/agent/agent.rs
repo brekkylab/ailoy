@@ -304,11 +304,11 @@ mod py {
     use pyo3::{Bound, Py, PyAny, PyResult, Python, pymethods, types::PyType};
     use pyo3_stub_gen_derive::gen_stub_pymethods;
 
-    use crate::value::py::{
-        MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
-    };
-
     use super::*;
+    use crate::value::{
+        Messages,
+        py::{MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator},
+    };
 
     fn spawn_delta<'a>(
         mut agent: Agent,
@@ -436,40 +436,40 @@ mod py {
         #[pyo3(name="run_delta", signature = (messages, config=None))]
         fn run_delta_py(
             &mut self,
-            messages: Vec<Message>,
+            messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputIterator> {
-            let (_, rx) = spawn_delta(self.clone(), messages, config)?;
+            let (_, rx) = spawn_delta(self.clone(), messages.into(), config)?;
             Ok(MessageDeltaOutputIterator { rx })
         }
 
         #[pyo3(name="run_delta_sync", signature = (messages, config=None))]
         fn run_delta_sync_py(
             &mut self,
-            messages: Vec<Message>,
+            messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
-            let (rt, rx) = spawn_delta(self.clone(), messages, config)?;
+            let (rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
             Ok(MessageDeltaOutputSyncIterator { rt, rx })
         }
 
         #[pyo3(name="run", signature = (messages, config=None))]
         fn run_py(
             &mut self,
-            messages: Vec<Message>,
+            messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageOutputIterator> {
-            let (_, rx) = spawn(self.clone(), messages, config)?;
+            let (_, rx) = spawn(self.clone(), messages.into(), config)?;
             Ok(MessageOutputIterator { rx })
         }
 
         #[pyo3(name="run_sync", signature = (messages, config=None))]
         fn run_sync_py(
             &mut self,
-            messages: Vec<Message>,
+            messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
-            let (rt, rx) = spawn_delta(self.clone(), messages, config)?;
+            let (rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
             Ok(MessageDeltaOutputSyncIterator { rt, rx })
         }
     }
@@ -487,7 +487,10 @@ mod node {
     use super::*;
     use crate::{
         ffi::node::common::get_or_create_runtime,
-        value::node::{MessageDeltaOutputIterator, MessageOutputIterator},
+        value::{
+            Messages,
+            node::{MessageDeltaOutputIterator, MessageOutputIterator},
+        },
     };
 
     #[napi]
@@ -534,7 +537,7 @@ mod node {
         pub fn run_delta_js<'a>(
             &'a mut self,
             env: Env,
-            messages: Vec<Message>,
+            messages: Messages,
             config: Option<AgentConfig>,
         ) -> napi::Result<Object<'a>> {
             let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
@@ -542,7 +545,7 @@ mod node {
             let mut agent = self.clone();
 
             rt.spawn(async move {
-                let mut stream = agent.run_delta(messages, config).boxed();
+                let mut stream = agent.run_delta(messages.into(), config).boxed();
 
                 while let Some(item) = stream.next().await {
                     if tx
@@ -565,7 +568,7 @@ mod node {
         pub fn run_js<'a>(
             &'a mut self,
             env: Env,
-            messages: Vec<Message>,
+            messages: Messages,
             config: Option<AgentConfig>,
         ) -> napi::Result<Object<'a>> {
             let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
@@ -573,7 +576,7 @@ mod node {
             let mut agent = self.clone();
 
             rt.spawn(async move {
-                let mut stream = agent.run(messages, config).boxed();
+                let mut stream = agent.run(messages.into(), config).boxed();
 
                 while let Some(item) = stream.next().await {
                     if tx
@@ -599,7 +602,7 @@ mod wasm {
     use wasm_bindgen::prelude::*;
 
     use super::*;
-    use crate::ffi::web::stream_to_async_iterable;
+    use crate::{ffi::web::stream_to_async_iterable, value::Messages};
 
     #[wasm_bindgen]
     impl Agent {
@@ -636,8 +639,13 @@ mod wasm {
             js_name = "runDelta",
             unchecked_return_type = "AsyncIterable<MessageDeltaOutput>"
         )]
-        pub fn run_delta_js(&self, messages: Vec<Message>, config: Option<AgentConfig>) -> JsValue {
+        pub fn run_delta_js(
+            &self,
+            messages: Messages,
+            config: Option<AgentConfig>,
+        ) -> Result<JsValue, js_sys::Error> {
             let mut agent = self.clone();
+            let messages = messages.try_into()?;
             let stream = async_stream::stream! {
                 let mut inner_stream = agent.run_delta(messages, config);
                 while let Some(item) = inner_stream.next().await {
@@ -650,15 +658,20 @@ mod wasm {
                     .map_err(|e| JsValue::from_str(&e.to_string()))
             }));
 
-            stream_to_async_iterable(js_stream).into()
+            Ok(stream_to_async_iterable(js_stream).into())
         }
 
         #[wasm_bindgen(
             js_name = "run",
             unchecked_return_type = "AsyncIterable<MessageOutput>"
         )]
-        pub fn run_js(&self, messages: Vec<Message>, config: Option<AgentConfig>) -> JsValue {
+        pub fn run_js(
+            &self,
+            messages: Messages,
+            config: Option<AgentConfig>,
+        ) -> Result<JsValue, js_sys::Error> {
             let mut agent = self.clone();
+            let messages = messages.try_into()?;
             let stream = async_stream::stream! {
                 let mut inner_stream = agent.run(messages, config);
                 while let Some(item) = inner_stream.next().await {
@@ -671,7 +684,7 @@ mod wasm {
                     .map_err(|e| JsValue::from_str(&e.to_string()))
             }));
 
-            stream_to_async_iterable(js_stream).into()
+            Ok(stream_to_async_iterable(js_stream).into())
         }
     }
 }

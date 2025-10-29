@@ -35,11 +35,11 @@ export declare class Agent {
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
   runDelta(
-    messages: Array<Message>,
+    messages: Messages,
     config?: AgentConfig | undefined | null
   ): MessageDeltaOutputIterator;
   run(
-    messages: Array<Message>,
+    messages: Messages,
     config?: AgentConfig | undefined | null
   ): MessageOutputIterator;
 }
@@ -75,12 +75,12 @@ export declare class LangModel {
     apiKey: string
   ): Promise<LangModel>;
   inferDelta(
-    messages: Array<Message>,
+    messages: Messages,
     tools?: Array<ToolDesc> | undefined | null,
     docs?: Array<Document> | undefined | null
   ): MessageDeltaOutputIterator;
   infer(
-    messages: Array<Message>,
+    messages: Messages,
     tools?: Array<ToolDesc> | undefined | null,
     docs?: Array<Document> | undefined | null
   ): MessageDeltaOutput;
@@ -229,7 +229,7 @@ export interface KnowledgeConfig {
 export interface Message {
   /** Author of the message. */
   role: Role;
-  /** Primary message parts (e.g., text, image, value, or function). */
+  /** Primary parts of the message (e.g., text, image, value, or function). */
   contents: Array<Part>;
   /** Optional stable identifier for deduplication or threading. */
   id?: string;
@@ -316,6 +316,8 @@ export interface MessageOutputIteratorResult {
   value?: MessageOutput;
   done: boolean;
 }
+
+export type Messages = Array<Message> | Array<SingleTextMessage> | string;
 
 export type Metadata = Record<string, any>;
 
@@ -464,6 +466,30 @@ export type Role =
   | "assistant"
   /** Outputs produced by external tools/functions */
   | "tool";
+
+/**
+ * A simplified form of [Message] for concise definition.
+ * All other members are identical to [Message], but `contents` is a `String` instead of `Vec<Part>`.
+ * This can be converted to Message via `.into()`.
+ */
+export interface SingleTextMessage {
+  /** Author of the message. */
+  role: Role;
+  /** Primary part of message in text. */
+  contents: string;
+  /** Optional stable identifier for deduplication or threading. */
+  id?: string;
+  /** Internal “thinking” text used by some models before producing final output. */
+  thinking?: string;
+  /** Tool-call parts emitted alongside the main contents. */
+  tool_calls?: Array<Part>;
+  /**
+   * Optional signature for the `thinking` field.
+   *
+   * This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
+   */
+  signature?: string;
+}
 
 export type ThinkEffort = "disable" | "enable" | "low" | "medium" | "high";
 
