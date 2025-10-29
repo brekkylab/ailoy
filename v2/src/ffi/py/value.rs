@@ -4,7 +4,7 @@ use pyo3_stub_gen::derive::*;
 use crate::{
     ffi::py::base::{PyRepr, python_to_value, value_to_python},
     value::{
-        Delta, Document, FinishReason, Message, MessageDelta, MessageOutput, PartDelta, Role,
+        Delta, Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, PartDelta, Role,
         ToolDesc,
     },
 };
@@ -111,7 +111,7 @@ impl FinishReason {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl MessageOutput {
+impl MessageDeltaOutput {
     pub fn __repr__(&self) -> String {
         format!(
             "MessageOutput(delta={}, finish_reason={})",

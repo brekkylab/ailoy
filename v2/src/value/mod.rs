@@ -16,3 +16,17 @@ pub use message::*;
 pub use part::*;
 pub use tool_desc::*;
 pub use value::*;
+
+#[cfg(feature = "python")]
+pub(crate) mod py {
+    use super::*;
+
+    pub(crate) use message::py::*;
+}
+
+#[cfg(feature = "nodejs")]
+pub(crate) mod node {
+    use super::*;
+
+    pub(crate) use message::node::*;
+}
