@@ -28,7 +28,7 @@
         "access": "public"
     },
     "scripts": {
-        "build:napi": "napi build --platform --release --package ailoy --features nodejs --manifest-path ../../../Cargo.toml --js ailoy_core.js --dts ailoy_core.d.ts --esm -o ./src && prettier -w ./src/ailoy_core.d.ts",
+        "build:napi": "napi build --platform --release --package ailoy --features nodejs --manifest-path ../../Cargo.toml --js ailoy_core.js --dts ailoy_core.d.ts --esm -o ./src && prettier -w ./src/ailoy_core.d.ts",
         "build:ts": "vite build",
         "build": "npm run build:napi && npm run build:ts",
         "test": "vitest",
