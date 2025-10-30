@@ -1,53 +1,100 @@
+import asyncio
 from typing import Literal
 
-from ailoy.agent import ToolDescription
-from ailoy.tools import get_json_schema
+import pytest
+
+import ailoy as ai
+
+pytestmark = [pytest.mark.asyncio]
 
 
-def test_tool_description():
-    def fn(
-        temperature_format: Literal["celsius", "fahrenheit"],
-        literal: int | float | bool | str | None = None,
-        bool_literal: Literal[0, 1, True, False, "true", "false", "T", "F", "y", "n"] = False,
+async def test_builtin_tool():
+    import subprocess
+
+    tool = ai.Tool.new_builtin("terminal")
+    command = "pwd"
+
+    tool_result = await tool(command=command)
+    process_run = subprocess.run([command], stdout=subprocess.PIPE)
+    assert tool_result["stdout"] == process_run.stdout.decode()
+
+
+async def test_python_async_function_tool():
+    async def tool_temperature(
+        location: str, unit: Literal["Celsius", "Fahrenheit"] = "Celsius"
     ):
         """
-        Test function
+        Get temperature of the provided location
         Args:
-            temperature_format: The temperature format to use
-            literal: Any literal value LLM want to put
-            bool_literal: A literal value that can be interpreted as boolean value
+            location: The city name
+            unit: The unit of temperature
         Returns:
-            The temperature
+            int: The temperature
         """
-        return -40.0
+        await asyncio.sleep(0.2)
+        return 35 if unit == "Celsius" else 95
 
-    # Let's see if that gets correctly parsed as an enum
-    schema = get_json_schema(fn)
-    expected_schema = {
-        "name": "fn",
-        "description": "Test function",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "temperature_format": {
-                    "type": "string",
-                    "enum": ["celsius", "fahrenheit"],
-                    "description": "The temperature format to use",
-                },
-                "literal": {
-                    "type": ["boolean", "integer", "number", "string"],
-                    "nullable": True,
-                    "description": "Any literal value LLM want to put",
-                },
-                "bool_literal": {
-                    "type": ["integer", "boolean", "string"],
-                    "enum": [0, 1, True, False, "true", "false", "T", "F", "y", "n"],
-                    "description": "A literal value that can be interpreted as boolean value",
-                },
-            },
-            "required": ["temperature_format"],
-        },
-    }
+    def tool_temperature_sync(
+        location: str, unit: Literal["Celsius", "Fahrenheit"] = "Celsius"
+    ):
+        """
+        Get temperature of the provided location
+        Args:
+            location: The city name
+            unit: The unit of temperature
+        Returns:
+            int: The temperature
+        """
+        return 35 if unit == "Celsius" else 95
 
-    assert schema["function"] == expected_schema
-    ToolDescription.model_validate(schema.get("function", {}))
+    # with async function
+    tool = ai.Tool.new_py_function(tool_temperature)
+
+    # async calls with __call__()
+    assert await tool(location="Seoul") == 35
+    assert await tool(location="Seoul", unit="Fahrenheit") == 95
+
+    # async calls with call()
+    assert await tool.call(**{"location": "Seoul"}) == 35
+    assert await tool.call(**{"location": "Seoul", "unit": "Fahrenheit"}) == 95
+
+    # with sync function
+    tool_sync = ai.Tool.new_py_function(tool_temperature_sync)
+
+    # async calls with __call__()
+    assert await tool_sync(location="Seoul") == 35
+    assert await tool_sync(location="Seoul", unit="Fahrenheit") == 95
+
+    # async calls with call()
+    assert await tool_sync.call(**{"location": "Seoul"}) == 35
+    assert await tool_sync.call(**{"location": "Seoul", "unit": "Fahrenheit"}) == 95
+
+    # sync calls with call_sync()
+    assert tool_sync.call_sync(location="Seoul") == 35
+    assert tool_sync.call_sync(location="Seoul", unit="Fahrenheit") == 95
+
+
+async def test_mcp_tools():
+    import json
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    mcp_client = await ai.MCPClient.from_stdio("uvx", ["mcp-server-time"])
+
+    # call tools() to get list of MCP tools
+    current_time_tool = mcp_client.tools[0]
+    tool_result = json.loads(await current_time_tool(timezone="Asia/Seoul"))
+    assert tool_result["timezone"] == "Asia/Seoul"
+    assert abs(
+        datetime.fromisoformat(tool_result["datetime"])
+        - datetime.now(tz=ZoneInfo("Asia/Seoul"))
+    ) < timedelta(seconds=5)
+
+    # call get_tool(name) to get the MCP tool with the given name
+    current_time_tool = mcp_client.get_tool("get_current_time")
+    tool_result = json.loads(current_time_tool.call_sync(timezone="Asia/Seoul"))
+    assert tool_result["timezone"] == "Asia/Seoul"
+    assert abs(
+        datetime.fromisoformat(tool_result["datetime"])
+        - datetime.now(tz=ZoneInfo("Asia/Seoul"))
+    ) < timedelta(seconds=5)
