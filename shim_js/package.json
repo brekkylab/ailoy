@@ -1,26 +1,22 @@
 {
     "name": "ailoy-js-shim",
     "type": "module",
-    "module": "./dist/index.js",
+    "main": "./dist/index.js",
     "scripts": {
         "build:faiss": "bash ./scripts/build_faiss_bridge.sh",
-        "build:ts": "rollup -c --bundleConfigAsCjs",
+        "build:ts": "vite build",
         "build": "npm run build:faiss && npm run build:ts",
         "test": "vitest"
     },
     "devDependencies": {
         "@playwright/test": "^1.54.2",
-        "@rollup/plugin-commonjs": "^28.0.6",
-        "@rollup/plugin-terser": "^0.4.4",
-        "@rollup/plugin-typescript": "^12.1.4",
         "@types/node": "^24.3.0",
         "@vitest/browser": "^3.2.4",
-        "@webgpu/types": "^0.1.64",
+        "@webgpu/types": "^0.1.66",
         "playwright": "^1.55.0",
-        "rollup": "^4.47.1",
-        "rollup-plugin-copy": "^3.5.0",
         "serve": "^14.2.0",
         "tslib": "^2.8.1",
-        "typescript": "^5.8.3"
+        "typescript": "^5.8.3",
+        "vite": "^7.1.12"
     }
 }

@@ -2,9 +2,67 @@ import { loadEnv } from "vite";
 import dts from "vite-plugin-dts";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 import wasm from "vite-plugin-wasm";
-import { defineConfig } from "vitest/config";
+import { Plugin, defineConfig } from "vitest/config";
 
 const SAFARI = process.env.BROWSER === "safari";
+
+function rewriteImportPath(
+  options: {
+    mappings?: Record<string, string>;
+  } = {}
+): Plugin {
+  const { mappings = {} } = options;
+
+  function escapeRegExp(string: string): string {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  return {
+    name: "rewrite-import-path",
+    enforce: "post",
+    generateBundle(_, bundle) {
+      // Iterate through all chunks in the bundle
+      for (const fileName in bundle) {
+        const chunk = bundle[fileName];
+
+        // Only process JavaScript chunks
+        if (chunk.type === "chunk" && fileName.endsWith(".js")) {
+          let code = chunk.code;
+          let modified = false;
+
+          // Replace each mapping in the code
+          for (const [from, to] of Object.entries(mappings)) {
+            let escapedFrom = escapeRegExp(from);
+            const patterns = [
+              // import from "..."
+              new RegExp(`from\\s+["']${escapedFrom}["']`, "g"),
+              // import("...")
+              new RegExp(`import\\s*\\(\\s*["']${escapedFrom}["']\\s*\\)`, "g"),
+              // require("...")
+              new RegExp(
+                `require\\s*\\(\\s*["']${escapedFrom}["']\\s*\\)`,
+                "g"
+              ),
+            ];
+
+            for (const pattern of patterns) {
+              const originalCode = code;
+              code = code.replace(pattern, (match) => match.replace(from, to));
+              if (code !== originalCode) {
+                modified = true;
+              }
+            }
+          }
+
+          // Update the chunk code if modified
+          if (modified) {
+            chunk.code = code;
+          }
+        }
+      }
+    },
+  };
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -16,11 +74,7 @@ export default defineConfig(({ mode }) => {
         formats: ["es"],
       },
       rollupOptions: {
-        external: [
-          "./ailoy-web_bg.js",
-          "./ailoy-web.js",
-          "./shim_js/dist/index.js",
-        ],
+        external: ["./ailoy-web_bg.wasm", "./shim_js/dist/index.js"],
       },
     },
     plugins: [
@@ -30,17 +84,22 @@ export default defineConfig(({ mode }) => {
       viteStaticCopy({
         targets: [
           {
-            src: [
-              "./src/ailoy-web_bg.js",
-              "./src/ailoy-web_bg.wasm",
-              "./src/ailoy-web.js",
-              "./src/shim_js",
-            ],
+            src: "./src/ailoy-web_bg.wasm",
             dest: "./",
+          },
+          {
+            src: "./src/shim_js/dist/index.js",
+            dest: "./",
+            rename: "shim.js",
           },
         ],
       }),
       wasm(),
+      rewriteImportPath({
+        mappings: {
+          "./shim_js/dist/index.js": "./shim.js",
+        },
+      }),
     ],
     define: {
       "process.env.OPENAI_API_KEY": JSON.stringify(env.OPENAI_API_KEY),

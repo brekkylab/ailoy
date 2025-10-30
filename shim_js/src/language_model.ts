@@ -1,11 +1,4 @@
-import {
-  Instance,
-  NDArray,
-  PackedFunc,
-  Scalar,
-  TVMObject,
-  VirtualMachine,
-} from "./tvmjs";
+import { Instance, NDArray, PackedFunc, Scalar, TVMObject } from "./tvmjs";
 import { init as init_tvm_runtime, TVMRuntime } from "./tvm_runtime";
 
 const PAGE_SIZE = 16;
