@@ -149,7 +149,7 @@ mod py {
                         // execute coroutine using Python `asyncio`
                         match py
                             .import("asyncio")
-                            .and_then(|asyncio| asyncio.call_method1("run", (py_result,)))
+                            .and_then(|asyncio| asyncio.call_method1("create_task", (py_result,)))
                         {
                             Ok(r) => r.unbind(),
                             Err(e) => {
