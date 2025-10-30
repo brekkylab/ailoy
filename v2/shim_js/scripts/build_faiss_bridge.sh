@@ -26,6 +26,7 @@ docker run --rm \
     -llapack \
     -lFortranRuntime \
     -lembind \
+    -O2 \
     -s WASM=1 \
     -s ENVIRONMENT=web \
     -s EXPORT_ES6=1 \

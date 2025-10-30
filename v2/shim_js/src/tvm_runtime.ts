@@ -5,7 +5,6 @@ import {
   DLDevice,
   Instance,
   instantiate,
-  PackedFunc,
   TVMObject,
   VirtualMachine,
 } from "./tvmjs";
