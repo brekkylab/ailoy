@@ -66,10 +66,6 @@ fn build_native() {
     println!("cargo:rustc-link-lib=static=ailoy_cpp_shim");
 
     // Link libfaiss.a
-    println!(
-        "cargo:rustc-link-search=native={}",
-        (cmake_install_dir.join("libfaiss.a")).display()
-    );
     println!("cargo:rustc-link-lib=static=faiss");
 
     #[cfg(target_os = "linux")]
