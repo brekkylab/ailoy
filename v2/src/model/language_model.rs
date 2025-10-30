@@ -16,7 +16,7 @@ use crate::{
     utils::{BoxFuture, BoxStream},
     value::{
         Delta, Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput,
-        ToolDesc,
+        PartDelta, PartDeltaFunction, ToolDesc,
     },
 };
 
@@ -130,10 +130,18 @@ pub trait LangModelInference {
                     delta,
                     finish_reason,
                 } = out_opt?;
-                if finish_reason.is_some() {
-                    acc_finish_reason = finish_reason;
-                }
                 acc_delta = acc_delta.accumulate(delta)?;
+                if let Some(finish_reason) = finish_reason {
+                    acc_finish_reason = Some(finish_reason.clone());
+                    if let FinishReason::ToolCall {} = finish_reason {
+                        let last_tool_call = acc_delta.tool_calls.pop().unwrap();
+                        let (id, name, arguments) = last_tool_call.to_parsed_function().unwrap();
+                        acc_delta.tool_calls.push(PartDelta::Function {
+                            id,
+                            function: PartDeltaFunction::WithParsedArgs { name, arguments },
+                        })
+                    }
+                }
             }
             Ok(MessageOutput {
                 message: acc_delta.finish()?,

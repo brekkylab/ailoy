@@ -9,7 +9,7 @@
         "type": "git",
         "url": "git+https://github.com/brekkylab/ailoy"
     },
-    "type": "module",
+    "type": "commonjs",
     "main": "dist/index.js",
     "files": [
         "README.md",

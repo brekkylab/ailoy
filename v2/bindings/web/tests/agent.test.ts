@@ -229,7 +229,7 @@ for (const cfg of modelConfigs) {
         };
 
         for await (const resp of agent.run("What is Ailoy?", {
-          documentPolyfill,
+          inference: { documentPolyfill },
         })) {
           console.log(resp.message);
         }

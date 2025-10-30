@@ -23,12 +23,9 @@
  * See `MessageDelta`.
  *
  * # Components
- * - **Language Model**: Generates natural language and structured outputs.
- *   It interprets the conversation context and predicts the assistant’s next action.
- * - **Tool**: Represents external functions or APIs that the model can dynamically invoke.
- *   The `Agent`` detects tool calls and automatically executes them during the reasoning loop.
- * - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases.
- *   When available, the `Agent`` enriches model input with these results before generating an answer.
+ * - **Language Model**: Generates natural language and structured outputs. It interprets the conversation context and predicts the assistant’s next action.
+ * - **Tool**: Represents external functions or APIs that the model can dynamically invoke. The `Agent` detects tool calls and automatically executes them during the reasoning loop.
+ * - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases. When available, the `Agent` enriches model input with these results before generating an answer.
  */
 export declare class Agent {
   constructor(lm: LangModel, tools?: Array<Tool> | undefined | null);
@@ -40,11 +37,11 @@ export declare class Agent {
   removeKnowledge(): void;
   runDelta(
     messages: Messages,
-    config?: InferenceConfig | undefined | null
+    config?: AgentConfig | undefined | null
   ): MessageDeltaOutputIterator;
   run(
     messages: Messages,
-    config?: InferenceConfig | undefined | null
+    config?: AgentConfig | undefined | null
   ): MessageOutputIterator;
 }
 
@@ -135,6 +132,16 @@ export declare class VectorStore {
   removeVectors(ids: Array<string>): Promise<void>;
   clear(): Promise<void>;
   count(): Promise<number>;
+}
+
+/**
+ * Configuration for running the agent.
+ *
+ * See `InferenceConfig` and `KnowledgeConfig` for more details.
+ */
+export interface AgentConfig {
+  inference?: InferenceConfig;
+  knowledge?: KnowledgeConfig;
 }
 
 export type APISpecification =
