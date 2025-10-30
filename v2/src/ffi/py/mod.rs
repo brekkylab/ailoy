@@ -8,7 +8,7 @@ pub(crate) mod value;
 use pyo3::prelude::*;
 
 use crate::{
-    agent::Agent,
+    agent::{Agent, AgentConfig},
     ffi::py::cache_progress::PyCacheProgress as CacheProgress,
     knowledge::{Knowledge, KnowledgeConfig},
     model::{DocumentPolyfill, EmbeddingModel, Grammar, InferenceConfig, LangModel},
@@ -28,6 +28,7 @@ use crate::{
 fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     // Add classes in alphabetical order
     m.add_class::<Agent>()?;
+    m.add_class::<AgentConfig>()?;
     m.add_class::<CacheProgress>()?;
     m.add_class::<Document>()?;
     m.add_class::<DocumentPolyfill>()?;

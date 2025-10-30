@@ -96,7 +96,7 @@ async def test_simple_chat(agent: ai.Agent, simple_chat_messages):
     acc = ai.MessageDelta()
     async for resp in agent.run_delta(
         simple_chat_messages,
-        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
+        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
@@ -134,7 +134,7 @@ async def test_simple_multiturn(agent: ai.Agent):
         )
         async for resp in agent.run(
             messages,
-            config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
+            config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
         ):
             result = resp.message
         messages.append(result)
@@ -153,7 +153,7 @@ async def test_builtin_tool(agent: ai.Agent):
     results = []
     async for resp in agent.run_delta(
         "List the files in the current directory.",
-        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
+        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
@@ -199,7 +199,7 @@ async def test_python_async_function_tool(agent: ai.Agent):
     results = []
     async for resp in agent.run_delta(
         "What is the temperature in Seoul now?",
-        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
+        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
@@ -232,7 +232,7 @@ async def test_mcp_tools(agent: ai.Agent):
     results = []
     async for resp in agent.run_delta(
         "What time is it currently in Asia/Seoul?",
-        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
+        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:

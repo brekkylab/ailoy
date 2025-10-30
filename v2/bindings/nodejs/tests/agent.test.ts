@@ -269,7 +269,7 @@ After the user’s question, a list of documents retrieved from the knowledge ba
         };
 
         for await (const resp of agent.runDelta("What is Ailoy?", {
-          documentPolyfill,
+          inference: { documentPolyfill },
         })) {
           console.log(resp.delta);
         }
