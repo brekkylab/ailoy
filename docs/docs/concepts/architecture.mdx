@@ -1,110 +1,84 @@
-import ArchitectureImg from "./img/architecture.svg";
-
 # Architecture
 
-## In a Nutshell
+Ailoy is built on a modular architecture that separates AI inference, external tools, and knowledge retrieval, yet seamlessly composes them through `Agent`.
 
-Ailoy aims to enable performant LLM execution with minimal boilerplate across a wide range of programming languages and environments.
-To achieve this, it is structured around a modular, message-driven architecture composed of three core components: **Runtime**, **Broker**, and **VM**.
+At a high level, Ailoy consists of the following core components:
 
-<p align="center">
-  <ArchitectureImg style={{ width: "80%", height: "80%" }} />
-</p>
+|Component|Description|
+|---|---|
+|`Agent`|Orchestrates high-level agent behavior|
+|`LangModel`|Serves as the reasoning and text generation engine|
+|`Tool`|Provides an extension interface for invoking external capabilities|
+|`Knowledge`|Manages retrieval and augmentation with external information|
 
-### Runtime
+## `Agent`
 
-The `Runtime` serves as the user-facing interface.
-It defines the public API and manages all interactions between the user and the internal components of the system.
+`Agent` is the top-level component.
+It is responsive to answer user's query, by controlling execution of its sub-components.
 
-To ensure seamless integration across diverse development environments, each `Runtime` is designed to follow the idiomatic conventions and best practices of its target programming language.
-This allows developers to interact with Ailoy in a way that feels natural and intuitive, without having to inspect an internal architecture.
+- Generate text using the `LangModel`
+- Invoke external functions through `Tool`
+- Retrieve context from `Knowledge`
 
-#### Responsibilities
+`Agent` exposes the `run()` function.
+It streams intermediate results or reasoning traces back to the user.
 
-- Expose user-facing APIs
-- Serialize user requests into messages
-- Deserialize responses back into native objects
+## `LangModel`
 
-#### Implementations
+The `LangModel` is the AI inference engine of Ailoy.
+It performs the actual reasoning and text generation that power the agent’s intelligence.
+Given an input sequence of messages, it interprets the context, predicts the next tokens, and generates coherent responses.
 
-- Python
-- JavaScript (node.js)
-- *JavaScript (browser) (planned)*
-- *Java / Kotlin (planned)*
-- *C# (planned)*
-- etc.
+Ailoy supports two types of models:
+- API Models — cloud-based models
+- Local Models — models that run entirely on your device
 
-### Broker
+The `LangModel` defines how messages are tokenized, formatted, and executed.
+It operates independently from the Agent, so you can use it directly when tools or knowledge modules are not required.
 
-The Broker implements Ailoy’s internal message broker system.
-It sits between the Runtime and the VM, managing communication and dispatching messages between them.
+## `Tool`
 
-Ailoy currently uses an in-process communication model for minimal overhead and maximum performance.
-This implementation is based on a local network system, allowing fast and efficient message delivery between components within the same device.
-However, the underlying architecture is designed to be easily extended to support remote communication protocols, such as TCP, enabling cross-machine scenarios.
+The Tool module enables the agent to perform operations beyond what `LangModel` can do.
+It allows the model to interact with external systems, execute logic, or query real-world data.
 
-#### Responsibilities
+A tool consists of two main parts: **tool description** and **tool behavior**.
 
-- Manage connections and message queues
-- Route messages to appropriate VMs
-- Support multiple networking backends
+A **tool description** defines how the tool is exposed to the model.
+It includes the tool’s name, description, parameters, and an optional return schema.
+This format follows the JSON Schema convention.
 
-#### Implementations
+A **tool behavior** defines what the tool actually does when invoked.
+It can be implemented as a function in Python, JavaScript, or Rust.
+When the model outputs a structured function call matching the tool’s schema, the Agent automatically routes it to the corresponding behavior.
 
-- inproc (for intra-device protocol)
-- *tcp (for inter-device protocol) (planned)*
+You can also use the Model Context Protocol (MCP) to register and expose tools dynamically.
+This provides a seamless way to define, describe, and connect tool behaviors across different environments.
 
-### VM
+## `Knowledge`
 
-The `VM` is the execution backend that performs the actual compute tasks.
-It is platform-specific and executes requests routed through the `Broker`.
+The `Knowledge` module enhances the agent’s reasoning by supplying factual or contextual data retrieved from external sources such as vector stores, databases, or document collections.
 
-#### Responsibilities
+When a query is made, the `Knowledge` module performs retrieval (e.g., via embeddings and similarity search) and produces an array of documents relevant to the user’s input.
+These documents are then incorporated into the reasoning flow to make the model’s responses more grounded and accurate — a process known as *Retrieval-Augmented Generation* (RAG).
 
-- Execute AI-related tasks or compute operations
-- Serialize response messages and return them to the `Broker`
+### Integration with `LangModel`
 
-#### Target architectures
+Ailoy allows the `Knowledge` module to be attached to a `LangModel` in two integration modes:
 
-Our goal is to run the `VM` across diverse environments.
-To support this, we are implementing portable `VM` backends across a variety of targets.
+#### 1. Native
 
-- x86_64-windows-unknown
-- arm64-macos-unknown
-- x86_64-unknown-linux-gnu
-- *wasm32-emscripten-unknown (planned)*
-- to be added
+In **native mode**, the `LangModel` itself is expected to support external document input.
+The retrieved documents are directly attached to the model’s input, allowing the model to internally process them as part of its reasoning.
 
-## Module System
+However, many models currently do not support native document input formats.
+To address this, Ailoy provides a **polyfill mechanism**.
+It is an internal augmentation layer that modifies the model’s chat template so it can recognize and interpret documents correctly.
+This polyfill enables RAG behavior even on models lacking explicit document-handling capabilities.
 
-In Ailoy's architecture, the VM is responsible for computing and returning results for incoming requests.
-It must be capable of executing a wide range of functions, including LLM inference, deep learning modules, and various utility operations.
-The number of functions supported by the VM is expected to grow continuously as new capabilities are introduced.
-Additionally, the VM should support user-defined tasks as plug-ins, enabling developers to extend its functionality without modifying the core library.
-These two requirements—supporting a growing set of functions and enabling extensibility through plug-ins—are fundamental to the design of the VM.
+#### 2. Tool
 
-To address these requirements, Ailoy adopts a module-based VM system.
-This design allows the VM to dynamically load task-specific modules and invoke the functions defined within them.
-Conceptually, a `Module` can be thought of as a package, similar to those found in many modern programming languages.
+In **tool mode**, the `Knowledge` module is registered as a callable **tool** (`knowledge` tool).
+When the `LangModel` determines that external context is needed, it issues a function call to the `knowledge` tool.
+The tool executes the retrieval process and returns relevant documents, which the agent then feeds back into the reasoning flow.
 
-| **Entity** | **Description** |
-| --- | --- |
-| **VM** | The runtime environment where task execution takes place |
-| **Module** | The executable logic that defines how tasks are performed within the VM |
-
-Each module consists of two types of sub-entities: operators and components.
-An operator is a stateless function that executes immediately when invoked with input and returns a result.
-In contrast, a component is a stateful instance that produces an output based on both its internal state and the given input.
-Roughly speaking, operators are analogous to functions, while components resemble class instances in traditional programming.
-
-| **Entity** | **Description** |
-| --- | --- |
-| **Operator** | A stateless function. Takes input and returns a result. |
-| **Component Type** | A class-like definition that can be instantiated by VM when it imports a module. |
-| **Component** | A runtime instance. Maintains internal state and produces output based on input and it's state. |
-
-Conceptually, a module can be thought of as a package, similar to those found in many modern programming languages.
-Each module consists of two types of sub-entities: operators and component types (also referred to as component factories).
-Some may wonder why a module consists of component types instead of just components.
-In Ailoy, components are not instantiated at module load time; rather, they are explicitly created by the user by sending a define_component-type packet.
-It is analogous to how packages work in most programming languages—when a package is imported, it typically exposes class definitions rather than class instances, and provides access to their constructors so that users can instantiate them as needed.
+This design allows the same retrieval process to be invoked dynamically through the model’s reasoning, even for models that cannot handle direct document input.

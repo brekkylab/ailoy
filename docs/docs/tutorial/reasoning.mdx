@@ -1,6 +1,6 @@
 # Reasoning
 
-Reasoning is an advanced capability of AI that enables it to tackle complex
+Reasoning(thinking) is an advanced capability of AI that enables it to tackle complex
 tasks through explicit, step-by-step logical inference. Reasoning models break
 down problems into smaller sub-tasks rather than solving them in a single pass.
 Compared to direct answer generation, it offers two key advantages:
@@ -15,11 +15,17 @@ computation and memory usage, it can increase latency and overall resource
 consumption. Therefore, it’s important to enable reasoning only when necessary,
 based on the complexity of your use case.
 
-## How to enable reasoning
+## Hybrid Reasoning Models
 
-In models like Qwen3 that support hybrid reasoning, reasoning can be turned on or off.
-Ailoy supports this kind of hybrid reasoning as well.
-You can activate reasoning feature by simply specifying an option `reasoning`.
+Some modern models, such as Qwen3, are designed as hybrid reasoning models.
+These models can switch between normal (direct-generation) and thinking (reasoning) modes depending on your configuration.
+
+Ailoy fully supports this hybrid capability. You can explicitly turn the reasoning process on or off via the reasoning option.
+When enabled, the model engages in structured, step-by-step inference—producing a detailed “thinking trace” before the final answer.
+
+### How to enable reasoning
+
+To activate reasoning mode, simply specify the reasoning option when querying the agent:
 
 <CodeTabs>
 
@@ -44,9 +50,17 @@ for await (const resp of agent.query(
 
 {/* prettier-ignore-start */}
 
-:::note 
-Note: Qwen3-0.6b is too small to perform effective reasoning.
-We recommend using a model with bigger parameters for reasoning tasks. 
+:::info
+Note that not all models are hybrid reasoning models.
+Some models always perform reasoning(like GPT-o series), while others do not support reasoning.
+In such cases, setting `reasoning=True` will have no effect—the model’s reasoning behavior.
+
+Please check the model’s documentation to understand whether it supports explicit reasoning control.
+:::
+
+:::info 
+Qwen3-0.6b is too small to perform effective reasoning.
+For complex tasks, we recommend using sufficiently large models.
 :::
 
 {/* prettier-ignore-end */}

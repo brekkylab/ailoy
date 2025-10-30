@@ -1,0 +1,94 @@
+# Multi-Turn Conversation
+
+Ailoy's `Agent` is designed to be stateless. It does not keep track of
+conversation histories. Each time you call the model, agent treats it as a new
+request.
+
+If you want to create a multi-turn chat — for example, a back-and-forth
+conversation with the assistant — you must include the entire conversation
+history (all previous messages) in the request.
+
+## Example
+
+Let’s start with a single-turn conversation:
+
+{/* prettier-ignore-start */}
+
+<CodeTabs>
+
+```python
+from ailoy import Agent, LangModel, Message
+
+model = LangModel.new_local_sync("Qwen/Qwen3-0.6B")
+agent = Agent(model)
+
+for resp in agent.run_sync([
+    Message(role="user", contents="Hello!")
+]):
+    print(resp.text)
+```
+
+
+```nodejs
+import * as ailoy from "ailoy-node";
+
+(async () => {
+  const model = await ailoy.LangModel.newLocal("Qwen/Qwen3-0.6B");
+  const agent = new ailoy.Agent(model);
+
+  for await (const resp of agent.run([
+    { role: "user", contents: "What is your name?" },
+  ])) {
+    console.log(resp.contents[0].text);
+  }
+})();
+```
+
+</CodeTabs>
+
+{/* prettier-ignore-end */}
+
+The model will respond to "Hello!" normally. Now, if you want to continue the
+conversation, you must pass both the previous messages and the new user message
+again:
+
+{/* prettier-ignore-start */}
+
+<CodeTabs>
+
+```python
+messages = [
+    Message(role="user", contents="Hello!"),
+    Message(role="assistant", contents="Hi there! How can I help you today?"),
+    Message(role="user", contents="What did I just say?"),
+]
+
+for resp in agent.run_sync(messages):
+    print(resp.text)
+```
+
+```nodejs
+import * as ailoy from "ailoy-node";
+
+(async () => {
+  const model = await ailoy.LangModel.newLocal("Qwen/Qwen3-0.6B");
+  const agent = new ailoy.Agent(model);
+
+  const messages = [
+    { role: "user", contents: "What is your name?" },
+    { role: "assistant", contents: "Hi there! How can I help you today?" },
+    { role: "user", contents: "What did I just say?" },
+  ]
+
+  for await (const resp of agent.run(messages)) {
+    console.log(resp.contents[0].text);
+  }
+})();
+```
+
+</CodeTabs>
+
+{/* prettier-ignore-end */}
+
+Ailoy will now use the full conversation context to produce the correct reply —
+even though it doesn’t persist any state internally.

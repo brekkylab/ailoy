@@ -19,12 +19,13 @@ const sidebars: SidebarsConfig = {
       label: "Tutorial",
       items: [
         "tutorial/getting-started",
-        "tutorial/managing-conversation",
+        "tutorial/system-message",
+        "tutorial/multi-turn-conversation",
         "tutorial/reasoning",
         "tutorial/using-tools",
-        "tutorial/integrate-with-mcp",
-        "tutorial/calling-low-level-apis",
-        "tutorial/rag-with-vector-store",
+        "tutorial/mcp-integration",
+        "tutorial/rag-using-documents",
+        "tutorial/managing-model-files",
         "tutorial/webassembly-supports",
       ],
     },
@@ -32,9 +33,9 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Concepts",
       items: [
+        "concepts/how-agent-works",
         "concepts/architecture",
-        "concepts/agent",
-        "concepts/tools",
+        "concepts/chat-completion-format",
         "concepts/devices-environments",
         "concepts/command-line-interfaces",
       ],
@@ -43,7 +44,6 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "API References",
       items: [
-        "api-references/internal-runtime-apis",
         {
           type: "html",
           value: `<a href="/ailoy/api-references/python/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Python API References</a>`,
@@ -51,12 +51,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: "html",
-          value: `<a href="/ailoy/api-references/nodejs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Node.js) API References</a>`,
+          value: `<a href="/ailoy/api-references/nodejs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">JavaScript(Node.js) API References</a>`,
           defaultStyle: true,
         },
         {
           type: "html",
-          value: `<a href="/ailoy/api-references/js-web/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Javascript(Web) API References</a>`,
+          value: `<a href="/ailoy/api-references/js-web/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">JavaScript(Web) API References</a>`,
           defaultStyle: true,
         },
       ],

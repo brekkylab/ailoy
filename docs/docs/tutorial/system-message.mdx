@@ -1,0 +1,91 @@
+# System Message
+
+A **system message** defines the global behavior, tone, or role of the
+assistant. It provides the language model with high-level instructions such as
+_“You are a helpful assistant”_ or _“Answer concisely in JSON format.”_
+
+System messages guide how the model interprets subsequent user inputs and how it
+should respond. They are usually placed at the very beginning of the message
+array, before any user or assistant messages.
+
+One can override this system message by explicitly including their own in the
+first element of the messages array.
+
+```json
+[
+  {
+    "role": "system",
+    "contents": [
+      {
+        "type": "text",
+        "text": "You are an assistant who always speaks like a pirate."
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "contents": [
+      { "type": "text", "text": "Explain how memory management works in Rust." }
+    ]
+  }
+]
+```
+
+The model will now respond according to the pirate persona instead of the
+default neutral assistant style:
+
+```json
+{
+  "role": "assistant",
+  "contents": [
+    {
+      "type": "text",
+      "text": "Arrr, matey! In Rust, the seas be ruled by ownership and borrowing. Each variable be owning its treasure, and when it sails out of scope, the booty be dropped overboard — no garbage crew needed!"
+    }
+  ]
+}
+```
+
+## Example
+
+<CodeTabs>
+
+```python
+TBD
+```
+
+```typescript
+TBD;
+```
+
+```typescript web
+TBD;
+```
+
+```rust
+TBD
+```
+
+</CodeTabs>
+
+<TerminalBox>
+
+Arrr, matey! In Rust, the seas be ruled by ownership and borrowing. Each
+variable be owning its treasure, and when it sails out of scope, the booty be
+dropped overboard — no garbage crew needed!
+
+</TerminalBox>
+
+The LM will use the developer-defined system message instead of its internal
+default, allowing full customization of the model’s tone, persona, or
+task-specific behavior.
+
+## Notes
+
+- Always place the system message as **the first message in the sequence**.
+  Placing it elsewhere may cause errors or undefined behavior.
+- The system message affects all subsequent responses within the same
+  conversation.
+- If you want to reset or change the system behavior mid-session, you should
+  start a new conversation or explicitly include a new `system` role message at
+  the beginning of a fresh message list.
