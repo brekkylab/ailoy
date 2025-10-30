@@ -11,7 +11,7 @@ pytestmark = [pytest.mark.asyncio]
 
 @pytest.fixture(scope="module")
 def qwen3():
-    return ai.LangModel.new_local_sync("Qwen/Qwen3-0.6B", progress_callback=print)
+    return ai.LangModel.new_local_sync("Qwen/Qwen3-4B", progress_callback=print)
 
 
 @pytest.fixture(scope="module")
@@ -96,7 +96,7 @@ async def test_simple_chat(agent: ai.Agent, simple_chat_messages):
     acc = ai.MessageDelta()
     async for resp in agent.run_delta(
         simple_chat_messages,
-        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
+        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
@@ -134,7 +134,7 @@ async def test_simple_multiturn(agent: ai.Agent):
         )
         async for resp in agent.run(
             messages,
-            config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
+            config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
         ):
             result = resp.message
         messages.append(result)
@@ -149,11 +149,12 @@ async def test_simple_multiturn(agent: ai.Agent):
 async def test_builtin_tool(agent: ai.Agent):
     tool = ai.Tool.new_builtin("terminal")
     agent.add_tool(tool)
+
     acc = ai.MessageDelta()
     results = []
     async for resp in agent.run_delta(
         "List the files in the current directory.",
-        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
+        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
@@ -164,6 +165,19 @@ async def test_builtin_tool(agent: ai.Agent):
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
+                elif isinstance(content, ai.PartDelta.Value):
+                    print(content.value)
+                else:
+                    raise ValueError(
+                        f"Content has invalid part_type: {content.part_type}"
+                    )
+            for tool_call in resp.delta.tool_calls:
+                if isinstance(tool_call, ai.PartDelta.Function):
+                    print(tool_call.function.text, end="")
+                else:
+                    raise ValueError(
+                        f"Tool call has invalid part_type: {tool_call.part_type}"
+                    )
     print()
 
     assert finish_reason == ai.FinishReason.Stop()
@@ -193,13 +207,13 @@ async def test_python_async_function_tool(agent: ai.Agent):
         return 35 if unit == "Celsius" else 95
 
     tool = ai.Tool.new_py_function(tool_temperature)
-
     agent.add_tool(tool)
+
     acc = ai.MessageDelta()
     results = []
     async for resp in agent.run_delta(
         "What is the temperature in Seoul now?",
-        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
+        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
@@ -210,6 +224,19 @@ async def test_python_async_function_tool(agent: ai.Agent):
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
+                elif isinstance(content, ai.PartDelta.Value):
+                    print(content.value)
+                else:
+                    raise ValueError(
+                        f"Content has invalid part_type: {content.part_type}"
+                    )
+            for tool_call in resp.delta.tool_calls:
+                if isinstance(tool_call, ai.PartDelta.Function):
+                    print(tool_call.function.text, end="")
+                else:
+                    raise ValueError(
+                        f"Tool call has invalid part_type: {tool_call.part_type}"
+                    )
     print()
 
     assert finish_reason == ai.FinishReason.Stop()
@@ -223,16 +250,75 @@ async def test_python_async_function_tool(agent: ai.Agent):
 @pytest.mark.parametrize(
     "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
 )
+async def test_parallel_tool_call(agent: ai.Agent):
+    async def tool_temperature(
+        location: str, unit: Literal["Celsius", "Fahrenheit"] = "Celsius"
+    ):
+        """
+        Get temperature of the provided location
+        Args:
+            location: The city name
+            unit: The unit of temperature
+        Returns:
+            int: The temperature
+        """
+        await asyncio.sleep(1.0)
+        return 35 if unit == "Celsius" else 95
+
+    async def tool_wind_speed(location: str):
+        """
+        Get the current wind speed in km/h at a given location
+        Args:
+            location: The city name
+        Returns:
+            float: The current wind speed at the given location in km/h, as a float.
+        """
+        await asyncio.sleep(1.0)
+        return 23.5
+
+    tools = [
+        ai.Tool.new_py_function(tool_temperature),
+        ai.Tool.new_py_function(tool_wind_speed),
+    ]
+    agent.add_tools(tools)
+
+    async for resp in agent.run(
+        "Tell me the weather in Seoul both temperature and wind.",
+        config=ai.InferenceConfig(think_effort="disable"),
+    ):
+        for content in resp.message.contents:
+            if isinstance(content, ai.PartDelta.Text):
+                print(f"{content.text=}")
+            elif isinstance(content, ai.PartDelta.Value):
+                print(f"{content.value=}")
+            else:
+                raise ValueError(f"Content has invalid part_type: {content.part_type}")
+        for tool_call in resp.message.tool_calls:
+            if isinstance(tool_call, ai.PartDelta.Function):
+                print(
+                    f"function_call={tool_call.function.name}(**{tool_call.function.arguments})"
+                )
+            else:
+                raise ValueError(
+                    f"Tool call has invalid part_type: {tool_call.part_type}"
+                )
+
+    agent.remove_tools([t.get_description().name for t in tools])
+
+
+@pytest.mark.parametrize(
+    "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
+)
 async def test_mcp_tools(agent: ai.Agent):
     mcp_client = await ai.MCPClient.from_stdio("uvx", ["mcp-server-time"])
     tools = mcp_client.tools
-
     agent.add_tools(tools)
+
     acc = ai.MessageDelta()
     results = []
     async for resp in agent.run_delta(
         "What time is it currently in Asia/Seoul?",
-        config=ai.InferenceConfig(temperature=0.0, think_effort="disable"),
+        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
@@ -243,6 +329,19 @@ async def test_mcp_tools(agent: ai.Agent):
             for content in resp.delta.contents:
                 if isinstance(content, ai.PartDelta.Text):
                     print(content.text, end="")
+                elif isinstance(content, ai.PartDelta.Value):
+                    print(content.value)
+                else:
+                    raise ValueError(
+                        f"Content has invalid part_type: {content.part_type}"
+                    )
+            for tool_call in resp.delta.tool_calls:
+                if isinstance(tool_call, ai.PartDelta.Function):
+                    print(tool_call.function.text, end="")
+                else:
+                    raise ValueError(
+                        f"Tool call has invalid part_type: {tool_call.part_type}"
+                    )
     print()
 
     assert finish_reason == ai.FinishReason.Stop()

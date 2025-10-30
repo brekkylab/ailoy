@@ -3,6 +3,7 @@
  * It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
  *
  * In essence, the Agent:
+ *
  * - Understands user input
  * - Interprets structured responses from the language model (such as tool calls)
  * - Executes tools as needed
@@ -20,12 +21,9 @@
  * See `MessageDelta`.
  *
  * # Components
- * - **Language Model**: Generates natural language and structured outputs.
- *   It interprets the conversation context and predicts the assistant’s next action.
- * - **Tool**: Represents external functions or APIs that the model can dynamically invoke.
- *   The `Agent`` detects tool calls and automatically executes them during the reasoning loop.
- * - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases.
- *   When available, the `Agent`` enriches model input with these results before generating an answer.
+ * - **Language Model**: Generates natural language and structured outputs. It interprets the conversation context and predicts the assistant’s next action.
+ * - **Tool**: Represents external functions or APIs that the model can dynamically invoke. The `Agent` detects tool calls and automatically executes them during the reasoning loop.
+ * - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases. When available, the `Agent` enriches model input with these results before generating an answer.
  */
 export class Agent {
   free(): void;
@@ -43,11 +41,11 @@ export class Agent {
   removeKnowledge(): void;
   runDelta(
     messages: Array<Message> | Array<SingleTextMessage> | string,
-    config?: InferenceConfig | null
+    config?: AgentConfig | null
   ): AsyncIterable<MessageDeltaOutput>;
   run(
     messages: Array<Message> | Array<SingleTextMessage> | string,
-    config?: InferenceConfig | null
+    config?: AgentConfig | null
   ): AsyncIterable<MessageOutput>;
 }
 
@@ -140,6 +138,16 @@ export class VectorStore {
   removeVectors(ids: string[]): Promise<void>;
   clear(): Promise<void>;
   count(): Promise<number>;
+}
+
+/**
+ * Configuration for running the agent.
+ *
+ * See `InferenceConfig` and `KnowledgeConfig` for more details.
+ */
+export interface AgentConfig {
+  inference?: InferenceConfig;
+  knowledge?: KnowledgeConfig;
 }
 
 export type APISpecification =
@@ -394,7 +402,7 @@ export type PartDelta =
  *     name: \"translate\".into(),
  *     arguments: r#\"{\"text\":\"hi\"}\"#.into(),
  * };
- * `
+ * ```
  */
 export type PartDeltaFunction =
   | { type: "verbatim"; text: string }

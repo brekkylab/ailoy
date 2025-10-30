@@ -641,6 +641,22 @@ impl PartDelta {
                 id,
                 function: PartDeltaFunction::WithParsedArgs { name, arguments },
             } => Some((id, name, arguments)),
+            Self::Function {
+                id,
+                function: PartDeltaFunction::WithStringArgs { name, arguments },
+            } => serde_json::from_str::<Value>(&arguments)
+                .ok()
+                .and_then(|arguments| Some((id, name, arguments))),
+            Self::Function {
+                id,
+                function: PartDeltaFunction::Verbatim { text },
+            } => serde_json::from_str::<Value>(&text).ok().and_then(|root| {
+                Some((
+                    id,
+                    root.pointer_as::<str>("/name")?.to_owned(),
+                    root.pointer("/arguments")?.to_owned(),
+                ))
+            }),
             _ => None,
         }
     }
@@ -756,43 +772,23 @@ impl Delta for PartDelta {
     }
 
     fn finish(self) -> anyhow::Result<Self::Item> {
-        match self {
+        match &self {
             PartDelta::Null {} => Ok(Part::Text {
                 text: String::new(),
             }),
-            PartDelta::Text { text } => Ok(Part::Text { text }),
-            PartDelta::Function { id, function } => {
-                let function = match function {
-                    // Try json deserialization if verbatim
-                    PartDeltaFunction::Verbatim { text } => {
-                        match serde_json::from_str::<Value>(&text) {
-                            Ok(root) => {
-                                match (root.pointer_as::<str>("/name"), root.pointer("/arguments"))
-                                {
-                                    (Some(name), Some(args)) => PartFunction {
-                                        name: name.to_owned(),
-                                        arguments: args.to_owned(),
-                                    },
-                                    _ => bail!("Invalid function JSON"),
-                                }
-                            }
-                            Err(_) => bail!("Invalid JSON"),
-                        }
-                    }
-                    // Try json deserialization for args
-                    PartDeltaFunction::WithStringArgs { name, arguments } => {
-                        let arguments =
-                            serde_json::from_str::<Value>(&arguments).context("Invalid JSON")?;
-                        PartFunction { name, arguments }
-                    }
-                    // As-is
-                    PartDeltaFunction::WithParsedArgs { name, arguments } => {
-                        PartFunction { name, arguments }
-                    }
-                };
-                Ok(Part::Function { id, function })
+            PartDelta::Text { text } => Ok(Part::Text {
+                text: text.to_owned(),
+            }),
+            PartDelta::Function { .. } => {
+                let (id, name, arguments) = self.to_parsed_function().unwrap();
+                Ok(Part::Function {
+                    id,
+                    function: PartFunction { name, arguments },
+                })
             }
-            PartDelta::Value { value } => Ok(Part::Value { value }),
+            PartDelta::Value { value } => Ok(Part::Value {
+                value: value.to_owned(),
+            }),
         }
     }
 }
@@ -813,10 +809,19 @@ mod py {
     use pyo3_stub_gen::derive::*;
 
     use super::*;
+    use crate::ffi::py::base::PyRepr;
 
     #[gen_stub_pymethods]
     #[pymethods]
     impl PartFunction {
+        pub fn __repr__(&self) -> String {
+            format!(
+                "PartFunction(name={}, arguments={})",
+                self.name.__repr__(),
+                serde_json::to_string(&self.arguments).unwrap_or("{...}".to_owned())
+            )
+        }
+
         #[getter]
         fn name(&self) -> String {
             self.name.clone()
@@ -835,10 +840,11 @@ mod py {
         pub fn __repr__(&self) -> String {
             let s = match &self {
                 Part::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
-                Part::Function { .. } => {
+                Part::Function { id, function } => {
                     format!(
-                        "Function({})",
-                        serde_json::to_string(self).unwrap_or("".to_owned())
+                        "Function(id={}, function={})",
+                        id.__repr__(),
+                        function.__repr__()
                     )
                 }
                 Part::Value { value } => format!(
@@ -848,7 +854,7 @@ mod py {
                 Part::Image { image } => {
                     format!(
                         "Image(\"{}\")",
-                        serde_json::to_string(image).unwrap_or("".to_owned())
+                        serde_json::to_string(image).unwrap_or("...".to_owned())
                     )
                 }
             };

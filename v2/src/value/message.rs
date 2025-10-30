@@ -343,15 +343,29 @@ impl Delta for MessageDelta {
                         let v = tool_calls.pop().unwrap().accumulate(part_incoming)?;
                         tool_calls.push(v);
                     }
-                    (PartDelta::Function { id: id1, .. }, PartDelta::Function { id: id2, .. }) => {
+                    (
+                        PartDelta::Function {
+                            id: id1,
+                            function: f1,
+                        },
+                        PartDelta::Function {
+                            id: id2,
+                            function: f2,
+                        },
+                    ) => {
                         if let Some(id1) = id1
                             && let Some(id2) = id2
                             && id1 != id2
                         {
                             tool_calls.push(part_incoming);
-                        } else {
+                        } else if id1.is_none()
+                            && id2.is_none()
+                            && std::mem::discriminant(f1) == std::mem::discriminant(f2)
+                        {
                             let v = tool_calls.pop().unwrap().accumulate(part_incoming)?;
                             tool_calls.push(v);
+                        } else {
+                            tool_calls.push(part_incoming);
                         }
                     }
                     _ => tool_calls.push(part_incoming),
