@@ -3,11 +3,12 @@
     "target": "ESNext",
     "strict": true,
     "moduleResolution": "node",
-    "module": "CommonJS",
+    "module": "es2020",
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
+    "types": ["@webgpu/types"]
   },
   "include": ["./src"],
   "exclude": ["node_modules"]
