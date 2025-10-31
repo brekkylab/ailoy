@@ -93,7 +93,7 @@ fn build_native() {
         println!("cargo:rustc-link-lib=openblas"); // OpenBLAS
 
         // Link Vulkan
-        println!("cargo:rustc-link-lib=vulkan");
+        println!("cargo:rustc-link-lib=dylib=vulkan");
     }
     #[cfg(target_os = "macos")]
     {
