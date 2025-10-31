@@ -42,7 +42,7 @@ RUN "C:\\vcpkg\\vcpkg.exe" install --triplet x64-windows-static-release; `
 
 # Install OpenSSL
 RUN Invoke-WebRequest `
-        -Uri "https://slproweb.com/download/Win64OpenSSL-3_5_1.exe" `
+        -Uri "https://slproweb.com/download/Win64OpenSSL-3_6_0.exe" `
         -OutFile "openssl-installer.exe"; `
     Start-Process -FilePath "openssl-installer.exe" `
         -ArgumentList '/silent', '/verysilent', '/sp-', '/SUPPRESSMSGBOXES', '/DIR=C:\OpenSSL' -Wait; `
