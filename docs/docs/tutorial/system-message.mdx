@@ -11,6 +11,8 @@ array, before any user or assistant messages.
 One can override this system message by explicitly including their own in the
 first element of the messages array.
 
+{/* prettier-ignore-start */}
+
 ```json
 [
   {
@@ -25,14 +27,21 @@ first element of the messages array.
   {
     "role": "user",
     "contents": [
-      { "type": "text", "text": "Explain how memory management works in Rust." }
+      {
+        "type": "text",
+        "text": "Explain how memory management works in Rust."
+      }
     ]
   }
 ]
 ```
 
+{/* prettier-ignore-end */}
+
 The model will now respond according to the pirate persona instead of the
 default neutral assistant style:
+
+{/* prettier-ignore-start */}
 
 ```json
 {
@@ -46,27 +55,115 @@ default neutral assistant style:
 }
 ```
 
+{/* prettier-ignore-end */}
+
 ## Example
+
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
 ```python
-TBD
+import asyncio
+
+import ailoy as ai
+
+
+async def main():
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-0.6B")
+    agent = ai.Agent(lm)
+
+    messages = [
+        ai.Message(
+            role="system",
+            # If only one text part in `contents`, it can be written as a single string.
+            contents="You are an assistant who always speaks like a pirate.",
+        ),
+        ai.Message(
+            role="user",
+            # In general, `contents` are written as a list of `Part`.
+            contents=[
+                ai.Part.Text(text="Explain how memory management works in Rust.")
+            ],
+        ),
+    ]
+    async for resp in agent.run(messages):
+        if isinstance(resp.message.contents[0], ai.Part.Text):
+            print(resp.message.contents[0].text)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
 ```
 
 ```typescript
-TBD;
+import * as ai from "ailoy-node";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
+  const agent = new ai.Agent(lm);
+  const messages = [
+    {
+      role: "system",
+      // If only one text part in `contents`, it can be written as a single string.
+      contents: "You are an assistant who always speaks like a pirate.",
+    },
+    {
+      role: "user",
+      // In general, `contents` are written as a list of `Part`.
+      contents: [
+        { type: "text", text: "Explain how memory management works in Rust." },
+      ],
+    },
+  ] as ai.Messages;
+  for await (const resp of agent.run(messages)) {
+    if (resp.message.contents[0].type === "text") {
+      console.log(resp.message.contents[0].text);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
 ```
 
 ```typescript web
-TBD;
-```
+import * as ai from "ailoy-web";
 
-```rust
-TBD
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
+  const agent = new ai.Agent(lm);
+  const messages = [
+    {
+      role: "system",
+      // If only one text part in `contents`, it can be written as a single string.
+      contents: "You are an assistant who always speaks like a pirate.",
+    },
+    {
+      role: "user",
+      // In general, `contents` are written as a list of `Part`.
+      contents: [
+        { type: "text", text: "Explain how memory management works in Rust." },
+      ],
+    },
+  ] as ai.Messages;
+  for await (const resp of agent.run(messages)) {
+    if (resp.message.contents[0].type === "text") {
+      console.log(resp.message.contents[0].text);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
 ```
 
 </CodeTabs>
+
+{/* prettier-ignore-end */}
 
 <TerminalBox>
 
