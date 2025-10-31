@@ -15,15 +15,16 @@ impl PartDelta {
     pub fn __repr__(&self) -> String {
         let s = match &self {
             PartDelta::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
-            PartDelta::Function { .. } => {
+            PartDelta::Function { id, function } => {
                 format!(
-                    "Function({})",
-                    serde_json::to_string(self).unwrap_or("".to_owned())
+                    "Function(id={}, function=PartDeltaFunction({}))",
+                    id.__repr__(),
+                    serde_json::to_string(function).unwrap_or("...".to_owned())
                 )
             }
             PartDelta::Value { value } => format!(
-                "Value({})",
-                serde_json::to_string(value).unwrap_or("{...}".to_owned())
+                "Value(value={})",
+                serde_json::to_string(value).unwrap_or("...".to_owned())
             ),
             PartDelta::Null {} => "Null()".to_owned(),
         };

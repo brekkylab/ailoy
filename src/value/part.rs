@@ -839,7 +839,7 @@ mod py {
     impl Part {
         pub fn __repr__(&self) -> String {
             let s = match &self {
-                Part::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
+                Part::Text { text } => format!("Text(text=\"{}\")", text.replace('\n', "\\n")),
                 Part::Function { id, function } => {
                     format!(
                         "Function(id={}, function={})",
@@ -848,12 +848,12 @@ mod py {
                     )
                 }
                 Part::Value { value } => format!(
-                    "Value({})",
-                    serde_json::to_string(value).unwrap_or("{...}".to_owned())
+                    "Value(value={})",
+                    serde_json::to_string(value).unwrap_or("...".to_owned())
                 ),
                 Part::Image { image } => {
                     format!(
-                        "Image(\"{}\")",
+                        "Image(image=PartImage({}))",
                         serde_json::to_string(image).unwrap_or("...".to_owned())
                     )
                 }
