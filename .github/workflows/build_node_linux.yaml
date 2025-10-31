@@ -32,7 +32,7 @@ jobs:
       - name: Install clang-libs (required by onig-sys)
         run: |
           dnf install -y clang-libs
-      
+
       - name: Install dependencies
         working-directory: ${{ github.workspace }}/bindings/nodejs
         run: |
@@ -56,4 +56,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PACKAGE_NAME }}
-          path: ${{ github.workspace }}/bindings/js-node/${{ env.PACKAGE_NAME }}
+          path: ${{ github.workspace }}/bindings/nodejs/${{ env.PACKAGE_NAME }}
