@@ -10,7 +10,8 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10"]
+        # python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     continue-on-error: true
 
@@ -26,19 +27,26 @@ jobs:
       - name: Install dependencies
         run: |
           brew install libomp
-          python -m pip install --upgrade pip
-          pip install build delocate scikit-build-core
+
+      - name: Install Python dependencies
+        working-directory: ${{ github.workspace }}/bindings/python
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin delocate
 
       - name: Build wheel
         working-directory: ${{ github.workspace }}/bindings/python
         run: |
-          python -m build -w --outdir dist/
+          source .venv/bin/activate
+          maturin build --out ./dist
         env:
           OpenMP_ROOT: /opt/homebrew/opt/libomp
 
       - name: Delocate wheel
         working-directory: ${{ github.workspace }}/bindings/python
         run: |
+          source .venv/bin/activate
           mkdir -p wheelhouse
           delocate-wheel dist/*.whl -w wheelhouse
           delocate-listdeps wheelhouse/*.whl
