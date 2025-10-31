@@ -62,6 +62,6 @@ RUN Invoke-WebRequest `
         -Uri "https://win.rustup.rs/x86_64" `
         -OutFile "rustup-init.exe"; `
     Start-Process -FilePath "rustup-init.exe" `
-        -ArgumentList '-y', '--default-toolchain', '1.88.0', '--profile', 'default' -Wait -NoNewWindow; `
+        -ArgumentList '-y', '--default-toolchain', '1.90.0', '--profile', 'default' -Wait -NoNewWindow; `
     Remove-Item "rustup-init.exe"; `
     setx /M PATH \"$env:USERPROFILE\.cargo\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"
