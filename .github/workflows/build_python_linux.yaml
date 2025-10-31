@@ -53,7 +53,7 @@ jobs:
           CMAKE_PREFIX_PATH: /opt/openblas
           OPENSSL_DIR: /opt/openssl
           VULKAN_SDK: /opt/vulkan-sdk
-          LD_LIBRARY_PATH: /opt/openblas/lib:/opt/vulkan-sdk/lib
+          LD_LIBRARY_PATH: /opt/openblas/lib:/opt/vulkan-sdk/lib:/opt/rh/gcc-toolset-14/root/usr/lib/gcc/x86_64-redhat-linux/14/32
 
       - name: Repair wheel
         working-directory: bindings/python

@@ -91,8 +91,9 @@ fn build_native() {
         println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
 
         // Link FAISS dependencies (not tested)
-        println!("cargo:rustc-link-lib=gomp"); // GNU OpenMP
-        println!("cargo:rustc-link-lib=openblas"); // OpenBLAS
+        println!("cargo:rustc-link-lib=static=gomp"); // GNU OpenMP
+        println!("cargo:rustc-link-lib=static=openblas"); // OpenBLAS
+        println!("cargo:rustc-link-lib=static=gfortran"); // gfortran (required by OpenBLAS)
 
         // Link Vulkan
         println!("cargo:rustc-link-lib=dylib=vulkan");
