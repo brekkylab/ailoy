@@ -37,36 +37,6 @@ Ailoy is a lightweight library for building AI applications — such as **agent 
 
 For more details, please refer to the [documentation](https://brekkylab.github.io/ailoy/).
 
-### Supported AI models
-
-Currently, the following AI models are supported:
-
-- Language Models
-  - Local Models
-    - <img src="https://github.com/user-attachments/assets/177461a2-7a0e-4449-b5a0-8d7028349607" width="20" height="20"> Qwen3
-      <details>
-        <summary>Click to see details</summary><p>
-          
-        - `Qwen/Qwen3-0.6B`
-        - `Qwen/Qwen3-1.7B`
-        - `Qwen/Qwen3-4B`
-        - `Qwen/Qwen3-8B`
-        - `Qwen/Qwen3-14B`
-        - `Qwen/Qwen3-32B`
-        - `Qwen/Qwen3-30B-A3B` (MoE)
-        </p>
-      </details>
-  - API Models
-    - <img src="https://github.com/user-attachments/assets/ffc93fe4-a345-4525-bf19-0f1419af08f8" width="20" height="20"> OpenAI
-    - <img src="https://github.com/user-attachments/assets/6fc0015d-090d-4642-a056-3fbc1f66b599" width="25" height="25"> Gemini
-    - <img src="https://github.com/user-attachments/assets/94855f00-a640-40e2-b3b6-9481d6bfd910" width="20" height="20"> Claude
-    - <img src="https://github.com/user-attachments/assets/aaf28fe3-9b1e-479d-9631-986afc8b5b66" width="20" height="20"> Grok
-- Embedding Models
-  - Local Models
-    - <img src="https://bge-model.com/_static/bge_logo.jpeg" width="20" height="20"> BAAI/bge-m3
-
-You can check out examples for a simple chatbot, tool usages and retrieval-augmented generation (RAG).
-
 ## Requirements
 
 ### For Agents with LLM APIs

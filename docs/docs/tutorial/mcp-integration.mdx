@@ -7,30 +7,21 @@ communication between an LLM and its environment, empowering models to access
 external tools, retrieve real-time information, and perform complex, multi-step
 reasoning.
 
-### Using MCP with Ailoy
+## Loading MCP Clients
 
-Ailoy Agents can seamlessly integrate with existing MCP-compliant servers. For
-example, the following code connects to the official GitHub MCP server:
+You can connect to any MCP server using the MCPClient interface. For example,
+the snippet below connects to the official GitHub MCP server.
 
 <CodeTabs>
 
 ```python
-from mcp import StdioServerParameters
-
-agent.add_tools_from_mcp_server(
-    StdioServerParameters(
-        "github",
-        command="npx",
-        args=["-y", "@modelcontextprotocol/server-github"]
-    )
-)
+import ailoy as ai
+# TBD
+client = ai.MCPClient("@modelcontextprotocol/server-github")
 ```
 
-```typescript
-await agent.addToolsFromMcpServer("github", {
-  command: "npx",
-  args: ["-y", "@modelcontextprotocol/server-github"],
-});
+```javascript
+// TBD
 ```
 
 </CodeTabs>
@@ -39,30 +30,75 @@ This launches the GitHub MCP server as a subprocess using standard I/O for
 communication. The agent automatically discovers the tools exposed by the server
 and registers them into its internal toolset.
 
-### Querying via MCP Tools
+## Extracting MCP Tools
 
-Once the tools are registered, the agent can invoke them as needed when you call
-the query() method:
+Each MCP server can expose multiple tools. To optimize context usage, you can
+selectively extract a subset of tools rather than registering all of them.
+
+<CodeTabs>
+
+```python
+import ailoy as ai
+# TBD
+tools = [
+    client.get_tools("github-search_repositories"),
+    client.get_tools("github-get_file_contents"),
+]
+```
+
+```javascript
+// TBD
+const tools = [
+  client.getTools("github-search_repositories"),
+  client.getTools("github-get_file_contents"),
+];
+```
+
+</CodeTabs>
+
+## Registering Tools into Agent
+
+To integrate MCP tools with LM, they must be registered to `Agent`. This enables
+the agent to automatically call those tools when reasoning or answering queries.
+
+<CodeTabs>
+
+```python
+import ailoy as ai
+# TBD
+agent.add_tools(tools)
+```
+
+```javascript
+// TBD
+```
+
+</CodeTabs>
+
+## Querying via MCP Tools
+
+With tools registered, the agent can automatically use them when you invoke
+`run()` or `run_delta()`.
 
 <CodeTabs>
 
 ```python
 question = "Search the repository named brekkylab/ailoy and describe what it does based on its README.md."
-for resp in agent.query(question):
+for resp in agent.run(question):
     agent.print(resp)
 ```
 
 ```typescript
 const question =
   "Search the repository named brekkylab/ailoy and describe what it does based on its README.md.";
-for await (const resp of agent.query(question)) {
+for await (const resp of agent.run(question)) {
   agent.print(resp);
 }
 ```
 
 </CodeTabs>
 
-This demonstrates how the agent utilizes the GitHub MCP tools to search
+This demonstrates how the agent leverages the GitHub MCP tools to search
 repositories and summarize their contents.
 
 {/* prettier-ignore-start */}
@@ -123,10 +159,10 @@ This repository is in an **early development stage**, and APIs may change. For m
 
 {/* prettier-ignore-end */}
 
-### Complete Example
+## Complete Example
 
-Here is the full source code to set up an agent, connect it to the GitHub MCP
-server, and issue a query:
+The following end-to-end example demonstrates how to set up an agent, connect to
+the GitHub MCP server, and issue a query.
 
 <CodeTabs>
 
@@ -157,7 +193,7 @@ import { startRuntime, defineAgent, LocalModel } from "ailoy-node";
   const rt = await startRuntime();
   const agent = await defineAgent(rt, LocalModel({ id: "Qwen/Qwen3-8B" }));
 
-  // Add tools from Github MCP server
+  // Add tools from the Github MCP server
   await agent.addToolsFromMcpServer("github", {
     command: "npx",
     args: ["-y", "@modelcontextprotocol/server-github"],
