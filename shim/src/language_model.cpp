@@ -183,11 +183,7 @@ void tvm_language_model_t::prefill(const std::vector<uint32_t> &tokens) {
 }
 
 void tvm_language_model_t::prefill_from_rs(rust::Slice<const uint32_t> tokens) {
-  std::vector<uint32_t> converted;
-  converted.reserve(tokens.size());
-  for (const auto &token : tokens) {
-    converted.push_back(static_cast<uint32_t>(token));
-  }
+  std::vector<uint32_t> converted(tokens.begin(), tokens.end());
   return prefill(converted);
 }
 
