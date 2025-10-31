@@ -13,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        python: ["cp310-cp310", "cp311-cp311", "cp312-cp312", "cp313-cp313"]
+        python: ["cp310-cp310", "cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314"]
 
     continue-on-error: true
 
@@ -27,19 +27,32 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Install Python build dependencies
+      - name: Install cxxbridge (required to build shim)
         run: |
-          $PYTHON_BIN/pip install -U pip
-          $PYTHON_BIN/pip install build scikit-build-core
+          cargo install cxxbridge-cmd
+
+      - name: Install clang-libs (required by onig-sys)
+        run: |
+          dnf install clang-libs
+
+      - name: Install maturin
+        working-directory: bindings/python
+        run: |
+          # maturin does not work outside virtualenv, so prepare one
+          $PYTHON_BIN/python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin
 
       - name: Build wheel
         working-directory: bindings/python
         run: |
-          $PYTHON_BIN/python -m build --wheel --outdir dist
+          source .venv/bin/activate
+          maturin build --out ./dist
         env:
-          OPENSSL_ROOT_DIR: /opt/openssl
           CMAKE_PREFIX_PATH: /opt/openblas
+          OPENSSL_DIR: /opt/openssl
           VULKAN_SDK: /opt/vulkan-sdk
+          LD_LIBRARY_PATH: /opt/openblas/lib:/opt/vulkan-sdk/lib
 
       - name: Repair wheel
         working-directory: bindings/python
