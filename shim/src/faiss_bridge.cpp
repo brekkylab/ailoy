@@ -44,7 +44,9 @@ void FaissIndexInner::add_vectors_with_ids(rust::Slice<const float> vectors,
                                            rust::Slice<const int64_t> ids) {
   std::vector<faiss::idx_t> faiss_ids;
   faiss_ids.reserve(ids.size());
-  std::copy(ids.begin(), ids.end(), std::back_inserter(faiss_ids));
+  for (const auto &id : ids) {
+    faiss_ids.push_back(static_cast<faiss::idx_t>(id));
+  }
   index_->add_with_ids(static_cast<faiss::idx_t>(num_vectors), vectors.data(),
                        faiss_ids.data());
 }
