@@ -13,7 +13,8 @@ jobs:
 
     strategy:
       matrix:
-        python: ["cp310-cp310", "cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314"]
+        python: ["cp310-cp310"]
+        # python: ["cp310-cp310", "cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314"]
 
     continue-on-error: true
 
@@ -33,7 +34,7 @@ jobs:
 
       - name: Install clang-libs (required by onig-sys)
         run: |
-          dnf install clang-libs
+          dnf install -y clang-libs
 
       - name: Install maturin
         working-directory: bindings/python
