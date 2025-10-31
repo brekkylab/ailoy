@@ -145,20 +145,18 @@ mod py {
                     // check whether result is coroutine
                     let is_coroutine = py_result.hasattr("__await__").unwrap_or(false);
 
+                    let locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
+                    println!("{:?}", locals);
+                    let event_loop = pyo3_async_runtimes::tokio::get_current_loop(py)?;
+                    println!("{:?}", event_loop);
+
                     let final_result = if is_coroutine {
                         // execute coroutine using Python `asyncio`
-                        match py
-                            .import("asyncio")
-                            .and_then(|asyncio| asyncio.call_method1("run", (py_result,)))
-                        {
-                            Ok(r) => r.unbind(),
-                            Err(e) => {
-                                return Ok(Value::object([(
-                                    "error",
-                                    format!("Async execution failed: {}", e),
-                                )]));
-                            }
-                        }
+                        let future = pyo3_async_runtimes::tokio::into_future(py_result)?;
+                        let rt = pyo3_async_runtimes::tokio::get_runtime();
+                        // Release the GIL while waiting
+                        let result = py.detach(|| rt.block_on(future))?;
+                        result
                     } else {
                         py_result.unbind()
                     };

@@ -306,7 +306,7 @@ mod py {
     use std::sync::Arc;
 
     use futures::lock::Mutex;
-    use pyo3::pymethods;
+    use pyo3::{Python, pymethods};
     use pyo3_stub_gen_derive::gen_stub_pymethods;
     use tokio::sync::mpsc;
 
@@ -339,6 +339,7 @@ mod py {
     }
 
     fn spawn<'a>(
+        py: Python<'a>,
         mut agent: Agent,
         messages: Vec<Message>,
         config: Option<AgentConfig>,
@@ -348,7 +349,9 @@ mod py {
     )> {
         let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.spawn(async move {
+        let locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
+        println!("{:?}", locals);
+        rt.spawn(pyo3_async_runtimes::tokio::scope(locals, async move {
             let mut stream = agent.run(messages, config).boxed();
 
             while let Some(item) = stream.next().await {
@@ -356,7 +359,7 @@ mod py {
                     break; // Exit if consumer vanished
                 }
             }
-        });
+        }));
         Ok((rt, rx))
     }
 
@@ -446,10 +449,11 @@ mod py {
         #[pyo3(name="run", signature = (messages, config=None))]
         fn run_py(
             &mut self,
+            py: Python<'_>,
             messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageOutputIterator> {
-            let (_rt, rx) = spawn(self.clone(), messages.into(), config)?;
+            let (_rt, rx) = spawn(py, self.clone(), messages.into(), config)?;
             Ok(MessageOutputIterator {
                 _rt,
                 rx: Arc::new(Mutex::new(rx)),
