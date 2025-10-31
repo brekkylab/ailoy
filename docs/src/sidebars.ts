@@ -36,13 +36,16 @@ const sidebars: SidebarsConfig = {
         "concepts/how-agent-works",
         "concepts/architecture",
         "concepts/chat-completion-format",
-        "concepts/command-line-interfaces",
       ],
     },
     {
       type: "category",
       label: "Resources",
-      items: ["resources/available-models", "resources/devices-environments"],
+      items: [
+        "resources/available-models",
+        "resources/devices-environments",
+        "resources/command-line-interfaces",
+      ],
     },
     {
       type: "category",
