@@ -793,16 +793,19 @@ pub(crate) mod node {
     use super::*;
 
     #[napi(transparent)]
-    pub struct Messages(Either3<Vec<Message>, Vec<SingleTextMessage>, String>);
+    pub struct Messages(Either<Vec<Either<Message, SingleTextMessage>>, String>);
 
     impl Into<Vec<Message>> for Messages {
         fn into(self) -> Vec<Message> {
             match self.0 {
-                Either3::A(messages) => messages,
-                Either3::B(messages) => {
-                    messages.into_iter().map(|message| message.into()).collect()
-                }
-                Either3::C(text) => {
+                Either::A(messages) => messages
+                    .into_iter()
+                    .map(|message| match message {
+                        Either::A(message) => message,
+                        Either::B(message) => message.into(),
+                    })
+                    .collect(),
+                Either::B(text) => {
                     vec![Message::new(Role::User).with_contents(vec![Part::text(text)])]
                 }
             }
@@ -935,7 +938,7 @@ mod wasm {
 
     #[wasm_bindgen]
     extern "C" {
-        #[wasm_bindgen(typescript_type = "Array<Message> | Array<SingleTextMessage> | string")]
+        #[wasm_bindgen(typescript_type = "Array<Message | SingleTextMessage> | string")]
         pub type Messages;
     }
 
