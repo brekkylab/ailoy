@@ -25,18 +25,32 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Create package
+      - name: Install cxxbridge (required to build shim)
+        run: |
+          cargo install cxxbridge-cmd
+
+      - name: Install clang-libs (required by onig-sys)
+        run: |
+          dnf install -y clang-libs
+      
+      - name: Install dependencies
+        working-directory: ${{ github.workspace }}/bindings/nodejs
         run: |
           npm install
+
+      - name: Build package
+        working-directory: ${{ github.workspace }}/bindings/nodejs
+        run: |
+          npm run build
           npm pack
           PACKAGE_NAME=$(ls -1t ailoy-*.tgz | head -n 1)
           echo "PACKAGE_NAME=$PACKAGE_NAME"
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
-        working-directory: ${{ github.workspace }}/bindings/js-node
         env:
-          OPENSSL_ROOT_DIR: /opt/openssl
           CMAKE_PREFIX_PATH: /opt/openblas
+          OPENSSL_DIR: /opt/openssl
           VULKAN_SDK: /opt/vulkan-sdk
+          LD_LIBRARY_PATH: /opt/openblas/lib:/opt/vulkan-sdk/lib
 
       - name: Upload npm package
         uses: actions/upload-artifact@v4
