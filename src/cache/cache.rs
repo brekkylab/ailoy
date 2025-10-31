@@ -316,7 +316,7 @@ impl Cache {
                 current_task += 1;
                 pairs.push((entry.clone(), bytes));
                 yield CacheProgress::<T> {
-                    comment: format!("Downloaded {}", entry.filename()),
+                    comment: format!("{} ready", entry.filename()),
                     current_task,
                     total_task,
                     result: None,
