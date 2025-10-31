@@ -135,10 +135,6 @@ mod tvm_runtime {
         }
     }
 
-    pub fn get_device_id(_: &str) -> i32 {
-        0
-    }
-
     #[derive(Debug)]
     pub struct EmbeddingModelInferencer {
         inner: UniquePtr<TVMEmbeddingModel>,
@@ -151,21 +147,25 @@ mod tvm_runtime {
     }
 
     impl TryFromCache for EmbeddingModelInferencer {
-        fn claim_files(
+        fn claim_files<'a>(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
+            _: &'a mut std::collections::HashMap<String, crate::value::Value>,
+        ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
             claim_files(cache, key)
         }
 
-        fn try_from_contents(
+        fn try_from_contents<'a>(
             mut contents: CacheContents,
-        ) -> BoxFuture<'static, anyhow::Result<Self>> {
+            ctx: &'a std::collections::HashMap<String, crate::value::Value>,
+        ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
-                let device = create_dldevice(
-                    get_device_type(get_accelerator()),
-                    get_device_id(get_accelerator()),
-                );
+                let device_id = if let Some(devid) = ctx.get("device_id") {
+                    devid.as_integer().unwrap_or(0)
+                } else {
+                    0
+                };
+                let device = create_dldevice(get_device_type(get_accelerator()), device_id as i32);
                 let inner = create_tvm_embedding_model(&mut contents, device);
 
                 Ok(EmbeddingModelInferencer { inner })
@@ -190,21 +190,25 @@ mod tvm_runtime {
     }
 
     impl TryFromCache for LanguageModelInferencer {
-        fn claim_files(
+        fn claim_files<'a>(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
+            _: &'a mut std::collections::HashMap<String, crate::value::Value>,
+        ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
             claim_files(cache, key)
         }
 
-        fn try_from_contents(
+        fn try_from_contents<'a>(
             mut contents: CacheContents,
-        ) -> BoxFuture<'static, anyhow::Result<Self>> {
+            ctx: &'a std::collections::HashMap<String, crate::value::Value>,
+        ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
-                let device = create_dldevice(
-                    get_device_type(get_accelerator()),
-                    get_device_id(get_accelerator()),
-                );
+                let device_id = if let Some(devid) = ctx.get("device_id") {
+                    devid.as_integer().unwrap_or(0)
+                } else {
+                    0
+                };
+                let device = create_dldevice(get_device_type(get_accelerator()), device_id as i32);
                 let inner = create_tvm_language_model(&mut contents, device);
 
                 Ok(LanguageModelInferencer { inner })
@@ -261,16 +265,18 @@ mod tvmjs_runtime {
     }
 
     impl TryFromCache for LanguageModelInferencer {
-        fn claim_files(
+        fn claim_files<'a>(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
+            _: &'a mut std::collections::HashMap<String, crate::value::Value>,
+        ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
             claim_files(cache, key)
         }
 
-        fn try_from_contents(
+        fn try_from_contents<'a>(
             mut contents: CacheContents,
-        ) -> BoxFuture<'static, anyhow::Result<Self>> {
+            _: &'a std::collections::HashMap<String, crate::value::Value>,
+        ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
                 let cache_contents = {
                     let obj = Object::new();
@@ -337,16 +343,18 @@ mod tvmjs_runtime {
     }
 
     impl TryFromCache for EmbeddingModelInferencer {
-        fn claim_files(
+        fn claim_files<'a>(
             cache: Cache,
             key: impl AsRef<str>,
-        ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
+            _: &'a mut std::collections::HashMap<String, crate::value::Value>,
+        ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
             claim_files(cache, key)
         }
 
-        fn try_from_contents(
+        fn try_from_contents<'a>(
             mut contents: CacheContents,
-        ) -> BoxFuture<'static, anyhow::Result<Self>> {
+            _: &'a std::collections::HashMap<String, crate::value::Value>,
+        ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
                 let cache_contents = {
                     let obj = Object::new();

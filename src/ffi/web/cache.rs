@@ -22,13 +22,14 @@ extern "C" {
 
 pub async fn await_cache_result<T>(
     cache_key: impl Into<String>,
+    ctx: Option<std::collections::HashMap<String, crate::value::Value>>,
     progress_callback: Option<CacheProgressCallbackFn>,
 ) -> Result<T>
 where
     T: TryFromCache + std::fmt::Debug + 'static,
 {
     let cache_key = cache_key.into();
-    let mut strm = Box::pin(Cache::new().try_create::<T>(cache_key));
+    let mut strm = Box::pin(Cache::new().try_create::<T>(cache_key, ctx));
     while let Some(item) = strm.next().await {
         if item.is_err() {
             return Err(anyhow!(item.unwrap_err()));

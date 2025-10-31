@@ -1,6 +1,6 @@
-use std::{any::Any, collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf};
 
-use crate::{cache::CacheEntry, dyn_maybe_send};
+use crate::cache::CacheEntry;
 
 /// A lightweight container of files fetched for a cache-backed build step.
 ///
@@ -16,7 +16,6 @@ use crate::{cache::CacheEntry, dyn_maybe_send};
 pub struct CacheContents {
     pub root: PathBuf,
     pub entries: BTreeMap<CacheEntry, Vec<u8>>,
-    pub ctx: Option<Box<dyn_maybe_send!(Any)>>,
 }
 
 impl CacheContents {

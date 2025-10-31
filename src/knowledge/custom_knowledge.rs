@@ -80,7 +80,9 @@ mod tests {
             }
             .boxed()
         })));
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
+            .await
+            .unwrap();
         let mut agent = Agent::new(model, vec![]);
 
         agent.set_knowledge(knowledge);

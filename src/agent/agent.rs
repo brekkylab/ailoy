@@ -693,7 +693,9 @@ mod tests {
         use super::*;
         use crate::model::LangModel;
 
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
+            .await
+            .unwrap();
         let mut agent = Agent::new(model, Vec::new());
 
         let mut strm = Box::pin(agent.run_delta(
@@ -721,7 +723,9 @@ mod tests {
             value::{ToolDesc, Value},
         };
 
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
+            .await
+            .unwrap();
 
         let tool_desc = ToolDesc::new(
             "temperature".to_owned(),
@@ -795,7 +799,9 @@ mod tests {
         use super::*;
         use crate::{model::LangModel, tool::MCPClient};
 
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
+            .await
+            .unwrap();
         let mut agent = Agent::new(model, Vec::new());
 
         let command = tokio::process::Command::new("uvx").configure(|cmd| {

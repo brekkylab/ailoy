@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 use futures::{Stream, StreamExt as _};
 
 use crate::{
     cache::{Cache, CacheProgress},
-    model::local::LocalEmbeddingModel,
-    value::Embedding,
+    model::{get_cache_context, local::LocalEmbeddingModel},
+    value::{Embedding, Value},
 };
 
 #[maybe_send_sync]
@@ -28,9 +30,14 @@ pub struct EmbeddingModel {
 }
 
 impl EmbeddingModel {
-    pub async fn new_local(model_name: impl Into<String>) -> anyhow::Result<Self> {
+    pub async fn new_local(
+        model_name: impl Into<String>,
+        device_id: Option<i32>,
+    ) -> anyhow::Result<Self> {
         let cache = crate::cache::Cache::new();
-        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(model_name));
+        let ctx = get_cache_context(device_id);
+        let mut model_strm =
+            Box::pin(cache.try_create::<LocalEmbeddingModel>(model_name, Some(ctx)));
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
@@ -45,9 +52,12 @@ impl EmbeddingModel {
 
     pub async fn try_new_local(
         model_name: impl Into<String>,
+        device_id: i32,
     ) -> impl Stream<Item = anyhow::Result<CacheProgress<Self>>> + 'static {
-        let model_name = model_name.into();
-        let mut strm = Box::pin(Cache::new().try_create::<LocalEmbeddingModel>(model_name));
+        let mut ctx = HashMap::new();
+        ctx.insert("device_id".to_owned(), Value::integer(device_id.into()));
+        let mut strm =
+            Box::pin(Cache::new().try_create::<LocalEmbeddingModel>(model_name, Some(ctx)));
         async_stream::try_stream! {
             while let Some(result) = strm.next().await {
                 let result = result?;
@@ -84,18 +94,23 @@ mod py {
     impl EmbeddingModel {
         #[classmethod]
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[EmbeddingModel]"))]
-        #[pyo3(name = "new_local", signature = (model_name, progress_callback = None))]
+        #[pyo3(name = "new_local", signature = (model_name, device_id = None, progress_callback = None))]
         fn new_local_py<'a>(
             _cls: &Bound<'a, PyType>,
             py: Python<'a>,
             model_name: String,
+            device_id: Option<i32>,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Bound<'a, PyAny>> {
             let fut = async move {
-                let inner =
-                    await_cache_result::<LocalEmbeddingModel>(model_name, progress_callback)
-                        .await?;
+                let ctx = get_cache_context(device_id);
+                let inner = await_cache_result::<LocalEmbeddingModel>(
+                    model_name,
+                    Some(ctx),
+                    progress_callback,
+                )
+                .await?;
                 Python::attach(|py| {
                     Py::new(
                         py,
@@ -109,17 +124,19 @@ mod py {
         }
 
         #[classmethod]
-        #[pyo3(name = "new_local_sync", signature = (model_name, progress_callback = None))]
+        #[pyo3(name = "new_local_sync", signature = (model_name, device_id=None, progress_callback = None))]
         fn new_local_sync_py(
             _cls: &Bound<'_, PyType>,
             py: Python<'_>,
             model_name: String,
+            device_id: Option<i32>,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Py<Self>> {
+            let ctx = get_cache_context(device_id);
             let inner = await_future(
                 py,
-                await_cache_result::<LocalEmbeddingModel>(model_name, progress_callback),
+                await_cache_result::<LocalEmbeddingModel>(model_name, Some(ctx), progress_callback),
             )?;
             Py::new(
                 py,
@@ -160,13 +177,16 @@ mod node {
         #[napi(js_name = "newLocal")]
         pub async fn new_local_js(
             model_name: String,
+            device_id: Option<i32>,
             progress_callback: Option<
                 ThreadsafeFunction<JsCacheProgress, (), JsCacheProgress, Status, false>,
             >,
         ) -> napi::Result<EmbeddingModel> {
-            let inner = await_cache_result::<LocalEmbeddingModel>(model_name, progress_callback)
-                .await
-                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
+            let ctx = get_cache_context(device_id);
+            let inner =
+                await_cache_result::<LocalEmbeddingModel>(model_name, Some(ctx), progress_callback)
+                    .await
+                    .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
             Ok(EmbeddingModel {
                 inner: EmbeddingModelInner::Local(inner),
             })
@@ -193,12 +213,15 @@ mod wasm {
         #[wasm_bindgen(js_name = "newLocal")]
         pub async fn new_local_js(
             #[wasm_bindgen(js_name = "modelName")] model_name: String,
+            #[wasm_bindgen(js_name = "deviceId")] device_id: Option<i32>,
             #[wasm_bindgen(js_name = "progressCallback")] progress_callback: Option<
                 CacheProgressCallbackFn,
             >,
         ) -> Result<Self, js_sys::Error> {
+            let ctx = get_cache_context(device_id);
             let inner = crate::ffi::web::await_cache_result::<LocalEmbeddingModel>(
                 model_name,
+                Some(ctx),
                 progress_callback,
             )
             .await

@@ -1,20 +1,21 @@
-use std::{any::Any, collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
-use anyhow::bail;
 use async_stream::try_stream;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
-    dyn_maybe_send,
     model::{
         ChatTemplate, InferenceConfig, LangModelInference, LanguageModelInferencer, Tokenizer,
     },
     utils::{BoxFuture, BoxStream},
     value::{
         Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, PartDelta,
-        PartDeltaFunction, Role, ToolDesc,
+        PartDeltaFunction, Role, ToolDesc, Value,
     },
 };
 
@@ -32,9 +33,13 @@ pub struct LocalLangModel {
 }
 
 impl LocalLangModel {
-    pub async fn try_new(model: impl Into<String>) -> anyhow::Result<Self> {
+    pub async fn try_new(model: impl Into<String>, device_id: Option<i32>) -> anyhow::Result<Self> {
         let cache = Cache::new();
-        let mut strm = Box::pin(cache.try_create::<LocalLangModel>(model));
+        let mut ctx = HashMap::new();
+        if let Some(device_id) = device_id {
+            ctx.insert("device_id".to_owned(), Value::integer(device_id.into()));
+        };
+        let mut strm = Box::pin(cache.try_create::<LocalLangModel>(model, Some(ctx)));
         while let Some(v) = strm.next().await {
             if let Some(result) = v?.result {
                 return Ok(result);
@@ -45,23 +50,32 @@ impl LocalLangModel {
 
     pub fn try_new_stream<'a>(
         model: impl Into<String>,
+        device_id: Option<i32>,
     ) -> BoxStream<'a, anyhow::Result<CacheProgress<Self>>> {
         let cache = Cache::new();
-        Box::pin(cache.try_create::<Self>(model))
+        let mut ctx = HashMap::new();
+        if let Some(device_id) = device_id {
+            ctx.insert("device_id".to_owned(), Value::integer(device_id.into()));
+        };
+        Box::pin(cache.try_create::<Self>(model, Some(ctx)))
     }
 }
 
 impl TryFromCache for LocalLangModel {
-    fn claim_files(
+    fn claim_files<'a>(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
-        LocalLangModelImpl::claim_files(cache, key)
+        ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
+        LocalLangModelImpl::claim_files(cache, key, ctx)
     }
 
-    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>> {
+    fn try_from_contents<'a>(
+        contents: CacheContents,
+        ctx: &'a std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<Self>> {
         Box::pin(async move {
-            let mut body = LocalLangModelImpl::try_from_contents(contents).await?;
+            let mut body = LocalLangModelImpl::try_from_contents(contents, ctx).await?;
             let (tx, mut rx) = mpsc::channel(1);
 
             let fut = async move {
@@ -224,94 +238,140 @@ impl LocalLangModelImpl {
 }
 
 impl TryFromCache for LocalLangModelImpl {
-    fn claim_files(
+    fn claim_files<'a>(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
+        ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
         let key = key.as_ref().to_owned();
         Box::pin(async move {
-            let mut chat_template = ChatTemplate::claim_files(cache.clone(), &key).await?;
-            let mut tokenizer = Tokenizer::claim_files(cache.clone(), &key).await?;
-            let mut inferncer = LanguageModelInferencer::claim_files(cache.clone(), &key).await?;
-            let ctx: Box<dyn_maybe_send!(Any)> = Box::new([
-                chat_template
-                    .entries
-                    .iter()
-                    .map(|v| v.clone())
-                    .collect::<Vec<_>>(),
-                tokenizer
-                    .entries
-                    .iter()
-                    .map(|v| v.clone())
-                    .collect::<Vec<_>>(),
-                inferncer
-                    .entries
-                    .iter()
-                    .map(|v| v.clone())
-                    .collect::<Vec<_>>(),
-            ]);
+            let mut chat_template_claim =
+                ChatTemplate::claim_files(cache.clone(), &key, ctx).await?;
+            let mut chat_template_entries = Vec::new();
+            for entry in chat_template_claim.entries.iter() {
+                chat_template_entries.push(crate::to_value!({
+                    dirname: entry.dirname().to_owned(),
+                    filename: entry.filename().to_owned()
+                }));
+            }
+            ctx.insert(
+                "chat_template_entries".to_owned(),
+                chat_template_entries.into(),
+            );
+
+            let mut tokenizer_claim = Tokenizer::claim_files(cache.clone(), &key, ctx).await?;
+            let mut tokenizer_entries = Vec::new();
+            for entry in tokenizer_claim.entries.iter() {
+                tokenizer_entries.push(crate::to_value!({
+                    dirname: entry.dirname().to_owned(),
+                    filename: entry.filename().to_owned()
+                }));
+            }
+            ctx.insert("tokenizer_entries".to_owned(), tokenizer_entries.into());
+
+            let mut inferencer_claim =
+                LanguageModelInferencer::claim_files(cache.clone(), &key, ctx).await?;
+            let mut inferencer_entries = Vec::new();
+            for entry in inferencer_claim.entries.iter() {
+                inferencer_entries.push(crate::to_value!({
+                    dirname: entry.dirname().to_owned(),
+                    filename: entry.filename().to_owned()
+                }));
+            }
+            ctx.insert("inferencer_entries".to_owned(), inferencer_entries.into());
+
             let mut rv = Vec::new();
-            rv.append(&mut chat_template.entries);
-            rv.append(&mut tokenizer.entries);
-            rv.append(&mut inferncer.entries);
-            Ok(CacheClaim::with_ctx(rv, ctx))
+            rv.append(&mut chat_template_claim.entries);
+            rv.append(&mut tokenizer_claim.entries);
+            rv.append(&mut inferencer_claim.entries);
+            Ok(CacheClaim::new(rv))
         })
     }
 
-    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>>
+    fn try_from_contents<'a>(
+        mut contents: CacheContents,
+        ctx: &'a std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<Self>>
     where
         Self: Sized,
     {
         Box::pin(async move {
-            let (ct_entries, tok_entries, inf_entries) = match contents.ctx.take() {
-                Some(ctx_any) => match ctx_any.downcast::<[Vec<CacheEntry>; 3]>() {
-                    Ok(boxed) => {
-                        let [a, b, c] = *boxed;
-                        (a, b, c)
-                    }
-                    Err(_) => bail!("contents.ctx is not [Vec<CacheEntry>; 3]"),
-                },
-                None => bail!("contents.ctx is None"),
-            };
-
+            let chat_template_entries = ctx
+                .get("chat_template_entries")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .into_iter()
+                .map(|v| {
+                    let v = v.as_object().unwrap();
+                    CacheEntry::new(
+                        v.get("dirname").unwrap().as_str().unwrap(),
+                        v.get("filename").unwrap().as_str().unwrap(),
+                    )
+                });
             let chat_template = {
                 let mut files = BTreeMap::new();
-                for k in ct_entries {
+                for k in chat_template_entries {
                     let v = contents.entries.remove(&k).unwrap();
                     files.insert(k, v);
                 }
                 let contents = CacheContents {
                     root: contents.root.clone(),
                     entries: files,
-                    ctx: None,
                 };
-                ChatTemplate::try_from_contents(contents).await?
+                ChatTemplate::try_from_contents(contents, ctx).await?
             };
+
+            let tokenizer_entries = ctx
+                .get("tokenizer_entries")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .into_iter()
+                .map(|v| {
+                    let v = v.as_object().unwrap();
+                    CacheEntry::new(
+                        v.get("dirname").unwrap().as_str().unwrap(),
+                        v.get("filename").unwrap().as_str().unwrap(),
+                    )
+                });
             let tokenizer = {
                 let mut files = BTreeMap::new();
-                for k in tok_entries {
+                for k in tokenizer_entries {
                     let v = contents.entries.remove(&k).unwrap();
                     files.insert(k, v);
                 }
                 let contents = CacheContents {
                     root: contents.root.clone(),
                     entries: files,
-                    ctx: None,
                 };
-                Tokenizer::try_from_contents(contents).await?
+                Tokenizer::try_from_contents(contents, ctx).await?
             };
+
+            let inferencer_entries = ctx
+                .get("inferencer_entries")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .into_iter()
+                .map(|v| {
+                    let v = v.as_object().unwrap();
+                    CacheEntry::new(
+                        v.get("dirname").unwrap().as_str().unwrap(),
+                        v.get("filename").unwrap().as_str().unwrap(),
+                    )
+                });
             let inferencer = {
                 let mut files = BTreeMap::new();
-                for k in inf_entries {
+                for k in inferencer_entries {
                     let v = contents.entries.remove(&k).unwrap();
                     files.insert(k, v);
                 }
                 let contents = CacheContents {
                     root: contents.root.clone(),
                     entries: files,
-                    ctx: None,
                 };
-                LanguageModelInferencer::try_from_contents(contents).await?
+                LanguageModelInferencer::try_from_contents(contents, ctx).await?
             };
 
             Ok(Self {
@@ -341,7 +401,7 @@ mod tests {
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
 
-        let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key));
+        let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key, None));
         let mut model: Option<LocalLangModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
@@ -543,7 +603,7 @@ mod tests {
     async fn infer_simple_chat() {
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key));
+        let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key, None));
         let mut model: Option<LocalLangModel> = None;
 
         while let Some(progress) = model_strm.next().await {

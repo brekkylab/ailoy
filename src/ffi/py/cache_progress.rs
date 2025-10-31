@@ -65,13 +65,14 @@ impl PyCacheProgress {
 
 pub async fn await_cache_result<T>(
     cache_key: impl Into<String>,
+    cache_ctx: Option<std::collections::HashMap<String, crate::value::Value>>,
     progress_callback: Option<Py<PyAny>>,
 ) -> PyResult<T>
 where
     T: TryFromCache + 'static,
 {
     let cache_key = cache_key.into();
-    let mut strm = Box::pin(Cache::new().try_create::<T>(cache_key));
+    let mut strm = Box::pin(Cache::new().try_create::<T>(cache_key, cache_ctx));
     while let Some(item) = strm.next().await {
         let progress = item?;
 

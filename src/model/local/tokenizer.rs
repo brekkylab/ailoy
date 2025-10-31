@@ -36,15 +36,19 @@ impl Tokenizer {
 }
 
 impl TryFromCache for Tokenizer {
-    fn claim_files(
+    fn claim_files<'a>(
         _: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
+        _: &'a mut std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
         let dirname = key.as_ref().replace("/", "--");
         Box::pin(async move { Ok(CacheClaim::new([(dirname.as_str(), "tokenizer.json")])) })
     }
 
-    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>> {
+    fn try_from_contents<'a>(
+        mut contents: CacheContents,
+        _: &'a std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<Self>> {
         Box::pin(async move {
             let Some((_, bytes)) = contents.remove_with_filename("tokenizer.json") else {
                 bail!("tokenizer.json not exists");
