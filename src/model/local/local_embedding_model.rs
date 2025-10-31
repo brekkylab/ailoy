@@ -1,12 +1,10 @@
-use std::{any::Any, collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use ailoy_macros::multi_platform_async_trait;
-use anyhow::bail;
 use futures::lock::Mutex;
 
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, CacheEntry, TryFromCache},
-    dyn_maybe_send,
     model::{
         EmbeddingModelInference,
         local::{EmbeddingModelInferencer, Tokenizer},
@@ -45,74 +43,100 @@ impl EmbeddingModelInference for LocalEmbeddingModel {
 }
 
 impl TryFromCache for LocalEmbeddingModel {
-    fn claim_files(
+    fn claim_files<'a>(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
+        ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
         let key = key.as_ref().to_owned();
         Box::pin(async move {
-            let mut tokenizer = Tokenizer::claim_files(cache.clone(), &key).await?;
-            let mut inferncer = EmbeddingModelInferencer::claim_files(cache.clone(), &key).await?;
-            let ctx: Box<dyn_maybe_send!(Any)> = Box::new([
-                tokenizer
-                    .entries
-                    .iter()
-                    .map(|v| v.clone())
-                    .collect::<Vec<_>>(),
-                inferncer
-                    .entries
-                    .iter()
-                    .map(|v| v.clone())
-                    .collect::<Vec<_>>(),
-            ]);
+            let mut tokenizer_claim = Tokenizer::claim_files(cache.clone(), &key, ctx).await?;
+            let mut tokenizer_entries = Vec::new();
+            for entry in tokenizer_claim.entries.iter() {
+                tokenizer_entries.push(crate::to_value!({
+                    dirname: entry.dirname().to_owned(),
+                    filename: entry.filename().to_owned()
+                }));
+            }
+            ctx.insert("tokenizer_entries".to_owned(), tokenizer_entries.into());
+
+            let mut inferencer_claim =
+                EmbeddingModelInferencer::claim_files(cache.clone(), &key, ctx).await?;
+            let mut inferencer_entries = Vec::new();
+            for entry in inferencer_claim.entries.iter() {
+                inferencer_entries.push(crate::to_value!({
+                    dirname: entry.dirname().to_owned(),
+                    filename: entry.filename().to_owned()
+                }));
+            }
+            ctx.insert("inferencer_entries".to_owned(), inferencer_entries.into());
+
             let mut rv = Vec::new();
-            rv.append(&mut tokenizer.entries);
-            rv.append(&mut inferncer.entries);
-            Ok(CacheClaim::with_ctx(rv, ctx))
+            rv.append(&mut tokenizer_claim.entries);
+            rv.append(&mut inferencer_claim.entries);
+            Ok(CacheClaim::new(rv))
         })
     }
 
-    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>>
+    fn try_from_contents(
+        mut contents: CacheContents,
+        ctx: &std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'static, anyhow::Result<Self>>
     where
         Self: Sized,
     {
+        let ctx = ctx.to_owned();
         Box::pin(async move {
-            let (tok_entries, inf_entries) = match contents.ctx.take() {
-                Some(ctx_any) => match ctx_any.downcast::<[Vec<CacheEntry>; 2]>() {
-                    Ok(boxed) => {
-                        let [a, b] = *boxed;
-                        (a, b)
-                    }
-                    Err(_) => bail!("contents.ctx is not [Vec<CacheEntry>; 3]"),
-                },
-                None => bail!("contents.ctx is None"),
-            };
-
+            let tokenizer_entries = ctx
+                .get("tokenizer_entries")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .into_iter()
+                .map(|v| {
+                    let v = v.as_object().unwrap();
+                    CacheEntry::new(
+                        v.get("dirname").unwrap().as_str().unwrap(),
+                        v.get("filename").unwrap().as_str().unwrap(),
+                    )
+                });
             let tokenizer = {
                 let mut files = BTreeMap::new();
-                for k in tok_entries {
+                for k in tokenizer_entries {
                     let v = contents.entries.remove(&k).unwrap();
                     files.insert(k, v);
                 }
                 let contents = CacheContents {
                     root: contents.root.clone(),
                     entries: files,
-                    ctx: None,
                 };
-                Tokenizer::try_from_contents(contents).await?
+                Tokenizer::try_from_contents(contents, &ctx).await?
             };
+
+            let inferencer_entries = ctx
+                .get("inferencer_entries")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .into_iter()
+                .map(|v| {
+                    let v = v.as_object().unwrap();
+                    CacheEntry::new(
+                        v.get("dirname").unwrap().as_str().unwrap(),
+                        v.get("filename").unwrap().as_str().unwrap(),
+                    )
+                });
             let inferencer = {
                 let mut files = BTreeMap::new();
-                for k in inf_entries {
+                for k in inferencer_entries {
                     let v = contents.entries.remove(&k).unwrap();
                     files.insert(k, v);
                 }
                 let contents = CacheContents {
                     root: contents.root.clone(),
                     entries: files,
-                    ctx: None,
                 };
-                EmbeddingModelInferencer::try_from_contents(contents).await?
+                EmbeddingModelInferencer::try_from_contents(contents, &ctx).await?
             };
 
             Ok(LocalEmbeddingModel {
@@ -137,7 +161,7 @@ mod tests {
         let cache = crate::cache::Cache::new();
         let key = "BAAI/bge-m3";
 
-        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key));
+        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None));
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
@@ -165,7 +189,7 @@ mod tests {
         let cache = crate::cache::Cache::new();
         let key = "BAAI/bge-m3";
 
-        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key));
+        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None));
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();

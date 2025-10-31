@@ -72,16 +72,20 @@ pub trait TryFromCache: Sized + MaybeSend {
     /// The returned future resolves to a list of logical entries (`dirname`/`filename`)
     /// that the caller will fetch and place into [`CacheContents`]. Return an error
     /// if the request is invalid (e.g., unknown key) or if computing the list fails.
-    fn claim_files(
+    fn claim_files<'a>(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>>;
+        ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<CacheClaim>>;
 
     /// Build `Self` from the previously fetched files.
     ///
     /// Implementations should verify that all required entries are present and valid,
     /// and return a descriptive `Err(String)` on failure.
-    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>>;
+    fn try_from_contents<'a>(
+        contents: CacheContents,
+        ctx: &'a std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<Self>>;
 }
 
 /// Infallible variant of [`TryFromCache`].
