@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: ghcr.io/brekkylab/ailoy-buildpack-linux:20250702
+      image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251031
 
     strategy:
       matrix:

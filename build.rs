@@ -59,7 +59,6 @@ fn build_native() {
     cmake_config.build();
 
     // Link to this project
-    println!("cargo:rustc-link-lib=stdc++");
     println!(
         "cargo:rustc-link-search=native={}",
         cmake_install_dir.display()
@@ -81,6 +80,9 @@ fn build_native() {
 
     #[cfg(target_os = "linux")]
     {
+        // manylinux uses libstdc++
+        println!("cargo:rustc-link-lib=stdc++");
+
         // Linux/ELF: ... -Wl,--whole-archive -l:libtvm_runtime.a -Wl,--no-whole-archive
         println!("cargo:rustc-link-arg=-Wl,--whole-archive");
         println!("cargo:rustc-link-arg=-Wl,-l:libtvm_runtime.a");
@@ -95,6 +97,9 @@ fn build_native() {
     }
     #[cfg(target_os = "macos")]
     {
+        // macos uses LLVM libc++
+        println!("cargo:rustc-link-lib=c++");
+
         // macOS: ... -Wl,-force_load,/abs/path/to/libtvm_runtime.a
         println!(
             "cargo:rustc-link-arg=-Wl,-force_load,{}",
