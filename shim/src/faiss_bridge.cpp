@@ -42,7 +42,9 @@ void FaissIndexInner::train_index(rust::Slice<const float> training_vectors,
 void FaissIndexInner::add_vectors_with_ids(rust::Slice<const float> vectors,
                                            size_t num_vectors,
                                            rust::Slice<const int64_t> ids) {
-  std::vector<faiss::idx_t> faiss_ids(ids.begin(), ids.end());
+  std::vector<faiss::idx_t> faiss_ids;
+  faiss_ids.reserve(ids.size());
+  std::copy(ids.begin(), ids.end(), std::back_inserter(faiss_ids));
   index_->add_with_ids(static_cast<faiss::idx_t>(num_vectors), vectors.data(),
                        faiss_ids.data());
 }
@@ -201,7 +203,6 @@ std::unique_ptr<FaissIndexInner> read_index(rust::Str filename) {
     }
 
     return std::make_unique<FaissIndexInner>(std::move(loaded_index));
-
   } catch (const std::exception &e) {
     throw std::runtime_error("Failed to read index from file '" +
                              std::string(filename) + "': " + e.what());
