@@ -112,10 +112,14 @@ size_t FaissIndexInner::remove_vectors(rust::Slice<const int64_t> ids) {
   }
 
   try {
-    faiss::IDSelectorBatch selector(ids.size(), ids.data());
+    std::vector<faiss::idx_t> faiss_ids;
+    faiss_ids.reserve(ids.size());
+    for (const auto &id : ids) {
+      faiss_ids.push_back(static_cast<faiss::idx_t>(id));
+    }
 
+    faiss::IDSelectorBatch selector(faiss_ids.size(), faiss_ids.data());
     size_t num_removed = index_->remove_ids(selector);
-
     return num_removed;
   } catch (const std::exception &e) {
     throw std::runtime_error("Failed to remove vectors: " +
