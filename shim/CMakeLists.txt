@@ -45,7 +45,7 @@ endif()
 #################
 project(ailoy CXX)
 
-set(AILOY_WITH_TEST ON CACHE BOOL "Build test")
+set(AILOY_WITH_TEST OFF CACHE BOOL "Build test")
 
 if(AILOY_WITH_TEST)
     FetchContent_Declare(googletest URL https://github.com/google/googletest/archive/refs/tags/v1.16.0.tar.gz)

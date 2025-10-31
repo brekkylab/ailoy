@@ -55,21 +55,28 @@ fn build_native() {
         println!("cargo:rustc-link-search=native={}/lib", libomp_path_str);
         println!("cargo:rustc-link-lib=omp");
     }
+
     cmake_config.build();
 
     // Link to this project
-    println!("cargo:rustc-link-lib=c++");
+    println!("cargo:rustc-link-lib=stdc++");
     println!(
         "cargo:rustc-link-search=native={}",
         cmake_install_dir.display()
     );
     println!("cargo:rustc-link-lib=static=ailoy_cpp_shim");
 
+    // Forward LD_LIBRARY_PATH if provided
+    if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
+        // Split and add each path separately
+        for path in ld_path.split(':') {
+            if !path.is_empty() {
+                println!("cargo:rustc-link-search=native={}", path);
+            }
+        }
+    }
+
     // Link libfaiss.a
-    println!(
-        "cargo:rustc-link-search=native={}",
-        (cmake_install_dir.join("libfaiss.a")).display()
-    );
     println!("cargo:rustc-link-lib=static=faiss");
 
     #[cfg(target_os = "linux")]
@@ -81,8 +88,10 @@ fn build_native() {
 
         // Link FAISS dependencies (not tested)
         println!("cargo:rustc-link-lib=gomp"); // GNU OpenMP
-        println!("cargo:rustc-link-lib=blas"); // BLAS
-        println!("cargo:rustc-link-lib=lapack"); // LAPACK
+        println!("cargo:rustc-link-lib=openblas"); // OpenBLAS
+
+        // Link Vulkan
+        println!("cargo:rustc-link-lib=vulkan");
     }
     #[cfg(target_os = "macos")]
     {
