@@ -106,13 +106,13 @@ tvm_embedding_model_t::infer(std::vector<int> tokens) {
 DLPackTensor
 tvm_embedding_model_t::infer_from_rs(rust::Slice<const uint32_t> tokens) {
   std::lock_guard<std::mutex> lk(m_);
-  std::vector<int> converted;
-  converted.reserve(tokens.size());
+  std::vector<int> tokens_converted;
+  tokens_converted.reserve(tokens.size());
+  for (const auto &token : tokens) {
+    tokens_converted.push_back(static_cast<int>(token));
+  }
 
-  std::transform(tokens.begin(), tokens.end(), std::back_inserter(converted),
-                 [](uint32_t val) { return static_cast<int>(val); });
-
-  auto ndarray = infer(converted);
+  auto ndarray = infer(tokens_converted);
   auto raw_dlpack_ptr = std::move(ndarray).ToDLPackVersioned();
   auto safe_managed_tensor =
       dlpack_bridge::create_managed_tensor(raw_dlpack_ptr);
