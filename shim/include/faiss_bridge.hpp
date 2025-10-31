@@ -7,8 +7,7 @@
 #include <faiss/Index.h>
 #include <faiss/MetricType.h>
 #include <faiss/index_factory.h>
-
-#include "rust/cxx.h"
+#include <rust/cxx.h>
 
 // Forward Declaration for cxx_bridge.rs.h
 enum class FaissMetricType : uint8_t;

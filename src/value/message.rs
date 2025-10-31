@@ -137,6 +137,7 @@ impl fmt::Display for Message {
 /// A simplified form of [Message] for concise definition.
 /// All other members are identical to [Message], but `contents` is a `String` instead of `Vec<Part>`.
 /// This can be converted to Message via `.into()`.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]

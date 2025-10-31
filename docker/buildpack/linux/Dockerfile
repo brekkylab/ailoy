@@ -10,7 +10,7 @@ RUN yum install -y perl-IPC-Cmd && \
     curl -LO https://www.openssl.org/source/openssl-3.0.16.tar.gz && \
     tar -xzf openssl-3.0.16.tar.gz && \
     cd openssl-3.0.16 && \
-    ./config --prefix=/opt/openssl --openssldir=/opt/openssl no-shared && \
+    ./config --prefix=/opt/openssl --openssldir=/opt/openssl no-shared no-tests && \
     make -j$(nproc) && \
     make install_sw
 

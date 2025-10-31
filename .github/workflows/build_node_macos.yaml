@@ -18,18 +18,36 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install Homebrew dependencies
+      - name: Install LLVM (Homebrew Clang)
+        run: |
+          brew install llvm
+          echo "CC=$(brew --prefix llvm)/bin/clang" >> $GITHUB_ENV
+          echo "CXX=$(brew --prefix llvm)/bin/clang++" >> $GITHUB_ENV
+          echo "LDFLAGS=-L$(brew --prefix llvm)/lib" >> $GITHUB_ENV
+          echo "CPPFLAGS=-I$(brew --prefix llvm)/include" >> $GITHUB_ENV
+          echo "PATH=$(brew --prefix llvm)/bin:$PATH" >> $GITHUB_ENV
+
+      - name: Install OpenMP (required by faiss)
         run: |
           brew install libomp
 
-      - name: Create package
-        run: | 
+      - name: Install cxxbridge (required to build shim)
+        run: |
+          cargo install cxxbridge-cmd
+
+      - name: Install dependencies
+        working-directory: ${{ github.workspace }}/bindings/nodejs
+        run: |
           npm install
+
+      - name: Build package
+        working-directory: ${{ github.workspace }}/bindings/nodejs
+        run: |
+          npm run build
           npm pack
           PACKAGE_NAME=$(ls -1t ailoy-*.tgz | head -n 1)
           echo "PACKAGE_NAME=$PACKAGE_NAME"
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
-        working-directory: ${{ github.workspace }}/bindings/js-node
         env:
           OpenMP_ROOT: /opt/homebrew/opt/libomp
 
@@ -37,4 +55,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PACKAGE_NAME }}
-          path: ${{ github.workspace }}/bindings/js-node/${{ env.PACKAGE_NAME }}
+          path: ${{ github.workspace }}/bindings/nodejs/${{ env.PACKAGE_NAME }}

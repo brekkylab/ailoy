@@ -41,6 +41,8 @@ fn build_native() {
     // Add OpenMP_ROOT if macos
     #[cfg(target_os = "macos")]
     {
+        cmake_config.define("MACOSX_DEPLOYMENT_TARGET", "14.0");
+
         // Link OpenMP(brew installed)
         let libomp_path = std::process::Command::new("brew")
             .arg("--prefix")
@@ -55,37 +57,66 @@ fn build_native() {
         println!("cargo:rustc-link-search=native={}/lib", libomp_path_str);
         println!("cargo:rustc-link-lib=omp");
     }
+
     cmake_config.build();
 
     // Link to this project
-    println!("cargo:rustc-link-lib=c++");
     println!(
         "cargo:rustc-link-search=native={}",
         cmake_install_dir.display()
     );
     println!("cargo:rustc-link-lib=static=ailoy_cpp_shim");
 
+    // Forward LD_LIBRARY_PATH if provided
+    if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
+        // Split and add each path separately
+        for path in ld_path.split(':') {
+            if !path.is_empty() {
+                println!("cargo:rustc-link-search=native={}", path);
+            }
+        }
+    }
+
     // Link libfaiss.a
-    println!(
-        "cargo:rustc-link-search=native={}",
-        (cmake_install_dir.join("libfaiss.a")).display()
-    );
     println!("cargo:rustc-link-lib=static=faiss");
 
     #[cfg(target_os = "linux")]
     {
+        // manylinux uses libstdc++.so
+        println!("cargo:rustc-link-lib=stdc++");
+
         // Linux/ELF: ... -Wl,--whole-archive -l:libtvm_runtime.a -Wl,--no-whole-archive
         println!("cargo:rustc-link-arg=-Wl,--whole-archive");
         println!("cargo:rustc-link-arg=-Wl,-l:libtvm_runtime.a");
         println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
 
         // Link FAISS dependencies (not tested)
-        println!("cargo:rustc-link-lib=gomp"); // GNU OpenMP
-        println!("cargo:rustc-link-lib=blas"); // BLAS
-        println!("cargo:rustc-link-lib=lapack"); // LAPACK
+        println!("cargo:rustc-link-lib=static=gomp"); // GNU OpenMP
+        println!("cargo:rustc-link-lib=static=openblas"); // OpenBLAS
+        println!("cargo:rustc-link-lib=static=gfortran"); // gfortran (required by OpenBLAS)
+
+        // Link Vulkan
+        println!("cargo:rustc-link-lib=dylib=vulkan");
     }
     #[cfg(target_os = "macos")]
     {
+        // Try to link LLVM clang-cpp first
+        if let Ok(output) = std::process::Command::new("llvm-config")
+            .arg("--libdir")
+            .output()
+            && output.status.success()
+        {
+            let lib_dir = String::from_utf8_lossy(&output.stdout);
+            let lib_dir = lib_dir.trim();
+
+            println!("cargo:rustc-link-search=native={}", lib_dir);
+            println!("cargo:rustc-link-lib=clang-cpp");
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir);
+        } else {
+            // Fallback to Apple Clang
+            println!("cargo:rustc-link-lib=c++");
+        }
+
         // macOS: ... -Wl,-force_load,/abs/path/to/libtvm_runtime.a
         println!(
             "cargo:rustc-link-arg=-Wl,-force_load,{}",

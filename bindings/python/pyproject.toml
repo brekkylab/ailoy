@@ -49,8 +49,7 @@ requires = ["maturin>=1.9"]
 build-backend = "maturin"
 
 [tool.maturin]
-auditwheel = "repair"
-compatibility = "pypi"
+auditwheel = "skip"
 features = ["python", "pyo3/extension-module", "ailoy-model-cli"]
 manifest-path = "../../Cargo.toml"
 module-name = "ailoy._core"
