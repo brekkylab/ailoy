@@ -34,6 +34,16 @@ fn build_native() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let cmake_install_dir = out_dir.parent().unwrap().join("deps");
 
+    // Forward LD_LIBRARY_PATH if provided
+    if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
+        // Split and add each path separately
+        for path in ld_path.split(':') {
+            if !path.is_empty() {
+                println!("cargo:rustc-link-search=native={}", path);
+            }
+        }
+    }
+
     // Run CMake
     let mut cmake_config = Config::new(&cmake_source_dir);
     cmake_config.define("CMAKE_INSTALL_PREFIX", &cmake_install_dir);
@@ -67,23 +77,13 @@ fn build_native() {
     );
     println!("cargo:rustc-link-lib=static=ailoy_cpp_shim");
 
-    // Forward LD_LIBRARY_PATH if provided
-    if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
-        // Split and add each path separately
-        for path in ld_path.split(':') {
-            if !path.is_empty() {
-                println!("cargo:rustc-link-search=native={}", path);
-            }
-        }
-    }
-
     // Link libfaiss.a
     println!("cargo:rustc-link-lib=static=faiss");
 
     #[cfg(target_os = "linux")]
     {
         // manylinux uses libstdc++.so
-        println!("cargo:rustc-link-lib=stdc++");
+        println!("cargo:rustc-link-lib=dylib=stdc++");
 
         // Linux/ELF: ... -Wl,--whole-archive -l:libtvm_runtime.a -Wl,--no-whole-archive
         println!("cargo:rustc-link-arg=-Wl,--whole-archive");
@@ -91,7 +91,7 @@ fn build_native() {
         println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
 
         // Link FAISS dependencies (not tested)
-        println!("cargo:rustc-link-lib=static=gomp"); // GNU OpenMP
+        println!("cargo:rustc-link-lib=gomp"); // GNU OpenMP
         println!("cargo:rustc-link-lib=static=openblas"); // OpenBLAS
         println!("cargo:rustc-link-lib=static=gfortran"); // gfortran (required by OpenBLAS)
 
