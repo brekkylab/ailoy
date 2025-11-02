@@ -61,7 +61,7 @@ Ailoy lets you run language model in two different modes:
 Each approach has its own strengths and trade-offs:
 
 - **API Models**: These connect to external AI services over the internet. If
-  you’re fine with token costs and prefer cloud-hosted models, this is the
+  you’re fine with API token costs and prefer cloud-hosted models, this is the
   simplest option.
 - **Local Models**: These run entirely on your own device, using open-source
   models. Choose this if you want full control, offline availability, or
@@ -91,7 +91,7 @@ import ailoy as ai
 
 async def main():
     lm = ai.LangModel.new_stream_api(
-        "OpenAI", 
+        spec="OpenAI", 
         model_name="gpt-4o", 
         api_key="YOUR_OPENAI_API_KEY"
     )
@@ -110,16 +110,12 @@ import * as ai from "ailoy-node";
 
 async function main() {
   const lm = await ai.LangModel.newStreamAPI(
-    "OpenAI", /* spec: */ 
-    "gpt-5", /* modelName: */ 
-    "YOUR_OPENAI_API_KEY", /* apiKey: */ 
+    "OpenAI",              // spec
+    "gpt-5",               // modelName
+    "YOUR_OPENAI_API_KEY", // apiKey
   );
   const agent = new ai.Agent(lm);
-  const query: ai.Message = {
-    role: "user",
-    contents: [{ type: "text", text: "Please give me a short poem about AI" }],
-  };
-  for await (const resp of agent.run([query])) {
+  for await (const resp of agent.run("Please give me a short poem about AI")) {
     if (resp.message.contents[0].type === "text") {
       console.log(resp.message.contents[0].text); 
     }
@@ -136,16 +132,12 @@ import * as ai from "ailoy-web";
 
 async function main() {
   const lm = await ai.LangModel.newStreamAPI(
-    "OpenAI", /* spec: */ 
-    "gpt-5", /* modelName: */ 
-    "YOUR_OPENAI_API_KEY", /* apiKey: */ 
+    "OpenAI",              // spec
+    "gpt-5",               // modelName
+    "YOUR_OPENAI_API_KEY", // apiKey
   );
   const agent = new ai.Agent(lm);
-  const query: ai.Message = {
-    role: "user",
-    contents: [{ type: "text", text: "Please give me a short poem about AI" }],
-  };
-  for await (const resp of agent.run([query])) {
+  for await (const resp of agent.run("Please give me a short poem about AI")) {
     if (resp.message.contents[0].type === "text") {
       console.log(resp.message.contents[0].text); 
     }
@@ -178,17 +170,17 @@ import ailoy as ai
 
 async def main():
     lm = await ai.LangModel.new_local(
-        model_name="Qwen/Qwen3-0.6B", 
-        progress_callback=print
+        model_name="Qwen/Qwen3-0.6B", progress_callback=print
     )
     agent = ai.Agent(lm)
-    async for resp in agent.run("Please give me a short poem about AI"):
+    async for resp in agent.run("Please give me a short poem about AI."):
         if isinstance(resp.message.contents[0], ai.Part.Text):
             print(resp.message.contents[0].text)
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 ```
 
 ```typescript
@@ -196,14 +188,11 @@ import * as ai from "ailoy-node";
 
 async function main() {
   const lm = await ai.LangModel.newLocal(
-    "Qwen/Qwen3-0.6B", console.log
+    "Qwen/Qwen3-0.6B", // modelName
+    console.log,       // progressCallback?
   );
   const agent = new ai.Agent(lm);
-  const query: ai.Message = {
-    role: "user",
-    contents: "Please give me a short poem about AI",
-  };
-  for await (const resp of agent.run([query])) {
+  for await (const resp of agent.run("Please give me a short poem about AI")) {
     if (resp.message.contents[0].type === "text") {
       console.log(resp.message.contents[0].text); 
     }
@@ -220,14 +209,11 @@ import * as ai from "ailoy-web";
 
 async function main() {
   const lm = await ai.LangModel.newLocal(
-    "Qwen/Qwen3-0.6B", console.log
+    "Qwen/Qwen3-0.6B", // modelName
+    console.log,       // progressCallback?
   );
   const agent = new ai.Agent(lm);
-  const query: ai.Message = {
-    role: "user",
-    contents: "Please give me a short poem about AI",
-  };
-  for await (const resp of agent.run([query])) {
+  for await (const resp of agent.run("Please give me a short poem about AI")) {
     if (resp.message.contents[0].type === "text") {
       console.log(resp.message.contents[0].text); 
     }
