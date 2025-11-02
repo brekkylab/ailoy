@@ -217,15 +217,9 @@ mod py {
             });
 
             // create Rust Future to run tool
-            let inner = self.inner.clone();
+            let tool = self.clone();
             let future = async move {
-                let result = match inner {
-                    ToolInner::Function(tool) => tool.run(input).await,
-                    ToolInner::MCP(tool) => tool.run(input).await,
-                    ToolInner::Knowledge(tool) => tool.run(input).await,
-                }
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
+                let result = tool.run(input).await?;
                 // Rust Value -> Python object
                 Python::attach(|py| value_to_python(py, &result).map(|bound| bound.unbind()))
             };
