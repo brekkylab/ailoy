@@ -44,7 +44,7 @@ jobs:
         working-directory: ${{ github.workspace }}/bindings/nodejs
         run: |
           npm run build
-          node scripts/bundle-dylibs.js ./dist/ailoy_core.linux-x64-gnu.node
+          node scripts/bundle-dylibs.js ./dist/ailoy_core.darwin-arm64.node
           npm pack
           PACKAGE_NAME=$(ls -1t ailoy-*.tgz | head -n 1)
           echo "PACKAGE_NAME=$PACKAGE_NAME"
