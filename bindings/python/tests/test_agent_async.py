@@ -96,7 +96,9 @@ async def test_simple_chat(agent: ai.Agent, simple_chat_messages):
     acc = ai.MessageDelta()
     async for resp in agent.run_delta(
         simple_chat_messages,
-        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
+        config=ai.AgentConfig(
+            inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+        ),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
@@ -134,7 +136,9 @@ async def test_simple_multiturn(agent: ai.Agent):
         )
         async for resp in agent.run(
             messages,
-            config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
+            config=ai.AgentConfig(
+                inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+            ),
         ):
             result = resp.message
         messages.append(result)
@@ -154,7 +158,9 @@ async def test_builtin_tool(agent: ai.Agent):
     results = []
     async for resp in agent.run_delta(
         "List the files in the current directory.",
-        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
+        config=ai.AgentConfig(
+            inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+        ),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
@@ -213,7 +219,9 @@ async def test_python_async_function_tool(agent: ai.Agent):
     results = []
     async for resp in agent.run_delta(
         "What is the temperature in Seoul now?",
-        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
+        config=ai.AgentConfig(
+            inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+        ),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
@@ -284,17 +292,17 @@ async def test_parallel_tool_call(agent: ai.Agent):
 
     async for resp in agent.run(
         "Tell me the weather in Seoul both temperature and wind.",
-        config=ai.InferenceConfig(think_effort="disable"),
+        config=ai.AgentConfig(inference=ai.InferenceConfig(think_effort="disable")),
     ):
         for content in resp.message.contents:
-            if isinstance(content, ai.PartDelta.Text):
+            if isinstance(content, ai.Part.Text):
                 print(f"{content.text=}")
-            elif isinstance(content, ai.PartDelta.Value):
+            elif isinstance(content, ai.Part.Value):
                 print(f"{content.value=}")
             else:
                 raise ValueError(f"Content has invalid part_type: {content.part_type}")
         for tool_call in resp.message.tool_calls:
-            if isinstance(tool_call, ai.PartDelta.Function):
+            if isinstance(tool_call, ai.Part.Function):
                 print(
                     f"function_call={tool_call.function.name}(**{tool_call.function.arguments})"
                 )
@@ -318,7 +326,9 @@ async def test_mcp_tools(agent: ai.Agent):
     results = []
     async for resp in agent.run_delta(
         "What time is it currently in Asia/Seoul?",
-        config=ai.AgentConfig(inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")),
+        config=ai.AgentConfig(
+            inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+        ),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
