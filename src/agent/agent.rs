@@ -330,16 +330,18 @@ mod py {
     )> {
         let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
-        rt.spawn(pyo3_async_runtimes::tokio::scope(locals, async move {
+        let future = async move {
             let mut stream = agent.run_delta(messages, config).boxed();
-
             while let Some(item) = stream.next().await {
                 if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
                 }
             }
-        }));
+        };
+        match pyo3_async_runtimes::tokio::get_current_locals(py) {
+            Ok(locals) => rt.spawn(pyo3_async_runtimes::tokio::scope(locals, future)),
+            Err(_) => rt.spawn(future),
+        };
         Ok((rt, rx))
     }
 
@@ -354,16 +356,18 @@ mod py {
     )> {
         let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
-        rt.spawn(pyo3_async_runtimes::tokio::scope(locals, async move {
+        let future = async move {
             let mut stream = agent.run(messages, config).boxed();
-
             while let Some(item) = stream.next().await {
                 if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
                 }
             }
-        }));
+        };
+        match pyo3_async_runtimes::tokio::get_current_locals(py) {
+            Ok(locals) => rt.spawn(pyo3_async_runtimes::tokio::scope(locals, future)),
+            Err(_) => rt.spawn(future),
+        };
         Ok((rt, rx))
     }
 
