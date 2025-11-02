@@ -110,68 +110,31 @@ mod py {
         let f: Box<ToolFunc> = Box::new(move |args: Value| {
             let py_func = Python::attach(|py| py_func.clone_ref(py));
             Box::pin(async move {
-                Python::attach(|py| {
-                    // Rust Value -> Python object
-                    let py_args = match value_to_python(py, &args) {
-                        Ok(obj) => obj,
-                        Err(e) => {
-                            return Ok(Value::object([(
-                                "error",
-                                format!("Failed to convert arguments to Python: {}", e),
-                            )]));
-                        }
-                    };
+                let (py_result, is_awaitable) = Python::attach(|py| {
+                    // Rust Value -> Python dict
+                    let py_args = value_to_python(py, &args).unwrap();
+                    let kwargs = py_args.cast::<PyDict>().unwrap();
 
                     // call python function
-                    let result = if let Ok(dict) = &py_args.cast::<PyDict>() {
-                        py_func.bind(py).call((), Some(&dict))
-                    } else {
-                        return Ok(Value::object([(
-                            "error",
-                            format!("Failed to convert arguments to Python dict: {:?}", py_args),
-                        )]));
-                    };
-
-                    let py_result = match result {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(Value::object([(
-                                "error",
-                                format!("Python function call failed: {}", e),
-                            )]));
-                        }
-                    };
+                    let result = py_func.bind(py).call((), Some(kwargs)).unwrap();
 
                     // check whether result is coroutine
-                    let is_coroutine = py_result.hasattr("__await__").unwrap_or(false);
+                    let is_awaitable = result.hasattr("__await__").unwrap_or(false);
+                    (result.unbind(), is_awaitable)
+                });
 
-                    let final_result = if is_coroutine {
-                        // execute coroutine using Python `asyncio`
-                        match py
-                            .import("asyncio")
-                            .and_then(|asyncio| asyncio.call_method1("run", (py_result,)))
-                        {
-                            Ok(r) => r.unbind(),
-                            Err(e) => {
-                                return Ok(Value::object([(
-                                    "error",
-                                    format!("Async execution failed: {}", e),
-                                )]));
-                            }
-                        }
-                    } else {
-                        py_result.unbind()
-                    };
+                // await function result if awaitable
+                let final_result = if is_awaitable {
+                    let fut = Python::attach(|py| {
+                        pyo3_async_runtimes::tokio::into_future(py_result.bind(py).to_owned())
+                    })?;
+                    fut.await?
+                } else {
+                    py_result
+                };
 
-                    // Python object -> Rust Value
-                    match python_to_value(&final_result.bind(py)) {
-                        Ok(value) => Ok(value),
-                        Err(e) => Ok(Value::object([(
-                            "error",
-                            format!("Failed to convert Python result to Value: {}", e),
-                        )])),
-                    }
-                })
+                // Python object -> Rust Value
+                Python::attach(|py| python_to_value(&final_result.bind(py)).map_err(Into::into))
             })
         });
         Arc::new(f)
