@@ -675,6 +675,121 @@ pub(crate) mod py {
         }
     }
 
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MessageDelta {
+        #[new]
+        #[pyo3(signature = (role=None, contents = None, id = None, thinking = None, tool_calls = None, signature = None))]
+        fn __new__(
+            role: Option<Role>,
+            contents: Option<Vec<PartDelta>>,
+            id: Option<String>,
+            thinking: Option<String>,
+            tool_calls: Option<Vec<PartDelta>>,
+            signature: Option<String>,
+        ) -> Self {
+            Self {
+                role,
+                contents: contents.unwrap_or_default(),
+                id,
+                thinking,
+                tool_calls: tool_calls.unwrap_or_default(),
+                signature,
+            }
+        }
+
+        pub fn __repr__(&self) -> String {
+            format!(
+                "MessageDelta(role={}, contents=[{}], id={}, thinking={}, tool_calls=[{}], signature={})",
+                self.role.__repr__(),
+                self.contents
+                    .iter()
+                    .map(|content| content.__repr__())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                self.id.__repr__(),
+                self.thinking.__repr__(),
+                self.tool_calls
+                    .iter()
+                    .map(|tool| tool.__repr__())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                self.signature.__repr__(),
+            )
+        }
+
+        fn __add__(&self, other: &Self) -> PyResult<Self> {
+            self.clone().accumulate(other.clone()).map_err(Into::into)
+        }
+
+        #[pyo3(name = "to_message")]
+        pub fn to_message_py(&self) -> PyResult<Message> {
+            self.clone().to_message().map_err(Into::into)
+        }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl FinishReason {
+        pub fn __repr__(&self) -> String {
+            match self {
+                FinishReason::Stop {} => "FinishReason.Stop()".to_owned(),
+                FinishReason::Length {} => "FinishReason.Length()".to_owned(),
+                FinishReason::ToolCall {} => "FinishReason.ToolCall()".to_owned(),
+                FinishReason::Refusal { reason } => {
+                    format!("FinishReason.Refusal(reason={})", reason)
+                }
+            }
+        }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MessageDeltaOutput {
+        pub fn __repr__(&self) -> String {
+            format!(
+                "MessageDeltaOutput(delta={}, finish_reason={})",
+                self.delta.__repr__(),
+                self.finish_reason
+                    .clone()
+                    .map(|finish_reason| finish_reason.__repr__())
+                    .unwrap_or("None".to_owned())
+            )
+        }
+
+        #[getter]
+        fn delta(&self) -> MessageDelta {
+            self.delta.clone()
+        }
+
+        #[getter]
+        fn finish_reason(&self) -> Option<FinishReason> {
+            self.finish_reason.clone()
+        }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl MessageOutput {
+        pub fn __repr__(&self) -> String {
+            format!(
+                "MessageOutput(message={}, finish_reason={})",
+                self.message.__repr__(),
+                self.finish_reason.__repr__(),
+            )
+        }
+
+        #[getter]
+        fn message(&self) -> Message {
+            self.message.clone()
+        }
+
+        #[getter]
+        fn finish_reason(&self) -> FinishReason {
+            self.finish_reason.clone()
+        }
+    }
+
     #[gen_stub_pyclass]
     #[pyclass(module = "ailoy._core", unsendable)]
     pub(crate) struct MessageDeltaOutputIterator {

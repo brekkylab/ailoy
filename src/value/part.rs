@@ -892,6 +892,39 @@ mod py {
             Part::image_url(url).map_err(|e| PyValueError::new_err(e.to_string()))
         }
     }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl PartDelta {
+        pub fn __repr__(&self) -> String {
+            let s = match &self {
+                PartDelta::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
+                PartDelta::Function { id, function } => {
+                    format!(
+                        "Function(id={}, function=PartDeltaFunction({}))",
+                        id.__repr__(),
+                        serde_json::to_string(function).unwrap_or("...".to_owned())
+                    )
+                }
+                PartDelta::Value { value } => format!(
+                    "Value(value={})",
+                    serde_json::to_string(value).unwrap_or("...".to_owned())
+                ),
+                PartDelta::Null {} => "Null()".to_owned(),
+            };
+            format!("PartDelta.{}", s)
+        }
+
+        #[getter]
+        fn part_type(&self) -> &'static str {
+            match &self {
+                PartDelta::Text { .. } => "text",
+                PartDelta::Function { .. } => "function",
+                PartDelta::Value { .. } => "value",
+                PartDelta::Null {} => "null",
+            }
+        }
+    }
 }
 
 #[cfg(feature = "nodejs")]
