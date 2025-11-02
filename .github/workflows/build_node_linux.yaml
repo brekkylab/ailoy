@@ -42,6 +42,7 @@ jobs:
         working-directory: ${{ github.workspace }}/bindings/nodejs
         run: |
           npm run build
+          node scripts/bundle-dylibs.js ./dist/ailoy_core.darwin-arm64.node
           npm pack
           PACKAGE_NAME=$(ls -1t ailoy-*.tgz | head -n 1)
           echo "PACKAGE_NAME=$PACKAGE_NAME"
@@ -50,7 +51,8 @@ jobs:
           CMAKE_PREFIX_PATH: /opt/openblas
           OPENSSL_DIR: /opt/openssl
           VULKAN_SDK: /opt/vulkan-sdk
-          LD_LIBRARY_PATH: /opt/openblas/lib:/opt/vulkan-sdk/lib:/opt/rh/gcc-toolset-14/root/usr/lib/gcc/x86_64-redhat-linux/14/32
+          LD_LIBRARY_PATH: /opt/openblas/lib:/opt/vulkan-sdk/lib
+          RUSTFLAGS: -L/opt/rh/gcc-toolset-14/root/lib/gcc/x86_64-redhat-linux/14
 
       - name: Upload npm package
         uses: actions/upload-artifact@v4
