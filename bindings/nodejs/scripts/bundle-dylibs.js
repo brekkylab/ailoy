@@ -48,7 +48,7 @@ const IGNORED_LIBS_LINUX = new Set([
   "libaudit.so.1",
 
   // Exclude vulkan
-  "libvulkan.so",
+  "libvulkan.so.1",
 ]);
 
 class DylibsBundler {
