@@ -100,22 +100,8 @@ fn build_native() {
     }
     #[cfg(target_os = "macos")]
     {
-        // Try to link LLVM clang-cpp first
-        if let Ok(output) = std::process::Command::new("llvm-config")
-            .arg("--libdir")
-            .output()
-            && output.status.success()
-        {
-            let lib_dir = String::from_utf8_lossy(&output.stdout);
-            let lib_dir = lib_dir.trim();
-
-            println!("cargo:rustc-link-search=native={}", lib_dir);
-            println!("cargo:rustc-link-lib=clang-cpp");
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir);
-        } else {
-            // Fallback to Apple Clang
-            println!("cargo:rustc-link-lib=c++");
-        }
+        // Link Apple Clang c++
+        println!("cargo:rustc-link-lib=c++");
 
         // macOS: ... -Wl,-force_load,/abs/path/to/libtvm_runtime.a
         println!(

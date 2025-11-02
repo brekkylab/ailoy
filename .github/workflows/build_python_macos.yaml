@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     name: Build for Python ${{ matrix.python-version }}
-    runs-on: macos-14
+    runs-on: macos-15
 
     strategy:
       matrix:
@@ -23,15 +23,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Install LLVM (Homebrew Clang)
-        run: |
-          brew install llvm
-          echo "CC=$(brew --prefix llvm)/bin/clang" >> $GITHUB_ENV
-          echo "CXX=$(brew --prefix llvm)/bin/clang++" >> $GITHUB_ENV
-          echo "LDFLAGS=-L$(brew --prefix llvm)/lib" >> $GITHUB_ENV
-          echo "CPPFLAGS=-I$(brew --prefix llvm)/include" >> $GITHUB_ENV
-          echo "PATH=$(brew --prefix llvm)/bin:$PATH" >> $GITHUB_ENV
 
       - name: Install OpenMP (required by faiss)
         run: |

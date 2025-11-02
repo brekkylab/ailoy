@@ -8,7 +8,7 @@ env:
 
 jobs:
   build-macos:
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - uses: actions/checkout@v4
@@ -17,15 +17,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install LLVM (Homebrew Clang)
-        run: |
-          brew install llvm
-          echo "CC=$(brew --prefix llvm)/bin/clang" >> $GITHUB_ENV
-          echo "CXX=$(brew --prefix llvm)/bin/clang++" >> $GITHUB_ENV
-          echo "LDFLAGS=-L$(brew --prefix llvm)/lib" >> $GITHUB_ENV
-          echo "CPPFLAGS=-I$(brew --prefix llvm)/include" >> $GITHUB_ENV
-          echo "PATH=$(brew --prefix llvm)/bin:$PATH" >> $GITHUB_ENV
 
       - name: Install OpenMP (required by faiss)
         run: |
