@@ -461,9 +461,9 @@ mod py {
             &mut self,
             messages: Messages,
             config: Option<AgentConfig>,
-        ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
-            let (_rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
-            Ok(MessageDeltaOutputSyncIterator { _rt, rx })
+        ) -> anyhow::Result<MessageOutputSyncIterator> {
+            let (_rt, rx) = spawn(self.clone(), messages.into(), config)?;
+            Ok(MessageOutputSyncIterator { _rt, rx })
         }
     }
 }
