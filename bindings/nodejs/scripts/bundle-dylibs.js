@@ -6,7 +6,8 @@ const { execSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const os = require("os");
 
-const SYSTEM_LIBS_LINUX = new Set([
+const IGNORED_LIBS_LINUX = new Set([
+  // System libs
   "libc.so.6",
   "libm.so.6",
   "libpthread.so.0",
@@ -45,6 +46,9 @@ const SYSTEM_LIBS_LINUX = new Set([
   "libselinux.so.1",
   "libpcre.so.3",
   "libaudit.so.1",
+
+  // Exclude vulkan
+  "libvulkan.so",
 ]);
 
 class DylibsBundler {
@@ -53,7 +57,7 @@ class DylibsBundler {
     this.outputDir = outputDir || path.dirname(this.binaryPath);
     this.libDir = path.join(this.outputDir, ".libs");
     this.processedLibs = new Set();
-    this.libMapping = new Map();
+    this.targetLibs = [];
     this.platform = os.platform();
     this.isLinux = this.platform === "linux";
     this.isMacOS = this.platform === "darwin";
@@ -113,7 +117,7 @@ class DylibsBundler {
   shouldBundle(libName, libPath) {
     if (this.isLinux) {
       // Ignore system libraries
-      if (SYSTEM_LIBS_LINUX.has(libName)) {
+      if (IGNORED_LIBS_LINUX.has(libName)) {
         return false;
       }
     } else if (this.isMacOS) {
@@ -141,9 +145,9 @@ class DylibsBundler {
     return true;
   }
 
-  copyLibrary(sourcePath, libName) {
+  copyLibrary(oldPath, oldName) {
     try {
-      const data = fs.readFileSync(sourcePath);
+      const data = fs.readFileSync(oldPath);
       const hash = crypto
         .createHash("sha256")
         .update(data)
@@ -153,29 +157,29 @@ class DylibsBundler {
       let newName;
       if (this.isLinux) {
         // Create versioned name: libfoo.so.1 -> libfoo-a1b2c3d4.so.1
-        const parts = libName.split(".so");
+        const parts = oldName.split(".so");
         newName =
           parts.length > 1
             ? `${parts[0]}-${hash}.so${parts.slice(1).join(".so")}`
-            : `${libName}-${hash}`;
+            : `${oldName}-${hash}`;
       } else if (this.isMacOS) {
         // Create versioned name: libfoo.1.dylib -> libfoo-a1b2c3d4.1.dylib
-        const parts = libName.split(".dylib");
+        const parts = oldName.split(".dylib");
         newName =
           parts.length > 1 && parts[0]
             ? `${parts[0]}-${hash}.dylib${parts.slice(1).join(".dylib")}`
-            : `${libName.replace(".dylib", "")}-${hash}.dylib`;
+            : `${oldName.replace(".dylib", "")}-${hash}.dylib`;
       }
 
-      const destPath = path.join(this.libDir, newName);
+      const newPath = path.join(this.libDir, newName);
 
-      if (!fs.existsSync(destPath)) {
-        fs.copyFileSync(sourcePath, destPath);
-        fs.chmodSync(destPath, 0o755);
-        console.log(`Copied: ${libName} -> ${newName}`);
+      if (!fs.existsSync(newPath)) {
+        fs.copyFileSync(oldPath, newPath);
+        fs.chmodSync(newPath, 0o755);
+        console.log(`Copied: ${oldName} -> ${newName}`);
       }
 
-      return newName;
+      return [newName, newPath];
     } catch (error) {
       console.error(`Failed to copy library ${libName}: ${error}`);
       return null;
@@ -260,12 +264,12 @@ class DylibsBundler {
   }
 
   // Patch library dependencies
-  patchLibraryDependencies(libPath, libMapping) {
+  patchLibraryDependencies(libPath, targetLibs) {
     try {
       if (this.isLinux) {
-        return this.patchLibraryDependenciesLinux(libPath, libMapping);
+        return this.patchLibraryDependenciesLinux(libPath, targetLibs);
       } else if (this.isMacOS) {
-        return this.patchLibraryDependenciesMacOS(libPath, libMapping);
+        return this.patchLibraryDependenciesMacOS(libPath, targetLibs);
       }
       return false;
     } catch (error) {
@@ -276,8 +280,8 @@ class DylibsBundler {
     }
   }
 
-  patchLibraryDependenciesLinux(libPath, libMapping) {
-    for (const [oldName, newName] of libMapping.entries()) {
+  patchLibraryDependenciesLinux(libPath, targetLibs) {
+    for (const { oldName, newName } of targetLibs) {
       try {
         execSync(
           `patchelf --replace-needed "${oldName}" "${newName}" "${libPath}"`,
@@ -290,20 +294,15 @@ class DylibsBundler {
     return true;
   }
 
-  patchLibraryDependenciesMacOS(libPath, libMapping) {
-    const deps = this.getDependenciesMacOS(libPath);
-
-    for (const { name, path: depPath } of deps) {
-      if (libMapping.has(name)) {
-        const newName = libMapping.get(name);
-        try {
-          execSync(
-            `install_name_tool -change "${depPath}" '@loader_path/${newName}' "${libPath}"`,
-            { stdio: "pipe" }
-          );
-        } catch (e) {
-          // Continue on error
-        }
+  patchLibraryDependenciesMacOS(libPath, targetLibs) {
+    for (const { oldPath, newName } of targetLibs) {
+      try {
+        execSync(
+          `install_name_tool -change "${oldPath}" '@rpath/${newName}' "${libPath}"`,
+          { stdio: "pipe" }
+        );
+      } catch (e) {
+        // Continue on error
       }
     }
     return true;
@@ -382,15 +381,14 @@ class DylibsBundler {
     console.log(`Found ${dependencies.length} dependencies to bundle`);
 
     // Copy all dependencies and build mapping
-    for (const { name, path: libPath } of dependencies) {
-      const newName = this.copyLibrary(libPath, name);
-      if (newName) {
-        this.libMapping.set(name, newName);
-        // Also map by full path for macOS
-        if (this.isMacOS) {
-          this.libMapping.set(libPath, newName);
-        }
-      }
+    for (const { name: oldName, path: oldPath } of dependencies) {
+      const [newName, newPath] = this.copyLibrary(oldPath, oldName);
+      this.targetLibs.push({
+        oldName,
+        oldPath,
+        newName,
+        newPath,
+      });
     }
 
     // Patch main binary RPATH
@@ -401,32 +399,12 @@ class DylibsBundler {
 
     // Patch main binary to use renamed libraries
     console.log("Patching main binary dependencies...");
-    this.patchLibraryDependencies(this.binaryPath, this.libMapping);
-
-    // Patch all bundled libraries
-    console.log("Patching bundled library dependencies...");
-    for (const [oldName, newName] of this.libMapping.entries()) {
-      // Skip path-based keys on macOS
-      if (this.isMacOS && oldName.includes("/")) {
-        continue;
-      }
-
-      const libPath = path.join(this.libDir, newName);
-
-      if (this.isLinux) {
-        this.patchRpath(libPath, "$ORIGIN");
-      } else if (this.isMacOS) {
-        this.changeInstallName(libPath, newName);
-        this.patchRpath(libPath, "@loader_path");
-      }
-
-      this.patchLibraryDependencies(libPath, this.libMapping);
-    }
+    this.patchLibraryDependencies(this.binaryPath, this.targetLibs);
 
     console.log("✓ Bundling complete!");
     console.log(`  Binary: ${this.binaryPath}`);
     console.log(`  Libraries: ${this.libDir}`);
-    console.log(`  Bundled ${this.libMapping.size} libraries`);
+    console.log(`  Bundled ${this.targetLibs.length} libraries`);
 
     return true;
   }
