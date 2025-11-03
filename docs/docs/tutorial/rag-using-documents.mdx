@@ -5,7 +5,7 @@ documents as part of its reasoning process. Instead of relying solely on
 information learned during model training, RAG allows the model to retrieve
 relevant knowledge dynamically from external sources.
 
-It leverages the AI generate more accurate, up-to-date, and context-aware
+It enables the AI generate more accurate, up-to-date, and context-aware
 responses by grounding its answers in your document data.
 
 In **Ailoy**, RAG is built from three pieces:
@@ -15,15 +15,15 @@ In **Ailoy**, RAG is built from three pieces:
 - **`Knowledge`** — a runtime component that performs retrieval and feeds the
   result into the agent’s prompt.
 
-In **preparation phase**, use the `EmbeddingModel` to encode documents and
-populate the `VectorStore`. In **runtime phase**, just use the `Knowledge` to
-retrieve relevant documents for each query and include them in the agent’s
+In the **preparation phase**, use the `EmbeddingModel` to encode documents and
+populate the `VectorStore`. In the **runtime phase**, just use the `Knowledge`
+to retrieve relevant documents for each query and include them in the agent’s
 context.
 
-Plesse refer to [Architecture](../concepts/architecture#knowledge) for more
-information.
+Please refer to [Architecture](../concepts/architecture#knowledge) section for
+more information.
 
-## Initializing a Embedding model
+## Initializing an Embedding model
 
 <CodeTabs>
 
