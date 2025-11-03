@@ -240,7 +240,9 @@ def get_json_schema(func: Callable) -> dict:
 
 
 def new_py_function(
-    cls: Tool, func: Callable, tool_desc: Optional[ToolDesc] = None
+    cls: Tool,
+    tool_desc: Optional[ToolDesc],
+    func: Callable,
 ) -> Tool:
     if tool_desc is None:
         try:
