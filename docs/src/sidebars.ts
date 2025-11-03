@@ -43,7 +43,7 @@ const sidebars: SidebarsConfig = {
       label: "Resources",
       items: [
         "resources/available-models",
-        "resources/devices-environments",
+        "resources/supported-environments",
         "resources/command-line-interfaces",
       ],
     },
