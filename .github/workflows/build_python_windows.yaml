@@ -98,14 +98,18 @@ jobs:
               python -m pip install --upgrade pip
 
               # =============================================
+              # Install cxxbridge
+              # =============================================
+              Write-Host '=== Installing cxxbridge ==='
+              cargo install cxxbridge-cmd
+
+              # =============================================
               # Build ailoy-py
               # =============================================
               Write-Host '=== Build Ailoy ==='
 
               Set-Location 'bindings\python'
 
-              python -m venv .venv
-              source .venv/bin/activate
               python -m pip install maturin delvewheel
 
               `$env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
