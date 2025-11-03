@@ -306,18 +306,22 @@ mod py {
     use std::sync::Arc;
 
     use futures::lock::Mutex;
-    use pyo3::pymethods;
+    use pyo3::{Python, pymethods};
     use pyo3_stub_gen_derive::gen_stub_pymethods;
     use tokio::sync::mpsc;
 
     use super::*;
     use crate::value::{
         Messages,
-        py::{MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator},
+        py::{
+            MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
+            MessageOutputSyncIterator,
+        },
     };
 
     fn spawn_delta<'a>(
         mut agent: Agent,
+        py: Python<'_>,
         messages: Vec<Message>,
         config: Option<AgentConfig>,
     ) -> anyhow::Result<(
@@ -326,20 +330,24 @@ mod py {
     )> {
         let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.spawn(async move {
+        let future = async move {
             let mut stream = agent.run_delta(messages, config).boxed();
-
             while let Some(item) = stream.next().await {
                 if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
                 }
             }
-        });
+        };
+        match pyo3_async_runtimes::tokio::get_current_locals(py) {
+            Ok(locals) => rt.spawn(pyo3_async_runtimes::tokio::scope(locals, future)),
+            Err(_) => rt.spawn(future),
+        };
         Ok((rt, rx))
     }
 
     fn spawn<'a>(
         mut agent: Agent,
+        py: Python<'_>,
         messages: Vec<Message>,
         config: Option<AgentConfig>,
     ) -> anyhow::Result<(
@@ -348,15 +356,18 @@ mod py {
     )> {
         let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.spawn(async move {
+        let future = async move {
             let mut stream = agent.run(messages, config).boxed();
-
             while let Some(item) = stream.next().await {
                 if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
                 }
             }
-        });
+        };
+        match pyo3_async_runtimes::tokio::get_current_locals(py) {
+            Ok(locals) => rt.spawn(pyo3_async_runtimes::tokio::scope(locals, future)),
+            Err(_) => rt.spawn(future),
+        };
         Ok((rt, rx))
     }
 
@@ -423,10 +434,11 @@ mod py {
         #[pyo3(name="run_delta", signature = (messages, config=None))]
         fn run_delta_py(
             &mut self,
+            py: Python<'_>,
             messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputIterator> {
-            let (_rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
+            let (_rt, rx) = spawn_delta(self.clone(), py, messages.into(), config)?;
             Ok(MessageDeltaOutputIterator {
                 _rt,
                 rx: Arc::new(Mutex::new(rx)),
@@ -436,20 +448,22 @@ mod py {
         #[pyo3(name="run_delta_sync", signature = (messages, config=None))]
         fn run_delta_sync_py(
             &mut self,
+            py: Python<'_>,
             messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
-            let (_rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
+            let (_rt, rx) = spawn_delta(self.clone(), py, messages.into(), config)?;
             Ok(MessageDeltaOutputSyncIterator { _rt, rx })
         }
 
         #[pyo3(name="run", signature = (messages, config=None))]
         fn run_py(
             &mut self,
+            py: Python<'_>,
             messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageOutputIterator> {
-            let (_rt, rx) = spawn(self.clone(), messages.into(), config)?;
+            let (_rt, rx) = spawn(self.clone(), py, messages.into(), config)?;
             Ok(MessageOutputIterator {
                 _rt,
                 rx: Arc::new(Mutex::new(rx)),
@@ -459,11 +473,12 @@ mod py {
         #[pyo3(name="run_sync", signature = (messages, config=None))]
         fn run_sync_py(
             &mut self,
+            py: Python<'_>,
             messages: Messages,
             config: Option<AgentConfig>,
-        ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
-            let (_rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
-            Ok(MessageDeltaOutputSyncIterator { _rt, rx })
+        ) -> anyhow::Result<MessageOutputSyncIterator> {
+            let (_rt, rx) = spawn(self.clone(), py, messages.into(), config)?;
+            Ok(MessageOutputSyncIterator { _rt, rx })
         }
     }
 }
