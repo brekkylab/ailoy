@@ -185,6 +185,8 @@ export type FinishReason =
   | { type: "tool_call" }
   | { type: "refusal"; reason: string };
 
+export declare function getQwen3Polyfill(): DocumentPolyfill;
+
 export type Grammar =
   | { type: "plain" }
   | { type: "json" }

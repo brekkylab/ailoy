@@ -642,6 +642,8 @@ export interface VectorStoreRetrieveResult {
   distance: number;
 }
 
+export function getQwen3Polyfill(): DocumentPolyfill;
+
 export function imageFromBase64(data: string): Part;
 
 export function imageFromBytes(data: Uint8Array): Part;

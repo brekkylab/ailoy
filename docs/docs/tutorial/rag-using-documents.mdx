@@ -32,14 +32,14 @@ more information.
 ```python
 import ailoy as ai
 
-# You can compute embeddings by calling the `run()` method.
+# You can compute embeddings by calling the `infer()` method.
 model = await ai.EmbeddingModel.new_local("BAAI/bge-m3")
 ```
 
 ```typescript
 import * as ai from "ailoy-node";
 
-// You can compute embeddings by calling the `run()` method.
+// You can compute embeddings by calling the `infer()` method.
 const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
 ```
 
@@ -96,14 +96,62 @@ The old man had taught the boy to fish and the boy loved him.
 ...
 
 vs = ai.VectorStore.new_faiss(1024)
-    chunks = {}
-    for i, chunk in enumerate(CHUNKS):
-        embedding = await model.run(chunk)
-        id = vs.add_vector(ai.VectorStoreAddInput(embedding, chunk, {"title": "The Old Man and the Sea", "index": i}))
+for i, chunk in enumerate(CHUNKS):
+    embedding = await model.run(chunk)
+    vs.add_vector(
+        ai.VectorStoreAddInput(
+            embedding,
+            chunk,
+            {"title": "The Old Man and the Sea", "index": i}
+        )
+    )
 ```
 
 ```typescript
-TODO;
+const CHUNKS = [
+  `
+He was an old man who fished alone in a skiff in the Gulf Stream and he had gone
+eighty-four days now without taking a fish. In the first forty days a boy had been with him.
+But after forty days without a fish the boy’s parents had told him that the old man was
+now definitely and finally salao, which is the worst form of unlucky, and the boy had gone
+at their orders in another boat which caught three good fish the first week. It made the
+boy sad to see the old man come in each day with his skiff empty and he always went
+down to help him carry either the coiled lines or the gaff and harpoon and the sail that
+was furled around the mast. The sail was patched with flour sacks and, furled, it looked
+like the flag of permanent defeat.
+`,
+  `
+The old man was thin and gaunt with deep wrinkles in the back of his neck. The
+brown blotches of the benevolent skin cancer the sun brings from its [9] reflection on the
+tropic sea were on his cheeks. The blotches ran well down the sides of his face and his
+hands had the deep-creased scars from handling heavy fish on the cords. But none of
+these scars were fresh. They were as old as erosions in a fishless desert.
+`,
+  `
+Everything about him was old except his eyes and they were the same color as the
+sea and were cheerful and undefeated.
+“Santiago,” the boy said to him as they climbed the bank from where the skiff was
+hauled up. “I could go with you again. We’ve made some money.”
+The old man had taught the boy to fish and the boy loved him.
+“No,” the old man said. “You’re with a lucky boat. Stay with them.”
+`,
+];
+
+...
+
+const vs = await ai.VectorStore.newFaiss(1024);
+CHUNKS.forEach(async (chunk, i) => {
+    console.log(chunk);
+    const embedding = await model.infer(chunk);
+    await vs.addVector({
+        embedding: embedding,
+        document: chunk,
+        metadata: {
+            title: "The Old Man and the Sea",
+            index: i,
+        },
+    });
+});
 ```
 
 </CodeTabs>
@@ -137,7 +185,11 @@ agent = ai.Agent(
 ```
 
 ```typescript
-TODO;
+const agent = new ai.Agent(
+  await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
+  undefined,
+  ai.Knowledge.newVectorStore(vs, model)
+);
 ```
 
 </CodeTabs>
@@ -151,11 +203,17 @@ To perform retrieval and generate grounded responses:
 ```python
 config = ai.AgentConfig(inference=ai.InferenceConfig(document_polyfill=ai.get_qwen3_polyfill()))
 async for resp in agent.run("Why did the boy stop fishing with the old man?", config):
-    print(resp)
+    print(resp.message.contents[0].text)
 ```
 
 ```typescript
-TODO;
+const config = { inference: { documentPolyfill: ai.getQwen3Polyfill() } };
+for await (const resp of agent.run(
+  "Why did the boy stop fishing with the old man?",
+  config
+)) {
+  console.log(resp.message.contents[0].text);
+}
 ```
 
 </CodeTabs>
@@ -212,7 +270,7 @@ async def main():
     )
     config = ai.AgentConfig(inference=ai.InferenceConfig(document_polyfill=ai.get_qwen3_polyfill()))
     async for resp in agent.run("Why did the boy stop fishing with the old man?", config):
-        print(resp)
+        print(resp.message.contents[0].text)
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -220,7 +278,70 @@ if __name__ == "__main__":
 ```
 
 ```typescript
-TODO;
+import * as ai from "ailoy-node";
+
+const CHUNKS = [
+  `
+He was an old man who fished alone in a skiff in the Gulf Stream and he had gone
+eighty-four days now without taking a fish. In the first forty days a boy had been with him.
+But after forty days without a fish the boy’s parents had told him that the old man was
+now definitely and finally salao, which is the worst form of unlucky, and the boy had gone
+at their orders in another boat which caught three good fish the first week. It made the
+boy sad to see the old man come in each day with his skiff empty and he always went
+down to help him carry either the coiled lines or the gaff and harpoon and the sail that
+was furled around the mast. The sail was patched with flour sacks and, furled, it looked
+like the flag of permanent defeat. 
+`,
+  `
+The old man was thin and gaunt with deep wrinkles in the back of his neck. The
+brown blotches of the benevolent skin cancer the sun brings from its [9] reflection on the
+tropic sea were on his cheeks. The blotches ran well down the sides of his face and his
+hands had the deep-creased scars from handling heavy fish on the cords. But none of
+these scars were fresh. They were as old as erosions in a fishless desert. 
+`,
+  `
+Everything about him was old except his eyes and they were the same color as the
+sea and were cheerful and undefeated.
+“Santiago,” the boy said to him as they climbed the bank from where the skiff was
+hauled up. “I could go with you again. We’ve made some money.”
+The old man had taught the boy to fish and the boy loved him.
+“No,” the old man said. “You’re with a lucky boat. Stay with them.” 
+`,
+];
+
+async function main() {
+  const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3", console.log);
+  const vs = await ai.VectorStore.newFaiss(1024);
+  CHUNKS.forEach(async (chunk, i) => {
+    const embedding = await model.infer(chunk);
+    await vs.addVector({
+      embedding: embedding,
+      document: chunk,
+      metadata: {
+        title: "The Old Man and the Sea",
+        index: i,
+      },
+    });
+  });
+
+  const agent = new ai.Agent(
+    await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
+    undefined,
+    ai.Knowledge.newVectorStore(vs, model)
+  );
+
+  const config = { inference: { documentPolyfill: ai.getQwen3Polyfill() } };
+  for await (const resp of agent.run(
+    "Why did the boy stop fishing with the old man?",
+    config
+  )) {
+    console.log(resp.message.contents[0].text);
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
 ```
 
 </CodeTabs>
