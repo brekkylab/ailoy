@@ -67,17 +67,16 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn new(lm: LangModel, tools: impl IntoIterator<Item = Tool>) -> Self {
+    pub fn new(
+        lm: LangModel,
+        tools: impl IntoIterator<Item = Tool>,
+        knowledge: Option<Knowledge>,
+    ) -> Self {
         Self {
             lm,
             tools: tools.into_iter().collect(),
-            knowledge: None,
+            knowledge,
         }
-    }
-
-    pub fn with_knowledge(mut self, knowledge: Knowledge) -> Self {
-        self.knowledge = Some(knowledge);
-        self
     }
 
     pub fn get_lm(&self) -> LangModel {
@@ -377,9 +376,9 @@ mod py {
     #[pymethods]
     impl Agent {
         #[new]
-        #[pyo3(signature = (lm, tools = None))]
-        fn __new__(lm: LangModel, tools: Option<Vec<Tool>>) -> Self {
-            Agent::new(lm, tools.unwrap_or_default())
+        #[pyo3(signature = (lm, tools = None, knowledge = None))]
+        fn __new__(lm: LangModel, tools: Option<Vec<Tool>>, knowledge: Option<Knowledge>) -> Self {
+            Agent::new(lm, tools.unwrap_or_default(), knowledge)
         }
 
         pub fn __repr__(&self) -> String {
@@ -489,10 +488,15 @@ mod node {
     #[napi]
     impl Agent {
         #[napi(constructor)]
-        pub fn new_js(lm: &LangModel, tools: Option<Vec<&Tool>>) -> Self {
+        pub fn new_js(
+            lm: &LangModel,
+            tools: Option<Vec<&Tool>>,
+            knowledge: Option<&Knowledge>,
+        ) -> Self {
             Self::new(
                 lm.clone(),
                 tools.unwrap_or(vec![]).iter().map(|&t| t.clone()),
+                knowledge.cloned(),
             )
         }
 
@@ -604,8 +608,12 @@ mod wasm {
         /// Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after the agent is initialized.
         /// If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
         #[wasm_bindgen(constructor)]
-        pub fn new_js(lm: &LangModel, tools: Option<Vec<Tool>>) -> Self {
-            Self::new(lm.clone(), tools.unwrap_or(vec![]))
+        pub fn new_js(
+            lm: &LangModel,
+            tools: Option<Vec<Tool>>,
+            knowledge: Option<Knowledge>,
+        ) -> Self {
+            Self::new(lm.clone(), tools.unwrap_or(vec![]), knowledge)
         }
 
         #[wasm_bindgen(js_name = "addTool")]
@@ -694,7 +702,7 @@ mod tests {
         use crate::model::LangModel;
 
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
-        let mut agent = Agent::new(model, Vec::new());
+        let mut agent = Agent::new(model, Vec::new(), None);
 
         let mut strm = Box::pin(agent.run_delta(
             vec![Message::new(Role::User).with_contents(vec![Part::text("Hi, what's your name?")])],
@@ -768,7 +776,7 @@ mod tests {
             })),
         )];
 
-        let mut agent = Agent::new(model, tools);
+        let mut agent = Agent::new(model, tools, None);
 
         let mut strm = Box::pin(agent.run_delta(
             vec![
@@ -796,7 +804,7 @@ mod tests {
         use crate::{model::LangModel, tool::MCPClient};
 
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
-        let mut agent = Agent::new(model, Vec::new());
+        let mut agent = Agent::new(model, Vec::new(), None);
 
         let command = tokio::process::Command::new("uvx").configure(|cmd| {
             cmd.arg("mcp-server-time");

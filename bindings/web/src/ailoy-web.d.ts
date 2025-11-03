@@ -34,7 +34,11 @@ export class Agent {
    * Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after the agent is initialized.
    * If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
    */
-  constructor(lm: LangModel, tools?: Tool[] | null);
+  constructor(
+    lm: LangModel,
+    tools?: Tool[] | null,
+    knowledge?: Knowledge | null
+  );
   addTool(tool: Tool): void;
   removeTool(toolName: string): void;
   setKnowledge(knowledge: Knowledge): void;
@@ -200,6 +204,44 @@ export type Grammar =
   | { type: "regex"; regex: string }
   | { type: "cfg"; cfg: string };
 
+/**
+ * Configuration parameters that control the behavior of model inference.
+ *
+ * `InferenceConfig` encapsulates all the configuration, controlling behavior of `LanguageModel`` inference.
+ *
+ * # Fields
+ *
+ * ## `document_polyfill`
+ * Configuration describing how retrieved documents are embedded into the model input.
+ * If `None`, it does not perform any polyfill, (ignoring documents).
+ *
+ * ## `think_effort`
+ * Controls the model’s reasoning intensity.
+ * In local models, `low`, `medium`, `high` is ignored.
+ * In API models, it is up to it\'s API. See API parameters.
+ *
+ * Possible values: `disable`, `enable`, `low`, `medium`, `high`.
+ *
+ * ## `temperature`
+ * Sampling temperature controlling randomness of output.
+ * Lower values make output more deterministic; higher values increase diversity.
+ *
+ * ## `top_p`
+ * Nucleus sampling parameter (probability mass cutoff).
+ * Limits token sampling to a cumulative probability ≤ `top_p`.`
+ *
+ * ## `max_tokens`
+ * Maximum number of tokens to generate for a single inference.
+ *
+ * ## `grammar`
+ * Optional grammar constraint that restricts valid output forms.
+ * Supported types include:
+ * - `Plain`: unconstrained text
+ * - `JSON`: ensures valid JSON output
+ * - `JSONSchema { schema }`: validates JSON against the given schema
+ * - `Regex { regex }`: constrains generation by a regular expression
+ * - `CFG { cfg }`: uses a context-free grammar definition
+ */
 export interface InferenceConfig {
   documentPolyfill?: DocumentPolyfill;
   thinkEffort?: ThinkEffort;

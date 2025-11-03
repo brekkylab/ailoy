@@ -1,38 +1,42 @@
 # RAG(Retrival-Augmented Generation) Using Documents
 
-**Retrieval-Augmented Generation (RAG)** is a useful method when you want to use
-AI with your own documents. In RAG, the AI model gets extra knowledge from
-outside sources, usually stored in something called a vector store. Instead of
-depending only on what the model learned during training, RAG finds and adds
-related documents at the time you ask a question. This helps the AI give more
-accurate, up-to-date, and relevant answers.
+Retrieval-Augmented Generation (RAG) enables an AI model to use your own
+documents as part of its reasoning process. Instead of relying solely on
+information learned during model training, RAG allows the model to retrieve
+relevant knowledge dynamically from external sources.
 
-In this example, we’ll walk you through a complete RAG workflow — how to build a
-vector store(`VectorStore`) and integrate it to the `Agent`.
+It leverages the AI generate more accurate, up-to-date, and context-aware
+responses by grounding its answers in your document data.
 
-### Initializing a Vector Store
+In **Ailoy**, RAG is built from three pieces:
 
-Ailoy simplifies the construction of RAG pipelines through its built-in
-`VectorStore` component, which works alongside the `Agent`.
+- **`EmbeddingModel`** — turns text into vectors for similarity search.
+- **`VectorStore`** — stores and retrieves those vectors with their source text.
+- **`Knowledge`** — a runtime component that performs retrieval and feeds the
+  result into the agent’s prompt.
 
-To initialize a vector store:
+In **preparation phase**, use the `EmbeddingModel` to encode documents and
+populate the `VectorStore`. In **runtime phase**, just use the `Knowledge` to
+retrieve relevant documents for each query and include them in the agent’s
+context.
+
+Plesse refer to [Architecture](../concepts/architecture#knowledge) for more
+information.
+
+## Initializing a Embedding model
 
 <CodeTabs>
 
 ```python
-from ailoy import Runtime
-from ailoy.vectorstore import VectorStore
+import ailoy as ai
 
-rt = Runtime()
-with VectorStore(rt, "BAAI/bge-m3", "faiss") as vs:
-    ...
+model = await ai.EmbeddingModel.new_local("BAAI/bge-m3")
 ```
 
 ```typescript
-import { startRuntime, defineVectorStore } from "ailoy-node";
+import * as ai from "ailoy-node";
 
-const rt = await startRuntime();
-const vs = await defineVectorStore(rt, "BAAI/bge-m3", "faiss");
+const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
 ```
 
 </CodeTabs>
@@ -46,97 +50,106 @@ const vs = await defineVectorStore(rt, "BAAI/bge-m3", "faiss");
 > [`BAAI/bge-m3`](https://huggingface.co/BAAI/bge-m3). Additional embedding
 > models will be supported in future releases.
 
-### Inserting Documents into the Vector Store
+You can compute embeddings by calling the model’s `run()` method.
 
-You can insert text along with optional metadata into the vector store:
+## Preparing Documents with a Vector Store
+
+Before running RAG, create a vector store to store document embeddings for
+retrieval. This step prepares your data for semantic search and may only need to
+be performed once per dataset.
 
 <CodeTabs>
 
 ```python
-vs.insert(
-    "Ailoy is a lightweight library for building AI applications",
-    metadata={"topic": "Ailoy"}
+import ailoy as ai
+
+CHUNKS = [
+    """
+He was an old man who fished alone in a skiff in the Gulf Stream and he had gone
+eighty-four days now without taking a fish. In the first forty days a boy had been with him.
+But after forty days without a fish the boy’s parents had told him that the old man was
+now definitely and finally salao, which is the worst form of unlucky, and the boy had gone
+at their orders in another boat which caught three good fish the first week. It made the
+boy sad to see the old man come in each day with his skiff empty and he always went
+down to help him carry either the coiled lines or the gaff and harpoon and the sail that
+was furled around the mast. The sail was patched with flour sacks and, furled, it looked
+like the flag of permanent defeat.
+""",
+"""
+The old man was thin and gaunt with deep wrinkles in the back of his neck. The
+brown blotches of the benevolent skin cancer the sun brings from its [9] reflection on the
+tropic sea were on his cheeks. The blotches ran well down the sides of his face and his
+hands had the deep-creased scars from handling heavy fish on the cords. But none of
+these scars were fresh. They were as old as erosions in a fishless desert.
+""",
+"""
+Everything about him was old except his eyes and they were the same color as the
+sea and were cheerful and undefeated.
+“Santiago,” the boy said to him as they climbed the bank from where the skiff was
+hauled up. “I could go with you again. We’ve made some money.”
+The old man had taught the boy to fish and the boy loved him.
+“No,” the old man said. “You’re with a lucky boat. Stay with them.”
+"""
+]
+
+...
+
+vs = ai.VectorStore.new_faiss(1024)
+    chunks = {}
+    for i, chunk in enumerate(CHUNKS):
+        embedding = await model.run(chunk)
+        id = vs.add_vector(ai.VectorStoreAddInput(embedding, chunk, {"title": "The Old Man and the Sea", "index": i}))
+```
+
+```typescript
+TODO;
+```
+
+</CodeTabs>
+
+## Defining the agent
+
+You can now create an Agent and attach a Knowledge module that integrates your
+vector store and embedding model.
+
+:::note
+
+To enable retrieval-based reasoning, make sure that applying the **document
+polyfill** that adapts the agent’s prompt structure to include retrieved
+documents.
+
+:::
+
+<CodeTabs>
+
+```python
+agent = ai.Agent(
+    await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
+    None,
+    ai.Knowledge.new_vector_store(vs, model),
 )
 ```
 
 ```typescript
-await vs.insert({
-  document: "Ailoy is a lightweight library for building AI applications",
-  metadata: {
-    topic: "Ailoy",
-  },
-});
+TODO;
 ```
 
 </CodeTabs>
 
-In practice, you should split large documents into smaller chunks before
-inserting them. This improves retrieval quality. You may use any text-splitting
-tool (e.g.,
-[LangChain](https://python.langchain.com/docs/concepts/text_splitters/)), or
-utilize Ailoy’s low-level runtime API for text splitting. (See
-[Calling Low-Level APIs](./calling-low-level-apis.mdx) for more details.)
+## Running
 
-### Retrieving Relevant Documents
-
-To retrieve documents similar to a given query:
+To perform retrieval and generate grounded responses:
 
 <CodeTabs>
 
 ```python
-query = "What is Ailoy?"
-items = vs.retrieve(query, top_k=5)
+config = ai.AgentConfig(inference=ai.InferenceConfig(document_polyfill=ai.get_qwen3_polyfill()))
+async for resp in agent.run("Why did the boy stop fishing with the old man?", config):
+    print(resp)
 ```
 
 ```typescript
-const query = "What is Ailoy?";
-const items = await vs.retrieve(query, 5);
-```
-
-</CodeTabs>
-
-This returns a list of `VectorStoreRetrieveItem` instances representing the most
-relevant chunks, ranked by similarity. The number of results is controlled via
-the `top_k` parameter (default is 5).
-
-### Constructing an Augmented Prompt
-
-Once documents are retrieved, you can construct a context-enriched prompt as
-follows:
-
-<CodeTabs>
-
-```python
-prompt = f"""
-    Based on the provided contexts, try to answer user's question.
-    Context: {[item.document for item in items]}
-    Question: {query}
-"""
-```
-
-```typescript
-const prompt = `
-  Based on the provided contexts, try to answer user' question.
-  Context: ${items.map((item) => item.document)}
-  Question: ${query}
-`;
-```
-
-</CodeTabs>
-
-You can then pass this prompt to the agent for inference:
-
-<CodeTabs>
-
-```python
-for resp in agent.query(prompt):
-    agent.print(resp)
-```
-
-```typescript
-for await (const resp of agent.query(prompt)) {
-  agent.print(resp);
-}
+TODO;
 ```
 
 </CodeTabs>
@@ -146,78 +159,65 @@ for await (const resp of agent.query(prompt)) {
 <CodeTabs>
 
 ```python
-from ailoy import Runtime, Agent, LocalModel, VectorStore
+import asyncio
 
-# Initialize Runtime
+import ailoy as ai
 
-rt = Runtime()
-
-# Initialize Agent and VectorStore
-
-with Agent(rt, LocalModel("Qwen/Qwen3-8B")) as agent, VectorStore(rt, "BAAI/bge-m3", "faiss") as vs:
-    # Insert items
-    vs.insert(
-        "Ailoy is a lightweight library for building AI applications",
-        metadata={"topic": "Ailoy"}
-    )
-
-    # Search the most relevant items
-    query = "What is Ailoy?"
-    items = vs.retrieve(query, top_k=5)
-
-    # Augment user query
-    prompt = f"""
-        Based on the provided contexts, try to answer user's question.
-        Context: {[item.document for item in items]}
-        Question: {query}
+CHUNKS = [
     """
+He was an old man who fished alone in a skiff in the Gulf Stream and he had gone
+eighty-four days now without taking a fish. In the first forty days a boy had been with him.
+But after forty days without a fish the boy’s parents had told him that the old man was
+now definitely and finally salao, which is the worst form of unlucky, and the boy had gone
+at their orders in another boat which caught three good fish the first week. It made the
+boy sad to see the old man come in each day with his skiff empty and he always went
+down to help him carry either the coiled lines or the gaff and harpoon and the sail that
+was furled around the mast. The sail was patched with flour sacks and, furled, it looked
+like the flag of permanent defeat.
+""",
+"""
+The old man was thin and gaunt with deep wrinkles in the back of his neck. The
+brown blotches of the benevolent skin cancer the sun brings from its [9] reflection on the
+tropic sea were on his cheeks. The blotches ran well down the sides of his face and his
+hands had the deep-creased scars from handling heavy fish on the cords. But none of
+these scars were fresh. They were as old as erosions in a fishless desert.
+""",
+"""
+Everything about him was old except his eyes and they were the same color as the
+sea and were cheerful and undefeated.
+“Santiago,” the boy said to him as they climbed the bank from where the skiff was
+hauled up. “I could go with you again. We’ve made some money.”
+The old man had taught the boy to fish and the boy loved him.
+“No,” the old man said. “You’re with a lucky boat. Stay with them.”
+"""
+]
 
-    # Invoke agent
-    for resp in agent.query(prompt):
-        agent.print(resp)
+async def main():
+    model = await ai.EmbeddingModel.new_local("BAAI/bge-m3", print)
+    vs = ai.VectorStore.new_faiss(1024)
+    chunks = {}
+    for i, chunk in enumerate(CHUNKS):
+        embedding = await model.run(chunk)
+        id = vs.add_vector(ai.VectorStoreAddInput(embedding, chunk, {"title": "The Old Man and the Sea", "index": i}))
+        chunks[id] = chunk
+        print(id)
+
+    agent = ai.Agent(
+        await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
+        None,
+        ai.Knowledge.new_vector_store(vs, model),
+    )
+    config = ai.AgentConfig(inference=ai.InferenceConfig(document_polyfill=ai.get_qwen3_polyfill()))
+    async for resp in agent.run("Why did the boy stop fishing with the old man?", config):
+        print(resp)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
 ```
 
 ```typescript
-import {
-  createRuntime,
-  defineAgent,
-  defineVectorStore,
-  LocalModel,
-} from "ailoy-node";
-
-async function main() {
-  // Initialize Runtime
-  const rt = await createRuntime();
-  // Initialize Agent
-  const agent = await defineAgent(rt, LocalModel({ id: "Qwen/Qwen3-8B" }));
-  // Initialize VectorStore
-  const vs = await defineVectorStore(rt, "BAAI/bge-m3", "faiss");
-
-  // Insert items
-  await vs.insert({
-    document: "Ailoy is a lightweight library for building AI applications",
-    metadata: { topic: "Ailoy" },
-  });
-
-  // Search the most relevant items
-  const query = "What is Ailoy?";
-  const items = await vs.retrieve(query, 5);
-
-  // Augment user query
-  const prompt = `
-    Based on the provided contexts, try to answer user' question.
-    Context: ${items.map((item) => item.document)}
-    Question: ${query}
-  `;
-
-  // Invoke agent
-  for await (const resp of agent.query(prompt)) {
-    agent.print(resp);
-  }
-
-  // Delete agent
-  await agent.delete();
-}
+TODO;
 ```
 
 </CodeTabs>

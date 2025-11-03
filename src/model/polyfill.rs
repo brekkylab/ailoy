@@ -154,7 +154,8 @@ impl DocumentPolyfill {
     }
 }
 
-pub fn create_simple_document_polyfill() -> DocumentPolyfill {
+#[cfg_attr(feature = "python", pyo3::pyfunction)]
+pub fn get_qwen3_polyfill() -> DocumentPolyfill {
     DocumentPolyfill {
         system_message_template: Some(dedent!(r#"
             {{- text }}
