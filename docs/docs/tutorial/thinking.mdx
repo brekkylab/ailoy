@@ -1,0 +1,187 @@
+# Thinking
+
+Thinking(reasoning) is an advanced capability of AI that enables it to tackle
+complex tasks through explicit, step-by-step logical inference. Thinking models
+break down problems into smaller sub-tasks rather than solving them in a single
+pass. Compared to direct answer generation, it offers two key advantages:
+
+1. Improved problem-solving intelligence
+2. Transparent and traceable intermediate thinking steps
+
+This functionality is particularly well-suited for domains that require
+multi-step thinking, such as scientific analysis, legal interpretation, or
+strategic decision-making. However, since the thinking step needs additional
+computation and memory usage, it can increase latency and overall resource
+consumption. Therefore, it’s important to enable thinking only when necessary,
+based on the complexity of your use case.
+
+{/* prettier-ignore-start */}
+
+:::info
+Small models like `Qwen3-0.6B` are generally too limited to perform effective reasoning.  
+For complex tasks, we recommend using a sufficiently large model.
+:::
+
+{/* prettier-ignore-end */}
+
+## Hybrid Thinking Models
+
+Some modern models, such as Qwen3, are designed as hybrid thinking models. These
+models can switch between normal (direct-generation) and thinking modes
+depending on your configuration.
+
+Ailoy fully supports this hybrid capability. You can explicitly turn the
+thinking process on or off via the thinking option. When enabled, the model
+engages in structured, step-by-step inference—producing a detailed “thinking
+trace” before the final answer.
+
+### How to enable thinking
+
+To enable thinking, simply specify the `think_effort` in the inference config
+when running the agent.  
+If you pass the inference config as the `inference` key within the agent config,
+it will be passed to the internal `LangModel`.
+
+{/* prettier-ignore-start */}
+
+:::note
+If you enable thinking, the time required to generate an entire message can increase quite a lot, which make your application look less responsive, so it may be better to run the agent with **[streaming](/docs/tutorial/streaming)**.
+:::
+
+{/* prettier-ignore-end */}
+
+{/* prettier-ignore-start */}
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def main():
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B")
+    agent = ai.Agent(lm)
+
+    GREEN = "\x1b[32m"
+    RESET = "\x1b[0m"
+
+    async for resp in agent.run_delta(
+        "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
+        config=ai.AgentConfig(inference=ai.InferenceConfig(think_effort="enable")),
+    ):
+        if resp.delta.thinking:
+            # thinking text will be printed in green.
+            print(GREEN + resp.delta.thinking + RESET, end="")
+        if resp.delta.contents and isinstance(
+            resp.delta.contents[0], ai.PartDelta.Text
+        ):
+            print(resp.delta.contents[0].text, end="")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const agent = new ai.Agent(lm);
+
+  const GREEN = "\x1b[32m";
+  const RESET = "\x1b[0m";
+
+  for await (const resp of agent.runDelta(
+    "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
+    { inference: { thinkEffort: "enable" } }
+  )) {
+    if (resp.delta.thinking !== undefined) {
+      // thinking text will be printed in green.
+      process.stdout.write(GREEN + resp.delta.thinking + RESET);
+    }
+    if (
+      resp.delta.contents.length !== 0 &&
+      resp.delta.contents[0].type === "text"
+    ) {
+      process.stdout.write(resp.delta.contents[0].text);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const agent = new ai.Agent(lm);
+
+  const GREEN = "\x1b[32m";
+  const RESET = "\x1b[0m";
+
+  for await (const resp of agent.runDelta(
+    "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
+    { inference: { thinkEffort: "enable" } }
+  )) {
+    if (resp.delta.thinking !== undefined) {
+      // thinking text will be printed in green.
+      process.stdout.write(GREEN + resp.delta.thinking + RESET);
+    }
+    if (
+      resp.delta.contents.length !== 0 &&
+      resp.delta.contents[0].type === "text"
+    ) {
+      process.stdout.write(resp.delta.contents[0].text);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+
+```
+
+</CodeTabs>
+
+{/* prettier-ignore-end */}
+
+## Thinking behaviors in various models
+
+`think_effort` can have one of these in the config:
+
+- `"disable"`
+- `"enable"`
+- `"low"`
+- `"medium"`
+- `"high"`
+
+But not all models are hybrid thinking models or capable to adjust thinking
+effort fine-grained.  
+Therefore, depending on the characteristics of the model, `think_effort` may
+actually be applied differently from the specified value without explicit
+warning.
+
+For example,
+
+- OpenAI's `gpt-4` model does not support thinking, so it will be applied as
+  `"disable"` regardless of which value is applied.
+- OpenAI's `o4` model supports "low", "medium", "high" but not "disable", so if
+  "disable" is specified, it will be applied as "low".
+- The `grok-4-fast` model only supports `"low"` or `"high"`, so if `"medium"` is
+  specified, it will be applied as `"low"`.
+- All Qwen3 models do not support adjusting `think_effort`, so any value other
+  than `"disable"` will be equivalent to `"enable"`.
+
+The `think_effort` is applied as the most similar one to what the user specified
+within the supported range, but you'd better to check the model specification
+for predictable model behaviors.
