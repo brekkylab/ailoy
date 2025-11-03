@@ -55,6 +55,7 @@ export class EmbeddingModel {
   [Symbol.dispose](): void;
   static newLocal(
     modelName: string,
+    deviceId?: number | null,
     progressCallback?: (progress: CacheProgress) => void | null
   ): Promise<EmbeddingModel>;
   infer(text: string): Promise<Float32Array>;
@@ -78,6 +79,7 @@ export class LangModel {
   [Symbol.dispose](): void;
   static newLocal(
     modelName: string,
+    deviceId?: number | null,
     progressCallback?: (progress: CacheProgress) => void | null
   ): Promise<LangModel>;
   static newStreamAPI(

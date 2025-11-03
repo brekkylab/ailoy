@@ -18,6 +18,7 @@ use super::{
 use crate::{
     cache::{CacheContents, CacheEntry, TryFromCache},
     utils::MaybeSend,
+    value::Value,
 };
 
 async fn download(url: Url) -> anyhow::Result<Vec<u8>> {
@@ -281,16 +282,18 @@ impl Cache {
     pub fn try_create<T>(
         self,
         key: impl Into<String>,
+        context: Option<HashMap<String, Value>>,
     ) -> impl Stream<Item = anyhow::Result<CacheProgress<T>>> + 'static
     where
         T: TryFromCache + MaybeSend + 'static,
     {
         let key = key.into();
         let this = self.clone();
+        let mut context = context.unwrap_or_default();
 
         try_stream! {
             // Claim files to be processed
-            let claim = T::claim_files(this.clone(), key.clone()).await?;
+            let claim = T::claim_files(this.clone(), key.clone(), &mut context).await?;
 
             // Number of tasks => downloading all files + initializing T
             let total_task: usize = claim.entries.len() + 1;
@@ -327,11 +330,10 @@ impl Cache {
             let contents = CacheContents {
                 root: self.root.clone(),
                 entries: pairs.into_iter().collect(),
-                ctx: claim.ctx,
             };
 
             // Final creation
-            let value = T::try_from_contents(contents).await?;
+            let value = T::try_from_contents(contents, &context).await?;
             current_task += 1;
             yield CacheProgress::<T> {
                 comment: "Intialized".to_owned(),

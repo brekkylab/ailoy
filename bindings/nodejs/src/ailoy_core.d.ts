@@ -48,6 +48,7 @@ export declare class Agent {
 export declare class EmbeddingModel {
   static newLocal(
     modelName: string,
+    deviceId?: number | undefined | null,
     progressCallback?: ((arg: CacheProgress) => void) | undefined | null
   ): Promise<EmbeddingModel>;
   infer(text: string): Promise<Embedding>;
@@ -68,6 +69,7 @@ export declare class Knowledge {
 export declare class LangModel {
   static newLocal(
     modelName: string,
+    deviceId?: number | undefined | null,
     progressCallback?: ((arg: CacheProgress) => void) | undefined | null
   ): Promise<LangModel>;
   static newStreamAPI(
