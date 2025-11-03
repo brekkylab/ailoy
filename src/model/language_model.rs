@@ -314,7 +314,7 @@ mod py {
     impl LangModel {
         #[classmethod]
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[LangModel]"))]
-        #[pyo3(name = "new_local", signature = (model_name, device_id=None, progress_callback = None))]
+        #[pyo3(name = "new_local", signature = (model_name, device_id = None, progress_callback = None))]
         fn new_local_py<'a>(
             _cls: &Bound<'a, PyType>,
             py: Python<'a>,
