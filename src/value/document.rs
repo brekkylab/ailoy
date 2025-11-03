@@ -35,3 +35,24 @@ impl fmt::Display for Document {
         write!(f, "Document {}", s)
     }
 }
+
+#[cfg(feature = "python")]
+pub(crate) mod py {
+    use pyo3::pymethods;
+    use pyo3_stub_gen::derive::*;
+
+    use super::*;
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl Document {
+        #[new]
+        #[pyo3(signature = (id, text, title=None))]
+        fn __new__(id: String, text: String, title: Option<String>) -> Self {
+            match title {
+                Some(title) => Self::new(id, text).with_title(title),
+                None => Self::new(id, text),
+            }
+        }
+    }
+}

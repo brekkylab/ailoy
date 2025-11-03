@@ -44,11 +44,11 @@ export class Agent {
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
   runDelta(
-    messages: Array<Message> | Array<SingleTextMessage> | string,
+    messages: Array<Message | SingleTextMessage> | string,
     config?: AgentConfig | null
   ): AsyncIterable<MessageDeltaOutput>;
   run(
-    messages: Array<Message> | Array<SingleTextMessage> | string,
+    messages: Array<Message | SingleTextMessage> | string,
     config?: AgentConfig | null
   ): AsyncIterable<MessageOutput>;
 }
@@ -59,6 +59,7 @@ export class EmbeddingModel {
   [Symbol.dispose](): void;
   static newLocal(
     modelName: string,
+    deviceId?: number | null,
     progressCallback?: (progress: CacheProgress) => void | null
   ): Promise<EmbeddingModel>;
   infer(text: string): Promise<Float32Array>;
@@ -82,6 +83,7 @@ export class LangModel {
   [Symbol.dispose](): void;
   static newLocal(
     modelName: string,
+    deviceId?: number | null,
     progressCallback?: (progress: CacheProgress) => void | null
   ): Promise<LangModel>;
   static newStreamAPI(
@@ -90,13 +92,13 @@ export class LangModel {
     apiKey: string
   ): Promise<LangModel>;
   inferDelta(
-    messages: Array<Message> | Array<SingleTextMessage> | string,
+    messages: Array<Message | SingleTextMessage> | string,
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
     config?: InferenceConfig | null
   ): AsyncIterable<MessageDeltaOutput>;
   infer(
-    messages: Array<Message> | Array<SingleTextMessage> | string,
+    messages: Array<Message | SingleTextMessage> | string,
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
     config?: InferenceConfig | null
