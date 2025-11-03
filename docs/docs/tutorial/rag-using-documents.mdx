@@ -23,36 +23,37 @@ context.
 Please refer to [Architecture](../concepts/architecture#knowledge) section for
 more information.
 
-## Initializing an Embedding model
+## Step-by-Step Guide
+
+### Initializing an Embedding Model
 
 <CodeTabs>
 
 ```python
 import ailoy as ai
 
+# You can compute embeddings by calling the `run()` method.
 model = await ai.EmbeddingModel.new_local("BAAI/bge-m3")
 ```
 
 ```typescript
 import * as ai from "ailoy-node";
 
+// You can compute embeddings by calling the `run()` method.
 const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
 ```
 
 </CodeTabs>
 
-> Ailoy currently supports both
-> [**FAISS**](https://github.com/facebookresearch/faiss) and
-> [**ChromaDB**](https://www.trychroma.com/) as vector store backends. Refer to
-> the official configuration guide for backend-specific options.
+:::note
 
-> 💡 **Note:** At this time, the only supported embedding model is
-> [`BAAI/bge-m3`](https://huggingface.co/BAAI/bge-m3). Additional embedding
-> models will be supported in future releases.
+💡 **Note:** At this time, the only supported embedding model is
+[`BAAI/bge-m3`](https://huggingface.co/BAAI/bge-m3). Additional embedding models
+will be supported in future releases.
 
-You can compute embeddings by calling the model’s `run()` method.
+:::
 
-## Preparing Documents with a Vector Store
+### Preparing Documents with a Vector Store
 
 Before running RAG, create a vector store to store document embeddings for
 retrieval. This step prepares your data for semantic search and may only need to
@@ -107,7 +108,12 @@ TODO;
 
 </CodeTabs>
 
-## Defining the agent
+> Ailoy currently supports both
+> [**FAISS**](https://github.com/facebookresearch/faiss) and
+> [**ChromaDB**](https://www.trychroma.com/) as vector store backends. Refer to
+> the official configuration guide for backend-specific options.
+
+### Defining the Agent
 
 You can now create an Agent and attach a Knowledge module that integrates your
 vector store and embedding model.
@@ -136,7 +142,7 @@ TODO;
 
 </CodeTabs>
 
-## Running
+### Performing RAG
 
 To perform retrieval and generate grounded responses:
 
@@ -195,12 +201,9 @@ The old man had taught the boy to fish and the boy loved him.
 async def main():
     model = await ai.EmbeddingModel.new_local("BAAI/bge-m3", print)
     vs = ai.VectorStore.new_faiss(1024)
-    chunks = {}
     for i, chunk in enumerate(CHUNKS):
         embedding = await model.run(chunk)
-        id = vs.add_vector(ai.VectorStoreAddInput(embedding, chunk, {"title": "The Old Man and the Sea", "index": i}))
-        chunks[id] = chunk
-        print(id)
+        vs.add_vector(ai.VectorStoreAddInput(embedding, chunk, {"title": "The Old Man and the Sea", "index": i}))
 
     agent = ai.Agent(
         await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
@@ -227,5 +230,7 @@ TODO;
 :::note
 For best results, ensure your documents are chunked semantically (e.g., by paragraphs or sections).
 :::
+
+## Output
 
 {/* prettier-ignore-end */}
