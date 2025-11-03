@@ -122,17 +122,8 @@ fn build_native() {
             (cmake_install_dir.join("tvm_runtime.lib")).display()
         );
 
-        // Link MKL for FAISS (not tested)
-        let mkl_root = env::var("MKL_ROOT")
-            .expect("MKL_ROOT environment variable not set. Please set it to your Intel MKL installation path.");
-
-        println!("cargo:rustc-link-search=native={}/lib/intel64", mkl_root);
-
-        // MKL core libraries and Intel OpenMP Runtime
-        println!("cargo:rustc-link-lib=static=mkl_intel_lp64");
-        println!("cargo:rustc-link-lib=static=mkl_sequential"); // or mkl_tbb_thread
-        println!("cargo:rustc-link-lib=static=mkl_core");
-        println!("cargo:rustc-link-lib=dylib=libiomp5md");
+        // Link OpenMP
+        println!("cargo:rustc-link-lib=libomp");
     }
 
     if std::env::var_os("CARGO_FEATURE_NODEJS").is_some() {
