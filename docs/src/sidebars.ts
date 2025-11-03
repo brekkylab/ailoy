@@ -21,6 +21,7 @@ const sidebars: SidebarsConfig = {
         "tutorial/getting-started",
         "tutorial/system-message",
         "tutorial/multi-turn-conversation",
+        "tutorial/streaming",
         "tutorial/thinking",
         "tutorial/using-tools",
         "tutorial/mcp-integration",
