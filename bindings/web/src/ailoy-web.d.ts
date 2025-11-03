@@ -644,6 +644,13 @@ export interface VectorStoreRetrieveResult {
   distance: number;
 }
 
+export function accumulateMessageDelta(
+  a: MessageDelta,
+  b: MessageDelta
+): MessageDelta;
+
+export function finishMessageDelta(delta: MessageDelta): Message;
+
 export function getQwen3Polyfill(): DocumentPolyfill;
 
 export function imageFromBase64(data: string): Part;
