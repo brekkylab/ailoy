@@ -37,7 +37,12 @@ fn build_native() {
     // Forward LD_LIBRARY_PATH if provided
     if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
         // Split and add each path separately
-        for path in ld_path.split(':') {
+        #[cfg(target_os = "windows")]
+        let lib_separator = ';';
+        #[cfg(not(target_os = "windows"))]
+        let lib_separator = ':';
+
+        for path in ld_path.split(lib_separator) {
             if !path.is_empty() {
                 println!("cargo:rustc-link-search=native={}", path);
             }
@@ -90,7 +95,7 @@ fn build_native() {
         println!("cargo:rustc-link-arg=-Wl,-l:libtvm_runtime.a");
         println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
 
-        // Link FAISS dependencies (not tested)
+        // Link FAISS dependencies
         println!("cargo:rustc-link-lib=gomp"); // GNU OpenMP
         println!("cargo:rustc-link-lib=static=openblas"); // OpenBLAS
         println!("cargo:rustc-link-lib=static=gfortran"); // gfortran (required by OpenBLAS)
@@ -115,15 +120,20 @@ fn build_native() {
     }
     #[cfg(target_os = "windows")]
     {
-        // Windows (MSVC): ... tvm_runtime.lib /WHOLEARCHIVE:tvm_runtime.lib
-        println!("cargo:rustc-link-lib=static=tvm_runtime.lib");
+        // Windows (MSVC): ... /WHOLEARCHIVE:tvm_runtime.lib
         println!(
             "cargo:rustc-link-arg=/WHOLEARCHIVE:{}",
             (cmake_install_dir.join("tvm_runtime.lib")).display()
         );
 
-        // Link OpenMP
+        // Link FAISS dependencies
+        println!("cargo:rustc-link-lib=static=blas");
+        println!("cargo:rustc-link-lib=static=lapack");
         println!("cargo:rustc-link-lib=libomp");
+
+        // Link Vulkan
+        println!("cargo:rustc-link-lib=dylib=vulkan-1");
+
     }
 
     if std::env::var_os("CARGO_FEATURE_NODEJS").is_some() {
