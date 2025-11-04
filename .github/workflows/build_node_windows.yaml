@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20250704
+  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251031
   NODE_VERSION: "20.19.4"
 
 jobs:
@@ -95,7 +95,7 @@ jobs:
               # =============================================
               Write-Host '=== Build Ailoy ==='
 
-              Set-Location 'bindings\js-node'
+              Set-Location 'bindings\nodejs'
 
               npm install
               if (`$LASTEXITCODE -ne 0) {
@@ -104,19 +104,24 @@ jobs:
               }
 
               `$env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
-              npm pack
+              `$env:LD_LIBRARY_PATH = "C:\vcpkg_installed\x64-windows-static-release\lib;C:\VulkanSDK\Lib"
+              npm run build
               if (`$LASTEXITCODE -ne 0) {
-                Write-Error 'npm pack failed'
+                Write-Error 'npm run build failed'
                 exit 1
               }
+
+              node .\scripts\bundle-dylibs.js .\dist\ailoy_core.win32-x64-msvc.node
+
+              npm pack
 
               Write-Host '=== Build Complete ==='
           "@
 
       - name: Get package name
-        working-directory: ${{ github.workspace }}/bindings/js-node
+        working-directory: ${{ github.workspace }}/bindings/nodejs
         run: |
-          $packageName = Get-ChildItem -Name "ailoy-*.tgz" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $packageName = Get-ChildItem -Name "ailoy-node*.tgz" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           echo "packageName=$packageName"
           echo "packageName=$packageName" >> $env:GITHUB_ENV
 
@@ -124,4 +129,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.packageName }}
-          path: ${{ github.workspace }}/bindings/js-node/${{ env.packageName }}
+          path: ${{ github.workspace }}/bindings/nodejs/${{ env.packageName }}

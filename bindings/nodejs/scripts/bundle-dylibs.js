@@ -51,16 +51,86 @@ const IGNORED_LIBS_LINUX = new Set([
   "libvulkan.so.1",
 ]);
 
+const IGNORED_LIBS_WINDOWS = new Set([
+  // Windows system DLLs (case-insensitive comparison will be used)
+  "kernel32.dll",
+  "user32.dll",
+  "advapi32.dll",
+  "ws2_32.dll",
+  "msvcrt.dll",
+  "shell32.dll",
+  "ole32.dll",
+  "oleaut32.dll",
+  "gdi32.dll",
+  "comdlg32.dll",
+  "comctl32.dll",
+  "ntdll.dll",
+  "rpcrt4.dll",
+  "secur32.dll",
+  "crypt32.dll",
+  "winmm.dll",
+  "version.dll",
+  "bcrypt.dll",
+  "userenv.dll",
+  "netapi32.dll",
+  "winspool.drv",
+  "psapi.dll",
+  "iphlpapi.dll",
+  "setupapi.dll",
+  "cfgmgr32.dll",
+  "shlwapi.dll",
+  "imm32.dll",
+  "msimg32.dll",
+  "dwmapi.dll",
+  "uxtheme.dll",
+  "winhttp.dll",
+  "wininet.dll",
+  "dbghelp.dll",
+  "imagehlp.dll",
+  "powrprof.dll",
+  "mpr.dll",
+  "credui.dll",
+  "wtsapi32.dll",
+  "wldap32.dll",
+  "vcruntime140.dll",
+  "vcruntime140_1.dll",
+  "msvcp140.dll",
+  "ucrtbase.dll",
+  "api-ms-win-crt-runtime-l1-1-0.dll",
+  "api-ms-win-crt-stdio-l1-1-0.dll",
+  "api-ms-win-crt-heap-l1-1-0.dll",
+  "api-ms-win-crt-locale-l1-1-0.dll",
+  "api-ms-win-crt-math-l1-1-0.dll",
+  "api-ms-win-crt-string-l1-1-0.dll",
+  "api-ms-win-crt-time-l1-1-0.dll",
+  "api-ms-win-crt-filesystem-l1-1-0.dll",
+  "api-ms-win-crt-environment-l1-1-0.dll",
+  "api-ms-win-crt-convert-l1-1-0.dll",
+  "api-ms-win-crt-process-l1-1-0.dll",
+  "api-ms-win-crt-utility-l1-1-0.dll",
+  "api-ms-win-crt-multibyte-l1-1-0.dll",
+  "api-ms-win-core-synch-l1-2-0.dll",
+  "api-ms-win-core-processthreads-l1-1-1.dll",
+  "api-ms-win-core-file-l1-2-0.dll",
+  "api-ms-win-core-localization-l1-2-0.dll",
+  "api-ms-win-core-sysinfo-l1-2-0.dll",
+  "api-ms-win-core-handle-l1-1-0.dll",
+
+  // Exclude vulkan
+  "vulkan-1.dll",
+]);
+
 class DylibsBundler {
   constructor(binaryPath, outputDir = null) {
     this.binaryPath = path.resolve(binaryPath);
     this.outputDir = outputDir || path.dirname(this.binaryPath);
-    this.libDir = path.join(this.outputDir, ".libs");
-    this.processedLibs = new Set();
-    this.targetLibs = [];
     this.platform = os.platform();
     this.isLinux = this.platform === "linux";
     this.isMacOS = this.platform === "darwin";
+    this.isWindows = this.platform === "win32";
+    this.libDir = this.isWindows ? this.outputDir : path.join(this.outputDir, ".libs");
+    this.processedLibs = new Set();
+    this.targetLibs = [];
   }
 
   // Get dependencies using ldd (Linux) or otool (macOS)
@@ -70,7 +140,10 @@ class DylibsBundler {
         return this.getDependenciesLinux(binaryPath);
       } else if (this.isMacOS) {
         return this.getDependenciesMacOS(binaryPath);
-      } else {
+      } else if (this.isWindows) {
+        return this.getDependenciesWindows(binaryPath);
+      } 
+      else {
         console.error(`Unsupported platform: ${this.platform}`);
         return [];
       }
@@ -114,6 +187,72 @@ class DylibsBundler {
     return deps;
   }
 
+  getDependenciesWindows(binaryPath) {
+    const deps = [];
+
+    try {
+      const output = execSync(`dumpbin /DEPENDENTS "${binaryPath}"`, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+      const lines = output.split(/\r?\n/);
+      let inDepsSection = false;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.includes("has the following dependencies:")) {
+          inDepsSection = true;
+          continue;
+        }
+
+        if (inDepsSection) {
+          // Continue on empty line
+          if (!trimmed) continue;
+
+          // "Summary" marks end of dependencies section
+          if (trimmed.includes("Summary")) {
+            break;
+          }
+
+          // DLL names are listed one per line, indented
+          if (trimmed && trimmed.endsWith(".dll")) {
+            const dllName = trimmed;
+            const dllPath = this.findDllPath(dllName);
+
+            if (dllPath) {
+              deps.push({name: dllName, path: dllPath});
+            } else {
+              console.warn(`Warning: Could not find DLL: ${dllName}`);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`Failed to run dumpbin on ${binaryPath}: ${error.message}`);
+      console.error("Make sure dumpbin is available (Visual Studio Developer Command Prompt)");
+    }
+
+    return deps;
+  }
+  
+  // Try to find a DLL in common locations
+  findDllPath(dllName) {
+    const searchPaths = [
+      path.dirname(this.binaryPath),
+      process.cwd(),
+      ...process.env.PATH.split(path.delimiter),
+    ];
+
+    for (const searchPath of searchPaths) {
+      const fullPath = path.join(searchPath, dllName);
+      if (fs.existsSync(fullPath)) {
+        return fullPath;
+      }
+    }
+
+    return null;
+  }
+
   shouldBundle(libName, libPath) {
     if (this.isLinux) {
       // Ignore system libraries
@@ -133,6 +272,16 @@ class DylibsBundler {
 
       // Ignore libailoy.dylib
       if (libName === "libailoy.dylib") {
+        return false;
+      }
+    } else if (this.isWindows) {
+      const lowerName = libName.toLowerCase();
+      if (IGNORED_LIBS_WINDOWS.has(lowerName)) {
+        return false;
+      }
+
+      const lowerPath = libPath.toLowerCase();
+      if (lowerPath.includes("\\windows\\") || lowerPath.includes("\\winsxs\\") || lowerPath.includes("\\system32\\") || lowerPath.includes("\\syswow64\\")) {
         return false;
       }
     }
@@ -169,6 +318,10 @@ class DylibsBundler {
           parts.length > 1 && parts[0]
             ? `${parts[0]}-${hash}.dylib${parts.slice(1).join(".dylib")}`
             : `${oldName.replace(".dylib", "")}-${hash}.dylib`;
+      } else if (this.isWindows) {
+        // Windows: Don't rename, just use original name
+        // DLLs are loaded by exact name and can't be patched
+        newName = oldName;
       }
 
       const newPath = path.join(this.libDir, newName);
@@ -181,7 +334,7 @@ class DylibsBundler {
 
       return [newName, newPath];
     } catch (error) {
-      console.error(`Failed to copy library ${libName}: ${error}`);
+      console.error(`Failed to copy library ${oldName}: ${error}`);
       return null;
     }
   }
@@ -333,6 +486,14 @@ class DylibsBundler {
         execSync("which install_name_tool", { stdio: "pipe" });
         execSync("which otool", { stdio: "pipe" });
         return true;
+      } else if (this.isWindows) {
+        try {
+          execSync("Get-Command dumpbin", { shell: "powershell", stdio:"pipe"});
+        } catch(e) {
+          console.error("dumpbin is not available.");
+          return false;
+        }
+        return true;
       }
     } catch (error) {
       if (this.isLinux) {
@@ -350,7 +511,7 @@ class DylibsBundler {
   }
 
   bundle() {
-    console.log(`Bundling dependenceis for: ${this.binaryPath}`);
+    console.log(`Bundling dependencies for: ${this.binaryPath}`);
 
     // Check if binary exists
     if (!fs.existsSync(this.binaryPath)) {
@@ -391,15 +552,17 @@ class DylibsBundler {
       });
     }
 
-    // Patch main binary RPATH
-    const rpath = this.isLinux ? "$ORIGIN/.libs" : "@loader_path/.libs";
-    if (!this.patchRpath(this.binaryPath, rpath)) {
-      return false;
-    }
+    if (!this.isWindows) {
+      // Patch main binary RPATH
+      const rpath = this.isLinux ? "$ORIGIN/.libs" : "@loader_path/.libs";
+      if (!this.patchRpath(this.binaryPath, rpath)) {
+        return false;
+      }
 
-    // Patch main binary to use renamed libraries
-    console.log("Patching main binary dependencies...");
-    this.patchLibraryDependencies(this.binaryPath, this.targetLibs);
+      // Patch main binary to use renamed libraries
+      console.log("Patching main binary dependencies...");
+      this.patchLibraryDependencies(this.binaryPath, this.targetLibs);
+    }
 
     console.log("✓ Bundling complete!");
     console.log(`  Binary: ${this.binaryPath}`);
