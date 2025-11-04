@@ -164,8 +164,8 @@ mod py {
 
         #[allow(unused_variables)]
         #[classmethod]
-        #[pyo3(name = "new_py_function", signature = (desc, func))]
-        pub fn new_py_function(_cls: &Bound<'_, PyType>, desc: ToolDesc, func: Py<PyAny>) -> Self {
+        #[pyo3(name = "new_py_function", signature = (func, desc))]
+        pub fn new_py_function(_cls: &Bound<'_, PyType>, func: Py<PyAny>, desc: ToolDesc) -> Self {
             unimplemented!("This classmethod will be monkeypatched in Python")
         }
 
