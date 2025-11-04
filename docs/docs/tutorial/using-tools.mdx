@@ -115,15 +115,11 @@ based on the conversation context and the provided tool description.
 ```python
 def tool_behavior(base, symbols):
     if not base:
-        raise ValueError("Missing 'base' currency")
+        raise ValueError("Missing 'base'")
     if not symbols:
         raise ValueError("Missing 'symbols'")
 
-    symbols = symbols.split(",")
-    if not symbols:
-        raise ValueError("No valid target symbols after normalization.")
-
-    query = parse.urlencode({"from": base, "to": ",".join(symbols)})
+    query = parse.urlencode({"from": base, "to": symbols})
     url = f"https://api.frankfurter.app/latest?{query}"
 
     try:
@@ -149,15 +145,7 @@ async function toolBehavior(args) {
     throw new Error("Missing 'symbols'");
   }
 
-  const symbolList = symbols
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (symbolList.length === 0) {
-    throw new Error("No valid target symbols after normalization.");
-  }
-
-  const params = new URLSearchParams({ from: base, to: symbolList.join(",") });
+  const params = new URLSearchParams({ from: base, to: symbols });
   const url = `https://api.frankfurter.app/latest?${params.toString()}`;
 
   let resp;
@@ -227,15 +215,11 @@ tool_desc = ai.ToolDesc(
 
 def tool_behavior(base, symbols):
     if not base:
-        raise ValueError("Missing 'base' currency")
+        raise ValueError("Missing 'base'")
     if not symbols:
         raise ValueError("Missing 'symbols'")
 
-    symbols = symbols.split(",")
-    if not symbols:
-        raise ValueError("No valid target symbols after normalization.")
-
-    query = parse.urlencode({"from": base, "to": ",".join(symbols)})
+    query = parse.urlencode({"from": base, "to": symbols})
     url = f"https://api.frankfurter.app/latest?{query}"
 
     try:
@@ -252,7 +236,7 @@ def tool_behavior(base, symbols):
 
 
 async def main():
-    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B", progress_callback=print)
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", progress_callback=print)
     tools = [ai.Tool.new_py_function(tool_behavior, tool_desc)]
     agent = ai.Agent(lm, tools)
     query = "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?"
@@ -296,15 +280,7 @@ async function toolBehavior(args) {
     throw new Error("Missing 'symbols'");
   }
 
-  const symbolList = symbols
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (symbolList.length === 0) {
-    throw new Error("No valid target symbols after normalization.");
-  }
-
-  const params = new URLSearchParams({ from: base, to: symbolList.join(",") });
+  const params = new URLSearchParams({ from: base, to: symbols });
   const url = `https://api.frankfurter.app/latest?${params.toString()}`;
 
   let resp;
@@ -326,7 +302,7 @@ async function toolBehavior(args) {
 }
 
 async function main() {
-  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", console.log);
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B", console.log);
   const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
   const agent = new ai.Agent(lm, tools);
   const query =
