@@ -150,7 +150,7 @@ async function toolBehavior(args) {
 
   let resp;
   try {
-    resp = await fetch(url, { timeout: 10000 }); // Node 20+ supports timeout option
+    resp = await fetch(url, { timeout: 10000 });
   } catch (err) {
     throw new Error(`Failed to reach Frankfurter API: ${err.message}`);
   }
@@ -285,7 +285,7 @@ async function toolBehavior(args) {
 
   let resp;
   try {
-    resp = await fetch(url, { timeout: 10000 }); // Node 20+ supports timeout option
+    resp = await fetch(url, { timeout: 10000 });
   } catch (err) {
     throw new Error(`Failed to reach Frankfurter API: ${err.message}`);
   }
