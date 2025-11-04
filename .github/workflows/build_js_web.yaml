@@ -20,6 +20,10 @@ jobs:
 
       - name: Set up Docker
         uses: docker/setup-docker-action@v4
+      
+      - name: Install wasm-pack
+        run: |
+          cargo install wasm-pack
 
       - name: Create package
         working-directory: ${{ github.workspace }}/bindings/web
