@@ -41,7 +41,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 ```
 
 
@@ -76,8 +75,7 @@ async function main() {
 
   for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
     if (resp.delta.contents?.[0]?.type === "text") {
-      // print text deltas without line break
-      process.stdout.write(resp.delta.contents[0].text);
+      console.log(resp.delta.contents[0].text);
     }
   }
   console.log();
@@ -135,7 +133,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 ```
 
 ```typescript
@@ -154,7 +151,7 @@ async function main() {
   } as ai.MessageDelta; // the base of accumulation
   for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
     if (resp.delta.contents?.[0]?.type === "text") {
-      // print text deltas without line break
+      // print text deltas in green
       process.stdout.write(GREEN + resp.delta.contents[0].text + RESET);
     }
     // accumulate newly generated delta into the base
@@ -195,8 +192,8 @@ async function main() {
   } as ai.MessageDelta; // the base of accumulation
   for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
     if (resp.delta.contents?.[0]?.type === "text") {
-      // print text deltas without line break
-      process.stdout.write(GREEN + resp.delta.contents[0].text + RESET);
+      // print text deltas in green
+      console.log(GREEN + resp.delta.contents[0].text + RESET);
     }
     // accumulate newly generated delta into the base
     acc = ai.accumulateMessageDelta(acc, resp.delta);
