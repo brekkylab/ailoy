@@ -154,7 +154,13 @@ impl DocumentPolyfill {
     }
 }
 
-pub fn create_simple_document_polyfill() -> DocumentPolyfill {
+#[cfg_attr(feature = "python", pyo3::pyfunction)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi)]
+#[cfg_attr(
+    feature = "wasm",
+    wasm_bindgen::prelude::wasm_bindgen(js_name = "getQwen3Polyfill")
+)]
+pub fn get_qwen3_polyfill() -> DocumentPolyfill {
     DocumentPolyfill {
         system_message_template: Some(dedent!(r#"
             {{- text }}

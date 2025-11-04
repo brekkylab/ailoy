@@ -34,7 +34,11 @@ export class Agent {
    * Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after the agent is initialized.
    * If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
    */
-  constructor(lm: LangModel, tools?: Tool[] | null);
+  constructor(
+    lm: LangModel,
+    tools?: Tool[] | null,
+    knowledge?: Knowledge | null
+  );
   addTool(tool: Tool): void;
   removeTool(toolName: string): void;
   setKnowledge(knowledge: Knowledge): void;
@@ -639,6 +643,8 @@ export interface VectorStoreRetrieveResult {
   metadata?: Metadata;
   distance: number;
 }
+
+export function getQwen3Polyfill(): DocumentPolyfill;
 
 export function imageFromBase64(data: string): Part;
 

@@ -114,12 +114,11 @@ mod tests {
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
             .await
             .unwrap();
-        let agent = Arc::new(Mutex::new(Agent::new(model, vec![])));
+        let agent = Arc::new(Mutex::new(Agent::new(model, vec![], None)));
 
         // Testing as knowledge
         {
             let mut agent_guard = agent.lock().await;
-            agent_guard.set_knowledge(knowledge.clone());
 
             let mut strm = Box::pin(agent_guard.run_delta(
                 vec![Message::new(Role::User).with_contents(vec![Part::text("What is Ailoy?")])],

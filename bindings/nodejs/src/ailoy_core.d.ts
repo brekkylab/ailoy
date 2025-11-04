@@ -28,7 +28,11 @@
  * - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases. When available, the `Agent` enriches model input with these results before generating an answer.
  */
 export declare class Agent {
-  constructor(lm: LangModel, tools?: Array<Tool> | undefined | null);
+  constructor(
+    lm: LangModel,
+    tools?: Array<Tool> | undefined | null,
+    knowledge?: Knowledge | undefined | null
+  );
   addTool(tool: Tool): void;
   addTools(tools: Array<Tool>): void;
   removeTool(toolName: string): void;
@@ -182,6 +186,8 @@ export type FinishReason =
   | { type: "length" }
   | { type: "tool_call" }
   | { type: "refusal"; reason: string };
+
+export declare function getQwen3Polyfill(): DocumentPolyfill;
 
 export type Grammar =
   | { type: "plain" }
