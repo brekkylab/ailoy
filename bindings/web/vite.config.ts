@@ -74,8 +74,6 @@ export default defineConfig(({ mode }) => {
         entry: ["src/index.ts"],
         formats: ["es"],
       },
-      target: "esnext",
-      assetsInlineLimit: 0,
       rollupOptions: {
         external: ["./shim_js/dist/index.js"],
       },
