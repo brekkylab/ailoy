@@ -209,9 +209,11 @@ impl LocalLangModelImpl {
                     mode = "tool_call".to_owned();
                     continue;
                 } else if s == "</tool_call>" {
-                    mode = "content".to_owned();
+                    // @jhlee: Currently, parallel tool calls are not supported.
+                    // The process stops immediately when the "eotc" token appears.
+                    // We’ll need to establish a policy for handling parallel tool calls in the future.
                     yield MessageDeltaOutput{delta, finish_reason: Some(FinishReason::ToolCall{})};
-                    continue;
+                    break;
                 } else if s == "<think>" {
                     mode = "reasoning".to_owned();
                     continue;
