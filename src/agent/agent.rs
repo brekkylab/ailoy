@@ -67,17 +67,16 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn new(lm: LangModel, tools: impl IntoIterator<Item = Tool>) -> Self {
+    pub fn new(
+        lm: LangModel,
+        tools: impl IntoIterator<Item = Tool>,
+        knowledge: Option<Knowledge>,
+    ) -> Self {
         Self {
             lm,
             tools: tools.into_iter().collect(),
-            knowledge: None,
+            knowledge,
         }
-    }
-
-    pub fn with_knowledge(mut self, knowledge: Knowledge) -> Self {
-        self.knowledge = Some(knowledge);
-        self
     }
 
     pub fn get_lm(&self) -> LangModel {
@@ -306,18 +305,22 @@ mod py {
     use std::sync::Arc;
 
     use futures::lock::Mutex;
-    use pyo3::pymethods;
+    use pyo3::{Python, pymethods};
     use pyo3_stub_gen_derive::gen_stub_pymethods;
     use tokio::sync::mpsc;
 
     use super::*;
     use crate::value::{
         Messages,
-        py::{MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator},
+        py::{
+            MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
+            MessageOutputSyncIterator,
+        },
     };
 
     fn spawn_delta<'a>(
         mut agent: Agent,
+        py: Python<'_>,
         messages: Vec<Message>,
         config: Option<AgentConfig>,
     ) -> anyhow::Result<(
@@ -326,20 +329,24 @@ mod py {
     )> {
         let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.spawn(async move {
+        let future = async move {
             let mut stream = agent.run_delta(messages, config).boxed();
-
             while let Some(item) = stream.next().await {
                 if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
                 }
             }
-        });
+        };
+        match pyo3_async_runtimes::tokio::get_current_locals(py) {
+            Ok(locals) => rt.spawn(pyo3_async_runtimes::tokio::scope(locals, future)),
+            Err(_) => rt.spawn(future),
+        };
         Ok((rt, rx))
     }
 
     fn spawn<'a>(
         mut agent: Agent,
+        py: Python<'_>,
         messages: Vec<Message>,
         config: Option<AgentConfig>,
     ) -> anyhow::Result<(
@@ -348,15 +355,18 @@ mod py {
     )> {
         let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.spawn(async move {
+        let future = async move {
             let mut stream = agent.run(messages, config).boxed();
-
             while let Some(item) = stream.next().await {
                 if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
                 }
             }
-        });
+        };
+        match pyo3_async_runtimes::tokio::get_current_locals(py) {
+            Ok(locals) => rt.spawn(pyo3_async_runtimes::tokio::scope(locals, future)),
+            Err(_) => rt.spawn(future),
+        };
         Ok((rt, rx))
     }
 
@@ -377,9 +387,9 @@ mod py {
     #[pymethods]
     impl Agent {
         #[new]
-        #[pyo3(signature = (lm, tools = None))]
-        fn __new__(lm: LangModel, tools: Option<Vec<Tool>>) -> Self {
-            Agent::new(lm, tools.unwrap_or_default())
+        #[pyo3(signature = (lm, tools = None, knowledge = None))]
+        fn __new__(lm: LangModel, tools: Option<Vec<Tool>>, knowledge: Option<Knowledge>) -> Self {
+            Agent::new(lm, tools.unwrap_or_default(), knowledge)
         }
 
         pub fn __repr__(&self) -> String {
@@ -423,10 +433,11 @@ mod py {
         #[pyo3(name="run_delta", signature = (messages, config=None))]
         fn run_delta_py(
             &mut self,
+            py: Python<'_>,
             messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputIterator> {
-            let (_rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
+            let (_rt, rx) = spawn_delta(self.clone(), py, messages.into(), config)?;
             Ok(MessageDeltaOutputIterator {
                 _rt,
                 rx: Arc::new(Mutex::new(rx)),
@@ -436,20 +447,22 @@ mod py {
         #[pyo3(name="run_delta_sync", signature = (messages, config=None))]
         fn run_delta_sync_py(
             &mut self,
+            py: Python<'_>,
             messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
-            let (_rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
+            let (_rt, rx) = spawn_delta(self.clone(), py, messages.into(), config)?;
             Ok(MessageDeltaOutputSyncIterator { _rt, rx })
         }
 
         #[pyo3(name="run", signature = (messages, config=None))]
         fn run_py(
             &mut self,
+            py: Python<'_>,
             messages: Messages,
             config: Option<AgentConfig>,
         ) -> anyhow::Result<MessageOutputIterator> {
-            let (_rt, rx) = spawn(self.clone(), messages.into(), config)?;
+            let (_rt, rx) = spawn(self.clone(), py, messages.into(), config)?;
             Ok(MessageOutputIterator {
                 _rt,
                 rx: Arc::new(Mutex::new(rx)),
@@ -459,11 +472,12 @@ mod py {
         #[pyo3(name="run_sync", signature = (messages, config=None))]
         fn run_sync_py(
             &mut self,
+            py: Python<'_>,
             messages: Messages,
             config: Option<AgentConfig>,
-        ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
-            let (_rt, rx) = spawn_delta(self.clone(), messages.into(), config)?;
-            Ok(MessageDeltaOutputSyncIterator { _rt, rx })
+        ) -> anyhow::Result<MessageOutputSyncIterator> {
+            let (_rt, rx) = spawn(self.clone(), py, messages.into(), config)?;
+            Ok(MessageOutputSyncIterator { _rt, rx })
         }
     }
 }
@@ -489,10 +503,15 @@ mod node {
     #[napi]
     impl Agent {
         #[napi(constructor)]
-        pub fn new_js(lm: &LangModel, tools: Option<Vec<&Tool>>) -> Self {
+        pub fn new_js(
+            lm: &LangModel,
+            tools: Option<Vec<&Tool>>,
+            knowledge: Option<&Knowledge>,
+        ) -> Self {
             Self::new(
                 lm.clone(),
                 tools.unwrap_or(vec![]).iter().map(|&t| t.clone()),
+                knowledge.cloned(),
             )
         }
 
@@ -604,8 +623,12 @@ mod wasm {
         /// Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after the agent is initialized.
         /// If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
         #[wasm_bindgen(constructor)]
-        pub fn new_js(lm: &LangModel, tools: Option<Vec<Tool>>) -> Self {
-            Self::new(lm.clone(), tools.unwrap_or(vec![]))
+        pub fn new_js(
+            lm: &LangModel,
+            tools: Option<Vec<Tool>>,
+            knowledge: Option<Knowledge>,
+        ) -> Self {
+            Self::new(lm.clone(), tools.unwrap_or(vec![]), knowledge)
         }
 
         #[wasm_bindgen(js_name = "addTool")]
@@ -693,8 +716,10 @@ mod tests {
         use super::*;
         use crate::model::LangModel;
 
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
-        let mut agent = Agent::new(model, Vec::new());
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
+            .await
+            .unwrap();
+        let mut agent = Agent::new(model, Vec::new(), None);
 
         let mut strm = Box::pin(agent.run_delta(
             vec![Message::new(Role::User).with_contents(vec![Part::text("Hi, what's your name?")])],
@@ -721,7 +746,9 @@ mod tests {
             value::{ToolDesc, Value},
         };
 
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
+            .await
+            .unwrap();
 
         let tool_desc = ToolDesc::new(
             "temperature".to_owned(),
@@ -768,7 +795,7 @@ mod tests {
             })),
         )];
 
-        let mut agent = Agent::new(model, tools);
+        let mut agent = Agent::new(model, tools, None);
 
         let mut strm = Box::pin(agent.run_delta(
             vec![
@@ -795,8 +822,10 @@ mod tests {
         use super::*;
         use crate::{model::LangModel, tool::MCPClient};
 
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
-        let mut agent = Agent::new(model, Vec::new());
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
+            .await
+            .unwrap();
+        let mut agent = Agent::new(model, Vec::new(), None);
 
         let command = tokio::process::Command::new("uvx").configure(|cmd| {
             cmd.arg("mcp-server-time");

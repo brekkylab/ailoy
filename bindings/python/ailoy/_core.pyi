@@ -38,7 +38,7 @@ class Agent:
     def lm(self) -> LangModel: ...
     @property
     def tools(self) -> builtins.list[Tool]: ...
-    def __new__(cls, lm: LangModel, tools: typing.Optional[typing.Sequence[Tool]] = None) -> Agent: ...
+    def __new__(cls, lm: LangModel, tools: typing.Optional[typing.Sequence[Tool]] = None, knowledge: typing.Optional[Knowledge] = None) -> Agent: ...
     def __repr__(self) -> builtins.str: ...
     def add_tools(self, tools: typing.Sequence[Tool]) -> None: ...
     def add_tool(self, tool: Tool) -> None: ...
@@ -47,7 +47,7 @@ class Agent:
     def run_delta(self, messages: str | list[Message], config: typing.Optional[AgentConfig] = None) -> MessageDeltaOutputIterator: ...
     def run_delta_sync(self, messages: str | list[Message], config: typing.Optional[AgentConfig] = None) -> MessageDeltaOutputSyncIterator: ...
     def run(self, messages: str | list[Message], config: typing.Optional[AgentConfig] = None) -> MessageOutputIterator: ...
-    def run_sync(self, messages: str | list[Message], config: typing.Optional[AgentConfig] = None) -> MessageDeltaOutputSyncIterator: ...
+    def run_sync(self, messages: str | list[Message], config: typing.Optional[AgentConfig] = None) -> MessageOutputSyncIterator: ...
 
 @typing.final
 class AgentConfig:
@@ -99,9 +99,9 @@ class DocumentPolyfill:
 @typing.final
 class EmbeddingModel:
     @classmethod
-    def new_local(cls, model_name: builtins.str, progress_callback: typing.Callable[[CacheProgress], None] = None) -> typing.Awaitable[EmbeddingModel]: ...
+    def new_local(cls, model_name: builtins.str, device_id: typing.Optional[builtins.int] = None, progress_callback: typing.Callable[[CacheProgress], None] = None) -> typing.Awaitable[EmbeddingModel]: ...
     @classmethod
-    def new_local_sync(cls, model_name: builtins.str, progress_callback: typing.Callable[[CacheProgress], None] = None) -> EmbeddingModel: ...
+    def new_local_sync(cls, model_name: builtins.str, device_id: typing.Optional[builtins.int] = None, progress_callback: typing.Callable[[CacheProgress], None] = None) -> EmbeddingModel: ...
     async def run(self, text: builtins.str) -> builtins.list[float]: ...
     def run_sync(self, text: builtins.str) -> builtins.list[float]: ...
 
@@ -141,6 +141,44 @@ class Grammar:
 
 @typing.final
 class InferenceConfig:
+    r"""
+    Configuration parameters that control the behavior of model inference.
+    
+    `InferenceConfig` encapsulates all the configuration, controlling behavior of `LanguageModel`` inference.
+    
+    # Fields
+    
+    ## `document_polyfill`
+    Configuration describing how retrieved documents are embedded into the model input.
+    If `None`, it does not perform any polyfill, (ignoring documents).
+    
+    ## `think_effort`
+    Controls the model’s reasoning intensity.
+    In local models, `low`, `medium`, `high` is ignored.
+    In API models, it is up to it's API. See API parameters.
+    
+    Possible values: `disable`, `enable`, `low`, `medium`, `high`.
+    
+    ## `temperature`
+    Sampling temperature controlling randomness of output.
+    Lower values make output more deterministic; higher values increase diversity.
+    
+    ## `top_p`
+    Nucleus sampling parameter (probability mass cutoff).
+    Limits token sampling to a cumulative probability ≤ `top_p`.`
+    
+    ## `max_tokens`
+    Maximum number of tokens to generate for a single inference.
+    
+    ## `grammar`
+    Optional grammar constraint that restricts valid output forms.  
+    Supported types include:
+    - `Plain`: unconstrained text  
+    - `JSON`: ensures valid JSON output  
+    - `JSONSchema { schema }`: validates JSON against the given schema  
+    - `Regex { regex }`: constrains generation by a regular expression  
+    - `CFG { cfg }`: uses a context-free grammar definition
+    """
     @property
     def document_polyfill(self) -> typing.Optional[DocumentPolyfill]: ...
     @document_polyfill.setter
@@ -184,9 +222,9 @@ class KnowledgeConfig:
 @typing.final
 class LangModel:
     @classmethod
-    def new_local(cls, model_name: builtins.str, progress_callback: typing.Callable[[CacheProgress], None] = None) -> typing.Awaitable[LangModel]: ...
+    def new_local(cls, model_name: builtins.str, device_id: typing.Optional[builtins.int] = None, progress_callback: typing.Callable[[CacheProgress], None] = None) -> typing.Awaitable[LangModel]: ...
     @classmethod
-    def new_local_sync(cls, model_name: builtins.str, progress_callback: typing.Callable[[CacheProgress], None] = None) -> LangModel: ...
+    def new_local_sync(cls, model_name: builtins.str, device_id: typing.Optional[builtins.int] = None, progress_callback: typing.Callable[[CacheProgress], None] = None) -> LangModel: ...
     @classmethod
     def new_stream_api(cls, spec: typing.Literal["ChatCompletion", "OpenAI", "Gemini", "Claude", "Responses", "Grok"], model_name: builtins.str, api_key: builtins.str) -> LangModel: ...
     def infer_delta(self, messages: str | list[Message], tools: typing.Optional[typing.Sequence[ToolDesc]] = None, documents: typing.Optional[typing.Sequence[Document]] = None, config: typing.Optional[InferenceConfig] = None) -> MessageDeltaOutputIterator: ...

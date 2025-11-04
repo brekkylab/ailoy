@@ -1,0 +1,120 @@
+# Supported Environments
+
+## For Agents with LLM APIs
+
+You can create _your own agent_ with **Ailoy** using external APIs such as
+OpenAI, Claude, Gemini or Grok.  
+Your system doesn't need to meet the hardware requirements with these APIs.
+
+- <img
+    width="20"
+    height="20"
+    alt="image"
+    src="https://github.com/user-attachments/assets/22661c5c-43a1-4ab8-9281-a9b5ad43cefb"
+  />
+  Windows (x86_64)
+- <img
+    width="20"
+    height="20"
+    alt="image"
+    src="https://github.com/user-attachments/assets/1e77e2be-4a6e-42a5-866d-e4bd1b5a7bb7"
+  />
+  macOS (Apple Silicon)
+- <img
+    width="20"
+    height="20"
+    alt="image"
+    src="https://github.com/user-attachments/assets/1877d447-66e7-4796-994c-d0242475a1d0"
+  />
+  Linux (x86_64)
+- 🌐 Web Browsers
+
+## For Agents with AI running locally
+
+**Local AI** is one of biggest feature of Ailoy that make it different from
+other AI tools. To make it feasible, you might need to check the conditions for
+the devices & environments to run AIs.
+
+{/* prettier-ignore-start */}
+
+- <img
+    width="20"
+    height="20"
+    alt="image"
+    src="https://github.com/user-attachments/assets/22661c5c-43a1-4ab8-9281-a9b5ad43cefb"
+  />
+  Windows (x86_64, with
+  <img
+    width="20"
+    height="20"
+    alt="image"
+    src="https://github.com/user-attachments/assets/2dde8002-f2fb-4ed1-a83c-9dd3b8a2b8bd"
+  />
+  Vulkan)
+  - **CPU**: Intel Skylake or newer (and compatible AMD), x86_64 is required
+  - **GPU**: At least 8GB of VRAM and support for Vulkan 1.3
+  - **NVIDIA/AMD/Intel graphic driver** that supports Vulkan 1.3 or higher
+  - **OS**: Windows 11 or Windows Server 2022 (earlier versions may work but are not officially tested)
+- <img
+    width="20"
+    height="20"
+    alt="image"
+    src="https://github.com/user-attachments/assets/1e77e2be-4a6e-42a5-866d-e4bd1b5a7bb7"
+  />
+  macOS (Apple Silicon, with
+  <img
+    width="20"
+    height="20"
+    alt="image"
+    src="https://github.com/user-attachments/assets/0bf3a719-b221-4d05-8a9e-3a37673a401d"
+  />
+  Metal)
+  - **Device**: Apple Silicon with Metal support
+  - **Memory**: At least 8GB of unified memory
+  - **OS**: macOS 15 or newer
+- <img
+    width="20"
+    height="20"
+    alt="image"
+    src="https://github.com/user-attachments/assets/1877d447-66e7-4796-994c-d0242475a1d0"
+  />
+  Linux (x86_64, with
+  <img
+    width="20"
+    height="20"
+    alt="image"
+    src="https://github.com/user-attachments/assets/2dde8002-f2fb-4ed1-a83c-9dd3b8a2b8bd"
+  />
+  Vulkan)
+  - **CPU**: Intel Skylake or newer (and compatible AMD), x86_64 is required
+  - **GPU**: At least 8GB of VRAM and support for Vulkan 1.3
+  - **NVIDIA/AMD/Intel graphic driver** that supports Vulkan 1.3 or higher
+  - **OS**: Debian 10 / Ubuntu 21.04 or newer (this means, os with glibc 2.28 or higher)
+- 🌐 Modern Web Browsers (wasm32, with
+  <img
+    width="20"
+    height="20"
+    alt="image"
+    src="https://github.com/user-attachments/assets/74ac8877-0265-48fe-9939-a256ce79d2d8"
+  />
+  WebGPU)
+  - **Browser**: Modern browsers with WebGPU support: <img
+     src="https://github.com/user-attachments/assets/4cc0058b-92c0-4cb2-8179-3d5416ed3196"
+     width="20"
+     height="20"
+     />
+    **Chrome browsers** are recommended.
+  - **GPU**: WebGPU with `"shader-f16"` support
+  - It may not work on mobile devices with Qualcomm APs.
+
+
+{/* prettier-ignore-end */}
+
+AI models typically consume a significant amount of memory.
+
+The exact usage depends on the model size, but we recommend at least **8GB of
+GPU memory**. Running the Qwen 8B model requires at least **12GB of GPU
+memory**. On macOS, this refers to unified memory, as Apple Silicon uses a
+shared memory architecture.
+
+Please refer to [Available Models](./available-models.mdx) for more information.

@@ -17,24 +17,22 @@ type SupportedLanguage = "python" | "nodejs" | "web";
 const pythonFiles = {
   "main.py": {
     active: true,
-    code: `from ailoy import Runtime, Agent, LocalModel
+    code: `import asyncio
 
-# Start Ailoy runtime
-rt = Runtime()
+from ailoy import Agent, LangModel, MessageDelta
 
-# Create an agent
-# During this step, the model parameters are downloaded and the LLM is set up for execution
-agent = Agent(rt, LocalModel("Qwen/Qwen3-0.6B"))
+async def main():
+    # Create an agent
+    # During this step, the model parameters are downloaded and the LLM is set up for execution
+    agent = Agent(await LangModel.new_local("Qwen/Qwen3-0.6B"))
 
-# Agent answers within the agentic loop
-for resp in agent.query("Please give me a short poem about AI"):
-    agent.print(resp)
+    # Agent answers within the agentic loop
+    async for resp in agent.run("Please give me a short poem about AI"):
+        print(resp.message)
 
-# Once the agent is no longer needed, it can be released
-agent.delete()
-
-# Stop the runtime
-rt.stop()`,
+if __name__ == "__main__":
+  asyncio.run(main())
+`,
   },
   "pyproject.toml": {
     code: `[project]
@@ -42,7 +40,7 @@ name = "ailoy-python-example"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "ailoy-py>=0.1.0",
+    "ailoy-py>=0.2.0",
 ]
 `,
   },
@@ -54,28 +52,16 @@ const nodejsFiles = {
     code: `import * as ai from "ailoy-node";
 
 (async () => {
-  // Start Ailoy runtime
-  const rt = await ai.startRuntime();
-
   // Create an agent
   // During this step, the model parameters are downloaded and the LLM is set up for execution
-  const agent = await ai.defineAgent(
-    rt,
-    ai.LocalModel({ id: "Qwen/Qwen3-0.6B" })
+  const agent = await new ai.Agent(
+    await ai.LangModel.newLocal("Qwen/Qwen3-0.6B")
   );
 
   // Agent answers within the agentic loop
-  for await (const resp of agent.query(
-    "Please give me a short poem about AI"
-  )) {
-    agent.print(resp);
+  for await (const resp of agent.run("Please give me a short poem about AI")) {
+    console.log(resp.message);
   }
-
-  // Once the agent is no longer needed, it can be released
-  await agent.delete();
-
-  // Stop the runtime
-  await rt.stop();
 })();
 `,
   },
@@ -89,7 +75,7 @@ const nodejsFiles = {
     "start": "node index.js"
   },
   "dependencies": {
-    "ailoy-node": "^0.1.0"
+    "ailoy-node": "^0.2.0"
   }
 }
 `,
@@ -150,7 +136,7 @@ document.getElementById("submit").addEventListener("click", async () => {
     "dev": "vite"
   },
   "dependencies": {
-    "ailoy-web": "^0.1.0"
+    "ailoy-web": "^0.2.0"
   },
   "devDependencies": {
     "vite": "^7.1.2"

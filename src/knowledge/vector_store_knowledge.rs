@@ -83,7 +83,9 @@ mod tests {
 
     async fn prepare_knowledge() -> anyhow::Result<Knowledge> {
         let mut store = VectorStore::new_faiss(FaissStore::new(1024).await.unwrap());
-        let embedding_model = EmbeddingModel::new_local("BAAI/bge-m3").await.unwrap();
+        let embedding_model = EmbeddingModel::new_local("BAAI/bge-m3", None)
+            .await
+            .unwrap();
 
         let doc0: String = "Ailoy is an awesome AI agent framework.".into();
         store
@@ -109,13 +111,14 @@ mod tests {
     #[multi_platform_test]
     async fn test_vectorstore_knowledge_with_agent() -> anyhow::Result<()> {
         let knowledge = prepare_knowledge().await?;
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B").await.unwrap();
-        let agent = Arc::new(Mutex::new(Agent::new(model, vec![])));
+        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
+            .await
+            .unwrap();
+        let agent = Arc::new(Mutex::new(Agent::new(model, vec![], None)));
 
         // Testing as knowledge
         {
             let mut agent_guard = agent.lock().await;
-            agent_guard.set_knowledge(knowledge.clone());
 
             let mut strm = Box::pin(agent_guard.run_delta(
                 vec![Message::new(Role::User).with_contents(vec![Part::text("What is Ailoy?")])],

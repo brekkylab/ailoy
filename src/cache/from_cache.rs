@@ -5,61 +5,72 @@ use crate::{
     utils::{BoxFuture, MaybeSend},
 };
 
-/// Build a value by fetching the files it needs from the Ailoy [`Cache`].
+/// A trait for reconstructing values from cached files managed by [`Cache`].
 ///
-/// # How it works
-/// The construction pipeline is:
-/// 1. **`claim_files(cache, key)`** → declare which logical files (`CacheEntry`s)
-///    are required to build `Self`. Optionally, attach a `ctx` (boxed `Any`)
-///    containing extra metadata needed for reconstruction.
-/// 2. The caller (typically [`Cache::try_create`]) **loads (or downloads)** those files
-///    and **aggregates** them into a [`CacheContents`] (handling local/remote logic).
-/// 3. **`try_from_contents(contents)`** → asynchronously parse/assemble `Self` from
-///    the provided bytes in `contents`.
+/// # Overview
+/// Implementors describe how to:
+/// 1. **Declare** which files must be fetched (`claim_files`)
+/// 2. **Reconstruct** `Self` once the files are available (`try_from_contents`)
 ///
-/// # Contracts (rules you must follow)
-/// - **`claim_files` should be lightweight**: its main job is to declare which
-///   logical files are required. It should not perform heavy work such as
-///   reading file contents or changing state. At most, it may inspect `cache`
-///   (e.g., to check a root path or remote URL).
-/// - **File names must match the manifest**: the logical names returned from
-///   `claim_files` must exist in the remote directory manifest (`dirname`/`filename`).
-/// - **`try_from_contents` must validate and consume files**: it takes ownership
-///   of `CacheContents`, extracts the required entries, and removes them as it goes.
-///   Since LLM models can include very large files, avoid copying data unnecessarily,
-///   as this may lead to out-of-memory issues.
-/// - **If you use `ctx`**: both `claim_files` and `try_from_contents` must agree
-///   on how to interpret it. `ctx` is just a generic box (`Any`) that carries
-///   extra information between the two steps. If no extra info is needed, you
-///   can leave it empty.
+/// This enables the cache system to automatically resolve, download,
+/// and assemble complex structures such as models or embeddings.
+///
+/// # Workflow
+/// 1. **`claim_files(cache, key, ctx)`**
+///    - Declare which logical cache entries (`CacheEntry`s) are required.
+///    - Optionally populate or inspect the provided `ctx` (a mutable
+///      [`HashMap<String, Value>`]) to pass metadata or intermediate data.
+/// 2. **Cache layer loads the files**
+///    - The caller (typically [`Cache::try_create`]) fetches local or remote files,
+///      groups them into a [`CacheContents`], and passes them to the next stage.
+/// 3. **`try_from_contents(contents, ctx)`**
+///    - Consume the provided [`CacheContents`] and asynchronously reconstruct `Self`.
+///    - The same `ctx` reference from `claim_files` is passed, allowing contextual reuse.
+///
+/// # Context (`ctx`)
+/// - `ctx` is a mutable key–value map (`HashMap<String, Value>`) that acts as a
+///   lightweight "construction context".
+/// - If no shared state is needed, you can ignore it.
+///
+/// # Contract
+/// - `claim_files` must be **lightweight**: it should only declare dependencies,
+///   not perform file reads or heavy computation.
+/// - Filenames must match the manifest paths (e.g. `"model.safetensors"`).
+/// - `try_from_contents` must **validate and consume** required entries, removing
+///   them from `contents` as it proceeds.
+/// - Avoid unnecessary copies—large models may load multi-gigabyte files.
 ///
 /// # Example
 /// ```rust,ignore
+/// use crate::cache::{Cache, CacheClaim, CacheContents, TryFromCache};
+///
 /// struct MyModel { tokenizer: Vec<u8>, weights: Vec<u8> }
 ///
 /// impl TryFromCache for MyModel {
-///     fn claim_files(cache: Cache, key: impl AsRef<str>)
-///     -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
-///         let k = key.as_ref().to_owned();
+///     fn claim_files<'a>(
+///         cache: Cache,
+///         key: impl AsRef<str>,
+///         ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
+///     ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
+///         let key = key.as_ref().to_owned();
 ///         Box::pin(async move {
-///             Ok(CacheClaim::with_ctx(
-///                 vec![
-///                     CacheEntry::new(&k, "tokenizer.json"),
-///                     CacheEntry::new(&k, "model.safetensors"),
-///                 ],
-///                 Box::new(()), // empty ctx in this simple case
-///             ))
+///             Ok(CacheClaim::new(vec![
+///                 (key.clone(), "tokenizer.json"),
+///                 (key, "model.safetensors"),
+///             ]))
 ///         })
 ///     }
 ///
-///     fn try_from_contents(contents: CacheContents)
-///     -> BoxFuture<'static, anyhow::Result<Self>> {
+///     fn try_from_contents<'a>(
+///         mut contents: CacheContents,
+///         _ctx: &'a std::collections::HashMap<String, crate::value::Value>,
+///     ) -> BoxFuture<'a, anyhow::Result<Self>> {
 ///         Box::pin(async move {
 ///             let tokenizer = contents.remove_with_filename_str("tokenizer.json")
-///                 .ok_or("missing tokenizer.json")?.1;
+///                 .ok_or_else(|| anyhow::anyhow!("missing tokenizer.json"))?.1;
 ///             let weights = contents.remove_with_filename_str("model.safetensors")
-///                 .ok_or("missing model.safetensors")?.1;
-///             Ok(MyModel { tokenizer, weights })
+///                 .ok_or_else(|| anyhow::anyhow!("missing model.safetensors"))?.1;
+///             Ok(Self { tokenizer, weights })
 ///         })
 ///     }
 /// }
@@ -72,16 +83,20 @@ pub trait TryFromCache: Sized + MaybeSend {
     /// The returned future resolves to a list of logical entries (`dirname`/`filename`)
     /// that the caller will fetch and place into [`CacheContents`]. Return an error
     /// if the request is invalid (e.g., unknown key) or if computing the list fails.
-    fn claim_files(
+    fn claim_files<'a>(
         cache: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>>;
+        ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<CacheClaim>>;
 
     /// Build `Self` from the previously fetched files.
     ///
     /// Implementations should verify that all required entries are present and valid,
     /// and return a descriptive `Err(String)` on failure.
-    fn try_from_contents(contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>>;
+    fn try_from_contents<'a>(
+        contents: CacheContents,
+        ctx: &'a std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<Self>>;
 }
 
 /// Infallible variant of [`TryFromCache`].

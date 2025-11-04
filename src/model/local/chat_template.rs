@@ -78,15 +78,19 @@ impl ChatTemplate {
 }
 
 impl TryFromCache for ChatTemplate {
-    fn claim_files(
+    fn claim_files<'a>(
         _: Cache,
         key: impl AsRef<str>,
-    ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
+        _: &'a mut std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
         let dirname = key.as_ref().replace("/", "--");
         Box::pin(async move { Ok(CacheClaim::new([(dirname.as_str(), "chat_template.j2")])) })
     }
 
-    fn try_from_contents(mut contents: CacheContents) -> BoxFuture<'static, anyhow::Result<Self>> {
+    fn try_from_contents<'a>(
+        mut contents: CacheContents,
+        _: &'a std::collections::HashMap<String, crate::value::Value>,
+    ) -> BoxFuture<'a, anyhow::Result<Self>> {
         Box::pin(async move {
             let Some((entry, bytes)) = contents.remove_with_filename("chat_template.j2") else {
                 bail!("chat_template.j2 not exists")
@@ -291,7 +295,7 @@ mod tests {
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
 
-        let mut template_strm = Box::pin(cache.try_create::<ChatTemplate>(key));
+        let mut template_strm = Box::pin(cache.try_create::<ChatTemplate>(key, None));
         let mut template: Option<ChatTemplate> = None;
         while let Some(progress) = template_strm.next().await {
             let mut progress = progress.unwrap();

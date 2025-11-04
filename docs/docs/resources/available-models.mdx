@@ -1,0 +1,78 @@
+# Available Models
+
+Currently, the following AI models are supported:
+
+{/* prettier-ignore-start */}
+- Language Models
+  - Local Models
+    - <img
+        src="https://github.com/user-attachments/assets/177461a2-7a0e-4449-b5a0-8d7028349607"
+        width="20"
+        height="20"
+      />
+      Qwen3
+      - `Qwen/Qwen3-0.6B`
+      - `Qwen/Qwen3-1.7B`
+      - `Qwen/Qwen3-4B`
+      - `Qwen/Qwen3-8B`
+      - `Qwen/Qwen3-14B`
+      - `Qwen/Qwen3-32B`
+      - `Qwen/Qwen3-30B-A3B` (MoE)
+  - API Models
+    - <img
+        src="https://github.com/user-attachments/assets/ffc93fe4-a345-4525-bf19-0f1419af08f8"
+        width="20"
+        height="20"
+      />
+      OpenAI
+    - <img
+        src="https://github.com/user-attachments/assets/6fc0015d-090d-4642-a056-3fbc1f66b599"
+        width="25"
+        height="25"
+      />
+      Gemini
+    - <img
+        src="https://github.com/user-attachments/assets/94855f00-a640-40e2-b3b6-9481d6bfd910"
+        width="20"
+        height="20"
+      />
+      Claude
+    - <img
+        src="https://github.com/user-attachments/assets/aaf28fe3-9b1e-479d-9631-986afc8b5b66"
+        width="20"
+        height="20"
+      />
+      Grok
+
+- Embedding Models
+  - Local Models
+    - <img
+        src="https://bge-model.com/_static/bge_logo.jpeg"
+        width="20"
+        height="20"
+      />
+      BAAI/bge-m3
+
+{/* prettier-ignore-end */}
+
+### VRAM requirements
+
+{/* prettier-ignore-start */}
+
+:::warning These values may vary depending on the environment and circumstances.
+:::
+
+{/* prettier-ignore-end */}
+
+Requirements for available VRAM size by models are estimated as follows:
+
+| Model                | Context length | VRAM (params) | VRAM (total) |
+| -------------------- | :------------: | :-----------: | :----------: |
+| `BAAI/bge-m3`        |       8k       |   ≈ 0.3 GB    |   ≈ 0.3 GB   |
+| `Qwen/Qwen3-0.6B`    |      40k       |   ≈ 0.5 GB    |   ≈ 5.0 GB   |
+| `Qwen/Qwen3-1.7B`    |      40k       |   ≈ 1.0 GB    |   ≈ 5.5 GB   |
+| `Qwen/Qwen3-4B`      |      40k       |   ≈ 2.4 GB    |   ≈ 8.0 GB   |
+| `Qwen/Qwen3-8B`      |      40k       |   ≈ 4.5 GB    |  ≈ 10.5 GB   |
+| `Qwen/Qwen3-14B`     |      40k       |   ≈ 8.0 GB    |  ≈ 14.5 GB   |
+| `Qwen/Qwen3-32B`     |      40k       |   ≈ 17.6 GB   |   ≈ 25 GB    |
+| `Qwen/Qwen3-30B-A3B` |      40k       |   ≈ 16.5 GB   |   ≈ 24 GB    |

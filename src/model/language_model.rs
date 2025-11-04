@@ -205,18 +205,22 @@ pub struct LangModel {
 }
 
 impl LangModel {
-    pub async fn try_new_local(model_name: impl Into<String>) -> anyhow::Result<Self> {
+    pub async fn try_new_local(
+        model_name: impl Into<String>,
+        device_id: Option<i32>,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
-            inner: LangModelInner::Local(LocalLangModel::try_new(model_name).await?),
+            inner: LangModelInner::Local(LocalLangModel::try_new(model_name, device_id).await?),
         })
     }
 
     pub fn try_new_local_stream<'a>(
         model_name: impl Into<String>,
+        device_id: Option<i32>,
     ) -> BoxStream<'a, anyhow::Result<CacheProgress<Self>>> {
         let model_name = model_name.into();
         Box::pin(async_stream::try_stream! {
-            let mut strm = LocalLangModel::try_new_stream(model_name);
+            let mut strm = LocalLangModel::try_new_stream(model_name, device_id);
             while let Some(result) = strm.next().await {
                 let result = result?;
                 yield CacheProgress {
@@ -272,6 +276,7 @@ mod py {
     use super::*;
     use crate::{
         ffi::py::{base::await_future, cache_progress::await_cache_result},
+        model::get_cache_context,
         value::{
             Messages,
             py::{MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator},
@@ -309,17 +314,23 @@ mod py {
     impl LangModel {
         #[classmethod]
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[LangModel]"))]
-        #[pyo3(name = "new_local", signature = (model_name, progress_callback = None))]
+        #[pyo3(name = "new_local", signature = (model_name, device_id = None, progress_callback = None))]
         fn new_local_py<'a>(
             _cls: &Bound<'a, PyType>,
             py: Python<'a>,
             model_name: String,
+            device_id: Option<i32>,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Bound<'a, PyAny>> {
             let fut = async move {
-                let inner =
-                    await_cache_result::<LocalLangModel>(model_name, progress_callback).await?;
+                let cache_ctx = get_cache_context(device_id);
+                let inner = await_cache_result::<LocalLangModel>(
+                    model_name,
+                    Some(cache_ctx),
+                    progress_callback,
+                )
+                .await?;
                 Python::attach(|py| {
                     Py::new(
                         py,
@@ -333,17 +344,23 @@ mod py {
         }
 
         #[classmethod]
-        #[pyo3(name = "new_local_sync", signature = (model_name, progress_callback = None))]
+        #[pyo3(name = "new_local_sync", signature = (model_name, device_id = None, progress_callback = None))]
         fn new_local_sync_py(
             _cls: &Bound<'_, PyType>,
             py: Python<'_>,
             model_name: String,
+            device_id: Option<i32>,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Py<Self>> {
+            let cache_ctx = get_cache_context(device_id);
             let inner = await_future(
                 py,
-                await_cache_result::<LocalLangModel>(model_name, progress_callback),
+                await_cache_result::<LocalLangModel>(
+                    model_name,
+                    Some(cache_ctx),
+                    progress_callback,
+                ),
             )?;
             Py::new(
                 py,
@@ -512,6 +529,7 @@ mod node {
             cache::{JsCacheProgress, await_cache_result},
             common::get_or_create_runtime,
         },
+        model::get_cache_context,
         value::Messages,
     };
 
@@ -520,13 +538,16 @@ mod node {
         #[napi(js_name = "newLocal")]
         pub async fn new_local_js(
             model_name: String,
+            device_id: Option<i32>,
             progress_callback: Option<
                 ThreadsafeFunction<JsCacheProgress, (), JsCacheProgress, Status, false>,
             >,
         ) -> napi::Result<LangModel> {
-            let inner = await_cache_result::<LocalLangModel>(model_name, progress_callback)
-                .await
-                .unwrap();
+            let ctx = get_cache_context(device_id);
+            let inner =
+                await_cache_result::<LocalLangModel>(model_name, Some(ctx), progress_callback)
+                    .await
+                    .unwrap();
             Ok(LangModel {
                 inner: LangModelInner::Local(inner),
             })
@@ -608,7 +629,7 @@ mod wasm {
     use super::*;
     use crate::{
         ffi::web::{CacheProgressCallbackFn, stream_to_async_iterable},
-        model::api::APISpecification,
+        model::{api::APISpecification, get_cache_context},
         value::Messages,
     };
 
@@ -617,12 +638,15 @@ mod wasm {
         #[wasm_bindgen(js_name = "newLocal")]
         pub async fn new_local_js(
             #[wasm_bindgen(js_name = "modelName")] model_name: String,
+            #[wasm_bindgen(js_name = "deviceId")] device_id: Option<i32>,
             #[wasm_bindgen(js_name = "progressCallback")] progress_callback: Option<
                 CacheProgressCallbackFn,
             >,
         ) -> Result<LangModel, js_sys::Error> {
+            let ctx = get_cache_context(device_id);
             let inner = crate::ffi::web::await_cache_result::<LocalLangModel>(
                 model_name,
+                Some(ctx),
                 progress_callback,
             )
             .await
