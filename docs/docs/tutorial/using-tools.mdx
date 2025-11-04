@@ -115,9 +115,9 @@ based on the conversation context and the provided tool description.
 ```python
 def tool_behavior(base, symbols):
     if not base:
-        raise ValueError("Missing 'base' currency (ISO 4217).")
+        raise ValueError("Missing 'base' currency")
     if not symbols:
-        raise ValueError("Missing 'symbols' (comma-separated ISO 4217 codes).")
+        raise ValueError("Missing 'symbols'")
 
     symbols = symbols.split(",")
     if not symbols:
@@ -140,12 +140,13 @@ def tool_behavior(base, symbols):
 ```
 
 ```typescript
-async function toolBehavior(base, symbols) {
+async function toolBehavior(args) {
+  const { base, symbols } = args;
   if (!base) {
-    throw new Error("Missing 'base' currency (ISO 4217).");
+    throw new Error("Missing 'base'");
   }
   if (!symbols) {
-    throw new Error("Missing 'symbols' (comma-separated ISO 4217 codes).");
+    throw new Error("Missing 'symbols'");
   }
 
   const symbolList = symbols
@@ -161,7 +162,7 @@ async function toolBehavior(base, symbols) {
 
   let resp;
   try {
-    resp = await fetch(url, { timeout: 10000 });
+    resp = await fetch(url, { timeout: 10000 }); // Node 20+ supports timeout option
   } catch (err) {
     throw new Error(`Failed to reach Frankfurter API: ${err.message}`);
   }
@@ -226,9 +227,9 @@ tool_desc = ai.ToolDesc(
 
 def tool_behavior(base, symbols):
     if not base:
-        raise ValueError("Missing 'base' currency (ISO 4217).")
+        raise ValueError("Missing 'base' currency")
     if not symbols:
-        raise ValueError("Missing 'symbols' (comma-separated ISO 4217 codes).")
+        raise ValueError("Missing 'symbols'")
 
     symbols = symbols.split(",")
     if not symbols:
@@ -286,12 +287,13 @@ const toolDesc = {
   },
 };
 
-async function toolBehavior(base, symbols) {
+async function toolBehavior(args) {
+  const { base, symbols } = args;
   if (!base) {
-    throw new Error("Missing 'base' currency (ISO 4217).");
+    throw new Error("Missing 'base'");
   }
   if (!symbols) {
-    throw new Error("Missing 'symbols' (comma-separated ISO 4217 codes).");
+    throw new Error("Missing 'symbols'");
   }
 
   const symbolList = symbols
@@ -307,7 +309,7 @@ async function toolBehavior(base, symbols) {
 
   let resp;
   try {
-    resp = await fetch(url, { timeout: 10000 });
+    resp = await fetch(url, { timeout: 10000 }); // Node 20+ supports timeout option
   } catch (err) {
     throw new Error(`Failed to reach Frankfurter API: ${err.message}`);
   }
