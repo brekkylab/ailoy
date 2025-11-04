@@ -889,14 +889,19 @@ mod node {
                 ValueType::Boolean => Ok(Value::Bool(any.coerce_to_bool()?)),
                 ValueType::Number => {
                     let num = any.coerce_to_number()?;
-                    if let Ok(u) = num.get_uint32() {
-                        Ok(Value::Unsigned(u as u64))
-                    } else if let Ok(i) = num.get_int64() {
-                        Ok(Value::Integer(i))
-                    } else if let Ok(f) = num.get_double() {
-                        Ok(Value::Float(ordered_float::OrderedFloat(f)))
+                    let f = num.get_double()?;
+                    if !f.is_finite() {
+                        return Ok(Value::Float(ordered_float::OrderedFloat(f)));
+                    }
+                    const MAX_SAFE_I: f64 = 9_007_199_254_740_991.0;
+                    if f.fract() == 0.0 && f.abs() <= MAX_SAFE_I {
+                        if f < 0.0 {
+                            Ok(Value::Integer(f as i64))
+                        } else {
+                            Ok(Value::Unsigned(f as u64))
+                        }
                     } else {
-                        Err(Error::from_reason("Unsupported JS type for Value"))
+                        Ok(Value::Float(ordered_float::OrderedFloat(f)))
                     }
                 }
                 ValueType::BigInt => {
