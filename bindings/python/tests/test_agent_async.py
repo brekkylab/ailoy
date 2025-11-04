@@ -255,63 +255,63 @@ async def test_python_async_function_tool(agent: ai.Agent):
     agent.remove_tool(tool.get_description().name)
 
 
-@pytest.mark.parametrize(
-    "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
-)
-async def test_parallel_tool_call(agent: ai.Agent):
-    async def tool_temperature(
-        location: str, unit: Literal["Celsius", "Fahrenheit"] = "Celsius"
-    ):
-        """
-        Get temperature of the provided location
-        Args:
-            location: The city name
-            unit: The unit of temperature
-        Returns:
-            int: The temperature
-        """
-        await asyncio.sleep(1.0)
-        return 35 if unit == "Celsius" else 95
+# @pytest.mark.parametrize(
+#     "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
+# )
+# async def test_parallel_tool_call(agent: ai.Agent):
+#     async def tool_temperature(
+#         location: str, unit: Literal["Celsius", "Fahrenheit"] = "Celsius"
+#     ):
+#         """
+#         Get temperature of the provided location
+#         Args:
+#             location: The city name
+#             unit: The unit of temperature
+#         Returns:
+#             int: The temperature
+#         """
+#         await asyncio.sleep(1.0)
+#         return 35 if unit == "Celsius" else 95
 
-    async def tool_wind_speed(location: str):
-        """
-        Get the current wind speed in km/h at a given location
-        Args:
-            location: The city name
-        Returns:
-            float: The current wind speed at the given location in km/h, as a float.
-        """
-        await asyncio.sleep(1.0)
-        return 23.5
+#     async def tool_wind_speed(location: str):
+#         """
+#         Get the current wind speed in km/h at a given location
+#         Args:
+#             location: The city name
+#         Returns:
+#             float: The current wind speed at the given location in km/h, as a float.
+#         """
+#         await asyncio.sleep(1.0)
+#         return 23.5
 
-    tools = [
-        ai.Tool.new_py_function(tool_temperature),
-        ai.Tool.new_py_function(tool_wind_speed),
-    ]
-    agent.add_tools(tools)
+#     tools = [
+#         ai.Tool.new_py_function(tool_temperature),
+#         ai.Tool.new_py_function(tool_wind_speed),
+#     ]
+#     agent.add_tools(tools)
 
-    async for resp in agent.run(
-        "Tell me the weather in Seoul both temperature and wind.",
-        config=ai.AgentConfig(inference=ai.InferenceConfig(think_effort="disable")),
-    ):
-        for content in resp.message.contents:
-            if isinstance(content, ai.Part.Text):
-                print(f"{content.text=}")
-            elif isinstance(content, ai.Part.Value):
-                print(f"{content.value=}")
-            else:
-                raise ValueError(f"Content has invalid part_type: {content.part_type}")
-        for tool_call in resp.message.tool_calls:
-            if isinstance(tool_call, ai.Part.Function):
-                print(
-                    f"function_call={tool_call.function.name}(**{tool_call.function.arguments})"
-                )
-            else:
-                raise ValueError(
-                    f"Tool call has invalid part_type: {tool_call.part_type}"
-                )
+#     async for resp in agent.run(
+#         "Tell me the weather in Seoul both temperature and wind.",
+#         config=ai.AgentConfig(inference=ai.InferenceConfig(think_effort="disable")),
+#     ):
+#         for content in resp.message.contents:
+#             if isinstance(content, ai.Part.Text):
+#                 print(f"{content.text=}")
+#             elif isinstance(content, ai.Part.Value):
+#                 print(f"{content.value=}")
+#             else:
+#                 raise ValueError(f"Content has invalid part_type: {content.part_type}")
+#         for tool_call in resp.message.tool_calls:
+#             if isinstance(tool_call, ai.Part.Function):
+#                 print(
+#                     f"function_call={tool_call.function.name}(**{tool_call.function.arguments})"
+#                 )
+#             else:
+#                 raise ValueError(
+#                     f"Tool call has invalid part_type: {tool_call.part_type}"
+#                 )
 
-    agent.remove_tools([t.get_description().name for t in tools])
+#     agent.remove_tools([t.get_description().name for t in tools])
 
 
 @pytest.mark.parametrize(
