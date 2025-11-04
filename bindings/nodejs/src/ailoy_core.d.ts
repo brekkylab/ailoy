@@ -140,6 +140,11 @@ export declare class VectorStore {
   count(): Promise<number>;
 }
 
+export declare function accumulateMessageDelta(
+  a: MessageDelta,
+  b: MessageDelta
+): MessageDelta;
+
 /**
  * Configuration for running the agent.
  *
@@ -179,6 +184,8 @@ export interface DocumentPolyfill {
 }
 
 export type Embedding = Float32Array;
+
+export declare function finishMessageDelta(delta: MessageDelta): Message;
 
 /** Explains why a language model's streamed generation finished. */
 export type FinishReason =

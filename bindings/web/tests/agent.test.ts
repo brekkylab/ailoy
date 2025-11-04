@@ -97,7 +97,7 @@ for (const cfg of modelConfigs) {
       }
     });
 
-    test.sequential("Simple Chat(string contents)", async () => {
+    test.sequential("Simple Chat(normal form)", async () => {
       for await (const resp of agent.run([
         {
           role: "user",
@@ -105,6 +105,22 @@ for (const cfg of modelConfigs) {
         },
       ])) {
         console.log(resp.message);
+      }
+    });
+
+    test.sequential("Simple Chat Delta", async () => {
+      let acc = {} as ailoy.MessageDelta;
+      for await (const resp of agent.runDelta([
+        {
+          role: "user",
+          contents: [{ type: "text", text: "What is your name?" }],
+        },
+      ])) {
+        acc = ailoy.accumulateMessageDelta(acc, resp.delta);
+      }
+      const message = ailoy.finishMessageDelta(acc);
+      if (message.contents?.[0]?.type === "text") {
+        console.log(message.contents[0].text);
       }
     });
 

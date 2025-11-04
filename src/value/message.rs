@@ -907,6 +907,22 @@ pub(crate) mod node {
 
     use super::*;
 
+    #[napi]
+    pub fn accumulate_message_delta(
+        a: MessageDelta,
+        b: MessageDelta,
+    ) -> napi::Result<MessageDelta> {
+        a.accumulate(b)
+            .map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
+    }
+
+    #[napi]
+    pub fn finish_message_delta(delta: MessageDelta) -> napi::Result<Message> {
+        delta
+            .finish()
+            .map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
+    }
+
     #[napi(transparent)]
     pub struct Messages(Either<Vec<Either<Message, SingleTextMessage>>, String>);
 
@@ -1050,6 +1066,22 @@ mod wasm {
     use wasm_bindgen::prelude::*;
 
     use super::*;
+
+    #[wasm_bindgen(js_name = "accumulateMessageDelta")]
+    pub fn accumulate_message_delta(
+        a: MessageDelta,
+        b: MessageDelta,
+    ) -> Result<MessageDelta, js_sys::Error> {
+        a.accumulate(b)
+            .map_err(|e| js_sys::Error::new(&format!("{}", e)))
+    }
+
+    #[wasm_bindgen(js_name = "finishMessageDelta")]
+    pub fn finish_message_delta(delta: MessageDelta) -> Result<Message, js_sys::Error> {
+        delta
+            .finish()
+            .map_err(|e| js_sys::Error::new(&format!("{}", e)))
+    }
 
     #[wasm_bindgen]
     extern "C" {

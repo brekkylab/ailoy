@@ -112,6 +112,24 @@ for (const cfg of modelConfigs) {
       }
     });
 
+    test.sequential("Simple Chat Delta", async () => {
+      let acc = {
+        contents: [],
+        tool_calls: [],
+      } as ailoy.MessageDelta;
+      for await (const resp of agent.runDelta([
+        {
+          role: "user",
+          contents: [{ type: "text", text: "What is your name?" }],
+        },
+      ])) {
+        acc = ailoy.accumulateMessageDelta(acc, resp.delta);
+      }
+      const message = ailoy.finishMessageDelta(acc);
+      if (message.contents[0].type === "text")
+        console.log(message.contents[0].text);
+    });
+
     test.sequential(
       "Tool Calling: Builtin Tool (terminal)",
       async () => {
