@@ -92,6 +92,7 @@ Ensure you have the following tools installed:
 - **Emscripten** >= 4.0.0
 - **CMake** >= 3.28.0
 - **Git**
+- **Docker Engine** (required to build faiss shim)
 
 
 ### Build Process
