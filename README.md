@@ -47,7 +47,7 @@ Please refer to the [documentation](https://brekkylab.github.io/ailoy/docs/resou
 
 ```bash
 cd bindings/python
-maturin develop
+maturin build --out ./dist
 ```
 
 For more details, refer to `bindings/python/README.md`.
