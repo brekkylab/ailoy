@@ -4,7 +4,7 @@
 
 :::warning
 WebAssembly support is currently **experimental**, and you may encounter unexpected errors.
-If you do, please report them via our **GitHub Issues** or **Discord** channels so we can address them promptly.
+If you do, please report them via our [**GitHub Issues**](https://github.com/brekkylab/ailoy/issues) or [**Discord**](https://discord.gg/27rx3EJy3P) channel so we can address them promptly.
 :::
 
 {/* prettier-ignore-end */}
@@ -135,7 +135,6 @@ found 0 vulnerabilities
 
 3. To ensure optimal performance and compatibility, update your `vite.config.ts`
    with the following settings:
-
    - Exclude `ailoy-web` from dependency optimization (`optimizeDeps.exclude`)
    - Enable cross-origin isolation (required for `SharedArrayBuffer` in WASM
      threading)
@@ -310,12 +309,168 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
 ### Implementation
 
-1. Create `src/AiloyRuntimeProvider.tsx` and write the code as follow:
+We use assistant-ui's
+[ExternalStoreRuntime](https://www.assistant-ui.com/docs/runtimes/custom/external-store)
+feature to ingest messages converted from states where raw messages are stored
+in Ailoy format.
+
+1. Let's start from writing conversion logics from Ailoy's `Message` and
+   `MessageDelta` to assistant-ui's `useExternalMessageConverter.Message`.  
+   Create `src/AiloyRuntimeProvider.tsx` and write the code as follow:
+
+```typescript
+import { useExternalMessageConverter } from "@assistant-ui/react";
+import * as ai from "ailoy-web";
+
+function imageDataToBase64(arr: Uint8Array): string {
+  let binaryString = "";
+  arr.forEach((byte) => {
+    binaryString += String.fromCharCode(byte);
+  });
+  const base64String = btoa(binaryString);
+  return base64String;
+}
+
+function convertMessage(
+  message: ai.Message
+): useExternalMessageConverter.Message {
+  if (message.role === "user") {
+    return {
+      role: message.role,
+      content: message.contents.map((part) => {
+        if (part.type === "text") return part;
+        else if (part.type === "image") {
+          if (part.image.type === "binary") {
+            return {
+              type: "image",
+              image: `data:image/png;base64,${imageDataToBase64(
+                part.image.data
+              )}`,
+            };
+          } else {
+            return { type: "image", image: part.image.url };
+          }
+        } else if (part.type === "value")
+          return { type: "text", text: part.value!.toString() };
+        else throw Error("Unknown content type");
+      }),
+    };
+  } else if (message.role === "assistant") {
+    let contents = [];
+    if (message.thinking) {
+      contents.push({
+        type: "reasoning",
+        text: message.thinking,
+      });
+    }
+    if (message.tool_calls) {
+      for (const toolCall of message.tool_calls) {
+        if (toolCall.type !== "function")
+          throw new Error("tool call content should be a type of function");
+        contents.push({
+          type: "tool-call",
+          toolCallId: toolCall.id,
+          toolName: toolCall.function.name,
+          args: toolCall.function.arguments,
+        });
+      }
+    }
+    for (const content of message.contents) {
+      if (content.type === "text") {
+        contents.push(content);
+      }
+    }
+    return {
+      role: message.role,
+      content: contents,
+    } as useExternalMessageConverter.Message;
+  } else if (message.role === "tool") {
+    let toolResult: string;
+    if (message.contents[0].type === "text") {
+      toolResult = message.contents[0].text;
+    } else if (message.contents[0].type === "value") {
+      toolResult = JSON.stringify(message.contents[0].value);
+    } else {
+      throw new Error("Tool result should be either text or value.");
+    }
+    return {
+      role: "tool",
+      toolCallId: message.id,
+      result: toolResult,
+    } as useExternalMessageConverter.Message;
+  } else {
+    throw new Error(`Unknown message type: ${message}`);
+  }
+}
+
+function convertMessageDelta(
+  delta: ai.MessageDelta
+): useExternalMessageConverter.Message {
+  if (delta.role === "assistant") {
+    let content = null;
+    if (delta.thinking !== undefined) {
+      content = {
+        type: "reasoning",
+        text: delta.thinking,
+      };
+    } else if (delta.tool_calls.length > 0) {
+      for (const toolCall of delta.tool_calls) {
+        if (toolCall.type !== "function")
+          throw new Error("tool call content should be a type of function");
+        if (toolCall.function.type === "verbatim") {
+          content = { type: "text", text: toolCall.function.text };
+        } else if (toolCall.function.type === "with_string_args") {
+          content = {
+            type: "text",
+            text: `{"name": "${toolCall.function.name}", "arguments": ${toolCall.function.arguments}}`,
+          };
+        } else {
+          content = {
+            type: "text",
+            text: `{"name": "${toolCall.function.name}", "arguments": ${toolCall.function.arguments}}`,
+          };
+        }
+      }
+    } else if (delta.contents.length > 0 && delta.contents[0].type === "text") {
+      content = {
+        type: "text",
+        text: delta.contents[0].text,
+      };
+    }
+    return {
+      role: "assistant",
+      content: content !== null ? [content] : [],
+    } as useExternalMessageConverter.Message;
+  } else if (delta.role === "tool") {
+    let toolResult: string;
+    if (delta.contents[0].type === "text") {
+      toolResult = delta.contents[0].text;
+    } else if (delta.contents[0].type === "value") {
+      toolResult = JSON.stringify(delta.contents[0].value);
+    } else {
+      throw new Error("Tool result should be either text or value.");
+    }
+    return {
+      role: "tool",
+      toolCallId: delta.id,
+      result: toolResult,
+    } as useExternalMessageConverter.Message;
+  } else {
+    // Consider this case as an empty assistant message
+    return {
+      role: "assistant",
+      content: [],
+    };
+  }
+}
+```
+
+2. Write `AiloyRuntimeProvider` component as follow:
 
 ```typescript
 "use client";
 
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
@@ -324,18 +479,24 @@ import {
 } from "@assistant-ui/react";
 import * as ai from "ailoy-web";
 
+/// Conversion logics
+
 export function AiloyRuntimeProvider({
   children,
 }: Readonly<{ children: ReactNode }>) {
   const [agent, setAgent] = useState<ai.Agent | undefined>(undefined);
   const [agentLoading, setAgentLoading] = useState<boolean>(false);
-  const [messages, setMessages] = useState<
-    (ai.UserMessage | ai.AgentResponse)[]
-  >([]);
+  // This stores the complete messages
+  const [messages, setMessages] = useState<ai.Message[]>([]);
+  // This stores the ongoing accumulated message delta
+  const [ongoingMessage, setOngoingMessage] = useState<ai.MessageDelta | null>(
+    null
+  );
   const [isAnswering, setIsAnswering] = useState<boolean>(false);
 
   useEffect(() => {
     (async () => {
+      // Check if WebGPU is available first
       const { supported, reason } = await ai.isWebGPUSupported();
       if (!supported) {
         alert(`WebGPU is not supported: ${reason!}`);
@@ -343,12 +504,13 @@ export function AiloyRuntimeProvider({
       }
 
       setAgentLoading(true);
-      const runtime = await ai.startRuntime();
-      const agent = await ai.defineAgent(
-        runtime,
-        ai.LocalModel({ id: "Qwen/Qwen3-0.6B" })
+
+      // Initialize the agent with local LangModel
+      const agent = new ai.Agent(
+        await ai.LangModel.newLocal("Qwen/Qwen3-0.6B")
       );
       setAgent(agent);
+
       setAgentLoading(false);
     })();
   }, []);
@@ -356,84 +518,62 @@ export function AiloyRuntimeProvider({
   const onNew = async (message: AppendMessage) => {
     if (agent === undefined) throw new Error("Agent is not initialized yet");
 
+    // Add text content
     if (message.content[0]?.type !== "text")
       throw new Error("Only text messages are supported");
 
-    const input = message.content[0].text;
-    const userMessage: ai.UserMessage = {
+    // Append a new user message
+    const newMessage: ai.Message = {
       role: "user",
-      content: input,
+      contents: [{ type: "text", text: message.content[0].text }],
     };
-    setMessages((prev) => [...prev, userMessage]);
-    setIsAnswering(true);
+    setMessages((prev) => [...prev, newMessage]);
 
-    for await (const resp of agent.query(input)) {
-      if (resp.type === "output_text" || resp.type === "reasoning") {
-        if (resp.isTypeSwitched) {
-          setMessages((prev) => [...prev, resp]);
-        } else {
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            last.content += resp.content;
-            return [...prev.slice(0, -1), last];
-          });
-        }
-      } else {
-        setMessages((prev) => [...prev, resp]);
+    setIsAnswering(true);
+    let accumulated: ai.MessageDelta | null = null;
+    for await (const { delta, finish_reason } of agent.runDelta([
+      ...messages,
+      newMessage,
+    ])) {
+      // Store accumulated message delta
+      accumulated =
+        accumulated === null
+          ? delta
+          : ai.accumulateMessageDelta(accumulated, delta);
+      setOngoingMessage(accumulated);
+
+      // Finish the delta and append to messages on `finish_reason` arrived
+      if (finish_reason !== undefined) {
+        let newMessage = ai.finishMessageDelta(accumulated);
+        setMessages((prevMessages) => [...prevMessages, newMessage]);
+        setOngoingMessage(null);
+        accumulated = null;
       }
     }
     setIsAnswering(false);
   };
 
-  const convertedMessages = useExternalMessageConverter({
-    messages,
-    callback: (message: ai.UserMessage | ai.AgentResponse) => {
-      if (message.role === "user") {
-        return {
-          role: message.role,
-          content: [{ type: "text", text: message.content as string }],
-        };
-      } else if (message.type === "output_text") {
-        return {
-          role: "assistant",
-          content: [{ type: "text", text: message.content }],
-        };
-      } else if (message.type === "reasoning") {
-        return {
-          role: "assistant",
-          content: [{ type: "reasoning", text: message.content }],
-        };
-      } else if (message.type === "tool_call") {
-        return {
-          role: "assistant",
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: message.content.id!,
-              toolName: message.content.function.name,
-              args: message.content.function.arguments,
-            },
-          ],
-        };
-      } else if (message.type === "tool_call_result") {
-        return {
-          role: "tool",
-          toolCallId: message.content.tool_call_id!,
-          result: message.content.content[0].text,
-        };
-      } else {
-        throw new Error(`Unknown message type: ${message.type}`);
+  // Converted messages derived from raw messages and message delta
+  const convertedMessages: useExternalMessageConverter.Message[] =
+    useMemo(() => {
+      let converted = messages.map(convertMessage);
+      if (ongoingMessage !== null) {
+        let convertedDelta = convertMessageDelta(ongoingMessage);
+        converted = [...converted, convertedDelta];
       }
-    },
-    isRunning: isAnswering,
-    joinStrategy: "concat-content",
-  });
+      return converted;
+    }, [messages, ongoingMessage]);
 
+  // Create ExternalStoreRuntime
   const runtime = useExternalStoreRuntime({
     isLoading: agentLoading,
     isDisabled: agent === undefined,
     isRunning: isAnswering,
-    messages: convertedMessages,
+    messages: useExternalMessageConverter({
+      messages: convertedMessages,
+      callback: (msg) => msg,
+      isRunning: isAnswering,
+    }),
     onNew,
   });
 
@@ -445,7 +585,7 @@ export function AiloyRuntimeProvider({
 }
 ```
 
-2. Update `src/App.tsx` to wrap `<Thread />` inside `<AiloyRuntimeProvider>`.
+3. Update `src/App.tsx` to wrap `<Thread />` inside `<AiloyRuntimeProvider>`.
 
 ```typescript
 import { Thread } from "@/components/assistant-ui/thread";
@@ -462,7 +602,7 @@ function App() {
 export default App;
 ```
 
-3. React’s `<StrictMode>` can cause components to mount twice during
+4. React’s `<StrictMode>` can cause components to mount twice during
    development.  
    To avoid double state updates, remove `<StrictMode>` from `src/main.tsx`:
 
@@ -479,7 +619,7 @@ createRoot(document.getElementById('root')!).render(
 )
 ```
 
-4. Start the development server with `npm run dev`.
+5. Start the development server with `npm run dev`.
 
 {/* prettier-ignore-start */}
 
@@ -497,7 +637,7 @@ $ npm run dev
 
 {/* prettier-ignore-end */}
 
-5. Visit http://localhost:5173 — your chat UI should be live.
+6. Visit http://localhost:5173 — your chat UI should be live.
 
 ![](./img/webassembly-supports/chat-ui.png)
 
@@ -529,19 +669,19 @@ You can easily switch to API models by changing the model configuration as
 below.
 
 ```typescript
-const agent = await ai.defineAgent(
-  runtime,
-  // ai.LocalModel({ id: "Qwen/Qwen3-0.6B" })
-  ai.APIModel({
-    id: "gpt-5-mini",
-    apiKey: "<YOUR_OPENAI_API_KEY>",
-  })
+const agent = new ai.Agent(
+  // await ai.LangModel.newLocal("Qwen/Qwen3-0.6B")
+  await ai.LangModel.newStreamAPI(
+    "OpenAI",
+    "gpt-5-mini",
+    "<YOUR_OPENAI_API_KEY>"
+  )
 );
 ```
 
 {/* prettier-ignore-start */}
 
-You can use any API models listed in [**supported API models**](http://localhost:3000/ailoy/docs/concepts/agent#api-models).
+You can use any API models listed in [**Available Models**](../resources/available-models.mdx).
 
 :::warning
 The above code is for test purpose. **You should never hardcode your API keys in your frontend codes!**
@@ -643,68 +783,39 @@ const UserMessage: FC = () => {
 
 In `src/AiloyRuntimeProvider.tsx`, update `onNew` to handle image contents.
 
-```typescript {4-27}
+```typescript {4-30}
 const onNew = async (message: AppendMessage) => {
-  // ...
+  if (agent === undefined) throw new Error("Agent is not initialized yet");
 
-  let userContent: ai.UserMessage["content"] = [];
+  let userContents: ai.Part[] = [];
 
   // Add attachments
   if (message.attachments !== undefined) {
     for (const attach of message.attachments) {
+      // Add image content
       if (attach.type === "image") {
-        const imageContent = await ai.ImageContent.fromFile(attach.file!);
-        userContent.push(imageContent);
+        const ab = await attach.file!.arrayBuffer();
+        const arr = new Uint8Array(ab);
+        const imagePart = ai.imageFromBytes(arr);
+        userContents.push(imagePart);
       }
       // other types are skipped
     }
   }
 
-  // Add text prompt
+  // Add text content
   if (message.content[0]?.type !== "text")
     throw new Error("Only text messages are supported");
-  const textContent: ai.TextContent = {
-    type: "text",
-    text: message.content[0].text,
-  };
-  userContent.push(textContent);
+  userContents.push({ type: "text", text: message.content[0].text });
 
-  // Set messages
-  setMessages((prev) => [...prev, { role: "user", content: userContent }]);
+  // Append a new user message
+  const newMessage: ai.Message = {
+    role: "user",
+    contents: userContents,
+  };
+  setMessages((prev) => [...prev, newMessage]);
 
   // ...
-```
-
-Update the message conversion callback in `useExternalMessageConverter` to
-handle multimodal contents.
-
-```typescript {4-23}
-const convertedMessages = useExternalMessageConverter({
-  messages,
-  callback: (message: ai.UserMessage | ai.AgentResponse) => {
-    if (message.role === "user") {
-      if (typeof message.content === "string") {
-        return {
-          role: message.role,
-          content: [{ type: "text", text: message.content }],
-        };
-      } else {
-        return {
-          role: message.role,
-          content: message.content.map((c) => {
-            if (c.type === "text") return c;
-            else if (c.type === "image_url")
-              return { type: "image", image: c.image_url.url };
-            else if (c.type === "input_audio")
-              return { type: "audio", audio: c.input_audio };
-            else throw Error("Unknown content type");
-          }),
-        };
-      }
-    }
-    // ...
-  },
-});
 ```
 
 Add `adapters` on `useExternalStoreRuntime` to handle image file attachments.
@@ -727,72 +838,59 @@ const runtime = useExternalStoreRuntime({
 });
 ```
 
+You don't need to modify the message conversion logics further, since it already
+handles image type contents.
+
 Now you can attach images and ask about them.
 
 ![](./img/webassembly-supports/image-input.gif)
 
-### Using Builtin Tools
+### Using Tools
 
-You can use any tool presets as described in
-[**Out-of-the-box tools**](../concepts/tools#out-of-the-box-tools). Let's add
-handling tool call and tool result messages and see how it works.
+You can register tools to agents with the same APIs as described in
+[**Using Tools**](./using-tools.mdx). Let's add a simple tool and see how the
+tool calls and results are handled.
 
-After `agent` is defined, add `calculator` tool preset as below.
-
-```typescript
-await agent.addToolsFromPreset("calculator");
-```
-
-Update the code in `<MessageList>` as below to show the corresponding message
-content for each message type.
+Define `calculator-add` tool and register to agent as below.
 
 ```typescript
-<MessageList>
-  {messages.map((message, idx) => {
-    let content = "";
-    if (message.role === "user") {
-      content = (message as ai.UserMessage).content as string;
-    } else if (
-      message.type === "output_text" ||
-      message.type === "reasoning"
-    ) {
-      content = (message as ai.AgentResponse).content as string;
-    } else if (message.type === "tool_call") {
-      content = `Tool Call: ${message.content.function.name} (${message.content.id})`;
-      content += `\nArguments: ${JSON.stringify(
-        message.content.function.arguments
-      )}`;
-    } else if (message.type === "tool_call_result") {
-      content = `Tool Result (${message.content.tool_call_id})`;
-      content += `\nContent: ${message.content.content[0].text}`;
-    }
+const agent = ...;
 
-    return (
-      <Message
-        key={`message-${idx}`}
-        model={{
-          direction:
-            message.role === "user" ? "outgoing" : "incoming",
-          position: "normal",
-          sender: message.role,
-          message: content,
-        }}
-      />
-    );
-  })}
-</MessageList>
+const tool = ai.Tool.newFunction(
+  {
+    name: "calculator-add",
+    description: "Get two numbers and return the addition.",
+    parameters: {
+      type: "object",
+      properties: {
+        a: {
+          type: "integer",
+          description: "The first number",
+        },
+        b: {
+          type: "integer",
+          description: "The second number",
+        },
+      },
+    },
+  },
+  async (args: { a: number; b: number }) => {
+    return args.a + args.b;
+  }
+);
+agent.addTool(tool);
 ```
 
-Test the tool calling with the prompt that might invoke the calculator tool.
+Test the tool calling with the prompt that might invoke the `calculator-add`
+tool.
 
-![tool calling](./img/webassembly-supports/builtin-tool.gif)
+![tool calling](./img/webassembly-supports/simple-tool.gif)
 
 ### Using MCP Tools
 
-You can register MCP clients and use their tools in agents via
-[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http),
-[Server-Sent Event](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports#http-with-sse),
-and WebSocket transports. Note that
+You can initialize MCP clients and use their tools in agents via
+[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
+transport. Note that
 [stdio](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#stdio)
 transport is not supported in browsers because they cannot run a stdio process.
 
@@ -940,15 +1038,11 @@ MCP server listening on 3000
 In `src/AiloyRuntimeProvider.tsx`, add MCP tools after the agent has been
 initialized.
 
-```typescript {3-8}
+```typescript {3-4}
 const agent = ...;
 
-await agent.addToolsFromMcpClient(
-  "calculator",
-  new ai.MCPStreamableHTTPClientTransport(
-    new URL("http://localhost:3000/mcp")
-  )
-);
+const mcpClient = await ai.MCPClient.streamableHttp("http://localhost:3000/mcp");
+agent.addTools(mcpClient.tools);
 ```
 
 Check if MCP tools work as expected.
@@ -957,38 +1051,35 @@ Check if MCP tools work as expected.
 
 ## Using Vector Stores
 
-You can interact with Vector Stores in Ailoy Web using the same API described in
-[**RAG with Vector Store**](./rag-with-vector-store.mdx).
+You can interact with Vector Stores in Ailoy Web using the same APIs described
+in [**RAG Using Documents**](./rag-using-documents.mdx).
 
 When combined with **local embedding models** and **in-memory vector stores**
 such as **Faiss**, you can build a fully client-side RAG application that runs
 entirely inside the user's browser—no backend servers required. This approach is
 ideal for privacy-preserving, offline-capable AI assistants.
 
-### Defining a Vector Store
+### Creating an EmbeddingModel
 
 ```typescript
 import * as ai from "ailoy-web";
 
-const runtime = await ai.startRuntime();
+const em = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
+```
 
-// Using an in-memory Faiss vector store
-const vectorstore = await ai.defineVectorStore(runtime, {
-  type: "faiss",
-  embedding: {
-    modelId: "BAAI/bge-m3",
-  },
-});
+### Creating a VectorStore
+
+```typescript
+import * as ai from "ailoy-web";
+
+// Using an in-memory Faiss vectorstore
+const vectorstore = await ai.VectorStore.newFaiss(1024);
 
 // Using an external ChromaDB server
-const vectorstore = await ai.defineVectorStore(runtime, {
-  type: "chromadb",
-  url: "http://localhost:8000", // Replace with your ChromaDB endpoint
-  collection: "my-collection",  // Your target collection name
-  embedding: {
-    modelId: "BAAI/bge-m3",
-  },
-})
+const vectorstore = await ai.VectorStore.newChroma(
+  "http://localhost:8000", // Replace with your ChromaDB endpoint
+  "my-collection",  // Your target collection name
+);
 ```
 
 {/* prettier-ignore-start */}
@@ -1023,8 +1114,9 @@ const items = [
 ];
 
 for (const item of items) {
-  const result = await vectorstore.insert(item);
-  console.log(result); // Example: {id: "1"}
+  const embedding = await em.infer(item.document);
+  const result = await vectorstore.addVector({ embedding, ...item });
+  console.log(result); // Example: "1"
 }
 ```
 
@@ -1034,8 +1126,9 @@ You can retrieve the most relevant documents by similarity score, which is
 computed using vector embeddings.
 
 ```typescript
+const queryEmbedding = await em.infer("What is BGE-M3?");
 // Retrieve the top 1 item most similar to the query
-const retrievedItems = await vectorstore.retrieve("What is BGE-M3?", 1);
+const retrievedItems = await vectorstore.retrieve(queryEmbedding, 1);
 console.log(retrievedItems);
 // Expected: returns the document related to "bge-m3"
 ```

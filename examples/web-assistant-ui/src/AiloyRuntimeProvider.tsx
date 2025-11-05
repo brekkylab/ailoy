@@ -174,6 +174,7 @@ export function AiloyRuntimeProvider({
       }
 
       setAgentLoading(true);
+
       const agent = new ai.Agent(
         await ai.LangModel.newLocal("Qwen/Qwen3-0.6B")
         // await ai.LangModel.newStreamAPI(
@@ -182,8 +183,8 @@ export function AiloyRuntimeProvider({
         //   "<YOUR-OPENAI-API-KEY>"
         // )
       );
-
       setAgent(agent);
+
       setAgentLoading(false);
     })();
   }, []);
