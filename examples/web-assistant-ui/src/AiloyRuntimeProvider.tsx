@@ -182,10 +182,6 @@ export function AiloyRuntimeProvider({
         //   "<YOUR-OPENAI-API-KEY>"
         // )
       );
-      const mcpClient = await ai.MCPClient.streamableHttp(
-        "http://localhost:3000/mcp"
-      );
-      agent.addTools(mcpClient.tools);
 
       setAgent(agent);
       setAgentLoading(false);

@@ -8,6 +8,8 @@ use std::{
 use anyhow::{Context, bail};
 use async_stream::try_stream;
 use futures::{Stream, StreamExt as _, stream::FuturesUnordered};
+use reqwest_middleware::ClientBuilder;
+use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 use tokio::sync::RwLock;
 use url::Url;
 
@@ -22,8 +24,11 @@ use crate::{
 };
 
 async fn download(url: Url) -> anyhow::Result<Vec<u8>> {
-    let req = reqwest::get(url);
-    let resp = req.await?;
+    let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+    let client = ClientBuilder::new(reqwest::Client::new())
+        .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+        .build();
+    let resp = client.get(url).send().await?;
     if !resp.status().is_success() {
         bail!("HTTP error: {}", resp.status());
     }
