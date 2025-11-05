@@ -13,14 +13,15 @@
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Fx.com%2Failoy_co)](https://x.com/ailoy_co)
 
 
-Ailoy is an AI agent builder. It is designed to enable AI features effortlessly. It is intended to be used just by importing it.
+Ailoy is a library for building **AI agents** and **AI applications**.
+It is designed to enable AI features effortlessly. It is intended to be used just by importing it.
 
 ## Features
 
 - Comprehensive AI agent capabilities
   - Reasoning-based workflows
-  - Tool calling capabilities, including `MCP` integration
-  - Native RAG support with built-in vector store
+  - **Tool calling** capabilities, including `MCP` integration
+  - Native **RAG(Retrieval-Augmented Generation)** support with built-in vector store
 - Run AI models locally or via cloud APIs
   - Easily **switch between open-source models and APIs**
   - **Fully local and private agent support**
