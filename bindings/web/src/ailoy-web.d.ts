@@ -40,6 +40,10 @@ export class Agent {
     knowledge?: Knowledge | null
   );
   addTool(tool: Tool): void;
+  /**
+   * Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after this function is called.
+   * If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
+   */
   addTools(tools: Tool[]): void;
   removeTool(toolName: string): void;
   removeTools(toolNames: string[]): void;
