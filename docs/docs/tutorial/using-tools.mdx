@@ -190,22 +190,34 @@ const agent = new ai.Agent(lm, tools);
 </CodeTabs>
 
 Also, you can register the tools **after** creating the agent by using the
-`add_tool` methods.
+`add_tool` or `add_tools` methods.
 
 <CodeTabs>
 
 ```python
-lm = await ai.LangModel.new_local("Qwen/Qwen3-8B")
-agent = ai.Agent(lm, [])
-...
-agent.add_tool(ai.Tool.new_py_function(tool_behavior, tool_desc))
+agent = ...
+
+# Add a single tool
+tool = ai.Tool.new_py_function(...)
+agent.add_tool(tool)
+
+# Add multiple tools
+tool1 = ai.Tool.new_py_function(...)
+tool2 = ai.Tool.new_py_function(...)
+agent.add_tools([tool1, tool2])
 ```
 
 ```typescript
-const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B");
-const agent = new ai.Agent(lm);
-...
-agent.add_tool(ai.Tool.newFunction(toolDesc, toolBehavior));
+const agent = ...
+
+// Add a single tool
+const tool = ai.Tool.newFunction(...);
+agent.addTool(tool);
+
+// Add multiple tools
+const tool1 = ai.Tool.newFunction(...);
+const tool2 = ai.Tool.newFunction(...);
+agent.addTools([tool1, tool2]);
 ```
 
 </CodeTabs>
