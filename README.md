@@ -20,14 +20,14 @@ It is designed to enable AI features effortlessly. It is intended to be used jus
 
 - Comprehensive AI agent capabilities
   - Reasoning-based workflows
-  - **Tool calling** capabilities, including `MCP` integration
+  - **Tool calling** capabilities, including **MCP** integration
   - Native **RAG(Retrieval-Augmented Generation)** support with built-in vector store
 - Run AI models locally or via cloud APIs
   - Easily **switch between open-source models and APIs**
   - **Fully local and private agent support**
 - Cross-platform compatibility
   - Runs in almost any environment
-  - Supports native-equivalent functionality in **web browsers** (using WASM)
+  - Supports native-equivalent functionality in **web browsers** using WASM
 
 For more details, please refer to the [documentation](https://brekkylab.github.io/ailoy/).
 
