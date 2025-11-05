@@ -92,6 +92,7 @@ dependencies = [
  "tokenizers",
  "tokio",
  "tsify",
+ "unicode-segmentation",
  "url",
  "uuid",
  "wasm-bindgen",

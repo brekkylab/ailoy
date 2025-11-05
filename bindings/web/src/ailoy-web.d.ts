@@ -40,7 +40,9 @@ export class Agent {
     knowledge?: Knowledge | null
   );
   addTool(tool: Tool): void;
+  addTools(tools: Tool[]): void;
   removeTool(toolName: string): void;
+  removeTools(toolNames: string[]): void;
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
   runDelta(
@@ -334,12 +336,12 @@ export interface Message {
  * ```
  */
 export interface MessageDelta {
-  role: Role | undefined;
+  role?: Role;
   contents: PartDelta[];
-  id: string | undefined;
-  thinking: string | undefined;
+  id?: string;
+  thinking?: string;
   tool_calls: PartDelta[];
-  signature: string | undefined;
+  signature?: string;
 }
 
 /**
@@ -615,14 +617,12 @@ export interface ToolDesc {
 }
 
 export type Value =
-  | undefined
-  | boolean
-  | number
-  | number
-  | number
   | string
-  | Record<string, any>
-  | Value[];
+  | number
+  | boolean
+  | null
+  | Array<Value>
+  | { [property: string]: Value };
 
 export interface VectorStoreAddInput {
   embedding: Embedding;

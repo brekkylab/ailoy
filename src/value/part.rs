@@ -1,6 +1,6 @@
 use std::fmt;
 
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -13,7 +13,10 @@ use crate::value::{Value, bytes::Bytes, delta::Delta};
 #[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+#[cfg_attr(
+    feature = "wasm",
+    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
+)]
 pub struct PartFunction {
     /// The name of the function
     pub name: String,
@@ -117,8 +120,7 @@ pub enum PartImage {
         height: u32,
         width: u32,
         colorspace: PartImageColorspace,
-        #[cfg_attr(feature = "nodejs", napi_derive::napi(ts_type = "Buffer"))]
-        data: super::bytes::Bytes,
+        data: Bytes,
     },
     Url {
         url: String,
@@ -131,77 +133,9 @@ impl TryInto<image::DynamicImage> for &PartImage {
     fn try_into(self) -> Result<image::DynamicImage, Self::Error> {
         match self {
             PartImage::Binary {
-                height,
-                width,
-                colorspace,
-                data: Bytes(buf),
-            } => {
-                fn bytes_to_u16_ne(b: &[u8]) -> anyhow::Result<Vec<u16>> {
-                    if b.len() % 2 != 0 {
-                        return Err(anyhow::anyhow!("bytes should be even"));
-                    }
-                    let mut v = Vec::with_capacity(b.len() / 2);
-                    for ch in b.chunks_exact(2) {
-                        v.push(u16::from_ne_bytes([ch[0], ch[1]]));
-                    }
-                    Ok(v)
-                }
-
-                let height = *height as u32;
-                let width = *width as u32;
-                let nbytes = buf.len() as u32 / height / width / colorspace.channel();
-                match (colorspace, nbytes) {
-                    // Grayscale 8-bit
-                    (PartImageColorspace::Grayscale, 1) => {
-                        let buf = image::GrayImage::from_raw(width, height, buf.to_vec())
-                            .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
-                        Ok(image::DynamicImage::ImageLuma8(buf))
-                    }
-                    // Grayscale 16-bit
-                    (PartImageColorspace::Grayscale, 2) => {
-                        let buf = image::ImageBuffer::<image::Luma<u16>, _>::from_raw(
-                            width,
-                            height,
-                            bytes_to_u16_ne(&buf)?,
-                        )
-                        .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
-                        Ok(image::DynamicImage::ImageLuma16(buf))
-                    }
-                    // RGB 8-bit
-                    (PartImageColorspace::RGB, 1) => {
-                        let buf = image::RgbImage::from_raw(width, height, buf.to_vec())
-                            .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
-                        Ok(image::DynamicImage::ImageRgb8(buf))
-                    }
-                    // RGBA 8-bit
-                    (PartImageColorspace::RGBA, 1) => {
-                        let buf = image::RgbaImage::from_raw(width, height, buf.to_vec())
-                            .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
-                        Ok(image::DynamicImage::ImageRgba8(buf))
-                    }
-                    // RGB 16-bit
-                    (PartImageColorspace::RGB, 2) => {
-                        let buf = image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(
-                            width,
-                            height,
-                            bytes_to_u16_ne(&buf)?,
-                        )
-                        .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
-                        Ok(image::DynamicImage::ImageRgb16(buf))
-                    }
-                    // RGBA 16-bit
-                    (PartImageColorspace::RGBA, 2) => {
-                        let buf = image::ImageBuffer::<image::Rgba<u16>, _>::from_raw(
-                            width,
-                            height,
-                            bytes_to_u16_ne(&buf)?,
-                        )
-                        .ok_or(anyhow::anyhow!("Failed to read image buffer"))?;
-                        Ok(image::DynamicImage::ImageRgba16(buf))
-                    }
-                    _ => Err(anyhow::anyhow!("Invalid colorspace or channel")),
-                }
-            }
+                data: Bytes(buf), ..
+            } => image::load_from_memory(buf)
+                .map_err(|e| anyhow!("Failed to load image from bytes: {}", e)),
             PartImage::Url { .. } => {
                 todo!("Request to url and get the data, and load to DynamicImage")
             }
@@ -264,7 +198,10 @@ impl PartImage {
 #[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(discriminant_case = "lowercase"))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+#[cfg_attr(
+    feature = "wasm",
+    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
+)]
 pub enum Part {
     /// Plain utf-8 encoded text.
     Text { text: String },
@@ -336,19 +273,19 @@ impl Part {
                 height: height as u32,
                 width: width as u32,
                 colorspace,
-                data: super::bytes::Bytes(data.into()),
+                data: Bytes(data.into()),
             },
         })
     }
 
     pub fn image_binary_from_bytes(data: &[u8]) -> anyhow::Result<Self> {
-        let img = image::load_from_memory(data).expect("Failed to load image from base64 data");
+        let img = image::load_from_memory(data).expect("Failed to load image from bytes");
         Ok(Self::Image {
             image: PartImage::Binary {
                 height: img.height(),
                 width: img.width(),
                 colorspace: img.color().into(),
-                data: super::bytes::Bytes(img.into_bytes().into()),
+                data: Bytes(data.to_vec().into()),
             },
         })
     }
@@ -514,7 +451,10 @@ impl fmt::Display for Part {
     napi_derive::napi(discriminant_case = "snake_case")
 )]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+#[cfg_attr(
+    feature = "wasm",
+    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
+)]
 pub enum PartDeltaFunction {
     Verbatim { text: String },
     WithStringArgs { name: String, arguments: String },
@@ -552,7 +492,10 @@ pub enum PartDeltaFunction {
     napi_derive::napi(discriminant_case = "snake_case")
 )]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+#[cfg_attr(
+    feature = "wasm",
+    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
+)]
 pub enum PartDelta {
     /// Incremental text fragment.
     Text { text: String },
@@ -809,7 +752,7 @@ mod py {
     use pyo3_stub_gen::derive::*;
 
     use super::*;
-    use crate::ffi::py::base::PyRepr;
+    use crate::{ffi::py::base::PyRepr, utils::Ellipse};
 
     #[gen_stub_pymethods]
     #[pymethods]
@@ -854,7 +797,9 @@ mod py {
                 Part::Image { image } => {
                     format!(
                         "Image(image=PartImage({}))",
-                        serde_json::to_string(image).unwrap_or("...".to_owned())
+                        serde_json::to_string(image)
+                            .unwrap_or("...".to_owned())
+                            .truncate_ellipse_with(100, "...]}")
                     )
                 }
             };

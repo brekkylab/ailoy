@@ -53,7 +53,10 @@ pub enum Role {
 )]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+#[cfg_attr(
+    feature = "wasm",
+    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
+)]
 pub struct Message {
     /// Author of the message.
     pub role: Role,
@@ -141,7 +144,10 @@ impl fmt::Display for Message {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+#[cfg_attr(
+    feature = "wasm",
+    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
+)]
 struct SingleTextMessage {
     /// Author of the message.
     pub role: Role,
@@ -214,14 +220,21 @@ impl Into<Message> for SingleTextMessage {
 )]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+#[cfg_attr(
+    feature = "wasm",
+    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
+)]
 pub struct MessageDelta {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,
     pub contents: Vec<PartDelta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
     #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "tool_calls"))]
     pub tool_calls: Vec<PartDelta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
 }
 
@@ -359,8 +372,7 @@ impl Delta for MessageDelta {
                             && id1 != id2
                         {
                             tool_calls.push(part_incoming);
-                        } else if id1.is_none()
-                            && id2.is_none()
+                        } else if id2.is_none()
                             && std::mem::discriminant(f1) == std::mem::discriminant(f2)
                         {
                             let v = tool_calls.pop().unwrap().accumulate(part_incoming)?;
@@ -492,7 +504,10 @@ impl fmt::Display for FinishReason {
 )]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+#[cfg_attr(
+    feature = "wasm",
+    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
+)]
 pub struct MessageDeltaOutput {
     pub delta: MessageDelta,
     #[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "finish_reason"))]
