@@ -7,7 +7,9 @@ communication between an LLM and its environment, empowering models to access
 external tools, retrieve real-time information, and perform complex, multi-step
 reasoning.
 
-## Loading MCP Clients
+## Step-by-Step Guide
+
+### Loading MCP Clients
 
 You can connect to any MCP server using the MCPClient interface. For example,
 the snippet below connects to the official GitHub MCP server.
@@ -15,13 +17,16 @@ the snippet below connects to the official GitHub MCP server.
 <CodeTabs>
 
 ```python
-import ailoy as ai
-# TBD
-client = ai.MCPClient("@modelcontextprotocol/server-github")
+client = await ai.MCPClient.from_stdio(
+      "npx", ["-y", "@modelcontextprotocol/server-github"]
+  )
 ```
 
 ```javascript
-// TBD
+const client = await ai.MCPClient.newStdio("npx", [
+  "-y",
+  "@modelcontextprotocol/server-github",
+]);
 ```
 
 </CodeTabs>
@@ -30,7 +35,7 @@ This launches the GitHub MCP server as a subprocess using standard I/O for
 communication. The agent automatically discovers the tools exposed by the server
 and registers them into its internal toolset.
 
-## Extracting MCP Tools
+### Extracting MCP Tools
 
 Each MCP server can expose multiple tools. To optimize context usage, you can
 selectively extract a subset of tools rather than registering all of them.
@@ -38,25 +43,22 @@ selectively extract a subset of tools rather than registering all of them.
 <CodeTabs>
 
 ```python
-import ailoy as ai
-# TBD
 tools = [
-    client.get_tools("github-search_repositories"),
-    client.get_tools("github-get_file_contents"),
+    client.get_tool("search_repositories"),
+    client.get_tool("get_file_contents"),
 ]
 ```
 
 ```javascript
-// TBD
 const tools = [
-  client.getTools("github-search_repositories"),
-  client.getTools("github-get_file_contents"),
+  client.getTool("search_repositories"),
+  client.getTool("get_file_contents"),
 ];
 ```
 
 </CodeTabs>
 
-## Registering Tools into Agent
+### Registering Tools into Agent
 
 To integrate MCP tools with LM, they must be registered to `Agent`. This enables
 the agent to automatically call those tools when reasoning or answering queries.
@@ -64,18 +66,18 @@ the agent to automatically call those tools when reasoning or answering queries.
 <CodeTabs>
 
 ```python
-import ailoy as ai
-# TBD
-agent.add_tools(tools)
+lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", progress_callback=print)
+agent = ai.Agent(lm, tools)
 ```
 
 ```javascript
-// TBD
+const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B", null, console.log);
+const agent = new ai.Agent(lm, tools);
 ```
 
 </CodeTabs>
 
-## Querying via MCP Tools
+### Querying via MCP Tools
 
 With tools registered, the agent can automatically use them when you invoke
 `run()` or `run_delta()`.
@@ -84,7 +86,7 @@ With tools registered, the agent can automatically use them when you invoke
 
 ```python
 question = "Search the repository named brekkylab/ailoy and describe what it does based on its README.md."
-for resp in agent.run(question):
+async for resp in agent.run(question):
     agent.print(resp)
 ```
 
@@ -100,6 +102,69 @@ for await (const resp of agent.run(question)) {
 
 This demonstrates how the agent leverages the GitHub MCP tools to search
 repositories and summarize their contents.
+
+## Complete Example
+
+The following end-to-end example demonstrates how to set up an agent, connect to
+the GitHub MCP server, and issue a query.
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def main():
+    # TBD
+    client = await ai.MCPClient.from_stdio(
+        "npx", ["-y", "@modelcontextprotocol/server-github"]
+    )
+    tools = [
+        client.get_tool("search_repositories"),
+        client.get_tool("get_file_contents"),
+    ]
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", progress_callback=print)
+    agent = ai.Agent(lm, tools)
+    query = "Search the repository named brekkylab/ailoy and describe what it does based on its README.md."
+    async for resp in agent.run(query):
+        print(resp)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function main() {
+  const client = await ai.MCPClient.newStdio("npx", [
+    "-y",
+    "@modelcontextprotocol/server-github",
+  ]);
+  const tools = [
+    client.getTool("search_repositories"),
+    client.getTool("get_file_contents"),
+  ];
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B", null, console.log);
+  const agent = new ai.Agent(lm, tools);
+  const query =
+    "Search the repository named brekkylab/ailoy and describe what it does based on its README.md.";
+  for await (const resp of agent.run(query)) {
+    console.log(resp.message);
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+</CodeTabs>
+
+## Output
 
 {/* prettier-ignore-start */}
 
@@ -158,53 +223,3 @@ This repository is in an **early development stage**, and APIs may change. For m
 </TerminalBox>
 
 {/* prettier-ignore-end */}
-
-## Complete Example
-
-The following end-to-end example demonstrates how to set up an agent, connect to
-the GitHub MCP server, and issue a query.
-
-<CodeTabs>
-
-```python
-from ailoy import Runtime, Agent, LocalModel
-from mcp import StdioServerParameters
-
-rt = Runtime()
-with Agent(rt, LocalModel("Qwen/Qwen3-8B")) as agent:
-    # Add tools from Github MCP server
-    agent.add_tools_from_mcp_server(
-        "github",
-        StdioServerParameters(
-            command="npx",
-            args=["-y", "@modelcontextprotocol/server-github"]
-        )
-    )
-
-    question = "Search the repository named brekkylab/ailoy and describe what it does based on its README.md."
-    for resp in agent.query(question):
-        agent.print(resp)
-```
-
-```typescript
-import { startRuntime, defineAgent, LocalModel } from "ailoy-node";
-
-(async () => {
-  const rt = await startRuntime();
-  const agent = await defineAgent(rt, LocalModel({ id: "Qwen/Qwen3-8B" }));
-
-  // Add tools from the Github MCP server
-  await agent.addToolsFromMcpServer("github", {
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-github"],
-  });
-
-  const question =
-    "Search the repository named brekkylab/ailoy and describe what it does based on its README.md.";
-  for await (const resp of agent.query(question)) {
-    agent.print(resp);
-  }
-})();
-```
-
-</CodeTabs>
