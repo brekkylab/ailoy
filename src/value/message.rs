@@ -610,7 +610,7 @@ pub(crate) mod py {
                     .collect::<Vec<_>>()
                     .join(", "),
                 self.id.__repr__(),
-                self.thinking.__repr__(),
+                self.thinking.__repr__().replace('\n', "\\n"),
                 self.tool_calls.as_ref().map_or(String::new(), |calls| {
                     calls
                         .iter()

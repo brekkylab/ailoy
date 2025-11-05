@@ -180,6 +180,16 @@ mod py {
 
     #[gen_stub_pymethods]
     #[pymethods]
+    impl KnowledgeConfig {
+        #[new]
+        #[pyo3(signature = (top_k=None))]
+        fn __new__(top_k: Option<u32>) -> Self {
+            Self { top_k }
+        }
+    }
+
+    #[gen_stub_pymethods]
+    #[pymethods]
     impl Knowledge {
         #[classmethod]
         #[pyo3(name = "new_vector_store")]

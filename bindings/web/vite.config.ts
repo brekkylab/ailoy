@@ -1,6 +1,7 @@
 import { loadEnv } from "vite";
 import dts from "vite-plugin-dts";
 import { viteStaticCopy } from "vite-plugin-static-copy";
+import topLevelAwait from "vite-plugin-top-level-await";
 import wasm from "vite-plugin-wasm";
 import { Plugin, defineConfig } from "vitest/config";
 
@@ -91,6 +92,7 @@ export default defineConfig(({ mode }) => {
         ],
       }),
       wasm(),
+      topLevelAwait(),
       rewriteImportPath({
         mappings: {
           "./shim_js/dist/index.js": "./shim.js",
