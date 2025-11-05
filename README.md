@@ -47,7 +47,7 @@ Please refer to the [documentation](https://brekkylab.github.io/ailoy/docs/resou
 
 ```bash
 cd bindings/python
-pip install -e .
+maturin develop
 ```
 
 For more details, refer to `bindings/python/README.md`.
@@ -55,17 +55,17 @@ For more details, refer to `bindings/python/README.md`.
 ### Node.js Build
 
 ```bash
-cd bindings/js-node
+cd bindings/nodejs
 npm run build
 ```
 
-For more details, refer to `bindings/js-node/README.md`.
+For more details, refer to `bindings/nodejs/README.md`.
 
 ### Javascript Build for web browsers
 
 ```bash
-cd bindings/js-web
+cd bindings/web
 npm run build
 ```
 
-For more details, refer to `bindings/js-web/README.md`.
+For more details, refer to `bindings/web/README.md`.
