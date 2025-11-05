@@ -1078,6 +1078,7 @@ pub use node::*;
 
 #[cfg(feature = "wasm")]
 mod wasm {
+    use js_sys::Array;
     use tsify::serde_wasm_bindgen;
     use wasm_bindgen::prelude::*;
 
@@ -1114,25 +1115,31 @@ mod wasm {
                     Message::new(Role::User).with_contents(vec![Part::text(text)]),
                 ])
             } else if self.is_array() {
-                // Try deserializing as Vec<Message> first
-                match serde_wasm_bindgen::from_value::<Vec<Message>>(self.clone().into()) {
-                    Ok(messages) => Ok(messages),
-                    Err(e_message) => {
-                        // Fallback: try deserializing as Vec<SingleTextMessage>
-                        let text_messages: Vec<SingleTextMessage> = serde_wasm_bindgen::from_value(
-                            self.into(),
+                let arr = Array::from(&self);
+                let result = arr
+                    .iter()
+                    .map(|message| {
+                        // Try deserializing as Message first
+                        serde_wasm_bindgen::from_value::<Message>(message.clone()).or_else(
+                            |e_message| {
+                                // Fallback: try deserializing as SingleTextMessage
+                                serde_wasm_bindgen::from_value::<SingleTextMessage>(message)
+                                    .map(|text_message| text_message.into())
+                                    .map_err(|e_text_message| {
+                                        Self::Error::new(&format!(
+                                            "Failed to deserialize as Array<Message>:\n  - {}\n  - {}",
+                                            e_message, e_text_message,
+                                        ))
+                                    })
+                            },
                         )
-                        .map_err(|e_text_message| {
-                            js_sys::Error::new(&format!(
-                                "Failed to deserialize as Array<Message>:\n- {}\n- {}",
-                                e_message, e_text_message,
-                            ))
-                        })?;
-                        Ok(text_messages.into_iter().map(Into::into).collect())
-                    }
-                }
+                    })
+                    .collect();
+                result
             } else {
-                Err(js_sys::Error::new("Expected Array<Message> or string"))
+                Err(js_sys::Error::new(
+                    "Expected Array<Message | SingleTextMessage> or string",
+                ))
             }
         }
     }

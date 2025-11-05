@@ -143,17 +143,18 @@ const CHUNKS = [...];
 async function prepare_knowledge() {
   const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
   const vs = await ai.VectorStore.newFaiss(1024);
-  CHUNKS.forEach(async (chunk, i) => {
-      const embedding = await model.infer(chunk);
-      await vs.addVector({
-          embedding: embedding,
-          document: chunk,
-          metadata: {
-              title: "The Old Man and the Sea",
-              index: i,
-          },
-      });
-  });
+  for (let i = 0; i < CHUNKS.length; i++) {
+    const chunk = CHUNKS[i];
+    const embedding = await model.infer(chunk);
+    await vs.addVector({
+      embedding: embedding,
+      document: chunk,
+      metadata: {
+        title: "The Old Man and the Sea",
+        index: i,
+      },
+    });
+  }
 
   return ai.Knowledge.newVectorStore(vs, model);
 }
@@ -161,6 +162,7 @@ async function prepare_knowledge() {
 prepare_knowledge().catch((err) => {
   console.error("Error:", err);
 });
+
 ```
 
 </CodeTabs>
@@ -170,7 +172,7 @@ prepare_knowledge().catch((err) => {
 > [**ChromaDB**](https://www.trychroma.com/) as vector store backends. Refer to
 > the official configuration guide for backend-specific options.
 
-### Defining the Agent
+### Defining the Knowledged Agent
 
 You can now create an Agent and attach a Knowledge module that integrates your
 vector store and embedding model.
@@ -297,7 +299,8 @@ async function main(knowledge: ai.Knowledge) {
     "Why did the boy stop fishing with the old man?",
     config
   )) {
-    console.log(resp.message.contents[0].text);
+    if (resp.message.contents?.[0]?.type === "text")
+      console.log(resp.message.contents?.[0]?.text);
   }
 }
 
@@ -324,7 +327,8 @@ async function main(knowledge: ai.Knowledge) {
     "Why did the boy stop fishing with the old man?",
     config
   )) {
-    console.log(resp.message.contents[0].text);
+    if (resp.message.contents?.[0]?.type === "text")
+      console.log(resp.message.contents?.[0]?.text);
   }
 }
 
@@ -515,7 +519,8 @@ The old man had taught the boy to fish and the boy loved him.
 async function prepare_knowledge() {
   const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
   const vs = await ai.VectorStore.newFaiss(1024);
-  CHUNKS.forEach(async (chunk, i) => {
+  for (let i = 0; i < CHUNKS.length; i++) {
+    const chunk = CHUNKS[i];
     const embedding = await model.infer(chunk);
     await vs.addVector({
       embedding: embedding,
@@ -525,7 +530,7 @@ async function prepare_knowledge() {
         index: i,
       },
     });
-  });
+  }
 
   return ai.Knowledge.newVectorStore(vs, model);
 }

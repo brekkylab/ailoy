@@ -20,6 +20,8 @@ Just want to see a completed example? Check out the **[last example](#example-of
 
 ## Step-by-step guide
 
+### A single-turn conversation
+
 Let’s start with a single-turn conversation:
 
 {/* prettier-ignore-start */}
@@ -49,7 +51,7 @@ if __name__ == "__main__":
 ```typescript
 import * as ai from "ailoy-node";
 
-(async () => {
+async function main() {
   const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(model);
 
@@ -59,23 +61,29 @@ import * as ai from "ailoy-node";
   for await (const resp of agent.run(messages)) {
     console.log(resp.contents[0].text);
   }
-})();
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
 ```
 
 ```typescript web
 import * as ai from "ailoy-web";
 
-(async () => {
+async function main() {
   const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(model);
 
-  const messages = [
-    { role: "user", contents: "Hello!" },
-  ] as ai.Messages;
+  const messages = [{ role: "user", contents: "Hello!" }];
   for await (const resp of agent.run(messages)) {
-    console.log(resp.contents[0].text);
+    console.log(resp.message.contents[0].text);
   }
-})();
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
 ```
 
 </CodeTabs>
@@ -88,6 +96,8 @@ Let's say it responds like this:
 ```
 Hi there! How can I help you today?
 ```
+
+### How to add context in the interaction
 
 Now, to continue the conversation, you must pass _both_ the **previous
 messages** and **your new user message** again:
@@ -124,7 +134,7 @@ if __name__ == "__main__":
 ```typescript
 import * as ai from "ailoy-node";
 
-(async () => {
+async function main() {
   const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(model);
 
@@ -136,15 +146,19 @@ import * as ai from "ailoy-node";
     { role: "user", contents: "What did I just say?" },
   ]
   for await (const resp of agent.run(messages)) {
-    console.log(resp.contents[0].text);
+    console.log(resp.message.contents[0].text);
   }
-})();
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
 ```
 
 ```typescript web
 import * as ai from "ailoy-web";
 
-(async () => {
+async function main() {
   const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(model);
 
@@ -156,9 +170,13 @@ import * as ai from "ailoy-web";
     { role: "user", contents: "What did I just say?" },
   ]
   for await (const resp of agent.run(messages)) {
-    console.log(resp.contents[0].text);
+    console.log(resp.message.contents[0].text);
   }
-})();
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
 ```
 
 </CodeTabs>
@@ -168,7 +186,9 @@ import * as ai from "ailoy-web";
 Ailoy will now use the full conversation context to produce the correct reply —
 even though it doesn’t persist any state internally.
 
-Here, I want to make the conversation continue by itself.  
+### A simplest multi-turn conversation
+
+Here, We want to make the conversation continue by itself.  
 Let's consider a user who always speaks the specified words in a fixed order.
 
 We will use a loop to add user messages and get the agent's responses one by
@@ -211,7 +231,7 @@ if __name__ == "__main__":
 ```typescript
 import * as ai from "ailoy-node";
 
-(async () => {
+async function main() {
   const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(model);
 
@@ -230,13 +250,17 @@ import * as ai from "ailoy-node";
       messages.push(resp.message);
     }
   }
-})();
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
 ```
 
 ```typescript web
 import * as ai from "ailoy-web";
 
-(async () => {
+async function main() {
   const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(model);
 
@@ -249,13 +273,17 @@ import * as ai from "ailoy-web";
   let messages = [];
   for (const user_message of USER_MESSAGES) {
     messages.push(user_message);
-    for await (const resp of agent.run(messages as ai.Messages)) {
+    for await (const resp of agent.run(messages)) {
       if (resp.message.contents[0].type == "text")
         console.log(resp.message.contents[0].text);
       messages.push(resp.message);
     }
   }
-})();
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
 ```
 
 </CodeTabs>
@@ -265,10 +293,19 @@ import * as ai from "ailoy-web";
 Now we just can replace the fixed inputs with live user inputs to make it real
 conversation!
 
-## Example of ongoing conversations
+## Example of interactive multi-turn conversations
 
 The code below is an example of receiving real-time input from the user and
 continuing a conversation with the agent.
+
+{/* prettier-ignore-start */}
+
+:::info
+Example code for web is not provided here.  
+To see a conversational agent that continuously interacts with users, check out **[WebAssembly Supports](webassembly-supports)** page.
+:::
+
+{/* prettier-ignore-end */}
 
 {/* prettier-ignore-start */}
 
@@ -303,7 +340,7 @@ if __name__ == "__main__":
 import * as ai from "ailoy-node";
 import * as readline from "readline";
 
-(async () => {
+async function main() {
   const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(model);
   const rl = readline.createInterface({
@@ -332,7 +369,11 @@ import * as readline from "readline";
 
   console.log("Assistant: It was a nice conversation!");
   rl.close();
-})();
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
 ```
 
 </CodeTabs>
