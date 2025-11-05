@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{io::Write as _, path::PathBuf};
 
 use aws_config::meta::region::ProvideRegion;
 use clap::{Parser, Subcommand};
@@ -151,6 +151,7 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
                     root
                 ));
             }
+
             let mut parts = model_name.splitn(3, '/');
             let kind = parts.next().unwrap_or("").trim();
             let name = parts.next().unwrap_or("").trim();
@@ -165,8 +166,8 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
             let prefix = format!("{}--{}", kind, name);
             let entries = std::fs::read_dir(root)?;
 
-            let mut removed = Vec::new();
-            let mut total_freed = 0u64;
+            let mut targets = Vec::new();
+            let mut total_size = 0u64;
 
             for entry in entries {
                 let entry = entry?;
@@ -179,28 +180,53 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
                 if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
                     if dir_name.starts_with(&prefix) {
                         let sz = dir_size(&path);
-                        std::fs::remove_dir_all(&path)?;
-                        total_freed += sz;
-                        removed.push((dir_name.to_string(), sz));
+                        targets.push((path.clone(), dir_name.to_string(), sz));
+                        total_size += sz;
                     }
                 }
             }
 
-            if removed.is_empty() {
+            if targets.is_empty() {
                 println!(
-                    "No directories found for '{}'. Nothing removed.",
+                    "No directories found for '{}'. Nothing to remove.",
                     model_name
                 );
-            } else {
-                println!("-----------------------------------------------");
-                for (name, sz) in &removed {
-                    println!("{:<40} {:>10.2} MB", name, *sz as f64 / 1024.0 / 1024.0);
+                return Ok(());
+            }
+
+            println!("-----------------------------------------------");
+            for (_, name, sz) in &targets {
+                println!("{:<40} {:>10.2} MB", name, *sz as f64 / 1024.0 / 1024.0);
+            }
+            println!(
+                "About to remove {} directories, freeing approximately {:.2} MB total.",
+                targets.len(),
+                total_size as f64 / 1024.0 / 1024.0
+            );
+
+            // Confirmation prompt
+            print!("Proceed with deletion? (y/N): ");
+            std::io::stdout().flush().unwrap();
+
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let input = input.trim().to_lowercase();
+
+            if input == "y" {
+                let mut removed = Vec::new();
+                let mut total_freed = 0u64;
+
+                for (path, name, sz) in &targets {
+                    std::fs::remove_dir_all(path)?;
+                    removed.push((name.clone(), *sz));
+                    total_freed += sz;
                 }
                 println!(
-                    "Removed {} directories, freed {:.2} MB total.",
-                    removed.len(),
+                    "Removed, freed {:.2} MB total.",
                     total_freed as f64 / 1024.0 / 1024.0
                 );
+            } else {
+                println!("Aborted.");
             }
         }
         Commands::Upload {
