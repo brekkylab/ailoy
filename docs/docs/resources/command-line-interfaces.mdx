@@ -18,21 +18,21 @@ If you installed it via the Node.js package, the output may differ slightly.
 
 ## Commands
 
-### `ailoy model`
+### `ailoy-model`
 
 Manages AI models used in Ailoy.
 
-#### `ailoy model list`
+#### `ailoy-model list`
 
 Lists all available models in the local cache directory.
 
-#### `ailoy model download <model-id>`
+#### `ailoy-model download <model-id>`
 
 Downloads the specified model using the given model ID and required attributes.
 Currently, the only supported model type is `tvm`, so you must specify the
 `--quantization` and `--device` options.
 
-#### `ailoy model remove <model-id>`
+#### `ailoy-model remove <model-id>`
 
 Removes the specified model by its ID.  
 You'll be prompted to confirm the deletion by entering `Y`(`y`) or `N`(`n`).
