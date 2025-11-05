@@ -95,6 +95,7 @@ Also, you can read an image from a local file and include it directly as input.
 
 ```python
 import asyncio
+from pathlib import Path
 
 import ailoy as ai
 
@@ -127,6 +128,7 @@ if __name__ == "__main__":
 
 ```typescript
 import * as ai from "ailoy-node";
+import * as fs from "fs";
 
 async function main() {
   const data = fs.readFileSync("dog.jpg");
