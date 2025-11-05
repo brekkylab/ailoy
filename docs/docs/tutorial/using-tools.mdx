@@ -8,26 +8,24 @@ even if it wasn’t part of the model’s training data.
 To use a tool, two components must be defined: **Tool Descripition** and **Tool
 Behavior**.
 
-{/* prettier-ignore-start */}
-
 :::info
-Please refer to **[Architecture](../concepts/architecture.mdx#tool)** section for more about the tool architecture.
-:::
 
-{/* prettier-ignore-end */}
+Please refer to **[Architecture](../concepts/architecture.mdx#tool)** section
+for more about the tool architecture.
+
+:::
 
 Now, let's explore how to make a _tool-aware agent_ in Ailoy.
 
 In this example, we’ll use the **[Frankfurter API](https://frankfurter.dev/)**
 to enable your agent to look up real-time currency exchange rates.
 
-{/* prettier-ignore-start */}
-
 :::info
-Please refer to **[MCP Integration](./mcp-integration.mdx)** section for using MCP tools.
-:::
 
-{/* prettier-ignore-end */}
+Please refer to **[MCP Integration](./mcp-integration.mdx)** section for using
+MCP tools.
+
+:::
 
 ## Step-by-Step Guide
 
@@ -39,17 +37,15 @@ helps the model understand how to invoke the tool correctly.
 
 Parameters are typically expressed in JSON Schema format.
 
-{/* prettier-ignore-start */}
-
 :::info
+
 You can refer to
 **[OpenAI's documentation](https://platform.openai.com/docs/guides/function-calling#defining-functions)**
 or
 **[Hunggingface's documentation](https://huggingface.co/docs/transformers/main/en/chat_templating_writing#tool-definitions)**
 for more details about defining tools in JSON Schema format.
-:::
 
-{/* prettier-ignore-end */}
+:::
 
 <CodeTabs>
 
@@ -412,17 +408,18 @@ You will need approximately **414,835.61 KRW** to buy 250 USD and 350 CNY.`}
 </TerminalBox>
 
 {/* prettier-ignore-end */}
-{/* prettier-ignore-start */}
 
 :::warning
+
 Keep in mind: Tools aren't free — every token counts.
 
-Using many tools can generate a large amount of information for the AI to process, potentially leading to longer context lengths and decreased performance.
+Using many tools can generate a large amount of information for the AI to
+process, potentially leading to longer context lengths and decreased
+performance.
 
-Using tools consumes tokens.
-API calls may lead to unexpected costs, while on-device models can slow down your machine or even cause crashes.
+Using tools consumes tokens. API calls may lead to unexpected costs, while
+on-device models can slow down your machine or even cause crashes.
 
-Avoid using unnecessary tools. Keep your chat context focused and concise. 
+Avoid using unnecessary tools. Keep your chat context focused and concise.
+
 :::
-
-{/* prettier-ignore-end */}
