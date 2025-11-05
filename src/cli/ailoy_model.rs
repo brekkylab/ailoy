@@ -21,6 +21,10 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    List,
+    Remove {
+        model_name: String,
+    },
     Upload {
         model_path: PathBuf,
 
@@ -71,7 +75,134 @@ enum Commands {
 pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
     let cli = Cli::parse_from(args.clone());
 
+    fn dir_size(path: &std::path::Path) -> u64 {
+        let mut total = 0;
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    total += dir_size(&path);
+                } else if let Ok(metadata) = std::fs::metadata(&path) {
+                    total += metadata.len();
+                }
+            }
+        }
+        total
+    }
+
     match &cli.command {
+        Commands::List => {
+            let cache = Cache::new();
+            let root = cache.root();
+            println!("Cache root: {:?}", root);
+
+            // Check if the cache root exists
+            if !root.exists() {
+                return Err(anyhow::anyhow!(
+                    "Cache root directory does not exist: {:?}",
+                    root
+                ));
+            }
+
+            // Iterate through all entries in the cache root
+            let entries = std::fs::read_dir(root).expect("Failed to read cache root directory");
+            let mut models = std::collections::BTreeMap::<String, u64>::new();
+
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+
+                    // Only consider directories
+                    if path.is_dir() {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            let parts: Vec<&str> = name.split("--").collect();
+
+                            // Ignore entries with 0 or 1 parts
+                            if parts.len() < 2 {
+                                continue;
+                            }
+
+                            // Take first two elements and join with "/"
+                            let parsed = format!("{}/{}", parts[0], parts[1]);
+                            let size = dir_size(&path);
+                            *models.entry(parsed).or_insert(0) += size;
+                        }
+                    }
+                }
+            }
+
+            for (model_name, model_size) in &models {
+                println!(
+                    "* {} ({:.2} MB)",
+                    model_name,
+                    *model_size as f64 / 1024.0 / 1024.0
+                );
+            }
+        }
+        Commands::Remove { model_name } => {
+            let cache = Cache::new();
+            let root = cache.root();
+            println!("Cache root: {:?}", root);
+
+            // Check if the cache root exists
+            if !root.exists() {
+                return Err(anyhow::anyhow!(
+                    "Cache root directory does not exist: {:?}",
+                    root
+                ));
+            }
+            let mut parts = model_name.splitn(3, '/');
+            let kind = parts.next().unwrap_or("").trim();
+            let name = parts.next().unwrap_or("").trim();
+
+            if kind.is_empty() || name.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Invalid model name '{}': expected format 'org/model-name'",
+                    model_name
+                ));
+            }
+
+            let prefix = format!("{}--{}", kind, name);
+            let entries = std::fs::read_dir(root)?;
+
+            let mut removed = Vec::new();
+            let mut total_freed = 0u64;
+
+            for entry in entries {
+                let entry = entry?;
+                let path = entry.path();
+
+                if !path.is_dir() {
+                    continue;
+                }
+
+                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if dir_name.starts_with(&prefix) {
+                        let sz = dir_size(&path);
+                        std::fs::remove_dir_all(&path)?;
+                        total_freed += sz;
+                        removed.push((dir_name.to_string(), sz));
+                    }
+                }
+            }
+
+            if removed.is_empty() {
+                println!(
+                    "No directories found for '{}'. Nothing removed.",
+                    model_name
+                );
+            } else {
+                println!("-----------------------------------------------");
+                for (name, sz) in &removed {
+                    println!("{:<40} {:>10.2} MB", name, *sz as f64 / 1024.0 / 1024.0);
+                }
+                println!(
+                    "Removed {} directories, freed {:.2} MB total.",
+                    removed.len(),
+                    total_freed as f64 / 1024.0 / 1024.0
+                );
+            }
+        }
         Commands::Upload {
             model_path,
             to_local_path,
