@@ -34,6 +34,21 @@ fn build_native() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let cmake_install_dir = out_dir.parent().unwrap().join("deps");
 
+    // Forward LD_LIBRARY_PATH if provided
+    if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
+        // Split and add each path separately
+        #[cfg(target_os = "windows")]
+        let lib_separator = ';';
+        #[cfg(not(target_os = "windows"))]
+        let lib_separator = ':';
+
+        for path in ld_path.split(lib_separator) {
+            if !path.is_empty() {
+                println!("cargo:rustc-link-search=native={}", path);
+            }
+        }
+    }
+
     // Run CMake
     let mut cmake_config = Config::new(&cmake_source_dir);
     cmake_config.define("CMAKE_INSTALL_PREFIX", &cmake_install_dir);
@@ -41,6 +56,8 @@ fn build_native() {
     // Add OpenMP_ROOT if macos
     #[cfg(target_os = "macos")]
     {
+        cmake_config.define("MACOSX_DEPLOYMENT_TARGET", "14.0");
+
         // Link OpenMP(brew installed)
         let libomp_path = std::process::Command::new("brew")
             .arg("--prefix")
@@ -55,10 +72,10 @@ fn build_native() {
         println!("cargo:rustc-link-search=native={}/lib", libomp_path_str);
         println!("cargo:rustc-link-lib=omp");
     }
+
     cmake_config.build();
 
     // Link to this project
-    println!("cargo:rustc-link-lib=c++");
     println!(
         "cargo:rustc-link-search=native={}",
         cmake_install_dir.display()
@@ -66,26 +83,31 @@ fn build_native() {
     println!("cargo:rustc-link-lib=static=ailoy_cpp_shim");
 
     // Link libfaiss.a
-    println!(
-        "cargo:rustc-link-search=native={}",
-        (cmake_install_dir.join("libfaiss.a")).display()
-    );
     println!("cargo:rustc-link-lib=static=faiss");
 
     #[cfg(target_os = "linux")]
     {
+        // manylinux uses libstdc++.so
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+
         // Linux/ELF: ... -Wl,--whole-archive -l:libtvm_runtime.a -Wl,--no-whole-archive
         println!("cargo:rustc-link-arg=-Wl,--whole-archive");
         println!("cargo:rustc-link-arg=-Wl,-l:libtvm_runtime.a");
         println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
 
-        // Link FAISS dependencies (not tested)
+        // Link FAISS dependencies
         println!("cargo:rustc-link-lib=gomp"); // GNU OpenMP
-        println!("cargo:rustc-link-lib=blas"); // BLAS
-        println!("cargo:rustc-link-lib=lapack"); // LAPACK
+        println!("cargo:rustc-link-lib=static=openblas"); // OpenBLAS
+        println!("cargo:rustc-link-lib=static=gfortran"); // gfortran (required by OpenBLAS)
+
+        // Link Vulkan
+        println!("cargo:rustc-link-lib=dylib=vulkan");
     }
     #[cfg(target_os = "macos")]
     {
+        // Link Apple Clang c++
+        println!("cargo:rustc-link-lib=c++");
+
         // macOS: ... -Wl,-force_load,/abs/path/to/libtvm_runtime.a
         println!(
             "cargo:rustc-link-arg=-Wl,-force_load,{}",
@@ -98,24 +120,20 @@ fn build_native() {
     }
     #[cfg(target_os = "windows")]
     {
-        // Windows (MSVC): ... tvm_runtime.lib /WHOLEARCHIVE:tvm_runtime.lib
-        println!("cargo:rustc-link-lib=static=tvm_runtime.lib");
+        // Windows (MSVC): ... /WHOLEARCHIVE:tvm_runtime.lib
         println!(
             "cargo:rustc-link-arg=/WHOLEARCHIVE:{}",
             (cmake_install_dir.join("tvm_runtime.lib")).display()
         );
 
-        // Link MKL for FAISS (not tested)
-        let mkl_root = env::var("MKL_ROOT")
-            .expect("MKL_ROOT environment variable not set. Please set it to your Intel MKL installation path.");
+        // Link FAISS dependencies
+        println!("cargo:rustc-link-lib=static=blas");
+        println!("cargo:rustc-link-lib=static=lapack");
+        println!("cargo:rustc-link-lib=libomp");
 
-        println!("cargo:rustc-link-search=native={}/lib/intel64", mkl_root);
+        // Link Vulkan
+        println!("cargo:rustc-link-lib=dylib=vulkan-1");
 
-        // MKL core libraries and Intel OpenMP Runtime
-        println!("cargo:rustc-link-lib=static=mkl_intel_lp64");
-        println!("cargo:rustc-link-lib=static=mkl_sequential"); // or mkl_tbb_thread
-        println!("cargo:rustc-link-lib=static=mkl_core");
-        println!("cargo:rustc-link-lib=dylib=libiomp5md");
     }
 
     if std::env::var_os("CARGO_FEATURE_NODEJS").is_some() {

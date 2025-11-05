@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20250704
+  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251031
 
 jobs:
   build-windows:
@@ -20,7 +20,9 @@ jobs:
           - py-version: "3.12"
             py-full-version: "3.12.10"
           - py-version: "3.13"
-            py-full-version: "3.13.5"
+            py-full-version: "3.13.9"
+          - py-version: "3.14"
+            py-full-version: "3.14.0"
 
     continue-on-error: true
 
@@ -96,16 +98,23 @@ jobs:
               python -m pip install --upgrade pip
 
               # =============================================
+              # Install cxxbridge
+              # =============================================
+              Write-Host '=== Installing cxxbridge ==='
+              cargo install cxxbridge-cmd
+
+              # =============================================
               # Build ailoy-py
               # =============================================
               Write-Host '=== Build Ailoy ==='
 
               Set-Location 'bindings\python'
 
-              python -m pip install build scikit-build-core delvewheel
+              python -m pip install maturin delvewheel
 
               `$env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
-              python -m build -w --outdir dist
+              `$env:LD_LIBRARY_PATH = "C:\vcpkg_installed\x64-windows-static-release\lib;C:\VulkanSDK\Lib"
+              python -m maturin build --out dist
               if (`$LASTEXITCODE -ne 0) {
                 Write-Error 'python build failed'
                 exit 1
@@ -113,7 +122,7 @@ jobs:
 
               `$DistWheel = Get-ChildItem dist\*.whl | Select-Object -First 1
               `$CurrentPath = (Get-Location).Path
-              python -m delvewheel repair -w wheelhouse `$DistWheel --add-path "`$CurrentPath\build\_deps\tvm-build\Release" --exclude vulkan-1.dll
+              python -m delvewheel repair -w wheelhouse `$DistWheel --exclude vulkan-1.dll
               if (`$LASTEXITCODE -ne 0) {
                 Write-Error 'delvewheel failed'
                 exit 1

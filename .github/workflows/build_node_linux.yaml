@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: ghcr.io/brekkylab/ailoy-buildpack-linux:20250702
+      image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251031
 
     steps:
       - name: Checkout source
@@ -25,21 +25,33 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Create package
+      - name: Install cxxbridge (required to build shim)
+        run: |
+          cargo install cxxbridge-cmd
+
+      - name: Install dependencies
+        working-directory: ${{ github.workspace }}/bindings/nodejs
         run: |
           npm install
+
+      - name: Build package
+        working-directory: ${{ github.workspace }}/bindings/nodejs
+        run: |
+          npm run build
+          node scripts/bundle-dylibs.js ./dist/ailoy_core.linux-x64-gnu.node
           npm pack
           PACKAGE_NAME=$(ls -1t ailoy-*.tgz | head -n 1)
           echo "PACKAGE_NAME=$PACKAGE_NAME"
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
-        working-directory: ${{ github.workspace }}/bindings/js-node
         env:
-          OPENSSL_ROOT_DIR: /opt/openssl
           CMAKE_PREFIX_PATH: /opt/openblas
+          OPENSSL_DIR: /opt/openssl
           VULKAN_SDK: /opt/vulkan-sdk
+          LD_LIBRARY_PATH: /opt/openblas/lib:/opt/vulkan-sdk/lib
+          RUSTFLAGS: -L/opt/rh/gcc-toolset-14/root/lib/gcc/x86_64-redhat-linux/14
 
       - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PACKAGE_NAME }}
-          path: ${{ github.workspace }}/bindings/js-node/${{ env.PACKAGE_NAME }}
+          path: ${{ github.workspace }}/bindings/nodejs/${{ env.PACKAGE_NAME }}
