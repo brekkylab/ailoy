@@ -29,7 +29,7 @@ import ailoy as ai
 
 
 async def main():
-    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B")
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-0.6B")
     agent = ai.Agent(lm)
 
     async for resp in agent.run_delta("Please give me a short poem about AI."):
@@ -48,7 +48,7 @@ if __name__ == "__main__":
 import * as ai from "ailoy-node";
 
 async function main() {
-  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(lm);
 
   for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
@@ -70,7 +70,7 @@ main().catch((err) => {
 import * as ai from "ailoy-web";
 
 async function main() {
-  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(lm);
 
   for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
@@ -109,7 +109,7 @@ import ailoy as ai
 
 
 async def main():
-    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B")
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-0.6B")
     agent = ai.Agent(lm)
 
     GREEN = "\x1b[32m"
@@ -139,7 +139,7 @@ if __name__ == "__main__":
 import * as ai from "ailoy-node";
 
 async function main() {
-  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(lm);
 
   const GREEN = "\x1b[32m";
@@ -180,7 +180,7 @@ main().catch((err) => {
 import * as ai from "ailoy-web";
 
 async function main() {
-  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(lm);
 
   const GREEN = "\x1b[32m";
@@ -189,7 +189,7 @@ async function main() {
   let acc = {
     contents: [],
     tool_calls: [],
-  } as ai.MessageDelta; // the base of accumulation
+  }; // the base of accumulation
   for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
     if (resp.delta.contents?.[0]?.type === "text") {
       // print text deltas in green
@@ -206,7 +206,7 @@ async function main() {
       acc = {
         contents: [],
         tool_calls: [],
-      } as ai.MessageDelta; // re-initialize the base
+      }; // re-initialize the base
     }
   }
   console.log();
@@ -215,6 +215,7 @@ async function main() {
 main().catch((err) => {
   console.error("Error:", err);
 });
+
 ```
 </CodeTabs>
 

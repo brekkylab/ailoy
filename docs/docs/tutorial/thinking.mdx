@@ -121,7 +121,11 @@ main().catch((err) => {
 import * as ai from "ailoy-web";
 
 async function main() {
-  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const lm = await ai.LangModel.newLocal(
+    "Qwen/Qwen3-4B",
+    undefined,
+    console.log
+  );
   const agent = new ai.Agent(lm);
 
   const GREEN = "\x1b[32m";
@@ -133,13 +137,13 @@ async function main() {
   )) {
     if (resp.delta.thinking !== undefined) {
       // thinking text will be printed in green.
-      process.stdout.write(GREEN + resp.delta.thinking + RESET);
+      console.log(GREEN + resp.delta.thinking + RESET);
     }
     if (
       resp.delta.contents.length !== 0 &&
       resp.delta.contents[0].type === "text"
     ) {
-      process.stdout.write(resp.delta.contents[0].text);
+      console.log(resp.delta.contents[0].text);
     }
   }
 }
@@ -147,7 +151,6 @@ async function main() {
 main().catch((err) => {
   console.error("Error:", err);
 });
-
 ```
 
 </CodeTabs>
