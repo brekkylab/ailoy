@@ -180,13 +180,13 @@ You can register a tool by passing it to the `Agent` constructor.
 <CodeTabs>
 
 ```python
-lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", progress_callback=print)
+lm = await ai.LangModel.new_local("Qwen/Qwen3-8B")
 tools = [ai.Tool.new_py_function(tool_behavior, tool_desc)]
 agent = ai.Agent(lm, tools)
 ```
 
 ```typescript
-const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B", console.log);
+const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B");
 const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
 const agent = new ai.Agent(lm, tools);
 ```
@@ -199,14 +199,14 @@ Also, you can register the tools **after** creating the agent by using the
 <CodeTabs>
 
 ```python
-lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", progress_callback=print)
+lm = await ai.LangModel.new_local("Qwen/Qwen3-8B")
 agent = ai.Agent(lm, [])
 ...
 agent.add_tool(ai.Tool.new_py_function(tool_behavior, tool_desc))
 ```
 
 ```typescript
-const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B", console.log);
+const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B");
 const agent = new ai.Agent(lm);
 ...
 agent.add_tool(ai.Tool.newFunction(toolDesc, toolBehavior));
@@ -273,12 +273,19 @@ def tool_behavior(base, symbols):
 
 
 async def main():
-    lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", progress_callback=print)
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", None, progress_callback=print)
     tools = [ai.Tool.new_py_function(tool_behavior, tool_desc)]
     agent = ai.Agent(lm, tools)
     query = "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?"
+    print("Query:", query, "\n")
     async for resp in agent.run(query):
-        print(resp)
+        if resp.message.role == "assistant":
+            if len(resp.message.tool_calls) > 0:
+                print("Tool call:", resp.message.tool_calls[0].function, "\n")
+            else:
+                print(resp.message.contents[0].text, "\n")
+        elif resp.message.role == "tool":
+            print("Tool response:", resp.message.contents[0].value, "\n")
 
 
 if __name__ == "__main__":
@@ -339,13 +346,25 @@ async function toolBehavior(args) {
 }
 
 async function main() {
-  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B", console.log);
+  const lm = await ai.LangModel.newLocal(
+    "Qwen/Qwen3-8B",
+    undefined,
+    console.log
+  );
   const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
   const agent = new ai.Agent(lm, tools);
   const query =
     "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?";
   for await (const resp of agent.run(query)) {
-    console.log(resp.message);
+    if (resp.message.role === "assistant") {
+      if (resp.message.tool_calls?.length > 0) {
+        console.log("Tool call:", resp.message.tool_calls[0].function, "\n");
+      } else {
+        console.log(resp.message.contents[0].text, "\n");
+      }
+    } else if (resp.message.role === "tool") {
+      console.log("Tool response:", resp.message.contents[0].value, "\n");
+    }
   }
 }
 
@@ -366,7 +385,8 @@ Here's what the output will look like:
 {/* prettier-ignore-start */}
 
 <TerminalBox>
-{`Question: I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?
+
+{`Query: I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?
 
 Tool call: frankfurter(symbols="USD,CNY", base="KRW")
 
