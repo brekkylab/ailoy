@@ -1,0 +1,221 @@
+# Streaming
+
+Agent and its underlying LLM sequentially generate string pieces(tokens) one by
+one, and each generated piece is stacked to form a final result. The longer the
+generation process, the longer it takes time to complete the result, so it's
+natural to try to utilize these intermediate results. Those can be streamed as
+the increments(deltas) of the entire result.
+
+This is useful for cases where users might want to stop content generation
+before it finishes, or for agent-based application developers who want to stream
+partial results to users in real time to make their applications more
+responsive.
+
+## How to stream deltas
+
+The `run()` method of Agent, which we've used so far, returns complete messages
+sequentially, meanwhile the `run_delta()`(Python, Rust) or `runDelta()`(Nodejs,
+Web) method returns sequence of results for each LLM generation unit, that we
+call it `delta` of messages.
+
+{/* prettier-ignore-start */}
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def main():
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B")
+    agent = ai.Agent(lm)
+
+    async for resp in agent.run_delta("Please give me a short poem about AI."):
+        if resp.delta.contents and isinstance(resp.delta.contents[0], ai.PartDelta.Text):
+            # print text deltas without line break
+            print(resp.delta.contents[0].text, end="")
+    print()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const agent = new ai.Agent(lm);
+
+  for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
+    if (resp.delta.contents?.[0]?.type === "text") {
+      // print text deltas without line break
+      process.stdout.write(resp.delta.contents[0].text);
+    }
+  }
+  console.log();
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const agent = new ai.Agent(lm);
+
+  for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
+    if (resp.delta.contents?.[0]?.type === "text") {
+      console.log(resp.delta.contents[0].text);
+    }
+  }
+  console.log();
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+</CodeTabs>
+
+{/* prettier-ignore-end */}
+
+## Delta to Full
+
+You can also construct a complete message by accumulating generated deltas of
+the message sequentially.
+
+A finish reason will be provided when the message is completely generated.
+Accumulate the message deltas until the finish reason appears, then call
+`finish` to produce the complete message.
+
+{/* prettier-ignore-start */}
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def main():
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B")
+    agent = ai.Agent(lm)
+
+    GREEN = "\x1b[32m"
+    RESET = "\x1b[0m"
+
+    acc = ai.MessageDelta()  # the base of accumulation
+    async for resp in agent.run_delta("Please give me a short poem about AI."):
+        if resp.delta.contents and isinstance(resp.delta.contents[0], ai.PartDelta.Text):
+            # print text deltas in green
+            print(GREEN + resp.delta.contents[0].text + RESET, end="")
+        acc += resp.delta  # accumulate newly generated delta into the base
+
+        # if finish_reason exists, it means that a whole message is generated.
+        if resp.finish_reason is not None:
+            message = acc.to_message()
+            if isinstance(message.contents[0], ai.Part.Text):
+                print("\n\n" + message.contents[0].text)
+            acc = ai.MessageDelta()  # re-initialize the base
+    print()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const agent = new ai.Agent(lm);
+
+  const GREEN = "\x1b[32m";
+  const RESET = "\x1b[0m";
+
+  let acc = {
+    contents: [],
+    tool_calls: [],
+  } as ai.MessageDelta; // the base of accumulation
+  for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
+    if (resp.delta.contents?.[0]?.type === "text") {
+      // print text deltas in green
+      process.stdout.write(GREEN + resp.delta.contents[0].text + RESET);
+    }
+    // accumulate newly generated delta into the base
+    acc = ai.accumulateMessageDelta(acc, resp.delta);
+
+    // if finish_reason exists, it means that a whole message is generated.
+    if (resp.finish_reason !== undefined) {
+      const message = ai.finishMessageDelta(acc);
+      if (message.contents?.[0]?.type === "text")
+        console.log("\n\n" + message.contents[0].text);
+      acc = {
+        contents: [],
+        tool_calls: [],
+      } as ai.MessageDelta; // re-initialize the base
+    }
+  }
+  console.log();
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const agent = new ai.Agent(lm);
+
+  const GREEN = "\x1b[32m";
+  const RESET = "\x1b[0m";
+
+  let acc = {
+    contents: [],
+    tool_calls: [],
+  } as ai.MessageDelta; // the base of accumulation
+  for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
+    if (resp.delta.contents?.[0]?.type === "text") {
+      // print text deltas in green
+      console.log(GREEN + resp.delta.contents[0].text + RESET);
+    }
+    // accumulate newly generated delta into the base
+    acc = ai.accumulateMessageDelta(acc, resp.delta);
+
+    // if finish_reason exists, it means that a whole message is generated.
+    if (resp.finish_reason !== undefined) {
+      const message = ai.finishMessageDelta(acc);
+      if (message.contents?.[0]?.type === "text")
+        console.log("\n\n" + message.contents[0].text);
+      acc = {
+        contents: [],
+        tool_calls: [],
+      } as ai.MessageDelta; // re-initialize the base
+    }
+  }
+  console.log();
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+</CodeTabs>
+
+{/* prettier-ignore-end */}

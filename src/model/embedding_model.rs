@@ -147,7 +147,7 @@ mod py {
         }
 
         #[pyo3(signature = (text))]
-        async fn run(&mut self, text: String) -> PyResult<Embedding> {
+        async fn infer(&mut self, text: String) -> PyResult<Embedding> {
             match &mut self.inner {
                 EmbeddingModelInner::Local(model) => model.infer(text).await,
             }
@@ -155,7 +155,7 @@ mod py {
         }
 
         #[pyo3(signature = (text))]
-        fn run_sync(&mut self, py: Python<'_>, text: String) -> PyResult<Embedding> {
+        fn infer_sync(&mut self, py: Python<'_>, text: String) -> PyResult<Embedding> {
             let fut = match &mut self.inner {
                 EmbeddingModelInner::Local(model) => model.infer(text),
             };

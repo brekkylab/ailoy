@@ -137,6 +137,7 @@ impl fmt::Display for Message {
 /// A simplified form of [Message] for concise definition.
 /// All other members are identical to [Message], but `contents` is a `String` instead of `Vec<Part>`.
 /// This can be converted to Message via `.into()`.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
@@ -594,7 +595,7 @@ pub(crate) mod py {
                     .collect::<Vec<_>>()
                     .join(", "),
                 self.id.__repr__(),
-                self.thinking.__repr__(),
+                self.thinking.__repr__().replace('\n', "\\n"),
                 self.tool_calls.as_ref().map_or(String::new(), |calls| {
                     calls
                         .iter()
@@ -907,6 +908,22 @@ pub(crate) mod node {
 
     use super::*;
 
+    #[napi]
+    pub fn accumulate_message_delta(
+        a: MessageDelta,
+        b: MessageDelta,
+    ) -> napi::Result<MessageDelta> {
+        a.accumulate(b)
+            .map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
+    }
+
+    #[napi]
+    pub fn finish_message_delta(delta: MessageDelta) -> napi::Result<Message> {
+        delta
+            .finish()
+            .map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
+    }
+
     #[napi(transparent)]
     pub struct Messages(Either<Vec<Either<Message, SingleTextMessage>>, String>);
 
@@ -1050,6 +1067,22 @@ mod wasm {
     use wasm_bindgen::prelude::*;
 
     use super::*;
+
+    #[wasm_bindgen(js_name = "accumulateMessageDelta")]
+    pub fn accumulate_message_delta(
+        a: MessageDelta,
+        b: MessageDelta,
+    ) -> Result<MessageDelta, js_sys::Error> {
+        a.accumulate(b)
+            .map_err(|e| js_sys::Error::new(&format!("{}", e)))
+    }
+
+    #[wasm_bindgen(js_name = "finishMessageDelta")]
+    pub fn finish_message_delta(delta: MessageDelta) -> Result<Message, js_sys::Error> {
+        delta
+            .finish()
+            .map_err(|e| js_sys::Error::new(&format!("{}", e)))
+    }
 
     #[wasm_bindgen]
     extern "C" {

@@ -45,7 +45,7 @@ endif()
 #################
 project(ailoy CXX)
 
-set(AILOY_WITH_TEST ON CACHE BOOL "Build test")
+set(AILOY_WITH_TEST OFF CACHE BOOL "Build test")
 
 if(AILOY_WITH_TEST)
     FetchContent_Declare(googletest URL https://github.com/google/googletest/archive/refs/tags/v1.16.0.tar.gz)
@@ -253,5 +253,5 @@ target_link_libraries(ailoy_cpp_shim PUBLIC faiss)
 ###########
 
 install(TARGETS ailoy_cpp_shim ARCHIVE DESTINATION .)
-install(FILES ${tvm_BINARY_DIR}/libtvm_runtime.a DESTINATION .)
-install(FILES ${faiss_BINARY_DIR}/faiss/libfaiss.a DESTINATION .)
+install(TARGETS tvm_runtime ARCHIVE DESTINATION .)
+install(TARGETS faiss ARCHIVE DESTINATION .)

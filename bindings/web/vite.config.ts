@@ -1,6 +1,7 @@
 import { loadEnv } from "vite";
 import dts from "vite-plugin-dts";
 import { viteStaticCopy } from "vite-plugin-static-copy";
+import topLevelAwait from "vite-plugin-top-level-await";
 import wasm from "vite-plugin-wasm";
 import { Plugin, defineConfig } from "vitest/config";
 
@@ -74,7 +75,7 @@ export default defineConfig(({ mode }) => {
         formats: ["es"],
       },
       rollupOptions: {
-        external: ["./ailoy-web_bg.wasm", "./shim_js/dist/index.js"],
+        external: ["./shim_js/dist/index.js"],
       },
     },
     plugins: [
@@ -84,17 +85,14 @@ export default defineConfig(({ mode }) => {
       viteStaticCopy({
         targets: [
           {
-            src: "./src/ailoy-web_bg.wasm",
-            dest: "./",
-          },
-          {
-            src: "./src/shim_js/dist/index.js",
+            src: ["./src/shim_js/dist/index.js"],
             dest: "./",
             rename: "shim.js",
           },
         ],
       }),
       wasm(),
+      topLevelAwait(),
       rewriteImportPath({
         mappings: {
           "./shim_js/dist/index.js": "./shim.js",

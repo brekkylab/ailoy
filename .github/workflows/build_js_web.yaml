@@ -7,29 +7,26 @@ env:
   NODE_VERSION: "20.19.4"
 
 jobs:
-  build-macos:
-    runs-on: macos-14
+  build:
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Rust Nightly
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: nightly
-          components: rust-src
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-    
-      - name: Setup Emsdk
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: 4.0.11
+
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
+      
+      - name: Install wasm-pack
+        run: |
+          cargo install wasm-pack
 
       - name: Create package
+        working-directory: ${{ github.workspace }}/bindings/web
         run: |
           npm install
           npm run build
@@ -37,10 +34,9 @@ jobs:
           PACKAGE_NAME=$(ls -1t ailoy-web-*.tgz | head -n 1)
           echo "PACKAGE_NAME=$PACKAGE_NAME"
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
-        working-directory: ${{ github.workspace }}/bindings/js-web
 
       - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PACKAGE_NAME }}
-          path: ${{ github.workspace }}/bindings/js-web/${{ env.PACKAGE_NAME }}
+          path: ${{ github.workspace }}/bindings/web/${{ env.PACKAGE_NAME }}
