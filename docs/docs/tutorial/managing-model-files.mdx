@@ -1,31 +1,39 @@
 # Managing Model Files
 
-Language models (LMs) usually contain very large size of parameters. This
-ranging from megabytes to gigabytes. In addition, they require extra files for
-chat templates, tokenization, and other supplementary data.
+Language models(LMs) usually contain a very large number of parameters, ranging
+from megabytes to gigabytes in total size. In addition, they require extra files
+for chat templates, tokenization, and other supplementary data.
 
 By default, Ailoy automatically downloads the required model files if they are
 not already present on the system. These files are stored in the following
-locations depending on your operating system:
+locations depending on your environment:
 
-| OS          | Model cache root path                                                                                                            |
+| Environment | Model cache root path                                                                                                            |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Linux       | `~/.cache/ailoy`                                                                                                                 |
 | macOS       | `~/.cache/ailoy`                                                                                                                 |
 | Windows     | `%LOCALAPPDATA%\ailoy`                                                                                                           |
 | WebAssembly | [Origin Private File System (OPFS)](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system) |
 
-Ailoy also provides a Command-Line Interface (CLI) that allows you to download
-and delete model files directly.
+## CLI tool
+
+Ailoy also provides a Command-Line Interface(CLI) tool that helps you to manage
+the model files directly.
+
+{/* prettier-ignore-start */}
 
 :::info
-
 Model names follow the same naming convention as those registered on
 HuggingFace.
-
 :::
 
-## List
+{/* prettier-ignore-end */}
+
+### List
+
+_Shows the list of the locally cached files._
+
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -35,7 +43,13 @@ ailoy-models list
 
 </CodeTabs>
 
-## Download
+{/* prettier-ignore-end */}
+
+### Download
+
+_Downloads the files of designated model into the local cache._
+
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -45,7 +59,17 @@ ailoy-models download Qwen/Qwen3-0.6B
 
 </CodeTabs>
 
-## Remove
+:::note
+Check out our **[Available Models](../resources/available-models)** page to see which local models are available.
+:::
+
+{/* prettier-ignore-end */}
+
+### Remove
+
+_Removes all files related to the designated model from the local model cache._
+
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -55,4 +79,4 @@ ailoy-models remove Qwen/Qwen3-0.6B
 
 </CodeTabs>
 
-TBD
+{/* prettier-ignore-end */}
