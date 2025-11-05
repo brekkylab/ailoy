@@ -56,8 +56,6 @@ pyo3-async-runtimes = { version = "0.27.0", features = ["attributes", "tokio-run
 pyo3-stub-gen = { version = "0.16.1", optional = true }
 pyo3-stub-gen-derive = { version = "0.16.1", optional = true }
 reqwest = { version = "0.12", features = ["json", "stream"] }
-reqwest-middleware = "0.4.2"
-reqwest-retry = "0.7.0"
 rmcp = { version = "0.5.0", features = ["default"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
@@ -81,6 +79,7 @@ uuid = { version = "1.18.0", features = ["v4"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
 js-sys = "0.3"
 sse-stream = "0.2"
 tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex"] }

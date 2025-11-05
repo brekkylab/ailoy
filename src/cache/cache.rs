@@ -8,8 +8,6 @@ use std::{
 use anyhow::{Context, bail};
 use async_stream::try_stream;
 use futures::{Stream, StreamExt as _, stream::FuturesUnordered};
-use reqwest_middleware::ClientBuilder;
-use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 use tokio::sync::RwLock;
 use url::Url;
 
@@ -23,20 +21,41 @@ use crate::{
     value::Value,
 };
 
-async fn download(url: Url) -> anyhow::Result<Vec<u8>> {
-    let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
-    let client = ClientBuilder::new(reqwest::Client::new())
-        .with(RetryTransientMiddleware::new_with_policy(retry_policy))
-        .build();
-    let resp = client.get(url).send().await?;
+async fn download_attempt(url: &Url) -> anyhow::Result<Vec<u8>> {
+    let client = reqwest::Client::builder().build()?;
+
+    let resp = client.get(url.clone()).send().await?;
+
     if !resp.status().is_success() {
         bail!("HTTP error: {}", resp.status());
     }
+
     let bytes = resp
         .bytes()
         .await
         .context("reqwest::Response::bytes failed")?;
+
     Ok(bytes.to_vec())
+}
+
+async fn download(url: Url) -> anyhow::Result<Vec<u8>> {
+    let max_retries = 3;
+    let mut last_error = None;
+
+    for attempt in 0..max_retries {
+        match download_attempt(&url).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < max_retries - 1 {
+                    let delay_ms = 1000 * (attempt as i32 + 1);
+                    crate::utils::sleep(delay_ms).await;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap())
 }
 
 /// [`super::FromCache`] or [`super::TryFromCache`] results with it's progress.
