@@ -50,7 +50,7 @@ cd bindings/python
 maturin build --out ./dist
 ```
 
-For more details, refer to `bindings/python/README.md`.
+For more details, refer to [`bindings/python/README.md`](./bindings/python/README.md).
 
 ### Node.js Build
 
@@ -59,7 +59,7 @@ cd bindings/nodejs
 npm run build
 ```
 
-For more details, refer to `bindings/nodejs/README.md`.
+For more details, refer to [`bindings/nodejs/README.md`](./bindings/nodejs/README.md).
 
 ### Javascript Build for web browsers
 
@@ -68,4 +68,4 @@ cd bindings/web
 npm run build
 ```
 
-For more details, refer to `bindings/web/README.md`.
+For more details, refer to [`bindings/web/README.md`](./bindings/web/README.md).
