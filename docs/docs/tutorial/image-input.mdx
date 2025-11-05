@@ -25,7 +25,7 @@ async def main():
             ai.Part.image_from_url(
                 "https://upload.wikimedia.org/wikipedia/commons/b/bd/Golden_Retriever_Dukedestiny01_drvd.jpg"
             ),
-            ai.Part.Text("What you can see in this image?"),
+            ai.Part.Text("What do you see in this image?"),
         ],
     )
     lm = ai.LangModel.new_stream_api(
@@ -54,7 +54,7 @@ async function main() {
       ai.imageFromUrl(
         "https://upload.wikimedia.org/wikipedia/commons/b/bd/Golden_Retriever_Dukedestiny01_drvd.jpg"
       ),
-      { type: "text", text: "What you can see in this image?" },
+      { type: "text", text: "What do you see in this image?" },
     ],
   };
   const lm = await ai.LangModel.newStreamAPI(
@@ -89,7 +89,7 @@ grass and some foliage.
 
 ## Feeding an Image Data
 
-Also, you can read an image from the file and feed them locally.
+Also, you can read an image from a local file and include it directly as input.
 
 <CodeTabs>
 
@@ -106,7 +106,7 @@ async def main():
         role="user",
         contents=[
             ai.Part.image_from_bytes(data),
-            ai.Part.Text("What you can see in this image?"),
+            ai.Part.Text("What do you see in this image?"),
         ],
     )
     lm = ai.LangModel.new_stream_api(
@@ -135,7 +135,7 @@ async function main() {
     role: "user",
     contents: [
       ai.imageFromData(data),
-      { type: "text", text: "What you can see in this image?" },
+      { type: "text", text: "What do you see in this image?" },
     ],
   };
   const lm = await ai.LangModel.newStreamAPI(
