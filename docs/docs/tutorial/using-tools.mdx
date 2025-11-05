@@ -177,6 +177,43 @@ iteration.
 
 You can register a tool by passing it to the `Agent` constructor.
 
+<CodeTabs>
+
+```python
+lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", progress_callback=print)
+tools = [ai.Tool.new_py_function(tool_behavior, tool_desc)]
+agent = ai.Agent(lm, tools)
+```
+
+```typescript
+const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B", console.log);
+const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
+const agent = new ai.Agent(lm, tools);
+```
+
+</CodeTabs>
+
+Also, you can register the tools **after** creating the agent by using the
+`add_tool` methods.
+
+<CodeTabs>
+
+```python
+lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", progress_callback=print)
+agent = ai.Agent(lm, [])
+...
+agent.add_tool(ai.Tool.new_py_function(tool_behavior, tool_desc))
+```
+
+```typescript
+const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B", console.log);
+const agent = new ai.Agent(lm);
+...
+agent.add_tool(ai.Tool.newFunction(toolDesc, toolBehavior));
+```
+
+</CodeTabs>
+
 You can check which tool the agent invoked and what result it produced from the
 response returned by `agent.run()` or `agent.run_delta()`. The `agent.run()`
 function includes a field called `tool_calls`. If this field contains any
