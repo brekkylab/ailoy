@@ -9,34 +9,19 @@ If you want you run an agent with previous context, you must explicitly
 **include the entire conversation history** (all prior messages) when making the
 call.
 
+## Adding Context in the Conversation
+
+Let's say that the user and the agent have exchanged some messages, as shown in
+the following diagram.
+
 ```mermaid
 sequenceDiagram
     participant User
-    participant Assistant
+    participant Agent
 
-    User->>Assistant: Message {role: "user", contents: [{type: "text", text: "Hello!"}]}
-    Assistant->>User: Message {role: "assistant", contents: [{type: "text", text: "Hi there! How can I help you today?"}]}
-    User->>Assistant: Message {role: "user", contents: [{type: "text", text: "What did I just say?"}]}
-```
-
-## Adding Context in the Conversation
-
-Let's assume you initially said to your agent:
-
-```
-John's favorite color is blue. Please remember that.
-```
-
-Then the agent replied like this:
-
-```
-Great to hear that John's favorite color is blue.
-```
-
-Now you would ask the agent:
-
-```
-What’s John's favorite color?
+    User->>Agent: "John's favorite color is blue. Please remember that."
+    Agent->>User: "Great to hear that John's favorite color is blue."
+    User->>Agent: "What’s John's favorite color?"
 ```
 
 You would expect the agent to answer `blue`, considering the context.
@@ -155,9 +140,9 @@ async def main():
         messages.append(ai.Message(role="user", contents=user_message))
         async for resp in agent.run(messages):
             if isinstance(resp.message.contents[0], ai.Part.Text):
-                print("Assistant:", resp.message.contents[0].text)
+                print("Agent:", resp.message.contents[0].text)
             messages.append(resp.message)
-    print("Assistant: It was a nice conversation!")
+    print("Agent: It was a nice conversation!")
 
 
 if __name__ == "__main__":
@@ -190,12 +175,12 @@ async function main() {
 
     for await (const resp of agent.run(messages as ai.Messages)) {
       if (resp.message.contents?.[0]?.type === "text")
-        console.log("Assistant:", resp.message.contents?.[0]?.text);
+        console.log("Agent:", resp.message.contents?.[0]?.text);
       messages.push(resp.message);
     }
   }
 
-  console.log("Assistant: It was a nice conversation!");
+  console.log("Agent: It was a nice conversation!");
   rl.close();
 }
 
