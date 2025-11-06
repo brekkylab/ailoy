@@ -9,28 +9,82 @@ Run `ailoy-model --help` for more details.
 
 {/* prettier-ignore-start */}
 
-{/* :::note
+:::note
 The terminal output in this documentation assumes that the CLI was installed via the Python package.
 If you installed it via the Node.js package, the output may differ slightly.
-::: */}
+:::
 
 {/* prettier-ignore-end */}
 
-## Commands
-
-### `ailoy-model`
+## `ailoy-model`
 
 Manages AI models used in Ailoy.
 
-#### `ailoy-model list`
+### `ailoy-model list`
 
-Lists all available models in the local cache directory.
+_Lists all available models in the local cache directory._
 
-#### `ailoy-model download <model-id>`
+#### Output
 
-Downloads the specified model using the given model ID and required attributes.
+```bash
+$ ailoy-model list
+Cache root: "/Users/<username>/.cache/ailoy"
+* BAAI/bge-m3 (325.18 MB)
+* Qwen/Qwen3-0.6B (344.42 MB)
+* Qwen/Qwen3-1.7B (954.35 MB)
+* Qwen/Qwen3-14B (7944.28 MB)
+* Qwen/Qwen3-30B-A3B (16421.57 MB)
+* Qwen/Qwen3-32B (17598.82 MB)
+* Qwen/Qwen3-4B (2188.11 MB)
+* Qwen/Qwen3-8B (4423.09 MB)
+```
 
-#### `ailoy-model remove <model-id>`
+### `ailoy-model download <model-id>`
 
-Removes the specified model by its ID.  
+_Downloads the specified model using the given model ID and required
+attributes._
+
+{/* prettier-ignore-start */}
+
+:::note
+Check out our **[Available Models](available-models)** page to see which local models are available.
+:::
+
+{/* prettier-ignore-end */}
+
+#### Output
+
+```bash
+$ ailoy-model download BAAI/bge-m3
+Downloading BAAI--bge-m3
+- Platform: aarch64-apple-darwin
+- Device: metal
+- Download path: "/Users/<username>/.cache/ailoy"
+  BAAI--bge-m3/ndarray-cache.json [############################] 144.42 KiB/144.42 KiB [00:00:00]
+  BAAI--bge-m3/params_shard_0.bin [############################] 122.07 MiB/122.07 MiB [00:00:05]
+  BAAI--bge-m3/params_shard_1.bin [##############################] 31.06 MiB/31.06 MiB [00:00:01]
+  BAAI--bge-m3/params_shard_2.bin [##############################] 31.62 MiB/31.62 MiB [00:00:01]
+  BAAI--bge-m3/params_shard_3.bin [##############################] 31.62 MiB/31.62 MiB [00:00:01]
+  BAAI--bge-m3/params_shard_4.bin [##############################] 31.62 MiB/31.62 MiB [00:00:01]
+  BAAI--bge-m3/params_shard_5.bin [##############################] 31.62 MiB/31.62 MiB [00:00:01]
+  BAAI--bge-m3/params_shard_6.bin [##############################] 24.84 MiB/24.84 MiB [00:00:00]
+  BAAI--bge-m3/tokenizer.json [##################################] 16.31 MiB/16.31 MiB [00:00:00]
+  BAAI--bge-m3--aarch64-apple-darwin--metal/rt.dylib [#########] 847.52 KiB/847.52 KiB [00:00:00]
+🎉 Download complete!
+```
+
+### `ailoy-model remove <model-id>`
+
+_Removes all the files related to the specified model by its ID._  
 You'll be prompted to confirm the deletion by entering `Y`(`y`) or `N`(`n`).
+
+```bash
+$ ailoy-model remove BAAI/bge-m3
+Cache root: "/Users/<username>/.cache/ailoy"
+-----------------------------------------------
+BAAI--bge-m3                                 320.89 MB
+BAAI--bge-m3--aarch64-apple-darwin--metal       0.83 MB
+About to remove 2 directories, freeing approximately 321.72 MB total.
+Proceed with deletion? (y/N): y
+Removed, freed 321.72 MB total.
+```

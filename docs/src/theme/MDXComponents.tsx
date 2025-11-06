@@ -1,4 +1,5 @@
 import CodeTabs from "@site/src/components/CodeTabs";
+import SmallIcon from "@site/src/components/SmallIcon";
 import TerminalBox from "@site/src/components/TerminalBox";
 import MDXComponents from "@theme-original/MDXComponents";
 import CodeBlock from "@theme/CodeBlock";
@@ -11,5 +12,6 @@ export default {
   Tabs,
   TabItem,
   CodeTabs,
+  SmallIcon,
   TerminalBox,
 };
