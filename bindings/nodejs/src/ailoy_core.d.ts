@@ -165,6 +165,8 @@ export type APISpecification =
 
 export type BuiltinToolKind = "terminal";
 
+export type Bytes = Buffer;
+
 export interface CacheProgress {
   comment: string;
   current: number;
@@ -487,7 +489,7 @@ export type PartImage =
       height: number;
       width: number;
       colorspace: PartImageColorspace;
-      data: Buffer;
+      data: Bytes;
     }
   | { type: "url"; url: string };
 

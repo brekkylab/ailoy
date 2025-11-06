@@ -30,17 +30,14 @@ fn decode_json_pointer_token(token: &str) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum Value {
     Null,
     Bool(bool),
     Unsigned(u64),
     Integer(i64),
-    Float(#[cfg_attr(feature = "wasm", tsify(type = "number"))] OrderedFloat<f64>),
+    Float(OrderedFloat<f64>),
     String(String),
-    Object(
-        #[cfg_attr(feature = "wasm", tsify(type = "Record<string, any>"))] IndexMap<String, Value>,
-    ),
+    Object(IndexMap<String, Value>),
     Array(Vec<Value>),
 }
 
@@ -1019,6 +1016,13 @@ mod wasm {
     };
 
     use super::Value;
+
+    #[wasm_bindgen(typescript_custom_section)]
+    const TS_APPEND_CONTENT: &'static str = dedent::dedent!(
+        r#"
+        export type Value = string | number | boolean | null | Array<Value> | {[property: string]: Value};
+        "#
+    );
 
     impl WasmDescribe for Value {
         fn describe() {

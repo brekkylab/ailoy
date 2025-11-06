@@ -21,17 +21,41 @@ use crate::{
     value::Value,
 };
 
-async fn download(url: Url) -> anyhow::Result<Vec<u8>> {
-    let req = reqwest::get(url);
-    let resp = req.await?;
+async fn download_attempt(url: &Url) -> anyhow::Result<Vec<u8>> {
+    let client = reqwest::Client::builder().build()?;
+
+    let resp = client.get(url.clone()).send().await?;
+
     if !resp.status().is_success() {
         bail!("HTTP error: {}", resp.status());
     }
+
     let bytes = resp
         .bytes()
         .await
         .context("reqwest::Response::bytes failed")?;
+
     Ok(bytes.to_vec())
+}
+
+async fn download(url: Url) -> anyhow::Result<Vec<u8>> {
+    let max_retries = 3;
+    let mut last_error = None;
+
+    for attempt in 0..max_retries {
+        match download_attempt(&url).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < max_retries - 1 {
+                    let delay_ms = 1000 * (attempt as i32 + 1);
+                    crate::utils::sleep(delay_ms).await;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap())
 }
 
 /// [`super::FromCache`] or [`super::TryFromCache`] results with it's progress.

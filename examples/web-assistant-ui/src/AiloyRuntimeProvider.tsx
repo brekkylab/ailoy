@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
@@ -12,14 +12,158 @@ import {
 } from "@assistant-ui/react";
 import * as ai from "ailoy-web";
 
+function imageDataToBase64(arr: Uint8Array): string {
+  let binaryString = "";
+  arr.forEach((byte) => {
+    binaryString += String.fromCharCode(byte);
+  });
+  const base64String = btoa(binaryString);
+  return base64String;
+}
+
+function convertMessage(
+  message: ai.Message
+): useExternalMessageConverter.Message {
+  if (message.role === "user") {
+    return {
+      role: message.role,
+      content: message.contents.map((part) => {
+        if (part.type === "text") return part;
+        else if (part.type === "image") {
+          if (part.image.type === "binary") {
+            return {
+              type: "image",
+              image: `data:image/png;base64,${imageDataToBase64(
+                part.image.data
+              )}`,
+            };
+          } else {
+            return { type: "image", image: part.image.url };
+          }
+        } else if (part.type === "value")
+          return { type: "text", text: part.value!.toString() };
+        else throw Error("Unknown content type");
+      }),
+    };
+  } else if (message.role === "assistant") {
+    let contents = [];
+    if (message.thinking) {
+      contents.push({
+        type: "reasoning",
+        text: message.thinking,
+      });
+    }
+    if (message.tool_calls) {
+      for (const toolCall of message.tool_calls) {
+        if (toolCall.type !== "function")
+          throw new Error("tool call content should be a type of function");
+        contents.push({
+          type: "tool-call",
+          toolCallId: toolCall.id,
+          toolName: toolCall.function.name,
+          args: toolCall.function.arguments,
+        });
+      }
+    }
+    for (const content of message.contents) {
+      if (content.type === "text") {
+        contents.push(content);
+      }
+    }
+    return {
+      role: message.role,
+      content: contents,
+    } as useExternalMessageConverter.Message;
+  } else if (message.role === "tool") {
+    let toolResult: string;
+    if (message.contents[0].type === "text") {
+      toolResult = message.contents[0].text;
+    } else if (message.contents[0].type === "value") {
+      toolResult = JSON.stringify(message.contents[0].value);
+    } else {
+      throw new Error("Tool result should be either text or value.");
+    }
+    return {
+      role: "tool",
+      toolCallId: message.id,
+      result: toolResult,
+    } as useExternalMessageConverter.Message;
+  } else {
+    throw new Error(`Unknown message type: ${message}`);
+  }
+}
+
+function convertMessageDelta(
+  delta: ai.MessageDelta
+): useExternalMessageConverter.Message {
+  if (delta.role === "assistant") {
+    let contents = [];
+    if (delta.thinking !== undefined) {
+      contents.push({
+        type: "reasoning",
+        text: delta.thinking,
+      });
+    }
+    if (delta.tool_calls.length > 0) {
+      for (const toolCall of delta.tool_calls) {
+        if (toolCall.type !== "function")
+          throw new Error("tool call content should be a type of function");
+        if (toolCall.function.type === "verbatim") {
+          contents.push({ type: "text", text: toolCall.function.text });
+        } else if (toolCall.function.type === "with_string_args") {
+          contents.push({
+            type: "text",
+            text: `{"name": "${toolCall.function.name}", "arguments": ${toolCall.function.arguments}}`,
+          });
+        } else {
+          contents.push({
+            type: "text",
+            text: `{"name": "${toolCall.function.name}", "arguments": ${toolCall.function.arguments}}`,
+          });
+        }
+      }
+    }
+    for (const content of delta.contents) {
+      if (content.type === "text") {
+        contents.push(content);
+      }
+    }
+    return {
+      role: "assistant",
+      content: contents,
+    } as useExternalMessageConverter.Message;
+  } else if (delta.role === "tool") {
+    let toolResult: string;
+    if (delta.contents[0].type === "text") {
+      toolResult = delta.contents[0].text;
+    } else if (delta.contents[0].type === "value") {
+      toolResult = JSON.stringify(delta.contents[0].value);
+    } else {
+      throw new Error("Tool result should be either text or value.");
+    }
+    return {
+      role: "tool",
+      toolCallId: delta.id,
+      result: toolResult,
+    } as useExternalMessageConverter.Message;
+  } else {
+    // Consider this case as an empty assistant message
+    return {
+      role: "assistant",
+      content: [],
+    };
+  }
+}
+
 export function AiloyRuntimeProvider({
   children,
 }: Readonly<{ children: ReactNode }>) {
   const [agent, setAgent] = useState<ai.Agent | undefined>(undefined);
   const [agentLoading, setAgentLoading] = useState<boolean>(false);
-  const [messages, setMessages] = useState<
-    (ai.UserMessage | ai.AgentResponse)[]
-  >([]);
+  const [messages, setMessages] = useState<ai.Message[]>([]);
+  const [ongoingMessage, setOngoingMessage] = useState<ai.MessageDelta | null>(
+    null
+  );
   const [isAnswering, setIsAnswering] = useState<boolean>(false);
 
   useEffect(() => {
@@ -31,16 +175,17 @@ export function AiloyRuntimeProvider({
       }
 
       setAgentLoading(true);
-      const runtime = await ai.startRuntime();
-      const agent = await ai.defineAgent(
-        runtime,
-        ai.LocalModel({ id: "Qwen/Qwen3-0.6B" })
-        // ai.APIModel({
-        //   id: "gpt-5-mini",
-        //   apiKey: "<OPENAI_API_KEY>",
-        // })
+
+      const agent = new ai.Agent(
+        await ai.LangModel.newLocal("Qwen/Qwen3-0.6B")
+        // await ai.LangModel.newStreamAPI(
+        //   "OpenAI",
+        //   "gpt-4o",
+        //   "<YOUR-OPENAI-API-KEY>"
+        // )
       );
       setAgent(agent);
+
       setAgentLoading(false);
     })();
   }, []);
@@ -48,14 +193,16 @@ export function AiloyRuntimeProvider({
   const onNew = async (message: AppendMessage) => {
     if (agent === undefined) throw new Error("Agent is not initialized yet");
 
-    let userContent: ai.UserMessage["content"] = [];
+    let userContents: ai.Part[] = [];
 
     // Add attachments
     if (message.attachments !== undefined) {
       for (const attach of message.attachments) {
         if (attach.type === "image") {
-          const imageContent = await ai.ImageContent.fromFile(attach.file!);
-          userContent.push(imageContent);
+          const ab = await attach.file!.arrayBuffer();
+          const arr = new Uint8Array(ab);
+          const imagePart = ai.imageFromBytes(arr);
+          userContents.push(imagePart);
         }
         // other types are skipped
       }
@@ -64,99 +211,56 @@ export function AiloyRuntimeProvider({
     // Add text prompt
     if (message.content[0]?.type !== "text")
       throw new Error("Only text messages are supported");
-    const textContent: ai.TextContent = {
-      type: "text",
-      text: message.content[0].text,
-    };
-    userContent.push(textContent);
-
-    console.log(userContent);
+    userContents.push({ type: "text", text: message.content[0].text });
 
     // Set messages
-    setMessages((prev) => [...prev, { role: "user", content: userContent }]);
+    const newMessage: ai.Message = {
+      role: "user",
+      contents: userContents,
+    };
+    setMessages((prev) => [...prev, newMessage]);
     setIsAnswering(true);
 
-    for await (const resp of agent.query(userContent)) {
-      if (resp.type === "output_text" || resp.type === "reasoning") {
-        if (resp.isTypeSwitched) {
-          setMessages((prev) => [...prev, resp]);
-        } else {
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            last.content += resp.content;
-            return [...prev.slice(0, -1), last];
-          });
-        }
-      } else {
-        setMessages((prev) => [...prev, resp]);
+    let accumulated: ai.MessageDelta | null = null;
+    for await (const { delta, finish_reason } of agent.runDelta([
+      ...messages,
+      newMessage,
+    ])) {
+      accumulated =
+        accumulated === null
+          ? delta
+          : ai.accumulateMessageDelta(accumulated, delta);
+      setOngoingMessage({ ...accumulated });
+
+      if (finish_reason !== undefined) {
+        let newMessage = ai.finishMessageDelta(accumulated);
+        setMessages((prevMessages) => [...prevMessages, newMessage]);
+        setOngoingMessage(null);
+        accumulated = null;
       }
     }
     setIsAnswering(false);
   };
 
-  const convertedMessages = useExternalMessageConverter({
-    messages,
-    callback: (message: ai.UserMessage | ai.AgentResponse) => {
-      if (message.role === "user") {
-        if (typeof message.content === "string") {
-          return {
-            role: message.role,
-            content: [{ type: "text", text: message.content }],
-          };
-        } else {
-          return {
-            role: message.role,
-            content: message.content.map((c) => {
-              if (c.type === "text") return c;
-              else if (c.type === "image_url")
-                return { type: "image", image: c.image_url.url };
-              else if (c.type === "input_audio")
-                return { type: "audio", audio: c.input_audio };
-              else throw Error("Unknown content type");
-            }),
-          };
-        }
-      } else if (message.type === "output_text") {
-        return {
-          role: "assistant",
-          content: [{ type: "text", text: message.content }],
-        };
-      } else if (message.type === "reasoning") {
-        return {
-          role: "assistant",
-          content: [{ type: "reasoning", text: message.content }],
-        };
-      } else if (message.type === "tool_call") {
-        return {
-          role: "assistant",
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: message.content.id!,
-              toolName: message.content.function.name,
-              args: message.content.function.arguments,
-            },
-          ],
-        };
-      } else if (message.type === "tool_call_result") {
-        return {
-          role: "tool",
-          toolCallId: message.content.tool_call_id!,
-          result: message.content.content[0].text,
-        };
-      } else {
-        throw new Error(`Unknown message type: ${message.type}`);
+  const convertedMessages: useExternalMessageConverter.Message[] =
+    useMemo(() => {
+      let converted = messages.map(convertMessage);
+      if (ongoingMessage !== null) {
+        let convertedDelta = convertMessageDelta(ongoingMessage);
+        converted = [...converted, convertedDelta];
       }
-    },
-    isRunning: isAnswering,
-    joinStrategy: "concat-content",
-  });
+      return converted;
+    }, [messages, ongoingMessage]);
 
   const runtime = useExternalStoreRuntime({
     isLoading: agentLoading,
     isDisabled: agent === undefined,
     isRunning: isAnswering,
-    messages: convertedMessages,
+    messages: useExternalMessageConverter({
+      messages: convertedMessages,
+      callback: (msg) => msg,
+      isRunning: isAnswering,
+    }),
     onNew,
     adapters: {
       attachments: new CompositeAttachmentAdapter([

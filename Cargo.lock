@@ -61,6 +61,7 @@ dependencies = [
  "env_logger",
  "futures",
  "getrandom 0.3.3",
+ "gloo-timers",
  "image",
  "indexmap",
  "indicatif",
@@ -92,6 +93,7 @@ dependencies = [
  "tokenizers",
  "tokio",
  "tsify",
+ "unicode-segmentation",
  "url",
  "uuid",
  "wasm-bindgen",
@@ -1545,6 +1547,18 @@ name = "gimli"
 version = "0.32.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
+
+[[package]]
+name = "gloo-timers"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "h2"

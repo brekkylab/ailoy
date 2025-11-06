@@ -1,41 +1,23 @@
-use base64::Engine as _;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+use crate::utils::Ellipsis;
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
 pub struct Bytes(pub ByteBuf);
 
-impl Serialize for Bytes {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        if serializer.is_human_readable() {
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&self.0);
-            serializer.serialize_str(&b64)
-        } else {
-            serializer.serialize_bytes(&self.0)
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Bytes {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        if deserializer.is_human_readable() {
-            let s = String::deserialize(deserializer)?;
-            let data = base64::engine::general_purpose::STANDARD
-                .decode(s.as_bytes())
-                .map_err(D::Error::custom)?;
-            Ok(Bytes(data.into()))
-        } else {
-            let b = <Vec<u8>>::deserialize(deserializer)?;
-            Ok(Bytes(b.into()))
-        }
+impl std::fmt::Debug for Bytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const MAX_LEN: usize = 64;
+        let bytes_str = format!("{:?}", self.0);
+        write!(
+            f,
+            "Bytes({} ({} bytes total))",
+            bytes_str.truncate_ellipsis(MAX_LEN),
+            self.0.len()
+        )
     }
 }
 
@@ -83,8 +65,13 @@ mod py {
 #[cfg(feature = "nodejs")]
 mod node {
     use napi::{Env, ValueType, bindgen_prelude::*};
+    use napi_derive::napi;
 
     use super::Bytes;
+
+    #[allow(unused)]
+    #[napi(js_name = "Bytes")]
+    pub type JsBytes = Buffer; // dummy type to generate type alias in d.ts
 
     unsafe fn read_buffer(env: sys::napi_env, val: sys::napi_value) -> Result<Vec<u8>> {
         let mut data_ptr: *mut core::ffi::c_void = std::ptr::null_mut();

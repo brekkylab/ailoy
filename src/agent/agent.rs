@@ -636,9 +636,24 @@ mod wasm {
             self.add_tool(tool.clone())
         }
 
+        /// Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after this function is called.
+        /// If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
+        #[wasm_bindgen(js_name = "addTools")]
+        pub fn add_tools_js(&mut self, tools: Vec<Tool>) {
+            self.add_tools(tools.clone())
+        }
+
         #[wasm_bindgen(js_name = "removeTool")]
         pub fn remove_tool_js(&mut self, #[wasm_bindgen(js_name = "toolName")] tool_name: String) {
             self.remove_tool(tool_name)
+        }
+
+        #[wasm_bindgen(js_name = "removeTools")]
+        pub fn remove_tools_js(
+            &mut self,
+            #[wasm_bindgen(js_name = "toolNames")] tool_names: Vec<String>,
+        ) {
+            self.remove_tools(tool_names)
         }
 
         #[wasm_bindgen(js_name = "setKnowledge")]
