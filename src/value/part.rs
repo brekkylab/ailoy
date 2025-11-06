@@ -752,7 +752,7 @@ mod py {
     use pyo3_stub_gen::derive::*;
 
     use super::*;
-    use crate::{ffi::py::base::PyRepr, utils::Ellipse};
+    use crate::{ffi::py::base::PyRepr, utils::Ellipsis};
 
     #[gen_stub_pymethods]
     #[pymethods]
@@ -799,7 +799,7 @@ mod py {
                         "Image(image=PartImage({}))",
                         serde_json::to_string(image)
                             .unwrap_or("...".to_owned())
-                            .truncate_ellipse_with(100, "...]}")
+                            .truncate_ellipsis_with(100, "...]}")
                     )
                 }
             };

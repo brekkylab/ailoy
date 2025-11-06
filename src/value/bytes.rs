@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
-use crate::utils::Ellipse;
+use crate::utils::Ellipsis;
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
@@ -15,7 +15,7 @@ impl std::fmt::Debug for Bytes {
         write!(
             f,
             "Bytes({} ({} bytes total))",
-            bytes_str.truncate_ellipse(MAX_LEN),
+            bytes_str.truncate_ellipsis(MAX_LEN),
             self.0.len()
         )
     }

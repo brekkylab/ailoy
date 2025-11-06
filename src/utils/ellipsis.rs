@@ -1,30 +1,30 @@
 use std::borrow::Cow;
 use unicode_segmentation::UnicodeSegmentation;
 
-pub trait Ellipse {
+pub trait Ellipsis {
     type Output;
 
     /// Truncate to a length of `len` extended grapheme clusters and place the given
-    /// ellipse string at the end when truncating.
+    /// ellipsis string at the end when truncating.
     ///
     /// Truncating to a length of 0 will yield the empty element without an
     /// attached ellipsis.
-    fn truncate_ellipse_with(&self, len: usize, ellipse: &str) -> Self::Output;
+    fn truncate_ellipsis_with(&self, len: usize, ellipsis: &str) -> Self::Output;
 
     /// Truncate to a length of `len` extended grapheme clusters and add `...` at
     /// the end of the string when truncating.
     ///
     /// Truncating to a length of 0 will yield the empty element without an
     /// attached ellipsis.
-    fn truncate_ellipse(&self, len: usize) -> Self::Output {
-        self.truncate_ellipse_with(len, "...")
+    fn truncate_ellipsis(&self, len: usize) -> Self::Output {
+        self.truncate_ellipsis_with(len, "...")
     }
 }
 
-impl<'a> Ellipse for &'a str {
+impl<'a> Ellipsis for &'a str {
     type Output = Cow<'a, str>;
 
-    fn truncate_ellipse_with(&self, len: usize, ellipse: &str) -> Self::Output {
+    fn truncate_ellipsis_with(&self, len: usize, ellipsis: &str) -> Self::Output {
         if self.graphemes(true).count() <= len {
             return Cow::Borrowed(self);
         } else if len == 0 {
@@ -34,16 +34,16 @@ impl<'a> Ellipse for &'a str {
         let result = self
             .graphemes(true)
             .take(len)
-            .chain(ellipse.graphemes(true))
+            .chain(ellipsis.graphemes(true))
             .collect();
         Cow::Owned(result)
     }
 }
 
-impl Ellipse for String {
+impl Ellipsis for String {
     type Output = String;
 
-    fn truncate_ellipse_with(&self, len: usize, ellipse: &str) -> Self::Output {
+    fn truncate_ellipsis_with(&self, len: usize, ellipsis: &str) -> Self::Output {
         if self.graphemes(true).count() <= len {
             return self.into();
         } else if len == 0 {
@@ -53,7 +53,7 @@ impl Ellipse for String {
         let result = self
             .graphemes(true)
             .take(len)
-            .chain(ellipse.graphemes(true))
+            .chain(ellipsis.graphemes(true))
             .collect();
         result
     }
