@@ -60,7 +60,6 @@ export default function TerminalBox({
           whiteSpace: "pre-wrap",
           fontSize: "0.9rem",
           maxHeight: "500px", // Scroll after approx. 40 lines
-          minWidth: "1000px",
           overflowY: "auto",
           borderTopLeftRadius: 0,
           borderTopRightRadius: 0,
