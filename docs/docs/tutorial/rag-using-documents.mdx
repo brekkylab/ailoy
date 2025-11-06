@@ -225,10 +225,10 @@ async def prepare_knowledge():
 
 
 async def main(knowledge: ai.Knowledge):
-  # create a 'knowledged' agent
-  agent = ai.Agent(
-      await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
-      knowledge=knowledge,
+    # create a 'knowledged' agent
+    agent = ai.Agent(
+        await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
+        knowledge=knowledge,
   )
 
 if __name__ == "__main__":
