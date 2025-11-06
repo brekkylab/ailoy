@@ -13,29 +13,29 @@
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Fx.com%2Failoy_co)](https://x.com/ailoy_co)
 
 
-Ailoy is a lightweight library for building AI applications — such as **agent systems** or **RAG pipelines** — with ease. It is designed to enable AI features effortlessly, one can just import and use.
+Ailoy is a library for building **AI agents** and **AI applications**.
+It is designed to enable AI features effortlessly. It is intended to be used just by importing it.
+
+## Features
+
+- Comprehensive AI agent capabilities
+  - Reasoning-based workflows
+  - **Tool calling** capabilities, including **MCP** integration
+  - Native **RAG(Retrieval-Augmented Generation)** support with built-in vector store
+- Run AI models locally or via cloud APIs
+  - Easily **switch between open-source models and APIs**
+  - **Fully local and private agent support**
+- Cross-platform compatibility
+  - Runs in almost any environment
+  - Supports native-equivalent functionality in **web browsers** using WASM
+
+For more details, please refer to the [documentation](https://brekkylab.github.io/ailoy/).
 
 > [!WARNING]
 > This library is in an early stage of development. APIs may change without notice.
 
 > [!TIP]
 > We have a [Discord channel](https://discord.gg/27rx3EJy3P)! If you get stuck or have any questions, feel free to join and ask.
-
-> [!TIP]
-> There are several interesting examples in the [`examples`](./examples) directory — take a look!
->
-> You might get inspired what kind of applications you can build with Agents.
-
-## Features
-
-- Run AI models either in local or via cloud APIs
-- Multi-turn conversation and system message customization
-- Support for reasoning-based workflows
-- Tool calling capabilities (including `MCP` integration)
-- Built-in vector store support (via `Faiss` or `ChromaDB`)
-- Supports running _native-equivalent_ functionality in the **web browsers(WASM)**
-
-For more details, please refer to the [documentation](https://brekkylab.github.io/ailoy/).
 
 ## Requirements
 
@@ -47,25 +47,25 @@ Please refer to the [documentation](https://brekkylab.github.io/ailoy/docs/resou
 
 ```bash
 cd bindings/python
-pip install -e .
+maturin build --out ./dist
 ```
 
-For more details, refer to `bindings/python/README.md`.
+For more details, refer to [`bindings/python/README.md`](./bindings/python/README.md).
 
 ### Node.js Build
 
 ```bash
-cd bindings/js-node
+cd bindings/nodejs
 npm run build
 ```
 
-For more details, refer to `bindings/js-node/README.md`.
+For more details, refer to [`bindings/nodejs/README.md`](./bindings/nodejs/README.md).
 
 ### Javascript Build for web browsers
 
 ```bash
-cd bindings/js-web
+cd bindings/web
 npm run build
 ```
 
-For more details, refer to `bindings/js-web/README.md`.
+For more details, refer to [`bindings/web/README.md`](./bindings/web/README.md).
