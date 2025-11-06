@@ -30,6 +30,7 @@ import {
   ComposerAddAttachment,
   UserMessageAttachments,
 } from "./attachment";
+import { Reasoning, ReasoningGroup } from "./reasoning";
 
 export const Thread: FC = () => {
   return (
@@ -248,6 +249,8 @@ const AssistantMessage: FC = () => {
             components={{
               Text: MarkdownText,
               tools: { Fallback: ToolFallback },
+              Reasoning,
+              ReasoningGroup,
             }}
           />
           <MessageError />

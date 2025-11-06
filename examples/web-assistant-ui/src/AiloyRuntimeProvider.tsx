@@ -97,39 +97,40 @@ function convertMessageDelta(
   delta: ai.MessageDelta
 ): useExternalMessageConverter.Message {
   if (delta.role === "assistant") {
-    let content = null;
+    let contents = [];
     if (delta.thinking !== undefined) {
-      content = {
+      contents.push({
         type: "reasoning",
         text: delta.thinking,
-      };
-    } else if (delta.tool_calls.length > 0) {
+      });
+    }
+    if (delta.tool_calls.length > 0) {
       for (const toolCall of delta.tool_calls) {
         if (toolCall.type !== "function")
           throw new Error("tool call content should be a type of function");
         if (toolCall.function.type === "verbatim") {
-          content = { type: "text", text: toolCall.function.text };
+          contents.push({ type: "text", text: toolCall.function.text });
         } else if (toolCall.function.type === "with_string_args") {
-          content = {
+          contents.push({
             type: "text",
             text: `{"name": "${toolCall.function.name}", "arguments": ${toolCall.function.arguments}}`,
-          };
+          });
         } else {
-          content = {
+          contents.push({
             type: "text",
             text: `{"name": "${toolCall.function.name}", "arguments": ${toolCall.function.arguments}}`,
-          };
+          });
         }
       }
-    } else if (delta.contents.length > 0 && delta.contents[0].type === "text") {
-      content = {
-        type: "text",
-        text: delta.contents[0].text,
-      };
+    }
+    for (const content of delta.contents) {
+      if (content.type === "text") {
+        contents.push(content);
+      }
     }
     return {
       role: "assistant",
-      content: content !== null ? [content] : [],
+      content: contents,
     } as useExternalMessageConverter.Message;
   } else if (delta.role === "tool") {
     let toolResult: string;
