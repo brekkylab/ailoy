@@ -81,11 +81,10 @@ async def test_image_base64_input(agent: ai.Agent, img_b64_part: ai.Part):
             )
         ]
     ):
-        if resp.accumulated:
-            print(resp.accumulated)
+        print(resp.message)
 
 
-@pytest.mark.parametrize("agent", ["openai", "grok"], indirect=True)
+@pytest.mark.parametrize("agent", ["openai", "claude", "grok"], indirect=True)
 async def test_image_url_input(agent: ai.Agent):
     img_part = ai.Part.image_from_url(image_url)
     async for resp in agent.run(
@@ -96,5 +95,4 @@ async def test_image_url_input(agent: ai.Agent):
             )
         ]
     ):
-        if resp.accumulated:
-            print(resp.accumulated)
+        print(resp.message)

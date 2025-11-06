@@ -1,8 +1,15 @@
-# Image Input
+# Image Inputs
 
 Ailoy supports **multi-modal inputs**, allowing you to include both text and
 images in a single message. This enables richer interactions such as visual
 question answering, image captioning, and grounded reasoning.
+
+:::info
+
+Image input is currently supported only for API-based models that natively
+understand visual content.
+
+:::
 
 ## Feeding an Image URL
 
@@ -87,6 +94,13 @@ grass and some foliage.
 
 </TerminalBox>
 
+:::info
+
+Gemini does not support URL image inputs. Use base64 image input instead as
+described in [**Feeding an Image File**](#feeding-an-image-file).
+
+:::
+
 ## Feeding an Image File
 
 Also, you can read an image from a local file and include it directly as input.
@@ -161,10 +175,3 @@ main().catch((err) => {
 </CodeTabs>
 
 This will produce the same output.
-
-:::info
-
-Image input is currently supported only for API-based models that natively
-understand visual content.
-
-:::
