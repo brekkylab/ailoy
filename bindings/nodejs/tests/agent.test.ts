@@ -51,6 +51,7 @@ const modelConfigs = [
       );
       return new ailoy.Agent(model);
     },
+    runImageUrl: true,
     runImageBase64: true,
   },
   {
