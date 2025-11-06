@@ -19,6 +19,33 @@ sequenceDiagram
     User->>Assistant: Message {role: "user", contents: [{type: "text", text: "What did I just say?"}]}
 ```
 
+## Adding Context in the Conversation
+
+Let's assume that you said the asissant this at first:
+
+```
+John's favorite color is blue. Please remember that.
+```
+
+And then assistant responded like this:
+
+```
+Great to hear that John's favorite color is blue.
+```
+
+Now you would ask back:
+
+```
+What’s John's favorite color?
+```
+
+You must want the assistant to answer `blue` considering the context.
+
+To add context in the conversation, you need to pass _both_ the **previous
+messages** and **your new user message**.
+
+{/* prettier-ignore-start */}
+
 <CodeTabs>
 
 ```python
@@ -33,10 +60,10 @@ async def main():
 
     messages = [
         # the previous messages
-        ai.Message(role="user", contents="Hello!"),
-        ai.Message(role="assistant", contents="Hi there! How can I help you today?"),
+        ai.Message(role="user", contents="John's favorite color is blue. Please remember that."),
+        ai.Message(role="assistant", contents="Great to hear that John's favorite color is blue."),
         # your new user message
-        ai.Message(role="user", contents="What did I just say?"),
+        ai.Message(role="user", contents="What’s John's favorite color?"),
     ]
     async for resp in agent.run(messages):
         if isinstance(resp.message.contents[0], ai.Part.Text):
@@ -55,13 +82,14 @@ async function main() {
 
   const messages = [
     // the previous messages
-    { role: "user", contents: "Hello!" },
-    { role: "assistant", contents: "Hi there! How can I help you today?" },
+    { role: "user", contents: "John's favorite color is blue. Please remember that." },
+    { role: "assistant", contents: "Great to hear that John's favorite color is blue." },
     // your new user message
-    { role: "user", contents: "What did I just say?" },
+    { role: "user", contents: "What’s John's favorite color?" },
   ];
   for await (const resp of agent.run(messages)) {
-    console.log(resp.message.contents[0].text);
+    if (resp.message.contents?.[0]?.type === "text")
+      console.log(resp.message.contents?.[0]?.text);
   }
 }
 
@@ -79,13 +107,14 @@ async function main() {
 
   const messages = [
     // the previous messages
-    { role: "user", contents: "Hello!" },
-    { role: "assistant", contents: "Hi there! How can I help you today?" },
+    { role: "user", contents: "John's favorite color is blue. Please remember that." },
+    { role: "assistant", contents: "Great to hear that John's favorite color is blue." },
     // your new user message
-    { role: "user", contents: "What did I just say?" },
+    { role: "user", contents: "What’s John's favorite color?" },
   ];
   for await (const resp of agent.run(messages)) {
-    console.log(resp.message.contents[0].text);
+    if (resp.message.contents?.[0]?.type === "text")
+      console.log(resp.message.contents?.[0]?.text);
   }
 }
 
@@ -96,14 +125,17 @@ main().catch((err) => {
 
 </CodeTabs>
 
+{/* prettier-ignore-end */}
+
 By including the full history, Ailoy can generate a coherent response while
 remaining internally stateless — it never stores conversation data between runs.
 
-## Interactive Multi-Turn conversations
+## A Live Multi-Turn Conversations
 
-If you want to simulate a live chat where the user and assistant exchange
-messages interactively, you can accumulate the message history in a list and
-feed it back each turn.
+You can implement a live chat between the user and the agent by accumulating
+real-time messages in a list and feeding them back to the agent.
+
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -119,7 +151,7 @@ async def main():
 
     print("(Enter 'exit' to end the conversation.)")
     messages = []
-    while (user_message := input("User: ")).lower() != "exit":
+    while (user_message := input("User: ").strip()).lower() != "exit":
         messages.append(ai.Message(role="user", contents=user_message))
         async for resp in agent.run(messages):
             if isinstance(resp.message.contents[0], ai.Part.Text):
@@ -157,8 +189,8 @@ async function main() {
     messages.push({ role: "user", contents: input });
 
     for await (const resp of agent.run(messages as ai.Messages)) {
-      if (resp.message.contents[0].type === "text")
-        console.log("Assistant:", resp.message.contents[0].text);
+      if (resp.message.contents?.[0]?.type === "text")
+        console.log("Assistant:", resp.message.contents?.[0]?.text);
       messages.push(resp.message);
     }
   }
@@ -175,8 +207,8 @@ main().catch((err) => {
 </CodeTabs>
 
 :::info
-
-To see a conversational agent that continuously interacts with users, check out
-**[WebAssembly Supports](webassembly-supports)** page.
-
+Example code for web environment is not provided here.  
+To see a conversational agent that continuously interacts with users, check out **[WebAssembly Supports](webassembly-supports)** page.
 :::
+
+{/* prettier-ignore-end */}
