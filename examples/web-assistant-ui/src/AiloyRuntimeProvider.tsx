@@ -12,14 +12,14 @@ import {
 } from "@assistant-ui/react";
 import * as ai from "ailoy-web";
 
-const imageDataToBase64 = (arr: Uint8Array): string => {
+function imageDataToBase64(arr: Uint8Array): string {
   let binaryString = "";
   arr.forEach((byte) => {
     binaryString += String.fromCharCode(byte);
   });
   const base64String = btoa(binaryString);
   return base64String;
-};
+}
 
 function convertMessage(
   message: ai.Message

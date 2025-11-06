@@ -1,13 +1,14 @@
 # WebAssembly Supports
 
-{/* prettier-ignore-start */}
-
 :::warning
-WebAssembly support is currently **experimental**, and you may encounter unexpected errors.
-If you do, please report them via our [**GitHub Issues**](https://github.com/brekkylab/ailoy/issues) or [**Discord**](https://discord.gg/27rx3EJy3P) channel so we can address them promptly.
-:::
 
-{/* prettier-ignore-end */}
+WebAssembly support is currently **experimental**, and you may encounter
+unexpected errors. If you do, please report them via our
+[**GitHub Issues**](https://github.com/brekkylab/ailoy/issues) or
+[**Discord**](https://discord.gg/27rx3EJy3P) channel so we can address them
+promptly.
+
+:::
 
 Ailoy supports running agents entirely in modern web browsers using
 **WebAssembly (WASM)**. This enables AI workloads directly in the browser with
@@ -15,11 +16,12 @@ no backend required.
 
 **Key capabilities**
 
-- Run local models accelerated by **WebGPU**—supports both **Agents** and
-  **VectorStores**.
+- Run local models accelerated by **WebGPU**—supports both **LangModel**s and
+  **EmbeddingModel**s.
 - Use API models just like you would in native environments.
-- Access built-in tools, or register your own custom tools
-- Connect **MCP tools** via Streamable HTTP transport.
+- Register your own **custom tools** or **MCP tools** (via Streamable HTTP
+  transport) on agents.
+- Use **vector stores** to construct a RAG pipeline.
 
 This guide walks you through setting up and using `ailoy-web` in your
 browser-based applications.
@@ -28,7 +30,7 @@ browser-based applications.
 
 If you plan to run local models with WebGPU, make sure your system has the
 necessary hardware accelerators and drivers installed. See
-[**Device & Environments**](../concepts/devices-environments.mdx) for more
+[**Supported Environments**](../resources/supported-environments.mdx) for more
 details.
 
 - **MacOS with Apple Silicon**: Fully supported, typically works out of the box.
@@ -54,14 +56,12 @@ if (supported) {
 }
 ```
 
-{/* prettier-ignore-start */}
-
 :::info
-If WebGPU is not supported, consider showing users a clear message in your UI that explains
-why—using the `reason` value returned by the function.
-:::
 
-{/* prettier-ignore-end */}
+If WebGPU is not supported, consider showing users a clear message in your UI
+that explains why—using the `reason` value returned by the function.
+
+:::
 
 ## Building a Simple Chat UI
 
@@ -406,39 +406,40 @@ function convertMessageDelta(
   delta: ai.MessageDelta
 ): useExternalMessageConverter.Message {
   if (delta.role === "assistant") {
-    let content = null;
+    let contents = [];
     if (delta.thinking !== undefined) {
-      content = {
+      contents.push({
         type: "reasoning",
         text: delta.thinking,
-      };
-    } else if (delta.tool_calls.length > 0) {
+      });
+    }
+    if (delta.tool_calls.length > 0) {
       for (const toolCall of delta.tool_calls) {
         if (toolCall.type !== "function")
           throw new Error("tool call content should be a type of function");
         if (toolCall.function.type === "verbatim") {
-          content = { type: "text", text: toolCall.function.text };
+          contents.push({ type: "text", text: toolCall.function.text });
         } else if (toolCall.function.type === "with_string_args") {
-          content = {
+          contents.push({
             type: "text",
             text: `{"name": "${toolCall.function.name}", "arguments": ${toolCall.function.arguments}}`,
-          };
+          });
         } else {
-          content = {
+          contents.push({
             type: "text",
             text: `{"name": "${toolCall.function.name}", "arguments": ${toolCall.function.arguments}}`,
-          };
+          });
         }
       }
-    } else if (delta.contents.length > 0 && delta.contents[0].type === "text") {
-      content = {
-        type: "text",
-        text: delta.contents[0].text,
-      };
+    }
+    for (const content of delta.contents) {
+      if (content.type === "text") {
+        contents.push(content);
+      }
     }
     return {
       role: "assistant",
-      content: content !== null ? [content] : [],
+      content: contents,
     } as useExternalMessageConverter.Message;
   } else if (delta.role === "tool") {
     let toolResult: string;
@@ -678,28 +679,25 @@ const agent = new ai.Agent(
 );
 ```
 
-{/* prettier-ignore-start */}
-
-You can use any API models listed in [**Available Models**](../resources/available-models.mdx).
+You can use any API models listed in
+[**Available Models**](../resources/available-models.mdx).
 
 :::warning
-The above code is for test purpose. **You should never hardcode your API keys in your frontend codes!**
-For example, consider making an input box to get API key from users and initialize agents using the key.
-:::
 
-{/* prettier-ignore-end */}
+The above code is for test purpose. **You should never hardcode your API keys in
+your frontend codes!** For example, consider making an input box to get API key
+from users and initialize agents using the key.
+
+:::
 
 ### Multi-Modal Inputs
 
-{/* prettier-ignore-start */}
+:::info
 
-:::warning
-Multi-Modal inputs are currently supported only on API models as
-described in
-[**Agent > Multi-Modal Inputs**](http://localhost:3000/ailoy/docs/concepts/agent#multi-modal-inputs).
+Image inputs are currently supported only on API models as described in
+[**Image Inputs**](./image-inputs.mdx).
+
 :::
-
-{/* prettier-ignore-end */}
 
 Follow the guide in assistant-ui's
 [**Attachments documentation**](https://www.assistant-ui.com/docs/guides/Attachments)
@@ -844,6 +842,62 @@ Now you can attach images and ask about them.
 
 ![](./img/webassembly-supports/image-input.gif)
 
+### Reasoning
+
+Follow the guide in assistant-ui's
+[**Reasoning documentation**](https://www.assistant-ui.com/docs/ui/Reasoning) to
+enable reasoning UI.
+
+Install reasoning UI component.
+
+<TerminalBox>
+
+$ npx assistant-ui@latest add reasoning
+
+</TerminalBox>
+
+Pass the `Reasoning` and `ReasoningGroup` components to the
+`MessagePrimitive.Parts` component in `src/components/assistant-ui/thread.tsx`:
+
+```typescript {1,11-12}
+import {Reasoning, ReasoningGroup} from "./reasoning";
+
+const AssistantMessage: FC = () => {
+  return (
+    <MessagePrimitive.Root asChild>
+      // ...
+      <div className="...">
+        <MessagePrimitive.Parts
+          components={{
+            // ...
+            Reasoning,
+            ReasoningGroup,
+          }}
+        />
+      </div>
+      // ...
+    </MessagePrimitive.Root>
+  )
+}
+```
+
+Now you can see how reasoning is visualized by adding agent config as follow:
+
+```typescript {3-7}
+for await (const { delta, finish_reason } of agent.runDelta(
+  [...messages, newMessage],
+  {
+    inference: {
+      thinkEffort: "enable",
+    },
+  }
+)) {
+  // ...
+}
+```
+
+![](./img/webassembly-supports/reasoning.gif)
+
 ### Using Tools
 
 You can register tools to agents with the same APIs as described in
@@ -893,17 +947,15 @@ transport. Note that
 [stdio](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#stdio)
 transport is not supported in browsers because they cannot run a stdio process.
 
-{/* prettier-ignore-start */}
-
 :::warning
+
 When connecting to MCP servers from browsers, make sure the server is configured
 to use **CORS middleware** with allowing your origins and exposing required
 headers such as `Mcp-Session-Id`. See
 [the official documentation](https://github.com/modelcontextprotocol/typescript-sdk?tab=readme-ov-file#cors-configuration-for-browser-based-clients)
 for more details.
-:::
 
-{/* prettier-ignore-end */}
+:::
 
 Let's create a simple MCP server for testing MCP tools availability.
 
@@ -988,14 +1040,13 @@ app.listen(PORT, () => {
 });
 ```
 
-{/* prettier-ignore-start */}
-
 :::warning
-Note that we used `zod/v3` since the current latest version of MCP sdk does not work with zod v4.
-([related issue](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1072))
-:::
 
-{/* prettier-ignore-end */}
+Note that we used `zod/v3` since the current latest version of MCP sdk does not
+work with zod v4.
+([related issue](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1072))
+
+:::
 
 This MCP server runs on streamable HTTP transport and has a single tool `add`
 which takes two numbers and return the addition. The server runs on
@@ -1081,14 +1132,13 @@ const vectorstore = await ai.VectorStore.newChroma(
 );
 ```
 
-{/* prettier-ignore-start */}
-
 :::warning
-When using external vector stores such as ChromaDB, make sure they're configured to use **CORS middleware** to allow your origin.
-For ChromaDB, refer the [**CORS configuration**](https://cookbook.chromadb.dev/strategies/cors/).
-:::
 
-{/* prettier-ignore-end */}
+When using external vector stores such as ChromaDB, make sure they're configured
+to use **CORS middleware** to allow your origin. For ChromaDB, refer the
+[**CORS configuration**](https://cookbook.chromadb.dev/strategies/cors/).
+
+:::
 
 ### Inserting Documents
 
