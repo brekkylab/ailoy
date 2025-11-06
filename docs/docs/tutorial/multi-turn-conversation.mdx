@@ -5,7 +5,7 @@ conversation histories. Each time you call the model, agent treats it as a new
 request. Each time you invoke the agent, it treats the provided messages as a
 fresh request with no internal memory of past conversations.
 
-If you want you run an assistant with previous context, you must explicitly
+If you want you run an agent with previous context, you must explicitly
 **include the entire conversation history** (all prior messages) when making the
 call.
 
@@ -21,25 +21,25 @@ sequenceDiagram
 
 ## Adding Context in the Conversation
 
-Let's assume that you said the asissant this at first:
+Let's assume you initially said to your agent:
 
 ```
 John's favorite color is blue. Please remember that.
 ```
 
-And then assistant responded like this:
+Then the agent replied like this:
 
 ```
 Great to hear that John's favorite color is blue.
 ```
 
-Now you would ask back:
+Now you would ask the agent:
 
 ```
 What’s John's favorite color?
 ```
 
-You must want the assistant to answer `blue` considering the context.
+You would expect the agent to answer `blue`, considering the context.
 
 To add context in the conversation, you need to pass _both_ the **previous
 messages** and **your new user message**.
