@@ -48,18 +48,68 @@ query real-world data.
 
 A tool consists of two main parts: **tool description** and **tool behavior**.
 
+```mermaid
+flowchart TD
+  subgraph Tool["Tool"]
+    direction TB
+    D["Tool Description"]
+    B["Tool Behavior"]
+  end
+```
+
 A **tool description** defines how the tool is exposed to the model. It includes
 the tool’s name, description, parameters, and an optional return schema. This
 format follows the JSON Schema convention.
 
-A **tool behavior** defines what the tool actually does when invoked. It can be
-implemented as a function in Python, JavaScript, or Rust. When the model outputs
-a structured function call matching the tool’s schema, the Agent automatically
-routes it to the corresponding behavior.
+Conventionally, this is represented in JSON Schema, which we also follow.
+
+<details>
+<summary>Schema Example</summary>
+<p>
+```json
+{
+  "name": "temperature",
+  "description": "Get current temperature",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "location": {
+        "type": "string",
+        "description": "The city name"
+      },
+      "unit": {
+        "type": "string",
+        "enum": ["Celsius", "Fahrenheit"]
+      }
+    },
+    "required": ["location", "unit"]
+  },
+  "returns": {
+    "type": "number",
+    "description": "Null if the given city name is unavailable.",
+    "nullable": true
+  }
+}
+```
+</p>
+</details>
+
+In contrast, a **tool behavior** defines what the tool actually does when
+invoked. For example, it can be a custom function in Python, JavaScript, or
+Rust. When the model outputs a structured function call matching the tool’s
+schema, the Agent automatically routes it to the corresponding behavior.
 
 You can also use the Model Context Protocol (MCP) to register and expose tools
 dynamically. This provides a seamless way to define, describe, and connect tool
 behaviors across different environments.
+
+Ailoy can define 3 types of the tools:
+
+| types    | description                                                      |
+| -------- | ---------------------------------------------------------------- |
+| Function | A native function in the host language, with explicit `ToolDesc` |
+| MCP      | A remote tool exposed via the Model **Context Protocol (MCP)**   |
+| Builtin  | Predefined tools provided by the **Ailoy** runtime itself        |
 
 ## `Knowledge`
 
@@ -77,12 +127,8 @@ and accurate responses. This process is known as Retrieval-Augmented Generation
 flowchart TD
   subgraph Knowledge["Knowledge"]
     direction TB
-    subgraph Embedding["Embedding Model"]
-      E[Calculate embeddings for the given texts]
-    end
-    subgraph VectorStore["Vector Store"]
-      V[Inserting, Retrieving, Deleting embeddings]
-    end
+    E["EmbeddingModel"]
+    V["VectorStore"]
   end
 ```
 

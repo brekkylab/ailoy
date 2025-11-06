@@ -22,16 +22,20 @@ the model files directly.
 
 {/* prettier-ignore-start */}
 
+:::note
+Model IDs follow the same naming convention as those registered on <SmallIcon src="https://huggingface.co/favicon.ico" /> HuggingFace.
+:::
+
 :::info
-Model names follow the same naming convention as those registered on
-HuggingFace.
+Please refer to **[Command-line Interface](../resources/command-line-interfaces.mdx)** for more
+about the CLI.
 :::
 
 {/* prettier-ignore-end */}
 
 ### List
 
-_Shows the list of the locally cached files._
+_Lists all available models in the local cache directory._
 
 {/* prettier-ignore-start */}
 
@@ -47,7 +51,7 @@ ailoy-models list
 
 ### Download
 
-_Downloads the files of designated model into the local cache._
+_Downloads the specified model by its model ID._
 
 {/* prettier-ignore-start */}
 
@@ -59,15 +63,11 @@ ailoy-models download Qwen/Qwen3-0.6B
 
 </CodeTabs>
 
-:::note
-Check out our **[Available Models](../resources/available-models)** page to see which local models are available.
-:::
-
 {/* prettier-ignore-end */}
 
 ### Remove
 
-_Removes all files related to the designated model from the local model cache._
+_Removes the specified model by its model ID._
 
 {/* prettier-ignore-start */}
 
