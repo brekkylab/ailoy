@@ -25,7 +25,9 @@ more information.
 
 ## Step-by-Step Guide
 
-### Initializing an Embedding Model
+### Initializing an Embedding Model and a Vector Store
+
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -33,7 +35,14 @@ more information.
 import ailoy as ai
 
 async def prepare_knowledge():
-    model = await ai.EmbeddingModel.new_local("BAAI/bge-m3")
+    # create an embedding model
+    model = await ai.EmbeddingModel.new_local(
+      model_name="BAAI/bge-m3",
+      device_id=None,
+      progress_callback=print,  
+    )
+    # create a vector store with dimension 1024
+    vs = ai.VectorStore.new_faiss(dim=1024)
 
 if __name__ == "__main__":
     asyncio.run(prepare_knowledge())
@@ -43,7 +52,14 @@ if __name__ == "__main__":
 import * as ai from "ailoy-node";
 
 async function prepare_knowledge() {
-  const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
+  // create an embedding model
+  const model = await ai.EmbeddingModel.newLocal(
+    "BAAI/bge-m3", // modelName
+    undefined,     // deviceId?
+    console.log    // progressCallback?
+  );
+  // create a vector store with dimension 1024
+  const vs = await ai.VectorStore.newFaiss(1024);
 }
 
 prepare_knowledge().catch((err) => {
@@ -55,7 +71,14 @@ prepare_knowledge().catch((err) => {
 import * as ai from "ailoy-web";
 
 async function prepare_knowledge() {
-  const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
+  // create an embedding model
+  const model = await ai.EmbeddingModel.newLocal(
+    "BAAI/bge-m3", // modelName
+    undefined,     // deviceId?
+    console.log    // progressCallback?
+  );
+  // create a vector store with dimension 1024
+  const vs = await ai.VectorStore.newFaiss(1024);
 }
 
 prepare_knowledge().catch((err) => {
@@ -66,18 +89,18 @@ prepare_knowledge().catch((err) => {
 </CodeTabs>
 
 :::note
-
-💡 **Note:** At this time, the only supported embedding model is
-[`BAAI/bge-m3`](https://huggingface.co/BAAI/bge-m3). Additional embedding models
-will be supported in future releases.
-
+At this time, the only supported embedding model is **[`BAAI/bge-m3`](https://huggingface.co/BAAI/bge-m3)**. Additional embedding models will be supported in future releases.
 :::
+
+{/* prettier-ignore-end */}
 
 ### Preparing Documents with a Vector Store
 
 Before running RAG, create a vector store to store document embeddings for
 retrieval. This step prepares your data for semantic search and may only need to
 be performed once per dataset.
+
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -92,7 +115,9 @@ async def prepare_knowledge() -> ai.Knowledge:
     model = await ai.EmbeddingModel.new_local("BAAI/bge-m3")
     vs = ai.VectorStore.new_faiss(1024)
     for i, chunk in enumerate(CHUNKS):
+        # embed chunks into semantic vectors
         embedding = await model.infer(chunk)
+        # store semantic vectors
         vs.add_vector(
             ai.VectorStoreAddInput(
                 embedding,
@@ -101,6 +126,7 @@ async def prepare_knowledge() -> ai.Knowledge:
             )
         )
 
+    # create a knowledge based on the vector store
     return ai.Knowledge.new_vector_store(vs, model)
 
 if __name__ == "__main__":
@@ -115,18 +141,21 @@ const CHUNKS = [...];
 async function prepare_knowledge() {
   const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
   const vs = await ai.VectorStore.newFaiss(1024);
-  CHUNKS.forEach(async (chunk, i) => {
-      const embedding = await model.infer(chunk);
-      await vs.addVector({
-          embedding: embedding,
-          document: chunk,
-          metadata: {
-              title: "The Old Man and the Sea",
-              index: i,
-          },
-      });
-  });
+  for (const [i, chunk] of CHUNKS.entries()) {
+    // embed chunks into semantic vectors
+    const embedding = await model.infer(chunk);
+    // store semantic vectors
+    await vs.addVector({
+      embedding: embedding,
+      document: chunk,
+      metadata: {
+        title: "The Old Man and the Sea",
+        index: i,
+      },
+    });
+  }
 
+  // create a knowledge based on the vector store
   return ai.Knowledge.newVectorStore(vs, model);
 }
 
@@ -143,9 +172,10 @@ const CHUNKS = [...];
 async function prepare_knowledge() {
   const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
   const vs = await ai.VectorStore.newFaiss(1024);
-  for (let i = 0; i < CHUNKS.length; i++) {
-    const chunk = CHUNKS[i];
+  for (const [i, chunk] of CHUNKS.entries()) {
+    // embed chunks into semantic vectors
     const embedding = await model.infer(chunk);
+    // store semantic vectors
     await vs.addVector({
       embedding: embedding,
       document: chunk,
@@ -156,6 +186,7 @@ async function prepare_knowledge() {
     });
   }
 
+  // create a knowledge based on the vector store
   return ai.Knowledge.newVectorStore(vs, model);
 }
 
@@ -167,6 +198,8 @@ prepare_knowledge().catch((err) => {
 
 </CodeTabs>
 
+{/* prettier-ignore-end */}
+
 > Ailoy currently supports both
 > [**FAISS**](https://github.com/facebookresearch/faiss) and
 > [**ChromaDB**](https://www.trychroma.com/) as vector store backends. Refer to
@@ -174,16 +207,10 @@ prepare_knowledge().catch((err) => {
 
 ### Defining the Knowledged Agent
 
-You can now create an Agent and attach a Knowledge module that integrates your
-vector store and embedding model.
+You can now create a knowledged `Agent` with the `Knowledge` module that
+integrates your vector store and embedding model.
 
-:::note
-
-To enable retrieval-based reasoning, make sure that applying the **document
-polyfill** that adapts the agent’s prompt structure to include retrieved
-documents.
-
-:::
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -198,6 +225,7 @@ async def prepare_knowledge():
 
 
 async def main(knowledge: ai.Knowledge):
+  # create a 'knowledged' agent
   agent = ai.Agent(
       await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
       knowledge=knowledge,
@@ -214,10 +242,11 @@ import * as ai from "ailoy-node";
 async function prepare_knowledge() {...}
 
 async function main(knowledge: ai.Knowledge) {
+  // create a 'knowledged' agent
   const agent = new ai.Agent(
     await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
-    undefined /* tools */,
-    knowledge
+    undefined,  // tools (not used here)
+    knowledge   // knowledge
   );
 }
 
@@ -234,10 +263,11 @@ import * as ai from "ailoy-web";
 async function prepare_knowledge() {...}
 
 async function main(knowledge: ai.Knowledge) {
+  // create a 'knowledged' agent
   const agent = new ai.Agent(
     await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
-    undefined /* tools */,
-    knowledge
+    undefined,  // tools (not used here)
+    knowledge   // knowledge
   );
 }
 
@@ -250,9 +280,20 @@ prepare_knowledge()
 
 </CodeTabs>
 
+{/* prettier-ignore-end */}
+
 ### Performing RAG
 
 To perform retrieval and generate grounded responses:
+
+{/* prettier-ignore-start */}
+
+:::note
+Not all models supports `documents` natively.  
+To enable retrieval-based reasoning in these models, make sure that
+applying the **document polyfill** that adapts the agent’s prompt
+structure to include retrieved documents.
+:::
 
 <CodeTabs>
 
@@ -272,7 +313,7 @@ async def main(knowledge: ai.Knowledge):
         knowledge=knowledge,
     )
     config = ai.AgentConfig(
-        # Qwen3 doesn't support documents directly, we need to add the document polyfill in config.
+        # need polyfill here because Qwen3 doesn't natively support 'documents'
         inference=ai.InferenceConfig(document_polyfill=ai.get_qwen3_polyfill())
     )
     async for resp in agent.run("Why did the boy stop fishing with the old man?", config):
@@ -291,10 +332,13 @@ async function prepare_knowledge() {...}
 async function main(knowledge: ai.Knowledge) {
   const agent = new ai.Agent(
     await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
-    undefined /* tools */,
+    undefined,
     knowledge
   );
-  const config = { inference: { documentPolyfill: ai.getQwen3Polyfill() } };
+  const config = { 
+    // need polyfill here because Qwen3 doesn't natively support 'documents'
+    inference: { documentPolyfill: ai.getQwen3Polyfill() }
+  };
   for await (const resp of agent.run(
     "Why did the boy stop fishing with the old man?",
     config
@@ -319,10 +363,13 @@ async function prepare_knowledge() {...}
 async function main(knowledge: ai.Knowledge) {
   const agent = new ai.Agent(
     await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
-    undefined /* tools */,
+    undefined,
     knowledge
   );
-  const config = { inference: { documentPolyfill: ai.getQwen3Polyfill() } };
+  const config = { 
+    // need polyfill here because Qwen3 doesn't natively support 'documents'
+    inference: { documentPolyfill: ai.getQwen3Polyfill() }
+  };
   for await (const resp of agent.run(
     "Why did the boy stop fishing with the old man?",
     config
@@ -341,7 +388,11 @@ prepare_knowledge()
 
 </CodeTabs>
 
+{/* prettier-ignore-end */}
+
 ## Complete Example
+
+{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -445,7 +496,7 @@ The old man had taught the boy to fish and the boy loved him.
 async function prepare_knowledge() {
   const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
   const vs = await ai.VectorStore.newFaiss(1024);
-  CHUNKS.forEach(async (chunk, i) => {
+  for (const [i, chunk] of CHUNKS.entries()) {
     const embedding = await model.infer(chunk);
     await vs.addVector({
       embedding: embedding,
@@ -455,7 +506,7 @@ async function prepare_knowledge() {
         index: i,
       },
     });
-  });
+  }
 
   return ai.Knowledge.newVectorStore(vs, model);
 }
@@ -519,8 +570,7 @@ The old man had taught the boy to fish and the boy loved him.
 async function prepare_knowledge() {
   const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
   const vs = await ai.VectorStore.newFaiss(1024);
-  for (let i = 0; i < CHUNKS.length; i++) {
-    const chunk = CHUNKS[i];
+  for (const [i, chunk] of CHUNKS.entries()) {
     const embedding = await model.infer(chunk);
     await vs.addVector({
       embedding: embedding,
@@ -567,7 +617,11 @@ prepare_knowledge()
 For best results, ensure your documents are chunked semantically (e.g., by paragraphs or sections).
 :::
 
+{/* prettier-ignore-end */}
+
 ## Output
+
+{/* prettier-ignore-start */}
 
 <TerminalBox>
 
