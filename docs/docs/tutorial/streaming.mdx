@@ -11,14 +11,12 @@ before it finishes, or for agent-based application developers who want to stream
 partial results to users in real time to make their applications more
 responsive.
 
-## How to stream deltas
+## How to Stream Deltas
 
 The `run()` method of Agent, which we've used so far, returns complete messages
 sequentially, meanwhile the `run_delta()`(Python, Rust) or `runDelta()`(Nodejs,
 Web) method returns sequence of results for each LLM generation unit, that we
 call it `delta` of messages.
-
-{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -43,7 +41,6 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-
 ```typescript
 import * as ai from "ailoy-node";
 
@@ -51,7 +48,9 @@ async function main() {
   const lm = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(lm);
 
-  for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
+  for await (const resp of agent.runDelta(
+    "Please give me a short poem about AI."
+  )) {
     if (resp.delta.contents?.[0]?.type === "text") {
       // print text deltas without line break
       process.stdout.write(resp.delta.contents[0].text);
@@ -63,7 +62,6 @@ async function main() {
 main().catch((err) => {
   console.error("Error:", err);
 });
-
 ```
 
 ```typescript web
@@ -73,7 +71,9 @@ async function main() {
   const lm = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
   const agent = new ai.Agent(lm);
 
-  for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
+  for await (const resp of agent.runDelta(
+    "Please give me a short poem about AI."
+  )) {
     if (resp.delta.contents?.[0]?.type === "text") {
       console.log(resp.delta.contents[0].text);
     }
@@ -85,11 +85,10 @@ main().catch((err) => {
   console.error("Error:", err);
 });
 ```
+
 </CodeTabs>
 
-{/* prettier-ignore-end */}
-
-## Delta to Full
+## Delta to Completed Message
 
 You can also construct a complete message by accumulating generated deltas of
 the message sequentially.
@@ -97,8 +96,6 @@ the message sequentially.
 A finish reason will be provided when the message is completely generated.
 Accumulate the message deltas until the finish reason appears, then call
 `finish` to produce the complete message.
-
-{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -149,7 +146,9 @@ async function main() {
     contents: [],
     tool_calls: [],
   } as ai.MessageDelta; // the base of accumulation
-  for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
+  for await (const resp of agent.runDelta(
+    "Please give me a short poem about AI."
+  )) {
     if (resp.delta.contents?.[0]?.type === "text") {
       // print text deltas in green
       process.stdout.write(GREEN + resp.delta.contents[0].text + RESET);
@@ -190,7 +189,9 @@ async function main() {
     contents: [],
     tool_calls: [],
   }; // the base of accumulation
-  for await (const resp of agent.runDelta("Please give me a short poem about AI.")) {
+  for await (const resp of agent.runDelta(
+    "Please give me a short poem about AI."
+  )) {
     if (resp.delta.contents?.[0]?.type === "text") {
       // print text deltas in green
       console.log(GREEN + resp.delta.contents[0].text + RESET);
@@ -215,8 +216,6 @@ async function main() {
 main().catch((err) => {
   console.error("Error:", err);
 });
-
 ```
-</CodeTabs>
 
-{/* prettier-ignore-end */}
+</CodeTabs>

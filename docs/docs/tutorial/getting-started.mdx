@@ -1,4 +1,4 @@
-# Getting started
+# Getting Started
 
 **_Welcome to Ailoy’s Tutorial!_** 🤗
 
@@ -9,8 +9,6 @@ capabilities to build agent systems.
 
 You can install Ailoy via a package manager. Just type the following command in
 your shell:
-
-{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -34,23 +32,20 @@ yarn add ailoy-web
 
 </CodeTabs>
 
-{/* prettier-ignore-end */}
-
-{/* prettier-ignore-start */}
-
 :::info
-For using Ailoy in web browsers, see [WebAssembly Supports](./webassembly-supports.mdx) for more details.
-:::
 
-{/* prettier-ignore-end */}
+For using Ailoy in web browsers, see
+[WebAssembly Supports](./webassembly-supports.mdx) for more details.
+
+:::
 
 ## Running a Simplest Agent
 
-The **Language Model (LM)** is the core of every agent.  
-An agent system operates based on a language model and its instructions, along
-with various extensions that enhance its capabilities.
+The **Language Model (LM)** is the core of every agent. An agent system operates
+based on a language model and its instructions, along with various extensions
+that enhance its capabilities.
 
-### Choosing Between API and Local Models
+### Choosing Between APIs and Local Models
 
 Ailoy lets you run language model in two different modes:
 
@@ -77,9 +72,7 @@ Let’s start with a simple example — Ailoy’s version of “Hello, World!”
 In just a few lines of code, you’ll run a model, send it a prompt, and print the
 response.
 
-### Using API models
-
-{/* prettier-ignore-start */}
+### Agent Using APIs
 
 <CodeTabs>
 
@@ -91,8 +84,8 @@ import ailoy as ai
 
 async def main():
     lm = ai.LangModel.new_stream_api(
-        spec="OpenAI", 
-        model_name="gpt-4o", 
+        spec="OpenAI",
+        model_name="gpt-4o",
         api_key="YOUR_OPENAI_API_KEY"
     )
     agent = ai.Agent(lm)
@@ -110,14 +103,14 @@ import * as ai from "ailoy-node";
 
 async function main() {
   const lm = await ai.LangModel.newStreamAPI(
-    "OpenAI",              // spec
-    "gpt-5",               // modelName
-    "YOUR_OPENAI_API_KEY", // apiKey
+    "OpenAI", // spec
+    "gpt-5", // modelName
+    "YOUR_OPENAI_API_KEY" // apiKey
   );
   const agent = new ai.Agent(lm);
   for await (const resp of agent.run("Please give me a short poem about AI")) {
     if (resp.message.contents[0].type === "text") {
-      console.log(resp.message.contents[0].text); 
+      console.log(resp.message.contents[0].text);
     }
   }
 }
@@ -132,14 +125,14 @@ import * as ai from "ailoy-web";
 
 async function main() {
   const lm = await ai.LangModel.newStreamAPI(
-    "OpenAI",              // spec
-    "gpt-5",               // modelName
-    "YOUR_OPENAI_API_KEY", // apiKey
+    "OpenAI", // spec
+    "gpt-5", // modelName
+    "YOUR_OPENAI_API_KEY" // apiKey
   );
   const agent = new ai.Agent(lm);
   for await (const resp of agent.run("Please give me a short poem about AI")) {
     if (resp.message.contents[0].type === "text") {
-      console.log(resp.message.contents[0].text); 
+      console.log(resp.message.contents[0].text);
     }
   }
 }
@@ -151,14 +144,10 @@ main().catch((err) => {
 
 </CodeTabs>
 
-{/* prettier-ignore-end */}
-
-### Using local models
+### Agent Using Local Models
 
 Here, we use the open-source model `Qwen3-0.6B`, running entirely on your own
 device — no API keys or internet connection required.
-
-{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -188,13 +177,13 @@ import * as ai from "ailoy-node";
 async function main() {
   const lm = await ai.LangModel.newLocal(
     "Qwen/Qwen3-0.6B", // modelName
-    undefine,          // device?
-    console.log,       // progressCallback?
+    undefine, // device?
+    console.log // progressCallback?
   );
   const agent = new ai.Agent(lm);
   for await (const resp of agent.run("Please give me a short poem about AI")) {
     if (resp.message.contents[0].type === "text") {
-      console.log(resp.message.contents[0].text); 
+      console.log(resp.message.contents[0].text);
     }
   }
 }
@@ -210,13 +199,13 @@ import * as ai from "ailoy-web";
 async function main() {
   const lm = await ai.LangModel.newLocal(
     "Qwen/Qwen3-0.6B", // modelName
-    undefine,          // device?
-    console.log,       // progressCallback?
+    undefine, // device?
+    console.log // progressCallback?
   );
   const agent = new ai.Agent(lm);
   for await (const resp of agent.run("Please give me a short poem about AI")) {
     if (resp.message.contents[0].type === "text") {
-      console.log(resp.message.contents[0].text); 
+      console.log(resp.message.contents[0].text);
     }
   }
 }
@@ -228,17 +217,12 @@ main().catch((err) => {
 
 </CodeTabs>
 
-{/* prettier-ignore-end */}
-
-{/* prettier-ignore-start */}
-
 :::info
-You can use the Ailoy
-[CLI interface](../concepts/command-line-interfaces) to manage downloaded model
-files. 
-:::
 
-{/* prettier-ignore-end */}
+You can use the Ailoy [CLI interface](../concepts/command-line-interfaces) to
+manage downloaded model files.
+
+:::
 
 ### Output
 
@@ -255,22 +239,26 @@ But dreams, still, run in hearts, in minds.
 
 </TerminalBox>
 
-That’s it! 🎉  
+That’s it! 🎉
+
 You’ve just run your first AI model with Ailoy.
 
-{/* prettier-ignore-start */}
+:::info
 
-:::info 
-For a detailed explanation of the input and output formats in Ailoy, please refer to [Chat Completion Format](../concepts/chat-completion-format).
+For a detailed explanation of the input and output formats in Ailoy, please
+refer to [Chat Completion Format](../concepts/chat-completion-format).
+
 :::
 
-:::info 
+:::info
+
 Don't be surprised if the output changes each time you run it.
 
-An LLM's output includes a certain level of randomness, controlled by the `temperature` and `top_p`.
-In ailoy, it can be adjusted with `InferenceConfig` in `AgentConfig`.
+An LLM's output includes a certain level of randomness, controlled by the
+`temperature` and `top_p`. In ailoy, it can be adjusted with `InferenceConfig`
+in `AgentConfig`.
 
-If both `temperature` and `top_p` are set to 0, the answer becomes deterministic.
+If both `temperature` and `top_p` are set to 0, the answer becomes
+deterministic.
+
 :::
-
-{/* prettier-ignore-end */}

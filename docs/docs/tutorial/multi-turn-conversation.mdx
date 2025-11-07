@@ -2,105 +2,32 @@
 
 Ailoy's `Agent` is designed to be stateless. It does not keep track of
 conversation histories. Each time you call the model, agent treats it as a new
-request.
+request. Each time you invoke the agent, it treats the provided messages as a
+fresh request with no internal memory of past conversations.
 
-If you want to create a multi-turn chat — for example, a back-and-forth
-conversation with the assistant — you must include the entire conversation
-history (all previous messages) in the request.
+If you want you run an agent with previous context, you must explicitly
+**include the entire conversation history** (all prior messages) when making the
+call.
 
-Let's see it step by step.
+## Adding Context in the Conversation
 
-{/* prettier-ignore-start */}
+Let's say that the user and the agent have exchanged some messages, as shown in
+the following diagram.
 
-:::info 
-Just want to see a completed example? Check out the **[last example](#example-of-ongoing-conversations)**!
-:::
+```mermaid
+sequenceDiagram
+    participant User
+    participant Agent
 
-{/* prettier-ignore-end */}
-
-## Step-by-step guide
-
-### A single-turn conversation
-
-Let’s start with a single-turn conversation:
-
-{/* prettier-ignore-start */}
-
-<CodeTabs>
-
-```python
-import asyncio
-
-import ailoy as ai
-
-
-async def main():
-    lm = await ai.LangModel.new_local("Qwen/Qwen3-0.6B")
-    agent = ai.Agent(lm)
-
-    messages = [ai.Message(role="user", contents="Hello!")]
-    async for resp in agent.run(messages):
-        if isinstance(resp.message.contents[0], ai.Part.Text):
-            print(resp.message.contents[0].text)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    User->>Agent: "John's favorite color is blue. Please remember that."
+    Agent->>User: "Great to hear that John's favorite color is blue."
+    User->>Agent: "What’s John's favorite color?"
 ```
 
-```typescript
-import * as ai from "ailoy-node";
+You would expect the agent to answer `blue`, considering the context.
 
-async function main() {
-  const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
-  const agent = new ai.Agent(model);
-
-  const messages = [
-    { role: "user", contents: "Hello!" },
-  ] as ai.Messages;
-  for await (const resp of agent.run(messages)) {
-    console.log(resp.contents[0].text);
-  }
-}
-
-main().catch((err) => {
-  console.error("Error:", err);
-});
-```
-
-```typescript web
-import * as ai from "ailoy-web";
-
-async function main() {
-  const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
-  const agent = new ai.Agent(model);
-
-  const messages = [{ role: "user", contents: "Hello!" }];
-  for await (const resp of agent.run(messages)) {
-    console.log(resp.message.contents[0].text);
-  }
-}
-
-main().catch((err) => {
-  console.error("Error:", err);
-});
-```
-
-</CodeTabs>
-
-{/* prettier-ignore-end */}
-
-The model will respond to your "Hello!" message.  
-Let's say it responds like this:
-
-```
-Hi there! How can I help you today?
-```
-
-### How to add context in the interaction
-
-Now, to continue the conversation, you must pass _both_ the **previous
-messages** and **your new user message** again:
+To add context in the conversation, you need to pass _both_ the **previous
+messages** and **your new user message**.
 
 {/* prettier-ignore-start */}
 
@@ -118,10 +45,10 @@ async def main():
 
     messages = [
         # the previous messages
-        ai.Message(role="user", contents="Hello!"),
-        ai.Message(role="assistant", contents="Hi there! How can I help you today?"),
+        ai.Message(role="user", contents="John's favorite color is blue. Please remember that."),
+        ai.Message(role="assistant", contents="Great to hear that John's favorite color is blue."),
         # your new user message
-        ai.Message(role="user", contents="What did I just say?"),
+        ai.Message(role="user", contents="What’s John's favorite color?"),
     ]
     async for resp in agent.run(messages):
         if isinstance(resp.message.contents[0], ai.Part.Text):
@@ -140,13 +67,14 @@ async function main() {
 
   const messages = [
     // the previous messages
-    { role: "user", contents: "Hello!" },
-    { role: "assistant", contents: "Hi there! How can I help you today?" },
+    { role: "user", contents: "John's favorite color is blue. Please remember that." },
+    { role: "assistant", contents: "Great to hear that John's favorite color is blue." },
     // your new user message
-    { role: "user", contents: "What did I just say?" },
-  ]
+    { role: "user", contents: "What’s John's favorite color?" },
+  ];
   for await (const resp of agent.run(messages)) {
-    console.log(resp.message.contents[0].text);
+    if (resp.message.contents?.[0]?.type === "text")
+      console.log(resp.message.contents?.[0]?.text);
   }
 }
 
@@ -164,13 +92,14 @@ async function main() {
 
   const messages = [
     // the previous messages
-    { role: "user", contents: "Hello!" },
-    { role: "assistant", contents: "Hi there! How can I help you today?" },
+    { role: "user", contents: "John's favorite color is blue. Please remember that." },
+    { role: "assistant", contents: "Great to hear that John's favorite color is blue." },
     // your new user message
-    { role: "user", contents: "What did I just say?" },
-  ]
+    { role: "user", contents: "What’s John's favorite color?" },
+  ];
   for await (const resp of agent.run(messages)) {
-    console.log(resp.message.contents[0].text);
+    if (resp.message.contents?.[0]?.type === "text")
+      console.log(resp.message.contents?.[0]?.text);
   }
 }
 
@@ -183,129 +112,13 @@ main().catch((err) => {
 
 {/* prettier-ignore-end */}
 
-Ailoy will now use the full conversation context to produce the correct reply —
-even though it doesn’t persist any state internally.
+By including the full history, Ailoy can generate a coherent response while
+remaining internally stateless — it never stores conversation data between runs.
 
-### A simplest multi-turn conversation
+## A Live Multi-Turn Conversations
 
-Here, We want to make the conversation continue by itself.  
-Let's consider a user who always speaks the specified words in a fixed order.
-
-We will use a loop to add user messages and get the agent's responses one by
-one.
-
-{/* prettier-ignore-start */}
-
-<CodeTabs>
-
-```python
-import asyncio
-
-import ailoy as ai
-
-
-async def main():
-    lm = await ai.LangModel.new_local("Qwen/Qwen3-0.6B")
-    agent = ai.Agent(lm)
-
-    USER_MESSAGES = [
-        ai.Message(role="user", contents="Hello!"),
-        ai.Message(role="user", contents="What did I just say?"),
-        ai.Message(role="user", contents="Oh, you are listening to me carefully!"),
-    ]
-
-    messages = []
-    for user_message in USER_MESSAGES:
-        print("User:", user_message.contents[0].text)
-        messages.append(user_message)  # Add user message
-        async for resp in agent.run(messages):
-            if isinstance(resp.message.contents[0], ai.Part.Text):
-                print("Assistant:", resp.message.contents[0].text)
-            messages.append(resp.message)  # Add assistant message
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-```typescript
-import * as ai from "ailoy-node";
-
-async function main() {
-  const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
-  const agent = new ai.Agent(model);
-
-  const USER_MESSAGES = [
-    { role: "user", contents: "Hello!" },
-    { role: "user", contents: "What did I just say?" },
-    { role: "user", contents: "Oh, you are listening to me carefully!" },
-  ];
-
-  let messages = [];
-  for (const user_message of USER_MESSAGES) {
-    messages.push(user_message);
-    for await (const resp of agent.run(messages as ai.Messages)) {
-      if (resp.message.contents[0].type == "text")
-        console.log(resp.message.contents[0].text);
-      messages.push(resp.message);
-    }
-  }
-}
-
-main().catch((err) => {
-  console.error("Error:", err);
-});
-```
-
-```typescript web
-import * as ai from "ailoy-web";
-
-async function main() {
-  const model = await ai.LangModel.newLocal("Qwen/Qwen3-0.6B");
-  const agent = new ai.Agent(model);
-
-  const USER_MESSAGES = [
-    { role: "user", contents: "Hello!" },
-    { role: "user", contents: "What did I just say?" },
-    { role: "user", contents: "Oh, you are listening to me carefully!" },
-  ];
-
-  let messages = [];
-  for (const user_message of USER_MESSAGES) {
-    messages.push(user_message);
-    for await (const resp of agent.run(messages)) {
-      if (resp.message.contents[0].type == "text")
-        console.log(resp.message.contents[0].text);
-      messages.push(resp.message);
-    }
-  }
-}
-
-main().catch((err) => {
-  console.error("Error:", err);
-});
-```
-
-</CodeTabs>
-
-{/* prettier-ignore-end */}
-
-Now we just can replace the fixed inputs with live user inputs to make it real
-conversation!
-
-## Example of interactive multi-turn conversations
-
-The code below is an example of receiving real-time input from the user and
-continuing a conversation with the agent.
-
-{/* prettier-ignore-start */}
-
-:::info
-Example code for web is not provided here.  
-To see a conversational agent that continuously interacts with users, check out **[WebAssembly Supports](webassembly-supports)** page.
-:::
-
-{/* prettier-ignore-end */}
+You can implement a live chat between the user and the agent by accumulating
+real-time messages in a list and feeding them back to the agent.
 
 {/* prettier-ignore-start */}
 
@@ -323,13 +136,13 @@ async def main():
 
     print("(Enter 'exit' to end the conversation.)")
     messages = []
-    while (user_message := input("User: ")).lower() != "exit":
+    while (user_message := input("User: ").strip()).lower() != "exit":
         messages.append(ai.Message(role="user", contents=user_message))
         async for resp in agent.run(messages):
             if isinstance(resp.message.contents[0], ai.Part.Text):
-                print("Assistant:", resp.message.contents[0].text)
+                print("Agent:", resp.message.contents[0].text)
             messages.append(resp.message)
-    print("Assistant: It was a nice conversation!")
+    print("Agent: It was a nice conversation!")
 
 
 if __name__ == "__main__":
@@ -361,13 +174,13 @@ async function main() {
     messages.push({ role: "user", contents: input });
 
     for await (const resp of agent.run(messages as ai.Messages)) {
-      if (resp.message.contents[0].type === "text")
-        console.log("Assistant:", resp.message.contents[0].text);
+      if (resp.message.contents?.[0]?.type === "text")
+        console.log("Agent:", resp.message.contents?.[0]?.text);
       messages.push(resp.message);
     }
   }
 
-  console.log("Assistant: It was a nice conversation!");
+  console.log("Agent: It was a nice conversation!");
   rl.close();
 }
 
@@ -377,5 +190,10 @@ main().catch((err) => {
 ```
 
 </CodeTabs>
+
+:::info
+Example code for web environment is not provided here.  
+To see a conversational agent that continuously interacts with users, check out **[WebAssembly Supports](webassembly-supports)** page.
+:::
 
 {/* prettier-ignore-end */}

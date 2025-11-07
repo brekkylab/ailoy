@@ -15,14 +15,13 @@ computation and memory usage, it can increase latency and overall resource
 consumption. Therefore, it’s important to enable thinking only when necessary,
 based on the complexity of your use case.
 
-{/* prettier-ignore-start */}
-
 :::info
-Small models like `Qwen3-0.6B` are generally too limited to perform effective reasoning.  
-For complex tasks, we recommend using a sufficiently large model.
-:::
 
-{/* prettier-ignore-end */}
+Small models like `Qwen3-0.6B` are generally too limited to perform effective
+reasoning.  
+For complex tasks, we recommend using a sufficiently large model.
+
+:::
 
 ## Hybrid Thinking Models
 
@@ -35,22 +34,20 @@ thinking process on or off via the thinking option. When enabled, the model
 engages in structured, step-by-step inference—producing a detailed “thinking
 trace” before the final answer.
 
-### How to enable thinking
+### How to Enable Thinking
 
 To enable thinking, simply specify the `think_effort` in the inference config
 when running the agent.  
 If you pass the inference config as the `inference` key within the agent config,
 it will be passed to the internal `LangModel`.
 
-{/* prettier-ignore-start */}
-
 :::note
-If you enable thinking, the time required to generate an entire message can increase quite a lot, which make your application look less responsive, so it may be better to run the agent with **[streaming](/docs/tutorial/streaming)**.
+
+If you enable thinking, the time required to generate an entire message can
+increase quite a lot, which make your application look less responsive, so it
+may be better to run the agent with **[streaming](/docs/tutorial/streaming)**.
+
 :::
-
-{/* prettier-ignore-end */}
-
-{/* prettier-ignore-start */}
 
 <CodeTabs>
 
@@ -114,7 +111,6 @@ async function main() {
 main().catch((err) => {
   console.error("Error:", err);
 });
-
 ```
 
 ```typescript web
@@ -155,9 +151,18 @@ main().catch((err) => {
 
 </CodeTabs>
 
-{/* prettier-ignore-end */}
+## Adjusting Thinking Effort
 
-## Thinking behaviors in various models
+The `think_effort` option determines **how much reasoning power the model uses**
+before giving an answer. Increasing this value enhances the model’s ability to
+think logically and systematically, but also consumes more time and resources.
+You can think of it as a balance between **intelligence** and **budget or
+responsiveness**:
+
+In short:
+
+- Higher `think_effort` → smarter but slower.
+- Lower `think_effort` → faster but shallower.
 
 `think_effort` can have one of these in the config:
 
