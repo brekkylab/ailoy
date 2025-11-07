@@ -44,10 +44,10 @@ Ailoy provides a powerful yet accessible framework for integrating advanced AI c
 
 [📚 **View Documentation**](https://brekkylab.github.io/ailoy/)
 
-> [!WARNING] **Early Development Notice**
+> [!WARNING]
 > Ailoy is under active development. APIs may evolve as we refine the library. We recommend pinning versions in production environments.
 
-> [!TIP] **Join Our Community**
+> [!TIP]
 > Have questions or need support? Join our [Discord channel](https://discord.gg/27rx3EJy3P) to connect with other developers and the Ailoy team.
 
 ## System Requirements
