@@ -27,7 +27,7 @@ Ailoy enables you to integrate advanced AI capabilities into your projects throu
 ## Key Features
 
 ### AI Agent Capabilities
-- **Reasoning**
+- **Reasoning**: Extend thinking effortlessly
 - **Multi-Modal Inputs**: Process both text and images
 - **Extensible Tool Calling**: User-defined functions and Model Context Protocol (MCP) tools
 - **Retrieval-Augmented Generation (RAG)**: Integrates external knowledge bases without boilerplate
