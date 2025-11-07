@@ -228,6 +228,61 @@ function includes a field called `tool_calls`. If this field contains any
 values, it indicates that the LLM’s output has triggered one or more **tool
 calls**.
 
+### Auto-generate Tool Description (only in Python)
+
+Python provides access to a function's metadata through the function object.  
+So the tool descriptions can be automatically generated from the type hints of
+the function parameters and the description in the docstring.
+
+As with libraries like
+**[transformers](https://huggingface.co/docs/transformers/v4.57.1/en/chat_extras#passing-tools)**,
+also in Ailoy, if you create a `Tool` from a Python function that includes a
+_Google-style docstring_ and type hints for its parameters, you don't need to
+create a `ToolDesc` by yourself.
+
+<details>
+  <summary>**See example Python code**</summary>
+<CodeTabs>
+
+```python
+def frankfurter(base: str, symbols: str):
+    """
+        Get the latest currency exchange rates of target currencies based on the 'base' currency
+
+        Args:
+            base: The ISO 4217 currency code to be the divider of the currency rate to be got.
+            unit: The target ISO 4217 currency codes separated by comma.
+    """
+
+    if not base:
+        raise ValueError("Missing 'base'")
+    if not symbols:
+        raise ValueError("Missing 'symbols'")
+
+    query = parse.urlencode({"from": base, "to": symbols})
+    url = f"https://api.frankfurter.app/latest?{query}"
+
+    try:
+        with request.urlopen(url, timeout=10) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Frankfurter API returned HTTP {resp.status}")
+            payload = json.loads(resp.read().decode("utf-8"))
+    except error.URLError as e:
+        raise RuntimeError(f"Failed to reach Frankfurter API: {e}") from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError("Failed to parse Frankfurter API response as JSON.") from e
+
+    return payload
+
+tool = ai.Tool.new_py_function(tool_behavior)  # don't need to provide `tool_desc` here
+# tool = ai.Tool.new_py_function(tool_behavior, tool_desc)  # if you provide, it will override
+agent.add_tool(tool)
+```
+
+</CodeTabs>
+
+</details>
+
 ## Complete Example
 
 <CodeTabs>
