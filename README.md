@@ -22,25 +22,24 @@
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Fx.com%2Failoy_co)](https://x.com/ailoy_co)
 
 
-Ailoy provides a powerful yet accessible framework for integrating advanced AI capabilities into your projects. Designed with simplicity in mind, it enables sophisticated AI features through straightforward imports and intuitive APIs.
+Ailoy enables you to integrate advanced AI capabilities into your projects through simple imports and intuitive APIs.
 
 ## Key Features
 
-### Comprehensive AI agent capabilities
-- **Reasoning** – Build agents that solve complex problems through structured thinking
-- **Multi-modal inputs** – Process and respond to both text and image contents
-- **Extensible tool calling** – Native support for custom tools and Model Context Protocol (MCP) integration
-- **Retrieval-Augmented Generation (RAG)** – Seamlessly integrate knowledge bases for context-aware responses
+### AI agent capabilities
+- **Reasoning** – Solve complex problems through structured thinking
+- **Multi-modal inputs** – Process both text and images
+- **Extensible tool calling** – Custom tools and Model Context Protocol (MCP) support
+- **Retrieval-Augmented Generation (RAG)** – Integrate knowledge bases for context-aware responses
 
 ### Flexible Model Adoption
 - **Unified interface** – Effortlessly switch between open-source and API models
-- **Privacy-first operation** – Run agents entirely locally with complete data privacy
-- **Cloud or edge** – Deploy whereever your application requirements demand
+- **Privacy-first** – Run entirely locally with complete data privacy
+- **Cloud or edge** – Deploy whereever you need
 
-### Universal Compatibility
-- **Cross-platform support** – Run on macOS, Linux, and Windows environments
-- **WebAssembly Integration** – Achieve near-native performance directly in web browsers
-- **Production-ready** – Built for reliability across diverse deployment scenarios
+### Cross-Platform
+- **macOS, Linux, Windows** – Native support across major platforms
+- **WebAssembly** – Near-native performance in web browsers
 
 [📚 **View Documentation**](https://brekkylab.github.io/ailoy/)
 
