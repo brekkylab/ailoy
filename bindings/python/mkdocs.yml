@@ -5,6 +5,8 @@ site_url: https://brekkylab.github.io/ailoy
 
 theme:
   name: material
+  favicon: /ailoy/img/favicon.ico
+  logo: /ailoy/img/logo.png
   palette:
     - scheme: default
       primary: indigo
