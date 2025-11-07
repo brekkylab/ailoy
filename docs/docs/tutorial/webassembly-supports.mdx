@@ -67,7 +67,7 @@ that explains why—using the `reason` value returned by the function.
 
 In this tutorial, we're going to build a simple chat UI application using Ailoy.
 You can see the full example codes in
-[our repository](https://github.com/brekkylab/ailoy/tree/main/examples/web-assistant-ui).
+**[our repository](https://github.com/brekkylab/ailoy/tree/main/examples/web-assistant-ui)**.
 
 ### Setup Vite and install `ailoy-web`
 
@@ -173,7 +173,7 @@ package to create a basic chat interface.
 
 It relies on [**shadcn**](https://ui.shadcn.com/docs/installation/vite), so
 we'll set that up first. Follow the guide from
-[shadcn's documentation](https://ui.shadcn.com/docs/installation/vite).
+[**shadcn's documentation**](https://ui.shadcn.com/docs/installation/vite).
 
 1. Edit `tsconfig.json`.
 
@@ -309,7 +309,7 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 ### Implementation
 
 We use assistant-ui's
-[ExternalStoreRuntime](https://www.assistant-ui.com/docs/runtimes/custom/external-store)
+[**ExternalStoreRuntime**](https://www.assistant-ui.com/docs/runtimes/custom/external-store)
 feature to ingest messages converted from states where raw messages are stored
 in Ailoy format.
 
@@ -942,9 +942,9 @@ tool.
 ### Using MCP Tools
 
 You can initialize MCP clients and use their tools in agents via
-[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
+[**Streamable HTTP**](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
 transport. Note that
-[stdio](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#stdio)
+[**stdio**](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#stdio)
 transport is not supported in browsers because they cannot run a stdio process.
 
 :::warning
@@ -952,7 +952,7 @@ transport is not supported in browsers because they cannot run a stdio process.
 When connecting to MCP servers from browsers, make sure the server is configured
 to use **CORS middleware** with allowing your origins and exposing required
 headers such as `Mcp-Session-Id`. See
-[the official documentation](https://github.com/modelcontextprotocol/typescript-sdk?tab=readme-ov-file#cors-configuration-for-browser-based-clients)
+[**the official documentation**](https://github.com/modelcontextprotocol/typescript-sdk?tab=readme-ov-file#cors-configuration-for-browser-based-clients)
 for more details.
 
 :::
@@ -1044,7 +1044,7 @@ app.listen(PORT, () => {
 
 Note that we used `zod/v3` since the current latest version of MCP sdk does not
 work with zod v4.
-([related issue](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1072))
+([**related issue**](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1072))
 
 :::
 

@@ -35,7 +35,7 @@ yarn add ailoy-web
 :::info
 
 For using Ailoy in web browsers, see
-[WebAssembly Supports](./webassembly-supports.mdx) for more details.
+**[WebAssembly Supports](./webassembly-supports.mdx)** for more details.
 
 :::
 
@@ -176,7 +176,7 @@ import * as ai from "ailoy-node";
 async function main() {
   const lm = await ai.LangModel.newLocal(
     "Qwen/Qwen3-0.6B", // modelName
-    undefine, // device?
+    undefined, // device?
     console.log // progressCallback?
   );
   const agent = new ai.Agent(lm);
@@ -198,7 +198,7 @@ import * as ai from "ailoy-web";
 async function main() {
   const lm = await ai.LangModel.newLocal(
     "Qwen/Qwen3-0.6B", // modelName
-    undefine, // device?
+    undefined, // device?
     console.log // progressCallback?
   );
   const agent = new ai.Agent(lm);
@@ -240,12 +240,12 @@ But dreams, still, run in hearts, in minds.
 
 That’s it! 🎉
 
-You’ve just run your first AI model with Ailoy.
+You’ve just run your first AI agent with Ailoy.
 
 :::info
 
 For a detailed explanation of the input and output formats in Ailoy, please
-refer to [Chat Completion Format](../concepts/chat-completion-format).
+refer to **[Chat Completion Format](../concepts/chat-completion-format)**.
 
 :::
 
