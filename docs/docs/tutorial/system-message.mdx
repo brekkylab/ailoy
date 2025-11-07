@@ -1,8 +1,8 @@
 # System Message
 
-A **system message** defines the global behavior, tone, or role of the
-assistant. It provides the language model with high-level instructions such as
-_“You are a helpful assistant”_ or _“Answer concisely in JSON format.”_
+A **system message** defines the global behavior, tone, or role of the agent. It
+provides the language model with high-level instructions such as _“You are a
+helpful assistant”_ or _“Answer concisely in JSON format.”_
 
 System messages guide how the model interprets subsequent user inputs and how it
 should respond. They are usually placed at the very beginning of the message
@@ -56,6 +56,10 @@ default neutral assistant style:
 ```
 
 {/* prettier-ignore-end */}
+
+The LM uses a system message defined by the developer instead of its internal
+default, allowing developers to fully customize the model’s tone, persona, and
+task-specific behavior.
 
 ## Example
 
@@ -170,16 +174,12 @@ main().catch((err) => {
 
 </TerminalBox>
 
-The LM will use the developer-defined system message instead of its internal
-default, allowing full customization of the model’s tone, persona, or
-task-specific behavior.
-
 ## Notes
 
 - Always place the system message as **the first message in the sequence**.
   Placing it elsewhere may cause errors or undefined behavior.
 - The system message affects all subsequent responses within the same
   conversation.
-- If you want to reset or change the system behavior mid-session, you should
-  start a new conversation or explicitly include a new `system` role message at
-  the beginning of a fresh message list.
+- To reset or change the system behavior during session, start a new
+  conversation or explicitly include a new system message at the beginning of a
+  new message list.

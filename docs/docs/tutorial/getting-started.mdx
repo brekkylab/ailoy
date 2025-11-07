@@ -39,28 +39,27 @@ For using Ailoy in web browsers, see
 
 :::
 
-## Running a Simplest Agent
+## Running the Simplest Agent
 
-The **Language Model (LM)** is the core of every agent. An agent system operates
+The **Language Model (LM)** is the core of AI agents. An agent system operates
 based on a language model and its instructions, along with various extensions
 that enhance its capabilities.
 
-### Choosing Between APIs and Local Models
+### API Models and Local Models
 
-Ailoy lets you run language model in two different modes:
+Ailoy lets you run language models in two different modes:
 
-- **API Models**: run models hosted by AI vendors (like OpenAI GPT or Anthropic
-  Claude)
+- **API Models**: run models hosted by AI vendors such as OpenAI’s GPT or
+  Anthropic’s Claude
 - **Local Models**: run open-source models directly on your own machine
 
 Each approach has its own strengths and trade-offs:
 
-- **API Models**: These connect to external AI services over the internet. If
-  you’re fine with API token costs and prefer cloud-hosted models, this is the
-  simplest option.
-- **Local Models**: These run entirely on your own device, using open-source
-  models. Choose this if you want full control, offline availability, or
-  privacy.
+- **API Models**: connect to external AI services over the internet. If you’re
+  fine with API token costs and prefer cloud-hosted models, this is the simplest
+  option.
+- **Local Models**: run entirely on your own device using open-source models.
+  Choose this if you want full control, offline availability, or privacy.
 
 Ailoy supports both seamlessly — you can switch between them anytime with
 minimal changes.
@@ -147,7 +146,7 @@ main().catch((err) => {
 ### Agent Using Local Models
 
 Here, we use the open-source model `Qwen3-0.6B`, running entirely on your own
-device — no API keys or internet connection required.
+device — no API key or internet connection is required.
 
 <CodeTabs>
 
@@ -219,8 +218,8 @@ main().catch((err) => {
 
 :::info
 
-You can use the Ailoy [CLI interface](../concepts/command-line-interfaces) to
-manage downloaded model files.
+You can use the Ailoy **[CLI interface](../concepts/command-line-interfaces)**
+to manage downloaded model files.
 
 :::
 
@@ -228,7 +227,7 @@ manage downloaded model files.
 
 Since the model needs to be downloaded and initialized, the first run may take a
 little time.  
-After a short wait, you may see an output similar to this.
+After a short wait, you will see an output similar to this.
 
 <TerminalBox>
 

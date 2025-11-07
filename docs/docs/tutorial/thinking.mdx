@@ -1,18 +1,19 @@
 # Thinking
 
-Thinking(reasoning) is an advanced capability of AI that enables it to tackle
-complex tasks through explicit, step-by-step logical inference. Thinking models
-break down problems into smaller sub-tasks rather than solving them in a single
-pass. Compared to direct answer generation, it offers two key advantages:
+Thinking (or reasoning) is an advanced capability of AI that enables it to
+tackle complex tasks through explicit, step-by-step logical inference. Thinking
+models break down problems into smaller reasoning steps rather than solving them
+in a single pass. Compared to direct answer generation, it offers two key
+advantages:
 
-1. Improved problem-solving intelligence
+1. Improved problem-solving capability
 2. Transparent and traceable intermediate thinking steps
 
 This functionality is particularly well-suited for domains that require
 multi-step thinking, such as scientific analysis, legal interpretation, or
-strategic decision-making. However, since the thinking step needs additional
+strategic decision-making. However, since the thinking step requires additional
 computation and memory usage, it can increase latency and overall resource
-consumption. Therefore, it’s important to enable thinking only when necessary,
+consumption. Therefore, it’s important to use thinking only when necessary,
 based on the complexity of your use case.
 
 :::info
@@ -26,8 +27,8 @@ For complex tasks, we recommend using a sufficiently large model.
 ## Hybrid Thinking Models
 
 Some modern models, such as Qwen3, are designed as hybrid thinking models. These
-models can switch between normal (direct-generation) and thinking modes
-depending on your configuration.
+models can switch between standard (direct-generation) and thinking modes based
+on configuration settings.
 
 Ailoy fully supports this hybrid capability. You can explicitly turn the
 thinking process on or off via the thinking option. When enabled, the model
@@ -38,13 +39,13 @@ trace” before the final answer.
 
 To enable thinking, simply specify the `think_effort` in the inference config
 when running the agent.  
-If you pass the inference config as the `inference` key within the agent config,
-it will be passed to the internal `LangModel`.
+If you pass the inference config under the `inference` key within the agent
+config, it will be passed to the internal `LangModel`.
 
 :::note
 
 If you enable thinking, the time required to generate an entire message can
-increase quite a lot, which make your application look less responsive, so it
+increase quite a lot, which makes your application look less responsive, so it
 may be better to run the agent with **[streaming](/docs/tutorial/streaming)**.
 
 :::
@@ -154,10 +155,9 @@ main().catch((err) => {
 ## Adjusting Thinking Effort
 
 The `think_effort` option determines **how much reasoning power the model uses**
-before giving an answer. Increasing this value enhances the model’s ability to
-think logically and systematically, but also consumes more time and resources.
-You can think of it as a balance between **intelligence** and **budget or
-responsiveness**:
+before giving an answer. Increasing this value enhances logical and systematic
+thinking, but also consumes more time and resources. You can think of it as a
+balance between **intelligence** and **budget or responsiveness**:
 
 In short:
 
