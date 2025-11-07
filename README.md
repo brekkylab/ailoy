@@ -56,8 +56,6 @@ For detailed compatibility information and system requirements, please consult t
 
 ## Installation
 
-Choose the binding appropriate for your development environment:
-
 ### Python
 
 ```bash
