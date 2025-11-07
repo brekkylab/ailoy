@@ -1088,12 +1088,17 @@ mod wasm {
 
             // Handle number
             if let Some(n) = js_val.as_f64() {
-                if n.is_finite() && n.fract() == 0.0 {
-                    return Ok(Value::Unsigned(n as u64));
-                } else if n >= i64::MIN as f64 && n <= i64::MAX as f64 {
-                    return Ok(Value::Integer(n as i64));
+                if n.is_finite() {
+                    if n.fract() == 0.0 {
+                        if n >= 0.0 && n <= u64::MAX as f64 {
+                            return Ok(Value::Unsigned(n as u64));
+                        } else if n >= i64::MIN as f64 && n <= i64::MAX as f64 {
+                            return Ok(Value::Integer(n as i64));
+                        }
+                    }
+                    return Ok(Value::Float(ordered_float::OrderedFloat(n)));
                 }
-                return Ok(Value::Float(ordered_float::OrderedFloat(n)));
+                return Err(js_sys::Error::new("Infinity or NaN"));
             }
 
             // Handle BigInt
