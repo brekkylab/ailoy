@@ -13,16 +13,6 @@ export default defineConfig(({}) => {
       target: "node20",
       outDir: "dist",
     },
-    plugins: [
-      dts({ rollupTypes: true }),
-      viteStaticCopy({
-        targets: [
-          {
-            src: ["./src/ailoy_core.*.node"],
-            dest: "./",
-          },
-        ],
-      }),
-    ],
+    plugins: [dts({ rollupTypes: true })],
   };
 });

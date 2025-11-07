@@ -34,15 +34,12 @@ jobs:
         run: |
           npm install
 
-      - name: Build package
+      - name: Build binary
         working-directory: ${{ github.workspace }}/bindings/nodejs
         run: |
-          npm run build
-          node scripts/bundle-dylibs.js ./dist/ailoy_core.linux-x64-gnu.node
-          npm pack
-          PACKAGE_NAME=$(ls -1t ailoy-*.tgz | head -n 1)
-          echo "PACKAGE_NAME=$PACKAGE_NAME"
-          echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
+          npm run build:napi
+          mv ./src/ailoy_core.linux-x64-gnu.node ./npm/linux-x64-gnu
+          node scripts/bundle-dylibs.js ./npm/linux-x64-gnu/ailoy_core.linux-x64-gnu.node
         env:
           CMAKE_PREFIX_PATH: /opt/openblas
           OPENSSL_DIR: /opt/openssl
@@ -50,8 +47,16 @@ jobs:
           LD_LIBRARY_PATH: /opt/openblas/lib:/opt/vulkan-sdk/lib
           RUSTFLAGS: -L/opt/rh/gcc-toolset-14/root/lib/gcc/x86_64-redhat-linux/14
 
+      - name: Create a package
+        working-directory: ${{ github.workspace }}/bindings/nodejs/npm/linux-x64-gnu
+        run: |
+          npm pack
+          PACKAGE_NAME=$(ls -1t ailoy-*.tgz | head -n 1)
+          echo "PACKAGE_NAME=$PACKAGE_NAME"
+          echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
+
       - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PACKAGE_NAME }}
-          path: ${{ github.workspace }}/bindings/nodejs/${{ env.PACKAGE_NAME }}
+          path: ${{ github.workspace }}/bindings/nodejs/npm/linux-x64-gnu/${{ env.PACKAGE_NAME }}
