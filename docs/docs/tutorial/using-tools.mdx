@@ -8,7 +8,7 @@ even if it wasn’t part of the model’s training data.
 To use a tool, two components must be defined: **Tool Descripition** and **Tool
 Behavior**.
 
-:::info
+:::note
 
 Please refer to **[Architecture](../concepts/architecture.mdx#tool)** section
 for more about the tool architecture.
@@ -20,10 +20,11 @@ Now, let's explore how to make a _tool-aware agent_ in Ailoy.
 In this example, we’ll use the **[Frankfurter API](https://frankfurter.dev/)**
 to enable your agent to look up real-time currency exchange rates.
 
-:::info
+:::note
 
-Please refer to **[MCP Integration](./mcp-integration.mdx)** section for using
-MCP tools.
+Ailoy also supports **[MCP](https://modelcontextprotocol.io/)** as tool. Please
+refer to **[MCP Integration](./mcp-integration.mdx)** section for using MCP
+tools.
 
 :::
 
@@ -176,13 +177,13 @@ You can register a tool by passing it to the `Agent` constructor.
 <CodeTabs>
 
 ```python
-lm = await ai.LangModel.new_local("Qwen/Qwen3-8B")
+lm = await ai.LangModel.new_local("Qwen/Qwen3-4B")
 tools = [ai.Tool.new_py_function(tool_behavior, tool_desc)]
 agent = ai.Agent(lm, tools)
 ```
 
 ```typescript
-const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B");
+const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
 const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
 const agent = new ai.Agent(lm, tools);
 ```
@@ -227,6 +228,61 @@ response returned by `agent.run()` or `agent.run_delta()`. The `agent.run()`
 function includes a field called `tool_calls`. If this field contains any
 values, it indicates that the LLM’s output has triggered one or more **tool
 calls**.
+
+### Auto-generate Tool Description (only in Python)
+
+Python provides access to a function's metadata through the function object.  
+So the tool descriptions can be automatically generated from the type hints of
+the function parameters and the description in the docstring.
+
+As with libraries like
+**[transformers](https://huggingface.co/docs/transformers/v4.57.1/en/chat_extras#passing-tools)**,
+also in Ailoy, if you create a `Tool` from a Python function that includes a
+_Google-style docstring_ and type hints for its parameters, you don't need to
+create a `ToolDesc` by yourself.
+
+<details>
+  <summary>**See example Python code**</summary>
+<CodeTabs>
+
+```python
+def frankfurter(base: str, symbols: str):
+    """
+        Get the latest currency exchange rates of target currencies based on the 'base' currency
+
+        Args:
+            base: The ISO 4217 currency code to be the divider of the currency rate to be got.
+            unit: The target ISO 4217 currency codes separated by comma.
+    """
+
+    if not base:
+        raise ValueError("Missing 'base'")
+    if not symbols:
+        raise ValueError("Missing 'symbols'")
+
+    query = parse.urlencode({"from": base, "to": symbols})
+    url = f"https://api.frankfurter.app/latest?{query}"
+
+    try:
+        with request.urlopen(url, timeout=10) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Frankfurter API returned HTTP {resp.status}")
+            payload = json.loads(resp.read().decode("utf-8"))
+    except error.URLError as e:
+        raise RuntimeError(f"Failed to reach Frankfurter API: {e}") from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError("Failed to parse Frankfurter API response as JSON.") from e
+
+    return payload
+
+tool = ai.Tool.new_py_function(tool_behavior)  # don't need to provide `tool_desc` here
+# tool = ai.Tool.new_py_function(tool_behavior, tool_desc)  # if you provide, it will override
+agent.add_tool(tool)
+```
+
+</CodeTabs>
+
+</details>
 
 ## Complete Example
 
@@ -281,10 +337,10 @@ def tool_behavior(base, symbols):
 
 
 async def main():
-    lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", None, progress_callback=print)
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B", None, progress_callback=print)
     tools = [ai.Tool.new_py_function(tool_behavior, tool_desc)]
     agent = ai.Agent(lm, tools)
-    query = "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?"
+    query = "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take? Get the currency data if you need."
     print("Query:", query, "\n")
     async for resp in agent.run(query):
         if resp.message.role == "assistant":
@@ -355,14 +411,95 @@ async function toolBehavior(args) {
 
 async function main() {
   const lm = await ai.LangModel.newLocal(
-    "Qwen/Qwen3-8B",
+    "Qwen/Qwen3-4B",
     undefined,
     console.log
   );
   const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
   const agent = new ai.Agent(lm, tools);
   const query =
-    "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?";
+    "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take? Get the currency data if you need.";
+  for await (const resp of agent.run(query)) {
+    if (resp.message.role === "assistant") {
+      if (resp.message.tool_calls?.length > 0) {
+        console.log("Tool call:", resp.message.tool_calls[0].function, "\n");
+      } else {
+        console.log(resp.message.contents[0].text, "\n");
+      }
+    } else if (resp.message.role === "tool") {
+      console.log("Tool response:", resp.message.contents[0].value, "\n");
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+const toolDesc = {
+  name: "frankfurter",
+  description:
+    "Get the latest currency exchange rates of target currencies based on the 'base' currency",
+  parameters: {
+    type: "object",
+    properties: {
+      base: {
+        type: "string",
+        description:
+          "The ISO 4217 currency code to be the divider of the currency rate to be got.",
+      },
+      symbols: {
+        type: "string",
+        description: "The target ISO 4217 currency codes separated by comma.",
+      },
+    },
+  },
+};
+
+async function toolBehavior(args) {
+  const { base, symbols } = args;
+  if (!base) {
+    throw new Error("Missing 'base'");
+  }
+  if (!symbols) {
+    throw new Error("Missing 'symbols'");
+  }
+
+  const params = new URLSearchParams({ from: base, to: symbols });
+  const url = `https://api.frankfurter.app/latest?${params.toString()}`;
+
+  let resp;
+  try {
+    resp = await fetch(url, { timeout: 10000 });
+  } catch (err) {
+    throw new Error(`Failed to reach Frankfurter API: ${err.message}`);
+  }
+
+  if (!resp.ok) {
+    throw new Error(`Frankfurter API returned HTTP ${resp.status}`);
+  }
+
+  try {
+    return await resp.json();
+  } catch {
+    throw new Error("Failed to parse Frankfurter API response as JSON.");
+  }
+}
+
+async function main() {
+  const lm = await ai.LangModel.newLocal(
+    "Qwen/Qwen3-4B",
+    undefined,
+    console.log
+  );
+  const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
+  const agent = new ai.Agent(lm, tools);
+  const query =
+    "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take? Get the currency data if you need.";
   for await (const resp of agent.run(query)) {
     if (resp.message.role === "assistant") {
       if (resp.message.tool_calls?.length > 0) {
