@@ -37,9 +37,10 @@ Ailoy enables you to integrate advanced AI capabilities into your projects throu
 - Effortlessly switch between **open-source** and **AI services**
 - Minimal software dependencies — deploy anywhere, from cloud to edge
 
-### Cross-Platform
+### Cross-Platform & Multi-language
 - **Linux, Windows, macOS**
 - Web browsers via **WebAssembly**
+- **Python, Javascript**
 
 [📚 **View Documentation**](https://brekkylab.github.io/ailoy/)
 
