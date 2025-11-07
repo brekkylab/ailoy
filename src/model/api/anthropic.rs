@@ -34,20 +34,28 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             Part::Value { value } => {
                 to_value!(serde_json::to_string(&value).unwrap())
             }
-            Part::Image { image } => {
-                let b64 = match image {
-                    PartImage::Binary { .. } => image.base64().unwrap(),
-                    PartImage::Url { .. } => panic!("Claude does not support image url inputs"),
-                };
-                to_value!({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/png",
-                        "data": b64,
-                    }
-                })
-            }
+            Part::Image { image } => match image {
+                PartImage::Binary { .. } => {
+                    let b64 = image.base64().unwrap();
+                    to_value!({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": b64,
+                        }
+                    })
+                }
+                PartImage::Url { url } => {
+                    to_value!({
+                        "type": "image",
+                        "source": {
+                            "type": "url",
+                            "url": url,
+                        }
+                    })
+                }
+            },
         }
     };
 
@@ -584,6 +592,16 @@ mod dialect_tests {
             serde_json::to_string(&marshaled).unwrap(),
             r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
         );
+
+        let msg = Message::new(Role::User).with_contents([
+            Part::image_url("https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg".into()).unwrap(),
+            Part::text("What is shown in this image?"),
+        ]);
+        let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg"}},{"type":"text","text":"What is shown in this image?"}]}"#
+        )
     }
 
     #[test]
