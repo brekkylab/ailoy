@@ -176,7 +176,7 @@ import * as ai from "ailoy-node";
 async function main() {
   const lm = await ai.LangModel.newLocal(
     "Qwen/Qwen3-0.6B", // modelName
-    undefine, // device?
+    undefined, // device?
     console.log // progressCallback?
   );
   const agent = new ai.Agent(lm);
@@ -198,7 +198,7 @@ import * as ai from "ailoy-web";
 async function main() {
   const lm = await ai.LangModel.newLocal(
     "Qwen/Qwen3-0.6B", // modelName
-    undefine, // device?
+    undefined, // device?
     console.log // progressCallback?
   );
   const agent = new ai.Agent(lm);
