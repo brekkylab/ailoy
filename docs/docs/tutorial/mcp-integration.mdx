@@ -9,12 +9,13 @@ reasoning.
 
 :::info
 
-Since standard I/O is not available in the web environment, only the MCP tools
-based on streamable HTTP are available in the web environment.  
-For information on MCP integration in the web environment, please refer to
-**[WebAssembly Supports](webassembly-supports#using-mcp-tools)**.  
-The following examples demonstrate MCP tools that use standard input/output in a
-native environment.
+Standard input/output is not available in the web environment. Therefore, only
+the MCP tools based on streamable HTTP are available in the web environment.  
+For information on MCP integration in the web environment, please refer to the
+**[WebAssembly Supports](webassembly-supports#using-mcp-tools)**.
+
+The following examples demonstrate MCP tools that use standard input/output only
+in a native environment.
 
 :::
 
@@ -44,7 +45,7 @@ const client = await ai.MCPClient.newStdio("npx", [
 
 This launches the GitHub MCP server as a subprocess using standard I/O for
 communication. The agent automatically discovers the tools exposed by the server
-and registers them into its internal toolset.
+and registers them to its internal toolset.
 
 ### Extracting MCP Tools
 
@@ -71,8 +72,9 @@ const tools = [
 
 ### Registering Tools into Agent
 
-To integrate MCP tools with LM, they must be registered to `Agent`. This enables
-the agent to automatically call those tools when reasoning or answering queries.
+To integrate MCP tools with LM, they must be registered to `Agent`.  
+Once registered, the agent can automatically invoke these tools during reasoning
+or when responding to user queries.
 
 <CodeTabs>
 

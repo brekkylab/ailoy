@@ -5,13 +5,16 @@ documents as part of its reasoning process. Instead of relying solely on
 information learned during model training, RAG allows the model to retrieve
 relevant knowledge dynamically from external sources.
 
-It enables the AI generate more accurate, up-to-date, and context-aware
+It enables the AI to generate more accurate, up-to-date, and context-aware
 responses by grounding its answers in your document data.
 
-In **Ailoy**, RAG is built from three pieces:
+In **Ailoy**, RAG is composed of three core components in addition to the
+`Agent`:
 
-- **`EmbeddingModel`** — turns text into vectors for similarity search.
-- **`VectorStore`** — stores and retrieves those vectors with their source text.
+- **`EmbeddingModel`** — converts text into vector representations for
+  similarity search.
+- **`VectorStore`** — stores and retrieves those vectors along with their source
+  text.
 - **`Knowledge`** — a runtime component that performs retrieval and feeds the
   result into the agent’s prompt.
 
@@ -20,8 +23,8 @@ populate the `VectorStore`. In the **runtime phase**, just use the `Knowledge`
 to retrieve relevant documents for each query and include them in the agent’s
 context.
 
-Please refer to [Architecture](../concepts/architecture#knowledge) section for
-more information.
+Please refer to the **[Architecture](../concepts/architecture#knowledge)**
+section for more information.
 
 ## Step-by-Step Guide
 
@@ -97,8 +100,8 @@ At this time, the only supported embedding model is **[`BAAI/bge-m3`](https://hu
 ### Preparing Documents with a Vector Store
 
 Before running RAG, create a vector store to store document embeddings for
-retrieval. This step prepares your data for semantic search and may only need to
-be performed once per dataset.
+retrieval. This step prepares your data for semantic search and typically only
+needs to be performed once per dataset.
 
 {/* prettier-ignore-start */}
 
@@ -205,10 +208,10 @@ prepare_knowledge().catch((err) => {
 > [**ChromaDB**](https://www.trychroma.com/) as vector store backends. Refer to
 > the official configuration guide for backend-specific options.
 
-### Defining the Knowledged Agent
+### Defining the Agent with Knowledge
 
-You can now create a knowledged `Agent` with the `Knowledge` module that
-integrates your vector store and embedding model.
+You can now create an `Agent` with the `Knowledge` module that integrates your
+vector store and embedding model.
 
 {/* prettier-ignore-start */}
 
@@ -225,7 +228,7 @@ async def prepare_knowledge():
 
 
 async def main(knowledge: ai.Knowledge):
-    # create a 'knowledged' agent
+    # create an agent with knowledge
     agent = ai.Agent(
         await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
         knowledge=knowledge,
@@ -242,7 +245,7 @@ import * as ai from "ailoy-node";
 async function prepare_knowledge() {...}
 
 async function main(knowledge: ai.Knowledge) {
-  // create a 'knowledged' agent
+  // create an agent with knowledge
   const agent = new ai.Agent(
     await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
     undefined,  // tools (not used here)
@@ -263,7 +266,7 @@ import * as ai from "ailoy-web";
 async function prepare_knowledge() {...}
 
 async function main(knowledge: ai.Knowledge) {
-  // create a 'knowledged' agent
+  // create an agent with knowledge
   const agent = new ai.Agent(
     await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
     undefined,  // tools (not used here)
@@ -291,7 +294,7 @@ To perform retrieval and generate grounded responses:
 :::note
 Not all models supports `documents` natively.  
 To enable retrieval-based reasoning in these models, make sure that
-applying the **document polyfill** that adapts the agent’s prompt
+applying the **document polyfill** which adapts the agent’s prompt
 structure to include retrieved documents.
 :::
 
