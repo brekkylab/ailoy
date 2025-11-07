@@ -15,7 +15,9 @@ section for more about the tool architecture.
 
 :::
 
-Now, let's explore how to make a _tool-aware agent_ in Ailoy.
+Let's explore how to make a _tool-aware agent_ in Ailoy.
+
+## Using Tools
 
 In this example, we’ll use the **[Frankfurter API](https://frankfurter.dev/)**
 to enable your agent to look up real-time currency exchange rates.
@@ -27,8 +29,6 @@ Please refer to the **[MCP Integration](./mcp-integration.mdx)** section for
 using MCP tools.
 
 :::
-
-## Step-by-Step Guide
 
 ### Defining the Tool Description
 
@@ -284,7 +284,7 @@ agent.add_tool(tool)
 
 </details>
 
-## Complete Example
+### Complete Example
 
 <CodeTabs>
 
@@ -520,7 +520,7 @@ main().catch((err) => {
 
 </CodeTabs>
 
-## Output
+### Output
 
 You can see that the agent uses the Frankfurter API to include real-time
 exchange rate information in its response.
@@ -573,3 +573,179 @@ To avoid inefficiency, use only the tools you need and keep the chat context
 focused and concise.
 
 :::
+
+## Using Builtin Tools
+
+Ailoy provides several builtin tools out-of-the-box. You don't need to define
+tool description and behavior to use these tools.
+
+See [**Resources > Builtin Tools**](../resources/builtin-tools.mdx) for the list
+of available builtin tools.
+
+### Creating the Tool
+
+In this example, we use `terminal` tool to execute shell commands.
+
+:::info
+
+Note that `terminal` tool is not available on web environment.
+
+:::
+
+You can create the builtin tool as follow:
+
+<CodeTabs>
+
+```python
+import ailoy as ai
+
+tool = ai.Tool.new_builtin("terminal")
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+const tool = ai.Tool.newBuiltin("terminal");
+```
+
+</CodeTabs>
+
+### Registering the Tool
+
+<CodeTabs>
+
+```python
+agent = ...
+
+agent.add_tool(tool)
+```
+
+```typescript
+const agent = ...
+
+agent.addTool(tool);
+```
+
+</CodeTabs>
+
+### Complete Example
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def main():
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B", None, progress_callback=print)
+    agent = ai.Agent(lm)
+
+    tool = ai.Tool.new_builtin("terminal")
+    agent.add_tool(tool)
+
+    query = "List the files and directories in the home directory."
+    print(f"Query: {query}\n")
+    async for resp in agent.run(query):
+        if resp.message.role == "assistant":
+            if len(resp.message.tool_calls) > 0:
+                print("Tool call:", resp.message.tool_calls[0].function, "\n")
+            else:
+                print(resp.message.contents[0].text, "\n")
+        elif resp.message.role == "tool":
+            print("Tool response:", resp.message.contents[0].value, "\n")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal(
+    "Qwen/Qwen3-4B",
+    undefined,
+    console.log
+  );
+  const agent = new ai.Agent(lm);
+
+  const tool = ai.Tool.newBuiltin("terminal");
+  const query = "List the files and directories in the home directory.";
+  console.log(query);
+  for await (const resp of agent.run(query)) {
+    if (resp.message.role === "assistant") {
+      if (resp.message.tool_calls?.length > 0) {
+        console.log("Tool call:", resp.message.tool_calls[0].function, "\n");
+      } else {
+        console.log(resp.message.contents[0].text, "\n");
+      }
+    } else if (resp.message.role === "tool") {
+      console.log("Tool response:", resp.message.contents[0].value, "\n");
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+</CodeTabs>
+
+### Output
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
+{`
+List the files and directories in the current directory, including hidden files.
+Tool call: { name: 'terminal', arguments: { command: 'ls -a' } } 
+
+Tool response: {
+  stdout: '.\\n' +
+    '..\\n' +
+    '.env.template\\n' +
+    '.gitignore\\n' +
+    '.prettierrc.json\\n' +
+    'npm\\n' +
+    'package-lock.json\\n' +
+    'package.json\\n' +
+    'README.md\\n' +
+    'scripts\\n' +
+    'src\\n' +
+    'tests\\n' +
+    'tsconfig.json\\n' +
+    'typedoc.json\\n' +
+    'vite.config.ts\\n' +
+    'vitest.config.ts\\n',
+  stderr: '',
+  exit_code: 0
+} 
+
+The files and directories in the current directory, including hidden ones, are as follows:
+
+- \`.\` (current directory)
+- \`..\` (parent directory)
+- \`.env.template\`
+- \`.gitignore\`
+- \`.prettierrc.json\`
+- \`npm\`
+- \`package-lock.json\`
+- \`package.json\`
+- \`README.md\`
+- \`scripts\`
+- \`src\`
+- \`tests\`
+- \`tsconfig.json\`
+- \`typedoc.json\`
+- \`vite.config.ts\`
+- \`vitest.config.ts\` 
+`}
+
+</TerminalBox>
+
+{/* prettier-ignore-end */}
