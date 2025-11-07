@@ -70,11 +70,11 @@ However, a model can operate in different modes, producing outputs that serve
 different purposes. These outputs reflect the **intention** behind what the
 model says or performs.
 
-| Intent                  | Description                                                                                                                                                                                                                                   |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Content**             | General output.                                                                                                                                                                                                                               |
-| **Reasoning(thinking)** | Some model generates intermediate thoughts or reasoning traces before producing the final answer. These are stored in the reasoning field (often hidden from the user) and can help trace or visualize the model’s internal decision process. |
-| **Tool call**           | When the model decides to invoke an external function or API instead of generating plain text. These are represented as structured objects that describe which function to call(name) and with what arguments.                                |
+| Intent                  | Description                                                                                                                                                                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Content**             | General output.                                                                                                                                                                                                                             |
+| **Thinking(Reasoning)** | Some model generates intermediate thoughts or thinking traces before producing the final answer. These are stored in the thinking field (often hidden from the user) and can help trace or visualize the model’s internal decision process. |
+| **Tool call**           | When the model decides to invoke an external function or API instead of generating plain text. These are represented as structured objects that describe which function to call(name) and with what arguments.                              |
 
 These types of outputs are stored in separate fields within a message, making it
 possible to distinguish from general conversation.
@@ -85,7 +85,7 @@ possible to distinguish from general conversation.
 [
   Message {
       role: "assistant",
-      reasoning: "Let’s reason step by step: photosynthesis converts light energy into chemical energy...",
+      thinking: "Let’s reason step by step: photosynthesis converts light energy into chemical energy...",
       contents: [
           { type: "text", text: "Photosynthesis is the process by which plants convert sunlight, water, and carbon dioxide into energy." }
       ],
