@@ -172,8 +172,8 @@ In short:
 - `"medium"`
 - `"high"`
 
-But not all models are hybrid thinking models or capable to adjust thinking
-effort fine-grained.  
+But not all models are hybrid thinking models or capable of fine-grained
+adjustment of thinking effort.  
 Therefore, depending on the characteristics of the model, `think_effort` may
 actually be applied differently from the specified value without explicit
 warning.
@@ -182,8 +182,8 @@ For example,
 
 - OpenAI's `gpt-4` model does not support thinking, so it will be applied as
   `"disable"` regardless of which value is applied.
-- OpenAI's `o4` model supports "low", "medium", "high" but not "disable", so if
-  "disable" is specified, it will be applied as "low".
+- OpenAI's `o4` model supports `"low"`, `"medium"`, `"high"` but not
+  `"disable"`, so if "disable" is specified, it will be applied as `"low"`.
 - The `grok-4-fast` model only supports `"low"` or `"high"`, so if `"medium"` is
   specified, it will be applied as `"low"`.
 - All Qwen3 models do not support adjusting `think_effort`, so any value other
@@ -191,4 +191,4 @@ For example,
 
 The `think_effort` is applied as the most similar one to what the user specified
 within the supported range, but you'd better to check the model specification
-for predictable model behaviors.
+for predictable model behavior.
