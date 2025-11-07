@@ -26,20 +26,20 @@ Ailoy enables you to integrate advanced AI capabilities into your projects throu
 
 ## Key Features
 
-### AI agent capabilities
-- **Reasoning** – Solve complex problems through structured thinking
-- **Multi-modal inputs** – Process both text and images
-- **Extensible tool calling** – Custom tools and Model Context Protocol (MCP) support
-- **Retrieval-Augmented Generation (RAG)** – Integrate knowledge bases for context-aware responses
+### AI Agent Capabilities
+- **Reasoning**
+- **Multi-Modal Inputs**: Process both text and image
+- **Extensible Tool Calling**: User-defined functions and Model Context Protocol (MCP) tools
+- **Retrieval-Augmented Generation (RAG)**: Integrates external knowledge bases without boilerplate
 
 ### Flexible Model Adoption
-- **Unified interface** – Effortlessly switch between open-source and API models
-- **Offline-capable** – Works fully offline with local model execution
-- **Cloud or edge** – Deploy whereever you need
+- Supports both **local AI execution** and **AI APIs**
+- Effortlessly switch between **open-source** and **AI services**
+- Minimal software dependencies — deploy anywhere, from cloud to edge
 
 ### Cross-Platform
-- **macOS, Linux, Windows** – Native support across major platforms
-- **WebAssembly** – Near-native performance in web browsers
+- **Linux, Windows, macOS**
+- Web browsers via **WebAssembly**
 
 [📚 **View Documentation**](https://brekkylab.github.io/ailoy/)
 
