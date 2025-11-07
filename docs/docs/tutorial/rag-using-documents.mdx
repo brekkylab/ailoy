@@ -315,6 +315,8 @@ async def main(knowledge: ai.Knowledge):
     config = ai.AgentConfig(
         # need polyfill here because Qwen3 doesn't natively support 'documents'
         inference=ai.InferenceConfig(document_polyfill=ai.get_qwen3_polyfill())
+        # set to use `top_k` documents with high similarity. default `top_k`=1
+        knowledge=ai.KnowledgeConfig(top_k=1)
     )
     async for resp in agent.run("Why did the boy stop fishing with the old man?", config):
         print(resp.message.contents[0].text)
@@ -337,7 +339,9 @@ async function main(knowledge: ai.Knowledge) {
   );
   const config = { 
     // need polyfill here because Qwen3 doesn't natively support 'documents'
-    inference: { documentPolyfill: ai.getQwen3Polyfill() }
+    inference: { documentPolyfill: ai.getQwen3Polyfill() },
+    // set to use `topK` documents with high similarity. default `topK`=1
+    knowledge: { topK: 1 }
   };
   for await (const resp of agent.run(
     "Why did the boy stop fishing with the old man?",
@@ -368,7 +372,9 @@ async function main(knowledge: ai.Knowledge) {
   );
   const config = { 
     // need polyfill here because Qwen3 doesn't natively support 'documents'
-    inference: { documentPolyfill: ai.getQwen3Polyfill() }
+    inference: { documentPolyfill: ai.getQwen3Polyfill() },
+    // set to use `topK` documents with high similarity. default `topK`=1
+    knowledge: { topK: 1 }
   };
   for await (const resp of agent.run(
     "Why did the boy stop fishing with the old man?",
