@@ -105,23 +105,29 @@ jobs:
 
               `$env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
               `$env:LD_LIBRARY_PATH = "C:\vcpkg_installed\x64-windows-static-release\lib;C:\VulkanSDK\Lib"
-              npm run build
+              npm run build:napi
               if (`$LASTEXITCODE -ne 0) {
-                Write-Error 'npm run build failed'
+                Write-Error 'npm run build:napi failed'
                 exit 1
               }
 
-              node .\scripts\bundle-dylibs.js .\dist\ailoy_core.win32-x64-msvc.node
+              Move-Item -Path .\src\ailoy_core.win32-x64-msvc.node -Destination .\npm\win32-x64-msvc
+              node .\scripts\bundle-dylibs.js .\npm\win32-x64-msvc\ailoy_core.win32-x64-msvc.node
 
+              Set-Location 'npm\win32-x64-msvc'
               npm pack
+              if (`$LASTEXITCODE -ne 0) {
+                Write-Error 'npm pack failed'
+                exit 1
+              }
 
               Write-Host '=== Build Complete ==='
           "@
 
       - name: Get package name
-        working-directory: ${{ github.workspace }}/bindings/nodejs
+        working-directory: ${{ github.workspace }}/bindings/nodejs/npm/win32-x64-msvc
         run: |
-          $packageName = Get-ChildItem -Name "ailoy-node*.tgz" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $packageName = Get-ChildItem -Name "ailoy-node-*.tgz" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           echo "packageName=$packageName"
           echo "packageName=$packageName" >> $env:GITHUB_ENV
 
@@ -129,4 +135,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.packageName }}
-          path: ${{ github.workspace }}/bindings/nodejs/${{ env.packageName }}
+          path: ${{ github.workspace }}/bindings/nodejs/npm/win32-x64-msvc/${{ env.packageName }}

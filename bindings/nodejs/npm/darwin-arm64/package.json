@@ -1,0 +1,30 @@
+{
+  "name": "ailoy-node-darwin-arm64",
+  "version": "0.2.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "ailoy_core.darwin-arm64.node",
+  "files": [
+    "ailoy_core.darwin-arm64.node",
+    ".libs"
+  ],
+  "description": "Node.js binding for Ailoy API",
+  "author": "Brekkylab Inc. <contact@brekkylab.com>",
+  "homepage": "https://brekkylab.github.io/ailoy",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brekkylab/ailoy"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "os": [
+    "darwin"
+  ]
+}

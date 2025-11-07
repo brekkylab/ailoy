@@ -1,0 +1,40 @@
+name: Build Nodejs main package
+
+on:
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "20.19.4"
+
+jobs:
+  build-main:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        working-directory: ${{ github.workspace }}/bindings/nodejs
+        run: |
+          npm install
+
+      - name: Build package
+        working-directory: ${{ github.workspace }}/bindings/nodejs
+        run: |
+          npm run build:ts
+          npm pack
+          PACKAGE_NAME=$(ls -1t ailoy-*.tgz | head -n 1)
+          echo "PACKAGE_NAME=$PACKAGE_NAME"
+          echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
+
+      - name: Upload npm package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}
+          path: ${{ github.workspace }}/bindings/nodejs/${{ env.PACKAGE_NAME }}

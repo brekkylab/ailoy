@@ -23,6 +23,10 @@
         "linux",
         "win32"
     ],
+    "cpu": [
+        "x64",
+        "arm64"
+    ],
     "publishConfig": {
         "registry": "https://registry.npmjs.org/",
         "access": "public"
@@ -33,8 +37,8 @@
         "build": "npm run build:napi && npm run build:ts",
         "test": "vitest",
         "test:coverage": "vitest run --coverage",
-        "prepack": "clean-package",
-        "postpack": "clean-package restore"
+        "prepack": "napi pre-publish --tag-style npm --skip-optional-publish && clean-package",
+        "postpack": "clean-package restore && git restore ./package.json"
     },
     "devDependencies": {
         "@napi-rs/cli": "^3.2.0",
@@ -49,6 +53,11 @@
         "vite-plugin-dts": "^4.5.4",
         "vite-plugin-static-copy": "^3.1.2",
         "vitest": "^3.2.4"
+    },
+    "optionalDependencies": {
+        "ailoy-node-win32-x64-msvc": "0.2.0",
+        "ailoy-node-linux-x64-gnu": "0.2.0",
+        "ailoy-node-darwin-arm64": "0.2.0"
     },
     "napi": {
         "binaryName": "ailoy_core",
