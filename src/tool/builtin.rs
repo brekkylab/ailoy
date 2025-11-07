@@ -45,7 +45,7 @@ pub fn create_terminal_tool() -> anyhow::Result<FunctionTool> {
                 "powershell"
             }
         };
-        let desc = ToolDescBuilder::new("execute_command")
+        let desc = ToolDescBuilder::new("terminal")
         .description(format!(
             "Executes a command on the current system using the default shell. Current shell: {}. \
             Optional fields: cwd (string), env (object), stdin (string)",

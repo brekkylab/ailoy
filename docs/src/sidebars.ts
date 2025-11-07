@@ -45,6 +45,7 @@ const sidebars: SidebarsConfig = {
       label: "Resources",
       items: [
         "resources/available-models",
+        "resources/builtin-tools",
         "resources/supported-environments",
         "resources/command-line-interfaces",
       ],
