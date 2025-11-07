@@ -146,31 +146,6 @@ merged into a complete `Message`.
 Ailoy provides a simple way to retrieve and aggregate deltas. One can use
 `accumulate` and `finish` function.
 
-<CodeTabs>
-
-```python
-import ailoy as ai
-
-...
-accumulated = new ai.MessageDelta();
-async for output in agent.run_delta([query]):
-    accumulated += output.delta
-accumulated = accumulated.finish()
-```
-
-```typescript
-import { MessageDelta } from "ailoy";
-
-...
-let accumulated = MessageDelta();
-for await (const resp of agent.run([query])) {
-    accumulated.accumulate(resp.delta);
-}
-accumulated = accumulated.finish();
-```
-
-</CodeTabs>
-
 ## Tool
 
 A Tool enables the model to act — to execute external functions, access APIs, or
