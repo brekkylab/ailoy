@@ -19,19 +19,19 @@ const pythonFiles = {
     active: true,
     code: `import asyncio
 
-from ailoy import Agent, LangModel, MessageDelta
+import ailoy as ai
 
 async def main():
     # Create an agent
     # During this step, the model parameters are downloaded and the LLM is set up for execution
-    agent = Agent(await LangModel.new_local("Qwen/Qwen3-0.6B"))
+    agent = ai.Agent(await ai.LangModel.new_local("Qwen/Qwen3-0.6B"))
 
     # Agent answers within the agentic loop
     async for resp in agent.run("Please give me a short poem about AI"):
         print(resp.message)
 
 if __name__ == "__main__":
-  asyncio.run(main())
+    asyncio.run(main())
 `,
   },
   "pyproject.toml": {
@@ -54,7 +54,7 @@ const nodejsFiles = {
 (async () => {
   // Create an agent
   // During this step, the model parameters are downloaded and the LLM is set up for execution
-  const agent = await new ai.Agent(
+  const agent = new ai.Agent(
     await ai.LangModel.newLocal("Qwen/Qwen3-0.6B")
   );
 
@@ -87,15 +87,9 @@ const webFiles = {
     active: true,
     code: `import * as ai from "ailoy-web";
 
-// Start Ailoy runtime
-const rt = await ai.startRuntime();
-
 // Create an agent
 // During this step, the model parameters are downloaded and the LLM is set up for execution
-const agent = await ai.defineAgent(
-  rt,
-  ai.LocalModel({ id: "Qwen/Qwen3-0.6B" })
-);
+const agent = new ai.Agent(await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"));
 
 document.getElementById("submit").addEventListener("click", async () => {
   const query = document.getElementById("query").value;
@@ -103,8 +97,8 @@ document.getElementById("submit").addEventListener("click", async () => {
   textarea.innerHTML = "";
 
   // Agent answers within the agentic loop
-  for await (const resp of agent.query(query)) {
-    textarea.innerHTML += resp.content;
+  for await (const resp of agent.run(query)) {
+    textarea.innerHTML += resp.message.contents[0].text;
   }
 });
 `,
