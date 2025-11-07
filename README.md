@@ -45,7 +45,7 @@ Ailoy enables you to integrate advanced AI capabilities into your projects throu
 [📚 **View Documentation**](https://brekkylab.github.io/ailoy/)
 
 > [!WARNING]
-> Ailoy is under active development. APIs may evolve as we refine the library. We recommend pinning versions in production environments.
+> Ailoy is under active development. APIs may change with version updates. We recommend pinning versions in production environments.
 
 > [!TIP]
 > Have questions or need support? Join our [Discord channel](https://discord.gg/27rx3EJy3P) to connect with other developers and the Ailoy team.
