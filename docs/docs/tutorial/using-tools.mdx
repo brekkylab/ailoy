@@ -1,17 +1,17 @@
 # Using Tools
 
-One of the most powerful features in Ailoy is the tool calling system. It allows
-you to extend your LLM’s capabilities by connecting it with external tools or
+One of the most powerful features in Ailoy is the tool-calling system. It allows
+you to extend your LLM’s capabilities by connecting it to external tools or
 APIs. This way, the agent can access real-time or domain-specific information,
 even if it wasn’t part of the model’s training data.
 
-To use a tool, two components must be defined: **Tool Descripition** and **Tool
+To use a tool, two components must be defined: **Tool Description** and **Tool
 Behavior**.
 
 :::note
 
-Please refer to **[Architecture](../concepts/architecture.mdx#tool)** section
-for more about the tool architecture.
+Please refer to the **[Architecture](../concepts/architecture.mdx#tool)**
+section for more about the tool architecture.
 
 :::
 
@@ -22,9 +22,9 @@ to enable your agent to look up real-time currency exchange rates.
 
 :::note
 
-Ailoy also supports **[MCP](https://modelcontextprotocol.io/)** as tool. Please
-refer to **[MCP Integration](./mcp-integration.mdx)** section for using MCP
-tools.
+Ailoy also supports **[MCP](https://modelcontextprotocol.io/)** as a tool.
+Please refer to the **[MCP Integration](./mcp-integration.mdx)** section for
+using MCP tools.
 
 :::
 
@@ -33,18 +33,18 @@ tools.
 ### Defining the Tool Description
 
 A tool description defines how the tool is exposed to the model. It includes the
-tool’s name, purpose, parameters, and optionally, its return types. This schema
+tool’s name, purpose, parameters, and optionally its return types. This schema
 helps the model understand how to invoke the tool correctly.
 
 Parameters are typically expressed in JSON Schema format.
 
 :::info
 
-You can refer to
+Refer to
 **[OpenAI's documentation](https://platform.openai.com/docs/guides/function-calling#defining-functions)**
 or
 **[Hunggingface's documentation](https://huggingface.co/docs/transformers/main/en/chat_templating_writing#tool-definitions)**
-for more details about defining tools in JSON Schema format.
+for more details on defining tools in JSON Schema format.
 
 :::
 
@@ -168,9 +168,8 @@ async function toolBehavior(args) {
 
 ### Registering the Tool with the Agent
 
-Once the tool is defined, the `Agent` automatically detects when the model
-intends to invoke it and executes the corresponding function in the following
-iteration.
+Once a tool is defined, the Agent automatically detects when the model wants to
+invoke it and executes the corresponding function during the next iteration.
 
 You can register a tool by passing it to the `Agent` constructor.
 
@@ -190,8 +189,8 @@ const agent = new ai.Agent(lm, tools);
 
 </CodeTabs>
 
-Also, you can register the tools **after** creating the agent by using the
-`add_tool` or `add_tools` methods.
+Alternatively, you can register the tools **after** creating the agent by using
+the `add_tool` or `add_tools` methods.
 
 <CodeTabs>
 
@@ -231,15 +230,16 @@ calls**.
 
 ### Auto-generate Tool Description (only in Python)
 
-Python provides access to a function's metadata through the function object.  
-So the tool descriptions can be automatically generated from the type hints of
-the function parameters and the description in the docstring.
+You can access a function’s metadata in Python through its function object.  
+This allows Ailoy to automatically generate tool descriptions from the
+function’s parameter type hints and its docstring.
 
-As with libraries like
+Similarly to libraries like
 **[transformers](https://huggingface.co/docs/transformers/v4.57.1/en/chat_extras#passing-tools)**,
-also in Ailoy, if you create a `Tool` from a Python function that includes a
-_Google-style docstring_ and type hints for its parameters, you don't need to
-create a `ToolDesc` by yourself.
+Ailoy can automatically create a tool description when you define a Tool from a
+Python function that includes both _Google-style docstrings_ and type hints for
+its parameters.  
+In this case, you don’t need to manually create a `ToolDesc`.
 
 <details>
   <summary>**See example Python code**</summary>
@@ -560,15 +560,16 @@ You will need approximately **414,835.61 KRW** to buy 250 USD and 350 CNY.`}
 
 :::warning
 
-Keep in mind: Tools aren't free — every token counts.
+Keep in mind: Tools are not free — every token counts.
 
-Using many tools can generate a large amount of information for the AI to
+Excessive tool usage can cause large amounts of information for the AI to
 process, potentially leading to longer context lengths and decreased
 performance.
 
-Using tools consumes tokens. API calls may lead to unexpected costs, while
+Each tool call consumes tokens. API calls may lead to unexpected costs, while
 on-device models can slow down your machine or even cause crashes.
 
-Avoid using unnecessary tools. Keep your chat context focused and concise.
+To avoid inefficiency, use only the tools you need and keep the chat context
+focused and concise.
 
 :::

@@ -1,15 +1,13 @@
 # Multi-Turn Conversation
 
-Ailoy's `Agent` is designed to be stateless. It does not keep track of
-conversation histories. Each time you call the model, agent treats it as a new
-request. Each time you invoke the agent, it treats the provided messages as a
+Ailoy's `Agent` is stateless by design. It does not keep track of conversation
+history. Each time you invoke the agent, it treats the provided messages as a
 fresh request with no internal memory of past conversations.
 
-If you want you run an agent with previous context, you must explicitly
-**include the entire conversation history** (all prior messages) when making the
-call.
+If you want to run an agent with previous context, you must explicitly **include
+the entire conversation history** (all prior messages) when making the call.
 
-## Adding Context in the Conversation
+## Adding Context to the Conversation
 
 Let's say that the user and the agent have exchanged some messages, as shown in
 the following diagram.
@@ -26,7 +24,7 @@ sequenceDiagram
 
 You would expect the agent to answer `blue`, considering the context.
 
-To add context in the conversation, you need to pass _both_ the **previous
+To add context to the conversation, you need to pass _both_ the **previous
 messages** and **your new user message**.
 
 {/* prettier-ignore-start */}
@@ -117,8 +115,8 @@ remaining internally stateless — it never stores conversation data between run
 
 ## A Live Multi-Turn Conversations
 
-You can implement a live chat between the user and the agent by accumulating
-real-time messages in a list and feeding them back to the agent.
+You can implement a live chat for the user and the agent by collecting real-time
+messages and passing them back to the agent.
 
 {/* prettier-ignore-start */}
 
@@ -192,8 +190,8 @@ main().catch((err) => {
 </CodeTabs>
 
 :::info
-Example code for web environment is not provided here.  
-To see a conversational agent that continuously interacts with users, check out **[WebAssembly Supports](webassembly-supports)** page.
+Example code for web environments is not provided here.  
+To see a conversational agent that continuously interacts with the user, check out the **[WebAssembly Supports](webassembly-supports)** page.
 :::
 
 {/* prettier-ignore-end */}

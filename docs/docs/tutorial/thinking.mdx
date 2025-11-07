@@ -1,18 +1,19 @@
 # Thinking
 
-Thinking(reasoning) is an advanced capability of AI that enables it to tackle
-complex tasks through explicit, step-by-step logical inference. Thinking models
-break down problems into smaller sub-tasks rather than solving them in a single
-pass. Compared to direct answer generation, it offers two key advantages:
+Thinking (or reasoning) is an advanced capability of AI that enables it to
+tackle complex tasks through explicit, step-by-step logical inference. Thinking
+models break down problems into smaller reasoning steps rather than solving them
+in a single pass. Compared to direct answer generation, it offers two key
+advantages:
 
-1. Improved problem-solving intelligence
+1. Improved problem-solving capability
 2. Transparent and traceable intermediate thinking steps
 
 This functionality is particularly well-suited for domains that require
 multi-step thinking, such as scientific analysis, legal interpretation, or
-strategic decision-making. However, since the thinking step needs additional
+strategic decision-making. However, since the thinking step requires additional
 computation and memory usage, it can increase latency and overall resource
-consumption. Therefore, it’s important to enable thinking only when necessary,
+consumption. Therefore, it’s important to use thinking only when necessary,
 based on the complexity of your use case.
 
 :::info
@@ -26,8 +27,8 @@ For complex tasks, we recommend using a sufficiently large model.
 ## Hybrid Thinking Models
 
 Some modern models, such as Qwen3, are designed as hybrid thinking models. These
-models can switch between normal (direct-generation) and thinking modes
-depending on your configuration.
+models can switch between standard (direct-generation) and thinking modes based
+on configuration settings.
 
 Ailoy fully supports this hybrid capability. You can explicitly turn the
 thinking process on or off via the thinking option. When enabled, the model
@@ -38,13 +39,13 @@ trace” before the final answer.
 
 To enable thinking, simply specify the `think_effort` in the inference config
 when running the agent.  
-If you pass the inference config as the `inference` key within the agent config,
-it will be passed to the internal `LangModel`.
+If you pass the inference config under the `inference` key within the agent
+config, it will be passed to the internal `LangModel`.
 
 :::note
 
 If you enable thinking, the time required to generate an entire message can
-increase quite a lot, which make your application look less responsive, so it
+increase quite a lot, which makes your application look less responsive, so it
 may be better to run the agent with **[streaming](/docs/tutorial/streaming)**.
 
 :::
@@ -154,10 +155,9 @@ main().catch((err) => {
 ## Adjusting Thinking Effort
 
 The `think_effort` option determines **how much reasoning power the model uses**
-before giving an answer. Increasing this value enhances the model’s ability to
-think logically and systematically, but also consumes more time and resources.
-You can think of it as a balance between **intelligence** and **budget or
-responsiveness**:
+before giving an answer. Increasing this value enhances logical and systematic
+thinking, but also consumes more time and resources. You can think of it as a
+balance between **intelligence** and **budget or responsiveness**:
 
 In short:
 
@@ -172,8 +172,8 @@ In short:
 - `"medium"`
 - `"high"`
 
-But not all models are hybrid thinking models or capable to adjust thinking
-effort fine-grained.  
+But not all models are hybrid thinking models or capable of fine-grained
+adjustment of thinking effort.  
 Therefore, depending on the characteristics of the model, `think_effort` may
 actually be applied differently from the specified value without explicit
 warning.
@@ -182,8 +182,8 @@ For example,
 
 - OpenAI's `gpt-4` model does not support thinking, so it will be applied as
   `"disable"` regardless of which value is applied.
-- OpenAI's `o4` model supports "low", "medium", "high" but not "disable", so if
-  "disable" is specified, it will be applied as "low".
+- OpenAI's `o4` model supports `"low"`, `"medium"`, `"high"` but not
+  `"disable"`, so if "disable" is specified, it will be applied as `"low"`.
 - The `grok-4-fast` model only supports `"low"` or `"high"`, so if `"medium"` is
   specified, it will be applied as `"low"`.
 - All Qwen3 models do not support adjusting `think_effort`, so any value other
@@ -191,4 +191,4 @@ For example,
 
 The `think_effort` is applied as the most similar one to what the user specified
 within the supported range, but you'd better to check the model specification
-for predictable model behaviors.
+for predictable model behavior.

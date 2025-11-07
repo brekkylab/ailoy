@@ -1,22 +1,27 @@
 # Streaming
 
-Agent and its underlying LLM sequentially generate string pieces(tokens) one by
-one, and each generated piece is stacked to form a final result. The longer the
-generation process, the longer it takes time to complete the result, so it's
-natural to try to utilize these intermediate results. Those can be streamed as
-the increments(deltas) of the entire result.
+Agent and its underlying LLM sequentially generate partial strings(tokens) one
+by one, and each generated token is accumulated to form the final output. The
+longer the generation process, the longer it takes to complete the result, so
+it’s often useful to utilize these intermediate results. Those can be streamed
+as the increments(deltas) of the entire result.
 
-This is useful for cases where users might want to stop content generation
-before it finishes, or for agent-based application developers who want to stream
-partial results to users in real time to make their applications more
-responsive.
+This is useful in cases where users may want to stop content generation after
+reviewing the partial results, or for agent-based application developers who
+want to stream partial results to users in real time to make their applications
+more responsive.
 
 ## How to Stream Deltas
 
-The `run()` method of Agent, which we've used so far, returns complete messages
-sequentially, meanwhile the `run_delta()`(Python, Rust) or `runDelta()`(Nodejs,
-Web) method returns sequence of results for each LLM generation unit, that we
-call it `delta` of messages.
+The `run()` method from the `Agent`, which we’ve been using so far, returns
+complete messages sequentially, while the `run_delta()`(Python, Rust) or
+`runDelta()`(Nodejs, Web) method returns a sequence of results for each LLM
+generation unit, called a `delta` of the message.
+
+The `run()` method from the `Agent`, which we’ve been using so far, returns
+complete messages one by one. In contrast, the `run_delta()` (Python, Rust) or
+`runDelta()` (Node.js, Web) method returns a sequence of partial results for
+each LLM generation step, referred to as _message deltas_.
 
 <CodeTabs>
 
@@ -90,12 +95,12 @@ main().catch((err) => {
 
 ## Delta to Completed Message
 
-You can also construct a complete message by accumulating generated deltas of
-the message sequentially.
+You can also construct a complete message by accumulating message deltas
+sequentially.
 
-A finish reason will be provided when the message is completely generated.
+A finish reason is provided when the message has been fully generated.
 Accumulate the message deltas until the finish reason appears, then call
-`finish` to produce the complete message.
+`finish()` to produce the complete message.
 
 <CodeTabs>
 
