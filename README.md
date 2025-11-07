@@ -1,9 +1,18 @@
-# Ailoy
+<p align="center">
+  <picture>
+    <img alt="Ailoy" src="https://brekkylab.github.io/ailoy/img/ailoy-logo-letter.png" width="352" style="max-width: 100%;">
+  </picture>
+</p>
+
+<h3 align="center">
+    <p>A comprehensive library for building intelligent AI agents and applications</p>
+</h3>
+
+<br/>
 
 [![document](https://img.shields.io/badge/document-latest-2ea44f?color=5a9cae)](https://brekkylab.github.io/ailoy/)
 [![Python version](https://img.shields.io/pypi/pyversions/ailoy-py)](https://pypi.org/project/ailoy-py/)
 [![Node version](https://img.shields.io/node/v/ailoy-node?color=339933)](https://www.npmjs.com/package/ailoy-node)
-
 
 [![ailoy-py version](https://img.shields.io/pypi/v/ailoy-py?color=blue)](https://pypi.org/project/ailoy-py/)
 [![ailoy-node version](<https://img.shields.io/npm/v/ailoy-node?label=npm(node)&color=339933>)](https://www.npmjs.com/package/ailoy-node)
@@ -13,59 +22,60 @@
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Fx.com%2Failoy_co)](https://x.com/ailoy_co)
 
 
-Ailoy is a library for building **AI agents** and **AI applications**.
-It is designed to enable AI features effortlessly. It is intended to be used just by importing it.
+Ailoy enables you to integrate advanced AI capabilities into your projects through simple imports and intuitive APIs.
 
-## Features
+## Key Features
 
-- Comprehensive AI agent capabilities
-  - Reasoning-based workflows
-  - **Tool calling** capabilities, including **MCP** integration
-  - Native **RAG(Retrieval-Augmented Generation)** support with built-in vector store
-- Run AI models locally or via cloud APIs
-  - Easily **switch between open-source models and APIs**
-  - **Fully local and private agent support**
-- Cross-platform compatibility
-  - Runs in almost any environment
-  - Supports native-equivalent functionality in **web browsers** using WASM
+### AI Agent Capabilities
+- **Reasoning**: Extend thinking effortlessly
+- **Multi-Modal Inputs**: Process both text and images
+- **Extensible Tool Calling**: User-defined functions and Model Context Protocol (MCP) tools
+- **Retrieval-Augmented Generation (RAG)**: Integrates external knowledge bases without boilerplate
 
-For more details, please refer to the [documentation](https://brekkylab.github.io/ailoy/).
+### Flexible Model Adoption
+- Supports both **local AI execution** and **cloud AI providers**
+- Effortlessly switch between **open-source** and **AI services**
+- Minimal software dependencies — deploy anywhere, from cloud to edge
+
+### Cross-Platform & Multi-language
+- **Linux, Windows, macOS**
+- Web browsers via **WebAssembly**
+- **Python, Javascript**
+
+[📚 **View Documentation**](https://brekkylab.github.io/ailoy/)
 
 > [!WARNING]
-> This library is in an early stage of development. APIs may change without notice.
+> Ailoy is under active development. APIs may change with version updates. We recommend pinning versions in production environments.
 
 > [!TIP]
-> We have a [Discord channel](https://discord.gg/27rx3EJy3P)! If you get stuck or have any questions, feel free to join and ask.
+> Have questions or need support? Join our [Discord channel](https://discord.gg/27rx3EJy3P) to connect with other developers and the Ailoy team.
 
-## Requirements
+## System Requirements
 
-Please refer to the [documentation](https://brekkylab.github.io/ailoy/docs/resources/supported-environments).
+For detailed compatibility information and system requirements, please consult the [supported environments documentation](https://brekkylab.github.io/ailoy/docs/resources/supported-environments).
 
-## Build from source
+## Installation
 
-### Python Build
-
-```bash
-cd bindings/python
-maturin build --out ./dist
-```
-
-For more details, refer to [`bindings/python/README.md`](./bindings/python/README.md).
-
-### Node.js Build
+### Python
 
 ```bash
-cd bindings/nodejs
-npm run build
+pip install ailoy-py
 ```
 
-For more details, refer to [`bindings/nodejs/README.md`](./bindings/nodejs/README.md).
+📖 [Python binding README](./bindings/python/README.md)
 
-### Javascript Build for web browsers
+### Node.js
 
 ```bash
-cd bindings/web
-npm run build
+npm install ailoy-node
 ```
 
-For more details, refer to [`bindings/web/README.md`](./bindings/web/README.md).
+📖 [Node.js binding README](./bindings/nodejs/README.md)
+
+### Web (Browser)
+
+```bash
+npm install ailoy-web
+```
+
+📖 [Web binding README](./bindings/web/README.md)
