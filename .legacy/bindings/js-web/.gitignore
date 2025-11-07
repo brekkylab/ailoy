@@ -1,4 +1,0 @@
-*.wasm
-ailoy_js_web.js
-tvmjs_runtime_wasi.js
-/package/
