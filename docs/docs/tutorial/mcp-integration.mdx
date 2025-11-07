@@ -33,7 +33,7 @@ client = await ai.MCPClient.from_stdio(
 )
 ```
 
-```javascript
+```typescript
 const client = await ai.MCPClient.newStdio("npx", [
   "-y",
   "@modelcontextprotocol/server-github",
@@ -60,7 +60,7 @@ tools = [
 ]
 ```
 
-```javascript
+```typescript
 const tools = [
   client.getTool("search_repositories"),
   client.getTool("get_file_contents"),
@@ -81,7 +81,7 @@ lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", progress_callback=print)
 agent = ai.Agent(lm, tools)
 ```
 
-```javascript
+```typescrpt
 const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B", null, console.log);
 const agent = new ai.Agent(lm, tools);
 ```
@@ -135,7 +135,7 @@ async def main():
         client.get_tool("search_repositories"),
         client.get_tool("get_file_contents"),
     ]
-    lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", progress_callback=print)
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B", progress_callback=print)
     agent = ai.Agent(lm, tools)
     query = "Search the repository named brekkylab/ailoy and describe what it does based on its README.md."
     async for resp in agent.run(query):
@@ -158,7 +158,7 @@ async function main() {
     client.getTool("search_repositories"),
     client.getTool("get_file_contents"),
   ];
-  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B", null, console.log);
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", null, console.log);
   const agent = new ai.Agent(lm, tools);
   const query =
     "Search the repository named brekkylab/ailoy and describe what it does based on its README.md.";
