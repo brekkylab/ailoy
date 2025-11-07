@@ -28,12 +28,12 @@ Ailoy enables you to integrate advanced AI capabilities into your projects throu
 
 ### AI Agent Capabilities
 - **Reasoning**
-- **Multi-Modal Inputs**: Process both text and image
+- **Multi-Modal Inputs**: Process both text and images
 - **Extensible Tool Calling**: User-defined functions and Model Context Protocol (MCP) tools
 - **Retrieval-Augmented Generation (RAG)**: Integrates external knowledge bases without boilerplate
 
 ### Flexible Model Adoption
-- Supports both **local AI execution** and **AI APIs**
+- Supports both **local AI execution** and **cloud AI providers**
 - Effortlessly switch between **open-source** and **AI services**
 - Minimal software dependencies — deploy anywhere, from cloud to edge
 
