@@ -33,7 +33,7 @@
         "build": "npm run build:napi && npm run build:ts",
         "test": "vitest",
         "test:coverage": "vitest run --coverage",
-        "prepack": "napi pre-publish --skip-optional-publish && clean-package",
+        "prepack": "napi pre-publish --tag-style npm --skip-optional-publish && clean-package",
         "postpack": "clean-package restore && git restore ./package.json"
     },
     "devDependencies": {
