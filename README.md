@@ -34,7 +34,7 @@ Ailoy enables you to integrate advanced AI capabilities into your projects throu
 
 ### Flexible Model Adoption
 - **Unified interface** – Effortlessly switch between open-source and API models
-- **Privacy-first** – Run entirely locally with complete data privacy
+- **Offline-capable** – Works fully offline with local model execution
 - **Cloud or edge** – Deploy whereever you need
 
 ### Cross-Platform
