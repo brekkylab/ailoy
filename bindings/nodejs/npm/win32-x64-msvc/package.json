@@ -1,6 +1,6 @@
 {
   "name": "ailoy-node-win32-x64-msvc",
-  "version": "0.2.0",
+  "version": "0.2.0-rc0",
   "cpu": [
     "x64"
   ],
