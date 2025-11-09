@@ -443,7 +443,7 @@ async def prepare_knowledge():
     model = await ai.EmbeddingModel.new_local("BAAI/bge-m3")
     vs = ai.VectorStore.new_faiss(1024)
     for i, chunk in enumerate(CHUNKS):
-        embedding = await model.run(chunk)
+        embedding = await model.infer(chunk)
         vs.add_vector(
             ai.VectorStoreAddInput(
                 embedding, chunk, {"title": "The Old Man and the Sea", "index": i}
