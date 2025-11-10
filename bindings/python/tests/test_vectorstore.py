@@ -35,7 +35,7 @@ def test_vectorstore_operations(vs: ai.VectorStore, emb: ai.EmbeddingModel):
     vs.clear()
 
     doc0 = "Ailoy is an awesome library"
-    emb0 = emb.run_sync(doc0)
+    emb0 = emb.infer_sync(doc0)
     input0 = ai.VectorStoreAddInput(
         embedding=emb0,
         document=doc0,
@@ -43,7 +43,7 @@ def test_vectorstore_operations(vs: ai.VectorStore, emb: ai.EmbeddingModel):
     )
 
     doc1 = "Langchain is a library"
-    emb1 = emb.run_sync(doc1)
+    emb1 = emb.infer_sync(doc1)
     input1 = ai.VectorStoreAddInput(
         embedding=emb1,
         document=doc1,
@@ -61,7 +61,7 @@ def test_vectorstore_operations(vs: ai.VectorStore, emb: ai.EmbeddingModel):
     assert get_result0.embedding == input0.embedding
 
     query = "What is Ailoy?"
-    query_emb = emb.run_sync(query)
+    query_emb = emb.infer_sync(query)
     retrieve_results = vs.retrieve(query_emb, top_k=2)
     assert len(retrieve_results) == 2
     assert retrieve_results[0].id == id0
