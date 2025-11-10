@@ -38,6 +38,12 @@ values = ["dev", "rc", "final"]
 optional_value = "final"
 
 [[tool.bumpversion.files]]
+filename = "Cargo.toml"
+
+[[tool.bumpversion.files]]
+filename = "Cargo.lock"
+
+[[tool.bumpversion.files]]
 filename = "bindings/nodejs/package.json"
 
 [[tool.bumpversion.files]]
