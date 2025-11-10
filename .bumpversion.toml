@@ -1,0 +1,69 @@
+[tool.bumpversion]
+current_version = "0.2.0-rc.0"
+parse = """(?x)
+    (?P<major>0|[1-9]\\d*)\\.
+    (?P<minor>0|[1-9]\\d*)\\.
+    (?P<patch>0|[1-9]\\d*)
+    (?:
+        -                             # dash separator for pre-release section
+        (?P<pre_l>[a-zA-Z-]+)         # pre-release label
+        \\.
+        (?P<pre_n>0|[1-9]\\d*)        # pre-release version number
+    )?                                # pre-release section is optional
+"""
+serialize = [
+    "{major}.{minor}.{patch}-{pre_l}.{pre_n}",
+    "{major}.{minor}.{patch}",
+]
+search = "{current_version}"
+replace = "{new_version}"
+regex = false
+ignore_missing_version = false
+ignore_missing_files = false
+tag = false
+sign_tags = false
+tag_name = "v{new_version}"
+tag_message = "Bump version: {current_version} → {new_version}"
+allow_dirty = false
+commit = false
+message = "Bump version: {current_version} → {new_version}"
+moveable_tags = []
+commit_args = ""
+setup_hooks = []
+pre_commit_hooks = []
+post_commit_hooks = []
+
+[tool.bumpversion.parts.pre_l]
+values = ["", "rc", "final"]
+first_value = ""
+optional_value = "final"
+
+[[tool.bumpversion.files]]
+filename = "Cargo.toml"
+
+[[tool.bumpversion.files]]
+filename = "Cargo.lock"
+
+[[tool.bumpversion.files]]
+filename = "macros/Cargo.toml"
+
+[[tool.bumpversion.files]]
+filename = "bindings/nodejs/package.json"
+
+[[tool.bumpversion.files]]
+filename = "bindings/nodejs/package-lock.json"
+
+[[tool.bumpversion.files]]
+filename = "bindings/nodejs/npm/darwin-arm64/package.json"
+
+[[tool.bumpversion.files]]
+filename = "bindings/nodejs/npm/linux-x64-gnu/package.json"
+
+[[tool.bumpversion.files]]
+filename = "bindings/nodejs/npm/win32-x64-msvc/package.json"
+
+[[tool.bumpversion.files]]
+filename = "bindings/web/package.json"
+
+[[tool.bumpversion.files]]
+filename = "bindings/web/package-lock.json"

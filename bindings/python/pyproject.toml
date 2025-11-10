@@ -1,6 +1,6 @@
 [project]
 name = "ailoy-py"
-version = "0.2.0rc0"
+dynamic = ["version"]
 description = "A lightweight library for building AI applications"
 readme = "README.md"
 requires-python = ">=3.10"
