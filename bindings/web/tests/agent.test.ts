@@ -110,7 +110,7 @@ for (const cfg of modelConfigs) {
     });
 
     test.sequential("Simple Chat Delta", async () => {
-      let acc = {} as ailoy.MessageDelta;
+      let acc = { contents: [], tool_calls: [] } as ailoy.MessageDelta;
       for await (const resp of agent.runDelta([
         {
           role: "user",
