@@ -44,6 +44,9 @@ filename = "Cargo.toml"
 filename = "Cargo.lock"
 
 [[tool.bumpversion.files]]
+filename = "macros/Cargo.toml"
+
+[[tool.bumpversion.files]]
 filename = "bindings/nodejs/package.json"
 
 [[tool.bumpversion.files]]
