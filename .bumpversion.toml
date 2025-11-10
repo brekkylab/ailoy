@@ -34,7 +34,8 @@ pre_commit_hooks = []
 post_commit_hooks = []
 
 [tool.bumpversion.parts.pre_l]
-values = ["dev", "rc", "final"]
+values = ["", "rc", "final"]
+first_value = ""
 optional_value = "final"
 
 [[tool.bumpversion.files]]
