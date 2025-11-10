@@ -1,3 +1,5 @@
+import { playwright } from "@vitest/browser-playwright";
+import { webdriverio } from "@vitest/browser-webdriverio";
 import { loadEnv } from "vite";
 import dts from "vite-plugin-dts";
 import { viteStaticCopy } from "vite-plugin-static-copy";
@@ -109,7 +111,7 @@ export default defineConfig(({ mode }) => {
       browser: {
         enabled: true,
         name: process.env.BROWSER ?? "chromium",
-        provider: SAFARI ? "webdriverio" : "playwright",
+        provider: SAFARI ? webdriverio() : playwright(),
         providerOptions: SAFARI
           ? {
               capabilities: {
@@ -125,6 +127,7 @@ export default defineConfig(({ mode }) => {
                 },
               },
             },
+        instances: [{ browser: "chromium" }],
       },
       typecheck: {
         enabled: true,
