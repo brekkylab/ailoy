@@ -1,8 +1,9 @@
 import json
 
+import ailoy as ai
 from ailoy import Agent
 
-from settings import ANNOUNCEMENT_IN_BATTLE, MAX_LEN_ABILITY
+from settings import ANNOUNCEMENT_IN_BATTLE, MAX_LEN_ABILITY, SYSTEM_MESSAGE
 
 
 class Character:
@@ -46,9 +47,11 @@ class Level:
 
         for _ in range(10):
             output = ""
-            for resp in self.agent.query(prompt):
-                if resp.type == "output_text":
-                    output += resp.content
+            for resp in self.agent.run_sync(
+                [ai.Message(role="system", contents=SYSTEM_MESSAGE), ai.Message(role="user", contents=prompt)]
+            ):
+                if len(resp.message.contents) > 0 and isinstance(resp.message.contents[0], ai.Part.Text):
+                    output += resp.message.contents[0].text
 
             try:
                 result = json.loads(output)
