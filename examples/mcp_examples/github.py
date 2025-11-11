@@ -1,48 +1,43 @@
+import asyncio
 import os
 
 import ailoy as ai
-from mcp import StdioServerParameters
+from aioconsole import ainput
 
 
-def main():
-    rt = ai.Runtime()
-
+async def main():
     github_pat = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", None)
     if github_pat is None:
         github_pat = input("Enter GITHUB_PERSONAL_ACCESS_TOKEN: ")
 
-    with ai.Agent(rt, ai.LocalModel("Qwen/Qwen3-8B")) as agent:
-        agent.add_tools_from_mcp_server(
-            "github",
-            StdioServerParameters(
-                command="docker",
-                args=[
-                    "run",
-                    "-i",
-                    "--rm",
-                    "-e",
-                    "GITHUB_PERSONAL_ACCESS_TOKEN",
-                    "ghcr.io/github/github-mcp-server",
-                ],
-                env={
-                    "GITHUB_PERSONAL_ACCESS_TOKEN": github_pat,
-                    # You can whitelist toolsets you want to use only.
-                    # https://github.com/github/github-mcp-server?tab=readme-ov-file#available-toolsets
-                    "GITHUB_TOOLSETS": "repos",
-                },
-            ),
-            tools_to_add=[
-                # You can whitelist tools you want to register to agent.
-                # https://github.com/github/github-mcp-server?tab=readme-ov-file#tools
-                "search_repositories",
-                "get_file_contents",
-            ],
-        )
+    model = await ai.LangModel.new_local("Qwen/Qwen3-8B")
+    agent = ai.Agent(model)
 
-        print('Ailoy Github MCP Agent (Please type "exit" to stop conversation)')
+    os.environ.setdefault("GITHUB_PERSONAL_ACCESS_TOKEN", github_pat)
+    os.environ.setdefault("GITHUB_TOOLSETS", "repos")
+    mcp_client = await ai.MCPClient.from_stdio(
+        "docker",
+        [
+            "run",
+            "-i",
+            "--rm",
+            "-e",
+            "GITHUB_PERSONAL_ACCESS_TOKEN",
+            "ghcr.io/github/github-mcp-server",
+        ],
+    )
+    agent.add_tools(
+        [
+            mcp_client.get_tool("search_repositories"),
+            mcp_client.get_tool("get_file_contents"),
+        ]
+    )
 
+    print('Ailoy Github MCP Agent (Please type "exit" to stop conversation)')
+
+    try:
         while True:
-            query = input("\n\nUser: ")
+            query = await ainput("\n\nUser: ")
 
             if query == "exit":
                 break
@@ -50,9 +45,29 @@ def main():
             if query == "":
                 continue
 
-            for resp in agent.query(query):
-                agent.print(resp)
+            async for resp in agent.run_delta(query):
+                for content in resp.delta.contents:
+                    if isinstance(content, ai.PartDelta.Text):
+                        print(content.text, end="", flush=True)
+                    elif isinstance(content, ai.PartDelta.Value):
+                        print(content.value)
+                    else:
+                        raise ValueError(
+                            f"Content has invalid part_type: {content.part_type}"
+                        )
+                for tool_call in resp.delta.tool_calls:
+                    if isinstance(tool_call, ai.PartDelta.Function) and isinstance(
+                        tool_call.function, ai.PartDeltaFunction.Verbatim
+                    ):
+                        print(tool_call.function.text, end="", flush=True)
+                    else:
+                        raise ValueError(
+                            f"Tool call has invalid part_type: {tool_call.part_type}"
+                        )
+
+    except asyncio.exceptions.CancelledError:
+        pass
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
