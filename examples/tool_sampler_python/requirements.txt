@@ -1,2 +1,0 @@
-ailoy-py>=0.1.0
-questionary

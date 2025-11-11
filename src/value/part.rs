@@ -757,6 +757,11 @@ mod py {
     #[gen_stub_pymethods]
     #[pymethods]
     impl PartFunction {
+        #[new]
+        pub fn __new__(name: String, arguments: crate::value::Value) -> Self {
+            Self { name, arguments }
+        }
+
         pub fn __repr__(&self) -> String {
             format!(
                 "PartFunction(name={}, arguments={})",
