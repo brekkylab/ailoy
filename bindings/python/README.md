@@ -92,7 +92,7 @@ maturin build --out ./dist
 ```
 
 > [!WARNING]
-> To build binding, you must change the crate type to **`cdylib`**.
+> To build binding, you must change the crate type to **`cdylib`** in Cargo.toml.
 >
 > ```toml
 > [lib]
