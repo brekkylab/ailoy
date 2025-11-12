@@ -28,6 +28,7 @@ jobs:
       - name: Create package
         working-directory: ${{ github.workspace }}/bindings/web
         run: |
+          ../../scripts/set-crate-type.sh cdylib
           npm install
           npm run build
           npm pack

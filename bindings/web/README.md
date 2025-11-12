@@ -115,6 +115,14 @@ npm run build:ts
 npm run build
 ```
 
+> [!WARNING]
+> To build binding, you must change the crate type to **`cdylib`**.
+>
+> ```toml
+> [lib]
+> crate-type = ["dylib"] # <- Change this to ["cdylib"]
+> ```
+
 ### Testing
 
 The project uses Vitest with Playwright for comprehensive testing.

@@ -37,6 +37,7 @@ jobs:
           # maturin does not work outside virtualenv, so prepare one
           $PYTHON_BIN/python -m venv .venv
           source .venv/bin/activate
+          ../../scripts/set-crate-type.sh cdylib
           pip install maturin
 
       - name: Build wheel

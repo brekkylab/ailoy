@@ -90,3 +90,11 @@ maturin develop
 ```bash
 maturin build --out ./dist
 ```
+
+> [!WARNING]
+> To build binding, you must change the crate type to **`cdylib`**.
+>
+> ```toml
+> [lib]
+> crate-type = ["dylib"] # <- Change this to ["cdylib"]
+> ```

@@ -69,6 +69,14 @@ npm run build:ts
 npm run build
 ```
 
+> [!WARNING]
+> To build binding, you must change the crate type to **`cdylib`**.
+>
+> ```toml
+> [lib]
+> crate-type = ["dylib"] # <- Change this to ["cdylib"]
+> ```
+
 ### Tests
 
 Some test cases require specific environment variables to be set before running the test (e.g. `OPENAI_API_KEY`). Please fill `.env.template` and rename to `.env` in order to run every tests.
