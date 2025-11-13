@@ -42,48 +42,7 @@ impl Manifest {
 #[derive(Clone, Debug)]
 pub struct ManifestFiles(pub BTreeMap<String, Vec<Manifest>>);
 
-impl ManifestFiles {
-    pub fn get_latest_manifest(&self, filename: &str, target_version: &str) -> Option<Manifest> {
-        if !self.0.contains_key(filename) {
-            return None;
-        }
-        let target_version = Version::from(&target_version);
-        if target_version.is_none() {
-            return None;
-        }
-        let target_version = target_version.unwrap();
-
-        // Sort the manifests by descending order of min_version
-        let mut manifests = self.0.get(filename).cloned().unwrap();
-        manifests.sort_by(|m1, m2| match (&m1.min_version, &m2.min_version) {
-            (Some(v1), Some(v2)) => {
-                let v1 = Version::from(v1).unwrap();
-                let v2 = Version::from(v2).unwrap();
-                v2.compare(v1).ord().unwrap()
-            }
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, None) => std::cmp::Ordering::Equal,
-        });
-
-        let mut ret: Option<Manifest> = None;
-        for manifest in manifests.iter() {
-            if let Some(min_version) = &manifest.min_version {
-                // If the largest min version less than target version is found, break immediately
-                let min_version = Version::from(min_version).unwrap();
-                if target_version >= min_version {
-                    ret = Some(manifest.clone());
-                    break;
-                }
-            } else {
-                // This is the case of min_version = "*"
-                ret = Some(manifest.clone());
-            }
-        }
-
-        ret
-    }
-}
+impl ManifestFiles {}
 
 impl Serialize for ManifestFiles {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -225,6 +184,60 @@ impl ManifestDirectory {
             self.files.0.insert(filename, vec![manifest]);
         }
     }
+
+    pub fn get_file_manifest(&self, filename: &str, target_version: &str) -> Option<Manifest> {
+        if !self.files.0.contains_key(filename) {
+            return None;
+        }
+        let target_version = Version::from(&target_version);
+        if target_version.is_none() {
+            return None;
+        }
+        let target_version = target_version.unwrap();
+
+        // Sort the manifests by descending order of min_version
+        let mut manifests = self.files.0.get(filename).cloned().unwrap();
+        manifests.sort_by(|m1, m2| match (&m1.min_version, &m2.min_version) {
+            (Some(v1), Some(v2)) => {
+                let v1 = Version::from(v1).unwrap();
+                let v2 = Version::from(v2).unwrap();
+                v2.compare(v1).ord().unwrap()
+            }
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+
+        let mut ret: Option<Manifest> = None;
+        for manifest in manifests.iter() {
+            if let Some(min_version) = &manifest.min_version {
+                // If the largest min version less than target version is found, break immediately
+                let min_version = Version::from(min_version).unwrap();
+                if target_version >= min_version {
+                    ret = Some(manifest.clone());
+                    break;
+                }
+            } else {
+                // This is the case of min_version = "*"
+                ret = Some(manifest.clone());
+            }
+        }
+
+        ret
+    }
+
+    pub fn get_file_manifests(&self, target_version: &str) -> Vec<(String, Manifest)> {
+        let mut manifests = Vec::<(String, Manifest)>::new();
+        for filename in self.files.0.keys() {
+            match self.get_file_manifest(filename, target_version) {
+                Some(manifest) => {
+                    manifests.push((filename.to_string(), manifest));
+                }
+                None => {}
+            }
+        }
+        manifests
+    }
 }
 
 #[cfg(test)]
@@ -251,23 +264,33 @@ mod tests {
                         "size": 867856,
                         "sha1": "a41c36b11632bb70eac7bd839839a479d8ea3ad1"
                     }
+                },
+                "new_file_from_0.3.0.json": {
+                    "0.3.0": {
+                        "size": 1234,
+                        "sha1": "dd0beab4a8f2fbee9223aa6f54d37dda396e4828"
+                    }
                 }
             }
         });
         let manifest_dir = serde_json::from_value::<ManifestDirectory>(manifest_json).unwrap();
 
-        let manifest_0_4_0 = manifest_dir.files.get_latest_manifest("rt.dylib", "0.4.0");
+        let manifest_0_4_0 = manifest_dir.get_file_manifest("rt.dylib", "0.4.0");
         assert!(manifest_0_4_0.is_some());
         assert_eq!(manifest_0_4_0.unwrap().min_version.unwrap(), "0.3.0");
 
-        let manifest_0_3_0_rc0 = manifest_dir
-            .files
-            .get_latest_manifest("rt.dylib", "0.3.0-rc.0");
+        let manifest_0_3_0_rc0 = manifest_dir.get_file_manifest("rt.dylib", "0.3.0-rc.0");
         assert!(manifest_0_3_0_rc0.is_some());
         assert_eq!(manifest_0_3_0_rc0.unwrap().min_version.unwrap(), "0.2.0");
 
-        let manifest_0_1_0 = manifest_dir.files.get_latest_manifest("rt.dylib", "0.1.0");
+        let manifest_0_1_0 = manifest_dir.get_file_manifest("rt.dylib", "0.1.0");
         assert!(manifest_0_1_0.is_some());
         assert_eq!(manifest_0_1_0.unwrap().min_version, None);
+
+        let manifests_0_3_0 = manifest_dir.get_file_manifests("0.3.0");
+        assert_eq!(manifests_0_3_0.len(), 2);
+
+        let manifests_0_2_0 = manifest_dir.get_file_manifests("0.2.0");
+        assert_eq!(manifests_0_2_0.len(), 1);
     }
 }

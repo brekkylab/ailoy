@@ -250,8 +250,8 @@ impl Cache {
                 .insert(entry.dirname().to_string(), value);
         };
         let manifests_lock = self.manifests.read().await;
-        let files = &manifests_lock.get(entry.dirname()).unwrap().files;
-match files.get_latest_manifest(entry.filename(), AILOY_VERSION) {
+        let manifest_dir = &manifests_lock.get(entry.dirname()).unwrap();
+        match manifest_dir.get_file_manifest(entry.filename(), AILOY_VERSION) {
             Some(manifest) => Ok(manifest),
             None => bail!(
 "The file \"{}\" does not exist in manifest",

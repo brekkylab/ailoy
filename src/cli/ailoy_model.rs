@@ -9,6 +9,7 @@ use url::Url;
 
 use crate::{
     cache::{Cache, Manifest, ManifestDirectory},
+    constants::AILOY_VERSION,
     model::get_accelerator,
 };
 
@@ -69,6 +70,12 @@ enum Commands {
             help = "Remote URL to download model files from. Default to Ailoy cache remote url"
         )]
         cache_remote_url: Option<Url>,
+
+        #[arg(
+            long,
+            help = format!("Target Ailoy version. Default: {}", AILOY_VERSION)
+        )]
+        ailoy_version: Option<String>,
     },
 }
 
@@ -364,6 +371,7 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
             device,
             download_path,
             cache_remote_url,
+            ailoy_version,
         } => {
             let model_name = model_name.clone().replace("/", "--");
             let platform = platform
@@ -377,10 +385,13 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
                 .unwrap_or(cache.remote_url().clone());
             let download_path = download_path.clone().unwrap_or(cache.root().to_path_buf());
 
+            let ailoy_version = ailoy_version.clone().unwrap_or(AILOY_VERSION.to_string());
+
             println!("Downloading {}", model_name);
             println!("- Platform: {}", platform);
             println!("- Device: {}", device);
             println!("- Download path: {:?}", download_path);
+            println!("- Target Ailoy version: {}", ailoy_version);
 
             let model_dirs = vec![
                 model_name.clone(), // common files (e.g. model params, tokenizer config, etc.)
@@ -395,9 +406,8 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
                 let manifest_url =
                     cache_remote_url.join(format!("{}/_manifest.json", model_dir).as_str())?;
                 let manifest_resp = client.get(manifest_url).send().await?;
-                let manifest_data = manifest_resp.bytes().await?.to_vec();
-                let manifest_dir: ManifestDirectory =
-                    serde_json::from_slice(manifest_data.iter().as_slice())?;
+                let manifest_text = manifest_resp.text().await?;
+                let manifest_dir = serde_json::from_str::<ManifestDirectory>(&manifest_text)?;
 
                 let download_dir = format!("{}/{}", download_path.to_str().unwrap(), model_dir);
                 std::fs::create_dir_all(&download_dir).map_err(|e| {
@@ -409,7 +419,8 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
                     std::process::exit(1);
                 })?;
 
-                for (filename, manifest) in manifest_dir.files.iter() {
+                for (filename, manifest) in manifest_dir.get_file_manifests(ailoy_version.as_str())
+                {
                     let remote_key = format!("{}/{}", model_dir, manifest.sha1());
                     let local_key = format!("{}/{}", model_dir, filename);
 
@@ -436,6 +447,34 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
 
                     pb.finish();
                 }
+
+                // for (filename, manifest) in manifest_dir.files.0.iter() {
+                //     let remote_key = format!("{}/{}", model_dir, manifest.sha1());
+                //     let local_key = format!("{}/{}", model_dir, filename);
+
+                //     let file_url = cache_remote_url.join(&remote_key)?;
+                //     let file_resp = client.get(file_url).send().await?.error_for_status()?;
+                //     let total_size = file_resp.content_length().unwrap_or(0);
+
+                //     let pb = ProgressBar::new(total_size);
+                //     pb.set_style(pb_style.clone());
+                //     pb.set_message(local_key.clone());
+
+                //     let mut file =
+                //         tokio::fs::File::create(format!("{}/{}", download_dir, filename)).await?;
+                //     let mut stream = file_resp.bytes_stream();
+                //     let mut downloaded: u64 = 0;
+
+                //     while let Some(chunk_result) = stream.next().await {
+                //         let chunk = chunk_result?;
+                //         file.write_all(&chunk).await?;
+                //         let new = u64::min(downloaded + (chunk.len() as u64), total_size);
+                //         downloaded = new;
+                //         pb.set_position(new);
+                //     }
+
+                //     pb.finish();
+                // }
             }
 
             println!("\n🎉 Download complete!");
