@@ -8,7 +8,8 @@
 
 #include <dlpack/dlpack.h>
 #include <tvm/runtime/memory/memory_manager.h>
-#include <tvm/runtime/vm/ndarray_cache_support.h>
+#include <tvm/runtime/module.h>
+#include <tvm/runtime/vm/tensor_cache_support.h>
 
 #include "cxx_bridge.rs.h"
 
@@ -39,7 +40,7 @@ tvm_runtime_t::tvm_runtime_t(CacheContents &contents, const DLDevice &device) {
     rust::String dirname;
     rust::String filename_;
     rust::Vec<uint8_t> bytes;
-    cache_contents_remove_with_filename_out(contents, rt_lib_name(), dirname,
+    cache_contents_remove_with_filename_out(contents, filename, dirname,
                                             filename_, bytes);
     rv =
         (std::filesystem::path(std::string(cache_contents_get_root(contents))) /
@@ -61,32 +62,33 @@ tvm_runtime_t::tvm_runtime_t(CacheContents &contents, const DLDevice &device) {
   };
 
   // Load module
-  const auto floadfile_so =
-      tvm::ffi::Function::GetGlobal("runtime.module.loadfile_so");
-  if (!floadfile_so)
-    throw std::runtime_error("Failed to get runtime.module.loadfile_so");
-  auto executable = tvm::runtime::Module::LoadFromFile(get_path("lib.dylib"));
+  auto executable = tvm::ffi::Module::LoadFromFile(get_path(rt_lib_name()));
   if (!executable.defined())
     throw std::runtime_error("Failed to load system");
 
   // Load vm
-  auto fload_exec = executable->GetFunction("vm_load_executable");
+  tvm::ffi::Optional<tvm::ffi::Function> fload_exec =
+      executable->GetFunction("vm_load_executable");
   if (!fload_exec.defined())
     throw std::runtime_error("Failed to get executable loader");
-  auto vm = fload_exec().cast<Module>();
-  vm->GetFunction("vm_initialization")(
-      static_cast<int>(device.device_type), device.device_id,
-      static_cast<int>(memory::AllocatorType::kPooled),
-      static_cast<int>(kDLCPU), 0,
-      static_cast<int>(memory::AllocatorType::kPooled));
+  auto vm = fload_exec.value()().cast<tvm::ffi::Module>();
+  vm->GetFunction("vm_initialization")
+      .value()(static_cast<int>(device.device_type), device.device_id,
+               static_cast<int>(memory::AllocatorType::kPooled),
+               static_cast<int>(kDLCPU), 0,
+               static_cast<int>(memory::AllocatorType::kPooled));
   vm_ = vm;
 
   // Load model metadata
-  tvm::ffi::TypedFunction<tvm::String()> fmetadata =
-      vm.GetFunction("_metadata");
+  std::string json_str = "";
+  tvm::ffi::Optional<tvm::ffi::Function> fmetadata =
+      vm->GetFunction("_metadata");
+  ICHECK(fmetadata.defined())
+      << "ValueError: _metadata function not found in module";
+  json_str = fmetadata.value()().cast<tvm::ffi::String>();
+
   picojson::value parsed;
-  std::string err =
-      picojson::parse(parsed, static_cast<std::string>(fmetadata()));
+  std::string err = picojson::parse(parsed, json_str);
   metadata_ = parsed.get<picojson::object>();
 
   if (!err.empty()) {
@@ -94,28 +96,33 @@ tvm_runtime_t::tvm_runtime_t(CacheContents &contents, const DLDevice &device) {
     return;
   }
 
-  // Load ndarray cache metadata
-  auto ndarray_cache_metadata = NDArrayCacheMetadata::LoadFromStr(
-      read_bytes("ndarray-cache.json"), "ndarray-cache.json");
+  // Load tensor cache metadata
+  auto tensor_cache_json = read_bytes("tensor-cache.json");
+  // If tensor-cache.json is empty, fallback to ndarray-cache.json
+  if (tensor_cache_json.empty()) {
+    tensor_cache_json = read_bytes("ndarray-cache.json");
+  }
+  auto tensor_cache_metadata =
+      TensorCacheMetadata::LoadFromStr(tensor_cache_json, "tensor-cache.json");
 
-  // Load ndarray cache
+  // Load tensor cache
   int shard_idx = 0;
-  for (const auto &record : ndarray_cache_metadata.records) {
+  for (const auto &record : tensor_cache_metadata.records) {
     auto bytes = read_bytes(record.data_path);
     {
-      const NDArrayCacheMetadata::FileRecord &shard_rec =
-          ndarray_cache_metadata.records[shard_idx];
+      const TensorCacheMetadata::FileRecord &shard_rec =
+          tensor_cache_metadata.records[shard_idx];
       if (shard_rec.format != "raw-shard")
         throw std::runtime_error("Only `raw-shard` format is supported");
       if (shard_rec.nbytes != bytes.length())
         throw std::runtime_error("Encountered an corrupted parameter shard.");
       const tvm::ffi::Function fupdate_cache =
-          tvm::ffi::Function::GetGlobal("vm.builtin.ndarray_cache.update")
+          tvm::ffi::Function::GetGlobal("vm.builtin.tensor_cache.update")
               .value();
-      Optional<NDArray> staging_buffer;
-      for (const NDArrayCacheMetadata::FileRecord::ParamRecord &param_record :
+      tvm::ffi::Optional<Tensor> staging_buffer;
+      for (const TensorCacheMetadata::FileRecord::ParamRecord &param_record :
            shard_rec.records) {
-        NDArray param;
+        Tensor param;
         param = param_record.Load(device, &bytes, &staging_buffer);
         fupdate_cache(param_record.name, param, true);
       }
@@ -131,13 +138,13 @@ tvm_runtime_t::tvm_runtime_t(CacheContents &contents, const DLDevice &device) {
 
   const picojson::array &params_array =
       metadata_.at("params").get<picojson::array>();
-  Array<String> param_names;
+  tvm::ffi::Array<tvm::ffi::String> param_names;
   param_names.reserve(params_array.size());
   for (const picojson::value &param : params_array) {
     const picojson::object &param_object = param.get<picojson::object>();
     param_names.push_back(param_object.at("name").get<std::string>());
   }
-  params_ = fload_params(param_names).cast<Array<NDArray>>();
+  params_ = fload_params(param_names).cast<tvm::ffi::Array<tvm::ffi::Tensor>>();
 }
 
 } // namespace ailoy

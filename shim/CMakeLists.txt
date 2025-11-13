@@ -164,7 +164,7 @@ target_include_directories(ailoy_cpp_shim PUBLIC ${AILOY_CXXBRIDGE_OUTDIR} ${CMA
 FetchContent_Declare(
     tvm
     GIT_REPOSITORY https://github.com/brekkylab/relax.git
-    GIT_TAG e2aa6d0ebf9bd82632a510c00f3966eeee89e68a
+    GIT_TAG f27bdf6b8371484ec0444a2a83dfaa2fe7c27fe3
     EXCLUDE_FROM_ALL
 )
 set(CONDA_BUILD ON) # Actually it is not related to conda, but this is only way to disable python build
@@ -206,7 +206,7 @@ target_compile_options(tvm_runtime_hollow INTERFACE
     $<TARGET_PROPERTY:tvm_runtime,COMPILE_OPTIONS>
     $<TARGET_PROPERTY:tvm_runtime,INTERFACE_COMPILE_OPTIONS>
 )
-add_dependencies(tvm_runtime_hollow tvm_runtime)
+add_dependencies(tvm_runtime_hollow tvm_runtime tvm_ffi_static)
 
 # User of ailoy_cpp_shim should import tvm_runtime with whole-archive options
 target_link_libraries(ailoy_cpp_shim PRIVATE tvm_runtime_hollow)
@@ -254,4 +254,5 @@ target_link_libraries(ailoy_cpp_shim PUBLIC faiss)
 
 install(TARGETS ailoy_cpp_shim ARCHIVE DESTINATION .)
 install(TARGETS tvm_runtime ARCHIVE DESTINATION .)
+install(TARGETS tvm_ffi_static ARCHIVE DESTINATION .)
 install(TARGETS faiss ARCHIVE DESTINATION .)

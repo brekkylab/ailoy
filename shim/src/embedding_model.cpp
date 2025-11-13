@@ -21,15 +21,15 @@ tvm_embedding_model_t::tvm_embedding_model_t(CacheContents &contents,
     throw std::runtime_error("Cannot find embed function");
 }
 
-void tvm_embedding_model_t::extract_ndarray_part(
-    const tvm::runtime::NDArray &from, tvm::runtime::NDArray &to) {
-  // from: F16 or F32 NDArray
+void tvm_embedding_model_t::extract_tensor_part(const Tensor &from,
+                                                Tensor &to) {
+  // from: F16 or F32 Tensor
   if (!(from.DataType().code() == kDLFloat &&
         (from.DataType().bits() == 16 || from.DataType().bits() == 32))) {
     throw std::runtime_error("Datatype of 'from' array is invalid.");
   }
 
-  // to: 1D NDArray with the same data type with 'from' array
+  // to: 1D Tensor with the same data type with 'from' array
   if (!(to.DataType().code() == kDLFloat &&
         (to.DataType().bits() == from.DataType().bits()) &&
         to.Shape().size() == 1)) {
@@ -45,7 +45,7 @@ void tvm_embedding_model_t::extract_ndarray_part(
   // size assertion
   if (from_size < to_size) {
     throw std::runtime_error(
-        "size of input NDArray is too small to fill output NDArray.");
+        "size of input Tensor is too small to fill output Tensor.");
   }
 
   // process
@@ -64,41 +64,40 @@ void tvm_embedding_model_t::extract_ndarray_part(
   }
 }
 
-const tvm::runtime::NDArray
-tvm_embedding_model_t::infer(std::vector<int> tokens) {
+const Tensor tvm_embedding_model_t::infer(std::vector<int> tokens) {
   Device cpu = Device{kDLCPU, 0};
   DLDataType I32 = DLDataType{.code = kDLInt, .bits = 32, .lanes = 1};
   DLDataType F32 = DLDataType{.code = kDLFloat, .bits = 32, .lanes = 1};
 
   int32_t tokens_length = tokens.size();
 
-  NDArray inputNDArrayCPU = NDArray::Empty({1, tokens_length}, I32, cpu);
-  NDArray maskNDArrayCPU = NDArray::Empty({1, tokens_length}, I32, cpu);
-  auto input_nd_array = static_cast<int32_t *>(inputNDArrayCPU->data);
-  auto mask_nd_array = static_cast<int32_t *>(maskNDArrayCPU->data);
+  Tensor inputTensorCPU = Tensor::Empty({1, tokens_length}, I32, cpu);
+  Tensor maskTensorCPU = Tensor::Empty({1, tokens_length}, I32, cpu);
+  auto input_tensor = static_cast<int32_t *>(inputTensorCPU->data);
+  auto mask_tensor = static_cast<int32_t *>(maskTensorCPU->data);
   for (size_t i = 0; i < tokens_length; i++) {
-    input_nd_array[i] = tokens.at(i);
-    mask_nd_array[i] = 1;
+    input_tensor[i] = tokens.at(i);
+    mask_tensor[i] = 1;
   }
 
-  NDArray inputNDArrayGPU =
-      NDArray::Empty({1, tokens_length}, I32, rt_->get_device());
-  inputNDArrayGPU.CopyFrom(inputNDArrayCPU);
-  NDArray maskNDArrayGPU =
-      NDArray::Empty({1, tokens_length}, I32, rt_->get_device());
-  maskNDArrayGPU.CopyFrom(maskNDArrayCPU);
+  Tensor inputTensorGPU =
+      Tensor::Empty({1, tokens_length}, I32, rt_->get_device());
+  inputTensorGPU.CopyFrom(inputTensorCPU);
+  Tensor maskTensorGPU =
+      Tensor::Empty({1, tokens_length}, I32, rt_->get_device());
+  maskTensorGPU.CopyFrom(maskTensorCPU);
 
-  NDArray logitsCurBatchOnGPU =
-      fprefill_(inputNDArrayGPU, maskNDArrayGPU, rt_->get_params())
-          .cast<NDArray>();
-  NDArray logitsCurBatchOnCPU = NDArray::Empty(
+  Tensor logitsCurBatchOnGPU =
+      fprefill_(inputTensorGPU, maskTensorGPU, rt_->get_params())
+          .cast<Tensor>();
+  Tensor logitsCurBatchOnCPU = Tensor::Empty(
       logitsCurBatchOnGPU.Shape(), logitsCurBatchOnGPU.DataType(), cpu);
   logitsCurBatchOnCPU.CopyFrom(logitsCurBatchOnGPU);
 
-  NDArray processed_embedding =
-      NDArray::Empty(tvm::ffi::Shape{logitsCurBatchOnCPU.Shape().back()},
-                     logitsCurBatchOnCPU.DataType(), cpu);
-  extract_ndarray_part(logitsCurBatchOnCPU, processed_embedding);
+  Tensor processed_embedding =
+      Tensor::Empty(tvm::ffi::Shape{logitsCurBatchOnCPU.Shape().back()},
+                    logitsCurBatchOnCPU.DataType(), cpu);
+  extract_tensor_part(logitsCurBatchOnCPU, processed_embedding);
 
   return processed_embedding;
 }
@@ -112,8 +111,8 @@ tvm_embedding_model_t::infer_from_rs(rust::Slice<const uint32_t> tokens) {
   std::transform(tokens.begin(), tokens.end(), std::back_inserter(converted),
                  [](uint32_t val) { return static_cast<int>(val); });
 
-  auto ndarray = infer(converted);
-  auto raw_dlpack_ptr = std::move(ndarray).ToDLPackVersioned();
+  auto tensor = infer(converted);
+  auto raw_dlpack_ptr = std::move(tensor).ToDLPackVersioned();
   auto safe_managed_tensor =
       dlpack_bridge::create_managed_tensor(raw_dlpack_ptr);
   return DLPackTensor{std::move(safe_managed_tensor)};
