@@ -3,6 +3,7 @@ extern crate alloc;
 pub mod agent;
 pub mod cache;
 pub mod cli;
+pub(crate) mod constants;
 pub mod ffi;
 pub mod knowledge;
 pub mod model;

@@ -66,6 +66,7 @@ strum_macros = "0.27.2"
 thiserror = "2.0.15"
 unicode-segmentation = "1.12.0"
 url = "2.5.4"
+version-compare = "0.2.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cxx = "1.0"
