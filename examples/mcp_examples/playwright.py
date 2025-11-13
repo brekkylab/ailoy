@@ -1,33 +1,35 @@
+import asyncio
 import os
+import sys
 
 import ailoy as ai
-from mcp import StdioServerParameters
+from aioconsole import ainput
 
 
-def main():
-    rt = ai.Runtime()
-
+async def main():
     openai_api_key = os.environ.get("OPENAI_API_KEY", None)
     if openai_api_key is None:
         openai_api_key = input("Enter OPENAI_API_KEY: ")
 
-    with ai.Agent(rt, ai.APIModel("gpt-4o", api_key=openai_api_key)) as agent:
-        agent.add_tools_from_mcp_server(
-            "playwright",
-            # https://github.com/microsoft/playwright-mcp?tab=readme-ov-file#getting-started
-            StdioServerParameters(command="npx", args=["@playwright/mcp@latest"]),
-            tools_to_add=[
-                # You can whitelist tools you want to register to agent.
-                # https://github.com/microsoft/playwright-mcp?tab=readme-ov-file#tools
-                "browser_click",
-                "browser_navigate",
-            ],
-        )
+    model = ai.LangModel.new_stream_api("OpenAI", "gpt-4o", openai_api_key)
+    agent = ai.Agent(model)
 
-        print('Ailoy Playwright MCP Agent (Please type "exit" to stop conversation)')
+    mcp_client = await ai.MCPClient.from_stdio("npx", ["@playwright/mcp@latest"])
+    agent.add_tools(
+        [
+            mcp_client.get_tool("browser_click"),
+            mcp_client.get_tool("browser_navigate"),
+        ]
+    )
 
+    print('Ailoy Playwright MCP Agent (Please type "exit" to stop conversation)')
+
+    os.set_blocking(sys.stdout.fileno(), True)
+
+    try:
+        messages: list[ai.Message] = []
         while True:
-            query = input("\n\nUser: ")
+            query = await ainput("\n\nUser: ")
 
             if query == "exit":
                 break
@@ -35,9 +37,47 @@ def main():
             if query == "":
                 continue
 
-            for resp in agent.query(query):
-                agent.print(resp)
+            messages.append(ai.Message(role="user", contents=query))
+
+            acc = ai.MessageDelta()
+            async for resp in agent.run_delta(messages):
+                acc += resp.delta
+                if resp.finish_reason:
+                    message = acc.to_message()
+                    acc = ai.MessageDelta()
+                    messages.append(message)
+
+                for content in resp.delta.contents:
+                    if isinstance(content, ai.PartDelta.Text):
+                        print(content.text, end="", flush=True)
+                    elif isinstance(content, ai.PartDelta.Value):
+                        print(content.value[:100])
+                    else:
+                        raise ValueError(
+                            f"Content has invalid part_type: {content.part_type}"
+                        )
+                for tool_call in resp.delta.tool_calls:
+                    if isinstance(tool_call, ai.PartDelta.Function):
+                        if isinstance(
+                            tool_call.function, ai.PartDeltaFunction.Verbatim
+                        ):
+                            print(tool_call.function.text, end="", flush=True)
+                        elif isinstance(
+                            tool_call.function, ai.PartDeltaFunction.WithStringArgs
+                        ):
+                            print(tool_call.function.arguments, end="", flush=True)
+                        elif isinstance(
+                            tool_call.function, ai.PartDeltaFunction.WithParsedArgs
+                        ):
+                            print(tool_call.function.arguments, end="", flush=True)
+                    else:
+                        raise ValueError(
+                            f"Tool call has invalid part_type: {tool_call.part_type}"
+                        )
+
+    except asyncio.exceptions.CancelledError:
+        pass
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

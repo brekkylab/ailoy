@@ -2,33 +2,88 @@ import { BrowserWindow, ipcMain, dialog } from "electron";
 import * as fs from "fs/promises";
 import * as ai from "ailoy-node";
 
-let runtime: ai.Runtime | undefined = undefined;
 let agent: ai.Agent | undefined = undefined;
+let embeddingModel: ai.EmbeddingModel | undefined = undefined;
 let vectorstore: ai.VectorStore | undefined = undefined;
+let knowledge: ai.Knowledge | undefined = undefined;
+
+function delay(t: number, val?: any) {
+  return new Promise(function (resolve) {
+    setTimeout(function () {
+      resolve(val);
+    }, t);
+  });
+}
 
 export const initializeComponents = async (mainWindow: BrowserWindow) => {
-  if (runtime === undefined) {
-    runtime = new ai.Runtime();
-    await runtime.start();
-  }
+  await delay(1000);
 
-  if (vectorstore === undefined) {
-    vectorstore = await ai.defineVectorStore(runtime, "BAAI/bge-m3", "faiss");
+  if (knowledge === undefined) {
+    embeddingModel = await ai.EmbeddingModel.newLocal(
+      "BAAI/bge-m3",
+      undefined,
+      (prog) => {
+        const percent = Math.round((prog.current / prog.total) * 100);
+        mainWindow.webContents.send(
+          "indicate-loading",
+          `Initializing Embedding Model... ${percent}%`,
+          false
+        );
+      }
+    );
+    vectorstore = await ai.VectorStore.newFaiss(1024);
+    knowledge = ai.Knowledge.newVectorStore(vectorstore, embeddingModel);
   }
 
   if (agent === undefined) {
-    mainWindow.webContents.send(
-      "indicate-loading",
-      "Loading AI model...",
-      false
+    const langmodel = await ai.LangModel.newLocal(
+      "Qwen/Qwen3-8B",
+      undefined,
+      (prog) => {
+        const percent = Math.round((prog.current / prog.total) * 100);
+        mainWindow.webContents.send(
+          "indicate-loading",
+          `Initializing Language Model... ${percent}%`,
+          false
+        );
+      }
     );
-    agent = await ai.defineAgent(
-      runtime,
-      ai.LocalModel({ id: "Qwen/Qwen3-8B" })
-    );
-    mainWindow.webContents.send("indicate-loading", "", true);
+    agent = new ai.Agent(langmodel);
+    agent.setKnowledge(knowledge);
   }
+
+  mainWindow.webContents.send("indicate-loading", "", true);
 };
+
+function splitTextIntoChunks(
+  text: string,
+  chunkSize: number,
+  chunkOverlap: number
+) {
+  const chunks = [];
+  let startIndex = 0;
+
+  while (startIndex < text.length) {
+    let endIndex = startIndex + chunkSize;
+    // Ensure endIndex does not exceed text length
+    if (endIndex > text.length) {
+      endIndex = text.length;
+    }
+
+    // Extract the chunk
+    const chunk = text.substring(startIndex, endIndex);
+    chunks.push(chunk);
+
+    // Calculate the next startIndex for the next chunk with overlap
+    startIndex += chunkSize - chunkOverlap;
+
+    // Prevent negative or excessive overlap if the remaining text is too short
+    if (startIndex < 0) {
+      startIndex = 0;
+    }
+  }
+  return chunks;
+}
 
 export const registerIpcHandlers = async (mainWindow: BrowserWindow) => {
   ipcMain.handle("open-file", async () => {
@@ -50,20 +105,14 @@ export const registerIpcHandlers = async (mainWindow: BrowserWindow) => {
     await vectorstore.clear();
 
     // split texts into chunks
-    const { chunks }: { chunks: Array<string> } = await runtime.call(
-      "split_text",
-      {
-        text: document,
-        chunk_size: 500,
-        chunk_overlap: 200,
-      }
-    );
+    const chunks = splitTextIntoChunks(document, 500, 200);
 
     let chunkIdx = 0;
     for (const chunk of chunks) {
-      await vectorstore.insert({
+      let embedding = await embeddingModel.infer(chunk);
+      await vectorstore.addVector({
+        embedding,
         document: chunk,
-        metadata: null,
       });
       mainWindow.webContents.send(
         "vector-store-update-progress",
@@ -76,36 +125,43 @@ export const registerIpcHandlers = async (mainWindow: BrowserWindow) => {
     mainWindow.webContents.send("vector-store-update-finished");
   });
 
-  ipcMain.handle("retrieve-similar-documents", async (event, query: string) => {
-    const results = await vectorstore.retrieve(query, 5);
-    return results;
-  });
-
-  ipcMain.handle("infer-language-model", async (event, message: string) => {
-    for await (const resp of agent.query(message)) {
-      mainWindow.webContents.send("assistant-answer", resp);
+  ipcMain.handle("infer-language-model", async (event, messages: Message[]) => {
+    for await (const resp of agent.runDelta(messages, {
+      inference: {
+        documentPolyfill: ai.getQwen3Polyfill(),
+      },
+      knowledge: {
+        topK: 5,
+      },
+    })) {
+      if (
+        resp.delta.contents.length > 0 &&
+        resp.delta.contents[0].type === "text"
+      ) {
+        mainWindow.webContents.send(
+          "assistant-answer",
+          resp.delta.contents[0].text
+        );
+      }
     }
+    mainWindow.webContents.send("assistant-answer-finished");
   });
 };
 
 export const removeIpcHandlers = () => {
   ipcMain.removeHandler("open-file");
   ipcMain.removeHandler("update-vector-store");
-  ipcMain.removeHandler("retrieve-similar-documents");
   ipcMain.removeHandler("infer-language-model");
 };
 
 export const destroyComponents = async () => {
-  if (vectorstore !== undefined) {
-    await vectorstore.delete();
+  if (knowledge !== undefined) {
+    knowledge = undefined;
     vectorstore = undefined;
+    embeddingModel = undefined;
   }
+
   if (agent !== undefined) {
-    await agent.delete();
     agent = undefined;
-  }
-  if (runtime !== undefined) {
-    await runtime.stop();
-    runtime = undefined;
   }
 };

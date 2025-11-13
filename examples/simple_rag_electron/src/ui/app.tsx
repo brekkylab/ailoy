@@ -5,11 +5,6 @@ import "./index.css";
 
 type LoadingStatus = "loading" | "loaded";
 
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-}
-
 const App: React.FC = () => {
   const [loadingStatus, setLoadingStatus] = useState<LoadingStatus>("loaded");
   const [loadingIndicator, setLoadingIndicator] = useState<string>("");
@@ -39,17 +34,20 @@ const App: React.FC = () => {
       setLoadingStatus("loaded");
       setLoadingIndicator("");
     });
-    window.electronAPI.onAssistantAnswer((resp: AgentResponse) => {
-      if (resp.type === "output_text") {
-        setMessages((prevMessages) => {
-          const last = prevMessages[prevMessages.length - 1];
-          last.content += resp.content;
-          return [...prevMessages.slice(0, prevMessages.length - 1), last];
-        });
-        if (resp.isTypeSwitched) {
-          setIsAnswering(false);
+    window.electronAPI.onAssistantAnswer((delta: string) => {
+      setMessages((prevMessages) => {
+        const last = prevMessages[prevMessages.length - 1];
+        if (last.contents[0].type === "text") {
+          last.contents[0] = {
+            ...last.contents[0],
+            text: last.contents[0].text + delta,
+          };
         }
-      }
+        return [...prevMessages.slice(0, prevMessages.length - 1), last];
+      });
+    });
+    window.electronAPI.onAssistantAnswerFinished(() => {
+      setIsAnswering(false);
     });
   }, []);
 
@@ -69,28 +67,19 @@ const App: React.FC = () => {
     // Clear query prompt
     setQuery("");
     // Add user message and empty assistant message
-    setMessages([
-      ...messages,
-      { role: "user", content: query },
-      { role: "assistant", content: "" },
-    ]);
-    // Retrieve similar documents from vector store
-    const results = await window.electronAPI.retrieveSimilarDocuments(query);
-    // TODO: visualize retrieved results
-    console.log(results);
-    // Augment results to prompt and infer
-    const augmentedPrompt = `
-Based on the given context, answer to user's query.
-
-Context: 
-${results.map((result) => result.document).join("\n")}
-
-
-Query: ${query}
-`;
-
+    setMessages((prevMessages) => {
+      const newUserMessage: Message = {
+        role: "user",
+        contents: [{ type: "text", text: query }],
+      };
+      window.electronAPI.inferLanguageModel([...prevMessages, newUserMessage]);
+      return [
+        ...prevMessages,
+        newUserMessage,
+        { role: "assistant", contents: [{ type: "text", text: "" }] },
+      ];
+    });
     setIsAnswering(true);
-    window.electronAPI.inferLanguageModel(augmentedPrompt);
   };
 
   return (
@@ -124,7 +113,9 @@ Query: ${query}
               key={index}
               className="mb-2 p-2 border rounded overflow-scroll"
             >
-              <Markdown>{`${message.role}: ${message.content}`}</Markdown>
+              <Markdown>{`${message.role}: ${
+                message.contents[0].type === "text" && message.contents[0].text
+              }`}</Markdown>
             </div>
           ))}
         </div>

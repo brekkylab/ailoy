@@ -1,15 +1,9 @@
-import type {
-  VectorStoreRetrieveItem,
-  AgentResponse as _AgentResponse,
-} from "ailoy-node";
+import type { VectorStoreRetrieveItem, Message as _Message } from "ailoy-node";
 
 export interface IElectronAPI {
   openFile: () => Promise<string>;
   updateVectorStore: (document: string) => Promise<void>;
-  retrieveSimilarDocuments: (
-    query: string
-  ) => Promise<Array<VectorStoreRetrieveItem>>;
-  inferLanguageModel: (message: string) => Promise<void>;
+  inferLanguageModel: (messages: Array<Message>) => Promise<void>;
 
   onIndicateLoading: (
     callback: (indicator: string, finished: boolean) => void
@@ -19,12 +13,13 @@ export interface IElectronAPI {
     callback: (loaded: number, total: number) => void
   ) => void;
   onVectorStoreUpdateFinished: (callback: () => void) => void;
-  onAssistantAnswer: (callback: (delta: MessageDelta) => void) => void;
+  onAssistantAnswer: (callback: (delta: string) => void) => void;
+  onAssistantAnswerFinished: (callback: () => void) => void;
 }
 
 declare global {
   interface Window {
     electronAPI: IElectronAPI;
   }
-  type AgentResponse = _AgentResponse;
+  type Message = _Message;
 }

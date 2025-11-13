@@ -849,8 +849,8 @@ pub(crate) mod py {
             slf
         }
 
-        fn __next__(&mut self) -> PyResult<MessageDeltaOutput> {
-            match self.rx.blocking_recv() {
+        fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageDeltaOutput> {
+            match py.detach(|| self.rx.blocking_recv()) {
                 Some(res) => res.map_err(Into::into),
                 None => Err(PyStopIteration::new_err(())),
             }
@@ -900,8 +900,8 @@ pub(crate) mod py {
             slf
         }
 
-        fn __next__(&mut self) -> PyResult<MessageOutput> {
-            match self.rx.blocking_recv() {
+        fn __next__(&mut self, py: Python<'_>) -> PyResult<MessageOutput> {
+            match py.detach(|| self.rx.blocking_recv()) {
                 Some(res) => res.map_err(Into::into),
                 None => Err(PyStopIteration::new_err(())),
             }

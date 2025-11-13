@@ -410,27 +410,37 @@ mod py {
             self.get_tools()
         }
 
-        #[pyo3(name="add_tools", signature = (tools))]
+        #[pyo3(name = "add_tools", signature = (tools))]
         fn add_tools_py(&mut self, tools: Vec<Tool>) {
             self.add_tools(tools);
         }
 
-        #[pyo3(name="add_tool", signature = (tool))]
+        #[pyo3(name = "add_tool", signature = (tool))]
         fn add_tool_py(&mut self, tool: Tool) {
             self.add_tool(tool);
         }
 
-        #[pyo3(name="remove_tools", signature = (tool_names))]
+        #[pyo3(name = "remove_tools", signature = (tool_names))]
         fn remove_tools_py(&mut self, tool_names: Vec<String>) {
             self.remove_tools(tool_names);
         }
 
-        #[pyo3(name="remove_tool", signature = (tool_name))]
+        #[pyo3(name = "remove_tool", signature = (tool_name))]
         fn remove_tool_py(&mut self, tool_name: String) {
             self.remove_tool(tool_name);
         }
 
-        #[pyo3(name="run_delta", signature = (messages, config=None))]
+        #[pyo3(name = "set_knowledge", signature = (knowledge))]
+        fn set_knowledge_py(&mut self, knowledge: &Knowledge) {
+            self.set_knowledge(knowledge.clone());
+        }
+
+        #[pyo3(name = "remove_knowledge")]
+        fn remove_knowledge_py(&mut self) {
+            self.remove_knowledge();
+        }
+
+        #[pyo3(name = "run_delta", signature = (messages, config=None))]
         fn run_delta_py(
             &mut self,
             py: Python<'_>,
@@ -444,7 +454,7 @@ mod py {
             })
         }
 
-        #[pyo3(name="run_delta_sync", signature = (messages, config=None))]
+        #[pyo3(name = "run_delta_sync", signature = (messages, config=None))]
         fn run_delta_sync_py(
             &mut self,
             py: Python<'_>,
@@ -455,7 +465,7 @@ mod py {
             Ok(MessageDeltaOutputSyncIterator { _rt, rx })
         }
 
-        #[pyo3(name="run", signature = (messages, config=None))]
+        #[pyo3(name = "run", signature = (messages, config=None))]
         fn run_py(
             &mut self,
             py: Python<'_>,
@@ -469,7 +479,7 @@ mod py {
             })
         }
 
-        #[pyo3(name="run_sync", signature = (messages, config=None))]
+        #[pyo3(name = "run_sync", signature = (messages, config=None))]
         fn run_sync_py(
             &mut self,
             py: Python<'_>,

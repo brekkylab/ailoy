@@ -20,7 +20,6 @@ from settings import (
     PROMPT_CLEAR_LEVEL,
     PROMPT_INPUT_ABILITY,
     PROMPT_INPUT_NAME,
-    SYSTEM_MESSAGE,
     TITLE_BATTLE_RESULT,
     TITLE_CHECK_INPUT,
     TITLE_STAT,
@@ -65,12 +64,11 @@ def main():
 
     levels = [Level(i, **content) for i, content in enumerate(LEVEL_CONTENTS)]
 
-    rt = ai.Runtime()
-    agent = ai.Agent(rt, ai.LocalModel("Qwen/Qwen3-8B"), system_message=SYSTEM_MESSAGE)
+    model = ai.LangModel.new_local_sync("Qwen/Qwen3-8B")
+    agent = ai.Agent(model)
 
     character = get_character_from_user(_console)
     for i, level in enumerate(levels):
-        agent.clear_messages()
         level.set_agent(agent)
         print(ANNOUNCEMENT_BOSS.format(level_index=i + 1))
         panel = Panel(
@@ -117,9 +115,6 @@ def main():
     )
     print(panel)
     print("[bold][italic]> The End. <[/italic][bold]\n")
-
-    agent.delete()
-    rt.stop()
 
 
 if __name__ == "__main__":

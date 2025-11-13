@@ -31,9 +31,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ),
   onVectorStoreUpdateFinished: (callback: () => void) =>
     ipcRenderer.on("vector-store-update-finished", () => callback()),
-  onAssistantAnswer: (callback: (resp: AgentResponse) => void) => {
-    ipcRenderer.on("assistant-answer", (event, resp: AgentResponse) =>
-      callback(resp)
+  onAssistantAnswer: (callback: (delta: string) => void) => {
+    ipcRenderer.on("assistant-answer", (event, delta: string) =>
+      callback(delta)
     );
   },
+  onAssistantAnswerFinished: (callback: () => void) =>
+    ipcRenderer.on("assistant-answer-finished", () => callback()),
 });
