@@ -432,7 +432,7 @@ mod py {
 
         #[pyo3(name = "set_knowledge", signature = (knowledge))]
         fn set_knowledge_py(&mut self, knowledge: &Knowledge) {
-            self.set_knowledge(knowledge);
+            self.set_knowledge(knowledge.clone());
         }
 
         #[pyo3(name = "remove_knowledge")]
