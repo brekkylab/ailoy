@@ -9,6 +9,7 @@ use url::Url;
 
 use crate::{
     cache::{Cache, Manifest, ManifestDirectory},
+    constants::AILOY_VERSION,
     model::get_accelerator,
 };
 
@@ -69,6 +70,12 @@ enum Commands {
             help = "Remote URL to download model files from. Default to Ailoy cache remote url"
         )]
         cache_remote_url: Option<Url>,
+
+        #[arg(
+            long,
+            help = format!("Target Ailoy version. Default: {}", AILOY_VERSION)
+        )]
+        ailoy_version: Option<String>,
     },
 }
 
@@ -364,6 +371,7 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
             device,
             download_path,
             cache_remote_url,
+            ailoy_version,
         } => {
             let model_name = model_name.clone().replace("/", "--");
             let platform = platform
@@ -377,10 +385,13 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
                 .unwrap_or(cache.remote_url().clone());
             let download_path = download_path.clone().unwrap_or(cache.root().to_path_buf());
 
+            let ailoy_version = ailoy_version.clone().unwrap_or(AILOY_VERSION.to_string());
+
             println!("Downloading {}", model_name);
             println!("- Platform: {}", platform);
             println!("- Device: {}", device);
             println!("- Download path: {:?}", download_path);
+            println!("- Target Ailoy version: {}", ailoy_version);
 
             let model_dirs = vec![
                 model_name.clone(), // common files (e.g. model params, tokenizer config, etc.)
@@ -395,9 +406,8 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
                 let manifest_url =
                     cache_remote_url.join(format!("{}/_manifest.json", model_dir).as_str())?;
                 let manifest_resp = client.get(manifest_url).send().await?;
-                let manifest_data = manifest_resp.bytes().await?.to_vec();
-                let manifest_dir: ManifestDirectory =
-                    serde_json::from_slice(manifest_data.iter().as_slice())?;
+                let manifest_text = manifest_resp.text().await?;
+                let manifest_dir = serde_json::from_str::<ManifestDirectory>(&manifest_text)?;
 
                 let download_dir = format!("{}/{}", download_path.to_str().unwrap(), model_dir);
                 std::fs::create_dir_all(&download_dir).map_err(|e| {
@@ -409,7 +419,8 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
                     std::process::exit(1);
                 })?;
 
-                for (filename, manifest) in manifest_dir.files.iter() {
+                for (filename, manifest) in manifest_dir.get_file_manifests(ailoy_version.as_str())
+                {
                     let remote_key = format!("{}/{}", model_dir, manifest.sha1());
                     let local_key = format!("{}/{}", model_dir, filename);
 
