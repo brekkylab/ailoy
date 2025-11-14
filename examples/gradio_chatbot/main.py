@@ -90,11 +90,11 @@ with gr.Blocks() as demo:
                 current += next_delta
             except Exception:
                 # if merge fails, convert current to Message and start fresh
-                ai_messages.append(current.to_message())
+                ai_messages.append(current.finish())
                 current = next_delta
 
         # add the last accumulated delta
-        ai_messages.append(current.to_message())
+        ai_messages.append(current.finish())
 
         return ai_messages
 
@@ -156,7 +156,7 @@ with gr.Blocks() as demo:
         ):
             delta_acc += resp.delta
             if resp.finish_reason:
-                message = delta_acc.to_message()
+                message = delta_acc.finish()
                 messages.extend(convert_message_ai2gr(message))
                 delta_acc = ai.MessageDelta()
                 yield messages

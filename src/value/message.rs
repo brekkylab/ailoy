@@ -738,9 +738,9 @@ pub(crate) mod py {
             self.clone().accumulate(other.clone()).map_err(Into::into)
         }
 
-        #[pyo3(name = "to_message")]
-        pub fn to_message_py(&self) -> PyResult<Message> {
-            self.clone().to_message().map_err(Into::into)
+        #[pyo3(name = "finish")]
+        pub fn finish_py(&self) -> PyResult<Message> {
+            self.clone().finish().map_err(Into::into)
         }
     }
 

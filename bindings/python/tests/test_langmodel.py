@@ -22,7 +22,7 @@ async def test_simple_chat_delta(model: ai.LangModel):
         print(m.delta.contents)
         msg_d += m.delta
     print(msg_d)
-    print(msg_d.to_message())
+    print(msg_d.finish())
 
 
 async def test_simple_chat(model: ai.LangModel):
@@ -41,4 +41,4 @@ async def test_chat_with_think(model: ai.LangModel):
         print(m.delta.contents)
         msg_d += m.delta
     print(msg_d)
-    print(msg_d.to_message())
+    print(msg_d.finish())
