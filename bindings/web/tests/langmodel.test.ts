@@ -4,8 +4,8 @@ import * as ailoy from "../src/index";
 
 describe("Ailoy LangModel", async () => {
   it("Local(Qwen3-0.6B)", async () => {
-    const model = await ailoy.LangModel.newLocal("Qwen/Qwen3-0.6B", (prog) => {
-      console.log(prog);
+    const model = await ailoy.LangModel.newLocal("Qwen/Qwen3-0.6B", {
+      progressCallback: (prog) => console.log(prog),
     });
     for await (const result of model.inferDelta("What is your name?")) {
       console.log(result);

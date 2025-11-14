@@ -52,8 +52,7 @@ export declare class Agent {
 export declare class EmbeddingModel {
   static newLocal(
     modelName: string,
-    deviceId?: number | undefined | null,
-    progressCallback?: ((arg: CacheProgress) => void) | undefined | null
+    config?: EmbeddingModelConfig | undefined | null
   ): Promise<EmbeddingModel>;
   infer(text: string): Promise<Embedding>;
 }
@@ -73,8 +72,7 @@ export declare class Knowledge {
 export declare class LangModel {
   static newLocal(
     modelName: string,
-    deviceId?: number | undefined | null,
-    progressCallback?: ((arg: CacheProgress) => void) | undefined | null
+    config?: LangModelConfig | undefined | null
   ): Promise<LangModel>;
   static newStreamAPI(
     spec: APISpecification,
@@ -187,6 +185,11 @@ export interface DocumentPolyfill {
 
 export type Embedding = Float32Array;
 
+export interface EmbeddingModelConfig {
+  deviceId?: number;
+  progressCallback?: (arg: CacheProgress) => void;
+}
+
 export declare function finishMessageDelta(delta: MessageDelta): Message;
 
 /** Explains why a language model's streamed generation finished. */
@@ -260,6 +263,11 @@ export interface InferenceConfig {
 
 export interface KnowledgeConfig {
   topK?: number;
+}
+
+export interface LangModelConfig {
+  deviceId?: number;
+  progressCallback?: (arg: CacheProgress) => void;
 }
 
 /**

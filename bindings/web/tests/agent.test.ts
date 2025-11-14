@@ -6,7 +6,9 @@ const modelConfigs = [
   {
     name: "Local",
     createAgent: async () => {
-      const model = await ailoy.LangModel.newLocal("Qwen/Qwen3-0.6B");
+      const model = await ailoy.LangModel.newLocal("Qwen/Qwen3-0.6B", {
+        progressCallback: (prog) => console.log(prog),
+      });
       return new ailoy.Agent(model);
     },
   },
