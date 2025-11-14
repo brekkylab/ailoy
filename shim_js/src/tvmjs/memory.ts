@@ -174,7 +174,8 @@ export class Memory {
    * @returns The object type index.
    */
   loadObjectTypeIndex(objectHandle: Pointer): number {
-    return this.loadI32(objectHandle);
+    // The object layout is [ref_counter (i64), type_index (i32), ...].
+    return this.loadI32(objectHandle + SizeOf.I64);
   }
   /**
    * Load the type key from the type info pointer.
@@ -184,6 +185,39 @@ export class Memory {
   loadTypeInfoTypeKey(typeInfoPtr: Pointer): string {
     const typeKeyPtr = typeInfoPtr + 2 * SizeOf.I32;
     return this.loadByteArrayAsString(typeKeyPtr);
+  }
+  /**
+   * Load small string from value pointer.
+   * @param ffiAnyPtr The pointer to the value.
+   * @returns The small string.
+   */
+  loadSmallStr(ffiAnyPtr: Pointer): string {
+    if (this.buffer != this.memory.buffer) {
+      this.updateViews();
+    }
+    const sizePtr = ffiAnyPtr + SizeOf.I32;
+    const length = this.loadU32(sizePtr);
+    const dataPtr = ffiAnyPtr + SizeOf.I32 + SizeOf.I32;
+    const ret = [];
+    for (let i = 0; i < length; i++) {
+      ret.push(String.fromCharCode(this.viewU8[dataPtr + i]));
+    }
+    return ret.join("");
+  }
+  /**
+   * Load small bytes from value pointer.
+   * @param ffiAnyPtr
+   */
+  loadSmallBytes(ffiAnyPtr: Pointer): Uint8Array {
+    if (this.buffer != this.memory.buffer) {
+      this.updateViews();
+    }
+    const sizePtr = ffiAnyPtr + SizeOf.I32;
+    const length = this.loadU32(sizePtr);
+    const dataPtr = ffiAnyPtr + SizeOf.I32 + SizeOf.I32;
+    const result = new Uint8Array(length);
+    result.set(this.viewU8.slice(dataPtr, dataPtr + length));
+    return result;
   }
   /**
    * Load bytearray as string from ptr.

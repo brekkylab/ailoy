@@ -90,9 +90,10 @@ fn build_native() {
         // manylinux uses libstdc++.so
         println!("cargo:rustc-link-lib=dylib=stdc++");
 
-        // Linux/ELF: ... -Wl,--whole-archive -l:libtvm_runtime.a -Wl,--no-whole-archive
+        // Linux/ELF: ... -Wl,--whole-archive -l:libtvm_runtime.a -l:libtvm_ffi_static.a -Wl,--no-whole-archive
         println!("cargo:rustc-link-arg=-Wl,--whole-archive");
         println!("cargo:rustc-link-arg=-Wl,-l:libtvm_runtime.a");
+        println!("cargo:rustc-link-arg=-Wl,-l:libtvm_ffi_static.a");
         println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
 
         // Link FAISS dependencies
@@ -113,6 +114,11 @@ fn build_native() {
             "cargo:rustc-link-arg=-Wl,-force_load,{}",
             (cmake_install_dir.join("libtvm_runtime.a")).display()
         );
+        // macOS: ... -Wl,-force_load,/abs/path/to/libtvm_ffi_static.a
+        println!(
+            "cargo:rustc-link-arg=-Wl,-force_load,{}",
+            (cmake_install_dir.join("libtvm_ffi_static.a")).display()
+        );
 
         println!("cargo:rustc-link-lib=framework=Metal");
         println!("cargo:rustc-link-lib=framework=Foundation");
@@ -125,6 +131,11 @@ fn build_native() {
             "cargo:rustc-link-arg=/WHOLEARCHIVE:{}",
             (cmake_install_dir.join("tvm_runtime.lib")).display()
         );
+        // Windows (MSVC): ... /WHOLEARCHIVE:tvm_ffi_static.lib
+        println!(
+            "cargo:rustc-link-arg=/WHOLEARCHIVE:{}",
+            (cmake_install_dir.join("tvm_ffi_static.lib")).display()
+        );
 
         // Link FAISS dependencies
         println!("cargo:rustc-link-lib=static=blas");
@@ -133,7 +144,6 @@ fn build_native() {
 
         // Link Vulkan
         println!("cargo:rustc-link-lib=dylib=vulkan-1");
-
     }
 
     if std::env::var_os("CARGO_FEATURE_NODEJS").is_some() {
@@ -143,6 +153,14 @@ fn build_native() {
     println!(
         "cargo:rerun-if-changed={}",
         cmake_source_dir.join("CMakeLists.txt").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        cmake_source_dir.join("src/*").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        cmake_source_dir.join("include/*").display()
     );
 }
 

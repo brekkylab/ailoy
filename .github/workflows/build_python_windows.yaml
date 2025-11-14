@@ -110,6 +110,8 @@ jobs:
 
               Set-Location 'bindings\python'
 
+              powershell ..\..\scripts\Set-Crate-Type.ps1 -Kind cdylib
+
               python -m pip install maturin delvewheel
 
               `$env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors

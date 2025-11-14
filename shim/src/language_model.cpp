@@ -4,6 +4,7 @@
 #include <string>
 
 #include <dlpack/dlpack.h>
+#include <tvm/ffi/container/array.h>
 #include <tvm/ffi/container/shape.h>
 #include <tvm/runtime/int_tuple.h>
 
@@ -162,13 +163,13 @@ void tvm_language_model_t::prefill(const std::vector<uint32_t> &tokens) {
     int32_t length = j - i;
     DLDataType I32 = DLDataType{.code = kDLInt, .bits = 32, .lanes = 1};
 
-    // Input NDArray
-    NDArray input = NDArray::Empty({length}, I32, rt_->get_device());
+    // Input Tensor
+    Tensor input = Tensor::Empty({length}, I32, rt_->get_device());
     input.CopyFromBytes(&*(new_tokens.begin() + i), length * sizeof(int32_t));
 
     // Embedding of the input
-    NDArray embedding = fembed_(input, rt_->get_params()).cast<NDArray>();
-    NDArray embedding_reshaped = embedding.CreateView(
+    Tensor embedding = fembed_(input, rt_->get_params()).cast<Tensor>();
+    Tensor embedding_reshaped = embedding.CreateView(
         tvm::ffi::Shape{1, embedding->shape[0], embedding->shape[1]},
         embedding.DataType());
 
@@ -187,7 +188,7 @@ void tvm_language_model_t::prefill_from_rs(rust::Slice<const uint32_t> tokens) {
   return prefill(converted);
 }
 
-NDArray tvm_language_model_t::decode(uint32_t last_token) {
+Tensor tvm_language_model_t::decode(uint32_t last_token) {
   DLDataType U32 = DLDataType{.code = kDLUInt, .bits = 32, .lanes = 1};
   DLDataType I32 = DLDataType{.code = kDLInt, .bits = 32, .lanes = 1};
   DLDataType F32 = DLDataType{.code = kDLFloat, .bits = 32, .lanes = 1};
@@ -197,14 +198,14 @@ NDArray tvm_language_model_t::decode(uint32_t last_token) {
     throw std::runtime_error("Context length limit exceed");
   }
 
-  // Input NDArray
-  NDArray token_ids = NDArray::Empty({1}, I32, rt_->get_device());
+  // Input Tensor
+  Tensor token_ids = Tensor::Empty({1}, I32, rt_->get_device());
   token_ids.CopyFromBytes(&last_token, sizeof(int32_t));
 
   // Embed
-  NDArray embed = rt_->get_vm_function("embed")(token_ids, rt_->get_params())
-                      .cast<NDArray>();
-  tvm::runtime::NDArray embed_reshaped = embed.CreateView(
+  Tensor embed = rt_->get_vm_function("embed")(token_ids, rt_->get_params())
+                     .cast<Tensor>();
+  Tensor embed_reshaped = embed.CreateView(
       tvm::ffi::Shape{1, 1, embed->shape[1]}, embed.DataType());
 
   // In decode, the sequence length of new tokens are always 1
@@ -218,7 +219,7 @@ NDArray tvm_language_model_t::decode(uint32_t last_token) {
   // Extract logits (1 x seq_len x vocab_size)
   // Note that the seq_len is the ID of the seqence, used for decoding multiple
   // context in parallel. In our cases, it always set to 1.
-  NDArray logits = Downcast<Array<NDArray>>(output)[0];
+  Tensor logits = output.as<tvm::ffi::Array<Tensor>>().value()[0];
   return logits;
 }
 
@@ -229,7 +230,7 @@ DLPackTensor tvm_language_model_t::decode_from_rs(uint32_t last_token) {
   return DLPackTensor{std::move(safe_managed_tensor)};
 }
 
-uint32_t tvm_language_model_t::sample(NDArray logits, double temperature,
+uint32_t tvm_language_model_t::sample(Tensor logits, double temperature,
                                       double top_p) {
   // Sample token from logits
   uint32_t sampled_token =
@@ -247,7 +248,7 @@ uint32_t tvm_language_model_t::sample_from_rs(DLPackTensor logits,
                                               double temperature,
                                               double top_p) {
   auto raw_dlpack_ptr = std::move(logits.inner)->release_tensor();
-  auto v = tvm::runtime::NDArray::FromDLPackVersioned(raw_dlpack_ptr);
+  auto v = Tensor::FromDLPackVersioned(raw_dlpack_ptr);
   return sample(v, temperature, top_p);
 }
 

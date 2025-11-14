@@ -6,7 +6,7 @@
 
 #include <rust/cxx.h>
 #include <tvm/ffi/function.h>
-#include <tvm/runtime/ndarray.h>
+#include <tvm/runtime/tensor.h>
 
 #include "tvm_runtime.hpp"
 
@@ -78,12 +78,12 @@ public:
   void prefill_from_rs(rust::Slice<const uint32_t> tokens);
 
   /** Decode */
-  tvm::runtime::NDArray decode(uint32_t last_token);
+  tvm::runtime::Tensor decode(uint32_t last_token);
 
   DLPackTensor decode_from_rs(uint32_t last_token);
 
   /** Sample */
-  uint32_t sample(tvm::runtime::NDArray, double temperature, double top_p);
+  uint32_t sample(tvm::runtime::Tensor, double temperature, double top_p);
 
   uint32_t sample_from_rs(DLPackTensor logits, double temperature,
                           double top_p);

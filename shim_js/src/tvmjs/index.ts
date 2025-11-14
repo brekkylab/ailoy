@@ -27,7 +27,7 @@ export {
   DLDevice,
   DLDataType,
   Module,
-  NDArray,
+  Tensor,
   TVMArray,
   TVMObject,
   VirtualMachine,

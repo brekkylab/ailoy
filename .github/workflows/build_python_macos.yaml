@@ -42,6 +42,7 @@ jobs:
         working-directory: ${{ github.workspace }}/bindings/python
         run: |
           source .venv/bin/activate
+          ../../scripts/set-crate-type.sh cdylib
           maturin build --out ./dist
         env:
           OpenMP_ROOT: /opt/homebrew/opt/libomp

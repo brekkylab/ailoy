@@ -17,6 +17,7 @@ use super::{
 };
 use crate::{
     cache::{CacheContents, CacheEntry, TryFromCache},
+    constants::AILOY_VERSION,
     utils::MaybeSend,
     value::Value,
 };
@@ -218,7 +219,28 @@ impl Cache {
     async fn get_manifest(&self, entry: &CacheEntry) -> anyhow::Result<Manifest> {
         if !self.manifests.read().await.contains_key(entry.dirname()) {
             let entry_manifest = CacheEntry::new(entry.dirname(), "_manifest.json");
-            let bytes = download(self.get_url(&entry_manifest)).await?;
+            
+            // Try to download manifest from remote first
+            let bytes = match download(self.get_url(&entry_manifest)).await {
+                Ok(data) => {
+                    // Save the manifest to local filesystem
+                    write(&self.path(&entry_manifest), &data, true).await?;
+                    data
+                }
+                Err(_) => {
+                    crate::warn!(
+                        "Failed to download manifest. Try to read from local filesystem..."
+                    );
+                    // Fallback to getting from local filesystem
+                    match read(&self.path(&entry_manifest)).await {
+                        Ok(data) => data,
+                        Err(_) => {
+                            bail!("Failed to get the manifest for this entry.");
+                        }
+                    }
+                }
+            };
+
             let text = std::str::from_utf8(&bytes).context("std::str::from_utf_8 failed")?;
             let value = serde_json::from_str::<ManifestDirectory>(text)
                 .context("`serde_json::from_str` failed")?;
@@ -228,11 +250,13 @@ impl Cache {
                 .insert(entry.dirname().to_string(), value);
         };
         let manifests_lock = self.manifests.read().await;
-        let files = &manifests_lock.get(entry.dirname()).unwrap().files;
-        if files.contains_key(entry.filename()) {
-            Ok(files.get(entry.filename()).unwrap().to_owned())
-        } else {
-            bail!("The file {} not exists in manifest", entry.filename())
+        let manifest_dir = &manifests_lock.get(entry.dirname()).unwrap();
+        match manifest_dir.get_file_manifest(entry.filename(), AILOY_VERSION) {
+            Some(manifest) => Ok(manifest),
+            None => bail!(
+"The file \"{}\" does not exist in manifest",
+                entry.filename()
+            ),
         }
     }
 

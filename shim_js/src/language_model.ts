@@ -1,4 +1,4 @@
-import { Instance, NDArray, PackedFunc, Scalar, TVMObject } from "./tvmjs";
+import { Instance, Tensor, PackedFunc, Scalar, TVMObject } from "./tvmjs";
 import { init as init_tvm_runtime, TVMRuntime } from "./tvm_runtime";
 
 const PAGE_SIZE = 16;
@@ -228,7 +228,7 @@ export class TVMLanguageModel {
       await this.rt.device.sync();
 
       // Embedding of the input: [T, D]
-      const embedding = this.fEmbed(input, this.rt.params) as NDArray;
+      const embedding = this.fEmbed(input, this.rt.params) as Tensor;
 
       // Reshape to [1, T, D]
       const embedding_reshaped = embedding.view([
@@ -267,7 +267,7 @@ export class TVMLanguageModel {
     input.copyFrom(buf);
 
     // Embed
-    const embed = this.fEmbed(input, this.rt.params) as NDArray;
+    const embed = this.fEmbed(input, this.rt.params) as Tensor;
     const embReshaped = embed.view([1, 1, embed.shape[1]]);
 
     // In decode, the sequence length of new tokens are always 1
@@ -281,7 +281,7 @@ export class TVMLanguageModel {
     // Extract logits (1 x seq_len x vocab_size)
     // Note that the seq_len is the ID of the seqence, used for decoding multiple
     // context in parallel. In our cases, it always set to 1.
-    const logits: NDArray = this.tvm.detachFromCurrentScope(out.get(0));
+    const logits: Tensor = this.tvm.detachFromCurrentScope(out.get(0));
     const logitsCPU = this.tvm.detachFromCurrentScope(
       this.tvm.empty(logits.shape, logits.dtype, this.tvm.cpu())
     );
