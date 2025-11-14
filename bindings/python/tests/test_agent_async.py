@@ -189,7 +189,7 @@ async def test_builtin_tool(agent: ai.Agent):
     assert finish_reason == ai.FinishReason.Stop()
     if finish_reason == ai.FinishReason.ToolCall():
         print(results)
-    assert results[0].tool_calls[0].function.name == "execute_command"
+    assert results[0].tool_calls[0].function.name == "terminal"
     print(f"{results[1].contents[0].value=}")
     print(f"{results[2].contents[0].text=}")
 
