@@ -447,34 +447,6 @@ pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
 
                     pb.finish();
                 }
-
-                // for (filename, manifest) in manifest_dir.files.0.iter() {
-                //     let remote_key = format!("{}/{}", model_dir, manifest.sha1());
-                //     let local_key = format!("{}/{}", model_dir, filename);
-
-                //     let file_url = cache_remote_url.join(&remote_key)?;
-                //     let file_resp = client.get(file_url).send().await?.error_for_status()?;
-                //     let total_size = file_resp.content_length().unwrap_or(0);
-
-                //     let pb = ProgressBar::new(total_size);
-                //     pb.set_style(pb_style.clone());
-                //     pb.set_message(local_key.clone());
-
-                //     let mut file =
-                //         tokio::fs::File::create(format!("{}/{}", download_dir, filename)).await?;
-                //     let mut stream = file_resp.bytes_stream();
-                //     let mut downloaded: u64 = 0;
-
-                //     while let Some(chunk_result) = stream.next().await {
-                //         let chunk = chunk_result?;
-                //         file.write_all(&chunk).await?;
-                //         let new = u64::min(downloaded + (chunk.len() as u64), total_size);
-                //         downloaded = new;
-                //         pb.set_position(new);
-                //     }
-
-                //     pb.finish();
-                // }
             }
 
             println!("\n🎉 Download complete!");
