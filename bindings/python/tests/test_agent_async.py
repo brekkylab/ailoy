@@ -103,7 +103,7 @@ async def test_simple_chat(agent: ai.Agent, simple_chat_messages):
         acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            result = acc.to_message()
+            result = acc.finish()
             acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
@@ -165,7 +165,7 @@ async def test_builtin_tool(agent: ai.Agent):
         acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            results.append(acc.to_message())
+            results.append(acc.finish())
             acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
@@ -226,7 +226,7 @@ async def test_python_async_function_tool(agent: ai.Agent):
         acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            results.append(acc.to_message())
+            results.append(acc.finish())
             acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
@@ -333,7 +333,7 @@ async def test_mcp_tools(agent: ai.Agent):
         acc += resp.delta
         if resp.finish_reason is not None:
             finish_reason = resp.finish_reason
-            results.append(acc.to_message())
+            results.append(acc.finish())
             acc = ai.MessageDelta()
         else:
             for content in resp.delta.contents:
