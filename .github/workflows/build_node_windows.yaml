@@ -103,6 +103,8 @@ jobs:
                 exit 1
               }
 
+              powershell ..\..\scripts\Set-Crate-Type.ps1 -Kind cdylib
+
               `$env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
               `$env:LD_LIBRARY_PATH = "C:\vcpkg_installed\x64-windows-static-release\lib;C:\VulkanSDK\Lib"
               npm run build:napi

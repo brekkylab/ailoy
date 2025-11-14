@@ -97,6 +97,14 @@ Ensure you have the following tools installed:
 
 ### Build Process
 
+> [!WARNING]
+> To build binding, you must change the crate type to **`cdylib`** in [Cargo.toml](../../Cargo.toml).
+>
+> ```toml
+> [lib]
+> crate-type = ["dylib"] # <- Change this to ["cdylib"]
+> ```
+
 ```bash
 # Install Node.js dependencies
 npm install
@@ -114,6 +122,7 @@ npm run build:ts
 # Run every build at once
 npm run build
 ```
+
 
 ### Testing
 

@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2024"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["dylib"]
 path = "src/lib.rs"
 
 [[bin]]

@@ -34,6 +34,7 @@ jobs:
       - name: Build binary
         working-directory: ${{ github.workspace }}/bindings/nodejs
         run: |
+          ../../scripts/set-crate-type.sh cdylib
           npm run build:napi
           mv ./src/ailoy_core.darwin-arm64.node ./npm/darwin-arm64/
           node scripts/bundle-dylibs.js ./npm/darwin-arm64/ailoy_core.darwin-arm64.node
