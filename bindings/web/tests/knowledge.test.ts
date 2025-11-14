@@ -5,8 +5,10 @@ import * as ailoy from "../src/";
 describe("Ailoy Knowledge", async () => {
   it.sequential("VectorStoreKnowledge", async () => {
     const vs = await ailoy.VectorStore.newFaiss(1024);
-    const emb = await ailoy.EmbeddingModel.newLocal("BAAI/bge-m3", (prog) =>
-      console.log(prog)
+    const emb = await ailoy.EmbeddingModel.newLocal(
+      "BAAI/bge-m3",
+      undefined,
+      (prog) => console.log(prog)
     );
     const doc0 =
       "BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.";

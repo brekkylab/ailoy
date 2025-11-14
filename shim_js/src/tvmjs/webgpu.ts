@@ -529,7 +529,7 @@ export class WebGPUContext {
     this.device.queue.writeBuffer(
       this.gpuBufferFromPtr(toPtr),
       toOffset,
-      rawBytes.buffer,
+      rawBytes as GPUAllowSharedBufferSource,
       0,
       nbytes
     );
@@ -945,7 +945,7 @@ export class WebGPUContext {
     this.device.queue.writeBuffer(
       this.gpuBufferFromPtr(to),
       toOffset,
-      rawBytes.buffer,
+      rawBytes as GPUAllowSharedBufferSource,
       0,
       nbytes
     );
