@@ -410,11 +410,9 @@ async function toolBehavior(args) {
 }
 
 async function main() {
-  const lm = await ai.LangModel.newLocal(
-    "Qwen/Qwen3-4B",
-    undefined,
-    console.log
-  );
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", {
+    progressCallback: console.log,
+  });
   const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
   const agent = new ai.Agent(lm, tools);
   const query =
@@ -491,11 +489,9 @@ async function toolBehavior(args) {
 }
 
 async function main() {
-  const lm = await ai.LangModel.newLocal(
-    "Qwen/Qwen3-4B",
-    undefined,
-    console.log
-  );
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", {
+    progressCallback: console.log,
+  });
   const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
   const agent = new ai.Agent(lm, tools);
   const query =
@@ -665,11 +661,9 @@ if __name__ == "__main__":
 import * as ai from "ailoy-node";
 
 async function main() {
-  const lm = await ai.LangModel.newLocal(
-    "Qwen/Qwen3-4B",
-    undefined,
-    console.log
-  );
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", {
+    progressCallback: console.log,
+  });
   const agent = new ai.Agent(lm);
 
   const tool = ai.Tool.newBuiltin("terminal");

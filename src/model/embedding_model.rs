@@ -172,21 +172,30 @@ mod node {
     use super::*;
     use crate::ffi::node::cache::{JsCacheProgress, await_cache_result};
 
+    #[derive(Default)]
+    #[napi(object, object_to_js = false)]
+    pub struct EmbeddingModelConfig {
+        pub device_id: Option<i32>,
+        pub progress_callback:
+            Option<ThreadsafeFunction<JsCacheProgress, (), JsCacheProgress, Status, false>>,
+    }
+
     #[napi]
     impl EmbeddingModel {
         #[napi(js_name = "newLocal")]
         pub async fn new_local_js(
             model_name: String,
-            device_id: Option<i32>,
-            progress_callback: Option<
-                ThreadsafeFunction<JsCacheProgress, (), JsCacheProgress, Status, false>,
-            >,
+            config: Option<EmbeddingModelConfig>,
         ) -> napi::Result<EmbeddingModel> {
-            let ctx = get_cache_context(device_id);
-            let inner =
-                await_cache_result::<LocalEmbeddingModel>(model_name, Some(ctx), progress_callback)
-                    .await
-                    .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
+            let config = config.unwrap_or_default();
+            let ctx = get_cache_context(config.device_id);
+            let inner = await_cache_result::<LocalEmbeddingModel>(
+                model_name,
+                Some(ctx),
+                config.progress_callback,
+            )
+            .await
+            .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))?;
             Ok(EmbeddingModel {
                 inner: EmbeddingModelInner::Local(inner),
             })
@@ -203,26 +212,67 @@ mod node {
 
 #[cfg(feature = "wasm")]
 mod wasm {
+    use js_sys::{Function, Reflect};
     use wasm_bindgen::prelude::*;
 
     use super::*;
-    use crate::ffi::web::CacheProgressCallbackFn;
+
+    #[wasm_bindgen]
+    extern "C" {
+        #[derive(Clone)]
+        #[wasm_bindgen(
+            js_name = "EmbeddingModelConfig",
+            typescript_type = "{deviceId?: number; progressCallback?: CacheProgressCallbackFn;}"
+        )]
+        pub type _EmbeddingModelConfig;
+    }
+
+    #[derive(Default)]
+    pub struct EmbeddingModelConfig {
+        pub device_id: Option<i32>,
+        pub progress_callback: Option<Function>,
+    }
+
+    impl TryFrom<_EmbeddingModelConfig> for EmbeddingModelConfig {
+        type Error = js_sys::Error;
+
+        fn try_from(value: _EmbeddingModelConfig) -> Result<Self, Self::Error> {
+            let obj = value.obj;
+            let mut config = Self::default();
+
+            if let Ok(val) = Reflect::get(&obj, &"deviceId".into())
+                && let Some(f64) = val.as_f64()
+            {
+                let i32 = f64 as i32;
+                config.device_id = Some(i32);
+            }
+
+            if let Ok(val) = Reflect::get(&obj, &"progressCallback".into())
+                && val.is_function()
+            {
+                config.progress_callback = Some(val.into());
+            }
+
+            Ok(config)
+        }
+    }
 
     #[wasm_bindgen]
     impl EmbeddingModel {
         #[wasm_bindgen(js_name = "newLocal")]
         pub async fn new_local_js(
             #[wasm_bindgen(js_name = "modelName")] model_name: String,
-            #[wasm_bindgen(js_name = "deviceId")] device_id: Option<i32>,
-            #[wasm_bindgen(js_name = "progressCallback")] progress_callback: Option<
-                CacheProgressCallbackFn,
-            >,
+            config: Option<_EmbeddingModelConfig>,
         ) -> Result<Self, js_sys::Error> {
-            let ctx = get_cache_context(device_id);
+            let config: EmbeddingModelConfig = match config {
+                Some(c) => c.try_into()?,
+                None => EmbeddingModelConfig::default(),
+            };
+            let ctx = get_cache_context(config.device_id);
             let inner = crate::ffi::web::await_cache_result::<LocalEmbeddingModel>(
                 model_name,
                 Some(ctx),
-                progress_callback,
+                config.progress_callback,
             )
             .await
             .map_err(|e| js_sys::Error::new(&e.to_string()))?;

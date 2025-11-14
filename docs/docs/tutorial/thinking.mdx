@@ -118,11 +118,9 @@ main().catch((err) => {
 import * as ai from "ailoy-web";
 
 async function main() {
-  const lm = await ai.LangModel.newLocal(
-    "Qwen/Qwen3-4B",
-    undefined,
-    console.log
-  );
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", {
+    progressCallback: console.log,
+  });
   const agent = new ai.Agent(lm);
 
   const GREEN = "\x1b[32m";

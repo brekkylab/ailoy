@@ -65,8 +65,10 @@ export class EmbeddingModel {
   [Symbol.dispose](): void;
   static newLocal(
     modelName: string,
-    deviceId?: number | null,
-    progressCallback?: (progress: CacheProgress) => void | null
+    config?: {
+      deviceId?: number;
+      progressCallback?: CacheProgressCallbackFn;
+    } | null
   ): Promise<EmbeddingModel>;
   infer(text: string): Promise<Float32Array>;
 }
@@ -89,8 +91,10 @@ export class LangModel {
   [Symbol.dispose](): void;
   static newLocal(
     modelName: string,
-    deviceId?: number | null,
-    progressCallback?: (progress: CacheProgress) => void | null
+    config?: {
+      deviceId?: number;
+      progressCallback?: CacheProgressCallbackFn;
+    } | null
   ): Promise<LangModel>;
   static newStreamAPI(
     spec: APISpecification,
@@ -179,6 +183,8 @@ export interface CacheProgress {
   current: number;
   total: number;
 }
+
+export type CacheProgressCallbackFn = (progress: CacheProgress) => void;
 
 export interface Document {
   id: string;
