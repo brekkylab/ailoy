@@ -41,7 +41,6 @@ async def prepare_knowledge():
     # create an embedding model
     model = await ai.EmbeddingModel.new_local(
         model_name="BAAI/bge-m3",
-        device_id=None,
         progress_callback=print,  
     )
     # create a vector store with dimension 1024
