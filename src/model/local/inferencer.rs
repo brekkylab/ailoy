@@ -70,14 +70,14 @@ pub fn claim_files(
     key: impl AsRef<str>,
 ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
     let dirname = vec![key.as_ref().replace("/", "--")].join("--");
-    let elem = CacheEntry::new(&dirname, "ndarray-cache.json");
+    let elem = CacheEntry::new(&dirname, "tensor-cache.json");
     Box::pin(async move {
-        let ndarray_cache_bytes = cache.get(&elem).await?;
-        let ndarray_cache_str =
-            std::str::from_utf8(&ndarray_cache_bytes).context("Internal error")?;
-        let ndarray_cache: serde_json::Value =
-            serde_json::from_str(ndarray_cache_str).context("JSON deserialization failed")?;
-        let mut rv = ndarray_cache
+        let tensor_cache_bytes = cache.get(&elem).await?;
+        let tensor_cache_str =
+            std::str::from_utf8(&tensor_cache_bytes).context("Internal error")?;
+        let tensor_cache: serde_json::Value =
+            serde_json::from_str(tensor_cache_str).context("JSON deserialization failed")?;
+        let mut rv = tensor_cache
             .as_object()
             .unwrap()
             .get("records")
@@ -97,7 +97,7 @@ pub fn claim_files(
                 )
             })
             .collect::<Vec<_>>();
-        rv.push(CacheEntry::new(&dirname, "ndarray-cache.json"));
+        rv.push(CacheEntry::new(&dirname, "tensor-cache.json"));
         rv.push(CacheEntry::new(
             format!(
                 "{}--{}--{}",

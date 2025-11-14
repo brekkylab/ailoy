@@ -24,7 +24,7 @@ export async function getGPUDevice(
   return gpuDetectOutput.device;
 }
 
-export interface NDArrayCacheEntry {
+export interface TensorCacheEntry {
   name: string;
   shape: Array<number>;
   dtype: string;
@@ -33,11 +33,11 @@ export interface NDArrayCacheEntry {
   nbytes: number;
 }
 
-export interface NDArrayShardEntry {
+export interface TensorShardEntry {
   dataPath: string;
   format: "raw-shard";
   nbytes: number;
-  records: Array<NDArrayCacheEntry>;
+  records: Array<TensorCacheEntry>;
 }
 
 export class TVMRuntime {
@@ -104,12 +104,22 @@ export async function init(
 
   tvm.beginScope();
 
-  // Load ndarray cache
-  const ndarray_cache = JSON.parse(
-    new TextDecoder().decode(cache_contents["ndarray-cache.json"])
-  );
-  delete cache_contents["ndarray-cache.json"];
-  const entries: Array<NDArrayShardEntry> = ndarray_cache.records;
+  // Load tensor cache
+  let tensor_cache_json: ArrayBuffer;
+  if (cache_contents["tensor-cache.json"] !== undefined) {
+    tensor_cache_json = cache_contents["tensor-cache.json"];
+    delete cache_contents["tensor-cache.json"];
+  } else if (cache_contents["ndarray-cache.json"] !== undefined) {
+    // Fallback to ndarray-cache.json for backward compatibility
+    tensor_cache_json = cache_contents["ndarray-cache.json"];
+    delete cache_contents["ndarray-cache.json"];
+  } else {
+    throw new Error(
+      "Cannot find either tensor-cache.json or ndarray-cache.json in cache directory"
+    );
+  }
+  const tensor_cache = JSON.parse(new TextDecoder().decode(tensor_cache_json));
+  const entries: Array<TensorShardEntry> = tensor_cache.records;
 
   // Register parameters
   for (const entry of entries) {
@@ -120,7 +130,7 @@ export async function init(
         record.byteOffset,
         record.byteOffset + record.nbytes
       );
-      await tvm.ndarrayCacheUpdateBuffer(device, record, bufferPart);
+      await tvm.tensorCacheUpdateBuffer(device, record, bufferPart);
     }
   }
 

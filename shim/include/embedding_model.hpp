@@ -6,7 +6,7 @@
 
 #include <rust/cxx.h>
 #include <tvm/ffi/function.h>
-#include <tvm/runtime/ndarray.h>
+#include <tvm/runtime/tensor.h>
 
 #include "tvm_runtime.hpp"
 
@@ -21,10 +21,10 @@ class tvm_embedding_model_t {
 public:
   tvm_embedding_model_t(CacheContents &contents, DLDevice device);
 
-  void extract_ndarray_part(const tvm::runtime::NDArray &from,
-                            tvm::runtime::NDArray &to);
+  void extract_tensor_part(const tvm::runtime::Tensor &from,
+                           tvm::runtime::Tensor &to);
 
-  const tvm::runtime::NDArray infer(std::vector<int> tokens);
+  const tvm::runtime::Tensor infer(std::vector<int> tokens);
 
   DLPackTensor infer_from_rs(rust::Slice<const uint32_t> tokens);
 
