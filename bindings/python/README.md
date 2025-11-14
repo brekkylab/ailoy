@@ -75,6 +75,14 @@ if __name__ == "__main__":
 - LAPACK (required to build Faiss)
 - Vulkan SDK (on Windows and Linux)
 
+> [!WARNING]
+> To build binding, you must change the crate type to **`cdylib`** in [Cargo.toml](../../Cargo.toml).
+>
+> ```toml
+> [lib]
+> crate-type = ["dylib"] # <- Change this to ["cdylib"]
+> ```
+
 
 ### Setup development environment
 
