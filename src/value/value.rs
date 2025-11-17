@@ -142,6 +142,20 @@ impl Value {
         }
     }
 
+    pub fn as_float(&self) -> Option<f64> {
+        match self {
+            Value::Float(f) => Some((*f).into()),
+            _ => None,
+        }
+    }
+
+    pub fn as_ordered_float(&self) -> Option<OrderedFloat<f64>> {
+        match self {
+            Value::Float(f) => Some(*f as OrderedFloat<f64>),
+            _ => None,
+        }
+    }
+
     pub fn is_string(&self) -> bool {
         match self {
             Value::String(_) => true,
