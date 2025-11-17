@@ -172,11 +172,15 @@ impl KnowledgeBehavior for Knowledge {
 
 #[cfg(feature = "python")]
 mod py {
-    use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyType};
+    use pyo3::{
+        exceptions::PyRuntimeError,
+        prelude::*,
+        types::{PyDict, PyType},
+    };
     use pyo3_stub_gen_derive::*;
 
     use super::*;
-    use crate::tool::Tool;
+    use crate::{ffi::py::base::python_to_value, tool::Tool};
 
     #[gen_stub_pymethods]
     #[pymethods]
@@ -185,6 +189,20 @@ mod py {
         #[pyo3(signature = (top_k=None))]
         fn __new__(top_k: Option<u32>) -> Self {
             Self { top_k }
+        }
+
+        #[classmethod]
+        #[pyo3(signature = (config))]
+        pub fn from_dict(
+            _cls: &Bound<'_, PyType>,
+            config: &Bound<'_, PyDict>,
+        ) -> PyResult<KnowledgeConfig> {
+            let top_k = config
+                .get_item("top_k")?
+                .and_then(|top_k| python_to_value(&top_k).ok())
+                .and_then(|top_k| top_k.as_unsigned())
+                .map(|top_k| top_k as u32);
+            Ok(KnowledgeConfig { top_k })
         }
     }
 

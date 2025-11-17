@@ -305,16 +305,22 @@ mod py {
     use std::sync::Arc;
 
     use futures::lock::Mutex;
-    use pyo3::{Python, pymethods};
+    use pyo3::{
+        Bound, PyResult, Python, pymethods,
+        types::{PyDict, PyDictMethods, PyType},
+    };
     use pyo3_stub_gen_derive::gen_stub_pymethods;
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::value::{
-        Messages,
-        py::{
-            MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
-            MessageOutputSyncIterator,
+    use crate::{
+        knowledge,
+        value::{
+            Messages,
+            py::{
+                MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
+                MessageOutputSyncIterator,
+            },
         },
     };
 
@@ -380,6 +386,35 @@ mod py {
                 inference,
                 knowledge,
             }
+        }
+
+        #[classmethod]
+        #[pyo3(signature = (config))]
+        pub fn from_dict(
+            _cls: &Bound<'_, PyType>,
+            py: Python<'_>,
+            config: &Bound<'_, PyDict>,
+        ) -> PyResult<AgentConfig> {
+            let inference_config_cls = py.get_type::<InferenceConfig>();
+            let knowledge_config_cls = py.get_type::<KnowledgeConfig>();
+
+            // get InferenceConfig if valid, else None
+            let inference = config.get_item("inference")?.and_then(|item| {
+                item.cast::<PyDict>()
+                    .ok()
+                    .and_then(|dict| InferenceConfig::from_dict(&inference_config_cls, &dict).ok())
+            });
+            // get KnowledgeConfig if valid, else None
+            let knowledge = config.get_item("knowledge")?.and_then(|item| {
+                item.cast::<PyDict>()
+                    .ok()
+                    .and_then(|dict| KnowledgeConfig::from_dict(&knowledge_config_cls, &dict).ok())
+            });
+
+            Ok(Self {
+                inference,
+                knowledge,
+            })
         }
     }
 
