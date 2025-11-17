@@ -185,6 +185,8 @@ export interface DocumentPolyfill {
   queryMessageTemplate?: string;
 }
 
+export type DocumentPolyfillKind = "Qwen3";
+
 export type Embedding = Float32Array;
 
 export declare function finishMessageDelta(delta: MessageDelta): Message;
@@ -195,6 +197,10 @@ export type FinishReason =
   | { type: "length" }
   | { type: "tool_call" }
   | { type: "refusal"; reason: string };
+
+export declare function getDocumentPolyfill(
+  kind: DocumentPolyfillKind
+): DocumentPolyfill;
 
 export declare function getQwen3Polyfill(): DocumentPolyfill;
 

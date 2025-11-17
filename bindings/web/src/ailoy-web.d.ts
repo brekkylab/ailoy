@@ -194,6 +194,8 @@ export interface DocumentPolyfill {
   queryMessageTemplate?: string;
 }
 
+export type DocumentPolyfillKind = "Qwen3";
+
 type Embedding = Float32Array;
 
 /**
@@ -654,6 +656,10 @@ export function accumulateMessageDelta(
 ): MessageDelta;
 
 export function finishMessageDelta(delta: MessageDelta): Message;
+
+export function getDocumentPolyfill(
+  kind: DocumentPolyfillKind
+): DocumentPolyfill;
 
 export function getQwen3Polyfill(): DocumentPolyfill;
 

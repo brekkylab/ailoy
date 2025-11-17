@@ -557,7 +557,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Agent, EmbeddingModel, Knowledge, LangModel, MCPClient, MessageDeltaOutputIterator, MessageOutputIterator, Tool, VectorStore, accumulateMessageDelta, APISpecification, BuiltinToolKind, finishMessageDelta, getQwen3Polyfill, imageFromBase64, imageFromBytes, imageFromUrl, PartImageColorspace, Role, ThinkEffort } = nativeBinding
+const { Agent, EmbeddingModel, Knowledge, LangModel, MCPClient, MessageDeltaOutputIterator, MessageOutputIterator, Tool, VectorStore, accumulateMessageDelta, APISpecification, BuiltinToolKind, DocumentPolyfillKind, finishMessageDelta, getDocumentPolyfill, getQwen3Polyfill, imageFromBase64, imageFromBytes, imageFromUrl, PartImageColorspace, Role, ThinkEffort } = nativeBinding
 export { Agent }
 export { EmbeddingModel }
 export { Knowledge }
@@ -570,7 +570,9 @@ export { VectorStore }
 export { accumulateMessageDelta }
 export { APISpecification }
 export { BuiltinToolKind }
+export { DocumentPolyfillKind }
 export { finishMessageDelta }
+export { getDocumentPolyfill }
 export { getQwen3Polyfill }
 export { imageFromBase64 }
 export { imageFromBytes }
