@@ -377,15 +377,10 @@ async def test_knowledge_with_polyfill(agent: ai.Agent):
     knowledge = ai.Knowledge.new_vector_store(vs, emb)
     agent.set_knowledge(knowledge)
 
-    document_polyfill = ai.DocumentPolyfill.get("Qwen3")
     acc = ai.MessageDelta()
     async for resp in agent.run_delta(
         "What is Ailoy?",
-        config=ai.AgentConfig(
-            inference=ai.InferenceConfig(
-                document_polyfill=document_polyfill,
-            )
-        ),
+        config=ai.AgentConfig.from_dict({"inference": {"document_polyfill": "Qwen3"}}),
     ):
         acc += resp.delta
         if resp.finish_reason is not None:
