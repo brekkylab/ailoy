@@ -41,7 +41,6 @@ async def prepare_knowledge():
     # create an embedding model
     model = await ai.EmbeddingModel.new_local(
         model_name="BAAI/bge-m3",
-        device_id=None,
         progress_callback=print,  
     )
     # create a vector store with dimension 1024
@@ -58,8 +57,9 @@ async function prepare_knowledge() {
   // create an embedding model
   const model = await ai.EmbeddingModel.newLocal(
     "BAAI/bge-m3", // modelName
-    undefined,     // deviceId?
-    console.log    // progressCallback?
+    {
+      progressCallback: console.log,
+    }
   );
   // create a vector store with dimension 1024
   const vs = await ai.VectorStore.newFaiss(1024);
@@ -77,8 +77,9 @@ async function prepare_knowledge() {
   // create an embedding model
   const model = await ai.EmbeddingModel.newLocal(
     "BAAI/bge-m3", // modelName
-    undefined,     // deviceId?
-    console.log    // progressCallback?
+    {
+      progressCallback: console.log,
+    }
   );
   // create a vector store with dimension 1024
   const vs = await ai.VectorStore.newFaiss(1024);
