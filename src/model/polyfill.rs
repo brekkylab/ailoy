@@ -212,8 +212,15 @@ mod py {
     #[pymethods]
     impl DocumentPolyfill {
         #[new]
-        fn __new__() -> Self {
-            Self::default()
+        #[pyo3(signature=(system_message_template=None, query_message_template=None))]
+        fn __new__(
+            system_message_template: Option<String>,
+            query_message_template: Option<String>,
+        ) -> Self {
+            Self {
+                system_message_template,
+                query_message_template,
+            }
         }
 
         #[classmethod]
