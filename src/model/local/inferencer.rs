@@ -70,9 +70,27 @@ pub fn claim_files(
     key: impl AsRef<str>,
 ) -> BoxFuture<'static, anyhow::Result<CacheClaim>> {
     let dirname = vec![key.as_ref().replace("/", "--")].join("--");
-    let elem = CacheEntry::new(&dirname, "tensor-cache.json");
     Box::pin(async move {
-        let tensor_cache_bytes = cache.get(&elem).await?;
+        let mut tensor_cache_json_filename = "tensor-cache.json";
+        let tensor_cache_bytes = match cache
+            .get(&CacheEntry::new(&dirname, tensor_cache_json_filename))
+            .await
+        {
+            Ok(data) => data,
+            Err(_) => {
+                tensor_cache_json_filename = "ndarray-cache.json";
+                match cache
+                    .get(&CacheEntry::new(&dirname, tensor_cache_json_filename))
+                    .await
+                {
+                    Ok(data) => data,
+                    Err(_) => {
+                        anyhow::bail!("Cannot find either tensor-cache.json or ndarray-cache.json");
+                    }
+                }
+            }
+        };
+
         let tensor_cache_str =
             std::str::from_utf8(&tensor_cache_bytes).context("Internal error")?;
         let tensor_cache: serde_json::Value =
@@ -97,7 +115,7 @@ pub fn claim_files(
                 )
             })
             .collect::<Vec<_>>();
-        rv.push(CacheEntry::new(&dirname, "tensor-cache.json"));
+        rv.push(CacheEntry::new(&dirname, tensor_cache_json_filename));
         rv.push(CacheEntry::new(
             format!(
                 "{}--{}--{}",

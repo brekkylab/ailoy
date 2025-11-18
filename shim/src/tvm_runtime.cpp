@@ -62,27 +62,33 @@ tvm_runtime_t::tvm_runtime_t(CacheContents &contents, const DLDevice &device) {
   };
 
   // Load module
-  auto executable = tvm::ffi::Module::LoadFromFile(get_path(rt_lib_name()));
-  if (!executable.defined())
-    throw std::runtime_error("Failed to load system");
 
-  // Load vm
-  tvm::ffi::Optional<tvm::ffi::Function> fload_exec =
-      executable->GetFunction("vm_load_executable");
-  if (!fload_exec.defined())
-    throw std::runtime_error("Failed to get executable loader");
-  auto vm = fload_exec.value()().cast<tvm::ffi::Module>();
-  vm->GetFunction("vm_initialization")
-      .value()(static_cast<int>(device.device_type), device.device_id,
-               static_cast<int>(memory::AllocatorType::kPooled),
-               static_cast<int>(kDLCPU), 0,
-               static_cast<int>(memory::AllocatorType::kPooled));
-  vm_ = vm;
+  try {
+    std::string lib_path = get_path(rt_lib_name());
+    auto executable = tvm::ffi::Module::LoadFromFile(lib_path);
+    if (!executable.defined())
+      throw std::runtime_error("Failed to load system");
+
+    // Load vm
+    tvm::ffi::Optional<tvm::ffi::Function> fload_exec =
+        executable->GetFunction("vm_load_executable");
+    if (!fload_exec.defined())
+      throw std::runtime_error("Failed to get executable loader");
+    auto vm = fload_exec.value()().cast<tvm::ffi::Module>();
+    vm->GetFunction("vm_initialization")
+        .value()(static_cast<int>(device.device_type), device.device_id,
+                 static_cast<int>(memory::AllocatorType::kPooled),
+                 static_cast<int>(kDLCPU), 0,
+                 static_cast<int>(memory::AllocatorType::kPooled));
+    vm_ = vm;
+  } catch (const tvm::ffi::Error &err) {
+    throw std::runtime_error("Failed to load VM executable: " + err.message());
+  }
 
   // Load model metadata
   std::string json_str = "";
   tvm::ffi::Optional<tvm::ffi::Function> fmetadata =
-      vm->GetFunction("_metadata");
+      vm_.value()->GetFunction("_metadata");
   ICHECK(fmetadata.defined())
       << "ValueError: _metadata function not found in module";
   json_str = fmetadata.value()().cast<tvm::ffi::String>();
