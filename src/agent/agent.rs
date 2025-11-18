@@ -313,14 +313,11 @@ mod py {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::{
-        knowledge,
-        value::{
-            Messages,
-            py::{
-                MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
-                MessageOutputSyncIterator,
-            },
+    use crate::value::{
+        Messages,
+        py::{
+            MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
+            MessageOutputSyncIterator,
         },
     };
 
