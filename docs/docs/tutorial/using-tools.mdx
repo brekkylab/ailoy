@@ -337,7 +337,7 @@ def tool_behavior(base, symbols):
 
 
 async def main():
-    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B", None, progress_callback=print)
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B", progress_callback=print)
     tools = [ai.Tool.new_py_function(tool_behavior, tool_desc)]
     agent = ai.Agent(lm, tools)
     query = "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take? Get the currency data if you need."
@@ -410,11 +410,9 @@ async function toolBehavior(args) {
 }
 
 async function main() {
-  const lm = await ai.LangModel.newLocal(
-    "Qwen/Qwen3-4B",
-    undefined,
-    console.log
-  );
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", {
+    progressCallback: console.log,
+  });
   const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
   const agent = new ai.Agent(lm, tools);
   const query =
@@ -491,11 +489,9 @@ async function toolBehavior(args) {
 }
 
 async function main() {
-  const lm = await ai.LangModel.newLocal(
-    "Qwen/Qwen3-4B",
-    undefined,
-    console.log
-  );
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", {
+    progressCallback: console.log,
+  });
   const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
   const agent = new ai.Agent(lm, tools);
   const query =
@@ -639,7 +635,7 @@ import ailoy as ai
 
 
 async def main():
-    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B", None, progress_callback=print)
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B", progress_callback=print)
     agent = ai.Agent(lm)
 
     tool = ai.Tool.new_builtin("terminal")
@@ -665,11 +661,9 @@ if __name__ == "__main__":
 import * as ai from "ailoy-node";
 
 async function main() {
-  const lm = await ai.LangModel.newLocal(
-    "Qwen/Qwen3-4B",
-    undefined,
-    console.log
-  );
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", {
+    progressCallback: console.log,
+  });
   const agent = new ai.Agent(lm);
 
   const tool = ai.Tool.newBuiltin("terminal");

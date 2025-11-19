@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use futures::StreamExt;
+use js_sys::Function;
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 use wasm_bindgen::prelude::*;
@@ -14,16 +15,17 @@ pub struct CacheProgress {
     pub total: usize,
 }
 
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(typescript_type = "(progress: CacheProgress) => void")]
-    pub type CacheProgressCallbackFn;
-}
+#[wasm_bindgen(typescript_custom_section)]
+const TS_APPEND_CONTENT: &'static str = dedent::dedent!(
+    r#"
+    export type CacheProgressCallbackFn = (progress: CacheProgress) => void;
+    "#
+);
 
 pub async fn await_cache_result<T>(
     cache_key: impl Into<String>,
     ctx: Option<std::collections::HashMap<String, crate::value::Value>>,
-    progress_callback: Option<CacheProgressCallbackFn>,
+    progress_callback: Option<Function>,
 ) -> Result<T>
 where
     T: TryFromCache + std::fmt::Debug + 'static,
@@ -44,7 +46,6 @@ where
                 current: progress.current_task,
                 total: progress.total_task,
             };
-            let callback: &js_sys::Function = callback.unchecked_ref();
             callback
                 .call1(&JsValue::NULL, &js_progress.into())
                 .map_err(|_| anyhow!("Failed to call progress callback"))?;

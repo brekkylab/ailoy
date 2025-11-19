@@ -43,7 +43,7 @@ async def main():
             async for resp in agent.run_delta(messages):
                 acc += resp.delta
                 if resp.finish_reason:
-                    message = acc.to_message()
+                    message = acc.finish()
                     acc = ai.MessageDelta()
                     messages.append(message)
 
