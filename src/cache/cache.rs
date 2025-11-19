@@ -163,7 +163,7 @@ impl Cache {
             }
         };
         let remote_url = {
-            let default = Url::parse("https://pub-9bacbd05eeb6446c9bf8285fe54c9f9e.r2.dev");
+            let default = Url::parse("https://cache.ailoy.co");
             if let Ok(env_value) = var("AILOY_CACHE_REMOTE_URL") {
                 if let Ok(value) = Url::parse(&env_value) {
                     value
@@ -219,7 +219,7 @@ impl Cache {
     async fn get_manifest(&self, entry: &CacheEntry) -> anyhow::Result<Manifest> {
         if !self.manifests.read().await.contains_key(entry.dirname()) {
             let entry_manifest = CacheEntry::new(entry.dirname(), "_manifest.json");
-            
+
             // Try to download manifest from remote first
             let bytes = match download(self.get_url(&entry_manifest)).await {
                 Ok(data) => {
@@ -254,7 +254,7 @@ impl Cache {
         match manifest_dir.get_file_manifest(entry.filename(), AILOY_VERSION) {
             Some(manifest) => Ok(manifest),
             None => bail!(
-"The file \"{}\" does not exist in manifest",
+                "The file \"{}\" does not exist in manifest",
                 entry.filename()
             ),
         }
