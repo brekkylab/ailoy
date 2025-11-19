@@ -233,7 +233,7 @@ async def main(knowledge: ai.Knowledge):
     agent = ai.Agent(
         await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
         knowledge=knowledge,
-  )
+    )
 
 if __name__ == "__main__":
     knowledge = asyncio.run(prepare_knowledge())
@@ -316,12 +316,12 @@ async def main(knowledge: ai.Knowledge):
         await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
         knowledge=knowledge,
     )
-    config = ai.AgentConfig(
+    config = ai.AgentConfig.from_dict({
         # need polyfill here because Qwen3 doesn't natively support 'documents'
-        inference=ai.InferenceConfig(document_polyfill=ai.get_qwen3_polyfill())
+        "inference": {"document_polyfill": "Qwen3"},
         # set this to use `top_k` documents with high similarity. default `top_k`=1
-        knowledge=ai.KnowledgeConfig(top_k=1)
-    )
+        "knowledge": {"top_k": 1},
+    })
     async for resp in agent.run("Why did the boy stop fishing with the old man?", config):
         print(resp.message.contents[0].text)
 
@@ -343,7 +343,7 @@ async function main(knowledge: ai.Knowledge) {
   );
   const config = { 
     // need polyfill here because Qwen3 doesn't natively support 'documents'
-    inference: { documentPolyfill: ai.getQwen3Polyfill() },
+    inference: { documentPolyfill: ai.getDocumentPolyfill("Qwen3") },
     // set this to use `topK` documents with high similarity. default `topK`=1
     knowledge: { topK: 1 }
   };
@@ -376,7 +376,7 @@ async function main(knowledge: ai.Knowledge) {
   );
   const config = { 
     // need polyfill here because Qwen3 doesn't natively support 'documents'
-    inference: { documentPolyfill: ai.getQwen3Polyfill() },
+    inference: { documentPolyfill: ai.getDocumentPolyfill("Qwen3") },
     // set this to use `topK` documents with high similarity. default `topK`=1
     knowledge: { topK: 1 }
   };
@@ -459,9 +459,7 @@ async def main(knowledge: ai.Knowledge):
         await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
         knowledge=knowledge,
     )
-    config = ai.AgentConfig(
-        inference=ai.InferenceConfig(document_polyfill=ai.get_qwen3_polyfill())
-    )
+    config = ai.AgentConfig.from_dict({"inference": {"document_polyfill": "Qwen3"}})
     async for resp in agent.run("Why did the boy stop fishing with the old man?", config):
         print(resp.message.contents[0].text)
 
@@ -528,7 +526,7 @@ async function main(knowledge: ai.Knowledge) {
     knowledge
   );
 
-  const config = { inference: { documentPolyfill: ai.getQwen3Polyfill() } };
+  const config = { inference: { documentPolyfill: ai.getDocumentPolyfill("Qwen3") } };
   for await (const resp of agent.run(
     "Why did the boy stop fishing with the old man?",
     config
@@ -602,7 +600,7 @@ async function main(knowledge: ai.Knowledge) {
     knowledge
   );
 
-  const config = { inference: { documentPolyfill: ai.getQwen3Polyfill() } };
+  const config = { inference: { documentPolyfill: ai.getDocumentPolyfill("Qwen3") } };
   for await (const resp of agent.run(
     "Why did the boy stop fishing with the old man?",
     config

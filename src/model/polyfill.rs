@@ -182,7 +182,7 @@ pub fn get_qwen3_polyfill() -> DocumentPolyfill {
         system_message_template: Some(dedent!(r#"
             {{- text }}
             # Knowledges
-            After the user’s question, a list of documents retrieved from the knowledge base may appear. Try to answer the user’s question based on the provided knowledges.
+            After the user's question, a list of documents retrieved from the knowledge base may appear. Try to answer the user’s question based on the provided knowledges.
             "#
         ).to_owned()),
         query_message_template: Some(dedent!(r#"

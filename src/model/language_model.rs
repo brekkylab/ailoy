@@ -269,13 +269,19 @@ impl LangModelInference for LangModel {
 #[cfg(feature = "python")]
 mod py {
     use futures::lock::Mutex;
-    use pyo3::{Bound, Py, PyAny, PyResult, Python, pymethods, types::PyType};
+    use pyo3::{
+        Bound, Py, PyAny, PyResult, Python, pymethods,
+        types::{PyDict, PyDictMethods, PyType},
+    };
     use pyo3_stub_gen_derive::*;
     use tokio::sync::mpsc;
 
     use super::*;
     use crate::{
-        ffi::py::{base::await_future, cache_progress::await_cache_result},
+        ffi::py::{
+            base::{await_future, python_to_value},
+            cache_progress::await_cache_result,
+        },
         model::get_cache_context,
         value::{
             Messages,
@@ -509,8 +515,58 @@ mod py {
             }
         }
 
-        // TODO: initialize from {"think_effort": "enable", ...}
-        // fn from_dict(d: Py<PyDict>)
+        #[classmethod]
+        #[pyo3(signature = (config))]
+        pub fn from_dict(
+            _cls: &Bound<'_, PyType>,
+            config: &Bound<'_, PyDict>,
+        ) -> PyResult<InferenceConfig> {
+            use std::str::FromStr;
+
+            use crate::model::DocumentPolyfillKind;
+
+            let document_polyfill = config
+                .get_item("document_polyfill")?
+                .and_then(|kind| python_to_value(&kind).ok())
+                .and_then(|kind| {
+                    DocumentPolyfillKind::from_str(kind.as_str().unwrap_or_default()).ok()
+                })
+                .and_then(|kind| DocumentPolyfill::get(kind).ok());
+            let think_effort = config
+                .get_item("think_effort")?
+                .and_then(|think_effort| python_to_value(&think_effort).ok())
+                .and_then(|think_effort| {
+                    ThinkEffort::from_str(think_effort.as_str().unwrap_or_default()).ok()
+                });
+            let temperature = config
+                .get_item("temperature")?
+                .and_then(|temperature| python_to_value(&temperature).ok())
+                .and_then(|temperature| temperature.as_float());
+            let top_p = config
+                .get_item("top_p")?
+                .and_then(|top_p| python_to_value(&top_p).ok())
+                .and_then(|top_p| top_p.as_float());
+            let max_tokens = config
+                .get_item("max_tokens")?
+                .and_then(|max_tokens| python_to_value(&max_tokens).ok())
+                .and_then(|max_tokens| max_tokens.as_integer())
+                .map(|max_tokens| max_tokens as i32);
+            // Grammar is not yet supported, so configuring grammar is disabled for now.
+            // let grammar = config
+            //     .get_item("grammar")?
+            //     .and_then(|grammar| python_to_value(&grammar).ok())
+            //     .and_then(|grammar| {
+            //         serde_json::from_str::<Grammar>(grammar.as_str().unwrap_or("{}")).ok()
+            //     });
+            Ok(InferenceConfig {
+                document_polyfill,
+                think_effort,
+                temperature,
+                top_p,
+                max_tokens,
+                grammar: Some(Grammar::default()),
+            })
+        }
     }
 }
 
