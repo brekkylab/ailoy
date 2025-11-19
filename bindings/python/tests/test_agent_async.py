@@ -363,3 +363,37 @@ async def test_mcp_tools(agent: ai.Agent):
     print(f"{results[2].contents[0].text=}")
 
     agent.remove_tools([t.get_description().name for t in tools])
+
+
+@pytest.mark.parametrize("agent", ["qwen3"], indirect=True)
+async def test_knowledge_with_polyfill(agent: ai.Agent):
+    vs = ai.VectorStore.new_faiss(1024)
+    emb = await ai.EmbeddingModel.new_local("BAAI/bge-m3")
+
+    doc0 = "Ailoy is an awesome AI agent framework supporting Rust, Python, Nodejs and WebAssembly."
+    emb0 = await emb.infer(doc0)
+    vs.add_vector(ai.VectorStoreAddInput(embedding=emb0, document=doc0))
+
+    knowledge = ai.Knowledge.new_vector_store(vs, emb)
+    agent.set_knowledge(knowledge)
+
+    document_polyfill = ai.DocumentPolyfill.get("Qwen3")
+    acc = ai.MessageDelta()
+    async for resp in agent.run_delta(
+        "What is Ailoy?",
+        config=ai.AgentConfig(
+            inference=ai.InferenceConfig(
+                document_polyfill=document_polyfill,
+            )
+        ),
+    ):
+        acc += resp.delta
+        if resp.finish_reason is not None:
+            acc = ai.MessageDelta()
+        else:
+            for content in resp.delta.contents:
+                if isinstance(content, ai.PartDelta.Text):
+                    print(content.text, end="")
+    print()
+
+    agent.remove_knowledge()

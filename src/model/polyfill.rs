@@ -1,7 +1,18 @@
 use dedent::dedent;
 use serde::{Deserialize, Serialize};
+use strum::EnumString;
+use strum_macros::Display;
 
 use crate::value::{Document, Message, Part, Role};
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Display, EnumString)]
+#[cfg_attr(feature = "python", derive(ailoy_macros::PyStringEnum))]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
+pub enum DocumentPolyfillKind {
+    Qwen3,
+}
 
 /// Provides a polyfill for LLMs that do not natively support the Document feature.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -22,6 +33,12 @@ pub struct DocumentPolyfill {
 }
 
 impl DocumentPolyfill {
+    pub fn get(kind: DocumentPolyfillKind) -> anyhow::Result<Self> {
+        match kind {
+            DocumentPolyfillKind::Qwen3 => Ok(get_qwen3_polyfill()),
+        }
+    }
+
     pub fn polyfill(
         &self,
         mut msgs: Vec<Message>,
@@ -186,17 +203,60 @@ pub fn get_qwen3_polyfill() -> DocumentPolyfill {
 
 #[cfg(feature = "python")]
 mod py {
-    use pyo3::pymethods;
+    use pyo3::{Bound, PyResult, exceptions::PyRuntimeError, pymethods, types::PyType};
     use pyo3_stub_gen_derive::gen_stub_pymethods;
 
-    use crate::model::DocumentPolyfill;
+    use super::*;
 
     #[gen_stub_pymethods]
     #[pymethods]
     impl DocumentPolyfill {
         #[new]
-        fn __new__() -> Self {
-            Self::default()
+        #[pyo3(signature=(system_message_template=None, query_message_template=None))]
+        fn __new__(
+            system_message_template: Option<String>,
+            query_message_template: Option<String>,
+        ) -> Self {
+            Self {
+                system_message_template,
+                query_message_template,
+            }
         }
+
+        #[classmethod]
+        #[pyo3(name = "get")]
+        pub fn get_py(_cls: &Bound<'_, PyType>, kind: DocumentPolyfillKind) -> PyResult<Self> {
+            Self::get(kind).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        }
+    }
+}
+
+#[cfg(feature = "nodejs")]
+mod node {
+    use napi::Status;
+    use napi_derive::napi;
+
+    use super::*;
+
+    #[napi]
+    pub fn get_document_polyfill(kind: DocumentPolyfillKind) -> napi::Result<DocumentPolyfill> {
+        DocumentPolyfill::get(kind)
+            .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use std::sync::Arc;
+
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+
+    #[wasm_bindgen(js_name = "getDocumentPolyfill")]
+    pub fn get_document_polyfill(
+        kind: DocumentPolyfillKind,
+    ) -> Result<DocumentPolyfill, js_sys::Error> {
+        DocumentPolyfill::get(kind).map_err(|e| js_sys::Error::new(&e.to_string()))
     }
 }
