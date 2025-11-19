@@ -551,6 +551,7 @@ mod py {
                 .and_then(|max_tokens| python_to_value(&max_tokens).ok())
                 .and_then(|max_tokens| max_tokens.as_integer())
                 .map(|max_tokens| max_tokens as i32);
+            // Grammar is not yet supported, so configuring grammar is disabled for now.
             // let grammar = config
             //     .get_item("grammar")?
             //     .and_then(|grammar| python_to_value(&grammar).ok())
