@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "ailoy"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ailoy-macros",
  "anyhow",
@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "ailoy-macros"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "convert_case",
