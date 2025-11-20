@@ -48,6 +48,7 @@ const sidebars: SidebarsConfig = {
         "resources/builtin-tools",
         "resources/supported-environments",
         "resources/command-line-interfaces",
+        "resources/troubleshooting",
       ],
     },
     {
