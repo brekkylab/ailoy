@@ -1,6 +1,5 @@
 {
     "dependencies": [
-        "openblas",
         "lapack-reference"
     ]
 }
