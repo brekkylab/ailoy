@@ -51,6 +51,7 @@ fn build_native() {
 
     // Run CMake
     let mut cmake_config = Config::new(&cmake_source_dir);
+    cmake_config.profile("Release"); // Always build Release
     cmake_config.define("CMAKE_INSTALL_PREFIX", &cmake_install_dir);
 
     // Add OpenMP_ROOT if macos
