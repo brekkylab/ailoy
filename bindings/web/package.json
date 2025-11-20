@@ -1,6 +1,6 @@
 {
     "name": "ailoy-web",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "author": "Brekkylab Inc. <contact@brekkylab.com>",
     "license": "Apache-2.0",
     "description": "Ailoy JavaScript API on Web browser environments",
