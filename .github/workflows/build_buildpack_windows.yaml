@@ -1,4 +1,4 @@
-name: Build Buildpack Image for Windows
+name: Build - Buildpack Image for Windows
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: Node Linux Build
+name: Build - Node.js Linux
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251031
+      image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251120
 
     steps:
       - name: Checkout source

@@ -1,4 +1,4 @@
-name: Build Buildpack Image for Linux
+name: Build - Buildpack Image for Linux
 
 on:
   workflow_dispatch:

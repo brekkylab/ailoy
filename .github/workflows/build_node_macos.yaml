@@ -1,4 +1,4 @@
-name: Node macOS Build
+name: Build - Node.js macOS
 
 on:
   workflow_dispatch:
