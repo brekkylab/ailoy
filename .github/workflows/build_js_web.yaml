@@ -1,4 +1,4 @@
-name: Build ailoy-web
+name: Build - Web
 
 on:
   workflow_dispatch:
