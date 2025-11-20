@@ -1,15 +1,15 @@
 FROM quay.io/pypa/manylinux_2_28_x86_64 AS build
 
 # Install Vulkan SDK
-RUN curl -LO https://sdk.lunarg.com/sdk/download/1.3.283.0/linux/vulkansdk-linux-x86_64-1.3.283.0.tar.xz && \
+RUN curl -LO https://sdk.lunarg.com/sdk/download/1.4.309.0/linux/vulkansdk-linux-x86_64-1.4.309.0.tar.xz && \
     mkdir -p /opt/vulkan-sdk && \
-    tar -xJf vulkansdk-linux-x86_64-1.3.283.0.tar.xz --strip-components=2 -C /opt/vulkan-sdk
+    tar -xJf vulkansdk-linux-x86_64-1.4.309.0.tar.xz --strip-components=2 -C /opt/vulkan-sdk
 
 # Install OpenSSL
 RUN yum install -y perl-IPC-Cmd && \
-    curl -LO https://www.openssl.org/source/openssl-3.0.16.tar.gz && \
-    tar -xzf openssl-3.0.16.tar.gz && \
-    cd openssl-3.0.16 && \
+    curl -LO https://www.openssl.org/source/openssl-3.6.0.tar.gz && \
+    tar -xzf openssl-3.6.0.tar.gz && \
+    cd openssl-3.6.0 && \
     ./config --prefix=/opt/openssl --openssldir=/opt/openssl no-shared no-tests && \
     make -j$(nproc) && \
     make install_sw
