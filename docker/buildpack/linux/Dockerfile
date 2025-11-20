@@ -6,7 +6,7 @@ RUN curl -LO https://sdk.lunarg.com/sdk/download/1.4.309.0/linux/vulkansdk-linux
     tar -xJf vulkansdk-linux-x86_64-1.4.309.0.tar.xz --strip-components=2 -C /opt/vulkan-sdk
 
 # Install OpenSSL
-RUN yum install -y perl-IPC-Cmd && \
+RUN yum install -y perl-IPC-Cmd perl-Time-Piece && \
     curl -LO https://www.openssl.org/source/openssl-3.6.0.tar.gz && \
     tar -xzf openssl-3.6.0.tar.gz && \
     cd openssl-3.6.0 && \
