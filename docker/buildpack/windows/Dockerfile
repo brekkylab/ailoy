@@ -32,7 +32,7 @@ RUN git clone https://github.com/microsoft/vcpkg.git C:\vcpkg; `
     cd C:\vcpkg; `
     .\bootstrap-vcpkg.bat -disableMetrics
 
-# Install OpenBLAS and LAPACK
+# Install lapack-reference
 COPY vcpkg.json ./
 RUN "C:\\vcpkg\\vcpkg.exe" install --triplet x64-windows-static-release; `
     rm -fo vcpkg.json; `
@@ -50,7 +50,7 @@ RUN Invoke-WebRequest `
 
 # Install Vulkan SDK
 RUN Invoke-WebRequest `
-        -Uri "https://sdk.lunarg.com/sdk/download/1.3.283.0/windows/vulkan-sdk.exe" `
+        -Uri "https://sdk.lunarg.com/sdk/download/1.4.309.0/windows/vulkan-sdk.exe" `
         -OutFile "vulkan-sdk.exe"; `
     Start-Process -FilePath "vulkan-sdk.exe" `
         -ArgumentList '--accept-licenses', '--default-answer', '--confirm-command', 'install', '--root', 'C:\VulkanSDK' -Wait; `
