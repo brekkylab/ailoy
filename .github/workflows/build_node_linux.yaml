@@ -1,7 +1,8 @@
 name: Build - Node.js Linux
 
 on:
-  workflow_dispatch:
+  # workflow_dispatch:
+  push:
   
 env:
   NODE_VERSION: "20.19.4"

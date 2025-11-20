@@ -1,7 +1,8 @@
 name: Build - Python Windows
 
 on:
-  workflow_dispatch:
+  # workflow_dispatch:
+  push:
 
 env:
   BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251120
