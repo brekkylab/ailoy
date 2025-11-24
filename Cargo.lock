@@ -44,6 +44,7 @@ dependencies = [
 name = "ailoy"
 version = "0.2.1"
 dependencies = [
+ "ailoy-faiss-sys",
  "ailoy-macros",
  "anyhow",
  "async-stream",
@@ -102,6 +103,16 @@ dependencies = [
  "wasm-bindgen-test",
  "web-sys",
  "yare",
+]
+
+[[package]]
+name = "ailoy-faiss-sys"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "cmake",
+ "cxx",
+ "cxx-build",
 ]
 
 [[package]]

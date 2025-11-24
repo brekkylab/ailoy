@@ -40,27 +40,39 @@ struct FaissIndexSearchResult {
       : distances(distances), indexes(indexes) {}
 };
 
-class FaissIndexHandle {
+class FaissIndexInner {
 private:
   std::unique_ptr<faiss::Index> index_;
 
 public:
-  explicit FaissIndexHandle(std::unique_ptr<faiss::Index> index)
+  explicit FaissIndexInner(std::unique_ptr<faiss::Index> index)
       : index_(std::move(index)) {
     if (!index_) {
-      throw std::runtime_error("FaissIndexHandle: null index provided");
+      throw std::runtime_error("FaissIndexInner: null index provided");
     }
   }
 
-  ~FaissIndexHandle() = default;
+  FaissIndexInner(int32_t dimension, const std::string &description,
+                  FaissMetricType metric) {
+    try {
+      auto faiss_index = std::unique_ptr<faiss::Index>(faiss::index_factory(
+          dimension, description.c_str(), faiss::MetricType(metric)));
+      index_ = std::move(faiss_index);
+    } catch (const std::exception &e) {
+      throw std::runtime_error("Failed to create FAISS index: " +
+                               std::string(e.what()));
+    }
+  }
+
+  ~FaissIndexInner() = default;
 
   // No copy constructors
-  FaissIndexHandle(const FaissIndexHandle &) = delete;
-  FaissIndexHandle &operator=(const FaissIndexHandle &) = delete;
+  FaissIndexInner(const FaissIndexInner &) = delete;
+  FaissIndexInner &operator=(const FaissIndexInner &) = delete;
 
   // Move constructors
-  FaissIndexHandle(FaissIndexHandle &&) = default;
-  FaissIndexHandle &operator=(FaissIndexHandle &&) = default;
+  FaissIndexInner(FaissIndexInner &&) = default;
+  FaissIndexInner &operator=(FaissIndexInner &&) = default;
 
   bool is_trained() const { return index_->is_trained; }
 
@@ -242,23 +254,6 @@ private:
   }
 };
 
-// Factory functions
-std::unique_ptr<FaissIndexHandle> create_index(int32_t dimension,
-                                               const std::string &description,
-                                               FaissMetricType metric) {
-  try {
-    faiss::MetricType faiss_metric = faiss::MetricType(metric);
-
-    auto faiss_index = std::unique_ptr<faiss::Index>(
-        faiss::index_factory(dimension, description.c_str(), faiss_metric));
-
-    return std::make_unique<FaissIndexHandle>(std::move(faiss_index));
-  } catch (const std::exception &e) {
-    throw std::runtime_error("Failed to create FAISS index: " +
-                             std::string(e.what()));
-  }
-}
-
 // TODO: Handle read_index (filesystem should be determined)
 // std::unique_ptr<FaissIndexHandle> read_index(const std::string &filename) {
 //   try {
@@ -311,18 +306,19 @@ EMSCRIPTEN_BINDINGS(faiss_bridge) {
       .field("indexes", &FaissIndexSearchResult::indexes);
 
   // Bind the main FaissIndex class
-  class_<FaissIndexHandle>("FaissIndexHandle")
-      .function("is_trained", &FaissIndexHandle::is_trained)
-      .function("get_ntotal", &FaissIndexHandle::get_ntotal)
-      .function("get_dimension", &FaissIndexHandle::get_dimension)
-      .function("get_metric_type", &FaissIndexHandle::get_metric_type)
-      .function("train_index", &FaissIndexHandle::train_index)
-      .function("add_vectors_with_ids", &FaissIndexHandle::add_vectors_with_ids)
-      .function("search_vectors", &FaissIndexHandle::search_vectors)
-      .function("get_by_ids", &FaissIndexHandle::get_by_ids)
-      .function("remove_vectors", &FaissIndexHandle::remove_vectors)
-      .function("clear", &FaissIndexHandle::clear);
+  class_<FaissIndexInner>("FaissIndexInner")
+      .constructor<int32_t, const std::string &, FaissMetricType>()
+      .function("is_trained", &FaissIndexInner::is_trained)
+      .function("get_ntotal", &FaissIndexInner::get_ntotal)
+      .function("get_dimension", &FaissIndexInner::get_dimension)
+      .function("get_metric_type", &FaissIndexInner::get_metric_type)
+      .function("train_index", &FaissIndexInner::train_index)
+      .function("add_vectors_with_ids", &FaissIndexInner::add_vectors_with_ids)
+      .function("search_vectors", &FaissIndexInner::search_vectors)
+      .function("get_by_ids", &FaissIndexInner::get_by_ids)
+      .function("remove_vectors", &FaissIndexInner::remove_vectors)
+      .function("clear", &FaissIndexInner::clear);
 
   // Bind factory functions
-  function("create_index", &create_index, allow_raw_pointers());
+  // function("create_index", &create_index, allow_raw_pointers());
 }

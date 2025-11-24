@@ -1,131 +1,11 @@
-use std::{
-    fmt,
-    str::FromStr,
-    sync::atomic::{AtomicI64, Ordering},
-};
+use std::sync::atomic::{AtomicI64, Ordering};
+
+#[cfg(target_arch = "wasm32")]
+use crate::ffi::js_bridge::{FaissIndexSearchResult, FaissMetricType, create_faiss_index};
+#[cfg(any(target_family = "unix", target_family = "windows"))]
+use ailoy_faiss_sys::{FaissIndexSearchResult, FaissMetricType};
 
 use anyhow::{Context, bail};
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FaissMetricType {
-    /// basic metrics
-    InnerProduct = 0,
-    L2 = 1,
-    L1,
-    Linf,
-    Lp,
-
-    /// some additional metrics defined in scipy.spatial.distance
-    Canberra = 20,
-    BrayCurtis,
-    JensenShannon,
-
-    /// sum_i(min(a_i, b_i)) / sum_i(max(a_i, b_i)) where a_i, b_i > 0
-    Jaccard,
-    /// Squared Eucliden distance, ignoring NaNs
-    NaNEuclidean,
-    /// Gower's distance - numeric dimensions are in [0,1] and categorical
-    /// dimensions are negative integers
-    Gower,
-}
-
-impl fmt::Display for FaissMetricType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            FaissMetricType::InnerProduct => write!(f, "InnerProduct"),
-            FaissMetricType::L2 => write!(f, "L2"),
-            FaissMetricType::L1 => write!(f, "L1"),
-            FaissMetricType::Linf => write!(f, "Linf"),
-            FaissMetricType::Lp => write!(f, "Lp"),
-            FaissMetricType::Canberra => write!(f, "Canberra"),
-            FaissMetricType::BrayCurtis => write!(f, "BrayCurtis"),
-            FaissMetricType::JensenShannon => write!(f, "JensenShannon"),
-            FaissMetricType::Jaccard => write!(f, "Jaccard"),
-            FaissMetricType::NaNEuclidean => write!(f, "NaNEuclidean"),
-            FaissMetricType::Gower => write!(f, "Gower"),
-        }
-    }
-}
-
-impl FromStr for FaissMetricType {
-    type Err = anyhow::Error; // TODO: Define custom error for this.
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "InnerProduct" => Ok(FaissMetricType::InnerProduct),
-            "L2" => Ok(FaissMetricType::L2),
-            "L1" => Ok(FaissMetricType::L1),
-            "Linf" => Ok(FaissMetricType::Linf),
-            "Lp" => Ok(FaissMetricType::Lp),
-            "Canberra" => Ok(FaissMetricType::Canberra),
-            "BrayCurtis" => Ok(FaissMetricType::BrayCurtis),
-            "JensenShannon" => Ok(FaissMetricType::JensenShannon),
-            "Jaccard" => Ok(FaissMetricType::Jaccard),
-            "NaNEuclidean" => Ok(FaissMetricType::NaNEuclidean),
-            "Gower" => Ok(FaissMetricType::Gower),
-            _ => bail!("Unknown metric type: '{}'", s),
-        }
-    }
-}
-
-#[cfg(any(target_family = "unix", target_family = "windows"))]
-impl From<crate::ffi::cxx_bridge::FaissMetricType> for FaissMetricType {
-    fn from(value: crate::ffi::cxx_bridge::FaissMetricType) -> Self {
-        match value {
-            crate::ffi::cxx_bridge::FaissMetricType::InnerProduct => FaissMetricType::InnerProduct,
-            crate::ffi::cxx_bridge::FaissMetricType::L2 => FaissMetricType::L2,
-            crate::ffi::cxx_bridge::FaissMetricType::L1 => FaissMetricType::L1,
-            crate::ffi::cxx_bridge::FaissMetricType::Linf => FaissMetricType::Linf,
-            crate::ffi::cxx_bridge::FaissMetricType::Lp => FaissMetricType::Lp,
-            crate::ffi::cxx_bridge::FaissMetricType::Canberra => FaissMetricType::Canberra,
-            crate::ffi::cxx_bridge::FaissMetricType::BrayCurtis => FaissMetricType::BrayCurtis,
-            crate::ffi::cxx_bridge::FaissMetricType::JensenShannon => {
-                FaissMetricType::JensenShannon
-            }
-            crate::ffi::cxx_bridge::FaissMetricType::Jaccard => FaissMetricType::Jaccard,
-            crate::ffi::cxx_bridge::FaissMetricType::NaNEuclidean => FaissMetricType::NaNEuclidean,
-            crate::ffi::cxx_bridge::FaissMetricType::Gower => FaissMetricType::Gower,
-            _ => panic!("Undefined Metric Type"),
-        }
-    }
-}
-
-#[cfg(any(target_family = "unix", target_family = "windows"))]
-impl Into<crate::ffi::cxx_bridge::FaissMetricType> for FaissMetricType {
-    fn into(self) -> crate::ffi::cxx_bridge::FaissMetricType {
-        match self {
-            FaissMetricType::InnerProduct => crate::ffi::cxx_bridge::FaissMetricType::InnerProduct,
-            FaissMetricType::L2 => crate::ffi::cxx_bridge::FaissMetricType::L2,
-            FaissMetricType::L1 => crate::ffi::cxx_bridge::FaissMetricType::L1,
-            FaissMetricType::Linf => crate::ffi::cxx_bridge::FaissMetricType::Linf,
-            FaissMetricType::Lp => crate::ffi::cxx_bridge::FaissMetricType::Lp,
-            FaissMetricType::Canberra => crate::ffi::cxx_bridge::FaissMetricType::Canberra,
-            FaissMetricType::BrayCurtis => crate::ffi::cxx_bridge::FaissMetricType::BrayCurtis,
-            FaissMetricType::JensenShannon => {
-                crate::ffi::cxx_bridge::FaissMetricType::JensenShannon
-            }
-            FaissMetricType::Jaccard => crate::ffi::cxx_bridge::FaissMetricType::Jaccard,
-            FaissMetricType::NaNEuclidean => crate::ffi::cxx_bridge::FaissMetricType::NaNEuclidean,
-            FaissMetricType::Gower => crate::ffi::cxx_bridge::FaissMetricType::Gower,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FaissIndexSearchResult {
-    pub distances: Vec<f32>,
-    pub indexes: Vec<i64>,
-}
-
-#[cfg(any(target_family = "unix", target_family = "windows"))]
-impl From<crate::ffi::cxx_bridge::FaissIndexSearchResult> for FaissIndexSearchResult {
-    fn from(value: crate::ffi::cxx_bridge::FaissIndexSearchResult) -> Self {
-        FaissIndexSearchResult {
-            distances: value.distances.clone(),
-            indexes: value.indexes.clone(),
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct FaissIndexBuilder {
@@ -161,7 +41,7 @@ impl FaissIndexBuilder {
 /// Rust wrapper of faiss::Index
 pub struct FaissIndex {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
-    inner: cxx::UniquePtr<crate::ffi::cxx_bridge::FaissIndexInner>,
+    inner: cxx::UniquePtr<ailoy_faiss_sys::FaissIndexInner>,
     #[cfg(target_family = "wasm")]
     inner: crate::ffi::js_bridge::FaissIndexInner,
 
@@ -176,20 +56,13 @@ impl FaissIndex {
     ) -> anyhow::Result<Self> {
         #[cfg(any(target_family = "unix", target_family = "windows"))]
         let wrapper =
-            unsafe { crate::ffi::cxx_bridge::create_index(dimension, description, metric.into())? };
+            unsafe { ailoy_faiss_sys::create_index(dimension, description, metric.into())? };
 
         #[cfg(target_family = "wasm")]
         let wrapper = {
-            use wasm_bindgen::JsCast;
-
-            let obj = js_sys::Object::new();
-            js_sys::Reflect::set(&obj, &"dimension".into(), &dimension.into()).unwrap();
-            js_sys::Reflect::set(&obj, &"description".into(), &description.into()).unwrap();
-            js_sys::Reflect::set(&obj, &"metric".into(), &metric.to_string().into()).unwrap();
-            let promise = crate::ffi::js_bridge::init_faiss_index_inner(&obj.into()).unwrap();
-            let js_result = wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
-            let js_instance = js_result.unchecked_into::<crate::ffi::js_bridge::FaissIndexInner>();
-            js_instance
+            create_faiss_index(dimension, description.into(), metric.to_string())
+                .await
+                .expect("Failed to create Faiss index")
         };
 
         Ok(Self {
@@ -199,7 +72,7 @@ impl FaissIndex {
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
-    fn inner(&self) -> &crate::ffi::cxx_bridge::FaissIndexInner {
+    fn inner(&self) -> &ailoy_faiss_sys::FaissIndexInner {
         self.inner.as_ref().unwrap()
     }
 
@@ -228,8 +101,12 @@ impl FaissIndex {
 
         #[cfg(target_family = "wasm")]
         {
-            let metric = self.inner().get_metric_type().as_string().unwrap();
-            FaissMetricType::from_str(metric.as_str()).unwrap()
+            self.inner()
+                .get_metric_type()
+                .as_string()
+                .unwrap()
+                .try_into()
+                .unwrap()
         }
     }
 
@@ -252,7 +129,7 @@ impl FaissIndex {
             for (i, &val) in flattened.iter().enumerate() {
                 arr.set_index(i as u32, val);
             }
-            self.inner().train_index(&arr, num_vectors as u32).unwrap();
+            self.inner().train_index(&arr, num_vectors).unwrap();
             Ok(())
         }
     }
@@ -292,7 +169,7 @@ impl FaissIndex {
             }
 
             self.inner()
-                .add_vectors_with_ids(&vector_arr, ids.len() as u32, &ids_arr)
+                .add_vectors_with_ids(&vector_arr, ids.len(), &ids_arr)
                 .unwrap();
         }
 
@@ -324,14 +201,10 @@ impl FaissIndex {
                 for (i, val) in flattened.into_iter().enumerate() {
                     query_vectors_arr.set_index(i as u32, val);
                 }
-                let raw_result = self
-                    .inner()
-                    .search_vectors(&query_vectors_arr, k as u32)
-                    .unwrap();
-                FaissIndexSearchResult {
-                    distances: raw_result.distances().to_vec(),
-                    indexes: raw_result.indexes().to_vec(),
-                }
+                self.inner()
+                    .search_vectors(&query_vectors_arr, k)
+                    .expect("Failed to search vector store with query vector")
+                    .into()
             }
         };
 
@@ -352,8 +225,8 @@ impl FaissIndex {
             .chunks_exact(k)
             .zip(search_result.indexes.chunks_exact(k))
             .map(|(distances_chunk, indexes_chunk)| FaissIndexSearchResult {
-                distances: distances_chunk.to_vec(),
-                indexes: indexes_chunk.to_vec(),
+                distances: distances_chunk.into(),
+                indexes: indexes_chunk.into(),
             })
             .collect();
 
@@ -467,7 +340,7 @@ impl FaissIndex {
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     pub fn read_index(filename: &str) -> anyhow::Result<Self> {
-        let wrapper = unsafe { crate::ffi::cxx_bridge::read_index(filename)? };
+        let wrapper = unsafe { ailoy_faiss_sys::read_index(filename)? };
         let current_total = wrapper.get_ntotal();
         Ok(Self {
             inner: wrapper,

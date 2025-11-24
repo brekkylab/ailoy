@@ -1,3 +1,9 @@
+[workspace]
+members = [
+    "./crates/macros",
+    "./crates/faiss-sys",
+]
+
 [package]
 name = "ailoy"
 version = "0.2.1"
@@ -30,7 +36,7 @@ ailoy-model-cli = ["dep:aws-config", "dep:aws-sdk-s3", "dep:clap", "dep:indicati
 default = []
 
 [dependencies]
-ailoy-macros = { path = "./macros" }
+ailoy-macros = { path = "./crates/macros" }
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1.89"
@@ -69,6 +75,7 @@ url = "2.5.4"
 version-compare = "0.2.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ailoy-faiss-sys = { path = "./crates/faiss-sys" }
 cxx = "1.0"
 log = "0.4.27"
 onig = { version = "6", default-features = false }

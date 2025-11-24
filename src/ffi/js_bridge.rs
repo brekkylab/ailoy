@@ -42,15 +42,14 @@ extern "C" {
     ///////////////////
     /// Faiss Index ///
     ///////////////////
-
     #[wasm_bindgen(js_name = "FaissIndexSearchResult")]
-    pub type FaissIndexSearchResult;
+    pub type JsFaissIndexSearchResult;
 
     #[wasm_bindgen(method, getter)]
-    pub fn distances(this: &FaissIndexSearchResult) -> js_sys::Float32Array;
+    pub fn distances(this: &JsFaissIndexSearchResult) -> js_sys::Float32Array;
 
     #[wasm_bindgen(method, getter)]
-    pub fn indexes(this: &FaissIndexSearchResult) -> js_sys::BigInt64Array;
+    pub fn indexes(this: &JsFaissIndexSearchResult) -> js_sys::BigInt64Array;
 
     #[wasm_bindgen(js_name = "FaissIndexInner")]
     pub type FaissIndexInner;
@@ -75,7 +74,7 @@ extern "C" {
     pub fn train_index(
         this: &FaissIndexInner,
         training_vectors: &js_sys::Float32Array,
-        num_training_vectors: u32,
+        num_training_vectors: usize,
     ) -> Result<(), JsValue>;
 
     #[wasm_bindgen(
@@ -87,7 +86,7 @@ extern "C" {
     pub fn add_vectors_with_ids(
         this: &FaissIndexInner,
         vectors: &js_sys::Float32Array,
-        num_vectors: u32,
+        num_vectors: usize,
         ids: &js_sys::BigInt64Array,
     ) -> Result<(), JsValue>;
 
@@ -100,8 +99,8 @@ extern "C" {
     pub fn search_vectors(
         this: &FaissIndexInner,
         query_vectors: &js_sys::Float32Array,
-        k: u32,
-    ) -> Result<FaissIndexSearchResult, JsValue>;
+        k: usize,
+    ) -> Result<JsFaissIndexSearchResult, JsValue>;
 
     #[wasm_bindgen(method, catch, js_class = "FaissIndexInner", js_name = "get_by_ids")]
     pub fn get_by_ids(
@@ -122,4 +121,89 @@ extern "C" {
 
     #[wasm_bindgen(method, catch, js_class = "FaissIndexInner", js_name = "clear")]
     pub fn clear(this: &FaissIndexInner) -> Result<(), JsValue>;
+
+    #[wasm_bindgen(catch, js_name = "create_faiss_index")]
+    pub async fn create_faiss_index(
+        dimension: i32,
+        description: String,
+        metric: String,
+    ) -> Result<FaissIndexInner, JsValue>;
+
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(u8)]
+pub enum FaissMetricType {
+    /// basic metrics
+    InnerProduct = 0,
+    L2 = 1,
+    L1,
+    Linf,
+    Lp,
+
+    /// some additional metrics defined in scipy.spatial.distance
+    Canberra = 20,
+    BrayCurtis,
+    JensenShannon,
+
+    /// sum_i(min(a_i, b_i)) / sum_i(max(a_i, b_i)) where a_i, b_i > 0
+    Jaccard,
+    /// Squared Eucliden distance, ignoring NaNs
+    NaNEuclidean,
+    /// Gower's distance - numeric dimensions are in [0,1] and categorical
+    /// dimensions are negative integers
+    Gower,
+}
+
+impl std::fmt::Display for FaissMetricType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            FaissMetricType::InnerProduct => write!(f, "InnerProduct"),
+            FaissMetricType::L2 => write!(f, "L2"),
+            FaissMetricType::L1 => write!(f, "L1"),
+            FaissMetricType::Linf => write!(f, "Linf"),
+            FaissMetricType::Lp => write!(f, "Lp"),
+            FaissMetricType::Canberra => write!(f, "Canberra"),
+            FaissMetricType::BrayCurtis => write!(f, "BrayCurtis"),
+            FaissMetricType::JensenShannon => write!(f, "JensenShannon"),
+            FaissMetricType::Jaccard => write!(f, "Jaccard"),
+            FaissMetricType::NaNEuclidean => write!(f, "NaNEuclidean"),
+            FaissMetricType::Gower => write!(f, "Gower"),
+        }
+    }
+}
+
+impl TryFrom<String> for FaissMetricType {
+    type Error = anyhow::Error; // TODO: Define custom error for this.
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "InnerProduct" => Ok(FaissMetricType::InnerProduct),
+            "L2" => Ok(FaissMetricType::L2),
+            "L1" => Ok(FaissMetricType::L1),
+            "Linf" => Ok(FaissMetricType::Linf),
+            "Lp" => Ok(FaissMetricType::Lp),
+            "Canberra" => Ok(FaissMetricType::Canberra),
+            "BrayCurtis" => Ok(FaissMetricType::BrayCurtis),
+            "JensenShannon" => Ok(FaissMetricType::JensenShannon),
+            "Jaccard" => Ok(FaissMetricType::Jaccard),
+            "NaNEuclidean" => Ok(FaissMetricType::NaNEuclidean),
+            "Gower" => Ok(FaissMetricType::Gower),
+            _ => anyhow::bail!("Unknown metric type: '{}'", value),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FaissIndexSearchResult {
+    pub distances: Vec<f32>,
+    pub indexes: Vec<i64>,
+}
+
+impl From<JsFaissIndexSearchResult> for FaissIndexSearchResult {
+    fn from(value: JsFaissIndexSearchResult) -> Self {
+        let distances = value.distances().to_vec();
+        let indexes = value.indexes().to_vec();
+        Self { distances, indexes }
+    }
 }

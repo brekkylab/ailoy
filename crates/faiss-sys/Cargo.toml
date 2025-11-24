@@ -1,0 +1,14 @@
+[package]
+name = "ailoy-faiss-sys"
+version = "0.2.1"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cxx = "1.0"
+
+[build-dependencies]
+cmake = "0.1"
+cxx-build = "1.0"
