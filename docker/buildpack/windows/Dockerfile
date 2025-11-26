@@ -6,20 +6,19 @@ SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPref
 
 # Download all installers in parallel first
 RUN $downloads = @( `
-        @{Url="https://aka.ms/vs/17/release/vs_buildtools.exe"; Out="C:\vs_buildtools.exe"}, `
-        @{Url="https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe"; Out="C:\PortableGit.7z.exe"}, `
-        @{Url="https://slproweb.com/download/Win64OpenSSL_Light-3_6_0.exe"; Out="C:\openssl-installer.exe"}, `
-        @{Url="https://sdk.lunarg.com/sdk/download/1.4.309.0/windows/vulkan-sdk.exe"; Out="C:\vulkan-sdk.exe"}, `
-        @{Url="https://win.rustup.rs/x86_64"; Out="C:\rustup-init.exe"} `
+        @{Url='https://aka.ms/vs/17/release/vs_buildtools.exe'; Out='C:\vs_buildtools.exe'}, `
+        @{Url='https://github.com/git-for-windows/git/releases/download/v2.50.0.windows.2/PortableGit-2.50.0.2-64-bit.7z.exe'; Out='C:\PortableGit.7z.exe'}, `
+        @{Url='https://slproweb.com/download/Win64OpenSSL_Light-3_6_0.exe'; Out='C:\openssl-installer.exe'}, `
+        @{Url='https://sdk.lunarg.com/sdk/download/1.4.309.0/windows/vulkan-sdk.exe'; Out='C:\vulkan-sdk.exe'}, `
+        @{Url='https://win.rustup.rs/x86_64'; Out='C:\rustup-init.exe'} `
     ); `
-    $processes = @(); `
+    $jobs = @(); `
     foreach ($d in $downloads) { `
         Write-Host "Starting download: $($d.Url)"; `
-        $processes += Start-Process powershell `
-            -ArgumentList @('-Command', "Invoke-WebRequest -Uri '$($d.Url)' -OutFile '$($d.Out)'") `
-            -PassThru; `
+        $jobs += Start-Job -ScriptBlock { param($url,$out) Invoke-WebRequest -Uri $url -OutFile $out } -ArgumentList $d.Url, $d.Out; `
     }; `
-    $processes | ForEach-Object { $_.WaitForExit() }; `
+    $jobs | Wait-Job | Receive-Job; `
+    $jobs | Remove-Job; `
     Write-Host "All downloads completed."
 
 # Install Visual Studio Build Tools with minimal components
@@ -55,15 +54,17 @@ RUN $env:VCPKG_BINARY_SOURCES = 'clear;x-azblob,https://vcpkg.blob.core.windows.
 
 # Install OpenSSL, Vulkan SDK, and Rust in parallel
 RUN $installers = @( `
-        @{Exe="C:\openssl-installer.exe"; Args='/silent /verysilent /sp- /SUPPRESSMSGBOXES /DIR=C:\OpenSSL'}, `
-        @{Exe="C:\vulkan-sdk.exe"; Args='--accept-licenses --default-answer --confirm-command install --root C:\VulkanSDK'}, `
-        @{Exe="C:\rustup-init.exe"; Args='-y --default-toolchain 1.90.0 --profile minimal'} `
+        @{Exe='C:\openssl-installer.exe'; Args='/silent /verysilent /sp- /SUPPRESSMSGBOXES /DIR=C:\OpenSSL'}, `
+        @{Exe='C:\vulkan-sdk.exe'; Args='--accept-licenses --default-answer --confirm-command install --root C:\VulkanSDK'}, `
+        @{Exe='C:\rustup-init.exe'; Args='-y --default-toolchain 1.90.0 --profile minimal'} `
     ); `
-    $processes = @(); `
+    $jobs = @(); `
     foreach ($i in $installers) { `
-        $processes += Start-Process -FilePath $i.Exe -ArgumentList @($i.Args) -PassThru; `
+        Write-Host "Starting install: $($i.Exe)"; `
+        $jobs += Start-Job -ScriptBlock { param($exe,$args) Start-Process -FilePath $exe -ArgumentList $args -Wait } -ArgumentList $i.Exe, $i.Args; `
     }; `
-    $processes | ForEach-Object { $_.WaitForExit() }; `
+    $jobs | Wait-Job | Receive-Job; `
+    $jobs | Remove-Job; `
     Remove-Item "C:\openssl-installer.exe", "C:\vulkan-sdk.exe", "C:\rustup-init.exe" -Force; `
     setx /M VULKAN_SDK \"C:\VulkanSDK\"; `
     setx /M PATH \"C:\VulkanSDK\Bin;C:\Users\ContainerAdministrator\.cargo\bin;$([System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine))\"; `
