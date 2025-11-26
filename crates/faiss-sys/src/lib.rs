@@ -32,7 +32,7 @@ mod ffi {
 
     #[namespace = "faiss_bridge"]
     unsafe extern "C++" {
-        include!("bridge.hpp");
+        include!("ailoy-faiss-sys/src/bridge.hpp");
 
         type FaissIndexInner;
 

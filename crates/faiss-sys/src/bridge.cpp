@@ -1,4 +1,5 @@
-#include "bridge.hpp"
+#include "ailoy-faiss-sys/src/bridge.hpp"
+#include "ailoy-faiss-sys/src/lib.rs.h"
 
 #include <filesystem>
 #include <fstream>
@@ -7,8 +8,6 @@
 #include <faiss/impl/IDSelector.h>
 #include <faiss/index_factory.h>
 #include <faiss/index_io.h>
-
-#include "lib.rs.h"
 
 namespace faiss_bridge {
 
