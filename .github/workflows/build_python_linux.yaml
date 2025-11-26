@@ -46,10 +46,9 @@ jobs:
           source .venv/bin/activate
           maturin build --out ./dist
         env:
-          CMAKE_PREFIX_PATH: /opt/openblas
           OPENSSL_DIR: /opt/openssl
           VULKAN_SDK: /opt/vulkan-sdk
-          LD_LIBRARY_PATH: /opt/openblas/lib:/opt/vulkan-sdk/lib
+          LD_LIBRARY_PATH: /opt/lapack/lib:/opt/vulkan-sdk/lib
 
       - name: Repair wheel
         working-directory: bindings/python

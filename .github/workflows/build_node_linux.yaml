@@ -42,10 +42,9 @@ jobs:
           mv ./src/ailoy_core.linux-x64-gnu.node ./npm/linux-x64-gnu
           node scripts/bundle-dylibs.js ./npm/linux-x64-gnu/ailoy_core.linux-x64-gnu.node
         env:
-          CMAKE_PREFIX_PATH: /opt/openblas
           OPENSSL_DIR: /opt/openssl
           VULKAN_SDK: /opt/vulkan-sdk
-          LD_LIBRARY_PATH: /opt/openblas/lib:/opt/vulkan-sdk/lib
+          LD_LIBRARY_PATH: /opt/lapack/lib:/opt/vulkan-sdk/lib
           RUSTFLAGS: -L/opt/rh/gcc-toolset-14/root/lib/gcc/x86_64-redhat-linux/14
 
       - name: Create a package

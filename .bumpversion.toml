@@ -42,7 +42,10 @@ optional_value = "final"
 filename = "Cargo.toml"
 
 [[tool.bumpversion.files]]
-filename = "macros/Cargo.toml"
+filename = "crates/macros/Cargo.toml"
+
+[[tool.bumpversion.files]]
+filename = "crates/faiss-sys/Cargo.toml"
 
 [[tool.bumpversion.files]]
 filename = "bindings/nodejs/package.json"

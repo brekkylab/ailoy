@@ -38,6 +38,7 @@ fn main() {
 
         let mut cfg = cmake::Config::new("faiss");
         cfg.define("CMAKE_BUILD_TYPE", "Release")
+            .define("CMAKE_INSTALL_LIBDIR", "lib")
             .define("BUILD_SHARED_LIBS", "OFF")
             .define("BUILD_TESTING", "OFF")
             .define("FAISS_ENABLE_GPU", "OFF")
@@ -45,6 +46,18 @@ fn main() {
             .define("FAISS_ENABLE_EXTRAS", "OFF")
             .out_dir(&faiss_build_dir)
             .very_verbose(true);
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            cfg.define("BLAS_LIBRARIES", "libblas.a")
+                .define("LAPACK_LIBRARIES", "liblapack.a");
+        }
+        #[cfg(target_os = "windows")]
+        {
+            cfg.define("BLAS_LIBRARIES", "blas.lib")
+                .define("LAPACK_LIBRARIES", "lapack.lib");
+        }
+
         cfg.build();
     } else {
         println!(
@@ -93,7 +106,6 @@ fn main() {
         .std("c++20")
         .compile("cxxbridge-faiss");
 
-    println!("cargo:rerun-if-changed=src/*.hpp");
-    println!("cargo:rerun-if-changed=src/*.cpp");
+    println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=faiss");
 }
