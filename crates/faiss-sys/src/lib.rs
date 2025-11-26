@@ -82,7 +82,7 @@ mod ffi {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod lib {
-    pub use ffi::*;
+    pub use crate::ffi::*;
 
     impl std::fmt::Display for FaissMetricType {
         fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -124,9 +124,9 @@ mod lib {
         }
     }
 
-    unsafe impl Send for ffi::FaissIndexInner {}
+    unsafe impl Send for FaissIndexInner {}
 
-    unsafe impl Sync for ffi::FaissIndexInner {}
+    unsafe impl Sync for FaissIndexInner {}
 }
 
 #[cfg(not(target_arch = "wasm32"))]
