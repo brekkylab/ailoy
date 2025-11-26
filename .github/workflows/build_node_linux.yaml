@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251120
+      image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251126
 
     steps:
       - name: Checkout source
