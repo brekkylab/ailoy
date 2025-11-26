@@ -24,27 +24,7 @@ import { LibraryProvider } from "./types";
  * Get performance measurement.
  */
 export function getPerformance(): Performance {
-  if (typeof performance === "undefined") {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const performanceNode = require("perf_hooks");
-    return performanceNode.performance as Performance;
-  } else {
-    return performance as Performance;
-  }
-}
-
-/**
- * Create a new websocket for a given URL
- * @param url The url.
- */
-export function createWebSocket(url: string): WebSocket {
-  if (typeof WebSocket === "undefined") {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const WebSocket = require("ws");
-    return new WebSocket(url);
-  } else {
-    return new (WebSocket as any)(url);
-  }
+  return performance as Performance;
 }
 
 /**
