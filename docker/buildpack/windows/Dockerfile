@@ -15,9 +15,10 @@ RUN $downloads = @( `
     $processes = @(); `
     foreach ($d in $downloads) { `
         Write-Host "Starting download: $($d.Url)"; `
-        $processes += Start-Process powershell -ArgumentList "-Command", "Invoke-WebRequest -Uri '$($d.Url)' -OutFile '$($d.Out)'" -PassThru; `
+        $processes += Start-Process powershell `
+            -ArgumentList @('-Command', "Invoke-WebRequest -Uri '$($d.Url)' -OutFile '$($d.Out)'") `
+            -PassThru; `
     }; `
-    # Wait for all downloads to complete
     $processes | ForEach-Object { $_.WaitForExit() }; `
     Write-Host "All downloads completed."
 
