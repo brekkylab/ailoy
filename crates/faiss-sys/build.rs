@@ -107,7 +107,7 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
-fn get_libomp_path() {
+fn get_libomp_path() -> String {
     let libomp_path = std::process::Command::new("brew")
         .arg("--prefix")
         .arg("libomp")
@@ -117,5 +117,5 @@ fn get_libomp_path() {
 
     let mut libomp_path = String::from_utf8(libomp_path).unwrap();
     libomp_path = libomp_path.trim().to_string();
-    return libomp_path.as_str();
+    libomp_path
 }
