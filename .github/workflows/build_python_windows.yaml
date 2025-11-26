@@ -27,7 +27,10 @@ jobs:
     continue-on-error: true
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodule: true
 
       - name: Login to ghcr.io
         uses: docker/login-action@v3

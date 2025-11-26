@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          submodule: true
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
