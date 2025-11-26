@@ -47,6 +47,7 @@ fn main() {
             .out_dir(&faiss_build_dir)
             .very_verbose(true);
 
+        // Configure BLAS and LAPACK
         #[cfg(not(target_os = "windows"))]
         {
             cfg.define("BLAS_LIBRARIES", "libblas.a")
@@ -58,6 +59,12 @@ fn main() {
                 .define("LAPACK_LIBRARIES", "lapack.lib");
         }
 
+        // Configure libomp for macos
+        #[cfg(target_os = "macos")]
+        {
+            cfg.define("OpenMP_ROOT", get_libomp_path());
+        }
+
         cfg.build();
     } else {
         println!(
@@ -66,22 +73,16 @@ fn main() {
         );
     }
 
+    println!("cargo:rustc-link-search=native={}", faiss_libdir.display());
+    println!("cargo:rustc-link-lib=static=faiss");
+    println!("cargo:rustc-link-lib=blas");
+    println!("cargo:rustc-link-lib=lapack");
+
     // Link OpenMP
     #[cfg(target_os = "macos")]
     {
-        // Link OpenMP(brew installed)
-        let libomp_path = std::process::Command::new("brew")
-            .arg("--prefix")
-            .arg("libomp")
-            .output()
-            .expect("Failed to execute brew command")
-            .stdout;
-
-        let mut libomp_path = String::from_utf8(libomp_path).unwrap();
-        libomp_path = libomp_path.trim().to_string();
-        cfg.define("OpenMP_ROOT", libomp_path.clone());
-
-        println!("cargo:rustc-link-search=native={}/lib", libomp_path);
+        // Link libomp
+        println!("cargo:rustc-link-search=native={}/lib", get_libomp_path());
         println!("cargo:rustc-link-lib=omp");
     }
     #[cfg(target_os = "linux")]
@@ -95,11 +96,6 @@ fn main() {
         println!("cargo:rustc-link-lib=static=libomp");
     }
 
-    println!("cargo:rustc-link-search=native={}", faiss_libdir.display());
-    println!("cargo:rustc-link-lib=static=faiss");
-    println!("cargo:rustc-link-lib=blas");
-    println!("cargo:rustc-link-lib=lapack");
-
     cxx_build::bridge("src/lib.rs")
         .include(&faiss_includedir)
         .file("src/bridge.cpp")
@@ -108,4 +104,18 @@ fn main() {
 
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=faiss");
+}
+
+#[cfg(target_os = "macos")]
+fn get_libomp_path() {
+    let libomp_path = std::process::Command::new("brew")
+        .arg("--prefix")
+        .arg("libomp")
+        .output()
+        .expect("Failed to execute brew command")
+        .stdout;
+
+    let mut libomp_path = String::from_utf8(libomp_path).unwrap();
+    libomp_path = libomp_path.trim().to_string();
+    return libomp_path.as_str();
 }
