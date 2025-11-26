@@ -61,7 +61,7 @@ RUN $installers = @( `
     ); `
     $processes = @(); `
     foreach ($i in $installers) { `
-        $processes += Start-Process -FilePath $i.Exe -ArgumentList $i.Args -Wait -PassThru; `
+        $processes += Start-Process -FilePath $i.Exe -ArgumentList @($i.Args) -PassThru; `
     }; `
     $processes | ForEach-Object { $_.WaitForExit() }; `
     Remove-Item "C:\openssl-installer.exe", "C:\vulkan-sdk.exe", "C:\rustup-init.exe" -Force; `
