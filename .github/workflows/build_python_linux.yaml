@@ -5,20 +5,11 @@ on:
 
 jobs:
   build:
-    name: Build for Python ${{ matrix.python }}
     runs-on: ubuntu-latest
-
     container:
       image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251120
-
-    strategy:
-      matrix:
-        python: ["cp310-cp310", "cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314"]
-
-    continue-on-error: true
-
     env:
-      PYTHON_BIN: /opt/python/${{ matrix.python }}/bin
+      PYTHON_BIN: /opt/python/cp310-cp310/bin
 
     steps:
       - name: Checkout source
