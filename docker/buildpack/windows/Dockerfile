@@ -15,7 +15,10 @@ RUN $downloads = @( `
     $jobs = @(); `
     foreach ($d in $downloads) { `
         Write-Host "Starting download: $($d.Url)"; `
-        $jobs += Start-Job -ScriptBlock { param($url,$out) Invoke-WebRequest -Uri $url -OutFile $out } -ArgumentList $d.Url, $d.Out; `
+        $jobs += Start-Job -ScriptBlock { `
+            param($url,$out); `
+            Invoke-WebRequest -Uri $url -OutFile $out; `
+        } -ArgumentList $d.Url, $d.Out; `
     }; `
     $jobs | Wait-Job | Receive-Job; `
     $jobs | Remove-Job; `
@@ -61,7 +64,11 @@ RUN $installers = @( `
     $jobs = @(); `
     foreach ($i in $installers) { `
         Write-Host "Starting install: $($i.Exe)"; `
-        $jobs += Start-Job -ScriptBlock { param($exe,$args) Start-Process -FilePath $exe -ArgumentList $args -Wait } -ArgumentList $i.Exe, $i.Args; `
+        $jobs += Start-Job -ScriptBlock { `
+            param($exe, $argString); `
+            $argList = $argString -split ' '; `
+            Start-Process -FilePath $exe -ArgumentList $argList -Wait; `
+        } -ArgumentList $i.Exe, $i.Args; `
     }; `
     $jobs | Wait-Job | Receive-Job; `
     $jobs | Remove-Job; `
