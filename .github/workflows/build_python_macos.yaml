@@ -31,7 +31,7 @@ jobs:
 
       - name: Install cxxbridge (required to build shim)
         run: |
-          cargo install cxxbridge-cmd
+          cargo install cxxbridge-cmd@1.0.189
 
       - name: Install Python dependencies
         working-directory: ${{ github.workspace }}/bindings/python

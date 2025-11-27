@@ -1,5 +1,5 @@
 #[cfg(not(target_arch = "wasm32"))]
-#[cxx::bridge]
+#[cxx::bridge(namespace = "faiss_bridge")]
 mod ffi {
     #[derive(Debug, Clone, Copy, PartialEq)]
     enum FaissMetricType {
@@ -30,7 +30,6 @@ mod ffi {
         pub indexes: Vec<i64>,
     }
 
-    #[namespace = "faiss_bridge"]
     unsafe extern "C++" {
         include!("ailoy-faiss-sys/src/bridge.hpp");
 
