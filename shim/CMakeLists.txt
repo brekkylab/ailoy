@@ -219,35 +219,6 @@ if(AILOY_WITH_TEST)
     target_link_options(test_tvm PRIVATE -fsanitize=undefined -fsanitize=address)
 endif()
 
-#########
-# faiss #
-#########
-find_package(OpenMP)
-if(NOT OpenMP_FOUND)
-    message(FATAL_ERROR "OpenMP not found. You have to specify OpenMP Root directory by either -DOpenMP_ROOT option or `OpenMP_ROOT` environment variable")
-endif()
-FetchContent_Declare(
-    faiss
-    GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
-    GIT_TAG v1.12.0
-    EXCLUDE_FROM_ALL
-)
-find_package(MKL QUIET)
-if (MKL_FOUND)
-    message(STATUS "Enable MKL Support")
-    set(BLA_STATIC ON CACHE BOOL "Use static libraries for BLAS" FORCE)
-    set(FAISS_ENABLE_MKL ON CACHE BOOL "Enable MKL support" FORCE)
-else()
-    message(STATUS "Disable MKL Support")
-    set(FAISS_ENABLE_MKL OFF CACHE BOOL "Enable MKL support" FORCE)
-endif()
-set(FAISS_ENABLE_GPU OFF CACHE BOOL "Disable GPU support" FORCE)
-set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable Python bindings" FORCE)
-set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "Disable extra components" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "Disable build tests" FORCE)
-FetchContent_MakeAvailable(faiss)
-target_link_libraries(ailoy_cpp_shim PUBLIC faiss)
-
 ###########
 # Install #
 ###########
@@ -255,4 +226,3 @@ target_link_libraries(ailoy_cpp_shim PUBLIC faiss)
 install(TARGETS ailoy_cpp_shim ARCHIVE DESTINATION .)
 install(TARGETS tvm_runtime ARCHIVE DESTINATION .)
 install(TARGETS tvm_ffi_static ARCHIVE DESTINATION .)
-install(TARGETS faiss ARCHIVE DESTINATION .)

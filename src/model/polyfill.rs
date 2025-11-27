@@ -247,8 +247,6 @@ mod node {
 
 #[cfg(feature = "wasm")]
 mod wasm {
-    use std::sync::Arc;
-
     use wasm_bindgen::prelude::*;
 
     use super::*;

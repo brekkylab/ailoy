@@ -11,7 +11,10 @@ jobs:
     runs-on: macos-15
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -24,7 +27,7 @@ jobs:
 
       - name: Install cxxbridge (required to build shim)
         run: |
-          cargo install cxxbridge-cmd
+          cargo install cxxbridge-cmd@1.0.189
 
       - name: Install dependencies
         working-directory: ${{ github.workspace }}/bindings/nodejs

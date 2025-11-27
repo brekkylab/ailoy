@@ -54,26 +54,6 @@ fn build_native() {
     cmake_config.profile("Release"); // Always build Release
     cmake_config.define("CMAKE_INSTALL_PREFIX", &cmake_install_dir);
 
-    // Add OpenMP_ROOT if macos
-    #[cfg(target_os = "macos")]
-    {
-        cmake_config.define("MACOSX_DEPLOYMENT_TARGET", "14.0");
-
-        // Link OpenMP(brew installed)
-        let libomp_path = std::process::Command::new("brew")
-            .arg("--prefix")
-            .arg("libomp")
-            .output()
-            .expect("Failed to execute brew command")
-            .stdout;
-        let mut libomp_path_str = String::from_utf8(libomp_path).unwrap();
-        libomp_path_str = libomp_path_str.trim().to_string();
-        cmake_config.define("OpenMP_ROOT", libomp_path_str.clone());
-
-        println!("cargo:rustc-link-search=native={}/lib", libomp_path_str);
-        println!("cargo:rustc-link-lib=omp");
-    }
-
     cmake_config.build();
 
     // Link to this project
@@ -82,9 +62,6 @@ fn build_native() {
         cmake_install_dir.display()
     );
     println!("cargo:rustc-link-lib=static=ailoy_cpp_shim");
-
-    // Link libfaiss.a
-    println!("cargo:rustc-link-lib=static=faiss");
 
     #[cfg(target_os = "linux")]
     {
@@ -96,11 +73,6 @@ fn build_native() {
         println!("cargo:rustc-link-arg=-Wl,-l:libtvm_runtime.a");
         println!("cargo:rustc-link-arg=-Wl,-l:libtvm_ffi_static.a");
         println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
-
-        // Link FAISS dependencies
-        println!("cargo:rustc-link-lib=gomp"); // GNU OpenMP
-        println!("cargo:rustc-link-lib=static=openblas"); // OpenBLAS
-        println!("cargo:rustc-link-lib=static=gfortran"); // gfortran (required by OpenBLAS)
 
         // Link Vulkan
         println!("cargo:rustc-link-lib=dylib=vulkan");
@@ -137,11 +109,6 @@ fn build_native() {
             "cargo:rustc-link-arg=/WHOLEARCHIVE:{}",
             (cmake_install_dir.join("tvm_ffi_static.lib")).display()
         );
-
-        // Link FAISS dependencies
-        println!("cargo:rustc-link-lib=static=blas");
-        println!("cargo:rustc-link-lib=static=lapack");
-        println!("cargo:rustc-link-lib=libomp");
 
         // Link Vulkan
         println!("cargo:rustc-link-lib=dylib=vulkan-1");
