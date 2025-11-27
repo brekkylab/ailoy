@@ -2,6 +2,11 @@ name: Build - Node.js main
 
 on:
   workflow_dispatch:
+  inputs:
+    publish:
+      type: boolean
+      required: false
+      description: 'Publish package to NPM'
 
 env:
   NODE_VERSION: "20.19.4"
@@ -15,9 +20,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         working-directory: ${{ github.workspace }}/bindings/nodejs
@@ -38,3 +44,10 @@ jobs:
         with:
           name: ${{ env.PACKAGE_NAME }}
           path: ${{ github.workspace }}/bindings/nodejs/${{ env.PACKAGE_NAME }}
+
+      - name: Publish package to NPM
+        if: ${{ inputs.publish }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.AILOY_NPM_TOKEN }}
+        run: |
+          npm publish --access=public ${{ github.workspace }}/bindings/nodejs/${{ env.PACKAGE_NAME }}

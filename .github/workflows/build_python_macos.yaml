@@ -2,10 +2,18 @@ name: Build - Python macOS
 
 on:
   workflow_dispatch:
+  inputs:
+    publish:
+      type: boolean
+      required: false
+      description: 'Publish package to PyPI'
 
 jobs:
   build:
     runs-on: macos-15
+    permissions:
+      id-token: write
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -56,3 +64,9 @@ jobs:
         with:
           name: ${{ env.WHEEL_FILENAME }}
           path: ${{ github.workspace }}/bindings/python/wheelhouse/${{ env.WHEEL_FILENAME }}
+
+      - name: Publish wheel to PyPI
+        if: ${{ inputs.publish }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ${{ github.workspace }}/bindings/python/wheelhouse/

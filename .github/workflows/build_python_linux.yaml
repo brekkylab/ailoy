@@ -2,6 +2,11 @@ name: Build - Python Linux
 
 on:
   workflow_dispatch:
+  inputs:
+    publish:
+      type: boolean
+      required: false
+      description: 'Publish package to PyPI'
 
 jobs:
   build:
@@ -10,6 +15,8 @@ jobs:
       image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251126
     env:
       PYTHON_BIN: /opt/python/cp310-cp310/bin
+    permissions:
+      id-token: write
 
     steps:
       - name: Checkout source
@@ -59,3 +66,9 @@ jobs:
         with:
           name: ${{ env.WHEEL_FILENAME }}
           path: bindings/python/wheelhouse
+
+      - name: Publish wheel to PyPI
+        if: ${{ inputs.publish }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ${{ github.workspace }}/bindings/python/wheelhouse/
