@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251120
+  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251127
   NODE_VERSION: "20.19.4"
 
 jobs:
@@ -109,7 +109,6 @@ jobs:
               powershell ..\..\scripts\Set-Crate-Type.ps1 -Kind cdylib
 
               `$env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
-              `$env:LD_LIBRARY_PATH = "C:\vcpkg_installed\x64-windows-static-release\lib;C:\VulkanSDK\Lib"
               npm run build:napi
               if (`$LASTEXITCODE -ne 0) {
                 Write-Error 'npm run build:napi failed'

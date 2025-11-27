@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251120
+  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251127
 
 jobs:
   build-windows:
@@ -118,7 +118,6 @@ jobs:
               python -m pip install maturin delvewheel
 
               `$env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
-              `$env:LD_LIBRARY_PATH = "C:\vcpkg_installed\x64-windows-static-release\lib;C:\VulkanSDK\Lib"
               python -m maturin build --out dist
               if (`$LASTEXITCODE -ne 0) {
                 Write-Error 'python build failed'
