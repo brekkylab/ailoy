@@ -11,8 +11,9 @@ on:
 jobs:
   build:
     runs-on: macos-15
-    permissions:
-      id-token: write
+
+    outputs:
+      wheel_filename: ${{ steps.save_wheel_name.outputs.wheel_filename }}
 
     steps:
       - name: Checkout source
@@ -50,6 +51,7 @@ jobs:
           OpenMP_ROOT: /opt/homebrew/opt/libomp
 
       - name: Delocate wheel
+        id: save_wheel_name
         working-directory: ${{ github.workspace }}/bindings/python
         run: |
           source .venv/bin/activate
@@ -57,16 +59,29 @@ jobs:
           delocate-wheel dist/*.whl -w wheelhouse
           delocate-listdeps wheelhouse/*.whl
           WHEEL_NAME=$(basename wheelhouse/*.whl)
-          echo "WHEEL_FILENAME=$WHEEL_NAME" >> $GITHUB_ENV
+          echo "wheel_filename=$WHEEL_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.WHEEL_FILENAME }}
-          path: ${{ github.workspace }}/bindings/python/wheelhouse/${{ env.WHEEL_FILENAME }}
+          name: ${{ steps.save_wheel_name.outputs.wheel_filename }}
+          path: ${{ github.workspace }}/bindings/python/wheelhouse/${{ steps.save_wheel_name.outputs.wheel_filename }}
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ inputs.publish }}
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.wheel_filename }}
+          path: wheelhouse
 
       - name: Publish wheel to PyPI
-        if: ${{ inputs.publish }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: ${{ github.workspace }}/bindings/python/wheelhouse/
+          packages-dir: wheelhouse

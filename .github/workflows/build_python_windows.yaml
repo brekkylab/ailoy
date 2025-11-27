@@ -14,10 +14,13 @@ env:
   PYTHON_FULL_VERSION: "3.10.11"
 
 jobs:
-  build-windows:
+  build:
     runs-on: windows-2022
     permissions:
       id-token: write
+
+    outputs:
+      wheel_filename: ${{ steps.save_wheel_name.outputs.wheel_filename }}
 
     steps:
       - name: Checkout source
@@ -129,19 +132,33 @@ jobs:
           "@
 
       - name: Get package name
+        id: save_wheel_name
         working-directory: ${{ github.workspace }}/bindings/python
         run: |
           $wheel = Get-ChildItem wheelhouse\*.whl | Select-Object -First 1
-          echo "WHEEL_FILENAME=$($wheel.Name)" >> $env:GITHUB_ENV
+          echo "wheel_filename=$($wheel.Name)" >> $env:GITHUB_OUTPUT
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.WHEEL_FILENAME }}
-          path: ${{ github.workspace }}/bindings/python/wheelhouse/${{ env.WHEEL_FILENAME }}
+          name: ${{ steps.save_wheel_name.outputs.wheel_filename }}
+          path: ${{ github.workspace }}/bindings/python/wheelhouse/${{ steps.save_wheel_name.outputs.wheel_filename }}
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ inputs.publish }}
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.wheel_filename }}
+          path: wheelhouse
 
       - name: Publish wheel to PyPI
-        if: ${{ inputs.publish }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: ${{ github.workspace }}/bindings/python/wheelhouse/
+          packages-dir: wheelhouse
