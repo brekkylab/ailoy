@@ -2,11 +2,11 @@ name: Build - Web
 
 on:
   workflow_dispatch:
-  inputs:
-    publish:
-      type: boolean
-      required: false
-      description: 'Publish package to NPM'
+    inputs:
+      publish:
+        type: boolean
+        required: false
+        description: 'Publish package to NPM'
 
 env:
   NODE_VERSION: "20.19.4"

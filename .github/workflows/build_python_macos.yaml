@@ -2,11 +2,11 @@ name: Build - Python macOS
 
 on:
   workflow_dispatch:
-  inputs:
-    publish:
-      type: boolean
-      required: false
-      description: 'Publish package to PyPI'
+    inputs:
+      publish:
+        type: boolean
+        required: false
+        description: 'Publish package to PyPI'
 
 jobs:
   build:

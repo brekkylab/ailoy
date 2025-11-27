@@ -2,11 +2,11 @@ name: Build - Node.js Windows
 
 on:
   workflow_dispatch:
-  inputs:
-    publish:
-      type: boolean
-      required: false
-      description: 'Publish package to NPM'
+    inputs:
+      publish:
+        type: boolean
+        required: false
+        description: 'Publish package to NPM'
 
 env:
   BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251127
