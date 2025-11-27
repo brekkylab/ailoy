@@ -16,8 +16,6 @@ env:
 jobs:
   build:
     runs-on: windows-2022
-    permissions:
-      id-token: write
 
     outputs:
       wheel_filename: ${{ steps.save_wheel_name.outputs.wheel_filename }}
