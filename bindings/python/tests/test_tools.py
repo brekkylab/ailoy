@@ -8,7 +8,7 @@ import ailoy as ai
 pytestmark = [pytest.mark.asyncio]
 
 
-async def test_builtin_tool():
+async def test_builtin_terminal_tool():
     import subprocess
 
     tool = ai.Tool.new_builtin("terminal")
@@ -17,6 +17,19 @@ async def test_builtin_tool():
     tool_result = await tool(command=command)
     process_run = subprocess.run([command], stdout=subprocess.PIPE)
     assert tool_result["stdout"] == process_run.stdout.decode()
+
+
+async def test_builtin_web_search_duckduckgo_tool():
+    tool = ai.Tool.new_builtin("web_search_duckduckgo")
+    tool_result = await tool(query="Ailoy", max_results=5)
+    assert "results" in tool_result
+    assert tool_result["results"].startswith("Found 5 search results")
+
+
+async def test_builtin_web_fetch_tool():
+    tool = ai.Tool.new_builtin("web_fetch")
+    tool_result = await tool(url="https://brekkylab.github.io/ailoy/")
+    assert "results" in tool_result
 
 
 async def test_python_async_function_tool():

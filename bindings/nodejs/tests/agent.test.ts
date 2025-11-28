@@ -151,6 +151,40 @@ for (const cfg of modelConfigs) {
     );
 
     test.sequential(
+      "Tool Calling: Builtin Tool (web search)",
+      async () => {
+        const tool = ailoy.Tool.newBuiltin("web_search_duckduckgo");
+        agent.addTool(tool);
+
+        for await (const resp of agent.runDelta(
+          "Search for Ailoy (AI agent framework) and describe its functionalities"
+        )) {
+          console.log(`[${cfg.name}] `, resp.delta);
+        }
+
+        agent.removeTool(tool.description.name);
+      },
+      10000
+    );
+
+    test.sequential(
+      "Tool Calling: Builtin Tool (web fetch)",
+      async () => {
+        const tool = ailoy.Tool.newBuiltin("web_fetch");
+        agent.addTool(tool);
+
+        for await (const resp of agent.run(
+          "Fetch the contents from https://brekkylab.github.io/ailoy/ and summarize it."
+        )) {
+          console.log(`[${cfg.name}] `, resp.message);
+        }
+
+        agent.removeTool(tool.description.name);
+      },
+      10000
+    );
+
+    test.sequential(
       "Tool Calling: MCP Tools (time)",
       async () => {
         const client = await ailoy.MCPClient.newStdio("uvx", [

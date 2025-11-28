@@ -150,7 +150,7 @@ async def test_simple_multiturn(agent: ai.Agent):
 @pytest.mark.parametrize(
     "agent", ["qwen3", "openai", "gemini", "claude", "grok"], indirect=True
 )
-async def test_builtin_tool(agent: ai.Agent):
+async def test_agent_builtin_terminal_tool(agent: ai.Agent):
     tool = ai.Tool.new_builtin("terminal")
     agent.add_tool(tool)
 
@@ -192,6 +192,50 @@ async def test_builtin_tool(agent: ai.Agent):
     assert results[0].tool_calls[0].function.name == "terminal"
     print(f"{results[1].contents[0].value=}")
     print(f"{results[2].contents[0].text=}")
+
+
+@pytest.mark.parametrize("agent", ["qwen3"], indirect=True)
+async def test_agent_builtin_web_search_tool(agent: ai.Agent):
+    agent.add_tools(
+        [ai.Tool.new_builtin("web_search_duckduckgo"), ai.Tool.new_builtin("web_fetch")]
+    )
+
+    acc = ai.MessageDelta()
+    results = []
+    async for resp in agent.run_delta(
+        "Search for Ailoy (AI agent framework) and describe its functionalities.",
+        config=ai.AgentConfig(
+            inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+        ),
+    ):
+        acc += resp.delta
+        if resp.finish_reason is not None:
+            finish_reason = resp.finish_reason
+            results.append(acc.finish())
+            acc = ai.MessageDelta()
+        else:
+            for content in resp.delta.contents:
+                if isinstance(content, ai.PartDelta.Text):
+                    print(content.text, end="")
+                elif isinstance(content, ai.PartDelta.Value):
+                    print(content.value)
+                else:
+                    raise ValueError(
+                        f"Content has invalid part_type: {content.part_type}"
+                    )
+            for tool_call in resp.delta.tool_calls:
+                if isinstance(tool_call, ai.PartDelta.Function):
+                    print(tool_call.function.text, end="")
+                else:
+                    raise ValueError(
+                        f"Tool call has invalid part_type: {tool_call.part_type}"
+                    )
+    print()
+
+    assert finish_reason == ai.FinishReason.Stop()
+    if finish_reason == ai.FinishReason.ToolCall():
+        print(results)
+    assert results[0].tool_calls[0].function.name == "web.search.duckduckgo"
 
 
 @pytest.mark.parametrize(
