@@ -283,6 +283,12 @@ pub fn create_web_search_duckduckgo_tool() -> anyhow::Result<FunctionTool> {
             "max_results": {"type": "number", "description": "Maximum number of results to return (default: 10)"},
         },
         "required": ["query"]
+    })).returns(to_value!({
+        "type": "object",
+        "properties": {
+            "results": {"type": "string", "description": "Formatted results in a single string"}
+        },
+        "required": ["results"]
     })).build();
 
     let f: Box<ToolFunc> = Box::new(move |args: Value| {
@@ -336,6 +342,13 @@ pub fn create_web_fetch_tool() -> anyhow::Result<FunctionTool> {
                 "url": {"type": "string", "description": "The webpage URL to fetch content from"},
             },
             "required": ["url"]
+        }))
+        .returns(to_value!({
+            "type": "object",
+            "properties": {
+                "results": {"type": "string", "description": "Parsed web contents"}
+            },
+            "required": ["results"]
         }))
         .build();
 

@@ -33,8 +33,7 @@ pub fn create_terminal_tool() -> anyhow::Result<FunctionTool> {
         };
         let desc = ToolDescBuilder::new("terminal")
         .description(format!(
-            "Executes a command on the current system using the default shell. Current shell: {}. \
-            Optional fields: cwd (string), env (object), stdin (string)",
+            "Executes a command on the current system using the default shell. Current shell: {}.",
             current_shell
         ))
         .parameters(to_value!({
@@ -46,6 +45,14 @@ pub fn create_terminal_tool() -> anyhow::Result<FunctionTool> {
                 "stdin": {"type": "string", "description": "Optional string to send to STDIN."},
             },
             "required": ["command"]
+        }))
+        .returns(to_value!({
+            "type": "object",
+            "properties": {
+                "stdout": {"type": "string", "description": "stdout of the executed command."},
+                "stderr": {"type": "strsing", "description": "stderr of the executed command."},
+                "exit_code": {"type": "number", "description": "Exit code of the executed command."}
+            }
         }))
         .build();
 
