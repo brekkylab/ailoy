@@ -1,16 +1,12 @@
 import { describe, it, expect } from "vitest";
 
-import { init_faiss_index_inner } from "../src/index";
+import { create_faiss_index, get_metric_type } from "../src/index";
 
 describe("FaissIndexInner", async () => {
   it("Basic Operations", async () => {
-    const vs = await init_faiss_index_inner({
-      dimension: 10,
-      description: "IDMap2,Flat",
-      metric: "L2",
-    });
+    const vs = await create_faiss_index(10, "IDMap2,Flat", "L2");
 
-    expect(vs.get_metric_type()).to.be.equal("L2");
+    expect(vs.get_metric_type()).to.be.equal(await get_metric_type("L2"));
     expect(vs.get_dimension()).to.be.equal(10);
 
     // add two vectors

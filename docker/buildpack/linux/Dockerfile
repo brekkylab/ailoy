@@ -14,17 +14,19 @@ RUN yum install -y perl-IPC-Cmd perl-Time-Piece && \
     make -j$(nproc) && \
     make install_sw
 
-# Install OpenBLAS
+# Install Reference-LAPACK
 RUN yum install -y gcc-gfortran && \
-    curl -LO https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.29/OpenBLAS-0.3.29.tar.gz && \
-    tar -xzf OpenBLAS-0.3.29.tar.gz && \
-    cd OpenBLAS-0.3.29 && \
-    make -j$(nproc) NO_SHARED=1 USE_OPENMP=0 && \
-    make PREFIX=/opt/openblas NO_SHARED=1 USE_OPENMP=0 install
+    curl -LO https://github.com/Reference-LAPACK/lapack/archive/refs/tags/v3.12.1.tar.gz && \
+    tar -xzf v3.12.1.tar.gz && \
+    cd lapack-3.12.1 && \
+    cp make.inc.example make.inc && \
+    sed -i 's/librefblas/libblas/g' make.inc && \
+    cmake -B./build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/lapack -DCMAKE_INSTALL_LIBDIR=lib . && \
+    cmake --build ./build -t install --parallel
 
 
 FROM quay.io/pypa/manylinux_2_28_x86_64
 
 COPY --from=build /opt/vulkan-sdk /opt/vulkan-sdk
 COPY --from=build /opt/openssl /opt/openssl
-COPY --from=build /opt/openblas /opt/openblas
+COPY --from=build /opt/lapack /opt/lapack

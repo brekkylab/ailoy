@@ -6,5 +6,9 @@ export {
   init as init_tvm_language_model,
   TVMLanguageModel,
 } from "./language_model";
-export { init as init_faiss_index_inner, FaissIndexInner } from "./faiss";
-export type { FaissIndexSearchResult } from "./faiss";
+export { create_faiss_index, get_metric_type } from "./faiss";
+export type {
+  FaissIndexInner,
+  FaissIndexSearchResult,
+  FaissMetricType,
+} from "./faiss";

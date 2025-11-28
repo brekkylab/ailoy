@@ -1,0 +1,3 @@
+[submodule "crates/faiss-sys/faiss"]
+	path = crates/faiss-sys/faiss
+	url = https://github.com/facebookresearch/faiss.git

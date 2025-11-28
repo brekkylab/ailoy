@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251120
+      image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251126
 
     strategy:
       matrix:
@@ -23,13 +23,15 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Install cxxbridge (required to build shim)
         run: |
-          cargo install cxxbridge-cmd
+          cargo install cxxbridge-cmd@1.0.189
 
       - name: Install maturin
         working-directory: bindings/python
@@ -46,10 +48,9 @@ jobs:
           source .venv/bin/activate
           maturin build --out ./dist
         env:
-          CMAKE_PREFIX_PATH: /opt/openblas
           OPENSSL_DIR: /opt/openssl
           VULKAN_SDK: /opt/vulkan-sdk
-          LD_LIBRARY_PATH: /opt/openblas/lib:/opt/vulkan-sdk/lib
+          LD_LIBRARY_PATH: /opt/lapack/lib:/opt/vulkan-sdk/lib
 
       - name: Repair wheel
         working-directory: bindings/python

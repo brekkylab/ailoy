@@ -20,7 +20,7 @@ export type FaissIndexSearchResult = {
   indexes: BigInt64Array
 };
 
-export interface FaissIndexHandle extends ClassHandle {
+export interface FaissIndexInner extends ClassHandle {
   get_metric_type(): FaissMetricType;
   clear(): void;
   is_trained(): boolean;
@@ -35,8 +35,9 @@ export interface FaissIndexHandle extends ClassHandle {
 
 interface EmbindModule {
   FaissMetricType: {InnerProduct: FaissMetricTypeValue<0>, L2: FaissMetricTypeValue<1>, L1: FaissMetricTypeValue<2>, Linf: FaissMetricTypeValue<3>, Lp: FaissMetricTypeValue<4>, Canberra: FaissMetricTypeValue<20>, BrayCurtis: FaissMetricTypeValue<21>, JensenShannon: FaissMetricTypeValue<22>, Jaccard: FaissMetricTypeValue<23>};
-  FaissIndexHandle: {};
-  create_index(_0: number, _1: EmbindString, _2: FaissMetricType): FaissIndexHandle;
+  FaissIndexInner: {
+    new(_0: number, _1: EmbindString, _2: FaissMetricType): FaissIndexInner;
+  };
 }
 
 export type MainModule = WasmModule & EmbindModule;

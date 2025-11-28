@@ -1,4 +1,5 @@
-#include "faiss_bridge.hpp"
+#include "ailoy-faiss-sys/src/bridge.hpp"
+#include "ailoy-faiss-sys/src/lib.rs.h"
 
 #include <filesystem>
 #include <fstream>
@@ -7,8 +8,6 @@
 #include <faiss/impl/IDSelector.h>
 #include <faiss/index_factory.h>
 #include <faiss/index_io.h>
-
-#include "cxx_bridge.rs.h"
 
 namespace faiss_bridge {
 
@@ -123,8 +122,7 @@ void FaissIndexInner::clear() {
   try {
     if (index_->ntotal > 0) {
       faiss::IDSelectorAll all_selector;
-
-      size_t num_removed = index_->remove_ids(all_selector);
+      index_->remove_ids(all_selector);
     } else {
       // log.debug("Index is already empty.")
     }

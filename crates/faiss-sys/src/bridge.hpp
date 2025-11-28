@@ -9,11 +9,11 @@
 #include <faiss/index_factory.h>
 #include <rust/cxx.h>
 
+namespace faiss_bridge {
+
 // Forward Declaration for cxx_bridge.rs.h
 enum class FaissMetricType : uint8_t;
 struct FaissIndexSearchResult;
-
-namespace faiss_bridge {
 
 class FaissIndexInner {
 private:
