@@ -2,6 +2,11 @@ name: Build - Python Linux
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        type: boolean
+        required: false
+        description: 'Publish package to PyPI'
 
 jobs:
   build:
@@ -10,6 +15,9 @@ jobs:
       image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251126
     env:
       PYTHON_BIN: /opt/python/cp310-cp310/bin
+
+    outputs:
+      wheel_filename: ${{ steps.save_wheel_name.outputs.wheel_filename }}
 
     steps:
       - name: Checkout source
@@ -44,6 +52,7 @@ jobs:
           LD_LIBRARY_PATH: /opt/lapack/lib:/opt/vulkan-sdk/lib
 
       - name: Repair wheel
+        id: save_wheel_name
         working-directory: bindings/python
         run: |
           mkdir -p wheelhouse
@@ -52,10 +61,29 @@ jobs:
             --exclude libvulkan.so.*
           auditwheel show wheelhouse/*.whl
           WHEEL_NAME=$(basename wheelhouse/*.whl)
-          echo "WHEEL_FILENAME=$WHEEL_NAME" >> $GITHUB_ENV
+          echo "wheel_filename=$WHEEL_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.WHEEL_FILENAME }}
-          path: bindings/python/wheelhouse
+          name: ${{ steps.save_wheel_name.outputs.wheel_filename }}
+          path: ${{ github.workspace }}/bindings/python/wheelhouse/${{ steps.save_wheel_name.outputs.wheel_filename }}
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ inputs.publish }}
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.wheel_filename }}
+          path: wheelhouse
+
+      - name: Publish wheel to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: wheelhouse
