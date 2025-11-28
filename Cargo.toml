@@ -57,7 +57,7 @@ minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { version = "3.4.0", features = ["tokio_rt", "napi8", "serde-json"], optional = true }
 napi-derive = { version = "3.3.0", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
-pyo3 = { version = "0.27.0", features = ["experimental-async", "macros", "anyhow"], optional = true }
+pyo3 = { version = "0.27.0", features = ["abi3-py310", "experimental-async", "macros", "anyhow"], optional = true }
 pyo3-async-runtimes = { version = "0.27.0", features = ["attributes", "tokio-runtime"], optional = true }
 pyo3-stub-gen = { version = "0.16.1", optional = true }
 pyo3-stub-gen-derive = { version = "0.16.1", optional = true }
