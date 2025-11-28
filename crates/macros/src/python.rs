@@ -60,18 +60,14 @@ pub fn py_string_enum(input: TokenStream) -> TokenStream {
         for attr in &variant.attrs {
             if attr.path().is_ident("serde") || attr.path().is_ident("strum") {
                 if let Meta::List(meta_list) = &attr.meta {
-                    for nested in meta_list.tokens.clone().into_iter() {
-                        let nested_str = nested.to_string();
-                        if nested_str.starts_with("rename") {
-                            // Parse rename = "value"
-                            if let Some(value) = nested_str
-                                .split('=')
-                                .nth(1)
-                                .map(|s| s.trim().trim_matches('"'))
-                            {
-                                explicit_rename = Some(value.to_string());
-                                break;
-                            }
+                    let tokens_str = meta_list.tokens.to_string();
+                    let parts: Vec<&str> = tokens_str.split("=").collect();
+                    if parts.len() >= 2 {
+                        let left = parts[0].trim();
+                        if left == "rename" {
+                            let right = parts[1].trim();
+                            explicit_rename = Some(right.trim_matches('"').to_string());
+                            break;
                         }
                     }
                 }

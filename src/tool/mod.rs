@@ -39,14 +39,14 @@ pub struct Tool {
 
 impl Tool {
     pub fn new_builtin(kind: BuiltinToolKind) -> anyhow::Result<Self> {
-        match kind {
-            BuiltinToolKind::Terminal => {
-                let terminal_tool = create_terminal_tool()?;
-                Ok(Self {
-                    inner: ToolInner::Function(terminal_tool),
-                })
-            }
-        }
+        let tool = match kind {
+            BuiltinToolKind::Terminal => create_terminal_tool(),
+            BuiltinToolKind::WebSearchDuckduckgo => create_web_search_duckduckgo_tool(),
+            BuiltinToolKind::WebFetch => create_web_fetch_tool(),
+        }?;
+        Ok(Self {
+            inner: ToolInner::Function(tool),
+        })
     }
 
     pub fn new_function(desc: ToolDesc, f: Arc<ToolFunc>) -> Self {

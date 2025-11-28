@@ -161,7 +161,10 @@ export type APISpecification =
   | "Responses"
   | "Grok";
 
-export type BuiltinToolKind = "terminal";
+export type BuiltinToolKind =
+  | "terminal"
+  | "web_search_duckduckgo"
+  | "web_fetch";
 
 export type Bytes = Buffer;
 
