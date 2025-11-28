@@ -58,9 +58,9 @@ describe("Ailoy Tools", async () => {
 
   it("BuiltinTool: web_search_duckduckgo", async () => {
     try {
-      const tool = ailoy.Tool.newBuiltin("web_search_duckduckgo");
+      ailoy.Tool.newBuiltin("web_search_duckduckgo");
     } catch (err) {
-      assert((err as Error).message, "not available");
+      assert.include((err as Error).message, "not available");
     }
   });
 
