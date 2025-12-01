@@ -195,7 +195,10 @@ impl WebContentFetcher {
 
         // Truncate if too long
         let final_text = if text.len() > 8000 {
-            format!("{}... [content truncated]", &text[..8000])
+            format!(
+                "{}... [content truncated]",
+                text.chars().take(8000).collect::<String>()
+            )
         } else {
             text
         };
