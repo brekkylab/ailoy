@@ -41,11 +41,11 @@ default = []
 ailoy-macros = { path = "./crates/macros" }
 anyhow = "1"
 async-stream = "0.3"
-async-trait = "0.1.89"
-aws-config = { version = "1.8.6", optional = true, default-features = false, features = ["rt-tokio"] }
-aws-sdk-s3 = { version = "1.106.0", optional = true, default-features = false, features = ["default-https-client", "rt-tokio"] }
-base64 = "0.21"
-chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "master" }
+async-trait = "0.1"
+aws-config = { version = "1.8", optional = true, default-features = false, features = ["rt-tokio"] }
+aws-sdk-s3 = { version = "1.115", optional = true, default-features = false, features = ["default-https-client", "rt-tokio", "http-1x"] }
+base64 = "0.22"
+chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", rev = "53c5c2f69b66bd7daa301b8e560758cb96d8c913" }
 clap = { version = "4.5.48", optional = true, features = ["derive"] }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
@@ -53,7 +53,7 @@ futures = "0.3.31"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
 indicatif = { version = "0.18.0", optional = true }
-jsonschema = { version = "0.33.0", default-features = false }
+jsonschema = { version = "0.37", default-features = false }
 minijinja = { version = "2.11.0", features = ["loader", "custom_syntax", "json", "preserve_order"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { version = "3.4.0", features = ["tokio_rt", "napi8", "serde-json"], optional = true }
@@ -65,13 +65,13 @@ pyo3-stub-gen = { version = "0.17.2", optional = true }
 pyo3-stub-gen-derive = { version = "0.17.2", optional = true }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 rmcp = { version = "0.5.0", features = ["default"] }
-scraper = "0.19"
+scraper = "0.24"
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 sha1 = "0.10"
 strum = { version = "0.27", features = ["derive"] }
-strum_macros = "0.27.2"
+strum_macros = "0.27"
 thiserror = "2.0.15"
 unicode-segmentation = "1.12.0"
 url = "2.5.4"
@@ -122,12 +122,13 @@ napi-build = "2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
 cmake = "0.1"
+scratch = "1.0"
 
 [dev-dependencies]
 yare = "3.0.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-env_logger = "0.11.8"
+env_logger = "0.11"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"

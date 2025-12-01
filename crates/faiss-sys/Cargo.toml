@@ -12,3 +12,4 @@ cxx = "1.0.189"
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
 cmake = "0.1"
 cxx-build = "1.0.189"
+scratch = "1.0"
