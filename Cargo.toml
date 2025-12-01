@@ -99,7 +99,7 @@ tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt", "sync"] }
 tsify = { version = "0.5.5", default-features = false, features = ["js"] }
 uuid = { version = "1.18.0", features = ["v4", "js"] }
-wasm-bindgen = "0.2"
+wasm-bindgen = "=0.2.105"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
     "FileSystemCreateWritableOptions",
