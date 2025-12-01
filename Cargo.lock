@@ -755,7 +755,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 [[package]]
 name = "chromadb"
 version = "2.3.0"
-source = "git+https://github.com/brekkylab/chromadb-rs.git?rev=53c5c2f69b66bd7daa301b8e560758cb96d8c913#53c5c2f69b66bd7daa301b8e560758cb96d8c913"
+source = "git+https://github.com/brekkylab/chromadb-rs.git?branch=master#e2e06f3e137f8c51b2148bd9fd943aa53e49a7eb"
 dependencies = [
  "anyhow",
  "async-trait",
