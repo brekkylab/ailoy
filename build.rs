@@ -53,7 +53,7 @@ fn build_native() {
     let mut cmake_config = Config::new(&cmake_source_dir);
     cmake_config.profile("Release"); // Always build Release
     cmake_config.define("CMAKE_INSTALL_PREFIX", &cmake_install_dir);
-
+    cmake_config.out_dir(scratch::path("ailoy-cpp-shim"));
     cmake_config.build();
 
     // Link to this project

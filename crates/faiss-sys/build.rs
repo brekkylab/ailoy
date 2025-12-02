@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 fn main() {
     let target = std::env::var("TARGET").expect("TARGET not set");
     if target.starts_with("wasm") {
@@ -22,8 +20,7 @@ fn main() {
         }
     }
 
-    let out_dir = std::env::var("OUT_DIR").map(PathBuf::from).unwrap();
-    let faiss_build_dir = out_dir.join("faiss");
+    let faiss_build_dir = scratch::path("faiss");
     let faiss_libdir = faiss_build_dir.join("lib");
     let faiss_includedir = faiss_build_dir.join("include");
 
