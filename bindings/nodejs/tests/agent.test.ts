@@ -153,9 +153,7 @@ for (const cfg of modelConfigs) {
     test.sequential(
       "Tool Calling: Builtin Tool (web search)",
       async () => {
-        const tool = ailoy.Tool.newBuiltin("web_search_duckduckgo", {
-          baseUrl: "http://www.naver.com",
-        });
+        const tool = ailoy.Tool.newBuiltin("web_search_duckduckgo");
         agent.addTool(tool);
 
         for await (const resp of agent.runDelta(
