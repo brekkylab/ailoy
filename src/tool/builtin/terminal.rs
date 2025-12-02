@@ -1,20 +1,6 @@
-use serde::{Deserialize, Serialize};
-use strum_macros::{Display, EnumString};
+use crate::{tool::FunctionTool, value::Value};
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Display, EnumString)]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
-#[cfg_attr(feature = "python", derive(ailoy_macros::PyStringEnum))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(from_wasm_abi, into_wasm_abi))]
-pub enum BuiltinToolKind {
-    Terminal,
-}
-
-use crate::tool::FunctionTool;
-
-pub fn create_terminal_tool() -> anyhow::Result<FunctionTool> {
+pub fn create_terminal_tool(_config: Value) -> anyhow::Result<FunctionTool> {
     #[cfg(feature = "wasm")]
     {
         return Err(anyhow::anyhow!(
@@ -47,8 +33,7 @@ pub fn create_terminal_tool() -> anyhow::Result<FunctionTool> {
         };
         let desc = ToolDescBuilder::new("terminal")
         .description(format!(
-            "Executes a command on the current system using the default shell. Current shell: {}. \
-            Optional fields: cwd (string), env (object), stdin (string)",
+            "Executes a command on the current system using the default shell. Current shell: {}.",
             current_shell
         ))
         .parameters(to_value!({
@@ -60,6 +45,14 @@ pub fn create_terminal_tool() -> anyhow::Result<FunctionTool> {
                 "stdin": {"type": "string", "description": "Optional string to send to STDIN."},
             },
             "required": ["command"]
+        }))
+        .returns(to_value!({
+            "type": "object",
+            "properties": {
+                "stdout": {"type": "string", "description": "stdout of the executed command."},
+                "stderr": {"type": "strsing", "description": "stderr of the executed command."},
+                "exit_code": {"type": "number", "description": "Exit code of the executed command."}
+            }
         }))
         .build();
 

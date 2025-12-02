@@ -51,6 +51,9 @@ filename = "crates/faiss-sys/Cargo.toml"
 filename = "bindings/nodejs/package.json"
 
 [[tool.bumpversion.files]]
+filename = "bindings/nodejs/src/ailoy_core.js"
+
+[[tool.bumpversion.files]]
 filename = "bindings/nodejs/npm/darwin-arm64/package.json"
 
 [[tool.bumpversion.files]]

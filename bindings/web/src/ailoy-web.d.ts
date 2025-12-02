@@ -127,7 +127,7 @@ export class Tool {
   private constructor();
   free(): void;
   [Symbol.dispose](): void;
-  static newBuiltin(kind: BuiltinToolKind): Tool;
+  static newBuiltin(kind: BuiltinToolKind, config?: any | null): Tool;
   static newFunction(desc: ToolDesc, func: (args: any) => Promise<any>): Tool;
   run(args: any): Promise<any>;
   readonly description: ToolDesc;
@@ -174,7 +174,10 @@ export type APISpecification =
   | "Responses"
   | "Grok";
 
-export type BuiltinToolKind = "terminal";
+export type BuiltinToolKind =
+  | "terminal"
+  | "web_search_duckduckgo"
+  | "web_fetch";
 
 export type Bytes = Uint8Array;
 

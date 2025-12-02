@@ -38,15 +38,15 @@ pub struct Tool {
 }
 
 impl Tool {
-    pub fn new_builtin(kind: BuiltinToolKind) -> anyhow::Result<Self> {
-        match kind {
-            BuiltinToolKind::Terminal => {
-                let terminal_tool = create_terminal_tool()?;
-                Ok(Self {
-                    inner: ToolInner::Function(terminal_tool),
-                })
-            }
-        }
+    pub fn new_builtin(kind: BuiltinToolKind, config: Value) -> anyhow::Result<Self> {
+        let tool = match kind {
+            BuiltinToolKind::Terminal => create_terminal_tool(config),
+            BuiltinToolKind::WebSearchDuckduckgo => create_web_search_duckduckgo_tool(config),
+            BuiltinToolKind::WebFetch => create_web_fetch_tool(config),
+        }?;
+        Ok(Self {
+            inner: ToolInner::Function(tool),
+        })
     }
 
     pub fn new_function(desc: ToolDesc, f: Arc<ToolFunc>) -> Self {
@@ -144,9 +144,18 @@ mod py {
     #[pymethods]
     impl Tool {
         #[classmethod]
-        #[pyo3(name = "new_builtin")]
-        pub fn new_builtin_py(_cls: &Bound<'_, PyType>, kind: BuiltinToolKind) -> PyResult<Self> {
-            Self::new_builtin(kind).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        #[pyo3(name = "new_builtin", signature = (kind, **kwargs))]
+        pub fn new_builtin_py(
+            _cls: &Bound<'_, PyType>,
+            kind: BuiltinToolKind,
+            kwargs: Option<&Bound<'_, PyDict>>,
+        ) -> PyResult<Self> {
+            let tool_config = if let Some(kwargs) = kwargs {
+                python_to_value(kwargs).unwrap()
+            } else {
+                Value::object_empty()
+            };
+            Self::new_builtin(kind, tool_config).map_err(|e| PyRuntimeError::new_err(e.to_string()))
         }
 
         #[gen_stub(skip)]
@@ -275,8 +284,8 @@ mod node {
     #[napi]
     impl Tool {
         #[napi(js_name = "newBuiltin")]
-        pub fn new_builtin_js(kind: BuiltinToolKind) -> napi::Result<Self> {
-            Self::new_builtin(kind)
+        pub fn new_builtin_js(kind: BuiltinToolKind, config: Option<Value>) -> napi::Result<Self> {
+            Self::new_builtin(kind, config.unwrap_or(Value::object_empty()))
                 .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
         }
 
@@ -355,8 +364,12 @@ mod wasm {
     #[wasm_bindgen]
     impl Tool {
         #[wasm_bindgen(js_name = "newBuiltin")]
-        pub fn new_builtin_js(kind: BuiltinToolKind) -> Result<Self, js_sys::Error> {
-            Self::new_builtin(kind).map_err(|e| js_sys::Error::new(&e.to_string()))
+        pub fn new_builtin_js(
+            kind: BuiltinToolKind,
+            config: Option<Value>,
+        ) -> Result<Self, js_sys::Error> {
+            Self::new_builtin(kind, config.unwrap_or(Value::object_empty()))
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
         }
 
         #[wasm_bindgen(js_name = "newFunction")]
