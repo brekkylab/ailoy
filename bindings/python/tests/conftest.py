@@ -3,7 +3,6 @@ from pytest import Parser
 
 def pytest_addoption(parser: Parser):
     parser.addoption(
-        "-l",
         "--langmodel",
         action="store",
         choices=[

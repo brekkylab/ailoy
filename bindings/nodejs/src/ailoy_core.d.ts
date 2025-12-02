@@ -108,7 +108,10 @@ export declare class MessageOutputIterator {
 }
 
 export declare class Tool {
-  static newBuiltin(kind: BuiltinToolKind): Tool;
+  static newBuiltin(
+    kind: BuiltinToolKind,
+    config?: any | undefined | null
+  ): Tool;
   static newFunction(desc: ToolDesc, func: (arg: any) => Promise<any>): Tool;
   get description(): ToolDesc;
   run(args: any): Promise<any>;

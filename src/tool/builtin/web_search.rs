@@ -6,6 +6,7 @@ use anyhow::anyhow;
 use futures::lock::Mutex;
 use reqwest::Client;
 use scraper::{Html, Selector};
+use serde::Deserialize;
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
 
@@ -53,6 +54,8 @@ impl RateLimiter {
     }
 }
 
+const DUCKDUCKGO_BASE_URL: &str = "https://html.duckduckgo.com/html";
+
 struct DuckDuckGoSearcher {
     base_url: String,
     rate_limiter: RateLimiter,
@@ -60,11 +63,13 @@ struct DuckDuckGoSearcher {
 }
 
 impl DuckDuckGoSearcher {
-    pub fn new() -> Self {
+    pub fn new(base_url: Option<String>, requests_per_minute: Option<usize>) -> Self {
         let client = Client::builder().user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36").build().expect("Failed to create HTTP client");
+        let base_url = base_url.unwrap_or(DUCKDUCKGO_BASE_URL.to_string());
+        let requests_per_minute = requests_per_minute.unwrap_or(60);
         Self {
-            base_url: "https://html.duckduckgo.com/html".to_string(),
-            rate_limiter: RateLimiter::new(60),
+            base_url,
+            rate_limiter: RateLimiter::new(requests_per_minute),
             client,
         }
     }
@@ -272,11 +277,30 @@ impl WebContentFetcher {
     }
 }
 
-pub fn create_web_search_duckduckgo_tool() -> anyhow::Result<FunctionTool> {
+pub fn create_web_search_duckduckgo_tool(config: Value) -> anyhow::Result<FunctionTool> {
+    #[derive(Clone, Default, Deserialize)]
+    struct WebSearchDuckduckgoToolConfig {
+        base_url: Option<String>,
+        requests_per_minute: Option<usize>,
+    }
+
+    let config =
+        serde_json::from_value::<WebSearchDuckduckgoToolConfig>(config.into()).unwrap_or_default();
+
     if cfg!(feature = "wasm") {
-        return Err(anyhow::anyhow!(
-            "Builtin tool \"web_search_duckduckgo\" is not available on web browser environment due to the CORS policy."
-        ));
+        if config.base_url.is_none()
+            || config
+                .base_url
+                .clone()
+                .is_some_and(|val| val == DUCKDUCKGO_BASE_URL)
+        {
+            return Err(anyhow::anyhow!(dedent::dedent!(
+                r#"
+                Builtin tool \"web_search_duckduckgo\" is not available on web browser environment due to the CORS policy.
+                Try to setup proxy server and configure `base_url` to point there.
+            "#
+            )));
+        }
     }
 
     let desc = ToolDescBuilder::new("web_search_duckduckgo").description("Search webpages using DuckDuckGo and return formatted results.").parameters(to_value!({
@@ -295,6 +319,9 @@ pub fn create_web_search_duckduckgo_tool() -> anyhow::Result<FunctionTool> {
     })).build();
 
     let f: Box<ToolFunc> = Box::new(move |args: Value| {
+        let config = config.clone();
+        let base_url = config.base_url;
+        let requests_per_minute = config.requests_per_minute;
         Box::pin(async move {
             let args = match args.as_object() {
                 Some(a) => a,
@@ -318,7 +345,7 @@ pub fn create_web_search_duckduckgo_tool() -> anyhow::Result<FunctionTool> {
                 .and_then(|v| v.as_unsigned())
                 .unwrap_or(10) as usize;
 
-            let searcher = DuckDuckGoSearcher::new();
+            let searcher = DuckDuckGoSearcher::new(base_url, requests_per_minute);
             let results = match searcher.search(query, max_results).await {
                 Ok(results) => results,
                 Err(err) => {
@@ -336,7 +363,7 @@ pub fn create_web_search_duckduckgo_tool() -> anyhow::Result<FunctionTool> {
     Ok(FunctionTool::new(desc, std::sync::Arc::new(f)))
 }
 
-pub fn create_web_fetch_tool() -> anyhow::Result<FunctionTool> {
+pub fn create_web_fetch_tool(_config: Value) -> anyhow::Result<FunctionTool> {
     let desc = ToolDescBuilder::new("web_fetch")
         .description("Fetch and parse content from a webpage URL.")
         .parameters(to_value!({

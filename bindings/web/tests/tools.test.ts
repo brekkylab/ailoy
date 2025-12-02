@@ -57,11 +57,22 @@ describe("Ailoy Tools", async () => {
   });
 
   it("BuiltinTool: web_search_duckduckgo", async () => {
+    // Creating tool without `base_url` should raise the error
     try {
       ailoy.Tool.newBuiltin("web_search_duckduckgo");
     } catch (err) {
       assert.include((err as Error).message, "not available");
     }
+
+    // Creating tool with `base_url` pointing to proxy server
+    const tool = ailoy.Tool.newBuiltin("web_search_duckduckgo", {
+      base_url: "http://localhost:3001",
+    });
+    const results = await tool.run({
+      query: "Ailoy",
+      max_results: 5,
+    });
+    console.log(results);
   });
 
   it("BuiltinTool: web_fetch", async () => {
