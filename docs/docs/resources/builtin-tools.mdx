@@ -41,9 +41,21 @@ Search webpages using DuckDuckGo and return formatted results.
 
 :::info
 
-This tool is not available on web environments.
+This tool may not work in web environments due to
+[**CORS**](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS)
+restrictions. To avoid this issue, configure your requests to pass through a
+proxy server that forwards the call to the original DuckDuckGo endpoint. See the
+[**example proxy server**](https://github.com/brekkylab/ailoy/blob/main/bindings/web/tests/proxy/duckduckgo.ts)
+implementation in our test codes.
 
 :::
+
+### Configuration
+
+| Name                  |  Type  |              Description              |             Default              |
+| --------------------- | :----: | :-----------------------------------: | :------------------------------: |
+| `base_url`            | string |     Base URL to send the request      | https://html.duckduckgo.com/html |
+| `requests_per_minute` | number | Maximum number of requests per minute |                60                |
 
 ### Arguments
 
