@@ -1,6 +1,6 @@
-use crate::tool::FunctionTool;
+use crate::{tool::FunctionTool, value::Value};
 
-pub fn create_terminal_tool() -> anyhow::Result<FunctionTool> {
+pub fn create_terminal_tool(_config: Value) -> anyhow::Result<FunctionTool> {
     #[cfg(feature = "wasm")]
     {
         return Err(anyhow::anyhow!(

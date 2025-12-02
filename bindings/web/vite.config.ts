@@ -129,6 +129,7 @@ export default defineConfig(({ mode }) => {
             },
         instances: [{ browser: "chromium" }],
       },
+      globalSetup: "./tests/globalSetup.ts",
       typecheck: {
         enabled: true,
       },
