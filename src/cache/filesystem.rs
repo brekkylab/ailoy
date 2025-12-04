@@ -57,11 +57,23 @@ mod opfs {
     use anyhow::{anyhow, bail};
     use js_sys::Uint8Array;
     use wasm_bindgen::JsCast as _;
+    use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{
         FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemGetFileOptions,
         FileSystemRemoveOptions, FileSystemWritableFileStream,
     };
+
+    #[wasm_bindgen]
+    extern "C" {
+        type Global;
+
+        #[wasm_bindgen(method, getter, js_name = Window)]
+        fn window(this: &Global) -> JsValue;
+
+        #[wasm_bindgen(method, getter, js_name = WorkerGlobalScope)]
+        fn worker(this: &Global) -> JsValue;
+    }
 
     async fn get_dir_handle(
         path: &Path,
@@ -71,12 +83,23 @@ mod opfs {
             bail!("Root is disallowed".to_owned());
         }
 
+        let global: Global = js_sys::global().unchecked_into();
+        let storage = if !global.window().is_undefined() {
+            global
+                .unchecked_into::<web_sys::Window>()
+                .navigator()
+                .storage()
+        } else if !global.worker().is_undefined() {
+            global
+                .unchecked_into::<web_sys::WorkerGlobalScope>()
+                .navigator()
+                .storage()
+        } else {
+            bail!("Failed to get navigator.storage");
+        };
+
         // Initialize `handle` with OPFS root
-        let promise = web_sys::window()
-            .and_then(|w| Some(w.navigator().storage()))
-            .ok_or(anyhow!("no navigator.storage"))?
-            .get_directory();
-        let mut handle = JsFuture::from(promise)
+        let mut handle = JsFuture::from(storage.get_directory())
             .await
             .map_err(|_| anyhow!("Failed to get OPFS root directory"))?
             .dyn_into::<FileSystemDirectoryHandle>()

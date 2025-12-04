@@ -112,6 +112,7 @@ web-sys = { version = "0.3", features = [
     "Navigator",
     "Storage",
     "StorageManager",
+    "WorkerNavigator",
     "console"
 ] }
 web-time = "1.1"
