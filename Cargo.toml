@@ -49,6 +49,7 @@ chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "mas
 clap = { version = "4.5.48", optional = true, features = ["derive"] }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
+fancy-regex = "0.16"
 futures = "0.3.31"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
@@ -81,8 +82,8 @@ version-compare = "0.2.1"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ailoy-faiss-sys = { path = "./crates/faiss-sys" }
 cxx = "1.0.189"
+getrandom = "0.3"
 log = "0.4.27"
-onig = { version = "6", default-features = false }
 parking_lot = "0.12.4"
 rmcp = { version = "0.5.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client"] }
 tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
