@@ -1,6 +1,8 @@
+#[allow(dead_code)]
 #[cfg(not(target_arch = "wasm32"))]
 mod sync {
     /// Reexports of the actual marker traits from core.
+    #[allow(unused_imports)]
     pub use core::marker::{Send as MaybeSend, Sync as MaybeSync};
     use core::{future::Future, pin::Pin};
 
@@ -140,6 +142,7 @@ mod sync {
     pub type AtomicPtr<T> = core::sync::atomic::AtomicPtr<T>;
 }
 
+#[allow(dead_code)]
 #[cfg(target_arch = "wasm32")]
 mod unsync {
     use core::{

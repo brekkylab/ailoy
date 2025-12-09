@@ -207,7 +207,12 @@ impl LocalLangModelImpl {
                     break;
                 } else if s == "<tool_call>" {
                     mode = "tool_call".to_owned();
-                    continue;
+                    // Generate a random tool call id
+                    let delta = delta.with_tool_calls([PartDelta::Function{
+                        id: Some(format!("call-{}", crate::utils::generate_random_hex_string(8).unwrap())),
+                        function: PartDeltaFunction::Verbatim{text: "".into()}
+                    }]);
+                    yield MessageDeltaOutput{delta, finish_reason: None};
                 } else if s == "</tool_call>" {
                     // @jhlee: Currently, parallel tool calls are not supported.
                     // The process stops immediately when the "eotc" token appears.
@@ -226,7 +231,10 @@ impl LocalLangModelImpl {
                     } else if mode == "reasoning" {
                         delta.with_thinking(s)
                     } else if mode == "tool_call" {
-                        delta.with_tool_calls([PartDelta::Function{id: None, function: PartDeltaFunction::Verbatim{text: s}}])
+                        delta.with_tool_calls([PartDelta::Function{
+                            id: None,
+                            function: PartDeltaFunction::Verbatim{text: s}
+                        }])
                     } else {
                         unreachable!();
                     };
@@ -388,18 +396,12 @@ impl TryFromCache for LocalLangModelImpl {
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 #[cfg(test)]
 mod tests {
-    use crate::{
-        debug,
-        value::{Delta, Part},
-    };
+    use super::*;
+    use crate::value::{Delta, Part, Role};
+    use futures::StreamExt;
 
     #[tokio::test]
     async fn infer_simple_chat() {
-        use futures::StreamExt;
-
-        use super::*;
-        use crate::value::Role;
-
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
 
@@ -440,10 +442,10 @@ mod tests {
         let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), config);
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
-            debug!("{:?}", out);
+            crate::debug!("{:?}", out);
             delta = delta.accumulate(out.delta).unwrap();
         }
-        crate::utils::log::info(format!("{:?}", delta.finish().unwrap()));
+        crate::info!("{:?}", delta.finish().unwrap());
     }
 
     // #[tokio::test]
@@ -642,9 +644,9 @@ mod tests {
         let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), config);
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
-            crate::utils::log::debug(format!("{:?}", out));
+            crate::debug!("{:?}", out);
             delta = delta.accumulate(out.delta).unwrap();
         }
-        crate::utils::log::info(format!("{:?}", delta.finish().unwrap()));
+        crate::info!("{:?}", delta.finish().unwrap());
     }
 }

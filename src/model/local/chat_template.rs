@@ -311,7 +311,9 @@ mod tests {
         let template = template.unwrap();
 
         let think_effort: ThinkEffort = if !think_effort.is_empty() {
-            serde_json::from_str(think_effort).unwrap()
+            use std::str::FromStr;
+
+            ThinkEffort::from_str(think_effort).unwrap()
         } else {
             ThinkEffort::Disable
         };
