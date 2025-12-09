@@ -66,7 +66,7 @@ describe("Ailoy Tools", async () => {
 
     // Creating tool with `base_url` pointing to proxy server
     const tool = ailoy.Tool.newBuiltin("web_search_duckduckgo", {
-      base_url: "http://localhost:3001",
+      base_url: "http://localhost:3001/web-search-duckduckgo",
     });
     const results = await tool.run({
       query: "Ailoy",
@@ -81,5 +81,13 @@ describe("Ailoy Tools", async () => {
       url: "https://brekkylab.github.io/ailoy/",
     });
     console.log(results);
+
+    const tool2 = ailoy.Tool.newBuiltin("web_fetch", {
+      proxy_url: "http://localhost:3001/web-fetch",
+    });
+    const { results: results2 } = await tool2.run({
+      url: "https://google.com",
+    });
+    console.log(results2);
   });
 });

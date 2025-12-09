@@ -121,7 +121,7 @@ impl ToolBehavior for MCPTool {
 mod tests {
     #[tokio::test]
     async fn run_stdio() -> anyhow::Result<()> {
-        use onig::Regex;
+        use fancy_regex::Regex;
         use rmcp::transport::ConfigureCommandExt;
 
         use super::*;
@@ -152,7 +152,8 @@ mod tests {
         assert_eq!(parsed_part["is_dst"].as_bool(), Some(false));
         assert_eq!(
             Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$")?
-                .is_match(parsed_part["datetime"].as_str().unwrap()),
+                .is_match(parsed_part["datetime"].as_str().unwrap())
+                .unwrap(),
             true
         );
 

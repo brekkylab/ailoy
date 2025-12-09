@@ -45,7 +45,7 @@ This tool may not work in web environments due to
 [**CORS**](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS)
 restrictions. To avoid this issue, configure your requests to pass through a
 proxy server that forwards the call to the original DuckDuckGo endpoint. See the
-[**example proxy server**](https://github.com/brekkylab/ailoy/blob/main/bindings/web/tests/proxy/duckduckgo.ts)
+[**example proxy server**](https://github.com/brekkylab/ailoy/blob/main/bindings/web/tests/proxy/web-search.ts)
 implementation in our test codes.
 
 :::
@@ -73,6 +73,25 @@ implementation in our test codes.
 ## `web_fetch`
 
 Fetch and parse content from a webpage URL.
+
+:::info
+
+Most of the public webpages may not be accessible directly from web environments
+due to [**CORS**](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS)
+restrictions. To avoid this issue, configure your requests to pass through a
+proxy server that forwards the call to the original URL provided via `url` query
+parameter. See the
+[**example proxy server**](https://github.com/brekkylab/ailoy/blob/main/bindings/web/tests/proxy/web-search.ts)
+implementation in our test codes.
+
+:::
+
+### Configuration
+
+| Name                  |  Type  |                                                   Description                                                   | Default |
+| --------------------- | :----: | :-------------------------------------------------------------------------------------------------------------: | :-----: |
+| `proxy_url`           | string | Proxy URL to send the request. The proxy server should proxy the requests to original `url` in query parameter. |  None   |
+| `requests_per_minute` | number |                                      Maximum number of requests per minute                                      |   60    |
 
 ### Arguments
 

@@ -1,22 +1,22 @@
 import { Server } from "http";
 
-import proxyDuckduckgo from "./proxy/duckduckgo";
+import webSearchProxy from "./proxy/web-search";
 
 let proxyServers: {
-  duckduckgo: Server | undefined;
+  webSearch: Server | undefined;
 } = {
-  duckduckgo: undefined,
+  webSearch: undefined,
 };
 
 export async function setup() {
-  if (proxyServers.duckduckgo === undefined) {
-    proxyServers.duckduckgo = proxyDuckduckgo.listen(3001);
+  if (proxyServers.webSearch === undefined) {
+    proxyServers.webSearch = webSearchProxy.listen(3001);
   }
 }
 
 export async function teardown() {
-  if (proxyServers.duckduckgo !== undefined) {
-    proxyServers.duckduckgo.close();
-    proxyServers.duckduckgo = undefined;
+  if (proxyServers.webSearch !== undefined) {
+    proxyServers.webSearch.close();
+    proxyServers.webSearch = undefined;
   }
 }

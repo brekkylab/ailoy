@@ -7,6 +7,7 @@ use futures::lock::Mutex;
 use reqwest::Client;
 use scraper::{Html, Selector};
 use serde::Deserialize;
+use url::Url;
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
 
@@ -56,6 +57,23 @@ impl RateLimiter {
 
 const DUCKDUCKGO_BASE_URL: &str = "https://html.duckduckgo.com/html";
 
+const USER_AGENTS: [&'static str; 14] = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Edge/120.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPad; CPU OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; rv:11.0) like Gecko",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 OPR/105.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Vivaldi/6.4.3160.42",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/119.0",
+];
+
 struct DuckDuckGoSearcher {
     base_url: String,
     rate_limiter: RateLimiter,
@@ -64,7 +82,9 @@ struct DuckDuckGoSearcher {
 
 impl DuckDuckGoSearcher {
     pub fn new(base_url: Option<String>, requests_per_minute: Option<usize>) -> Self {
-        let client = Client::builder().user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36").build().expect("Failed to create HTTP client");
+        let client = Client::builder()
+            .build()
+            .expect("Failed to create HTTP client");
         let base_url = base_url.unwrap_or(DUCKDUCKGO_BASE_URL.to_string());
         let requests_per_minute = requests_per_minute.unwrap_or(60);
         Self {
@@ -102,6 +122,10 @@ impl DuckDuckGoSearcher {
         let response = self
             .client
             .post(&self.base_url)
+            .header(
+                "User-Agent",
+                USER_AGENTS[getrandom::u32().unwrap() as usize % USER_AGENTS.len()],
+            )
             .form(&params)
             .timeout(Duration::from_secs(30))
             .send()
@@ -167,30 +191,39 @@ impl DuckDuckGoSearcher {
 struct WebContentFetcher {
     rate_limiter: RateLimiter,
     client: Client,
+    proxy_url: Option<Url>,
 }
 
 impl WebContentFetcher {
-    pub fn new() -> Self {
+    pub fn new(proxy_url: Option<String>, requests_per_minute: Option<usize>) -> Self {
         let client = Client::builder()
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             .build()
             .expect("Failed to create HTTP client");
 
+        let requests_per_minute = requests_per_minute.unwrap_or(60);
         Self {
-            rate_limiter: RateLimiter::new(20),
+            rate_limiter: RateLimiter::new(requests_per_minute),
             client,
+            proxy_url: proxy_url.map(|url| Url::parse(&url).unwrap()),
         }
     }
 
     pub async fn fetch_and_parse(&self, url: &str) -> anyhow::Result<String> {
         self.rate_limiter.acquire().await;
 
-        let response = self
-            .client
-            .get(url)
-            .timeout(Duration::from_secs(30))
-            .send()
-            .await?;
+        let response = if let Some(proxy_url) = self.proxy_url.clone() {
+            self.client.get(proxy_url).query(&[("url", url)])
+        } else {
+            self.client.get(url)
+        }
+        .header(
+            "User-Agent",
+            USER_AGENTS[getrandom::u32().unwrap() as usize % USER_AGENTS.len()],
+        )
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await?;
 
         let body = response.error_for_status()?.text().await?;
         let document = Html::parse_document(&body);
@@ -236,16 +269,8 @@ impl WebContentFetcher {
         let result = cleaned.join(" ");
 
         // Remove extra whitespace
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let re = onig::Regex::new(r"\s+").unwrap();
-            re.replace_all(&result, " ").trim().to_string()
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let re = regex::Regex::new(r"\s+").unwrap();
-            re.replace_all(&result, " ").trim().to_string()
-        }
+        let re = fancy_regex::Regex::new(r"\s+").unwrap();
+        re.replace_all(&result, " ").trim().to_string()
     }
 
     fn extract_text_recursive(
@@ -363,7 +388,15 @@ pub fn create_web_search_duckduckgo_tool(config: Value) -> anyhow::Result<Functi
     Ok(FunctionTool::new(desc, std::sync::Arc::new(f)))
 }
 
-pub fn create_web_fetch_tool(_config: Value) -> anyhow::Result<FunctionTool> {
+pub fn create_web_fetch_tool(config: Value) -> anyhow::Result<FunctionTool> {
+    #[derive(Clone, Default, Deserialize)]
+    struct WebFetchToolConfig {
+        proxy_url: Option<String>,
+        requests_per_minute: Option<usize>,
+    }
+
+    let config = serde_json::from_value::<WebFetchToolConfig>(config.into()).unwrap_or_default();
+
     let desc = ToolDescBuilder::new("web_fetch")
         .description("Fetch and parse content from a webpage URL.")
         .parameters(to_value!({
@@ -383,6 +416,7 @@ pub fn create_web_fetch_tool(_config: Value) -> anyhow::Result<FunctionTool> {
         .build();
 
     let f: Box<ToolFunc> = Box::new(move |args: Value| {
+        let config = config.clone();
         Box::pin(async move {
             let args = match args.as_object() {
                 Some(a) => a,
@@ -402,7 +436,7 @@ pub fn create_web_fetch_tool(_config: Value) -> anyhow::Result<FunctionTool> {
                 }
             };
 
-            let fetcher = WebContentFetcher::new();
+            let fetcher = WebContentFetcher::new(config.proxy_url, config.requests_per_minute);
             let results = match fetcher.fetch_and_parse(url).await {
                 Ok(results) => results,
                 Err(err) => {
