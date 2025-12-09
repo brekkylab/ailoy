@@ -416,7 +416,7 @@ mod tests {
         client.initialize().await?;
 
         let list_tools = client.list_tools().await?;
-        crate::debug!(&format!("list of tools: {:?}", list_tools));
+        crate::debug!("list of tools: {:?}", list_tools);
 
         let call_tool = client
             .call_tool(CallToolRequestParam {
@@ -430,7 +430,7 @@ mod tests {
             })
             .await
             .unwrap();
-        crate::debug!(&format!("call tool result: {:?}", call_tool));
+        crate::debug!("call tool result: {:?}", call_tool);
 
         Ok(())
     }
@@ -444,7 +444,7 @@ mod tests {
             serde_json::json!({"latitude": 32.7767, "longitude": -96.797}),
         )?;
         let result = tool.run(args).await.unwrap();
-        log::debug(&format!("tool call result: {:?}", result));
+        crate::debug!("tool call result: {:?}", result);
 
         Ok(())
     }

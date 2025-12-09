@@ -644,7 +644,7 @@ mod tests {
         let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), config);
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
-            crate::debug!(format!("{:?}", out));
+            crate::debug!("{:?}", out);
             delta = delta.accumulate(out.delta).unwrap();
         }
         crate::info!("{:?}", delta.finish().unwrap());
