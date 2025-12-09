@@ -396,18 +396,12 @@ impl TryFromCache for LocalLangModelImpl {
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 #[cfg(test)]
 mod tests {
-    use crate::{
-        debug,
-        value::{Delta, Part},
-    };
+    use super::*;
+    use crate::value::{Delta, Part, Role};
+    use futures::StreamExt;
 
     #[tokio::test]
     async fn infer_simple_chat() {
-        use futures::StreamExt;
-
-        use super::*;
-        use crate::value::Role;
-
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
 
@@ -448,10 +442,10 @@ mod tests {
         let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), config);
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
-            debug!("{:?}", out);
+            crate::debug!("{:?}", out);
             delta = delta.accumulate(out.delta).unwrap();
         }
-        crate::utils::log::info(format!("{:?}", delta.finish().unwrap()));
+        crate::info!("{:?}", delta.finish().unwrap());
     }
 
     // #[tokio::test]
