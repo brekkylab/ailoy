@@ -364,7 +364,11 @@ pub(super) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
 
     // Gemini always return "STOP" even for tool call responses,
     // so adjust the finish reason when tool calls exist.
-    if !delta.tool_calls.is_empty() && finish_reason.is_some() {
+    if !delta.tool_calls.is_empty()
+        && finish_reason
+            .clone()
+            .is_some_and(|reason| matches!(reason, FinishReason::Stop {}))
+    {
         finish_reason = Some(FinishReason::ToolCall {});
     }
 
