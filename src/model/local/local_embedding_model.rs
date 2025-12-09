@@ -154,7 +154,6 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::utils::log;
 
     #[multi_platform_test]
     async fn infer_embedding() {
@@ -165,10 +164,12 @@ mod tests {
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
-            log::info(format!(
+            crate::info!(
                 "{} ({} / {})",
-                progress.comment, progress.current_task, progress.total_task
-            ));
+                progress.comment,
+                progress.current_task,
+                progress.total_task
+            );
             if progress.current_task == progress.total_task {
                 model = progress.result.take();
             }
@@ -177,7 +178,7 @@ mod tests {
 
         let embedding = model.infer("What is BGE M3?".to_owned()).await.unwrap();
         assert_eq!(embedding.len(), 1024);
-        log::debug(format!("{:?}", embedding.normalized()));
+        crate::debug!("{:?}", embedding.normalized());
     }
 
     #[multi_platform_test]
@@ -193,10 +194,12 @@ mod tests {
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
-            log::info(format!(
+            crate::info!(
                 "{} ({} / {})",
-                progress.comment, progress.current_task, progress.total_task
-            ));
+                progress.comment,
+                progress.current_task,
+                progress.total_task,
+            );
             if progress.current_task == progress.total_task {
                 model = progress.result.take();
             }

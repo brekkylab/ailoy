@@ -147,19 +147,40 @@ impl PartImage {
     /// Returns base64 encoded string with PNG format
     pub fn base64(&self) -> anyhow::Result<String> {
         match self {
-            PartImage::Binary { .. } => {
+            PartImage::Binary {
+                width,
+                height,
+                colorspace,
+                ..
+            } => {
                 let img: image::DynamicImage = self.try_into()?;
+                let pixels = match colorspace {
+                    PartImageColorspace::Grayscale => img.to_luma8().into_raw(),
+                    PartImageColorspace::RGB => img.to_rgb8().into_raw(),
+                    PartImageColorspace::RGBA => img.to_rgba8().into_raw(),
+                };
 
                 // dump as PNG
-                let mut png_bytes: Vec<u8> = Vec::new();
-                img.write_to(
-                    &mut std::io::Cursor::new(&mut png_bytes),
-                    image::ImageFormat::Png,
-                )?;
+                let mut cursor = std::io::Cursor::new(Vec::new());
+                let mut encoder = png::Encoder::new(&mut cursor, *width, *height);
+
+                encoder.set_color(match colorspace {
+                    PartImageColorspace::Grayscale => png::ColorType::Grayscale,
+                    PartImageColorspace::RGB => png::ColorType::Rgb,
+                    PartImageColorspace::RGBA => png::ColorType::Rgba,
+                });
+                encoder.set_depth(png::BitDepth::Eight);
+                encoder.set_compression(png::Compression::Balanced); // zlib level 6
+                encoder.set_filter(png::Filter::Adaptive);
+
+                {
+                    let mut writer = encoder.write_header()?;
+                    writer.write_image_data(&pixels)?;
+                }
+                let png_bytes = cursor.into_inner();
 
                 // base64 encoding
-                let encoded =
-                    base64::engine::general_purpose::STANDARD.encode(png_bytes.as_slice());
+                let encoded = base64::engine::general_purpose::STANDARD.encode(png_bytes);
                 Ok(encoded)
             }
             _ => Err(anyhow::anyhow!(
@@ -264,8 +285,8 @@ impl Part {
             .ok()
             .context("Colorspace parsing failed")?;
         let data = data.into_iter().collect::<Vec<_>>();
-        let nbytes = data.len() as u32 / height / width / colorspace.channel();
-        if !(nbytes == 1 || nbytes == 2 || nbytes == 3 || nbytes == 4) {
+        let nbytes = data.len() as u32;
+        if nbytes != (height * width * 8 * colorspace.channel()) {
             bail!("Invalid data length");
         }
         Ok(Self::Image {

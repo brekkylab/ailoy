@@ -407,7 +407,6 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::utils::log;
 
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -417,7 +416,7 @@ mod tests {
         client.initialize().await?;
 
         let list_tools = client.list_tools().await?;
-        log::debug(&format!("list of tools: {:?}", list_tools));
+        crate::debug!(&format!("list of tools: {:?}", list_tools));
 
         let call_tool = client
             .call_tool(CallToolRequestParam {
@@ -431,7 +430,7 @@ mod tests {
             })
             .await
             .unwrap();
-        log::debug(&format!("call tool result: {:?}", call_tool));
+        crate::debug!(&format!("call tool result: {:?}", call_tool));
 
         Ok(())
     }

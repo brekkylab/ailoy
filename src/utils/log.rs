@@ -3,6 +3,7 @@ use log;
 #[cfg(target_arch = "wasm32")]
 use web_sys;
 
+#[allow(dead_code)]
 pub fn debug(s: impl Into<String> + std::fmt::Display) {
     #[cfg(not(target_arch = "wasm32"))]
     log::debug!("{}", s);
@@ -18,6 +19,7 @@ macro_rules! debug {
     };
 }
 
+#[allow(dead_code)]
 pub fn info(s: impl Into<String> + std::fmt::Display) {
     #[cfg(not(target_arch = "wasm32"))]
     log::info!("{}", s);
@@ -33,6 +35,7 @@ macro_rules! info {
     };
 }
 
+#[allow(dead_code)]
 pub fn warn(s: impl Into<String> + std::fmt::Display) {
     #[cfg(not(target_arch = "wasm32"))]
     log::warn!("{}", s);
@@ -48,6 +51,7 @@ macro_rules! warn {
     };
 }
 
+#[allow(dead_code)]
 pub fn error(s: impl Into<String> + std::fmt::Display) {
     #[cfg(not(target_arch = "wasm32"))]
     log::error!("{}", s);

@@ -29,7 +29,19 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             Part::Image { image } => {
                 let b64 = match image {
                     PartImage::Binary { .. } => image.base64().unwrap(),
-                    PartImage::Url { .. } => panic!("Gemini does not support image url inputs"),
+                    PartImage::Url { url } => {
+                        // If url is a form of base64 data uri, use the data part as inline data.
+                        // Otherwise, Gemini does not support public url image inputs.
+                        let re = fancy_regex::Regex::new(
+                            r"^data:([a-z]+/[a-z0-9-+.]+(;[a-z-]+=[a-z0-9-]+)?)?;base64,(.*)$",
+                        )
+                        .unwrap();
+                        if let Some(captures) = re.captures(url).unwrap() {
+                            captures.get(3).map(|m| m.as_str().to_string()).unwrap()
+                        } else {
+                            panic!("Gemini does not support image url inputs")
+                        }
+                    }
                 };
                 to_value!({"inline_data": {"mime_type": "image/png", "data": b64}})
             }
@@ -38,13 +50,15 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
     };
 
     if msg.role == Role::Tool {
+        let tool_call_id = msg.id.clone().expect("Tool call id must exist.");
+        let (tool_name, _) = tool_call_id.split_once("/").unwrap();
         return to_value!(
             {
                 "role": "user",
                 "parts": [
                     {
                         "functionResponse": {
-                            "name": msg.id.clone().expect("Tool call id must exist."),
+                            "name": tool_name,
                             "response": {
                                 "result": part_to_value(&msg.contents[0])
                             }
@@ -260,7 +274,13 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
                             None => Value::Null,
                         };
                         rv.tool_calls.push(PartDelta::Function {
-                            id: Some(name.clone()),
+                            // Generate tool call id with a form of "{tool_name}/{random_id}",
+                            // and use {tool_name} part only on Marshal.
+                            id: Some(format!(
+                                "{}/call-{}",
+                                name,
+                                crate::utils::generate_random_hex_string(8).unwrap()
+                            )),
                             function: PartDeltaFunction::WithParsedArgs { name, arguments },
                         });
                     } else {
@@ -406,12 +426,12 @@ mod dialect_tests {
     pub fn serialize_tool_response() {
         let msgs = vec![
             Message::new(Role::Tool)
-                .with_id("temperature")
+                .with_id("temperature/call-1")
                 .with_contents(vec![Part::Value {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
             Message::new(Role::Tool)
-                .with_id("temperature")
+                .with_id("temperature/call-2")
                 .with_contents(vec![Part::Value {
                     value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
                 }]),
@@ -425,19 +445,20 @@ mod dialect_tests {
 
     #[test]
     pub fn serialize_image() {
-        let raw_pixels: Vec<u8> = vec![
-            10, 20, 30, // First row
-            40, 50, 60, // Second row
-            70, 80, 90, // Third row
-        ];
+        use base64::prelude::*;
+
+        let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAD0lEQVR4nGPh4uJikYNgAANQAI8386KKAAAAAElFTkSuQmCC";
+        let png_bytes = BASE64_STANDARD.decode(png_base64).unwrap();
         let msg = Message::new(Role::User).with_contents([
             Part::text("What you can see in this image?"),
-            Part::image_binary(3, 3, "grayscale", raw_pixels).unwrap(),
+            Part::image_binary(3, 3, "grayscale", png_bytes).unwrap(),
         ]);
         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","parts":[{"text":"What you can see in this image?"},{"inline_data":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#,
+            r#"{"role":"user","parts":[{"text":"What you can see in this image?"},{"inline_data":{"mime_type":"image/png","data":""#.to_owned()
+                + png_base64
+                + r#""}}]}"#,
         );
     }
 
@@ -658,8 +679,9 @@ mod api_tests {
         ];
         let msgs = vec![
             Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
-            Message::new(Role::User)
-                .with_contents([Part::text("How much hot currently in Dubai?")]),
+            Message::new(Role::User).with_contents([Part::text(
+                "How much hot currently in Dubai? Anwer in Celsius",
+            )]),
         ];
         let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
         let mut assistant_msg = MessageDelta::default();
@@ -706,20 +728,20 @@ mod api_tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
             Message::new(Role::Assistant).with_tool_calls([Part::function(
-                "temperature",
+                "temperature/call-1",
                 to_value!({"location": "Dubai", "unit": "fahrenheit"}),
             )]),
             Message::new(Role::Assistant).with_tool_calls([Part::function(
-                "temperature",
+                "temperature/call-2",
                 to_value!({"location": "Dubai", "unit": "celsius"}),
             )]),
             Message::new(Role::Tool)
-                .with_id("temperature")
+                .with_id("temperature/call-1")
                 .with_contents([Part::Value {
                     value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
                 }]),
             Message::new(Role::Tool)
-                .with_id("temperature")
+                .with_id("temperature/call-2")
                 .with_contents([Part::Value {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
