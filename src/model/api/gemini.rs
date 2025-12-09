@@ -343,7 +343,7 @@ pub(super) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
         return MessageDeltaOutput::default();
     };
 
-    let finish_reason = candidate
+    let mut finish_reason = candidate
         .pointer("/finishReason")
         .and_then(|v| v.as_str())
         .map(|reason| match reason {
@@ -361,6 +361,12 @@ pub(super) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
             .map(|decoded| decoded.get())
             .unwrap_or_default(),
     };
+
+    // Gemini always return "STOP" even for tool call responses,
+    // so adjust the finish reason when tool calls exist.
+    if !delta.tool_calls.is_empty() && finish_reason.is_some() {
+        finish_reason = Some(FinishReason::ToolCall {});
+    }
 
     MessageDeltaOutput {
         delta,
@@ -691,7 +697,7 @@ mod api_tests {
             assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
+        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             if let Some(tool_calls) = message.tool_calls {
                 debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
