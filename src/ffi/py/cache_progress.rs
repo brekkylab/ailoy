@@ -4,7 +4,7 @@ use futures::StreamExt;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use pyo3_stub_gen::{PyStubType, TypeInfo, derive::*};
 
-use crate::cache::{Cache, TryFromCache};
+use crate::utils::BoxStream;
 
 #[pyclass(subclass)]
 pub struct GenericCacheResultT {}
@@ -63,17 +63,11 @@ impl PyCacheProgress {
     }
 }
 
-pub async fn await_cache_result<T>(
-    cache_key: impl Into<String>,
-    cache_ctx: Option<std::collections::HashMap<String, crate::value::Value>>,
+pub async fn await_cache_result<'a, T>(
+    mut cache_strm: BoxStream<'a, anyhow::Result<crate::cache::CacheProgress<T>>>,
     progress_callback: Option<Py<PyAny>>,
-) -> PyResult<T>
-where
-    T: TryFromCache + 'static,
-{
-    let cache_key = cache_key.into();
-    let mut strm = Box::pin(Cache::new().try_create::<T>(cache_key, cache_ctx));
-    while let Some(item) = strm.next().await {
+) -> PyResult<T> {
+    while let Some(item) = cache_strm.next().await {
         let progress = item?;
 
         // Call progress_callback if exists

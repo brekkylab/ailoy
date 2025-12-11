@@ -29,6 +29,10 @@ impl CacheEntry {
             .to_string_lossy()
             .to_string()
     }
+
+    pub async fn remove(&self) -> anyhow::Result<()> {
+        crate::cache::filesystem::remove(self.path()).await
+    }
 }
 
 impl AsRef<CacheEntry> for CacheEntry {

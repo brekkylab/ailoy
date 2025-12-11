@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, bail};
 use async_stream::try_stream;
-use futures::{Stream, StreamExt as _, stream::FuturesUnordered};
+use futures::StreamExt;
 use tokio::sync::RwLock;
 use url::Url;
 
@@ -16,9 +16,10 @@ use super::{
     manifest::{Manifest, ManifestDirectory},
 };
 use crate::{
-    cache::{CacheContents, CacheEntry, TryFromCache},
+    boxed,
+    cache::{CacheContents, CacheEntry, TryFromCache, filesystem},
     constants::AILOY_VERSION,
-    utils::MaybeSend,
+    utils::{BoxStream, MaybeSend},
     value::Value,
 };
 
@@ -264,35 +265,87 @@ impl Cache {
     ///
     /// Steps:
     /// 1. Read the directory manifest to find the content hash for `entry`.
-    /// 2. If a local file exists, compute its content hash (via [`Manifest::from_u8`])
-    ///    and compare; if it matches, return the local bytes.
+    /// 2. If a local file exists,
+    ///   - If `validate_checksum` is enabled, compute its content hash (via [`Manifest::from_u8`]) and compare; if it matches, return the local bytes.
+    ///   - Otherwise, just return the local bytes immediately.
     /// 3. Otherwise, download the blob named by the content hash and write it back
     ///    to the logical filename, then return the bytes.
     ///
     /// Errors bubble up from manifest lookup, IO, and network.
-    pub async fn get(&self, entry: impl AsRef<CacheEntry>) -> anyhow::Result<Vec<u8>> {
+    pub async fn get(
+        &self,
+        entry: impl AsRef<CacheEntry>,
+        validate_checksum: Option<bool>,
+    ) -> anyhow::Result<Vec<u8>> {
         let entry = entry.as_ref();
 
         // Get manifest
         let manifest = self.get_manifest(entry).await?;
 
-        // Get local
-        let (local_manifest, local_bytes) = match read(&self.path(entry)).await {
-            Ok(v) => (Some(Manifest::from_u8(&v)), Some(v)),
-            Err(_) => (None, None),
-        };
+        // Get local data
+        let local_bytes = read(&self.path(entry)).await.ok();
 
-        // Return local if sha matches, or download
-        if local_manifest.is_some() && local_manifest.unwrap().sha1() == manifest.sha1() {
-            Ok(local_bytes.unwrap())
-        } else {
-            let remote_entry = CacheEntry::new(entry.dirname(), manifest.sha1());
-            let url = self.get_url(&remote_entry);
-            let bytes = download(url).await?;
-            // Write back
-            write(&self.path(entry), &bytes, true).await?;
-            Ok(bytes)
+        if let Some(local_bytes) = local_bytes {
+            // Validating checksum is enabled by default.
+            let validate_checksum = validate_checksum.unwrap_or(true);
+
+            if validate_checksum {
+                // If validation is enabled, validate sha1 checksum
+                let local_manifest = Manifest::from_u8(&local_bytes);
+                if local_manifest.sha1() == manifest.sha1() {
+                    return Ok(local_bytes);
+                }
+            } else {
+                // If validation is disabled, just return the bytes immediately
+                return Ok(local_bytes);
+            }
         }
+
+        // Download otherwise
+        let remote_entry = CacheEntry::new(entry.dirname(), manifest.sha1());
+        let url = self.get_url(&remote_entry);
+        let bytes = download(url).await?;
+        // Write back
+        write(&self.path(entry), &bytes, true).await?;
+        Ok(bytes)
+    }
+
+    pub fn prepare_files<T>(
+        &self,
+        key: impl Into<String>,
+        validate_checksum: Option<bool>,
+    ) -> BoxStream<'static, anyhow::Result<(CacheEntry, usize, usize, Vec<u8>)>>
+    where
+        T: TryFromCache + MaybeSend + 'static,
+    {
+        let key = key.into();
+        let this = self.clone();
+        let mut context = HashMap::new();
+
+        boxed!(try_stream! {
+            // Claim files to be processed
+            let claim = T::claim_files(this.clone(), key.clone(), &mut context).await?;
+
+            // Number of tasks
+            let total_task: usize = claim.entries.len();
+
+            // Current processed task
+            let mut current_task: usize = 0;
+
+            let tasks = claim.entries.into_iter().map(|entry| {
+                let this = this.clone();
+                async move {
+                    let res = this.get(&entry, validate_checksum).await;
+                    (entry, res)
+                }
+            }).collect::<Vec<_>>();
+            let mut futures_strm = futures::stream::iter(tasks).buffer_unordered(10);
+            while let Some((entry, res)) = futures_strm.next().await {
+                let bytes = res?;
+                current_task += 1;
+                yield (entry, current_task, total_task, bytes);
+            }
+        })
     }
 
     /// Builds a typed value from the cache.
@@ -317,7 +370,7 @@ impl Cache {
     /// use futures::StreamExt;
     ///
     /// let cache = Cache::new();
-    /// let mut s = cache.try_create_stream::<MyType>("Qwen/Qwen3-0.6B");
+    /// let mut s = cache.try_create::<MyType>("Qwen/Qwen3-0.6B");
     /// while let Some(evt) = s.next().await {
     ///     let evt = evt?;
     ///     println!("[{}/{}] {}", evt.current_task(), evt.total_task(), evt.comment());
@@ -328,43 +381,23 @@ impl Cache {
     /// # Ok::<(), String>(())
     /// ```
     pub fn try_create<T>(
-        self,
+        &self,
         key: impl Into<String>,
         context: Option<HashMap<String, Value>>,
-    ) -> impl Stream<Item = anyhow::Result<CacheProgress<T>>> + 'static
+        validate_checksum: Option<bool>,
+    ) -> BoxStream<'static, anyhow::Result<CacheProgress<T>>>
     where
         T: TryFromCache + MaybeSend + 'static,
     {
-        let key = key.into();
-        let this = self.clone();
-        let mut context = context.unwrap_or_default();
-
-        try_stream! {
-            // Claim files to be processed
-            let claim = T::claim_files(this.clone(), key.clone(), &mut context).await?;
-
-            // Number of tasks => downloading all files + initializing T
-            let total_task: usize = claim.entries.len() + 1;
-
-            // Current processed task
-            let mut current_task = 0;
-
-            // Main tasks
-            let mut tasks: FuturesUnordered<_> = claim.entries
-                .into_iter()
-                .map(|entry| {
-                    let this = this.clone();
-                    async move {
-                        let res = this.get(&entry).await;
-                        (entry, res)
-                    }
-                })
-                .collect();
-
-            let mut pairs: Vec<(CacheEntry, Vec<u8>)> = Vec::with_capacity(total_task);
-            while let Some((entry, res)) = tasks.next().await {
-                let bytes = res?;
-                current_task += 1;
+        let root = self.root.clone();
+        let mut strm = self.prepare_files::<T>(key, validate_checksum);
+        boxed!(try_stream! {
+            let mut pairs: Vec<(CacheEntry, Vec<u8>)> = Vec::new();
+            let mut total_task: usize = 0;
+            while let Some(res) = strm.next().await {
+                let (entry, current_task, _total_task, bytes) = res?;
+                // Number of total tasks: preparing all files + initialization
+                total_task = _total_task + 1;
                 pairs.push((entry.clone(), bytes));
                 yield CacheProgress::<T> {
                     comment: format!("{} ready", entry.filename()),
@@ -375,21 +408,25 @@ impl Cache {
             }
 
             // Assemble cache contents
-            let contents = CacheContents {
-                root: self.root.clone(),
+            let mut contents = CacheContents {
+                root,
                 entries: pairs.into_iter().collect(),
             };
 
             // Final creation
-            let value = T::try_from_contents(contents, &context).await?;
-            current_task += 1;
+            let context = context.clone().unwrap_or_default();
+            let value = T::try_from_contents(&mut contents, &context).await?;
             yield CacheProgress::<T> {
                 comment: "Intialized".to_owned(),
-                current_task,
+                current_task: total_task,
                 total_task,
                 result: Some(value),
             };
-        }
+        })
+    }
+
+    pub async fn remove(&self, elem: &CacheEntry) -> anyhow::Result<()> {
+        filesystem::remove(self.path(elem)).await
     }
 }
 
@@ -440,7 +477,7 @@ mod tests {
     async fn test1() {
         let cache = Cache::new();
         let bytes = cache
-            .get(&CacheEntry::new("Qwen--Qwen3-0.6B", "tokenizer.json"))
+            .get(&CacheEntry::new("Qwen--Qwen3-0.6B", "tokenizer.json"), None)
             .await
             .unwrap();
         println!("Downloaded {}", bytes.len());

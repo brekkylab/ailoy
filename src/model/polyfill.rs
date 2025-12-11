@@ -238,6 +238,7 @@ mod node {
 
     use super::*;
 
+    #[allow(dead_code)]
     #[napi]
     pub fn get_document_polyfill(kind: DocumentPolyfillKind) -> napi::Result<DocumentPolyfill> {
         DocumentPolyfill::get(kind)

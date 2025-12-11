@@ -83,7 +83,7 @@ mod tests {
 
     async fn prepare_knowledge() -> anyhow::Result<Knowledge> {
         let mut store = VectorStore::new_faiss(FaissStore::new(1024).await.unwrap());
-        let embedding_model = EmbeddingModel::new_local("BAAI/bge-m3", None)
+        let embedding_model = EmbeddingModel::try_new_local("BAAI/bge-m3", None)
             .await
             .unwrap();
 

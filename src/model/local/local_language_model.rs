@@ -1,14 +1,12 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use async_stream::try_stream;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::{
-    cache::{Cache, CacheClaim, CacheContents, CacheEntry, CacheProgress, TryFromCache},
+    boxed,
+    cache::{Cache, CacheClaim, CacheContents, CacheProgress, TryFromCache},
     model::{
         ChatTemplate, InferenceConfig, LangModelInference, LanguageModelInferencer, Tokenizer,
     },
@@ -27,19 +25,33 @@ struct Request {
     tx_resp: mpsc::UnboundedSender<anyhow::Result<MessageDeltaOutput>>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct LocalLangModelConfig {
+    pub device_id: Option<i32>,
+    pub validate_checksum: Option<bool>,
+}
+
 #[derive(Clone, Debug)]
 pub struct LocalLangModel {
     tx: Arc<mpsc::Sender<Request>>,
 }
 
 impl LocalLangModel {
-    pub async fn try_new(model: impl Into<String>, device_id: Option<i32>) -> anyhow::Result<Self> {
+    pub async fn try_new(
+        model: impl Into<String>,
+        config: Option<LocalLangModelConfig>,
+    ) -> anyhow::Result<Self> {
+        let config = config.unwrap_or_default();
         let cache = Cache::new();
         let mut ctx = HashMap::new();
-        if let Some(device_id) = device_id {
+        if let Some(device_id) = config.device_id {
             ctx.insert("device_id".to_owned(), Value::integer(device_id.into()));
         };
-        let mut strm = Box::pin(cache.try_create::<LocalLangModel>(model, Some(ctx)));
+        let mut strm = Box::pin(cache.try_create::<LocalLangModel>(
+            model,
+            Some(ctx),
+            config.validate_checksum,
+        ));
         while let Some(v) = strm.next().await {
             if let Some(result) = v?.result {
                 return Ok(result);
@@ -50,14 +62,48 @@ impl LocalLangModel {
 
     pub fn try_new_stream<'a>(
         model: impl Into<String>,
-        device_id: Option<i32>,
+        config: Option<LocalLangModelConfig>,
     ) -> BoxStream<'a, anyhow::Result<CacheProgress<Self>>> {
+        let config = config.unwrap_or_default();
         let cache = Cache::new();
         let mut ctx = HashMap::new();
-        if let Some(device_id) = device_id {
+        if let Some(device_id) = config.device_id {
             ctx.insert("device_id".to_owned(), Value::integer(device_id.into()));
         };
-        Box::pin(cache.try_create::<Self>(model, Some(ctx)))
+        let strm = cache.try_create::<Self>(model, Some(ctx), config.validate_checksum);
+        boxed!(strm)
+    }
+
+    pub fn download<'a>(
+        model: impl Into<String>,
+    ) -> BoxStream<'a, anyhow::Result<CacheProgress<()>>> {
+        let cache = Cache::new();
+        let mut strm = cache.prepare_files::<Self>(model, Some(true));
+        boxed!(try_stream! {
+            while let Some(res) = strm.next().await {
+                let (entry, current_task, total_task, _) = res?;
+                yield CacheProgress::<()> {
+                    comment: format!("{} downloaded", entry.filename()),
+                    current_task,
+                    total_task,
+                    result: None,
+                }
+            }
+        })
+    }
+
+    pub async fn remove(model: impl Into<String>) -> anyhow::Result<()> {
+        let cache = Cache::new();
+        let model = model.into();
+        let claim = Self::claim_files(cache.clone(), &model, &mut HashMap::new())
+            .await
+            .expect(format!("Failed to get the entries for {}", model).as_str());
+
+        for entry in claim.entries.iter() {
+            cache.remove(entry).await.unwrap();
+        }
+
+        Ok(())
     }
 }
 
@@ -71,7 +117,7 @@ impl TryFromCache for LocalLangModel {
     }
 
     fn try_from_contents<'a>(
-        contents: CacheContents,
+        contents: &'a mut CacheContents,
         ctx: &'a std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>> {
         Box::pin(async move {
@@ -299,91 +345,16 @@ impl TryFromCache for LocalLangModelImpl {
     }
 
     fn try_from_contents<'a>(
-        mut contents: CacheContents,
+        contents: &'a mut CacheContents,
         ctx: &'a std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>>
     where
         Self: Sized,
     {
         Box::pin(async move {
-            let chat_template_entries = ctx
-                .get("chat_template_entries")
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .into_iter()
-                .map(|v| {
-                    let v = v.as_object().unwrap();
-                    CacheEntry::new(
-                        v.get("dirname").unwrap().as_str().unwrap(),
-                        v.get("filename").unwrap().as_str().unwrap(),
-                    )
-                });
-            let chat_template = {
-                let mut files = BTreeMap::new();
-                for k in chat_template_entries {
-                    let v = contents.entries.remove(&k).unwrap();
-                    files.insert(k, v);
-                }
-                let contents = CacheContents {
-                    root: contents.root.clone(),
-                    entries: files,
-                };
-                ChatTemplate::try_from_contents(contents, ctx).await?
-            };
-
-            let tokenizer_entries = ctx
-                .get("tokenizer_entries")
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .into_iter()
-                .map(|v| {
-                    let v = v.as_object().unwrap();
-                    CacheEntry::new(
-                        v.get("dirname").unwrap().as_str().unwrap(),
-                        v.get("filename").unwrap().as_str().unwrap(),
-                    )
-                });
-            let tokenizer = {
-                let mut files = BTreeMap::new();
-                for k in tokenizer_entries {
-                    let v = contents.entries.remove(&k).unwrap();
-                    files.insert(k, v);
-                }
-                let contents = CacheContents {
-                    root: contents.root.clone(),
-                    entries: files,
-                };
-                Tokenizer::try_from_contents(contents, ctx).await?
-            };
-
-            let inferencer_entries = ctx
-                .get("inferencer_entries")
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .into_iter()
-                .map(|v| {
-                    let v = v.as_object().unwrap();
-                    CacheEntry::new(
-                        v.get("dirname").unwrap().as_str().unwrap(),
-                        v.get("filename").unwrap().as_str().unwrap(),
-                    )
-                });
-            let inferencer = {
-                let mut files = BTreeMap::new();
-                for k in inferencer_entries {
-                    let v = contents.entries.remove(&k).unwrap();
-                    files.insert(k, v);
-                }
-                let contents = CacheContents {
-                    root: contents.root.clone(),
-                    entries: files,
-                };
-                LanguageModelInferencer::try_from_contents(contents, ctx).await?
-            };
-
+            let chat_template = ChatTemplate::try_from_contents(contents, ctx).await?;
+            let tokenizer = Tokenizer::try_from_contents(contents, ctx).await?;
+            let inferencer = LanguageModelInferencer::try_from_contents(contents, ctx).await?;
             Ok(Self {
                 chat_template,
                 tokenizer,
@@ -402,10 +373,10 @@ mod tests {
 
     #[tokio::test]
     async fn infer_simple_chat() {
-        let cache = crate::cache::Cache::new();
+        let cache = Cache::new();
         let key = "Qwen/Qwen3-0.6B";
 
-        let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key, None));
+        let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key, None, None));
         let mut model: Option<LocalLangModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
@@ -607,7 +578,7 @@ mod tests {
     async fn infer_simple_chat() {
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key, None));
+        let mut model_strm = boxed!(cache.try_create::<LocalLangModel>(key, None, None));
         let mut model: Option<LocalLangModel> = None;
 
         while let Some(progress) = model_strm.next().await {

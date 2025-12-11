@@ -88,7 +88,7 @@ impl TryFromCache for ChatTemplate {
     }
 
     fn try_from_contents<'a>(
-        mut contents: CacheContents,
+        contents: &'a mut CacheContents,
         _: &'a std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>> {
         Box::pin(async move {
@@ -292,10 +292,10 @@ mod tests {
     ) {
         use futures::StreamExt;
 
-        let cache = crate::cache::Cache::new();
+        let cache = Cache::new();
         let key = "Qwen/Qwen3-0.6B";
 
-        let mut template_strm = Box::pin(cache.try_create::<ChatTemplate>(key, None));
+        let mut template_strm = Box::pin(cache.try_create::<ChatTemplate>(key, None, None));
         let mut template: Option<ChatTemplate> = None;
         while let Some(progress) = template_strm.next().await {
             let mut progress = progress.unwrap();
