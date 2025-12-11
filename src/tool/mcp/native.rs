@@ -43,9 +43,9 @@ impl MCPClient {
         Self::new(().serve(TokioChildProcess::new(command)?).await?).await
     }
 
-    pub async fn from_streamable_http(uri: impl Into<Arc<str>>) -> anyhow::Result<Self> {
+    pub async fn from_streamable_http(uri: impl Into<String>) -> anyhow::Result<Self> {
         Self::new(
-            ().serve(StreamableHttpClientTransport::from_uri(uri))
+            ().serve(StreamableHttpClientTransport::from_uri(uri.into()))
                 .await?,
         )
         .await
@@ -119,13 +119,14 @@ impl ToolBehavior for MCPTool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::value::Value;
+    use ailoy_macros::multi_platform_test;
+
     #[tokio::test]
     async fn run_stdio() -> anyhow::Result<()> {
         use fancy_regex::Regex;
         use rmcp::transport::ConfigureCommandExt;
-
-        use super::*;
-        use crate::value::Value;
 
         let command = tokio::process::Command::new("uvx").configure(|cmd| {
             cmd.arg("mcp-server-time");
@@ -156,6 +157,23 @@ mod tests {
                 .unwrap(),
             true
         );
+
+        Ok(())
+    }
+
+    #[multi_platform_test]
+    async fn test_streamable_http_client() -> anyhow::Result<()> {
+        let client = MCPClient::from_streamable_http("http://localhost:8123/mcp").await?;
+
+        let tools = client.tools;
+        crate::debug!("list of tools: {:?}", tools);
+
+        let tool = tools[1].clone();
+
+        let tool_call_args: Value =
+            serde_json::json!({"latitude": 32.7767, "longitude": -96.797}).into();
+        let call_tool = tool.run(tool_call_args).await.unwrap();
+        crate::debug!("call tool result: {:?}", call_tool);
 
         Ok(())
     }
