@@ -536,3 +536,33 @@ macro_rules! dyn_maybe_send_sync {
         dyn $($traits)+
     };
 }
+
+/// Macro that boxes a stream or future with `.boxed()` on non-wasm32 targets
+/// and `.boxed_local()` on wasm32 targets.
+///
+/// # Examples
+/// ```
+/// use futures::stream::StreamExt;
+/// use futures::future::FutureExt;
+///
+/// // Boxing a stream
+/// let stream = futures::stream::iter(vec![1, 2, 3]);
+/// let boxed_stream = box!(stream);
+///
+/// // Boxing a future
+/// let future = async { 42 };
+/// let boxed_future = box!(future);
+/// ```
+#[macro_export]
+macro_rules! boxed {
+    ($item:expr) => {{
+        #[cfg(target_arch = "wasm32")]
+        {
+            $item.boxed_local()
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            $item.boxed()
+        }
+    }};
+}

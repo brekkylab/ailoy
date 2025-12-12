@@ -14,6 +14,7 @@ use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::{
+    boxed,
     tool::{ToolBehavior, mcp::common::handle_result},
     value::{ToolDesc, Value},
 };
@@ -177,8 +178,7 @@ impl StreamableHttpClient {
             .map(|s| s.to_string());
         match content_type {
             Some(ct) if ct.as_bytes().starts_with("text/event-stream".as_bytes()) => {
-                let event_stream =
-                    SseStream::from_byte_stream(response.bytes_stream()).boxed_local();
+                let event_stream = boxed!(SseStream::from_byte_stream(response.bytes_stream()));
                 Ok(StreamableHttpPostResponse::Sse(event_stream, session_id))
             }
             Some(ct) if ct.as_bytes().starts_with("application/json".as_bytes()) => {

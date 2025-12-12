@@ -37,6 +37,7 @@ export declare class Agent {
   addTools(tools: Array<Tool>): void;
   removeTool(toolName: string): void;
   removeTools(toolNames: Array<string>): void;
+  clearTools(): void;
   setKnowledge(knowledge: Knowledge): void;
   removeKnowledge(): void;
   runDelta(
@@ -52,9 +53,14 @@ export declare class Agent {
 export declare class EmbeddingModel {
   static newLocal(
     modelName: string,
-    config?: EmbeddingModelConfig | undefined | null
+    config?: LocalEmbeddingModelConfig | undefined | null
   ): Promise<EmbeddingModel>;
   infer(text: string): Promise<Embedding>;
+  static download(
+    modelName: string,
+    config?: LocalEmbeddingModelConfig | undefined | null
+  ): Promise<void>;
+  static remove(modelName: string): Promise<void>;
 }
 
 export declare class Knowledge {
@@ -72,13 +78,18 @@ export declare class Knowledge {
 export declare class LangModel {
   static newLocal(
     modelName: string,
-    config?: LangModelConfig | undefined | null
+    config?: LocalLangModelConfig | undefined | null
   ): Promise<LangModel>;
   static newStreamAPI(
     spec: APISpecification,
     modelName: string,
     apiKey: string
   ): Promise<LangModel>;
+  static download(
+    modelName: string,
+    config?: LocalLangModelConfig | undefined | null
+  ): Promise<void>;
+  static remove(modelName: string): Promise<void>;
   inferDelta(
     messages: Messages,
     tools?: Array<ToolDesc> | undefined | null,
@@ -193,11 +204,6 @@ export type DocumentPolyfillKind = "Qwen3";
 
 export type Embedding = Float32Array;
 
-export interface EmbeddingModelConfig {
-  deviceId?: number;
-  progressCallback?: (arg: CacheProgress) => void;
-}
-
 export declare function finishMessageDelta(delta: MessageDelta): Message;
 
 /** Explains why a language model's streamed generation finished. */
@@ -277,8 +283,15 @@ export interface KnowledgeConfig {
   topK?: number;
 }
 
-export interface LangModelConfig {
+export interface LocalEmbeddingModelConfig {
   deviceId?: number;
+  validateChecksum?: boolean;
+  progressCallback?: (arg: CacheProgress) => void;
+}
+
+export interface LocalLangModelConfig {
+  deviceId?: number;
+  validateChecksum?: boolean;
   progressCallback?: (arg: CacheProgress) => void;
 }
 

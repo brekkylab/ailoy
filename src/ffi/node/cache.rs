@@ -5,7 +5,7 @@ use napi::{
 };
 use napi_derive::napi;
 
-use crate::cache::{Cache, TryFromCache};
+use crate::utils::BoxStream;
 
 #[napi(object, js_name = "CacheProgress")]
 pub struct JsCacheProgress {
@@ -14,19 +14,13 @@ pub struct JsCacheProgress {
     pub total: u32,
 }
 
-pub async fn await_cache_result<T>(
-    cache_key: impl Into<String>,
-    cache_ctx: Option<std::collections::HashMap<String, crate::value::Value>>,
+pub async fn await_cache_result<'a, T>(
+    mut cache_strm: BoxStream<'a, anyhow::Result<crate::cache::CacheProgress<T>>>,
     progress_callback: Option<
         ThreadsafeFunction<JsCacheProgress, (), JsCacheProgress, Status, false>,
     >,
-) -> Result<T>
-where
-    T: TryFromCache + 'static,
-{
-    let cache_key = cache_key.into();
-    let mut strm = Box::pin(Cache::new().try_create::<T>(cache_key, cache_ctx));
-    while let Some(item) = strm.next().await {
+) -> Result<T> {
+    while let Some(item) = cache_strm.next().await {
         if item.is_err() {
             // Exit the loop and return the error
             return item

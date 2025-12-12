@@ -1,16 +1,18 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use ailoy_macros::multi_platform_async_trait;
-use futures::lock::Mutex;
+use async_stream::try_stream;
+use futures::{StreamExt as _, lock::Mutex};
 
 use crate::{
-    cache::{Cache, CacheClaim, CacheContents, CacheEntry, TryFromCache},
+    boxed,
+    cache::{Cache, CacheClaim, CacheContents, CacheProgress, TryFromCache},
     model::{
         EmbeddingModelInference,
         local::{EmbeddingModelInferencer, Tokenizer},
     },
-    utils::{BoxFuture, Normalize},
-    value::Embedding,
+    utils::{BoxFuture, BoxStream, Normalize},
+    value::{Embedding, Value},
 };
 
 #[derive(Debug, Clone)]
@@ -21,6 +23,12 @@ pub(crate) struct LocalEmbeddingModel {
     inferencer: Arc<Mutex<EmbeddingModelInferencer>>,
 
     do_normalize: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct LocalEmbeddingModelConfig {
+    pub device_id: Option<i32>,
+    pub validate_checksum: Option<bool>,
 }
 
 #[multi_platform_async_trait]
@@ -78,73 +86,84 @@ impl TryFromCache for LocalEmbeddingModel {
         })
     }
 
-    fn try_from_contents(
-        mut contents: CacheContents,
+    fn try_from_contents<'a>(
+        contents: &'a mut CacheContents,
         ctx: &std::collections::HashMap<String, crate::value::Value>,
-    ) -> BoxFuture<'static, anyhow::Result<Self>>
+    ) -> BoxFuture<'a, anyhow::Result<Self>>
     where
         Self: Sized,
     {
         let ctx = ctx.to_owned();
         Box::pin(async move {
-            let tokenizer_entries = ctx
-                .get("tokenizer_entries")
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .into_iter()
-                .map(|v| {
-                    let v = v.as_object().unwrap();
-                    CacheEntry::new(
-                        v.get("dirname").unwrap().as_str().unwrap(),
-                        v.get("filename").unwrap().as_str().unwrap(),
-                    )
-                });
-            let tokenizer = {
-                let mut files = BTreeMap::new();
-                for k in tokenizer_entries {
-                    let v = contents.entries.remove(&k).unwrap();
-                    files.insert(k, v);
-                }
-                let contents = CacheContents {
-                    root: contents.root.clone(),
-                    entries: files,
-                };
-                Tokenizer::try_from_contents(contents, &ctx).await?
-            };
-
-            let inferencer_entries = ctx
-                .get("inferencer_entries")
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .into_iter()
-                .map(|v| {
-                    let v = v.as_object().unwrap();
-                    CacheEntry::new(
-                        v.get("dirname").unwrap().as_str().unwrap(),
-                        v.get("filename").unwrap().as_str().unwrap(),
-                    )
-                });
-            let inferencer = {
-                let mut files = BTreeMap::new();
-                for k in inferencer_entries {
-                    let v = contents.entries.remove(&k).unwrap();
-                    files.insert(k, v);
-                }
-                let contents = CacheContents {
-                    root: contents.root.clone(),
-                    entries: files,
-                };
-                EmbeddingModelInferencer::try_from_contents(contents, &ctx).await?
-            };
-
+            let tokenizer = Tokenizer::try_from_contents(contents, &ctx).await?;
+            let inferencer = EmbeddingModelInferencer::try_from_contents(contents, &ctx).await?;
             Ok(LocalEmbeddingModel {
                 tokenizer,
                 inferencer: Arc::new(Mutex::new(inferencer)),
                 do_normalize: true,
             })
         })
+    }
+}
+
+impl LocalEmbeddingModel {
+    pub async fn try_new(
+        model: impl Into<String>,
+        config: Option<LocalEmbeddingModelConfig>,
+    ) -> anyhow::Result<Self> {
+        let mut strm = Self::try_new_stream(model, config);
+        while let Some(v) = strm.next().await {
+            if let Some(result) = v?.result {
+                return Ok(result);
+            }
+        }
+        unreachable!()
+    }
+
+    pub fn try_new_stream<'a>(
+        model: impl Into<String>,
+        config: Option<LocalEmbeddingModelConfig>,
+    ) -> BoxStream<'a, anyhow::Result<CacheProgress<Self>>> {
+        let config = config.unwrap_or_default();
+        let cache = Cache::new();
+        let mut ctx = HashMap::new();
+        if let Some(device_id) = config.device_id {
+            ctx.insert("device_id".to_owned(), Value::integer(device_id.into()));
+        };
+        let strm = cache.try_create::<Self>(model, Some(ctx), config.validate_checksum);
+        boxed!(strm)
+    }
+
+    pub fn download<'a>(
+        model: impl Into<String>,
+    ) -> BoxStream<'a, anyhow::Result<CacheProgress<()>>> {
+        let cache = Cache::new();
+        let mut strm = cache.prepare_files::<Self>(model, Some(true));
+        boxed!(try_stream! {
+            while let Some(res) = strm.next().await {
+                let (entry, current_task, total_task, _) = res?;
+                yield CacheProgress::<()> {
+                    comment: format!("{} downloaded", entry.filename()),
+                    current_task,
+                    total_task,
+                    result: None,
+                }
+            }
+        })
+    }
+
+    pub async fn remove(model: impl Into<String>) -> anyhow::Result<()> {
+        let cache = Cache::new();
+        let model = model.into();
+        let claim = Self::claim_files(cache.clone(), &model, &mut HashMap::new())
+            .await
+            .expect(format!("Failed to get the entries for {}", model).as_str());
+
+        for entry in claim.entries.iter() {
+            cache.remove(entry).await.unwrap();
+        }
+
+        Ok(())
     }
 }
 
@@ -157,10 +176,10 @@ mod tests {
 
     #[multi_platform_test]
     async fn infer_embedding() {
-        let cache = crate::cache::Cache::new();
+        let cache = Cache::new();
         let key = "BAAI/bge-m3";
 
-        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None));
+        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, None));
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
@@ -187,10 +206,10 @@ mod tests {
 
         use super::*;
 
-        let cache = crate::cache::Cache::new();
+        let cache = Cache::new();
         let key = "BAAI/bge-m3";
 
-        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None));
+        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, None));
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();

@@ -73,14 +73,14 @@ pub fn claim_files(
     Box::pin(async move {
         let mut tensor_cache_json_filename = "tensor-cache.json";
         let tensor_cache_bytes = match cache
-            .get(&CacheEntry::new(&dirname, tensor_cache_json_filename))
+            .get(&CacheEntry::new(&dirname, tensor_cache_json_filename), None)
             .await
         {
             Ok(data) => data,
             Err(_) => {
                 tensor_cache_json_filename = "ndarray-cache.json";
                 match cache
-                    .get(&CacheEntry::new(&dirname, tensor_cache_json_filename))
+                    .get(&CacheEntry::new(&dirname, tensor_cache_json_filename), None)
                     .await
                 {
                     Ok(data) => data,
@@ -174,7 +174,7 @@ mod tvm_runtime {
         }
 
         fn try_from_contents<'a>(
-            mut contents: CacheContents,
+            contents: &'a mut CacheContents,
             ctx: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
@@ -184,7 +184,7 @@ mod tvm_runtime {
                     0
                 };
                 let device = create_dldevice(get_device_type(get_accelerator()), device_id as i32);
-                let inner = create_tvm_embedding_model(&mut contents, device);
+                let inner = create_tvm_embedding_model(contents, device);
 
                 Ok(EmbeddingModelInferencer { inner })
             })
@@ -217,7 +217,7 @@ mod tvm_runtime {
         }
 
         fn try_from_contents<'a>(
-            mut contents: CacheContents,
+            contents: &'a mut CacheContents,
             ctx: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
@@ -227,7 +227,7 @@ mod tvm_runtime {
                     0
                 };
                 let device = create_dldevice(get_device_type(get_accelerator()), device_id as i32);
-                let inner = create_tvm_language_model(&mut contents, device);
+                let inner = create_tvm_language_model(contents, device);
 
                 Ok(LanguageModelInferencer { inner })
             })
@@ -292,7 +292,7 @@ mod tvmjs_runtime {
         }
 
         fn try_from_contents<'a>(
-            mut contents: CacheContents,
+            contents: &'a mut CacheContents,
             _: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
@@ -370,7 +370,7 @@ mod tvmjs_runtime {
         }
 
         fn try_from_contents<'a>(
-            mut contents: CacheContents,
+            contents: &'a mut CacheContents,
             _: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
