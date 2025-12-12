@@ -842,7 +842,7 @@ mod api_tests {
     #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model =
-            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4o", *OPENAI_API_KEY);
+            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-5.2", *OPENAI_API_KEY);
 
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
