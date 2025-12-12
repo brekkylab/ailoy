@@ -1,4 +1,4 @@
-use std::{borrow::Cow, rc::Rc, sync::atomic::AtomicU32};
+use std::{borrow::Cow, rc::Rc, sync::atomic::AtomicI64};
 
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::{Context, anyhow};
@@ -129,7 +129,7 @@ struct StreamableHttpClient {
     auth_token: Option<String>,
     session_id: Option<String>,
     allow_stateless: bool,
-    request_id: Rc<AtomicU32>,
+    request_id: Rc<AtomicI64>,
 }
 
 impl StreamableHttpClient {
@@ -141,7 +141,7 @@ impl StreamableHttpClient {
             auth_token,
             session_id: None,
             allow_stateless,
-            request_id: Rc::new(AtomicU32::new(0)),
+            request_id: Rc::new(AtomicI64::new(0)),
         }
     }
 

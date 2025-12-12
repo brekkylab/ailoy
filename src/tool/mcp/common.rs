@@ -3,9 +3,9 @@ use crate::{to_value, value::Value};
 pub fn handle_result(value: rmcp::model::CallToolResult) -> anyhow::Result<Value> {
     if let Some(result) = value.structured_content {
         Ok(result.into())
-    } else if let Some(content) = value.content {
-        let mut rv = Vec::with_capacity(content.len());
-        for raw_content in content {
+    } else {
+        let mut rv = Vec::with_capacity(value.content.len());
+        for raw_content in value.content {
             let v = match raw_content.raw {
                 rmcp::model::RawContent::Text(raw_text_content) => {
                     Value::String(raw_text_content.text)
@@ -16,6 +16,7 @@ pub fn handle_result(value: rmcp::model::CallToolResult) -> anyhow::Result<Value
                 }
                 rmcp::model::RawContent::Resource(_) => Value::Null,
                 rmcp::model::RawContent::Audio(_) => Value::Null,
+                rmcp::model::RawContent::ResourceLink(_) => Value::Null,
             };
             rv.push(v);
         }
@@ -26,7 +27,5 @@ pub fn handle_result(value: rmcp::model::CallToolResult) -> anyhow::Result<Value
         } else {
             Ok(to_value!(rv))
         }
-    } else {
-        Ok(Value::Null)
     }
 }
