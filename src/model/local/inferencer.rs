@@ -293,7 +293,7 @@ mod tvmjs_runtime {
 
         fn try_from_contents<'a>(
             contents: &'a mut CacheContents,
-            _: &'a std::collections::HashMap<String, crate::value::Value>,
+            ctx: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
                 let cache_contents = {
@@ -307,8 +307,28 @@ mod tvmjs_runtime {
                     }
                     obj
                 };
+                let config = {
+                    let config = Object::new();
+                    let kv_cache_config = if ctx.contains_key("kv_cache") {
+                        let kv_cache = ctx.get("kv_cache").unwrap().as_object().unwrap();
+                        let kv_cache_config = Object::new();
+                        if let Some(context_window_size) = kv_cache.get("context_window_size") {
+                            Reflect::set(
+                                &kv_cache_config,
+                                &"contextWindowSize".into(),
+                                &JsValue::from_f64(context_window_size.as_integer().unwrap() as f64),
+                            )
+                            .unwrap();
+                        }
+                        kv_cache_config.into()
+                    } else {
+                        JsValue::undefined()
+                    };
+                    Reflect::set(&config, &"kvCache".into(), &kv_cache_config).unwrap();
+                    config
+                };
 
-                let prom = init_tvm_language_model_js(&cache_contents);
+                let prom = init_tvm_language_model_js(&cache_contents, Some(config));
                 let js_lm = match JsFuture::from(prom).await {
                     Ok(out) => {
                         let lm: JSTVMLanguageModel = out

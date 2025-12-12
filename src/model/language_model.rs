@@ -743,7 +743,9 @@ mod wasm {
 
     use super::*;
     use crate::{
-        ffi::web::stream_to_async_iterable, model::api::APISpecification, value::Messages,
+        ffi::web::stream_to_async_iterable,
+        model::{KvCacheConfig, api::APISpecification},
+        value::Messages,
     };
 
     #[wasm_bindgen]
@@ -751,7 +753,7 @@ mod wasm {
         #[derive(Clone)]
         #[wasm_bindgen(
             js_name = "LocalLangModelConfig",
-            typescript_type = "{deviceId?: number; validateChecksum?: boolean; progressCallback?: CacheProgressCallbackFn;}"
+            typescript_type = "{deviceId?: number; validateChecksum?: boolean; kvCache?: {contextWindowSize?: number;}, progressCallback?: CacheProgressCallbackFn;}"
         )]
         pub type _JSLocalLangModelConfig;
     }
@@ -760,6 +762,7 @@ mod wasm {
     pub struct JSLocalLangModelConfig {
         pub device_id: Option<i32>,
         pub validate_checksum: Option<bool>,
+        pub kv_cache: Option<KvCacheConfig>,
         pub progress_callback: Option<Function>,
     }
 
@@ -781,6 +784,17 @@ mod wasm {
                 && let Some(b) = val.as_bool()
             {
                 config.validate_checksum = Some(b)
+            }
+
+            if let Ok(val) = Reflect::get(&obj, &"kvCache".into()) {
+                let mut kv_cache = KvCacheConfig {
+                    context_window_size: None,
+                };
+                if let Ok(context_window_size) = Reflect::get(&val, &"contextWindowSize".into()) {
+                    kv_cache.context_window_size =
+                        Some(context_window_size.as_f64().unwrap() as u32)
+                }
+                config.kv_cache = Some(kv_cache);
             }
 
             if let Ok(val) = Reflect::get(&obj, &"progressCallback".into())
@@ -809,6 +823,7 @@ mod wasm {
                 Some(LocalLangModelConfig {
                     device_id: config.device_id,
                     validate_checksum: config.validate_checksum,
+                    kv_cache: config.kv_cache,
                 }),
             );
             let inner = crate::ffi::web::await_cache_result(cache_strm, config.progress_callback)

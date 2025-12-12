@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_stream::try_stream;
 use futures::StreamExt;
+use serde::Serialize;
 use tokio::sync::mpsc;
 
 use crate::{
@@ -25,10 +26,16 @@ struct Request {
     tx_resp: mpsc::UnboundedSender<anyhow::Result<MessageDeltaOutput>>,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct KvCacheConfig {
+    pub context_window_size: Option<u32>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct LocalLangModelConfig {
     pub device_id: Option<i32>,
     pub validate_checksum: Option<bool>,
+    pub kv_cache: Option<KvCacheConfig>,
 }
 
 #[derive(Clone, Debug)]
@@ -60,6 +67,10 @@ impl LocalLangModel {
         if let Some(device_id) = config.device_id {
             ctx.insert("device_id".to_owned(), Value::integer(device_id.into()));
         };
+        if let Some(kv_cache) = config.kv_cache {
+            let kv_cache = serde_json::to_value(kv_cache).unwrap();
+            ctx.insert("kv_cache".to_owned(), kv_cache.into());
+        }
         let strm = cache.try_create::<Self>(model, Some(ctx), config.validate_checksum);
         boxed!(strm)
     }

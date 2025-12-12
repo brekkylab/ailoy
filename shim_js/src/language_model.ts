@@ -3,6 +3,10 @@ import { init as init_tvm_runtime, TVMRuntime } from "./tvm_runtime";
 
 const PAGE_SIZE = 16;
 
+interface KVCacheConfig {
+  contextWindowSize?: number;
+}
+
 class KVCache {
   private tvm: Instance;
   private inner: TVMObject;
@@ -16,13 +20,14 @@ class KVCache {
   private fKVCacheGetNumAvailablePages: PackedFunc;
   private fKVCacheGetTotalSequenceLength: PackedFunc;
 
-  constructor(rt: TVMRuntime) {
+  constructor(rt: TVMRuntime, config?: KVCacheConfig) {
     this.tvm = rt.tvm;
 
     this.tvm.beginScope();
     // Determine prefill chunk size
     const prefillChunkSize = rt.metadata.prefill_chunk_size;
-    const contextWindowSize = rt.metadata.context_window_size;
+    const contextWindowSize =
+      config?.contextWindowSize ?? rt.metadata.context_window_size;
     const slidingWindowSize = rt.metadata.sliding_window_size;
     // const defaultPageSize = 16;
     const defaultMaxNumSequence = 1;
@@ -131,6 +136,10 @@ class KVCache {
   }
 }
 
+export interface TVMLanguageModelConfig {
+  kvCache?: KVCacheConfig;
+}
+
 export class TVMLanguageModel {
   private rt: TVMRuntime;
   private tvm: Instance;
@@ -143,7 +152,7 @@ export class TVMLanguageModel {
   private fDecode: PackedFunc;
   private fSampleTopPfromLogits: PackedFunc;
 
-  constructor(rt: TVMRuntime) {
+  constructor(rt: TVMRuntime, config?: TVMLanguageModelConfig) {
     this.rt = rt;
     this.tvm = this.rt.tvm;
 
@@ -151,7 +160,7 @@ export class TVMLanguageModel {
 
     this.prefillChunkSize = this.rt.metadata.prefill_chunk_size;
 
-    this.kvcache = new KVCache(this.rt);
+    this.kvcache = new KVCache(this.rt, config?.kvCache);
 
     this.fEmbed = this.rt.get_function("embed");
     this.fPrefill = this.rt.get_function("prefill");
@@ -315,9 +324,10 @@ export class TVMLanguageModel {
 }
 
 export async function init(
-  cache_contents: Record<string, ArrayBuffer>
+  cache_contents: Record<string, ArrayBuffer>,
+  config?: TVMLanguageModelConfig
 ): Promise<TVMLanguageModel> {
   const rt = await init_tvm_runtime(cache_contents);
-  const rv = new TVMLanguageModel(rt);
+  const rv = new TVMLanguageModel(rt, config);
   return rv;
 }
