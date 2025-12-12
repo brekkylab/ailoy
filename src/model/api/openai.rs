@@ -132,7 +132,9 @@ impl Marshal<RequestConfig> for OpenAIMarshal {
         let (reasoning_effort, reasoning_summary) = if is_reasoning_model {
             match &config.think_effort {
                 ThinkEffort::Disable => {
-                    if model.starts_with("gpt-5") {
+                    if model.starts_with("gpt-5.2") || model.starts_with("gpt-5.1") {
+                        (Some("none"), None)
+                    } else if model.starts_with("gpt-5") {
                         (Some("minimal"), None)
                     } else {
                         (Some("low"), None)
@@ -842,7 +844,7 @@ mod api_tests {
     #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model =
-            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
+            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-5.1", *OPENAI_API_KEY);
 
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
