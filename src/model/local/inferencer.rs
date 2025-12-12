@@ -312,11 +312,13 @@ mod tvmjs_runtime {
                     let kv_cache_config = if ctx.contains_key("kv_cache") {
                         let kv_cache = ctx.get("kv_cache").unwrap().as_object().unwrap();
                         let kv_cache_config = Object::new();
-                        if let Some(context_window_size) = kv_cache.get("context_window_size") {
+                        if let Some(context_window_size) = kv_cache.get("context_window_size")
+                            && let Some(context_window_size) = context_window_size.as_integer()
+                        {
                             Reflect::set(
                                 &kv_cache_config,
                                 &"contextWindowSize".into(),
-                                &JsValue::from_f64(context_window_size.as_integer().unwrap() as f64),
+                                &JsValue::from_f64(context_window_size as f64),
                             )
                             .unwrap();
                         }

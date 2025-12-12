@@ -790,9 +790,10 @@ mod wasm {
                 let mut kv_cache = KvCacheConfig {
                     context_window_size: None,
                 };
-                if let Ok(context_window_size) = Reflect::get(&val, &"contextWindowSize".into()) {
-                    kv_cache.context_window_size =
-                        Some(context_window_size.as_f64().unwrap() as u32)
+                if let Ok(context_window_size) = Reflect::get(&val, &"contextWindowSize".into())
+                    && let Some(context_window_size) = context_window_size.as_f64()
+                {
+                    kv_cache.context_window_size = Some(context_window_size as u32)
                 }
                 config.kv_cache = Some(kv_cache);
             }
