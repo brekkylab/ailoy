@@ -41,17 +41,7 @@ impl LocalLangModel {
         model: impl Into<String>,
         config: Option<LocalLangModelConfig>,
     ) -> anyhow::Result<Self> {
-        let config = config.unwrap_or_default();
-        let cache = Cache::new();
-        let mut ctx = HashMap::new();
-        if let Some(device_id) = config.device_id {
-            ctx.insert("device_id".to_owned(), Value::integer(device_id.into()));
-        };
-        let mut strm = Box::pin(cache.try_create::<LocalLangModel>(
-            model,
-            Some(ctx),
-            config.validate_checksum,
-        ));
+        let mut strm = Self::try_new_stream(model, config);
         while let Some(v) = strm.next().await {
             if let Some(result) = v?.result {
                 return Ok(result);
