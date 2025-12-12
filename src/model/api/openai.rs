@@ -134,10 +134,8 @@ impl Marshal<RequestConfig> for OpenAIMarshal {
                 ThinkEffort::Disable => {
                     if model.starts_with("gpt-5.2") || model.starts_with("gpt-5.1") {
                         (Some("none"), None)
-                    } else if model.starts_with("gpt-5") {
-                        (Some("minimal"), None)
                     } else {
-                        (Some("low"), None)
+                        (Some("minimal"), None)
                     }
                 }
                 ThinkEffort::Enable | ThinkEffort::Medium => (Some("medium"), Some("auto")),
@@ -844,7 +842,7 @@ mod api_tests {
     #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model =
-            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-5.1", *OPENAI_API_KEY);
+            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4o", *OPENAI_API_KEY);
 
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
@@ -866,7 +864,7 @@ mod api_tests {
     #[multi_platform_test]
     async fn infer_tool_call() {
         let mut model =
-            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
+            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-5.2", *OPENAI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -908,7 +906,7 @@ mod api_tests {
     #[multi_platform_test]
     async fn infer_tool_response() {
         let mut model =
-            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
+            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-5.2", *OPENAI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
