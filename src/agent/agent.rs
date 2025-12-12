@@ -129,6 +129,10 @@ impl Agent {
         self.remove_tools(vec![tool_name]);
     }
 
+    pub fn clear_tools(&mut self) {
+        self.tools.clear();
+    }
+
     pub fn set_knowledge(&mut self, knowledge: Knowledge) {
         self.knowledge = Some(knowledge);
     }
@@ -313,11 +317,14 @@ mod py {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::value::{
-        Messages,
-        py::{
-            MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
-            MessageOutputSyncIterator,
+    use crate::{
+        boxed,
+        value::{
+            Messages,
+            py::{
+                MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
+                MessageOutputSyncIterator,
+            },
         },
     };
 
@@ -333,7 +340,7 @@ mod py {
         let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let future = async move {
-            let mut stream = agent.run_delta(messages, config).boxed();
+            let mut stream = boxed!(agent.run_delta(messages, config));
             while let Some(item) = stream.next().await {
                 if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
@@ -359,7 +366,7 @@ mod py {
         let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let future = async move {
-            let mut stream = agent.run(messages, config).boxed();
+            let mut stream = boxed!(agent.run(messages, config));
             while let Some(item) = stream.next().await {
                 if tx.send(item).is_err() {
                     break; // Exit if consumer vanished
@@ -462,6 +469,11 @@ mod py {
             self.remove_tool(tool_name);
         }
 
+        #[pyo3(name = "clear_tools")]
+        fn clear_tools_py(&mut self) {
+            self.clear_tools()
+        }
+
         #[pyo3(name = "set_knowledge", signature = (knowledge))]
         fn set_knowledge_py(&mut self, knowledge: &Knowledge) {
             self.set_knowledge(knowledge.clone());
@@ -535,6 +547,7 @@ mod node {
 
     use super::*;
     use crate::{
+        boxed,
         ffi::node::common::get_or_create_runtime,
         value::{
             Messages,
@@ -577,6 +590,11 @@ mod node {
             self.remove_tools(tool_names)
         }
 
+        #[napi(js_name = "clearTools")]
+        pub unsafe fn clear_tools_js(&mut self) {
+            self.clear_tools()
+        }
+
         #[napi(js_name = "setKnowledge")]
         pub unsafe fn set_knowledge_js(&mut self, knowledge: &Knowledge) {
             self.set_knowledge(knowledge.clone())
@@ -599,7 +617,7 @@ mod node {
             let mut agent = self.clone();
 
             rt.spawn(async move {
-                let mut stream = agent.run_delta(messages.into(), config).boxed();
+                let mut stream = boxed!(agent.run_delta(messages.into(), config));
 
                 while let Some(item) = stream.next().await {
                     if tx
@@ -630,7 +648,7 @@ mod node {
             let mut agent = self.clone();
 
             rt.spawn(async move {
-                let mut stream = agent.run(messages.into(), config).boxed();
+                let mut stream = boxed!(agent.run(messages.into(), config));
 
                 while let Some(item) = stream.next().await {
                     if tx
@@ -696,6 +714,11 @@ mod wasm {
             #[wasm_bindgen(js_name = "toolNames")] tool_names: Vec<String>,
         ) {
             self.remove_tools(tool_names)
+        }
+
+        #[wasm_bindgen(js_name = "clearTools")]
+        pub fn clear_tools_js(&mut self) {
+            self.clear_tools()
         }
 
         #[wasm_bindgen(js_name = "setKnowledge")]

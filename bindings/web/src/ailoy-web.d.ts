@@ -28,6 +28,21 @@
 export class Agent {
   free(): void;
   [Symbol.dispose](): void;
+  addTool(tool: Tool): void;
+  /**
+   * Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after this function is called.
+   * If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
+   */
+  addTools(tools: Tool[]): void;
+  runDelta(
+    messages: Array<Message | SingleTextMessage> | string,
+    config?: AgentConfig | null
+  ): AsyncIterable<MessageDeltaOutput>;
+  clearTools(): void;
+  removeTool(toolName: string): void;
+  removeTools(toolNames: string[]): void;
+  setKnowledge(knowledge: Knowledge): void;
+  removeKnowledge(): void;
   /**
    * Construct a new Agent instance with provided `LangModel` and `Tool`s.
    *
@@ -39,20 +54,6 @@ export class Agent {
     tools?: Tool[] | null,
     knowledge?: Knowledge | null
   );
-  addTool(tool: Tool): void;
-  /**
-   * Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after this function is called.
-   * If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
-   */
-  addTools(tools: Tool[]): void;
-  removeTool(toolName: string): void;
-  removeTools(toolNames: string[]): void;
-  setKnowledge(knowledge: Knowledge): void;
-  removeKnowledge(): void;
-  runDelta(
-    messages: Array<Message | SingleTextMessage> | string,
-    config?: AgentConfig | null
-  ): AsyncIterable<MessageDeltaOutput>;
   run(
     messages: Array<Message | SingleTextMessage> | string,
     config?: AgentConfig | null
@@ -63,25 +64,35 @@ export class EmbeddingModel {
   private constructor();
   free(): void;
   [Symbol.dispose](): void;
+  static download(
+    modelName: string,
+    config?: {
+      deviceId?: number;
+      validateChecksum?: boolean;
+      progressCallback?: CacheProgressCallbackFn;
+    } | null
+  ): Promise<void>;
   static newLocal(
     modelName: string,
     config?: {
       deviceId?: number;
+      validateChecksum?: boolean;
       progressCallback?: CacheProgressCallbackFn;
     } | null
   ): Promise<EmbeddingModel>;
   infer(text: string): Promise<Float32Array>;
+  static remove(modelName: string): Promise<void>;
 }
 
 export class Knowledge {
   private constructor();
   free(): void;
   [Symbol.dispose](): void;
+  retrieve(query: string, config?: KnowledgeConfig | null): Promise<Document[]>;
   static newVectorStore(
     store: VectorStore,
     embedding_model: EmbeddingModel
   ): Knowledge;
-  retrieve(query: string, config?: KnowledgeConfig | null): Promise<Document[]>;
   asTool(): Tool;
 }
 
@@ -89,17 +100,21 @@ export class LangModel {
   private constructor();
   free(): void;
   [Symbol.dispose](): void;
+  static download(
+    modelName: string,
+    config?: {
+      deviceId?: number;
+      validateChecksum?: boolean;
+      progressCallback?: CacheProgressCallbackFn;
+    } | null
+  ): Promise<void>;
   static newLocal(
     modelName: string,
     config?: {
       deviceId?: number;
+      validateChecksum?: boolean;
       progressCallback?: CacheProgressCallbackFn;
     } | null
-  ): Promise<LangModel>;
-  static newStreamAPI(
-    spec: APISpecification,
-    modelName: string,
-    apiKey: string
   ): Promise<LangModel>;
   inferDelta(
     messages: Array<Message | SingleTextMessage> | string,
@@ -107,12 +122,18 @@ export class LangModel {
     docs?: Document[] | null,
     config?: InferenceConfig | null
   ): AsyncIterable<MessageDeltaOutput>;
+  static newStreamAPI(
+    spec: APISpecification,
+    modelName: string,
+    apiKey: string
+  ): Promise<LangModel>;
   infer(
     messages: Array<Message | SingleTextMessage> | string,
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
     config?: InferenceConfig | null
   ): Promise<MessageOutput>;
+  static remove(modelName: string): Promise<void>;
 }
 
 export class MCPClient {
@@ -137,19 +158,19 @@ export class VectorStore {
   private constructor();
   free(): void;
   [Symbol.dispose](): void;
-  static newFaiss(dim: number): Promise<VectorStore>;
-  static newChroma(
-    url: string,
-    collectionName?: string | null
-  ): Promise<VectorStore>;
-  addVector(input: VectorStoreAddInput): Promise<string>;
-  addVectors(inputs: VectorStoreAddInput[]): Promise<string[]>;
-  getById(id: string): Promise<VectorStoreGetResult | undefined>;
-  getByIds(ids: string[]): Promise<VectorStoreGetResult[]>;
   retrieve(
     query_embedding: Float32Array,
     top_k: number
   ): Promise<VectorStoreRetrieveResult[]>;
+  getById(id: string): Promise<VectorStoreGetResult | undefined>;
+  static newFaiss(dim: number): Promise<VectorStore>;
+  addVector(input: VectorStoreAddInput): Promise<string>;
+  getByIds(ids: string[]): Promise<VectorStoreGetResult[]>;
+  static newChroma(
+    url: string,
+    collectionName?: string | null
+  ): Promise<VectorStore>;
+  addVectors(inputs: VectorStoreAddInput[]): Promise<string[]>;
   removeVector(id: string): Promise<void>;
   removeVectors(ids: string[]): Promise<void>;
   clear(): Promise<void>;

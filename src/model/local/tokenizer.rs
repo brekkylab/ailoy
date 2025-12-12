@@ -46,7 +46,7 @@ impl TryFromCache for Tokenizer {
     }
 
     fn try_from_contents<'a>(
-        mut contents: CacheContents,
+        contents: &'a mut CacheContents,
         _: &'a std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>> {
         Box::pin(async move {

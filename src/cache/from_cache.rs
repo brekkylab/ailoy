@@ -94,7 +94,7 @@ pub trait TryFromCache: Sized + MaybeSend {
     /// Implementations should verify that all required entries are present and valid,
     /// and return a descriptive `Err(String)` on failure.
     fn try_from_contents<'a>(
-        contents: CacheContents,
+        contents: &'a mut CacheContents,
         ctx: &'a std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>>;
 }

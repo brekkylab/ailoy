@@ -50,6 +50,7 @@ mod tests {
     use super::*;
     use crate::{
         agent::Agent,
+        boxed,
         knowledge::Knowledge,
         model::LangModel,
         value::{Message, Part, Role},
@@ -58,7 +59,7 @@ mod tests {
     #[multi_platform_test]
     async fn test_custom_knowledge_with_agent() -> anyhow::Result<()> {
         let knowledge = Knowledge::new_custom(CustomKnowledge::new(Arc::new(|_, _| {
-            async {
+            boxed!(async {
                 let documents = vec![
                     Document {
                         id: "1".to_owned(),
@@ -77,8 +78,7 @@ mod tests {
                     },
                 ];
                 Ok(documents)
-            }
-            .boxed()
+            })
         })));
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
             .await

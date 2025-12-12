@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 use wasm_bindgen::prelude::*;
 
-use crate::cache::{Cache, TryFromCache};
+use crate::utils::BoxStream;
 
 #[derive(Serialize, Deserialize, Tsify)]
 #[tsify(into_wasm_abi, from_wasm_abi)]
@@ -22,17 +22,14 @@ const TS_APPEND_CONTENT: &'static str = dedent::dedent!(
     "#
 );
 
-pub async fn await_cache_result<T>(
-    cache_key: impl Into<String>,
-    ctx: Option<std::collections::HashMap<String, crate::value::Value>>,
+pub async fn await_cache_result<'a, T>(
+    mut cache_strm: BoxStream<'a, anyhow::Result<crate::cache::CacheProgress<T>>>,
     progress_callback: Option<Function>,
 ) -> Result<T>
 where
-    T: TryFromCache + std::fmt::Debug + 'static,
+    T: std::fmt::Debug,
 {
-    let cache_key = cache_key.into();
-    let mut strm = Box::pin(Cache::new().try_create::<T>(cache_key, ctx));
-    while let Some(item) = strm.next().await {
+    while let Some(item) = cache_strm.next().await {
         if item.is_err() {
             return Err(anyhow!(item.unwrap_err()));
         }

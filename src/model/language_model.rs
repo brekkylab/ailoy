@@ -8,7 +8,7 @@ use strum_macros::{Display, EnumString};
 use crate::{
     cache::CacheProgress,
     model::{
-        LocalLangModel, StreamAPILangModel,
+        LocalLangModel, LocalLangModelConfig, StreamAPILangModel,
         api::APISpecification,
         custom::{CustomLangModel, CustomLangModelInferFunc},
         polyfill::DocumentPolyfill,
@@ -207,20 +207,20 @@ pub struct LangModel {
 impl LangModel {
     pub async fn try_new_local(
         model_name: impl Into<String>,
-        device_id: Option<i32>,
+        config: Option<LocalLangModelConfig>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            inner: LangModelInner::Local(LocalLangModel::try_new(model_name, device_id).await?),
+            inner: LangModelInner::Local(LocalLangModel::try_new(model_name, config).await?),
         })
     }
 
     pub fn try_new_local_stream<'a>(
         model_name: impl Into<String>,
-        device_id: Option<i32>,
+        config: Option<LocalLangModelConfig>,
     ) -> BoxStream<'a, anyhow::Result<CacheProgress<Self>>> {
         let model_name = model_name.into();
         Box::pin(async_stream::try_stream! {
-            let mut strm = LocalLangModel::try_new_stream(model_name, device_id);
+            let mut strm = LocalLangModel::try_new_stream(model_name, config);
             while let Some(result) = strm.next().await {
                 let result = result?;
                 yield CacheProgress {
@@ -247,6 +247,16 @@ impl LangModel {
         Self {
             inner: LangModelInner::Custom(CustomLangModel { infer_func: f }),
         }
+    }
+
+    pub fn download<'a>(
+        model: impl Into<String>,
+    ) -> BoxStream<'a, anyhow::Result<CacheProgress<()>>> {
+        LocalLangModel::download(model)
+    }
+
+    pub async fn remove(model: impl Into<String>) -> anyhow::Result<()> {
+        LocalLangModel::remove(model).await
     }
 }
 
@@ -278,11 +288,11 @@ mod py {
 
     use super::*;
     use crate::{
+        boxed,
         ffi::py::{
             base::{await_future, python_to_value},
             cache_progress::await_cache_result,
         },
-        model::get_cache_context,
         value::{
             Messages,
             py::{MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator},
@@ -302,9 +312,7 @@ mod py {
         let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.spawn(async move {
-            let mut stream = model
-                .infer_delta(messages, tools, documents, config)
-                .boxed();
+            let mut stream = boxed!(model.infer_delta(messages, tools, documents, config));
 
             while let Some(item) = stream.next().await {
                 if tx.send(item).is_err() {
@@ -320,23 +328,23 @@ mod py {
     impl LangModel {
         #[classmethod]
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[LangModel]"))]
-        #[pyo3(name = "new_local", signature = (model_name, device_id = None, progress_callback = None))]
+        #[pyo3(name = "new_local", signature = (model_name, device_id = None, validate_checksum = None, progress_callback = None))]
         fn new_local_py<'a>(
             _cls: &Bound<'a, PyType>,
             py: Python<'a>,
             model_name: String,
             device_id: Option<i32>,
+            validate_checksum: Option<bool>,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Bound<'a, PyAny>> {
+            let config = LocalLangModelConfig {
+                device_id,
+                validate_checksum,
+            };
+            let cache_strm = LocalLangModel::try_new_stream(model_name, Some(config));
             let fut = async move {
-                let cache_ctx = get_cache_context(device_id);
-                let inner = await_cache_result::<LocalLangModel>(
-                    model_name,
-                    Some(cache_ctx),
-                    progress_callback,
-                )
-                .await?;
+                let inner = await_cache_result(cache_strm, progress_callback).await?;
                 Python::attach(|py| {
                     Py::new(
                         py,
@@ -350,24 +358,22 @@ mod py {
         }
 
         #[classmethod]
-        #[pyo3(name = "new_local_sync", signature = (model_name, device_id = None, progress_callback = None))]
+        #[pyo3(name = "new_local_sync", signature = (model_name, device_id = None, validate_checksum = None, progress_callback = None))]
         fn new_local_sync_py(
             _cls: &Bound<'_, PyType>,
             py: Python<'_>,
             model_name: String,
             device_id: Option<i32>,
+            validate_checksum: Option<bool>,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Py<Self>> {
-            let cache_ctx = get_cache_context(device_id);
-            let inner = await_future(
-                py,
-                await_cache_result::<LocalLangModel>(
-                    model_name,
-                    Some(cache_ctx),
-                    progress_callback,
-                ),
-            )?;
+            let config = LocalLangModelConfig {
+                device_id,
+                validate_checksum,
+            };
+            let cache_strm = LocalLangModel::try_new_stream(model_name, Some(config));
+            let inner = await_future(py, await_cache_result(cache_strm, progress_callback))?;
             Py::new(
                 py,
                 LangModel {
@@ -389,6 +395,30 @@ mod py {
                     spec, model_name, api_key,
                 )),
             }
+        }
+
+        #[classmethod]
+        #[pyo3(name = "download", signature = (model_name, progress_callback = None))]
+        fn download_py<'a>(
+            _cls: &Bound<'a, PyType>,
+            py: Python<'_>,
+            model_name: String,
+            #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
+            progress_callback: Option<Py<PyAny>>,
+        ) -> PyResult<()> {
+            let strm = Self::download(model_name);
+            await_future(py, await_cache_result(strm, progress_callback))?;
+            Ok(())
+        }
+
+        #[classmethod]
+        #[pyo3(name = "remove", signature = (model_name))]
+        fn remove_py<'a>(
+            _cls: &Bound<'a, PyType>,
+            py: Python<'_>,
+            model_name: String,
+        ) -> PyResult<()> {
+            await_future(py, Self::remove(model_name))
         }
 
         #[pyo3(name="infer_delta", signature = (messages, tools=None, documents=None, config=None))]
@@ -581,18 +611,19 @@ mod node {
 
     use super::*;
     use crate::{
+        boxed,
         ffi::node::{
             cache::{JsCacheProgress, await_cache_result},
             common::get_or_create_runtime,
         },
-        model::get_cache_context,
         value::Messages,
     };
 
     #[derive(Default)]
-    #[napi(object, object_to_js = false)]
-    pub struct LangModelConfig {
+    #[napi(js_name = "LocalLangModelConfig", object, object_to_js = false)]
+    pub struct JSLocalLangModelConfig {
         pub device_id: Option<i32>,
+        pub validate_checksum: Option<bool>,
         pub progress_callback:
             Option<ThreadsafeFunction<JsCacheProgress, (), JsCacheProgress, Status, false>>,
     }
@@ -602,17 +633,19 @@ mod node {
         #[napi(js_name = "newLocal")]
         pub async fn new_local_js(
             model_name: String,
-            config: Option<LangModelConfig>,
+            config: Option<JSLocalLangModelConfig>,
         ) -> napi::Result<LangModel> {
             let config = config.unwrap_or_default();
-            let ctx = get_cache_context(config.device_id);
-            let inner = await_cache_result::<LocalLangModel>(
+            let cache_strm = LocalLangModel::try_new_stream(
                 model_name,
-                Some(ctx),
-                config.progress_callback,
-            )
-            .await
-            .unwrap();
+                Some(LocalLangModelConfig {
+                    device_id: config.device_id,
+                    validate_checksum: config.validate_checksum,
+                }),
+            );
+            let inner = await_cache_result(cache_strm, config.progress_callback)
+                .await
+                .unwrap();
             Ok(LangModel {
                 inner: LangModelInner::Local(inner),
             })
@@ -630,6 +663,24 @@ mod node {
             })
         }
 
+        #[napi(js_name = "download")]
+        pub async fn download_js(
+            model_name: String,
+            config: Option<JSLocalLangModelConfig>,
+        ) -> napi::Result<()> {
+            let config = config.unwrap_or_default();
+            let strm = Self::download(model_name);
+            let _ = await_cache_result(strm, config.progress_callback).await;
+            Ok(())
+        }
+
+        #[napi(js_name = "remove")]
+        pub async fn remove_js(model_name: String) -> napi::Result<()> {
+            Self::remove(model_name)
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        }
+
         #[napi(js_name = "inferDelta", ts_return_type = "MessageDeltaOutputIterator")]
         pub fn infer_delta_node<'a>(
             &'a mut self,
@@ -643,14 +694,12 @@ mod node {
             let mut model = self.clone();
 
             rt.spawn(async move {
-                let mut stream = model
-                    .infer_delta(
-                        messages.into(),
-                        tools.unwrap_or(vec![]),
-                        docs.unwrap_or(vec![]),
-                        InferenceConfig::default(),
-                    )
-                    .boxed();
+                let mut stream = boxed!(model.infer_delta(
+                    messages.into(),
+                    tools.unwrap_or(vec![]),
+                    docs.unwrap_or(vec![]),
+                    InferenceConfig::default(),
+                ));
 
                 while let Some(item) = stream.next().await {
                     if tx.send(item).is_err() {
@@ -694,31 +743,30 @@ mod wasm {
 
     use super::*;
     use crate::{
-        ffi::web::stream_to_async_iterable,
-        model::{api::APISpecification, get_cache_context},
-        value::Messages,
+        ffi::web::stream_to_async_iterable, model::api::APISpecification, value::Messages,
     };
 
     #[wasm_bindgen]
     extern "C" {
         #[derive(Clone)]
         #[wasm_bindgen(
-            js_name = "LangModelConfig",
-            typescript_type = "{deviceId?: number; progressCallback?: CacheProgressCallbackFn;}"
+            js_name = "LocalLangModelConfig",
+            typescript_type = "{deviceId?: number; validateChecksum?: boolean; progressCallback?: CacheProgressCallbackFn;}"
         )]
-        pub type _LangModelConfig;
+        pub type _JSLocalLangModelConfig;
     }
 
     #[derive(Default)]
-    pub struct LangModelConfig {
+    pub struct JSLocalLangModelConfig {
         pub device_id: Option<i32>,
+        pub validate_checksum: Option<bool>,
         pub progress_callback: Option<Function>,
     }
 
-    impl TryFrom<_LangModelConfig> for LangModelConfig {
+    impl TryFrom<_JSLocalLangModelConfig> for JSLocalLangModelConfig {
         type Error = js_sys::Error;
 
-        fn try_from(value: _LangModelConfig) -> Result<Self, Self::Error> {
+        fn try_from(value: _JSLocalLangModelConfig) -> Result<Self, Self::Error> {
             let obj = value.obj;
             let mut config = Self::default();
 
@@ -727,6 +775,12 @@ mod wasm {
             {
                 let i32 = f64 as i32;
                 config.device_id = Some(i32);
+            }
+
+            if let Ok(val) = Reflect::get(&obj, &"validateChecksum".into())
+                && let Some(b) = val.as_bool()
+            {
+                config.validate_checksum = Some(b)
             }
 
             if let Ok(val) = Reflect::get(&obj, &"progressCallback".into())
@@ -744,20 +798,22 @@ mod wasm {
         #[wasm_bindgen(js_name = "newLocal")]
         pub async fn new_local_js(
             #[wasm_bindgen(js_name = "modelName")] model_name: String,
-            config: Option<_LangModelConfig>,
+            config: Option<_JSLocalLangModelConfig>,
         ) -> Result<LangModel, js_sys::Error> {
-            let config: LangModelConfig = match config {
+            let config: JSLocalLangModelConfig = match config {
                 Some(c) => c.try_into()?,
-                None => LangModelConfig::default(),
+                None => JSLocalLangModelConfig::default(),
             };
-            let ctx = get_cache_context(config.device_id);
-            let inner = crate::ffi::web::await_cache_result::<LocalLangModel>(
+            let cache_strm = LocalLangModel::try_new_stream(
                 model_name,
-                Some(ctx),
-                config.progress_callback,
-            )
-            .await
-            .map_err(|e| js_sys::Error::new(&e.to_string()))?;
+                Some(LocalLangModelConfig {
+                    device_id: config.device_id,
+                    validate_checksum: config.validate_checksum,
+                }),
+            );
+            let inner = crate::ffi::web::await_cache_result(cache_strm, config.progress_callback)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))?;
             Ok(LangModel {
                 inner: LangModelInner::Local(inner),
             })
@@ -770,6 +826,29 @@ mod wasm {
             #[wasm_bindgen(js_name = "apiKey")] api_key: String,
         ) -> LangModel {
             LangModel::new_stream_api(spec, model_name, api_key)
+        }
+
+        #[wasm_bindgen(js_name = "download")]
+        pub async fn download_js(
+            #[wasm_bindgen(js_name = "modelName")] model_name: String,
+            #[wasm_bindgen(js_name = "config")] config: Option<_JSLocalLangModelConfig>,
+        ) -> Result<(), js_sys::Error> {
+            let config: JSLocalLangModelConfig = match config {
+                Some(c) => c.try_into()?,
+                None => JSLocalLangModelConfig::default(),
+            };
+            let strm = Self::download(model_name);
+            let _ = crate::ffi::web::await_cache_result(strm, config.progress_callback).await;
+            Ok(())
+        }
+
+        #[wasm_bindgen(js_name = "remove")]
+        pub async fn remove_js(
+            #[wasm_bindgen(js_name = "modelName")] model_name: String,
+        ) -> Result<(), js_sys::Error> {
+            Self::remove(model_name)
+                .await
+                .map_err(|e| js_sys::Error::new(&e.to_string()))
         }
 
         #[wasm_bindgen(js_name = inferDelta, unchecked_return_type = "AsyncIterable<MessageDeltaOutput>")]

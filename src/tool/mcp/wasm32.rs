@@ -1,4 +1,4 @@
-use std::{borrow::Cow, rc::Rc, sync::atomic::AtomicU32};
+use std::{borrow::Cow, rc::Rc, sync::atomic::AtomicI64};
 
 use ailoy_macros::multi_platform_async_trait;
 use anyhow::{Context, anyhow};
@@ -14,6 +14,7 @@ use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::{
+    boxed,
     tool::{ToolBehavior, mcp::common::handle_result},
     value::{ToolDesc, Value},
 };
@@ -128,7 +129,7 @@ struct StreamableHttpClient {
     auth_token: Option<String>,
     session_id: Option<String>,
     allow_stateless: bool,
-    request_id: Rc<AtomicU32>,
+    request_id: Rc<AtomicI64>,
 }
 
 impl StreamableHttpClient {
@@ -140,7 +141,7 @@ impl StreamableHttpClient {
             auth_token,
             session_id: None,
             allow_stateless,
-            request_id: Rc::new(AtomicU32::new(0)),
+            request_id: Rc::new(AtomicI64::new(0)),
         }
     }
 
@@ -177,8 +178,7 @@ impl StreamableHttpClient {
             .map(|s| s.to_string());
         match content_type {
             Some(ct) if ct.as_bytes().starts_with("text/event-stream".as_bytes()) => {
-                let event_stream =
-                    SseStream::from_byte_stream(response.bytes_stream()).boxed_local();
+                let event_stream = boxed!(SseStream::from_byte_stream(response.bytes_stream()));
                 Ok(StreamableHttpPostResponse::Sse(event_stream, session_id))
             }
             Some(ct) if ct.as_bytes().starts_with("application/json".as_bytes()) => {

@@ -32,7 +32,7 @@ mod native {
             .context("tokio::fs::write failed")
     }
 
-    pub async fn _remove(path: impl AsRef<Path>) -> anyhow::Result<()> {
+    pub async fn remove(path: impl AsRef<Path>) -> anyhow::Result<()> {
         if path.as_ref().is_dir() {
             tokio_remove_dir(path)
                 .await
@@ -205,7 +205,7 @@ mod opfs {
         Ok(())
     }
 
-    pub async fn _remove(path: impl AsRef<Path>) -> anyhow::Result<()> {
+    pub async fn remove(path: impl AsRef<Path>) -> anyhow::Result<()> {
         let handle = get_dir_handle(path.as_ref(), false).await?;
 
         let opts = FileSystemRemoveOptions::new();
