@@ -121,6 +121,47 @@ impl Marshal<ToolDesc> for OpenAIMarshal {
     }
 }
 
+#[derive(
+    PartialEq, Eq, PartialOrd, Ord, strum::Display, strum::EnumString, strum::IntoStaticStr,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum OpenAIReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    // XHigh,
+}
+
+impl From<&ThinkEffort> for OpenAIReasoningEffort {
+    fn from(think_effort: &ThinkEffort) -> Self {
+        match think_effort {
+            ThinkEffort::Disable => OpenAIReasoningEffort::None,
+            ThinkEffort::Enable | ThinkEffort::Medium => OpenAIReasoningEffort::Medium,
+            ThinkEffort::Low => OpenAIReasoningEffort::Low,
+            ThinkEffort::High => OpenAIReasoningEffort::High,
+        }
+    }
+}
+
+fn get_lowest_effort(model: &String) -> OpenAIReasoningEffort {
+    if model == "gpt-5.1-pro" {
+        OpenAIReasoningEffort::High
+    } else if model == "gpt-5.2-pro" {
+        OpenAIReasoningEffort::Medium
+    } else if model.contains("codex") {
+        // gpt-5-codex, gpt-5.1-codex, gpt-5.1-codex-max
+        OpenAIReasoningEffort::Low
+    } else if model.starts_with("gpt-5.2") || model.starts_with("gpt-5.1") {
+        OpenAIReasoningEffort::None
+    } else if model.starts_with("gpt-5") {
+        OpenAIReasoningEffort::Minimal
+    } else {
+        OpenAIReasoningEffort::Low
+    }
+}
+
 impl Marshal<RequestConfig> for OpenAIMarshal {
     fn marshal(&mut self, config: &RequestConfig) -> Value {
         let Some(model) = &config.model else {
@@ -128,23 +169,19 @@ impl Marshal<RequestConfig> for OpenAIMarshal {
         };
 
         let is_reasoning_model = model.starts_with("o") || model.starts_with("gpt-5");
-
-        let (reasoning_effort, reasoning_summary) = if is_reasoning_model {
-            match &config.think_effort {
-                ThinkEffort::Disable => {
-                    if model.starts_with("gpt-5") {
-                        (Some("minimal"), None)
-                    } else {
-                        (Some("low"), None)
-                    }
-                }
-                ThinkEffort::Enable | ThinkEffort::Medium => (Some("medium"), Some("auto")),
-                ThinkEffort::Low => (Some("low"), Some("auto")),
-                ThinkEffort::High => (Some("high"), Some("auto")),
-            }
+        let reasoning_effort: Option<&str> = if is_reasoning_model {
+            let openai_effort: OpenAIReasoningEffort = (&config.think_effort).into();
+            Some(get_lowest_effort(model).max(openai_effort).into())
         } else {
-            (None, None)
+            None
         };
+        let reasoning_summary = if is_reasoning_model && config.think_effort != ThinkEffort::Disable
+        {
+            Some("auto")
+        } else {
+            None
+        };
+
         let reasoning = match (reasoning_effort, reasoning_summary) {
             (Some(effort), Some(summary)) => {
                 to_value!({"effort": effort, "summary": summary})
@@ -560,7 +597,7 @@ mod dialect_tests {
         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msgs);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"[{"role":"user","content":[{"type":"input_text","text":"Hello there."}]},{"role":"assistant","content":[{"type":"input_text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"input_text","text":"I'm okay."}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"This is thinking text would be remaining."}]},{"role":"assistant","content":[{"type":"input_text","text":"Is there anything I can help with?"}]}]"#
+            r#"[{"role":"user","content":[{"type":"input_text","text":"Hello there."}]},{"role":"assistant","content":[{"type":"output_text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"input_text","text":"I'm okay."}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"This is thinking text would be remaining."}]},{"role":"assistant","content":[{"type":"output_text","text":"Is there anything I can help with?"}]}]"#
         );
     }
 
@@ -626,6 +663,81 @@ mod dialect_tests {
 
     #[test]
     pub fn serialize_config() {
+        let config = RequestConfig {
+            model: Some("gpt-5.2-codex-max".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Disable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-5.2-codex-max","instructions":"You are a helpful assistant.","reasoning":{"effort":"low"},"stream":true,"max_output_tokens":1024}"#
+        );
+
+        let config = RequestConfig {
+            model: Some("gpt-5.2-pro".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Disable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-5.2-pro","instructions":"You are a helpful assistant.","reasoning":{"effort":"medium"},"stream":true,"max_output_tokens":1024}"#
+        );
+
+        let config = RequestConfig {
+            model: Some("gpt-5.1-pro".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Low,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-5.1-pro","instructions":"You are a helpful assistant.","reasoning":{"effort":"high","summary":"auto"},"stream":true,"max_output_tokens":1024}"#
+        );
+
+        let config = RequestConfig {
+            model: Some("gpt-5.1".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Disable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-5.1","instructions":"You are a helpful assistant.","reasoning":{"effort":"none"},"stream":true,"max_output_tokens":1024}"#
+        );
+
+        let config = RequestConfig {
+            model: Some("gpt-5-nano".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Disable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"model":"gpt-5-nano","instructions":"You are a helpful assistant.","reasoning":{"effort":"minimal"},"stream":true,"max_output_tokens":1024}"#
+        );
+
         let config = RequestConfig {
             model: Some("gpt-5".to_owned()),
             system_message: Some("You are a helpful assistant.".to_owned()),
@@ -842,7 +954,7 @@ mod api_tests {
     #[multi_platform_test]
     async fn infer_simple_chat() {
         let mut model =
-            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
+            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-5.2", *OPENAI_API_KEY);
 
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
@@ -864,7 +976,7 @@ mod api_tests {
     #[multi_platform_test]
     async fn infer_tool_call() {
         let mut model =
-            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
+            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-5.2", *OPENAI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
@@ -906,7 +1018,7 @@ mod api_tests {
     #[multi_platform_test]
     async fn infer_tool_response() {
         let mut model =
-            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-4.1", *OPENAI_API_KEY);
+            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-5.2", *OPENAI_API_KEY);
         let tools = vec![
             ToolDescBuilder::new("temperature")
                 .description("Get current temperature")
