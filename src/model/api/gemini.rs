@@ -139,40 +139,50 @@ impl Marshal<ToolDesc> for GeminiMarshal {
 
 impl Marshal<RequestConfig> for GeminiMarshal {
     fn marshal(&mut self, config: &RequestConfig) -> Value {
-        let (include_thoughts, thinking_budget) = if let Some(model) = &config.model
-            && matches!(
-                model.as_str(),
-                "gemini-2.5-pro" | "gemini-2.5-flash" | "gemini-2.5-flash-lite"
-            ) {
-            match &config.think_effort {
-                ThinkEffort::Disable => match model.as_str() {
-                    "gemini-2.5-pro" => (false, 128),
-                    "gemini-2.5-flash" => (false, 0),
-                    "gemini-2.5-flash-lite" => (false, 0),
-                    _ => unreachable!(""),
-                },
-                ThinkEffort::Enable => (true, -1),
-                ThinkEffort::Low => match model.as_str() {
-                    "gemini-2.5-pro" => (true, 1024),
-                    "gemini-2.5-flash" => (true, 1024),
-                    "gemini-2.5-flash-lite" => (true, 1024),
-                    _ => unreachable!(""),
-                },
-                ThinkEffort::Medium => match model.as_str() {
-                    "gemini-2.5-pro" => (true, 8192),
-                    "gemini-2.5-flash" => (true, 8192),
-                    "gemini-2.5-flash-lite" => (true, 8192),
-                    _ => unreachable!(""),
-                },
-                ThinkEffort::High => match model.as_str() {
-                    "gemini-2.5-pro" => (true, 24576),
-                    "gemini-2.5-flash" => (true, 24576),
-                    "gemini-2.5-flash-lite" => (true, 24576),
-                    _ => unreachable!(""),
-                },
+        let Some(model) = &config.model else {
+            panic!("Cannot marshal `Config` without `model`.");
+        };
+
+        let is_thinking_model = matches!(
+            model.as_str(),
+            "gemini-3-pro-preview"
+                | "gemini-2.5-pro"
+                | "gemini-2.5-flash"
+                | "gemini-2.5-flash-lite"
+        );
+        let include_thoughts = is_thinking_model && config.think_effort != ThinkEffort::Disable;
+        let thinking_config = if is_thinking_model {
+            if model.as_str() == "gemini-3-pro-preview" {
+                match &config.think_effort {
+                    ThinkEffort::Disable => {
+                        to_value!({"includeThoughts": include_thoughts, "thinkingLevel": "low"})
+                    }
+                    ThinkEffort::Enable => to_value!({"includeThoughts": include_thoughts}),
+                    ThinkEffort::Low => {
+                        to_value!({"includeThoughts": include_thoughts, "thinkingLevel": "low"})
+                    }
+                    ThinkEffort::Medium => {
+                        to_value!({"includeThoughts": include_thoughts, "thinkingLevel": "high"})
+                    }
+                    ThinkEffort::High => {
+                        to_value!({"includeThoughts": include_thoughts, "thinkingLevel": "high"})
+                    }
+                }
+            } else {
+                let matching_budget = match &config.think_effort {
+                    ThinkEffort::Disable => match model.as_str() {
+                        "gemini-2.5-pro" => 128,
+                        _ => 0,
+                    },
+                    ThinkEffort::Enable => -1,
+                    ThinkEffort::Low => 1024,
+                    ThinkEffort::Medium => 8192,
+                    ThinkEffort::High => 24576,
+                };
+                to_value!({"includeThoughts": include_thoughts, "thinkingBudget": matching_budget})
             }
         } else {
-            (false, 0)
+            to_value!({"includeThoughts": include_thoughts, "thinkingBudget": 0})
         };
 
         let system_instruction = if let Some(system_message) = &config.system_message {
@@ -182,8 +192,6 @@ impl Marshal<RequestConfig> for GeminiMarshal {
         } else {
             Value::Null
         };
-
-        let thinking_config = to_value!({"includeThoughts": include_thoughts, "thinkingBudget": thinking_budget as i64});
 
         let mut generation_config = to_value!({
             "thinkingConfig": thinking_config,
@@ -474,6 +482,36 @@ mod dialect_tests {
 
     #[test]
     pub fn serialize_config() {
+        let config = RequestConfig {
+            model: Some("gemini-3-pro-preview".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Enable,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"system_instruction":{"parts":[{"text":"You are a helpful assistant."}]},"generationConfig":{"thinkingConfig":{"includeThoughts":true},"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}}"#
+        );
+
+        let config = RequestConfig {
+            model: Some("gemini-3-pro-preview".to_owned()),
+            system_message: Some("You are a helpful assistant.".to_owned()),
+            stream: true,
+            think_effort: ThinkEffort::Low,
+            temperature: Some(0.6),
+            top_p: Some(0.9),
+            max_tokens: Some(1024),
+        };
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&config);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"system_instruction":{"parts":[{"text":"You are a helpful assistant."}]},"generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingLevel":"low"},"max_output_tokens":1024,"temperature":0.6,"top_p":0.9}}"#
+        );
+
         let config = RequestConfig {
             model: Some("gemini-2.5-pro".to_owned()),
             system_message: Some("You are a helpful assistant.".to_owned()),
