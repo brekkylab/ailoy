@@ -293,6 +293,7 @@ mod py {
             base::{await_future, python_to_value},
             cache_progress::await_cache_result,
         },
+        model::KvCacheConfig,
         value::{
             Messages,
             py::{MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator},
@@ -328,19 +329,21 @@ mod py {
     impl LangModel {
         #[classmethod]
         #[gen_stub(override_return_type(type_repr = "typing.Awaitable[LangModel]"))]
-        #[pyo3(name = "new_local", signature = (model_name, device_id = None, validate_checksum = None, progress_callback = None))]
+        #[pyo3(name = "new_local", signature = (model_name, device_id = None, validate_checksum = None, kv_cache = None, progress_callback = None))]
         fn new_local_py<'a>(
             _cls: &Bound<'a, PyType>,
             py: Python<'a>,
             model_name: String,
             device_id: Option<i32>,
             validate_checksum: Option<bool>,
+            kv_cache: Option<KvCacheConfig>,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Bound<'a, PyAny>> {
             let config = LocalLangModelConfig {
                 device_id,
                 validate_checksum,
+                kv_cache,
             };
             let cache_strm = LocalLangModel::try_new_stream(model_name, Some(config));
             let fut = async move {
@@ -358,19 +361,21 @@ mod py {
         }
 
         #[classmethod]
-        #[pyo3(name = "new_local_sync", signature = (model_name, device_id = None, validate_checksum = None, progress_callback = None))]
+        #[pyo3(name = "new_local_sync", signature = (model_name, device_id = None, validate_checksum = None, kv_cache = None, progress_callback = None))]
         fn new_local_sync_py(
             _cls: &Bound<'_, PyType>,
             py: Python<'_>,
             model_name: String,
             device_id: Option<i32>,
             validate_checksum: Option<bool>,
+            kv_cache: Option<KvCacheConfig>,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Py<Self>> {
             let config = LocalLangModelConfig {
                 device_id,
                 validate_checksum,
+                kv_cache,
             };
             let cache_strm = LocalLangModel::try_new_stream(model_name, Some(config));
             let inner = await_future(py, await_cache_result(cache_strm, progress_callback))?;
@@ -616,6 +621,7 @@ mod node {
             cache::{JsCacheProgress, await_cache_result},
             common::get_or_create_runtime,
         },
+        model::KvCacheConfig,
         value::Messages,
     };
 
@@ -624,6 +630,7 @@ mod node {
     pub struct JSLocalLangModelConfig {
         pub device_id: Option<i32>,
         pub validate_checksum: Option<bool>,
+        pub kv_cache: Option<KvCacheConfig>,
         pub progress_callback:
             Option<ThreadsafeFunction<JsCacheProgress, (), JsCacheProgress, Status, false>>,
     }
@@ -641,6 +648,7 @@ mod node {
                 Some(LocalLangModelConfig {
                     device_id: config.device_id,
                     validate_checksum: config.validate_checksum,
+                    kv_cache: config.kv_cache,
                 }),
             );
             let inner = await_cache_result(cache_strm, config.progress_callback)
@@ -739,6 +747,7 @@ mod node {
 #[cfg(feature = "wasm")]
 mod wasm {
     use js_sys::{Function, Reflect};
+    use tsify::Tsify;
     use wasm_bindgen::prelude::*;
 
     use super::*;
@@ -753,7 +762,12 @@ mod wasm {
         #[derive(Clone)]
         #[wasm_bindgen(
             js_name = "LocalLangModelConfig",
-            typescript_type = "{deviceId?: number; validateChecksum?: boolean; kvCache?: {contextWindowSize?: number;}, progressCallback?: CacheProgressCallbackFn;}"
+            typescript_type = "{
+                deviceId?: number; 
+                validateChecksum?: boolean; 
+                kvCache?: KvCacheConfig;
+                progressCallback?: CacheProgressCallbackFn;
+            }"
         )]
         pub type _JSLocalLangModelConfig;
     }
@@ -787,15 +801,8 @@ mod wasm {
             }
 
             if let Ok(val) = Reflect::get(&obj, &"kvCache".into()) {
-                let mut kv_cache = KvCacheConfig {
-                    context_window_size: None,
-                };
-                if let Ok(context_window_size) = Reflect::get(&val, &"contextWindowSize".into())
-                    && let Some(context_window_size) = context_window_size.as_f64()
-                {
-                    kv_cache.context_window_size = Some(context_window_size as u32)
-                }
-                config.kv_cache = Some(kv_cache);
+                let kv_cache_config = KvCacheConfig::from_js(val).unwrap_or_default();
+                config.kv_cache = Some(kv_cache_config);
             }
 
             if let Ok(val) = Reflect::get(&obj, &"progressCallback".into())

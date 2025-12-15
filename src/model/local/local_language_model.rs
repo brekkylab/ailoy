@@ -26,7 +26,16 @@ struct Request {
     tx_resp: mpsc::UnboundedSender<anyhow::Result<MessageDeltaOutput>>,
 }
 
+#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct KvCacheConfig {
     pub context_window_size: Option<u32>,
 }
@@ -52,6 +61,24 @@ impl LocalLangModelConfig {
     pub fn with_kv_cache(mut self, kv_cache: &KvCacheConfig) -> Self {
         self.kv_cache = Some(kv_cache.clone());
         self
+    }
+}
+
+#[cfg(feature = "python")]
+mod py {
+    use super::*;
+    use pyo3::prelude::*;
+    use pyo3_stub_gen_derive::*;
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl KvCacheConfig {
+        #[new]
+        fn __new__(context_window_size: Option<u32>) -> Self {
+            Self {
+                context_window_size,
+            }
+        }
     }
 }
 

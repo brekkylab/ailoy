@@ -283,6 +283,10 @@ export interface KnowledgeConfig {
   topK?: number;
 }
 
+export interface KvCacheConfig {
+  contextWindowSize?: number;
+}
+
 export interface LocalEmbeddingModelConfig {
   deviceId?: number;
   validateChecksum?: boolean;
@@ -292,6 +296,7 @@ export interface LocalEmbeddingModelConfig {
 export interface LocalLangModelConfig {
   deviceId?: number;
   validateChecksum?: boolean;
+  kvCache?: KvCacheConfig;
   progressCallback?: (arg: CacheProgress) => void;
 }
 
