@@ -140,6 +140,7 @@ mod tvm_runtime {
             DLPackTensor, TVMEmbeddingModel, TVMLanguageModel, create_dldevice,
             create_tvm_embedding_model, create_tvm_language_model,
         },
+        model::KvCacheConfig,
         utils::BoxFuture,
     };
 
@@ -227,7 +228,14 @@ mod tvm_runtime {
                     0
                 };
                 let device = create_dldevice(get_device_type(get_accelerator()), device_id as i32);
-                let inner = create_tvm_language_model(contents, device);
+
+                let kv_cache_config = if let Some(kv_cache) = ctx.get("kv_cache") {
+                    serde_json::from_value(kv_cache.clone().into()).unwrap()
+                } else {
+                    KvCacheConfig::default()
+                };
+
+                let inner = create_tvm_language_model(contents, device, &kv_cache_config);
 
                 Ok(LanguageModelInferencer { inner })
             })

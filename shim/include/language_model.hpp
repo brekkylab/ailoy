@@ -14,9 +14,11 @@ namespace ailoy {
 
 struct CacheContents;
 
+struct KvCacheConfig;
+
 struct kv_cache_t {
 public:
-  kv_cache_t(tvm_runtime_t &rt);
+  kv_cache_t(tvm_runtime_t &rt, const KvCacheConfig &kv_cache_config);
 
   ~kv_cache_t() { remove_sequence(); }
 
@@ -68,7 +70,8 @@ public:
   /**
    * Constructor
    */
-  tvm_language_model_t(ailoy::CacheContents &contents, DLDevice device);
+  tvm_language_model_t(CacheContents &contents, DLDevice device,
+                       const KvCacheConfig &kv_cache_config);
 
   void clear();
 
@@ -107,7 +110,8 @@ private:
 };
 
 std::unique_ptr<tvm_language_model_t>
-create_tvm_language_model(ailoy::CacheContents &contents,
-                          std::unique_ptr<DLDevice> device);
+create_tvm_language_model(CacheContents &contents,
+                          std::unique_ptr<DLDevice> device,
+                          const KvCacheConfig &kv_cache_config);
 
 } // namespace ailoy
