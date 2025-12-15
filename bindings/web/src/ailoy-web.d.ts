@@ -298,7 +298,7 @@ export interface KnowledgeConfig {
 }
 
 export interface KvCacheConfig {
-  contextWindowSize: number | undefined;
+  contextWindowSize?: number;
 }
 
 /**

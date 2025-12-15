@@ -259,6 +259,7 @@ mod tvmjs_runtime {
             JSTVMEmbeddingModel, JSTVMLanguageModel, init_tvm_embedding_model_js,
             init_tvm_language_model_js,
         },
+        model::KvCacheConfig,
         utils::{BoxFuture, float16},
     };
 
@@ -317,24 +318,12 @@ mod tvmjs_runtime {
                 };
                 let config = {
                     let config = Object::new();
-                    let kv_cache_config = if ctx.contains_key("kv_cache") {
-                        let kv_cache = ctx.get("kv_cache").unwrap().as_object().unwrap();
-                        let kv_cache_config = Object::new();
-                        if let Some(context_window_size) = kv_cache.get("context_window_size")
-                            && let Some(context_window_size) = context_window_size.as_integer()
-                        {
-                            Reflect::set(
-                                &kv_cache_config,
-                                &"contextWindowSize".into(),
-                                &JsValue::from_f64(context_window_size as f64),
-                            )
-                            .unwrap();
-                        }
-                        kv_cache_config.into()
-                    } else {
-                        JsValue::undefined()
-                    };
-                    Reflect::set(&config, &"kvCache".into(), &kv_cache_config).unwrap();
+                    if let Some(kv_cache) = ctx.get("kv_cache") {
+                        let kv_cache_config =
+                            serde_json::from_value::<KvCacheConfig>(kv_cache.clone().into())
+                                .unwrap_or_default();
+                        Reflect::set(&config, &"kvCache".into(), &kv_cache_config.into()).unwrap();
+                    }
                     config
                 };
 

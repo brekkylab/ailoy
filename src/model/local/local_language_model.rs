@@ -37,6 +37,7 @@ struct Request {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KvCacheConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context_window_size: Option<u32>,
 }
 
