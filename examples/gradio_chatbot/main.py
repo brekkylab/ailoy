@@ -44,7 +44,7 @@ with gr.Blocks() as demo:
     agent.add_tool(tool)
 
     gr.Markdown("# Chat with Ailoy Agent")
-    chatbot = gr.Chatbot(type="messages", label="Agent", height="80vh")
+    chatbot = gr.Chatbot(label="Agent", height="80vh")
     input = gr.Textbox(lines=1, label="Chat Message")
 
     def user_prompt(prompt, history):
@@ -78,7 +78,7 @@ with gr.Blocks() as demo:
                         return delta
 
             if len(message["content"]) > 0:
-                delta.contents = [ai.PartDelta.Text(message["content"])]
+                delta.contents = [ai.PartDelta.Text(message["content"][0]["text"])]
             return delta
 
         deltas = list(map(convert_message_delta, messages))
