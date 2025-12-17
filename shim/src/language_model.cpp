@@ -33,14 +33,18 @@ int get_int_from_picojson(picojson::object obj, std::string key,
 
 constexpr size_t page_size = 16;
 
-kv_cache_t::kv_cache_t(tvm_runtime_t &rt) {
+kv_cache_t::kv_cache_t(tvm_runtime_t &rt,
+                       const KvCacheConfig &kv_cache_config) {
   auto fn = rt.get_vm_function("create_tir_paged_kv_cache");
   if (!fn.defined())
     throw std::runtime_error("create_tir_paged_kv_cache not defined");
+
+  auto context_window_size = kv_cache_config.context_window_size(
+      get_int_from_picojson(rt.get_metadata(), "context_window_size"));
+
   kv_cache_ =
       fn(IntTuple{1}, // max_num_sequence
-         IntTuple{
-             get_int_from_picojson(rt.get_metadata(), "context_window_size")},
+         IntTuple{context_window_size},
          IntTuple{
              get_int_from_picojson(rt.get_metadata(), "prefill_chunk_size")},
          IntTuple{page_size}, // page size
@@ -93,10 +97,11 @@ int kv_cache_t::get_total_sequence_length() {
   return fkv_cache_get_total_sequence_length_(kv_cache_).cast<int>();
 }
 
-tvm_language_model_t::tvm_language_model_t(CacheContents &contents,
-                                           DLDevice device) {
+tvm_language_model_t::tvm_language_model_t(
+    CacheContents &contents, DLDevice device,
+    const KvCacheConfig &kv_cache_config) {
   rt_ = std::make_unique<tvm_runtime_t>(contents, device);
-  kv_cache_ = std::make_unique<kv_cache_t>(*rt_);
+  kv_cache_ = std::make_unique<kv_cache_t>(*rt_, kv_cache_config);
 
   // Packed functions
   fembed_ = rt_->get_vm_function("embed");
@@ -254,8 +259,10 @@ uint32_t tvm_language_model_t::sample_from_rs(DLPackTensor logits,
 
 std::unique_ptr<tvm_language_model_t>
 create_tvm_language_model(CacheContents &contents,
-                          std::unique_ptr<DLDevice> device) {
-  return std::make_unique<tvm_language_model_t>(contents, std::move(*device));
+                          std::unique_ptr<DLDevice> device,
+                          const KvCacheConfig &kv_cache_config) {
+  return std::make_unique<tvm_language_model_t>(contents, std::move(*device),
+                                                kv_cache_config);
 }
 
 } // namespace ailoy

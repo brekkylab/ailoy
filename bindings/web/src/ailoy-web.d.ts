@@ -105,6 +105,7 @@ export class LangModel {
     config?: {
       deviceId?: number;
       validateChecksum?: boolean;
+      kvCache?: KvCacheConfig;
       progressCallback?: CacheProgressCallbackFn;
     } | null
   ): Promise<void>;
@@ -113,6 +114,7 @@ export class LangModel {
     config?: {
       deviceId?: number;
       validateChecksum?: boolean;
+      kvCache?: KvCacheConfig;
       progressCallback?: CacheProgressCallbackFn;
     } | null
   ): Promise<LangModel>;
@@ -293,6 +295,10 @@ export interface InferenceConfig {
 
 export interface KnowledgeConfig {
   topK?: number;
+}
+
+export interface KvCacheConfig {
+  contextWindowSize?: number;
 }
 
 /**

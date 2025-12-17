@@ -140,6 +140,7 @@ mod tvm_runtime {
             DLPackTensor, TVMEmbeddingModel, TVMLanguageModel, create_dldevice,
             create_tvm_embedding_model, create_tvm_language_model,
         },
+        model::KvCacheConfig,
         utils::BoxFuture,
     };
 
@@ -227,7 +228,14 @@ mod tvm_runtime {
                     0
                 };
                 let device = create_dldevice(get_device_type(get_accelerator()), device_id as i32);
-                let inner = create_tvm_language_model(contents, device);
+
+                let kv_cache_config = if let Some(kv_cache) = ctx.get("kv_cache") {
+                    serde_json::from_value(kv_cache.clone().into()).unwrap()
+                } else {
+                    KvCacheConfig::default()
+                };
+
+                let inner = create_tvm_language_model(contents, device, &kv_cache_config);
 
                 Ok(LanguageModelInferencer { inner })
             })
@@ -251,6 +259,7 @@ mod tvmjs_runtime {
             JSTVMEmbeddingModel, JSTVMLanguageModel, init_tvm_embedding_model_js,
             init_tvm_language_model_js,
         },
+        model::KvCacheConfig,
         utils::{BoxFuture, float16},
     };
 
@@ -293,7 +302,7 @@ mod tvmjs_runtime {
 
         fn try_from_contents<'a>(
             contents: &'a mut CacheContents,
-            _: &'a std::collections::HashMap<String, crate::value::Value>,
+            ctx: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
                 let cache_contents = {
@@ -307,8 +316,18 @@ mod tvmjs_runtime {
                     }
                     obj
                 };
+                let config = {
+                    let config = Object::new();
+                    if let Some(kv_cache) = ctx.get("kv_cache") {
+                        let kv_cache_config =
+                            serde_json::from_value::<KvCacheConfig>(kv_cache.clone().into())
+                                .unwrap_or_default();
+                        Reflect::set(&config, &"kvCache".into(), &kv_cache_config.into()).unwrap();
+                    }
+                    config
+                };
 
-                let prom = init_tvm_language_model_js(&cache_contents);
+                let prom = init_tvm_language_model_js(&cache_contents, Some(config));
                 let js_lm = match JsFuture::from(prom).await {
                     Ok(out) => {
                         let lm: JSTVMLanguageModel = out

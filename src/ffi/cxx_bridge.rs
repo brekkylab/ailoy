@@ -1,6 +1,9 @@
 pub use ffi::*;
 
-use crate::cache::{CacheContents, CacheEntry};
+use crate::{
+    cache::{CacheContents, CacheEntry},
+    model::KvCacheConfig,
+};
 
 fn cache_entry_new(dirname: &str, filename: &str) -> Box<CacheEntry> {
     Box::new(CacheEntry::new(dirname, filename))
@@ -28,6 +31,12 @@ fn cache_contents_remove_with_filename_out(
         true
     } else {
         false
+    }
+}
+
+impl KvCacheConfig {
+    pub fn context_window_size(&self, default_value: u32) -> u32 {
+        self.context_window_size.unwrap_or(default_value)
     }
 }
 
@@ -76,6 +85,7 @@ mod ffi {
         pub fn create_tvm_language_model(
             cache: &mut CacheContents,
             device: UniquePtr<DLDevice>,
+            kv_cache_config: &KvCacheConfig,
         ) -> UniquePtr<TVMLanguageModel>;
 
         #[cxx_name = "prefill_from_rs"]
@@ -138,6 +148,10 @@ mod ffi {
             out_filename: &mut String,
             out_bytes: &mut Vec<u8>,
         ) -> bool;
+
+        type KvCacheConfig;
+
+        pub fn context_window_size(self: &KvCacheConfig, default_value: u32) -> u32;
     }
 }
 

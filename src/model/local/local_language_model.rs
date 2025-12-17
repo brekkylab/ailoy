@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_stream::try_stream;
 use futures::StreamExt;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -25,10 +26,61 @@ struct Request {
     tx_resp: mpsc::UnboundedSender<anyhow::Result<MessageDeltaOutput>>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
+)]
+#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KvCacheConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window_size: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LocalLangModelConfig {
     pub device_id: Option<i32>,
     pub validate_checksum: Option<bool>,
+    pub kv_cache: Option<KvCacheConfig>,
+}
+
+impl LocalLangModelConfig {
+    pub fn with_device_id(mut self, device_id: i32) -> Self {
+        self.device_id = Some(device_id);
+        self
+    }
+
+    pub fn with_validate_checksum(mut self, validate_checksum: bool) -> Self {
+        self.validate_checksum = Some(validate_checksum);
+        self
+    }
+
+    pub fn with_kv_cache(mut self, kv_cache: &KvCacheConfig) -> Self {
+        self.kv_cache = Some(kv_cache.clone());
+        self
+    }
+}
+
+#[cfg(feature = "python")]
+mod py {
+    use super::*;
+    use pyo3::prelude::*;
+    use pyo3_stub_gen_derive::*;
+
+    #[gen_stub_pymethods]
+    #[pymethods]
+    impl KvCacheConfig {
+        #[new]
+        fn __new__(context_window_size: Option<u32>) -> Self {
+            Self {
+                context_window_size,
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -60,6 +112,10 @@ impl LocalLangModel {
         if let Some(device_id) = config.device_id {
             ctx.insert("device_id".to_owned(), Value::integer(device_id.into()));
         };
+        if let Some(kv_cache) = config.kv_cache {
+            let kv_cache = serde_json::to_value(kv_cache).unwrap();
+            ctx.insert("kv_cache".to_owned(), kv_cache.into());
+        }
         let strm = cache.try_create::<Self>(model, Some(ctx), config.validate_checksum);
         boxed!(strm)
     }
@@ -363,22 +419,12 @@ mod tests {
 
     #[tokio::test]
     async fn infer_simple_chat() {
-        let cache = Cache::new();
-        let key = "Qwen/Qwen3-0.6B";
-
-        let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key, None, None));
-        let mut model: Option<LocalLangModel> = None;
-        while let Some(progress) = model_strm.next().await {
-            let mut progress = progress.unwrap();
-            println!(
-                "{} ({} / {})",
-                progress.comment, progress.current_task, progress.total_task
-            );
-            if progress.current_task == progress.total_task {
-                model = progress.result.take();
-            }
-        }
-        let mut model = model.unwrap();
+        let mut model = LocalLangModel::try_new(
+            "Qwen/Qwen3-0.6B",
+            Some(LocalLangModelConfig::default().with_validate_checksum(false)),
+        )
+        .await
+        .unwrap();
         let msgs = vec![
             Message::new(Role::System).with_contents([Part::Text {
                 text: "You are an assistant.".to_owned(),

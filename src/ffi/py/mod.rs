@@ -11,7 +11,8 @@ use crate::{
     ffi::py::cache_progress::PyCacheProgress as CacheProgress,
     knowledge::{Knowledge, KnowledgeConfig},
     model::{
-        DocumentPolyfill, EmbeddingModel, Grammar, InferenceConfig, LangModel, get_qwen3_polyfill,
+        DocumentPolyfill, EmbeddingModel, Grammar, InferenceConfig, KvCacheConfig, LangModel,
+        get_qwen3_polyfill,
     },
     tool::{MCPClient, Tool},
     value::{
@@ -39,6 +40,7 @@ fn ailoy_py(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<InferenceConfig>()?;
     m.add_class::<Knowledge>()?;
     m.add_class::<KnowledgeConfig>()?;
+    m.add_class::<KvCacheConfig>()?;
     m.add_class::<LangModel>()?;
     m.add_class::<MCPClient>()?;
     m.add_class::<Message>()?;
