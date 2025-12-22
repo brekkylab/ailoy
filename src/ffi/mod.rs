@@ -1,5 +1,3 @@
-// #[cfg(any(target_family = "unix", target_family = "windows"))]
-// pub mod cxx_bridge;
 #[cfg(target_family = "wasm")]
 pub mod js_bridge;
 #[cfg(feature = "nodejs")]

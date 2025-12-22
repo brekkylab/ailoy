@@ -134,8 +134,8 @@ mod tvm {
     use std::path::PathBuf;
 
     use tvm_ffi::{
-        AnyCompatible, AnyView, Array, DLDataType, DLDataTypeCode, DLDevice, DLDeviceType,
-        Function, Module, Shape, Tensor as TVMFFITensor,
+        AnyView, Array, DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, Function, Module,
+        Shape, Tensor as TVMFFITensor,
     };
     use tvm_runtime::{Tensor, TensorCache};
 
@@ -688,20 +688,8 @@ mod tvm {
             self.kv_cache.end_forward().unwrap();
 
             // The output of decode is an Array of 2 items: logits(Tensor) and kv cache.
-            // Since it's not possible to convert Any to Array<Any>, we just try to access to the pointer of ArrayObj directly and get the first item only.
-            let logits = unsafe {
-                let output_raw = tvm_ffi::Any::into_raw_ffi_any(output);
-
-                let array_ptr =
-                    output_raw.data_union.v_obj as *const tvm_ffi::collections::array::ArrayObj;
-                let array_obj = &*array_ptr;
-
-                let array_data_base_ptr = array_obj.data as *const tvm_ffi_sys::TVMFFIAny;
-                let array_first_item = &*array_data_base_ptr;
-
-                let tensor = TVMFFITensor::try_cast_from_any_view(array_first_item).unwrap();
-                tensor
-            };
+            let logits =
+                unsafe { tvm_ffi::collections::array::get_from_any_array(output, 0).unwrap() };
 
             Ok(logits)
         }
