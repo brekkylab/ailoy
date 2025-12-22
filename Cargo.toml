@@ -76,10 +76,20 @@ sha1 = "0.10"
 strum = { version = "0.27", features = ["derive"] }
 strum_macros = "0.27"
 thiserror = "2.0.15"
+tvm-ffi = { path = "../tvm-runtime-rs/tvm-ffi" }
+tvm-ffi-sys = { path = "../tvm-runtime-rs/tvm-ffi-sys" }
 unicode-segmentation = "1.12.0"
 url = "2.5.4"
 urlencoding = "2.1"
 version-compare = "0.2.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tvm-runtime = { path = "../tvm-runtime-rs/tvm-runtime", features = ["metal"] }
+tvm-runtime-sys = { path = "../tvm-runtime-rs/tvm-runtime-sys", features = ["metal"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+tvm-runtime = { path = "../tvm-runtime-rs/tvm-runtime", features = ["vulkan"] }
+tvm-runtime-sys = { path = "../tvm-runtime-rs/tvm-runtime-sys", features = ["vulkan"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ailoy-faiss-sys = { path = "./crates/faiss-sys" }

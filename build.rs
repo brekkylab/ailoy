@@ -26,110 +26,24 @@ fn main() {
 }
 
 fn build_native() {
-    use cmake::Config;
+    let tvm_ffi_lib = std::env::var("DEP_TVM_FFI_LIB").expect("tvm-ffi-sys did not export lib");
+    let tvm_runtime_lib =
+        std::env::var("DEP_TVM_RUNTIME_LIB").expect("tvm-runtime-sys did not export lib");
 
-    // Setup directories
-    let cargo_manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let cmake_source_dir = cargo_manifest_dir.join("shim");
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let cmake_install_dir = out_dir.parent().unwrap().join("deps");
-
-    // Forward LD_LIBRARY_PATH if provided
-    if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
-        // Split and add each path separately
-        #[cfg(target_os = "windows")]
-        let lib_separator = ';';
-        #[cfg(not(target_os = "windows"))]
-        let lib_separator = ':';
-
-        for path in ld_path.split(lib_separator) {
-            if !path.is_empty() {
-                println!("cargo:rustc-link-search=native={}", path);
-            }
-        }
-    }
-
-    // Run CMake
-    let mut cmake_config = Config::new(&cmake_source_dir);
-    cmake_config.profile("Release"); // Always build Release
-    cmake_config.define("CMAKE_INSTALL_PREFIX", &cmake_install_dir);
-    cmake_config.out_dir(scratch::path("ailoy-cpp-shim"));
-    cmake_config.build();
-
-    // Link to this project
-    println!(
-        "cargo:rustc-link-search=native={}",
-        cmake_install_dir.display()
-    );
-    println!("cargo:rustc-link-lib=static=ailoy_cpp_shim");
-
-    #[cfg(target_os = "linux")]
+    #[cfg(target_family = "unix")]
     {
-        // manylinux uses libstdc++.so
-        println!("cargo:rustc-link-lib=dylib=stdc++");
-
-        // Linux/ELF: ... -Wl,--whole-archive -l:libtvm_runtime.a -l:libtvm_ffi_static.a -Wl,--no-whole-archive
-        println!("cargo:rustc-link-arg=-Wl,--whole-archive");
-        println!("cargo:rustc-link-arg=-Wl,-l:libtvm_runtime.a");
-        println!("cargo:rustc-link-arg=-Wl,-l:libtvm_ffi_static.a");
-        println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
-
-        // Link Vulkan
-        println!("cargo:rustc-link-lib=dylib=vulkan");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", tvm_ffi_lib);
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", tvm_runtime_lib);
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(target_family = "windows")]
     {
-        // Link Apple Clang c++
-        println!("cargo:rustc-link-lib=c++");
-
-        // macOS: ... -Wl,-force_load,/abs/path/to/libtvm_runtime.a
-        println!(
-            "cargo:rustc-link-arg=-Wl,-force_load,{}",
-            (cmake_install_dir.join("libtvm_runtime.a")).display()
-        );
-        // macOS: ... -Wl,-force_load,/abs/path/to/libtvm_ffi_static.a
-        println!(
-            "cargo:rustc-link-arg=-Wl,-force_load,{}",
-            (cmake_install_dir.join("libtvm_ffi_static.a")).display()
-        );
-
-        println!("cargo:rustc-link-lib=framework=Metal");
-        println!("cargo:rustc-link-lib=framework=Foundation");
-        println!("cargo:rustc-link-lib=framework=Accelerate");
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // Windows (MSVC): ... /WHOLEARCHIVE:tvm_runtime.lib
-        println!(
-            "cargo:rustc-link-arg=/WHOLEARCHIVE:{}",
-            (cmake_install_dir.join("tvm_runtime.lib")).display()
-        );
-        // Windows (MSVC): ... /WHOLEARCHIVE:tvm_ffi_static.lib
-        println!(
-            "cargo:rustc-link-arg=/WHOLEARCHIVE:{}",
-            (cmake_install_dir.join("tvm_ffi_static.lib")).display()
-        );
-
-        // Link Vulkan
-        println!("cargo:rustc-link-lib=dylib=vulkan-1");
+        println!("cargo:rustc-link-search=native={}", tvm_ffi_lib);
+        println!("cargo:rustc-link-search=native={}", tvm_runtime_lib);
     }
 
     if std::env::var_os("CARGO_FEATURE_NODEJS").is_some() {
         napi_build::setup();
     }
-
-    println!(
-        "cargo:rerun-if-changed={}",
-        cmake_source_dir.join("CMakeLists.txt").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        cmake_source_dir.join("src/*").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        cmake_source_dir.join("include/*").display()
-    );
 }
 
 fn build_wasm() {

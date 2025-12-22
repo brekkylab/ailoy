@@ -40,7 +40,7 @@ impl EmbeddingModelInference for LocalEmbeddingModel {
         #[cfg(target_family = "wasm")]
         let mut embedding = inferencer.infer(&input_tokens).await;
         #[cfg(not(target_family = "wasm"))]
-        let mut embedding = inferencer.infer(&input_tokens).to_vec_f32()?;
+        let mut embedding = inferencer.infer(&input_tokens)?;
 
         if self.do_normalize {
             embedding = embedding.normalized();
