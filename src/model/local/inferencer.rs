@@ -156,15 +156,149 @@ mod tvm {
         }
     }
 
-    #[derive(Debug)]
+    #[allow(dead_code)]
     pub struct EmbeddingModelInferencer {
-        // inner: UniquePtr<TVMEmbeddingModel>,
+        device: DLDevice,
+        vm: Module,
+        params: Array<TVMFFITensor>,
+        fprefill: Function,
     }
 
+    impl std::fmt::Debug for EmbeddingModelInferencer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("EmbeddingModelInferencer").finish()
+        }
+    }
+
+    unsafe impl crate::utils::MaybeSend for EmbeddingModelInferencer {}
+
     impl EmbeddingModelInferencer {
+        pub fn new(runtime_path: &PathBuf, tensor_cache_path: &PathBuf, device: DLDevice) -> Self {
+            let exec = Module::load_from_file(runtime_path.to_string_lossy()).unwrap();
+            let vm: Module = exec
+                .get_function("vm_load_executable")
+                .unwrap()
+                .call_tuple(())
+                .unwrap()
+                .try_into()
+                .unwrap();
+            vm.get_function("vm_initialization")
+                .unwrap()
+                .call_tuple((
+                    device.device_type as i32,            // device_type
+                    device.device_id as i32,              // device_id
+                    2i32,                                 // vm_allocator_type
+                    tvm_ffi::DLDeviceType::kDLCPU as i32, // host_device_type
+                    0i32,                                 // host_device_id
+                    2i32,                                 // host_vm_allocator_type
+                ))
+                .unwrap();
+
+            let metadata: tvm_ffi::String = vm
+                .get_function("_metadata")
+                .unwrap()
+                .call_tuple(())
+                .unwrap()
+                .try_into()
+                .unwrap();
+            let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+
+            let tensor_cache = TensorCache::from(tensor_cache_path, device).unwrap();
+            let param_names = metadata
+                .get("params")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.get("name").unwrap().as_str().unwrap())
+                .collect::<Vec<_>>();
+            let params = tensor_cache.get_params(param_names);
+
+            let fprefill = vm.get_function("prefill").unwrap();
+
+            Self {
+                device,
+                vm,
+                params,
+                fprefill,
+            }
+        }
+
         pub fn infer(&mut self, tokens: &[u32]) -> anyhow::Result<Vec<f32>> {
-            // self.inner.pin_mut().infer(tokens)
-            todo!()
+            let dtype_i32 = DLDataType {
+                code: DLDataTypeCode::kDLInt as u8,
+                bits: 32,
+                lanes: 1,
+            };
+            let mut input = Tensor::empty(&[1, tokens.len() as i64], dtype_i32, self.device);
+            let mut mask = Tensor::empty(&[1, tokens.len() as i64], dtype_i32, self.device);
+            unsafe {
+                let tokens_i32: Vec<i32> = tokens.to_vec().into_iter().map(|v| v as i32).collect();
+                let tokens_slice = std::slice::from_raw_parts(
+                    tokens_i32.as_ptr() as *const u8,
+                    tokens.len() * std::mem::size_of::<i32>(),
+                );
+                input.copy_from_slice(tokens_slice).unwrap();
+
+                let mask_i32 = std::slice::from_raw_parts(
+                    vec![1i32; tokens.len()].as_ptr() as *const u8,
+                    tokens.len() * std::mem::size_of::<i32>(),
+                );
+                mask.copy_from_slice(mask_i32).unwrap();
+            }
+
+            let logits: tvm_ffi::Tensor = self
+                .fprefill
+                .call_packed(&[
+                    tvm_ffi::AnyView::from(&<tvm_ffi::Tensor as From<Tensor>>::from(input)),
+                    tvm_ffi::AnyView::from(&<tvm_ffi::Tensor as From<Tensor>>::from(mask)),
+                    tvm_ffi::AnyView::from(&self.params),
+                ])
+                .unwrap()
+                .try_into()
+                .unwrap();
+            let logits: Tensor = logits.into();
+
+            let mut logits_cpu = Tensor::empty_like(
+                &logits,
+                DLDevice {
+                    device_type: DLDeviceType::kDLCPU,
+                    device_id: 0,
+                },
+            );
+            logits_cpu.copy_from(&logits).unwrap();
+
+            // Copy the dense vector only
+            let last_dim = logits_cpu.shape().last().unwrap().clone() as usize;
+            let dense_vec = if logits_cpu.dtype().bits == 16 {
+                // Copy FP16
+                let mut buffer_u16: Vec<u16> = vec![0u16; last_dim];
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        logits_cpu.data_ptr() as *const u16,
+                        buffer_u16.as_mut_ptr(),
+                        last_dim,
+                    );
+                }
+                let buffer_f32: Vec<f32> = buffer_u16
+                    .into_iter()
+                    .map(|v| crate::utils::float16::f16_to_f32(v))
+                    .collect();
+                buffer_f32
+            } else {
+                // Copy FP32
+                let mut buffer: Vec<f32> = vec![0f32; last_dim];
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        logits_cpu.data_ptr() as *const f32,
+                        buffer.as_mut_ptr(),
+                        last_dim,
+                    );
+                }
+                buffer
+            };
+
+            Ok(dense_vec)
         }
     }
 
@@ -181,18 +315,44 @@ mod tvm {
             contents: &'a mut CacheContents,
             ctx: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
-            todo!()
-            // Box::pin(async move {
-            //     let device_id = if let Some(devid) = ctx.get("device_id") {
-            //         devid.as_integer().unwrap_or(0)
-            //     } else {
-            //         0
-            //     };
-            //     let device = create_dldevice(get_device_type(get_accelerator()), device_id as i32);
-            //     let inner = create_tvm_embedding_model(contents, device);
+            Box::pin(async move {
+                let device_id = if let Some(devid) = ctx.get("device_id") {
+                    devid.as_integer().unwrap_or(0) as i32
+                } else {
+                    0i32
+                };
+                let device = DLDevice {
+                    device_type: get_device_type(get_accelerator()),
+                    device_id,
+                };
 
-            //     Ok(EmbeddingModelInferencer { inner })
-            // })
+                let runtime_filename = format!("rt.{}", get_lib_extension());
+                let runtime_path =
+                    if let Some((entry, _)) = contents.remove_with_filename(&runtime_filename) {
+                        entry.path()
+                    } else {
+                        anyhow::bail!("{} does not exist", runtime_filename)
+                    };
+
+                let tensor_cache_path = if let Some((entry, _)) =
+                    contents.remove_with_filename("tensor-cache.json")
+                {
+                    entry.path()
+                } else if let Some((entry, _)) = contents.remove_with_filename("ndarray-cache.json")
+                {
+                    entry.path()
+                } else {
+                    anyhow::bail!("tensor cache json does not exist")
+                };
+
+                let inferencer = EmbeddingModelInferencer::new(
+                    &contents.root.join(runtime_path),
+                    &contents.root.join(tensor_cache_path),
+                    device,
+                );
+
+                Ok(inferencer)
+            })
         }
     }
 
