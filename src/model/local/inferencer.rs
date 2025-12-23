@@ -363,6 +363,7 @@ mod tvm {
         pub context_window_size: i64,
         pub prefill_chunk_size: i64,
         pub sliding_window_size: i64,
+        pub page_size: i64,
 
         pub fkv_state_clear: Function,
         pub fkv_state_add_sequence: Function,
@@ -450,6 +451,7 @@ mod tvm {
                 context_window_size,
                 prefill_chunk_size,
                 sliding_window_size,
+                page_size: PAGE_SIZE,
                 fkv_state_clear,
                 fkv_state_add_sequence,
                 fkv_state_remove_sequence,
@@ -508,6 +510,33 @@ mod tvm {
             self.add_sequence().unwrap();
             Ok(())
         }
+
+        pub fn popn(&mut self, num_tokens: i64) -> tvm_ffi::Result<()> {
+            self.fkv_state_popn
+                .call_packed(&[
+                    AnyView::from(&self.state),
+                    AnyView::from(&tvm_ffi::Any::from(0)), // sequence id
+                    AnyView::from(&tvm_ffi::Any::from(num_tokens)),
+                ])
+                .unwrap();
+            Ok(())
+        }
+
+        pub fn get_num_available_pages(&self) -> i64 {
+            let res = self
+                .fkv_cache_get_num_available_pages
+                .call_packed(&[AnyView::from(&self.state)])
+                .unwrap();
+            res.try_into().unwrap()
+        }
+
+        pub fn get_total_sequence_length(&self) -> i64 {
+            let res = self
+                .fkv_cache_get_total_sequence_length
+                .call_packed(&[AnyView::from(&self.state)])
+                .unwrap();
+            res.try_into().unwrap()
+        }
     }
 
     impl Drop for KVCache {
@@ -522,6 +551,7 @@ mod tvm {
         vm: Module,
         params: Array<TVMFFITensor>,
         kv_cache: KVCache,
+        history: Vec<u32>,
 
         fembed: Function,
         fprefill: Function,
@@ -604,6 +634,8 @@ mod tvm {
                 vm,
                 params,
                 kv_cache,
+                history: Vec::new(),
+
                 fembed,
                 fprefill,
                 fdecode,
@@ -647,29 +679,79 @@ mod tvm {
             Ok(embedding_reshaped.into())
         }
 
+        pub fn clear(&mut self) -> anyhow::Result<()> {
+            self.kv_cache
+                .clear()
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            self.history.clear();
+            Ok(())
+        }
+
         pub fn prefill(&mut self, tokens: &[u32]) -> anyhow::Result<()> {
-            let new_tokens: Vec<i32> = tokens.to_vec().into_iter().map(|t| t as i32).collect();
+            if tokens.is_empty() {
+                anyhow::bail!("Token must not be empty");
+            }
+
+            // Make sure that kv-cache and history is sync
+            if self.kv_cache.get_total_sequence_length() != self.history.len() as i64 {
+                self.clear()?;
+            }
+
+            // The longest common prefix (LCP) between inputs & previous conversations
+            let lcp_index = self
+                .history
+                .iter()
+                .zip(tokens.iter())
+                .take_while(|(h, t)| h == t)
+                .count();
+
+            // Rewind the head of kv-cache to the LCP
+            if lcp_index < self.history.len() {
+                self.kv_cache
+                    .popn((self.history.len() - lcp_index) as i64)
+                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            }
+
+            // Tokens to be added (without common prefixes)
+            let new_tokens: Vec<i32> = tokens[lcp_index..].iter().map(|t| *t as i32).collect();
+
+            if new_tokens.is_empty() {
+                self.history = tokens.to_vec();
+                return Ok(());
+            }
+
+            // Calculate remaining space in KV cache
+            if new_tokens.len() as i64
+                >= self.kv_cache.get_num_available_pages() * self.kv_cache.page_size
+            {
+                anyhow::bail!("Context length limit exceed");
+            }
+
             let prefill_chunk_size = self.kv_cache.prefill_chunk_size as usize;
             for i in (0..new_tokens.len()).step_by(prefill_chunk_size) {
-                let j = if i + prefill_chunk_size < new_tokens.len() {
-                    i + prefill_chunk_size
-                } else {
-                    new_tokens.len()
-                };
+                let j = std::cmp::min(i + prefill_chunk_size, new_tokens.len());
                 let length = j - i;
-                let tokens_sliced = &new_tokens[i..(i + length)];
-                let embedding = self.embed(tokens_sliced).unwrap();
+                let tokens_sliced = &new_tokens[i..j];
+                let embedding = self.embed(tokens_sliced)?;
 
-                self.kv_cache.begin_forward(length as i64).unwrap();
+                self.kv_cache
+                    .begin_forward(length as i64)
+                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
                 self.fprefill
                     .call_packed(&[
                         AnyView::from(&embedding),
                         AnyView::from(self.kv_cache.get_state()),
                         AnyView::from(&self.params),
                     ])
-                    .unwrap();
-                self.kv_cache.end_forward().unwrap();
+                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                self.kv_cache
+                    .end_forward()
+                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
             }
+
+            // Update history
+            self.history = tokens.to_vec();
+
             Ok(())
         }
 
@@ -707,7 +789,9 @@ mod tvm {
                 .unwrap()
                 .try_into()
                 .unwrap();
-            Ok(sampled_token as u32)
+            let sampled_token = sampled_token as u32;
+            self.history.push(sampled_token);
+            Ok(sampled_token)
         }
     }
 

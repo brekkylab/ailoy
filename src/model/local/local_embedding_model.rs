@@ -179,7 +179,8 @@ mod tests {
         let cache = Cache::new();
         let key = "BAAI/bge-m3";
 
-        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, None));
+        let mut model_strm =
+            Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, Some(false)));
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
@@ -209,7 +210,8 @@ mod tests {
         let cache = Cache::new();
         let key = "BAAI/bge-m3";
 
-        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, None));
+        let mut model_strm =
+            Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, Some(false)));
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
