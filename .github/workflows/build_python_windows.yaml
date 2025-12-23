@@ -95,12 +95,6 @@ jobs:
               python -m pip install --upgrade pip
 
               # =============================================
-              # Install cxxbridge
-              # =============================================
-              Write-Host '=== Installing cxxbridge ==='
-              cargo install cxxbridge-cmd@1.0.189
-
-              # =============================================
               # Build ailoy-py
               # =============================================
               Write-Host '=== Build Ailoy ==='

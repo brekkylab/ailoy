@@ -99,12 +99,6 @@ jobs:
               }
 
               # =============================================
-              # Install cxxbridge
-              # =============================================
-              Write-Host '=== Installing cxxbridge ==='
-              cargo install cxxbridge-cmd@1.0.189
-
-              # =============================================
               # Build ailoy-node
               # =============================================
               Write-Host '=== Build Ailoy ==='
