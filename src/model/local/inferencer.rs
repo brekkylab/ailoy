@@ -160,7 +160,7 @@ mod tvm {
     pub struct EmbeddingModelInferencer {
         device: DLDevice,
         vm: Module,
-        params: Array<TVMFFITensor>,
+        params: Array<Tensor>,
         fprefill: Function,
     }
 
@@ -549,7 +549,7 @@ mod tvm {
     pub struct LanguageModelInferencer {
         device: DLDevice,
         vm: Module,
-        params: Array<TVMFFITensor>,
+        params: Array<Tensor>,
         kv_cache: KVCache,
         history: Vec<u32>,
 
