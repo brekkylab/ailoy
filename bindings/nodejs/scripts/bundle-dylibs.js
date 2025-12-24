@@ -173,17 +173,36 @@ class DylibsBundler {
     }
 
     for (const line of output.split("\n")) {
-      // Matches both "lib.so => /path/to/lib.so (0x...)" and "lib.so => not found"
-      const match = line.match(/\s*(.+?)\s*=>\s*(.+?)\s*(\(|$)/);
-      if (match) {
-        const libName = match[1].trim();
-        let libPath = match[2].trim();
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      let libNameStr, libPath;
+
+      // Case 1: libfoo.so => /path/to/libfoo.so (0x...)
+      // Case 2: libfoo.so => not found
+      const matchRel = trimmed.match(/^(.+?)\s*=>\s*(.+?)\s*(\(|$)/);
+      if (matchRel) {
+        libNameStr = matchRel[1].trim();
+        libPath = matchRel[2].trim();
+      } else {
+        // Case 3: /path/to/libfoo.so (0x...)
+        const matchAbs = trimmed.match(/^\s*(\/.+?)\s+\(/);
+        if (matchAbs) {
+          libPath = matchAbs[1].trim();
+          libNameStr = libPath;
+        }
+      }
+
+      if (libNameStr && libPath) {
+        const libName = path.basename(libNameStr);
         if (libPath === "not found") {
           // Keep it as "not found"
         }
-        
-        // Find the original name in the DT_NEEDED list
-        const originalPath = needed.find(n => n === libName || n.startsWith(libName)) || libName;
+
+        // Find the original name in the DT_NEEDED list that corresponds to this lib
+        const originalPath =
+          needed.find((n) => n === libNameStr || n === libName || path.basename(n) === libName) ||
+          libNameStr;
 
         deps.push({ name: libName, path: libPath, originalPath });
       }
@@ -355,8 +374,9 @@ class DylibsBundler {
     return true;
   }
 
-  copyLibrary(oldPath, oldName) {
+  copyLibrary(oldPath, name) {
     try {
+      const oldName = path.basename(name);
       const data = fs.readFileSync(oldPath);
       const hash = crypto
         .createHash("sha256")
@@ -404,7 +424,7 @@ class DylibsBundler {
     const deps = this.getDependencies(binaryPath);
     const toBundle = [];
 
-    for (const { name, path: libPath } of deps) {
+    for (const { name, path: libPath, originalPath } of deps) {
       if (!this.shouldBundle(name, libPath)) {
         continue;
       }
@@ -423,7 +443,7 @@ class DylibsBundler {
       }
 
       this.processedLibs.add(name);
-      toBundle.push({ name, path: actualPath });
+      toBundle.push({ name, path: actualPath, originalPath });
 
       // Recursively process this library's dependencies
       const subDeps = this.collectDependencies(actualPath, depth + 1);
