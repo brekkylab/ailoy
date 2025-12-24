@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 fn main() {
     let target = std::env::var("TARGET").expect("TARGET not set");
     if target.starts_with("wasm") {
@@ -6,19 +8,23 @@ fn main() {
     }
 
     // Forward LD_LIBRARY_PATH if provided
-    if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
+    let ld_paths = if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
         // Split and add each path separately
         #[cfg(target_os = "windows")]
         let lib_separator = ';';
         #[cfg(not(target_os = "windows"))]
         let lib_separator = ':';
 
+        let mut ld_paths = vec![];
         for path in ld_path.split(lib_separator) {
             if !path.is_empty() {
-                println!("cargo:rustc-link-search=native={}", path);
+                ld_paths.push(path.to_string());
             }
         }
-    }
+        ld_paths
+    } else {
+        vec![]
+    };
 
     let faiss_build_dir = scratch::path("faiss");
     let faiss_libdir = faiss_build_dir.join("lib");
@@ -39,20 +45,25 @@ fn main() {
         cfg.define("CMAKE_BUILD_TYPE", "Release")
             .define("CMAKE_INSTALL_LIBDIR", "lib")
             .define("BUILD_SHARED_LIBS", "ON")
-            .define("BLA_STATIC", "ON")
             .define("BUILD_TESTING", "OFF")
             .define("FAISS_ENABLE_GPU", "OFF")
             .define("FAISS_ENABLE_PYTHON", "OFF")
             .define("FAISS_ENABLE_EXTRAS", "OFF")
-            .define("FAISS_USE_LTO", "ON")
             .out_dir(&faiss_build_dir)
             .very_verbose(true);
 
         // Configure BLAS and LAPACK
         #[cfg(not(target_os = "windows"))]
         {
-            cfg.define("BLAS_LIBRARIES", "libblas.a")
-                .define("LAPACK_LIBRARIES", "liblapack.a");
+            for ld_path in ld_paths.iter() {
+                let path = PathBuf::from(ld_path);
+                if path.join("libblas.a").exists() {
+                    cfg.define("BLAS_LIBRARIES", path.join("libblas.a"));
+                }
+                if path.join("liblapack.a").exists() {
+                    cfg.define("LAPACK_LIBRARIES", path.join("liblapack.a"));
+                }
+            }
         }
         #[cfg(target_os = "windows")]
         {
@@ -75,7 +86,10 @@ fn main() {
     }
 
     println!("cargo:rustc-link-search=native={}", faiss_libdir.display());
-    println!("cargo:rustc-link-lib=dylib=faiss");
+    println!("cargo:rustc-link-lib=faiss");
+    for ld_path in ld_paths {
+        println!("cargo:rustc-link-search=native={}", ld_path);
+    }
 
     cxx_build::bridge("src/lib.rs")
         .include(&faiss_includedir)
