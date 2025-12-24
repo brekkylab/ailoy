@@ -76,20 +76,17 @@ sha1 = "0.10"
 strum = { version = "0.27", features = ["derive"] }
 strum_macros = "0.27"
 thiserror = "2.0.15"
-tvm-ffi = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "38893dd08c4a63cfbb8ac803b2b737a85ba1e16e" }
-tvm-ffi-sys = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "38893dd08c4a63cfbb8ac803b2b737a85ba1e16e" }
+tvm-ffi = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "a055f3674a909346794b00139827a0a6e1868efb" }
 unicode-segmentation = "1.12.0"
 url = "2.5.4"
 urlencoding = "2.1"
 version-compare = "0.2.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "38893dd08c4a63cfbb8ac803b2b737a85ba1e16e" }
-tvm-runtime-sys = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "38893dd08c4a63cfbb8ac803b2b737a85ba1e16e" }
+tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "a055f3674a909346794b00139827a0a6e1868efb", features = ["metal"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
-tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "38893dd08c4a63cfbb8ac803b2b737a85ba1e16e" }
-tvm-runtime-sys = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "38893dd08c4a63cfbb8ac803b2b737a85ba1e16e" }
+tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "a055f3674a909346794b00139827a0a6e1868efb", features = ["vulkan"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ailoy-faiss-sys = { path = "./crates/faiss-sys" }

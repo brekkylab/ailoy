@@ -26,21 +26,6 @@ fn main() {
 }
 
 fn build_native() {
-    let tvm_ffi_lib = std::env::var("DEP_TVM_FFI_LIB").expect("tvm-ffi-sys did not export lib");
-    let tvm_runtime_lib =
-        std::env::var("DEP_TVM_RUNTIME_LIB").expect("tvm-runtime-sys did not export lib");
-
-    #[cfg(target_family = "unix")]
-    {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", tvm_ffi_lib);
-        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", tvm_runtime_lib);
-    }
-    #[cfg(target_family = "windows")]
-    {
-        println!("cargo:rustc-link-search=native={}", tvm_ffi_lib);
-        println!("cargo:rustc-link-search=native={}", tvm_runtime_lib);
-    }
-
     if std::env::var_os("CARGO_FEATURE_NODEJS").is_some() {
         napi_build::setup();
     }
