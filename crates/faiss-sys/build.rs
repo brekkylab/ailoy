@@ -26,9 +26,11 @@ fn main() {
 
     // Check if Faiss is already built
     let faiss_lib = if cfg!(target_os = "windows") {
-        faiss_libdir.join("faiss.lib")
+        faiss_libdir.join("faiss.dll")
+    } else if cfg!(target_os = "macos") {
+        faiss_libdir.join("libfaiss.dylib")
     } else {
-        faiss_libdir.join("libfaiss.a")
+        faiss_libdir.join("libfaiss.so")
     };
     if !faiss_lib.exists() {
         println!("cargo:warning=Building Faiss (this may take a while, but will be cached)...");
@@ -36,11 +38,13 @@ fn main() {
         let mut cfg = cmake::Config::new("faiss");
         cfg.define("CMAKE_BUILD_TYPE", "Release")
             .define("CMAKE_INSTALL_LIBDIR", "lib")
-            .define("BUILD_SHARED_LIBS", "OFF")
+            .define("BUILD_SHARED_LIBS", "ON")
+            .define("BLA_STATIC", "ON")
             .define("BUILD_TESTING", "OFF")
             .define("FAISS_ENABLE_GPU", "OFF")
             .define("FAISS_ENABLE_PYTHON", "OFF")
             .define("FAISS_ENABLE_EXTRAS", "OFF")
+            .define("FAISS_USE_LTO", "ON")
             .out_dir(&faiss_build_dir)
             .very_verbose(true);
 
@@ -71,33 +75,37 @@ fn main() {
     }
 
     println!("cargo:rustc-link-search=native={}", faiss_libdir.display());
-    println!("cargo:rustc-link-lib=static=faiss");
-    println!("cargo:rustc-link-lib=blas");
-    println!("cargo:rustc-link-lib=lapack");
-
-    // Link OpenMP
-    #[cfg(target_os = "macos")]
-    {
-        // Link libomp
-        println!("cargo:rustc-link-search=native={}/lib", get_libomp_path());
-        println!("cargo:rustc-link-lib=omp");
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // Link GNU OpenMP
-        println!("cargo:rustc-link-lib=gomp");
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // Link MSVC OpenMP
-        println!("cargo:rustc-link-lib=static=libomp");
-    }
+    println!("cargo:rustc-link-lib=dylib=faiss");
 
     cxx_build::bridge("src/lib.rs")
         .include(&faiss_includedir)
         .file("src/bridge.cpp")
         .std("c++20")
         .compile("cxxbridge-faiss");
+
+    // Patch link path of libfaiss from rpath to absolute path
+    #[cfg(target_os = "macos")]
+    {
+        let libfaiss_path = faiss_libdir.join("libfaiss.dylib");
+        if libfaiss_path.exists() {
+            let _ = std::process::Command::new("install_name_tool")
+                .arg("-id")
+                .arg(&libfaiss_path)
+                .arg(&libfaiss_path)
+                .status();
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let libfaiss_path = faiss_libdir.join("libfaiss.so");
+        if libfaiss_path.exists() {
+            let _ = std::process::Command::new("patchelf")
+                .arg("--set-soname")
+                .arg(&libfaiss_path)
+                .arg(&libfaiss_path)
+                .status();
+        }
+    }
 
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=faiss");
