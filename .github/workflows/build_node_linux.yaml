@@ -41,7 +41,6 @@ jobs:
       - name: Build binary
         working-directory: ${{ github.workspace }}/bindings/nodejs
         run: |
-          ../../scripts/set-crate-type.sh cdylib
           npm run build:napi
           mv ./src/ailoy_core.linux-x64-gnu.node ./npm/linux-x64-gnu
           node scripts/bundle-dylibs.js ./npm/linux-x64-gnu/ailoy_core.linux-x64-gnu.node

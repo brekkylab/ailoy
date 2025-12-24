@@ -90,7 +90,7 @@ tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "a055
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ailoy-faiss-sys = { path = "./crates/faiss-sys" }
-cxx = "1.0.189"
+cxx = "1.0"
 getrandom = "0.3"
 log = "0.4.27"
 parking_lot = "0.12.4"

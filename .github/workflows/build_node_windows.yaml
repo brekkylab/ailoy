@@ -111,8 +111,6 @@ jobs:
                 exit 1
               }
 
-              powershell ..\..\scripts\Set-Crate-Type.ps1 -Kind cdylib
-
               `$env:CMAKE_BUILD_PARALLEL_LEVEL = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
               npm run build:napi
               if (`$LASTEXITCODE -ne 0) {
