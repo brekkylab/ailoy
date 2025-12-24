@@ -9,7 +9,7 @@ on:
         description: 'Publish package to PyPI'
 
 env:
-  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251127
+  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251224
   PYTHON_VERSION: "3.10"
   PYTHON_FULL_VERSION: "3.10.11"
 

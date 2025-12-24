@@ -9,19 +9,18 @@ fn main() {
 
     // Forward LD_LIBRARY_PATH if provided
     let ld_paths = if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
-        // Split and add each path separately
         #[cfg(target_os = "windows")]
         let lib_separator = ';';
         #[cfg(not(target_os = "windows"))]
         let lib_separator = ':';
 
-        let mut ld_paths = vec![];
+        let mut paths = vec![];
         for path in ld_path.split(lib_separator) {
             if !path.is_empty() {
-                ld_paths.push(path.to_string());
+                paths.push(path.to_string());
             }
         }
-        ld_paths
+        paths
     } else {
         vec![]
     };
@@ -31,14 +30,15 @@ fn main() {
     let faiss_includedir = faiss_build_dir.join("include");
 
     // Check if Faiss is already built
-    let faiss_lib = if cfg!(target_os = "windows") {
-        faiss_libdir.join("faiss.dll")
+    let faiss_dylib_path = if cfg!(target_os = "windows") {
+        let faiss_bindir = faiss_build_dir.join("bin");
+        faiss_bindir.join("faiss.dll")
     } else if cfg!(target_os = "macos") {
         faiss_libdir.join("libfaiss.dylib")
     } else {
         faiss_libdir.join("libfaiss.so")
     };
-    if !faiss_lib.exists() {
+    if !faiss_dylib_path.exists() {
         println!("cargo:warning=Building Faiss (this may take a while, but will be cached)...");
 
         let mut cfg = cmake::Config::new("faiss");
@@ -67,8 +67,15 @@ fn main() {
         }
         #[cfg(target_os = "windows")]
         {
-            cfg.define("BLAS_LIBRARIES", "blas.lib")
-                .define("LAPACK_LIBRARIES", "lapack.lib");
+            for ld_path in ld_paths.iter() {
+                let path = PathBuf::from(ld_path);
+                if path.join("blas.lib").exists() {
+                    cfg.define("BLAS_LIBRARIES", path.join("blas.lib"));
+                }
+                if path.join("lapack.lib").exists() {
+                    cfg.define("LAPACK_LIBRARIES", path.join("lapack.lib"));
+                }
+            }
         }
 
         // Configure libomp for macos
@@ -100,24 +107,50 @@ fn main() {
     // Patch link path of libfaiss from rpath to absolute path
     #[cfg(target_os = "macos")]
     {
-        let libfaiss_path = faiss_libdir.join("libfaiss.dylib");
-        if libfaiss_path.exists() {
+        if faiss_dylib_path.exists() {
             let _ = std::process::Command::new("install_name_tool")
                 .arg("-id")
-                .arg(&libfaiss_path)
-                .arg(&libfaiss_path)
+                .arg(&faiss_dylib_path)
+                .arg(&faiss_dylib_path)
                 .status();
         }
     }
     #[cfg(target_os = "linux")]
     {
-        let libfaiss_path = faiss_libdir.join("libfaiss.so");
-        if libfaiss_path.exists() {
+        if faiss_dylib_path.exists() {
             let _ = std::process::Command::new("patchelf")
                 .arg("--set-soname")
-                .arg(&libfaiss_path)
-                .arg(&libfaiss_path)
+                .arg(&faiss_dylib_path)
+                .arg(&faiss_dylib_path)
                 .status();
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if faiss_dylib_path.exists() {
+            let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+            // Copy to OUT_DIR
+            let _ = std::fs::copy(&faiss_dylib_path, out_dir.join("faiss.dll"));
+
+            // Try to copy to the target/profile directory and deps folder
+            let target_dir = out_dir.clone();
+            if let Some(build_dir_idx) = target_dir
+                .components()
+                .enumerate()
+                .find(|(_, c)| c.as_os_str() == "build")
+                .map(|(i, _)| i)
+            {
+                let mut path = PathBuf::new();
+                for (i, c) in target_dir.components().enumerate() {
+                    if i >= build_dir_idx {
+                        break;
+                    }
+                    path.push(c);
+                }
+                // path is now target/debug
+                let _ = std::fs::copy(&faiss_dylib_path, path.join("faiss.dll"));
+                let _ = std::fs::copy(&faiss_dylib_path, path.join("deps").join("faiss.dll"));
+            }
         }
     }
 

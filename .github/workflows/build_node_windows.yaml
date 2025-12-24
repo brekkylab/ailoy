@@ -9,7 +9,7 @@ on:
         description: 'Publish package to NPM'
 
 env:
-  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251127
+  BUILDPACK_IMAGE: ghcr.io/brekkylab/ailoy-buildpack-windows:20251224
   NODE_VERSION: "20.19.4"
 
 jobs:
