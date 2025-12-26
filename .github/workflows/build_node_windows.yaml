@@ -119,6 +119,8 @@ jobs:
               }
 
               Move-Item -Path .\src\ailoy_core.win32-x64-msvc.node -Destination .\npm\win32-x64-msvc
+              # Let bundle-dylibs.js script to find the dlls in the target/release directory
+              `$env:PATH = "C:\\workspace\\target\\release;$env:PATH"
               node .\scripts\bundle-dylibs.js .\npm\win32-x64-msvc\ailoy_core.win32-x64-msvc.node
 
               Set-Location 'npm\win32-x64-msvc'
