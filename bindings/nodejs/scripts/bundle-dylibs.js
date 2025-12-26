@@ -52,7 +52,7 @@ const IGNORED_LIBS_LINUX = new Set([
 ]);
 
 const IGNORED_LIBS_WINDOWS = new Set([
-  // Windows system DLLs (case-insensitive comparison will be used)
+  // Core Windows system DLLs
   "kernel32.dll",
   "user32.dll",
   "advapi32.dll",
@@ -71,6 +71,7 @@ const IGNORED_LIBS_WINDOWS = new Set([
   "winmm.dll",
   "version.dll",
   "bcrypt.dll",
+  "bcryptprimitives.dll",
   "userenv.dll",
   "netapi32.dll",
   "winspool.drv",
@@ -92,6 +93,8 @@ const IGNORED_LIBS_WINDOWS = new Set([
   "credui.dll",
   "wtsapi32.dll",
   "wldap32.dll",
+
+  // Universal C Runtime (included by default on Windows 10/11)
   "ucrtbase.dll",
   "api-ms-win-crt-runtime-l1-1-0.dll",
   "api-ms-win-crt-stdio-l1-1-0.dll",
@@ -106,12 +109,23 @@ const IGNORED_LIBS_WINDOWS = new Set([
   "api-ms-win-crt-process-l1-1-0.dll",
   "api-ms-win-crt-utility-l1-1-0.dll",
   "api-ms-win-crt-multibyte-l1-1-0.dll",
+
+  // Core Windows API sets (Windows 10/11)
+  "api-ms-win-core-synch-l1-1-0.dll",
   "api-ms-win-core-synch-l1-2-0.dll",
+  "api-ms-win-core-processthreads-l1-1-0.dll",
   "api-ms-win-core-processthreads-l1-1-1.dll",
+  "api-ms-win-core-file-l1-1-0.dll",
   "api-ms-win-core-file-l1-2-0.dll",
+  "api-ms-win-core-localization-l1-1-0.dll",
   "api-ms-win-core-localization-l1-2-0.dll",
+  "api-ms-win-core-sysinfo-l1-1-0.dll",
   "api-ms-win-core-sysinfo-l1-2-0.dll",
   "api-ms-win-core-handle-l1-1-0.dll",
+  "api-ms-win-core-errorhandling-l1-1-0.dll",
+  "api-ms-win-core-memory-l1-1-0.dll",
+  "api-ms-win-core-profile-l1-1-0.dll",
+  "api-ms-win-eventing-provider-l1-1-0.dll",
 
   // Exclude vulkan
   "vulkan-1.dll",
@@ -297,8 +311,8 @@ class DylibsBundler {
           }
 
           // DLL names are listed one per line, indented
-          if (trimmed && trimmed.endsWith(".dll")) {
-            const dllName = trimmed;
+          if (trimmed && trimmed.toLowerCase().endsWith(".dll")) {
+            const dllName = trimmed.toLowerCase();
             const dllPath = this.findDllPath(dllName);
 
             if (dllPath) {
@@ -354,11 +368,6 @@ class DylibsBundler {
     } else if (this.isWindows) {
       const lowerName = libName.toLowerCase();
       if (IGNORED_LIBS_WINDOWS.has(lowerName)) {
-        return false;
-      }
-
-      const lowerPath = libPath.toLowerCase();
-      if (lowerPath.includes("\\windows\\") || lowerPath.includes("\\winsxs\\") || lowerPath.includes("\\system32\\") || lowerPath.includes("\\syswow64\\")) {
         return false;
       }
     }
