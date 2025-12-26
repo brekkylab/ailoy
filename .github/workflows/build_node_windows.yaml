@@ -121,7 +121,7 @@ jobs:
               Move-Item -Path .\src\ailoy_core.win32-x64-msvc.node -Destination .\npm\win32-x64-msvc
               # Let bundle-dylibs.js script to find the dlls in the target\x86_64-pc-windows-msvc\release directory
               # Note that napi-rs inserts target triple between `target` and `release`
-              `$env:PATH = "C:\workspace\target\x86_64-pc-windows-msvc\release;`$env:PATH"
+              `$env:PATH = "C:\\workspace\\target\\x86_64-pc-windows-msvc\\release;`$env:PATH"
 
               node .\scripts\bundle-dylibs.js .\npm\win32-x64-msvc\ailoy_core.win32-x64-msvc.node
 

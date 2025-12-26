@@ -111,8 +111,8 @@ jobs:
               }
 
               `$DistWheel = Get-ChildItem dist\*.whl | Select-Object -First 1
-              # Let delvewheel to find the dlls in the target/release directory
-              `$env:PATH = "C:\workspace\target\release;`$env:PATH"
+              # Let delvewheel to find the dlls in the target\release directory
+              `$env:PATH = "C:\\workspace\\target\\release;`$env:PATH"
 
               python -m delvewheel repair -w wheelhouse `$DistWheel --exclude vulkan-1.dll
               if (`$LASTEXITCODE -ne 0) {
