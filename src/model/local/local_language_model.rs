@@ -279,7 +279,7 @@ impl LocalLangModelImpl {
 
                 {
                     #[cfg(target_family = "wasm")]
-                    let new_token = self.inferencer.decode(last_token, config.temperature.unwrap_or(0.6), config.top_p.unwrap_or(0.9)).await;
+                    let new_token = self.inferencer.decode(last_token, temperature, top_p).await;
                     #[cfg(not(target_family = "wasm"))]
                     let new_token = {
                         let logits = self.inferencer.decode(last_token).unwrap();

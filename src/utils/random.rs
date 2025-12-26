@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 pub fn get_random_f64() -> f64 {
     let mut buf = [0u8; 8];
     getrandom::fill(&mut buf).expect("Failed to get random bytes");

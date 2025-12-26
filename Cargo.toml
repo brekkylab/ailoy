@@ -76,7 +76,6 @@ sha1 = "0.10"
 strum = { version = "0.27", features = ["derive"] }
 strum_macros = "0.27"
 thiserror = "2.0.15"
-tvm-ffi = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "07fe796048a14c6ba0b66abe2d3783ac1ccc41a9" }
 unicode-segmentation = "1.12.0"
 url = "2.5.4"
 urlencoding = "2.1"
@@ -97,6 +96,7 @@ parking_lot = "0.12.4"
 rmcp = { version = "0.11.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 tokenizers = { version = "0.22.2", default-features = false, features = ["onig"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+tvm-ffi = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "07fe796048a14c6ba0b66abe2d3783ac1ccc41a9" }
 uuid = { version = "1.18.0", features = ["v4"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
