@@ -283,7 +283,7 @@ impl LocalLangModelImpl {
                     #[cfg(not(target_family = "wasm"))]
                     let new_token = {
                         let logits = self.inferencer.decode(last_token).unwrap();
-                        let new_token = self.inferencer.sample(&logits, temperature, top_p).unwrap();
+                        let new_token = self.inferencer.sample(logits, temperature, top_p).unwrap();
                         new_token
                     };
 

@@ -134,8 +134,7 @@ mod tvm {
     use std::path::PathBuf;
 
     use tvm_ffi::{
-        AnyView, Array, DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, Function, Module,
-        Shape, Tensor as TVMFFITensor,
+        AnyView, Array, DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, Function, Module, Shape,
     };
     use tvm_runtime::{Tensor, TensorCache};
 
@@ -247,17 +246,16 @@ mod tvm {
                 mask.copy_from_slice(mask_i32).unwrap();
             }
 
-            let logits: tvm_ffi::Tensor = self
+            let logits: Tensor = self
                 .fprefill
                 .call_packed(&[
-                    tvm_ffi::AnyView::from(&<tvm_ffi::Tensor as From<Tensor>>::from(input)),
-                    tvm_ffi::AnyView::from(&<tvm_ffi::Tensor as From<Tensor>>::from(mask)),
-                    tvm_ffi::AnyView::from(&self.params),
+                    AnyView::from(&input),
+                    AnyView::from(&mask),
+                    AnyView::from(&self.params),
                 ])
                 .unwrap()
                 .try_into()
                 .unwrap();
-            let logits: Tensor = logits.into();
 
             let mut logits_cpu = Tensor::empty_like(
                 &logits,
@@ -474,7 +472,7 @@ mod tvm {
             self.fkv_state_add_sequence
                 .call_packed(&[
                     AnyView::from(&self.state),
-                    AnyView::from(&tvm_ffi::Any::from(0)), // sequence id
+                    AnyView::from(&0), // sequence id
                 ])
                 .unwrap();
             Ok(())
@@ -484,7 +482,7 @@ mod tvm {
             self.fkv_state_remove_sequence
                 .call_packed(&[
                     AnyView::from(&self.state),
-                    AnyView::from(&tvm_ffi::Any::from(0)), // sequence id
+                    AnyView::from(&0), // sequence id
                 ])
                 .unwrap();
             Ok(())
@@ -500,7 +498,7 @@ mod tvm {
 
         pub fn end_forward(&mut self) -> tvm_ffi::Result<tvm_ffi::Any> {
             self.fkv_state_end_forward
-                .call_packed(&[(&self.state).into()])
+                .call_packed(&[AnyView::from(&self.state)])
         }
 
         pub fn clear(&mut self) -> tvm_ffi::Result<()> {
@@ -515,8 +513,8 @@ mod tvm {
             self.fkv_state_popn
                 .call_packed(&[
                     AnyView::from(&self.state),
-                    AnyView::from(&tvm_ffi::Any::from(0)), // sequence id
-                    AnyView::from(&tvm_ffi::Any::from(num_tokens)),
+                    AnyView::from(&0), // sequence id
+                    AnyView::from(&num_tokens),
                 ])
                 .unwrap();
             Ok(())
@@ -644,7 +642,7 @@ mod tvm {
             }
         }
 
-        pub fn embed(&self, tokens: &[i32]) -> anyhow::Result<TVMFFITensor> {
+        pub fn embed(&self, tokens: &[i32]) -> anyhow::Result<Tensor> {
             let mut input = Tensor::empty(
                 &[tokens.len() as i64],
                 DLDataType {
@@ -662,16 +660,12 @@ mod tvm {
                 input.copy_from_slice(tokens_slice).unwrap();
             }
 
-            let embedding: TVMFFITensor = self
+            let embedding: Tensor = self
                 .fembed
-                .call_packed(&[
-                    AnyView::from(&<TVMFFITensor as From<Tensor>>::from(input)),
-                    AnyView::from(&self.params),
-                ])
+                .call_packed(&[AnyView::from(&input), AnyView::from(&self.params)])
                 .unwrap()
                 .try_into()
                 .unwrap();
-            let mut embedding: Tensor = embedding.into();
             let embedding_reshaped = embedding
                 .reshape(&[1, embedding.shape()[0], embedding.shape()[1]])
                 .unwrap();
@@ -755,7 +749,7 @@ mod tvm {
             Ok(())
         }
 
-        pub fn decode(&mut self, last_token: u32) -> anyhow::Result<TVMFFITensor> {
+        pub fn decode(&mut self, last_token: u32) -> anyhow::Result<Tensor> {
             let embedding = self.embed(&[last_token as i32]).unwrap();
 
             self.kv_cache.begin_forward(1).unwrap();
@@ -778,7 +772,7 @@ mod tvm {
 
         pub fn sample(
             &mut self,
-            logits: &TVMFFITensor,
+            logits: Tensor,
             temperature: f64,
             top_p: f64,
         ) -> anyhow::Result<u32> {
