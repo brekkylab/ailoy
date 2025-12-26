@@ -92,9 +92,6 @@ const IGNORED_LIBS_WINDOWS = new Set([
   "credui.dll",
   "wtsapi32.dll",
   "wldap32.dll",
-  "vcruntime140.dll",
-  "vcruntime140_1.dll",
-  "msvcp140.dll",
   "ucrtbase.dll",
   "api-ms-win-crt-runtime-l1-1-0.dll",
   "api-ms-win-crt-stdio-l1-1-0.dll",
@@ -328,10 +325,8 @@ class DylibsBundler {
       ...process.env.PATH.split(path.delimiter),
     ];
 
-    console.log("[findDllPath] dllName: ", dllName);
     for (const searchPath of searchPaths) {
       const fullPath = path.join(searchPath, dllName);
-      console.log("[findDllPath] fullPath: ", fullPath);
       if (fs.existsSync(fullPath)) {
         return fullPath;
       }
