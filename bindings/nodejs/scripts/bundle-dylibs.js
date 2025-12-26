@@ -328,8 +328,10 @@ class DylibsBundler {
       ...process.env.PATH.split(path.delimiter),
     ];
 
+    console.log("[findDllPath] dllName: ", dllName);
     for (const searchPath of searchPaths) {
       const fullPath = path.join(searchPath, dllName);
+      console.log("[findDllPath] fullPath: ", fullPath);
       if (fs.existsSync(fullPath)) {
         return fullPath;
       }
