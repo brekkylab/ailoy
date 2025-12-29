@@ -12,12 +12,12 @@ use tokio::sync::RwLock;
 use url::Url;
 
 use super::{
-    filesystem::{read, write},
+    filesystem,
     manifest::{Manifest, ManifestDirectory},
 };
 use crate::{
     boxed,
-    cache::{CacheContents, CacheEntry, TryFromCache, filesystem},
+    cache::{ByteSource, CacheContents, CacheEntry, TryFromCache},
     constants::AILOY_VERSION,
     utils::{BoxStream, MaybeSend},
     value::Value,
@@ -225,7 +225,7 @@ impl Cache {
             let bytes = match download(self.get_url(&entry_manifest)).await {
                 Ok(data) => {
                     // Save the manifest to local filesystem
-                    write(&self.path(&entry_manifest), &data, true).await?;
+                    filesystem::write(&self.path(&entry_manifest), &data, true).await?;
                     data
                 }
                 Err(_) => {
@@ -233,7 +233,7 @@ impl Cache {
                         "Failed to download manifest. Try to read from local filesystem..."
                     );
                     // Fallback to getting from local filesystem
-                    match read(&self.path(&entry_manifest)).await {
+                    match filesystem::read(&self.path(&entry_manifest)).await {
                         Ok(data) => data,
                         Err(_) => {
                             bail!("Failed to get the manifest for this entry.");
@@ -283,7 +283,7 @@ impl Cache {
         let manifest = self.get_manifest(entry).await?;
 
         // Get local data
-        let local_bytes = read(&self.path(entry)).await.ok();
+        let local_bytes = filesystem::read(&self.path(entry)).await.ok();
 
         if let Some(local_bytes) = local_bytes {
             // Validating checksum is enabled by default.
@@ -306,7 +306,7 @@ impl Cache {
         let url = self.get_url(&remote_entry);
         let bytes = download(url).await?;
         // Write back
-        write(&self.path(entry), &bytes, true).await?;
+        filesystem::write(&self.path(entry), &bytes, true).await?;
         Ok(bytes)
     }
 
@@ -390,15 +390,34 @@ impl Cache {
         T: TryFromCache + MaybeSend + 'static,
     {
         let root = self.root.clone();
+        let cache_clone = self.clone();
         let mut strm = self.prepare_files::<T>(key, validate_checksum);
         boxed!(try_stream! {
-            let mut pairs: Vec<(CacheEntry, Vec<u8>)> = Vec::new();
+            let mut pairs: Vec<(CacheEntry, ByteSource)> = Vec::new();
             let mut total_task: usize = 0;
+
+            // Threshold for eager loading: 10MB
+            // Files smaller than this (like tokenizer.json, chat-template.j2, configs)
+            // are kept in memory for fast access. Larger files (model weights) are
+            // kept as lazy references to avoid OOM.
+            const EAGER_LOAD_THRESHOLD: usize = 10 * 1024 * 1024; // 10MB
+
             while let Some(res) = strm.next().await {
                 let (entry, current_task, _total_task, bytes) = res?;
                 // Number of total tasks: preparing all files + initialization
                 total_task = _total_task + 1;
-                pairs.push((entry.clone(), bytes));
+
+                // Decide whether to eager load or lazy load based on file size
+                let source = if bytes.len() < EAGER_LOAD_THRESHOLD {
+                    // Small file: keep in memory
+                    ByteSource::Eager(bytes)
+                } else {
+                    // Large file: drop bytes and keep just the path reference
+                    // The file is already on disk from prepare_files/Cache::get
+                    ByteSource::Lazy(cache_clone.path(&entry))
+                };
+
+                pairs.push((entry.clone(), source));
                 yield CacheProgress::<T> {
                     comment: format!("{} ready", entry.filename()),
                     current_task,

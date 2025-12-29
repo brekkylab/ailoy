@@ -50,9 +50,10 @@ impl TryFromCache for Tokenizer {
         _: &'a std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>> {
         Box::pin(async move {
-            let Some((_, bytes)) = contents.remove_with_filename("tokenizer.json") else {
+            let Some((_, source)) = contents.remove_with_filename("tokenizer.json") else {
                 bail!("tokenizer.json not exists");
             };
+            let bytes = source.read_all().await?;
             let s = std::str::from_utf8(&bytes).context("Utf-8 conversion failed")?;
             Ok(Tokenizer::new(s))
         })

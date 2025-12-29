@@ -89,13 +89,52 @@ export class TVMRuntime {
   }
 }
 
-export async function init(
-  cache_contents: Record<string, ArrayBuffer>
-): Promise<TVMRuntime> {
-  // Load WASM
-  const tvmBytes = cache_contents["rt.wasm"];
-  delete cache_contents["rt.wasm"];
-  const tvm = await instantiate(tvmBytes, createPolyfillWASI(), undefined);
+export type CacheEntries = Record<
+  string,
+  { fullPath: string; eagerData?: ArrayBuffer }
+>;
+
+/**
+ * Helper to read a file from OPFS lazily.
+ * First checks if the file is available in eagerFiles (already loaded in Rust).
+ * If not, reads from OPFS. This avoids double-reading small files.
+ */
+async function readOPFSFile(
+  filename: string,
+  cacheEntries: CacheEntries
+): Promise<ArrayBuffer> {
+  if (!(filename in cacheEntries)) {
+    throw new Error(`${filename} is not in the cache entries`);
+  }
+
+  const entry = cacheEntries[filename];
+
+  // Check if file is already loaded eagerly
+  if (entry.eagerData) {
+    return entry.eagerData;
+  }
+
+  // Navigate to OPFS root
+  const root = await navigator.storage.getDirectory();
+
+  // Parse path and navigate to parent directory
+  const parts = entry.fullPath.split("/").filter((p) => p.length > 0);
+  let dirHandle = root;
+
+  for (let i = 0; i < parts.length - 1; i++) {
+    dirHandle = await dirHandle.getDirectoryHandle(parts[i]);
+  }
+
+  // Get file handle and read
+  const fileHandle = await dirHandle.getFileHandle(parts[parts.length - 1]);
+  const file = await fileHandle.getFile();
+  return await file.arrayBuffer();
+}
+
+export async function init(cacheEntries: CacheEntries): Promise<TVMRuntime> {
+  // Load runtime WASM
+  const rtBytes = await readOPFSFile("rt.wasm", cacheEntries);
+  const tvm = await instantiate(rtBytes, createPolyfillWASI(), undefined);
 
   // Initialize GPU
   const gpu: GPUDevice = await getGPUDevice();
@@ -104,27 +143,27 @@ export async function init(
 
   tvm.beginScope();
 
-  // Load tensor cache
+  // Load tensor cache JSON
   let tensor_cache_json: ArrayBuffer;
-  if (cache_contents["tensor-cache.json"] !== undefined) {
-    tensor_cache_json = cache_contents["tensor-cache.json"];
-    delete cache_contents["tensor-cache.json"];
-  } else if (cache_contents["ndarray-cache.json"] !== undefined) {
+  if ("tensor-cache.json" in cacheEntries) {
+    tensor_cache_json = await readOPFSFile("tensor-cache.json", cacheEntries);
+  } else if ("ndarray-cache.json" in cacheEntries) {
     // Fallback to ndarray-cache.json for backward compatibility
-    tensor_cache_json = cache_contents["ndarray-cache.json"];
-    delete cache_contents["ndarray-cache.json"];
+    tensor_cache_json = await readOPFSFile("ndarray-cache.json", cacheEntries);
   } else {
     throw new Error(
-      "Cannot find either tensor-cache.json or ndarray-cache.json in cache directory"
+      "Cannot find either tensor-cache.json or ndarray-cache.json in file entries"
     );
   }
-  const tensor_cache = JSON.parse(new TextDecoder().decode(tensor_cache_json));
-  const entries: Array<TensorShardEntry> = tensor_cache.records;
 
-  // Register parameters
-  for (const entry of entries) {
-    const buffer = cache_contents[entry.dataPath];
-    delete cache_contents[entry.dataPath];
+  const tensor_cache = JSON.parse(new TextDecoder().decode(tensor_cache_json));
+
+  // Load parameters with pipelined parallelism (4 concurrent operations)
+  const MAX_CONCURRENT = 4;
+
+  const processShard = async (entry: TensorShardEntry) => {
+    const buffer = await readOPFSFile(entry.dataPath, cacheEntries);
+
     for (const record of entry.records) {
       const bufferPart = buffer.slice(
         record.byteOffset,
@@ -132,7 +171,29 @@ export async function init(
       );
       await tvm.tensorCacheUpdateBuffer(device, record, bufferPart);
     }
+    // buffer can be GC'd after this function returns
+  };
+
+  const pending = new Set<Promise<void>>();
+
+  // Process shards with a sliding window of concurrency,
+  // up to MAX_CONCURRENT concurrent operations
+  for (const entry of tensor_cache.records as Array<TensorShardEntry>) {
+    // Start processing this shard
+    const promise = processShard(entry).then(() => {
+      // Remove this promise from pending set when it completes
+      pending.delete(promise);
+    });
+    pending.add(promise);
+
+    // If we've reached max concurrency, wait for at least one to complete
+    if (pending.size >= MAX_CONCURRENT) {
+      await Promise.race(pending);
+    }
   }
+
+  // Wait for all remaining operations to complete
+  await Promise.all(Array.from(pending));
 
   // Load VM
   const vm = tvm.detachFromCurrentScope(tvm.createVirtualMachine(device));

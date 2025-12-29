@@ -8,7 +8,7 @@ extern "C" {
 
     #[wasm_bindgen(js_name = init_tvm_language_model)]
     pub fn init_tvm_language_model_js(
-        cache_contents: &js_sys::Object,
+        cache_entries: &js_sys::Object,
         config: Option<js_sys::Object>,
     ) -> js_sys::Promise;
 
@@ -34,7 +34,7 @@ extern "C" {
     ///////////////////////
 
     #[wasm_bindgen(js_name = init_tvm_embedding_model)]
-    pub fn init_tvm_embedding_model_js(cache_contents: &js_sys::Object) -> js_sys::Promise;
+    pub fn init_tvm_embedding_model_js(cache_entries: &js_sys::Object) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = "TVMEmbeddingModel")]
     pub type JSTVMEmbeddingModel;

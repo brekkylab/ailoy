@@ -1,5 +1,9 @@
 import { Instance, Tensor, PackedFunc, Scalar, TVMObject } from "./tvmjs";
-import { init as init_tvm_runtime, TVMRuntime } from "./tvm_runtime";
+import {
+  CacheEntries,
+  init as init_tvm_runtime,
+  TVMRuntime,
+} from "./tvm_runtime";
 
 const PAGE_SIZE = 16;
 
@@ -324,10 +328,10 @@ export class TVMLanguageModel {
 }
 
 export async function init(
-  cache_contents: Record<string, ArrayBuffer>,
+  cacheEntries: CacheEntries,
   config?: TVMLanguageModelConfig
 ): Promise<TVMLanguageModel> {
-  const rt = await init_tvm_runtime(cache_contents);
+  const rt = await init_tvm_runtime(cacheEntries);
   const rv = new TVMLanguageModel(rt, config);
   return rv;
 }

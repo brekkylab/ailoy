@@ -1,4 +1,4 @@
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 pub use tvm::EmbeddingModelInferencer;
 #[cfg(any(target_family = "unix", target_family = "windows"))]
@@ -133,6 +133,7 @@ pub fn claim_files(
 mod tvm {
     use std::path::PathBuf;
 
+    use anyhow::anyhow;
     use tvm_ffi::{
         AnyView, Array, DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, Function, Module, Shape,
     };
@@ -353,29 +354,43 @@ mod tvm {
                 };
 
                 let runtime_filename = format!("rt.{}", get_lib_extension());
-                let runtime_path =
-                    if let Some((entry, _)) = contents.remove_with_filename(&runtime_filename) {
-                        entry.path()
+                let runtime_path = if let Some((entry, source)) =
+                    contents.remove_with_filename(&runtime_filename)
+                {
+                    // For native, prefer using the lazy path directly to avoid loading into memory
+                    if let Some(path) = source.as_path() {
+                        path.to_path_buf()
                     } else {
-                        anyhow::bail!("{} does not exist", runtime_filename)
-                    };
+                        // Fallback: if it's eager, use the entry path
+                        contents.root.join(entry.path())
+                    }
+                } else {
+                    anyhow::bail!("{} does not exist", runtime_filename)
+                };
 
-                let tensor_cache_path = if let Some((entry, _)) =
+                let tensor_cache_path = if let Some((entry, source)) =
                     contents.remove_with_filename("tensor-cache.json")
                 {
-                    entry.path()
-                } else if let Some((entry, _)) = contents.remove_with_filename("ndarray-cache.json")
+                    if let Some(path) = source.as_path() {
+                        path.to_path_buf()
+                    } else {
+                        contents.root.join(entry.path())
+                    }
+                } else if let Some((entry, source)) =
+                    contents.remove_with_filename("ndarray-cache.json")
                 {
-                    entry.path()
+                    if let Some(path) = source.as_path() {
+                        path.to_path_buf()
+                    } else {
+                        contents.root.join(entry.path())
+                    }
                 } else {
                     anyhow::bail!("tensor cache json does not exist")
                 };
 
-                let inferencer = EmbeddingModelInferencer::new(
-                    &contents.root.join(runtime_path),
-                    &contents.root.join(tensor_cache_path),
-                    device,
-                )?;
+                // TensorCache::from() already loads params incrementally from disk
+                let inferencer =
+                    EmbeddingModelInferencer::new(&runtime_path, &tensor_cache_path, device)?;
 
                 Ok(inferencer)
             })
@@ -765,9 +780,7 @@ mod tvm {
         }
 
         pub fn clear(&mut self) -> anyhow::Result<()> {
-            self.kv_cache
-                .clear()
-                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            self.kv_cache.clear().map_err(|e| anyhow!("{e:?}"))?;
             self.history.clear();
             Ok(())
         }
@@ -794,7 +807,7 @@ mod tvm {
             if lcp_index < self.history.len() {
                 self.kv_cache
                     .popn((self.history.len() - lcp_index) as i64)
-                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                    .map_err(|e| anyhow!("{e:?}"))?;
             }
 
             // Tokens to be added (without common prefixes)
@@ -821,17 +834,15 @@ mod tvm {
 
                 self.kv_cache
                     .begin_forward(length as i64)
-                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                    .map_err(|e| anyhow!("{e:?}"))?;
                 self.fprefill
                     .call_packed(&[
                         AnyView::from(&embedding),
                         AnyView::from(self.kv_cache.get_state()),
                         AnyView::from(&self.params),
                     ])
-                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-                self.kv_cache
-                    .end_forward()
-                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                    .map_err(|e| anyhow!("{e:?}"))?;
+                self.kv_cache.end_forward().map_err(|e| anyhow!("{e:?}"))?;
             }
 
             // Update history
@@ -918,27 +929,44 @@ mod tvm {
                 };
 
                 let runtime_filename = format!("rt.{}", get_lib_extension());
-                let runtime_path =
-                    if let Some((entry, _)) = contents.remove_with_filename(&runtime_filename) {
-                        entry.path()
+                let runtime_path = if let Some((entry, source)) =
+                    contents.remove_with_filename(&runtime_filename)
+                {
+                    // For native, prefer using the lazy path directly to avoid loading into memory
+                    if let Some(path) = source.as_path() {
+                        path.to_path_buf()
                     } else {
-                        anyhow::bail!("{} does not exist", runtime_filename)
-                    };
+                        // Fallback: if it's eager, use the entry path
+                        contents.root.join(entry.path())
+                    }
+                } else {
+                    anyhow::bail!("{} does not exist", runtime_filename)
+                };
 
-                let tensor_cache_path = if let Some((entry, _)) =
+                let tensor_cache_path = if let Some((entry, source)) =
                     contents.remove_with_filename("tensor-cache.json")
                 {
-                    entry.path()
-                } else if let Some((entry, _)) = contents.remove_with_filename("ndarray-cache.json")
+                    if let Some(path) = source.as_path() {
+                        path.to_path_buf()
+                    } else {
+                        contents.root.join(entry.path())
+                    }
+                } else if let Some((entry, source)) =
+                    contents.remove_with_filename("ndarray-cache.json")
                 {
-                    entry.path()
+                    if let Some(path) = source.as_path() {
+                        path.to_path_buf()
+                    } else {
+                        contents.root.join(entry.path())
+                    }
                 } else {
                     anyhow::bail!("tensor cache json does not exist")
                 };
 
+                // TensorCache::from() already loads params incrementally from disk
                 let inferencer = LanguageModelInferencer::new(
-                    &contents.root.join(runtime_path),
-                    &contents.root.join(tensor_cache_path),
+                    &runtime_path,
+                    &tensor_cache_path,
                     device,
                     kv_cache_config,
                 )?;
@@ -968,6 +996,41 @@ mod tvmjs_runtime {
         model::KvCacheConfig,
         utils::{BoxFuture, float16},
     };
+
+    fn prepare_cache_entries<'a>(
+        contents: &'a mut CacheContents,
+    ) -> Result<js_sys::Object, js_sys::Error> {
+        // Build CacheEntries object with file entries, including full path and optional eager data
+        let cache_entries = Object::new();
+        let root = contents.root.clone();
+        for (entry, source) in contents.drain() {
+            let entry_obj = Object::new();
+            let full_path = root.join(entry.path());
+            Reflect::set(
+                &entry_obj,
+                &JsValue::from_str("fullPath"),
+                &JsValue::from_str(&full_path.to_string_lossy()),
+            )?;
+
+            // If file is eager (small), pass bytes directly
+            if let Some(bytes) = source.as_eager() {
+                let u8arr = Uint8Array::new_with_length(bytes.len() as u32);
+                u8arr.copy_from(bytes);
+                Reflect::set(
+                    &entry_obj,
+                    &JsValue::from_str("eagerData"),
+                    &u8arr.buffer().into(),
+                )?;
+            }
+
+            Reflect::set(
+                &cache_entries,
+                &JsValue::from_str(entry.filename()),
+                &entry_obj,
+            )?;
+        }
+        Ok(cache_entries)
+    }
 
     pub struct LanguageModelInferencer {
         inner: JSTVMLanguageModel,
@@ -1011,17 +1074,10 @@ mod tvmjs_runtime {
             ctx: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
-                let cache_contents = {
-                    let obj = Object::new();
-                    for (entry, buf) in contents.drain() {
-                        let filename = entry.filename();
-                        let u8arr = Uint8Array::new_with_length(buf.len() as u32);
-                        u8arr.copy_from(&buf[..]);
-                        Reflect::set(&obj, &JsValue::from_str(filename), &u8arr.buffer().into())
-                            .unwrap();
-                    }
-                    obj
-                };
+                let cache_entries = prepare_cache_entries(contents)
+                    .map_err(|e| anyhow!("Failed to prepare cache entries: {:?}", e))?;
+
+                // Build model config object with kv cache settings
                 let config = {
                     let config = Object::new();
                     if let Some(kv_cache) = ctx.get("kv_cache") {
@@ -1033,7 +1089,7 @@ mod tvmjs_runtime {
                     config
                 };
 
-                let prom = init_tvm_language_model_js(&cache_contents, Some(config));
+                let prom = init_tvm_language_model_js(&cache_entries, Some(config));
                 let js_lm = match JsFuture::from(prom).await {
                     Ok(out) => {
                         let lm: JSTVMLanguageModel = out
@@ -1099,19 +1155,10 @@ mod tvmjs_runtime {
             _: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
-                let cache_contents = {
-                    let obj = Object::new();
-                    for (entry, buf) in contents.drain() {
-                        let filename = entry.filename();
-                        let u8arr = Uint8Array::new_with_length(buf.len() as u32);
-                        u8arr.copy_from(&buf[..]);
-                        Reflect::set(&obj, &JsValue::from_str(filename), &u8arr.buffer().into())
-                            .unwrap();
-                    }
-                    obj
-                };
+                let cache_entries = prepare_cache_entries(contents)
+                    .map_err(|e| anyhow!("Failed to prepare cache entries: {:?}", e))?;
 
-                let prom = init_tvm_embedding_model_js(&cache_contents);
+                let prom = init_tvm_embedding_model_js(&cache_entries);
                 let js_em: JSTVMEmbeddingModel = match JsFuture::from(prom).await {
                     Ok(out) => {
                         let em: JSTVMEmbeddingModel = out
