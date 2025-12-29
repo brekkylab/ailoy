@@ -108,21 +108,27 @@ fn main() {
     #[cfg(target_os = "macos")]
     {
         if faiss_dylib_path.exists() {
-            let _ = std::process::Command::new("install_name_tool")
+            if let Err(e) = std::process::Command::new("install_name_tool")
                 .arg("-id")
                 .arg(&faiss_dylib_path)
                 .arg(&faiss_dylib_path)
-                .status();
+                .status()
+            {
+                println!("cargo:warning=Failed to patch libfaiss.dylib: {:?}", e);
+            }
         }
     }
     #[cfg(target_os = "linux")]
     {
         if faiss_dylib_path.exists() {
-            let _ = std::process::Command::new("patchelf")
+            if let Err(e) = std::process::Command::new("patchelf")
                 .arg("--set-soname")
                 .arg(&faiss_dylib_path)
                 .arg(&faiss_dylib_path)
-                .status();
+                .status()
+            {
+                println!("cargo:warning=Failed to patch libfaiss.so: {:?}", e);
+            }
         }
     }
     #[cfg(target_os = "windows")]
@@ -130,7 +136,9 @@ fn main() {
         if faiss_dylib_path.exists() {
             let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
             // Copy to OUT_DIR
-            let _ = std::fs::copy(&faiss_dylib_path, out_dir.join("faiss.dll"));
+            if let Err(e) = std::fs::copy(&faiss_dylib_path, out_dir.join("faiss.dll")) {
+                println!("cargo:warning=Failed to copy faiss.dll to OUT_DIR: {:?}", e);
+            }
 
             // Try to copy to the target/profile directory and deps folder
             let target_dir = out_dir.clone();
@@ -148,8 +156,16 @@ fn main() {
                     path.push(c);
                 }
                 // path is now target/debug
-                let _ = std::fs::copy(&faiss_dylib_path, path.join("faiss.dll"));
-                let _ = std::fs::copy(&faiss_dylib_path, path.join("deps").join("faiss.dll"));
+                if let Err(e) = std::fs::copy(&faiss_dylib_path, path.join("faiss.dll")) {
+                    println!("cargo:warning=Failed to copy faiss.dll to target build directory");
+                }
+                if let Err(e) =
+                    std::fs::copy(&faiss_dylib_path, path.join("deps").join("faiss.dll"))
+                {
+                    println!(
+                        "cargo:warning=Failed to copy faiss.dll to `deps` under target build directory"
+                    );
+                }
             }
         }
     }

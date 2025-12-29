@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 pub use tvm::EmbeddingModelInferencer;
 #[cfg(any(target_family = "unix", target_family = "windows"))]
@@ -172,17 +172,22 @@ mod tvm {
     unsafe impl crate::utils::MaybeSend for EmbeddingModelInferencer {}
 
     impl EmbeddingModelInferencer {
-        pub fn new(runtime_path: &PathBuf, tensor_cache_path: &PathBuf, device: DLDevice) -> Self {
-            let exec = Module::load_from_file(runtime_path.to_string_lossy()).unwrap();
+        pub fn new(
+            runtime_path: &PathBuf,
+            tensor_cache_path: &PathBuf,
+            device: DLDevice,
+        ) -> anyhow::Result<Self> {
+            let exec = Module::load_from_file(runtime_path.to_string_lossy())
+                .map_err(|e| anyhow!("Failed to load TVM module: {:?}", e))?;
             let vm: Module = exec
                 .get_function("vm_load_executable")
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to get `vm_load_executable` function: {:?}", e))?
                 .call_tuple(())
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to call `vm_load_executable`: {:?}", e))?
                 .try_into()
-                .unwrap();
+                .map_err(|e| anyhow!("Failed to convert to Module: {:?}", e))?;
             vm.get_function("vm_initialization")
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to get `vm_initialization` function: {:?}", e))?
                 .call_tuple((
                     device.device_type as i32,            // device_type
                     device.device_id as i32,              // device_id
@@ -191,36 +196,45 @@ mod tvm {
                     0i32,                                 // host_device_id
                     2i32,                                 // host_vm_allocator_type
                 ))
-                .unwrap();
+                .map_err(|e| anyhow!("Failed to call `vm_initialization`: {:?}", e))?;
 
             let metadata: tvm_ffi::String = vm
                 .get_function("_metadata")
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to get `_metadata` function: {:?}", e))?
                 .call_tuple(())
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to call `_metadata`: {:?}", e))?
                 .try_into()
-                .unwrap();
-            let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+                .map_err(|e| anyhow!("Failed to convert to String: {:?}", e))?;
+            let metadata: serde_json::Value = serde_json::from_str(&metadata)
+                .map_err(|e| anyhow!("Failed to parse metadata json: {:?}", e))?;
 
-            let tensor_cache = TensorCache::from(tensor_cache_path, device).unwrap();
+            let tensor_cache = TensorCache::from(tensor_cache_path, device)
+                .map_err(|e| anyhow!("Failed to initialize tensor cache: {:?}", e))?;
             let param_names = metadata
                 .get("params")
-                .unwrap()
+                .ok_or(anyhow!("Failed to get `params` attribute"))?
                 .as_array()
-                .unwrap()
+                .ok_or(anyhow!("Failed to convert `params` to array"))?
                 .iter()
-                .map(|v| v.get("name").unwrap().as_str().unwrap())
-                .collect::<Vec<_>>();
+                .map(|v| {
+                    v.get("name")
+                        .ok_or(anyhow!("Failed to get `name` attribute"))?
+                        .as_str()
+                        .ok_or(anyhow!("Failed to convert `name` to str"))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
             let params = tensor_cache.get_params(param_names);
 
-            let fprefill = vm.get_function("prefill").unwrap();
+            let fprefill = vm
+                .get_function("prefill")
+                .map_err(|e| anyhow!("Failed to get `prefill` function: {:?}", e))?;
 
-            Self {
+            Ok(Self {
                 device,
                 vm,
                 params,
                 fprefill,
-            }
+            })
         }
 
         pub fn infer(&mut self, tokens: &[u32]) -> anyhow::Result<Vec<f32>> {
@@ -229,21 +243,29 @@ mod tvm {
                 bits: 32,
                 lanes: 1,
             };
+
             let mut input = Tensor::empty(&[1, tokens.len() as i64], dtype_i32, self.device);
-            let mut mask = Tensor::empty(&[1, tokens.len() as i64], dtype_i32, self.device);
+            let tokens_i32: Vec<i32> = tokens.to_vec().into_iter().map(|v| v as i32).collect();
+            // SAFETY: `input` has the same amount of buffer with tokens
             unsafe {
-                let tokens_i32: Vec<i32> = tokens.to_vec().into_iter().map(|v| v as i32).collect();
                 let tokens_slice = std::slice::from_raw_parts(
                     tokens_i32.as_ptr() as *const u8,
                     tokens.len() * std::mem::size_of::<i32>(),
                 );
-                input.copy_from_slice(tokens_slice).unwrap();
+                input
+                    .copy_from_slice(tokens_slice)
+                    .map_err(|e| anyhow!("Failed to copy tokens from host to device: {:?}", e))?;
+            }
 
+            let mut mask = Tensor::empty(&[1, tokens.len() as i64], dtype_i32, self.device);
+            // SAFETY: `mask` has the same amount of buffer with tokens
+            unsafe {
                 let mask_i32 = std::slice::from_raw_parts(
                     vec![1i32; tokens.len()].as_ptr() as *const u8,
                     tokens.len() * std::mem::size_of::<i32>(),
                 );
-                mask.copy_from_slice(mask_i32).unwrap();
+                mask.copy_from_slice(mask_i32)
+                    .map_err(|e| anyhow!("Failed to copy mask from host to device: {:?}", e))?;
             }
 
             let logits: Tensor = self
@@ -253,9 +275,9 @@ mod tvm {
                     AnyView::from(&mask),
                     AnyView::from(&self.params),
                 ])
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to call `prefill`: {:?}", e))?
                 .try_into()
-                .unwrap();
+                .map_err(|e| anyhow!("Failed to convert to Tensor: {:?}", e))?;
 
             let mut logits_cpu = Tensor::empty_like(
                 &logits,
@@ -264,10 +286,16 @@ mod tvm {
                     device_id: 0,
                 },
             );
-            logits_cpu.copy_from(&logits).unwrap();
+            logits_cpu
+                .copy_from(&logits)
+                .map_err(|e| anyhow!("Failed to copy from device to host: {:?}", e))?;
 
             // Copy the dense vector only
-            let last_dim = logits_cpu.shape().last().unwrap().clone() as usize;
+            let last_dim = logits_cpu
+                .shape()
+                .last()
+                .ok_or(anyhow!("last dim should be exist"))?
+                .clone() as usize;
             let dense_vec = if logits_cpu.dtype().bits == 16 {
                 // Copy FP16
                 let mut buffer_u16: Vec<u16> = vec![0u16; last_dim];
@@ -347,7 +375,7 @@ mod tvm {
                     &contents.root.join(runtime_path),
                     &contents.root.join(tensor_cache_path),
                     device,
-                );
+                )?;
 
                 Ok(inferencer)
             })
@@ -380,42 +408,49 @@ mod tvm {
             context_window_size: Option<i64>,
             prefill_chunk_size: Option<i64>,
             sliding_window_size: Option<i64>,
-        ) -> Self {
+        ) -> anyhow::Result<Self> {
             let metadata_str: tvm_ffi::String = vm
                 .get_function("_metadata")
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to get `_metadata` function: {:?}", e))?
                 .call_tuple(())
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to call `_metadata`: {:?}", e))?
                 .try_into()
-                .unwrap();
-            let metadata: serde_json::Value = serde_json::from_str(&metadata_str).unwrap();
+                .map_err(|e| anyhow!("Failed to convert to String: {:?}", e))?;
+            let metadata: serde_json::Value = serde_json::from_str(&metadata_str)
+                .map_err(|e| anyhow!("Failed to parse metadata json: {:?}", e))?;
 
             let context_window_size = context_window_size.unwrap_or(
                 metadata
                     .get("context_window_size")
-                    .unwrap()
+                    .ok_or(anyhow!("Failed to get `context_window_size` attribute"))?
                     .as_i64()
-                    .unwrap(),
+                    .ok_or(anyhow!("Failed to convert `context_window_size` to i64"))?,
             );
             let prefill_chunk_size = prefill_chunk_size.unwrap_or(
                 metadata
                     .get("prefill_chunk_size")
-                    .unwrap()
+                    .ok_or(anyhow!("Failed to get `prefill_chunk_size` attribute"))?
                     .as_i64()
-                    .unwrap(),
+                    .ok_or(anyhow!("Failed to convert `prefill_chunk_size` to i64"))?,
             );
             let sliding_window_size = sliding_window_size.unwrap_or(
                 metadata
                     .get("sliding_window_size")
-                    .unwrap()
+                    .ok_or(anyhow!("Failed to get `sliding_window_size` attribute"))?
                     .as_i64()
-                    .unwrap(),
+                    .ok_or(anyhow!("Failed to convert `sliding_window_size` to i64"))?,
             );
 
+            // TVM uses a fixed page size of 16 for KV cache management
             const PAGE_SIZE: i64 = 16;
             let state = vm
                 .get_function("create_tir_paged_kv_cache")
-                .unwrap()
+                .map_err(|e| {
+                    anyhow!(
+                        "Failed to get `create_tir_paged_kv_cache` function: {:?}",
+                        e
+                    )
+                })?
                 .call_tuple((
                     Shape::from([1]),                                  // max_batch_size
                     Shape::from([context_window_size]),                // max_total_seq_len
@@ -423,26 +458,60 @@ mod tvm {
                     Shape::from([PAGE_SIZE]),                          // page_size
                     Shape::from([(sliding_window_size != -1) as i64]), // support_sliding_window
                 ))
-                .unwrap();
+                .map_err(|e| anyhow!("Failed to call `create_tir_paged_kv_cache`: {:?}", e))?;
 
-            let fkv_state_clear = Function::get_global("vm.builtin.kv_state_clear").unwrap();
-            let fkv_state_add_sequence =
-                Function::get_global("vm.builtin.kv_state_add_sequence").unwrap();
+            let fkv_state_clear =
+                Function::get_global("vm.builtin.kv_state_clear").map_err(|e| {
+                    anyhow!(
+                        "Failed to get global function `vm.builtin.kv_state_clear`: {:?}",
+                        e
+                    )
+                })?;
+            let fkv_state_add_sequence = Function::get_global("vm.builtin.kv_state_add_sequence")
+                .map_err(|e| {
+                anyhow!(
+                    "Failed to get global function `vm.builtin.kv_state_add_sequence`: {:?}",
+                    e
+                )
+            })?;
             let fkv_state_remove_sequence =
-                Function::get_global("vm.builtin.kv_state_remove_sequence").unwrap();
-            let fkv_state_fork_sequence =
-                Function::get_global("vm.builtin.kv_state_fork_sequence").unwrap();
-            let fkv_state_begin_forward =
-                Function::get_global("vm.builtin.kv_state_begin_forward").unwrap();
-            let fkv_state_end_forward =
-                Function::get_global("vm.builtin.kv_state_end_forward").unwrap();
-            let fkv_state_popn = Function::get_global("vm.builtin.kv_state_popn").unwrap();
-            let fkv_cache_get_num_available_pages =
-                Function::get_global("vm.builtin.attention_kv_cache_get_num_available_pages")
-                    .unwrap();
-            let fkv_cache_get_total_sequence_length =
-                Function::get_global("vm.builtin.attention_kv_cache_get_total_sequence_length")
-                    .unwrap();
+                Function::get_global("vm.builtin.kv_state_remove_sequence").map_err(|e| {
+                    anyhow!(
+                        "Failed to get global function `vm.builtin.kv_state_remove_sequence`: {:?}",
+                        e
+                    )
+                })?;
+            let fkv_state_fork_sequence = Function::get_global("vm.builtin.kv_state_fork_sequence")
+                .map_err(|e| {
+                    anyhow!(
+                        "Failed to get global function `vm.builtin.kv_state_fork_sequence`: {:?}",
+                        e
+                    )
+                })?;
+            let fkv_state_begin_forward = Function::get_global("vm.builtin.kv_state_begin_forward")
+                .map_err(|e| {
+                    anyhow!(
+                        "Failed to get global function `vm.builtin.kv_state_begin_forward`: {:?}",
+                        e
+                    )
+                })?;
+            let fkv_state_end_forward = Function::get_global("vm.builtin.kv_state_end_forward")
+                .map_err(|e| {
+                    anyhow!(
+                        "Failed to get global function `vm.builtin.kv_state_end_forward`: {:?}",
+                        e
+                    )
+                })?;
+            let fkv_state_popn = Function::get_global("vm.builtin.kv_state_popn").map_err(|e| {
+                anyhow!(
+                    "Failed to get global function `vm.builtin.kv_state_popn`: {:?}",
+                    e
+                )
+            })?;
+            let fkv_cache_get_num_available_pages = Function::get_global("vm.builtin.attention_kv_cache_get_num_available_pages")
+                .map_err(|e| anyhow!("Failed to get global function `vm.builtin.attention_kv_cache_get_num_available_pages`: {:?}", e))?;
+            let fkv_cache_get_total_sequence_length = Function::get_global("vm.builtin.attention_kv_cache_get_total_sequence_length")
+                .map_err(|e| anyhow!("Failed to get global function `vm.builtin.attention_kv_cache_get_total_sequence_length`: {:?}", e))?;
 
             let mut self_ = Self {
                 state,
@@ -460,8 +529,10 @@ mod tvm {
                 fkv_cache_get_num_available_pages,
                 fkv_cache_get_total_sequence_length,
             };
-            self_.clear().unwrap();
             self_
+                .clear()
+                .map_err(|e| anyhow!("Failed to clear KV cache: {:?}", e))?;
+            Ok(self_)
         }
 
         pub fn get_state(&self) -> &tvm_ffi::Any {
@@ -469,22 +540,18 @@ mod tvm {
         }
 
         pub fn add_sequence(&mut self) -> tvm_ffi::Result<()> {
-            self.fkv_state_add_sequence
-                .call_packed(&[
-                    AnyView::from(&self.state),
-                    AnyView::from(&0), // sequence id
-                ])
-                .unwrap();
+            self.fkv_state_add_sequence.call_packed(&[
+                AnyView::from(&self.state),
+                AnyView::from(&0), // sequence id
+            ])?;
             Ok(())
         }
 
         pub fn remove_sequence(&mut self) -> tvm_ffi::Result<()> {
-            self.fkv_state_remove_sequence
-                .call_packed(&[
-                    AnyView::from(&self.state),
-                    AnyView::from(&0), // sequence id
-                ])
-                .unwrap();
+            self.fkv_state_remove_sequence.call_packed(&[
+                AnyView::from(&self.state),
+                AnyView::from(&0), // sequence id
+            ])?;
             Ok(())
         }
 
@@ -503,43 +570,43 @@ mod tvm {
 
         pub fn clear(&mut self) -> tvm_ffi::Result<()> {
             self.fkv_state_clear
-                .call_packed(&[AnyView::from(&self.state)])
-                .unwrap();
-            self.add_sequence().unwrap();
+                .call_packed(&[AnyView::from(&self.state)])?;
+            self.add_sequence()?;
             Ok(())
         }
 
         pub fn popn(&mut self, num_tokens: i64) -> tvm_ffi::Result<()> {
-            self.fkv_state_popn
-                .call_packed(&[
-                    AnyView::from(&self.state),
-                    AnyView::from(&0), // sequence id
-                    AnyView::from(&num_tokens),
-                ])
-                .unwrap();
+            self.fkv_state_popn.call_packed(&[
+                AnyView::from(&self.state),
+                AnyView::from(&0), // sequence id
+                AnyView::from(&num_tokens),
+            ])?;
             Ok(())
         }
 
-        pub fn get_num_available_pages(&self) -> i64 {
+        pub fn get_num_available_pages(&self) -> anyhow::Result<i64> {
             let res = self
                 .fkv_cache_get_num_available_pages
                 .call_packed(&[AnyView::from(&self.state)])
-                .unwrap();
-            res.try_into().unwrap()
+                .map_err(|e| anyhow!("Failed to get num available pages: {:?}", e))?;
+            res.try_into()
+                .map_err(|e| anyhow!("Failed to convert to i64: {:?}", e))
         }
 
-        pub fn get_total_sequence_length(&self) -> i64 {
+        pub fn get_total_sequence_length(&self) -> anyhow::Result<i64> {
             let res = self
                 .fkv_cache_get_total_sequence_length
                 .call_packed(&[AnyView::from(&self.state)])
-                .unwrap();
-            res.try_into().unwrap()
+                .map_err(|e| anyhow!("Failed to get total sequence length: {:?}", e))?;
+            res.try_into()
+                .map_err(|e| anyhow!("Failed to convert to i64: {:?}", e))
         }
     }
 
     impl Drop for KVCache {
         fn drop(&mut self) {
-            self.remove_sequence().unwrap();
+            // Best-effort cleanup - ignore errors during drop
+            let _ = self.remove_sequence();
         }
     }
 
@@ -572,17 +639,18 @@ mod tvm {
             tensor_cache_path: &PathBuf,
             device: DLDevice,
             kv_cache_config: KvCacheConfig,
-        ) -> Self {
-            let exec = Module::load_from_file(runtime_path.to_string_lossy()).unwrap();
+        ) -> anyhow::Result<Self> {
+            let exec = Module::load_from_file(runtime_path.to_string_lossy())
+                .map_err(|e| anyhow!("Failed to load TVM module: {:?}", e))?;
             let vm: Module = exec
                 .get_function("vm_load_executable")
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to get `vm_load_executable` function: {:?}", e))?
                 .call_tuple(())
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to call `vm_load_executable`: {:?}", e))?
                 .try_into()
-                .unwrap();
+                .map_err(|e| anyhow!("Failed to convert to Module: {:?}", e))?;
             vm.get_function("vm_initialization")
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to get `vm_initialization` function: {:?}", e))?
                 .call_tuple((
                     device.device_type as i32,            // device_type
                     device.device_id as i32,              // device_id
@@ -591,26 +659,33 @@ mod tvm {
                     0i32,                                 // host_device_id
                     2i32,                                 // host_vm_allocator_type
                 ))
-                .unwrap();
+                .map_err(|e| anyhow!("Failed to call `vm_initialization`: {:?}", e))?;
 
             let metadata: tvm_ffi::String = vm
                 .get_function("_metadata")
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to get `_metadata` function: {:?}", e))?
                 .call_tuple(())
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to call `_metadata`: {:?}", e))?
                 .try_into()
-                .unwrap();
-            let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+                .map_err(|e| anyhow!("Failed to convert to String: {:?}", e))?;
+            let metadata: serde_json::Value = serde_json::from_str(&metadata)
+                .map_err(|e| anyhow!("Failed to parse metadata json: {:?}", e))?;
 
-            let tensor_cache = TensorCache::from(tensor_cache_path, device).unwrap();
+            let tensor_cache = TensorCache::from(tensor_cache_path, device)
+                .map_err(|e| anyhow!("Failed to initialize tensor cache: {:?}", e))?;
             let param_names = metadata
                 .get("params")
-                .unwrap()
+                .ok_or(anyhow!("Failed to get `params` attribute"))?
                 .as_array()
-                .unwrap()
+                .ok_or(anyhow!("Failed to convert `params` to array"))?
                 .iter()
-                .map(|v| v.get("name").unwrap().as_str().unwrap())
-                .collect::<Vec<_>>();
+                .map(|v| {
+                    v.get("name")
+                        .ok_or(anyhow!("Failed to get `name` attribute"))?
+                        .as_str()
+                        .ok_or(anyhow!("Failed to convert `name` to str"))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
             let params = tensor_cache.get_params(param_names);
 
             let kv_cache = KVCache::new(
@@ -618,16 +693,29 @@ mod tvm {
                 kv_cache_config.context_window_size.map(|v| v as i64),
                 None,
                 None,
-            );
+            )?;
 
-            let fembed = vm.get_function("embed").unwrap();
-            let fprefill = vm.get_function("prefill").unwrap();
-            let fdecode = vm.get_function("decode").unwrap();
-            let fapply_bitmask_inplace = vm.get_function("apply_bitmask_inplace").unwrap();
+            let fembed = vm
+                .get_function("embed")
+                .map_err(|e| anyhow!("Failed to get `embed` function: {:?}", e))?;
+            let fprefill = vm
+                .get_function("prefill")
+                .map_err(|e| anyhow!("Failed to get `prefill` function: {:?}", e))?;
+            let fdecode = vm
+                .get_function("decode")
+                .map_err(|e| anyhow!("Failed to get `decode` function: {:?}", e))?;
+            let fapply_bitmask_inplace = vm
+                .get_function("apply_bitmask_inplace")
+                .map_err(|e| anyhow!("Failed to get `apply_bitmask_inplace` function: {:?}", e))?;
             let fsample_top_p_from_logits =
-                Function::get_global("vm.builtin.sample_top_p_from_logits").unwrap();
+                Function::get_global("vm.builtin.sample_top_p_from_logits").map_err(|e| {
+                    anyhow!(
+                        "Failed to get global function `vm.builtin.sample_top_p_from_logits`: {:?}",
+                        e
+                    )
+                })?;
 
-            Self {
+            Ok(Self {
                 device,
                 vm,
                 params,
@@ -639,7 +727,7 @@ mod tvm {
                 fdecode,
                 fapply_bitmask_inplace,
                 fsample_top_p_from_logits,
-            }
+            })
         }
 
         pub fn embed(&self, tokens: &[i32]) -> anyhow::Result<Tensor> {
@@ -652,23 +740,26 @@ mod tvm {
                 },
                 self.device,
             );
+            // SAFETY: `input` has the same amount of buffer with tokens
             unsafe {
                 let tokens_slice = std::slice::from_raw_parts(
                     tokens.as_ptr() as *const u8,
                     tokens.len() * std::mem::size_of::<i32>(),
                 );
-                input.copy_from_slice(tokens_slice).unwrap();
+                input
+                    .copy_from_slice(tokens_slice)
+                    .map_err(|e| anyhow!("Failed to copy tokens from host to device: {:?}", e))?;
             }
 
             let embedding: Tensor = self
                 .fembed
                 .call_packed(&[AnyView::from(&input), AnyView::from(&self.params)])
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to call `embed`: {:?}", e))?
                 .try_into()
-                .unwrap();
+                .map_err(|e| anyhow!("Failed to convert to Tensor: {:?}", e))?;
             let embedding_reshaped = embedding
                 .reshape(&[1, embedding.shape()[0], embedding.shape()[1]])
-                .unwrap();
+                .map_err(|e| anyhow!("Failed to reshape embedding: {:?}", e))?;
 
             Ok(embedding_reshaped.into())
         }
@@ -687,7 +778,7 @@ mod tvm {
             }
 
             // Make sure that kv-cache and history is sync
-            if self.kv_cache.get_total_sequence_length() != self.history.len() as i64 {
+            if self.kv_cache.get_total_sequence_length()? != self.history.len() as i64 {
                 self.clear()?;
             }
 
@@ -716,7 +807,7 @@ mod tvm {
 
             // Calculate remaining space in KV cache
             if new_tokens.len() as i64
-                >= self.kv_cache.get_num_available_pages() * self.kv_cache.page_size
+                >= self.kv_cache.get_num_available_pages()? * self.kv_cache.page_size
             {
                 anyhow::bail!("Context length limit exceed");
             }
@@ -750,9 +841,11 @@ mod tvm {
         }
 
         pub fn decode(&mut self, last_token: u32) -> anyhow::Result<Tensor> {
-            let embedding = self.embed(&[last_token as i32]).unwrap();
+            let embedding = self.embed(&[last_token as i32])?;
 
-            self.kv_cache.begin_forward(1).unwrap();
+            self.kv_cache
+                .begin_forward(1)
+                .map_err(|e| anyhow!("Failed to begin forward: {:?}", e))?;
             let output = self
                 .fdecode
                 .call_packed(&[
@@ -760,12 +853,16 @@ mod tvm {
                     AnyView::from(self.kv_cache.get_state()),
                     AnyView::from(&self.params),
                 ])
-                .unwrap();
-            self.kv_cache.end_forward().unwrap();
+                .map_err(|e| anyhow!("Failed to call `decode`: {:?}", e))?;
+            self.kv_cache
+                .end_forward()
+                .map_err(|e| anyhow!("Failed to end forward: {:?}", e))?;
 
             // The output of decode is an Array of 2 items: logits(Tensor) and kv cache.
-            let logits =
-                unsafe { tvm_ffi::collections::array::get_from_any_array(output, 0).unwrap() };
+            let logits = unsafe {
+                tvm_ffi::collections::array::get_from_any_array(output, 0)
+                    .map_err(|e| anyhow!("Failed to get logits from output array: {:?}", e))?
+            };
 
             Ok(logits)
         }
@@ -780,9 +877,9 @@ mod tvm {
             let sampled_token: i32 = self
                 .fsample_top_p_from_logits
                 .call_tuple((logits, &temperature, &top_p, &uniform_dist_threshold))
-                .unwrap()
+                .map_err(|e| anyhow!("Failed to call `sample_top_p_from_logits`: {:?}", e))?
                 .try_into()
-                .unwrap();
+                .map_err(|e| anyhow!("Failed to convert sampled token to i32: {:?}", e))?;
             let sampled_token = sampled_token as u32;
             self.history.push(sampled_token);
             Ok(sampled_token)
@@ -814,7 +911,8 @@ mod tvm {
                 };
 
                 let kv_cache_config = if let Some(kv_cache) = ctx.get("kv_cache") {
-                    serde_json::from_value(kv_cache.clone().into()).unwrap()
+                    serde_json::from_value(kv_cache.clone().into())
+                        .map_err(|e| anyhow!("Failed to parse kv_cache config: {:?}", e))?
                 } else {
                     KvCacheConfig::default()
                 };
@@ -843,7 +941,7 @@ mod tvm {
                     &contents.root.join(tensor_cache_path),
                     device,
                     kv_cache_config,
-                );
+                )?;
 
                 Ok(inferencer)
             })
