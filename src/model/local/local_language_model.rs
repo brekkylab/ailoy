@@ -254,7 +254,7 @@ impl LocalLangModelImpl {
                 #[cfg(target_family = "wasm")]
                 self.inferencer.prefill(&input_tokens).await;
                 #[cfg(not(target_family = "wasm"))]
-                self.inferencer.prefill(&input_tokens);
+                self.inferencer.prefill(&input_tokens).unwrap();
             }
 
             let mut last_token = *input_tokens.last().unwrap();
@@ -274,11 +274,18 @@ impl LocalLangModelImpl {
                     break;
                 }
 
+                let temperature = config.temperature.unwrap_or(0.6);
+                let top_p = config.top_p.unwrap_or(0.9);
+
                 {
                     #[cfg(target_family = "wasm")]
-                    let new_token = self.inferencer.decode(last_token, config.temperature.unwrap_or(0.6), config.top_p.unwrap_or(0.9)).await;
+                    let new_token = self.inferencer.decode(last_token, temperature, top_p).await;
                     #[cfg(not(target_family = "wasm"))]
-                    let new_token = self.inferencer.decode(last_token, config.temperature.unwrap_or(0.6), config.top_p.unwrap_or(0.9));
+                    let new_token = {
+                        let logits = self.inferencer.decode(last_token).unwrap();
+                        let new_token = self.inferencer.sample(logits, temperature, top_p).unwrap();
+                        new_token
+                    };
 
                     agg_tokens.push(new_token);
                     last_token = new_token;
@@ -449,7 +456,7 @@ mod tests {
         let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), config);
         while let Some(out) = strm.next().await {
             let out = out.unwrap();
-            crate::debug!("{:?}", out);
+            println!("{:?}", out);
             delta = delta.accumulate(out.delta).unwrap();
         }
         crate::info!("{:?}", delta.finish().unwrap());

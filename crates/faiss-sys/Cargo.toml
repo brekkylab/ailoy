@@ -7,9 +7,9 @@ edition = "2024"
 anyhow = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-cxx = "1.0.189"
+cxx = "1.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
 cmake = "0.1"
-cxx-build = "1.0.189"
+cxx-build = "1.0"
 scratch = "1.0"

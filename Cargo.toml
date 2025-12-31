@@ -11,7 +11,7 @@ version = "0.2.3"
 edition = "2024"
 
 [lib]
-crate-type = ["rlib", "dylib"]
+crate-type = ["rlib", "cdylib"]
 path = "src/lib.rs"
 
 [[bin]]
@@ -81,15 +81,22 @@ url = "2.5.4"
 urlencoding = "2.1"
 version-compare = "0.2.1"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "d0edb6e77eb537837efb40c6c94ef5407b18bfa5", features = ["metal"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "d0edb6e77eb537837efb40c6c94ef5407b18bfa5", features = ["vulkan"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ailoy-faiss-sys = { path = "./crates/faiss-sys" }
-cxx = "1.0.189"
+cxx = "1.0"
 getrandom = "0.3"
 log = "0.4.27"
 parking_lot = "0.12.4"
 rmcp = { version = "0.11.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 tokenizers = { version = "0.22.2", default-features = false, features = ["onig"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+tvm-ffi = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "d0edb6e77eb537837efb40c6c94ef5407b18bfa5" }
 uuid = { version = "1.18.0", features = ["v4"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

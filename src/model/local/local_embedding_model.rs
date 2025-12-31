@@ -40,7 +40,7 @@ impl EmbeddingModelInference for LocalEmbeddingModel {
         #[cfg(target_family = "wasm")]
         let mut embedding = inferencer.infer(&input_tokens).await;
         #[cfg(not(target_family = "wasm"))]
-        let mut embedding = inferencer.infer(&input_tokens).to_vec_f32()?;
+        let mut embedding = inferencer.infer(&input_tokens)?;
 
         if self.do_normalize {
             embedding = embedding.normalized();
@@ -179,7 +179,8 @@ mod tests {
         let cache = Cache::new();
         let key = "BAAI/bge-m3";
 
-        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, None));
+        let mut model_strm =
+            Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, Some(false)));
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();
@@ -209,7 +210,8 @@ mod tests {
         let cache = Cache::new();
         let key = "BAAI/bge-m3";
 
-        let mut model_strm = Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, None));
+        let mut model_strm =
+            Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, Some(false)));
         let mut model: Option<LocalEmbeddingModel> = None;
         while let Some(progress) = model_strm.next().await {
             let mut progress = progress.unwrap();

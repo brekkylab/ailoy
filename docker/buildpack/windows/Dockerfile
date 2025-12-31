@@ -59,7 +59,7 @@ RUN $env:VCPKG_BINARY_SOURCES = 'clear;x-azblob,https://vcpkg.blob.core.windows.
 RUN $installers = @( `
         @{Exe='C:\openssl-installer.exe'; Args='/silent /verysilent /sp- /SUPPRESSMSGBOXES /DIR=C:\OpenSSL'}, `
         @{Exe='C:\vulkan-sdk.exe'; Args='--accept-licenses --default-answer --confirm-command install --root C:\VulkanSDK'}, `
-        @{Exe='C:\rustup-init.exe'; Args='-y --default-toolchain 1.90.0 --profile minimal'} `
+        @{Exe='C:\rustup-init.exe'; Args='-y --default-toolchain 1.92.0 --profile minimal'} `
     ); `
     $jobs = @(); `
     foreach ($i in $installers) { `

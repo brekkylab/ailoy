@@ -52,7 +52,7 @@ const IGNORED_LIBS_LINUX = new Set([
 ]);
 
 const IGNORED_LIBS_WINDOWS = new Set([
-  // Windows system DLLs (case-insensitive comparison will be used)
+  // Core Windows system DLLs
   "kernel32.dll",
   "user32.dll",
   "advapi32.dll",
@@ -71,6 +71,7 @@ const IGNORED_LIBS_WINDOWS = new Set([
   "winmm.dll",
   "version.dll",
   "bcrypt.dll",
+  "bcryptprimitives.dll",
   "userenv.dll",
   "netapi32.dll",
   "winspool.drv",
@@ -92,9 +93,8 @@ const IGNORED_LIBS_WINDOWS = new Set([
   "credui.dll",
   "wtsapi32.dll",
   "wldap32.dll",
-  "vcruntime140.dll",
-  "vcruntime140_1.dll",
-  "msvcp140.dll",
+
+  // Universal C Runtime (included by default on Windows 10/11)
   "ucrtbase.dll",
   "api-ms-win-crt-runtime-l1-1-0.dll",
   "api-ms-win-crt-stdio-l1-1-0.dll",
@@ -109,12 +109,23 @@ const IGNORED_LIBS_WINDOWS = new Set([
   "api-ms-win-crt-process-l1-1-0.dll",
   "api-ms-win-crt-utility-l1-1-0.dll",
   "api-ms-win-crt-multibyte-l1-1-0.dll",
+
+  // Core Windows API sets (Windows 10/11)
+  "api-ms-win-core-synch-l1-1-0.dll",
   "api-ms-win-core-synch-l1-2-0.dll",
+  "api-ms-win-core-processthreads-l1-1-0.dll",
   "api-ms-win-core-processthreads-l1-1-1.dll",
+  "api-ms-win-core-file-l1-1-0.dll",
   "api-ms-win-core-file-l1-2-0.dll",
+  "api-ms-win-core-localization-l1-1-0.dll",
   "api-ms-win-core-localization-l1-2-0.dll",
+  "api-ms-win-core-sysinfo-l1-1-0.dll",
   "api-ms-win-core-sysinfo-l1-2-0.dll",
   "api-ms-win-core-handle-l1-1-0.dll",
+  "api-ms-win-core-errorhandling-l1-1-0.dll",
+  "api-ms-win-core-memory-l1-1-0.dll",
+  "api-ms-win-core-profile-l1-1-0.dll",
+  "api-ms-win-eventing-provider-l1-1-0.dll",
 
   // Exclude vulkan
   "vulkan-1.dll",
@@ -159,11 +170,52 @@ class DylibsBundler {
     const output = execSync(`ldd "${binaryPath}"`, { encoding: "utf-8" });
     const deps = [];
 
+    // Get exact names from DT_NEEDED using patchelf
+    let needed = [];
+    try {
+      needed = execSync(`patchelf --print-needed "${binaryPath}"`, {
+        encoding: "utf-8",
+      })
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } catch (e) {
+      // Fallback or ignore if patchelf fails
+    }
+
     for (const line of output.split("\n")) {
-      const match = line.match(/\s*(.+?)\s*=>\s*(.+?)\s*\(/);
-      if (match) {
-        const [, libName, libPath] = match;
-        deps.push({ name: libName.trim(), path: libPath.trim() });
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      let libNameStr, libPath;
+
+      // Case 1: libfoo.so => /path/to/libfoo.so (0x...)
+      // Case 2: libfoo.so => not found
+      const matchRel = trimmed.match(/^(.+?)\s*=>\s*(.+?)\s*(\(|$)/);
+      if (matchRel) {
+        libNameStr = matchRel[1].trim();
+        libPath = matchRel[2].trim();
+      } else {
+        // Case 3: /path/to/libfoo.so (0x...)
+        const matchAbs = trimmed.match(/^\s*(\/.+?)\s+\(/);
+        if (matchAbs) {
+          libPath = matchAbs[1].trim();
+          libNameStr = libPath;
+        }
+      }
+
+      if (libNameStr && libPath) {
+        const libName = path.basename(libNameStr);
+        if (libPath === "not found") {
+          // Keep it as "not found"
+        }
+
+        // Find the original name in the DT_NEEDED list that corresponds to this lib
+        const originalPath =
+          needed.find((n) => n === libNameStr || n === libName || path.basename(n) === libName) ||
+          libNameStr;
+
+        deps.push({ name: libName, path: libPath, originalPath });
       }
     }
 
@@ -175,16 +227,60 @@ class DylibsBundler {
     const deps = [];
     const lines = output.split("\n").slice(1); // Skip first line (binary name)
 
+    const rpaths = this.getRpaths(binaryPath);
+    const loaderPath = path.dirname(binaryPath);
+
     for (const line of lines) {
       const match = line.trim().match(/^(.+?)\s+\(/);
       if (match) {
-        const libPath = match[1].trim();
+        let libPath = match[1].trim();
         const libName = path.basename(libPath);
-        deps.push({ name: libName, path: libPath });
+        const originalPath = libPath;
+
+        // Resolve @rpath, @loader_path, @executable_path
+        if (libPath.startsWith("@rpath/")) {
+          const suffix = libPath.substring(7);
+          for (const rpathVal of rpaths) {
+            let resolvedPath = rpathVal;
+            if (resolvedPath.startsWith("@loader_path")) {
+              resolvedPath = resolvedPath.replace("@loader_path", loaderPath);
+            }
+            const testPath = path.join(resolvedPath, suffix);
+            if (fs.existsSync(testPath)) {
+              libPath = testPath;
+              break;
+            }
+          }
+        } else if (libPath.startsWith("@loader_path/")) {
+          libPath = libPath.replace("@loader_path", loaderPath);
+        }
+
+        deps.push({ name: libName, path: libPath, originalPath });
       }
     }
 
     return deps;
+  }
+
+  getRpaths(binaryPath) {
+    try {
+      const output = execSync(`otool -l "${binaryPath}"`, { encoding: "utf-8" });
+      const rpaths = [];
+      const lines = output.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line === "cmd LC_RPATH") {
+          const pathLine = lines[i + 2].trim();
+          const match = pathLine.match(/path (.+?) \(offset \d+\)/);
+          if (match) {
+            rpaths.push(match[1]);
+          }
+        }
+      }
+      return rpaths;
+    } catch (error) {
+      return [];
+    }
   }
 
   getDependenciesWindows(binaryPath) {
@@ -215,8 +311,8 @@ class DylibsBundler {
           }
 
           // DLL names are listed one per line, indented
-          if (trimmed && trimmed.endsWith(".dll")) {
-            const dllName = trimmed;
+          if (trimmed && trimmed.toLowerCase().endsWith(".dll")) {
+            const dllName = trimmed.toLowerCase();
             const dllPath = this.findDllPath(dllName);
 
             if (dllPath) {
@@ -265,23 +361,13 @@ class DylibsBundler {
         return false;
       }
 
-      // Ignore @rpath, @loader_path, @executable_path if they don't exist
-      if (libPath.startsWith("@")) {
-        return false;
-      }
-
-      // Ignore libailoy.dylib
+      // Ignore libailoy.dylib if it's the one we are currently processing or it's a known artifact
       if (libName === "libailoy.dylib") {
         return false;
       }
     } else if (this.isWindows) {
       const lowerName = libName.toLowerCase();
       if (IGNORED_LIBS_WINDOWS.has(lowerName)) {
-        return false;
-      }
-
-      const lowerPath = libPath.toLowerCase();
-      if (lowerPath.includes("\\windows\\") || lowerPath.includes("\\winsxs\\") || lowerPath.includes("\\system32\\") || lowerPath.includes("\\syswow64\\")) {
         return false;
       }
     }
@@ -294,8 +380,9 @@ class DylibsBundler {
     return true;
   }
 
-  copyLibrary(oldPath, oldName) {
+  copyLibrary(oldPath, name) {
     try {
+      const oldName = path.basename(name);
       const data = fs.readFileSync(oldPath);
       const hash = crypto
         .createHash("sha256")
@@ -343,7 +430,7 @@ class DylibsBundler {
     const deps = this.getDependencies(binaryPath);
     const toBundle = [];
 
-    for (const { name, path: libPath } of deps) {
+    for (const { name, path: libPath, originalPath } of deps) {
       if (!this.shouldBundle(name, libPath)) {
         continue;
       }
@@ -362,7 +449,7 @@ class DylibsBundler {
       }
 
       this.processedLibs.add(name);
-      toBundle.push({ name, path: actualPath });
+      toBundle.push({ name, path: actualPath, originalPath });
 
       // Recursively process this library's dependencies
       const subDeps = this.collectDependencies(actualPath, depth + 1);
@@ -401,7 +488,19 @@ class DylibsBundler {
   }
 
   patchRpathMacOS(binaryPath, rpath) {
-    // Add rpath if not exists
+    // Remove all existing RPATHs
+    const existingRpaths = this.getRpaths(binaryPath);
+    for (const oldRpath of existingRpaths) {
+      try {
+        execSync(`install_name_tool -delete_rpath "${oldRpath}" "${binaryPath}"`, {
+          stdio: "pipe",
+        });
+      } catch (error) {
+        // Ignore errors if it fails to delete
+      }
+    }
+
+    // Add new rpath
     try {
       execSync(`install_name_tool -add_rpath '${rpath}' "${binaryPath}"`, {
         stdio: "pipe",
@@ -434,28 +533,36 @@ class DylibsBundler {
   }
 
   patchLibraryDependenciesLinux(libPath, targetLibs) {
-    for (const { oldName, newName } of targetLibs) {
-      try {
-        execSync(
-          `patchelf --replace-needed "${oldName}" "${newName}" "${libPath}"`,
-          { stdio: "pipe" }
-        );
-      } catch (e) {
-        // Library might not depend on this one, continue
+    const deps = this.getDependenciesLinux(libPath);
+    for (const dep of deps) {
+      const target = targetLibs.find((t) => t.oldName === dep.name);
+      if (target) {
+        try {
+          execSync(
+            `patchelf --replace-needed "${dep.originalPath}" "${target.newName}" "${libPath}"`,
+            { stdio: "pipe" }
+          );
+        } catch (e) {
+          // Library might not depend on this one, continue
+        }
       }
     }
     return true;
   }
 
   patchLibraryDependenciesMacOS(libPath, targetLibs) {
-    for (const { oldPath, newName } of targetLibs) {
-      try {
-        execSync(
-          `install_name_tool -change "${oldPath}" '@rpath/${newName}' "${libPath}"`,
-          { stdio: "pipe" }
-        );
-      } catch (e) {
-        // Continue on error
+    const deps = this.getDependenciesMacOS(libPath);
+    for (const dep of deps) {
+      const target = targetLibs.find((t) => t.oldName === dep.name);
+      if (target) {
+        try {
+          execSync(
+            `install_name_tool -change "${dep.originalPath}" '@rpath/${target.newName}' "${libPath}"`,
+            { stdio: "pipe" }
+          );
+        } catch (e) {
+          // Continue on error
+        }
       }
     }
     return true;
@@ -473,6 +580,17 @@ class DylibsBundler {
       console.error(
         `Failed to change install name for ${path.basename(libPath)}`
       );
+    }
+  }
+
+  // Re-sign binary/library for macOS (ad-hoc signing)
+  reSignMacOS(path) {
+    if (!this.isMacOS) return;
+    try {
+      execSync(`codesign -f -s - "${path}"`, { stdio: "pipe" });
+      console.log(`Re-signed: ${path}`);
+    } catch (error) {
+      console.error(`Failed to re-sign ${path}: ${error.message}`);
     }
   }
 
@@ -562,6 +680,23 @@ class DylibsBundler {
       // Patch main binary to use renamed libraries
       console.log("Patching main binary dependencies...");
       this.patchLibraryDependencies(this.binaryPath, this.targetLibs);
+
+      // Recursive patching for all bundled libraries
+      console.log("Patching bundled libraries...");
+      const libRpath = this.isLinux ? "$ORIGIN" : "@loader_path";
+      for (const lib of this.targetLibs) {
+        // Change its own ID (for macOS)
+        this.changeInstallName(lib.newPath, lib.newName);
+        // Patch its dependencies
+        this.patchLibraryDependencies(lib.newPath, this.targetLibs);
+        // Clear and set RPATH for the library itself as well
+        this.patchRpath(lib.newPath, libRpath);
+        // Re-sign the library
+        this.reSignMacOS(lib.newPath);
+      }
+
+      // Finally re-sign the main binary
+      this.reSignMacOS(this.binaryPath);
     }
 
     console.log("✓ Bundling complete!");

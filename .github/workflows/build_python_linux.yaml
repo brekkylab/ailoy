@@ -28,17 +28,12 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Install cxxbridge (required to build shim)
-        run: |
-          cargo install cxxbridge-cmd@1.0.189
-
       - name: Install maturin
         working-directory: bindings/python
         run: |
           # maturin does not work outside virtualenv, so prepare one
           $PYTHON_BIN/python -m venv .venv
           source .venv/bin/activate
-          ../../scripts/set-crate-type.sh cdylib
           pip install maturin
 
       - name: Build wheel

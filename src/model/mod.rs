@@ -8,5 +8,5 @@ mod polyfill;
 pub use api::*;
 pub use embedding_model::*;
 pub use language_model::*;
-pub(crate) use local::*;
+pub use local::*;
 pub use polyfill::*;
