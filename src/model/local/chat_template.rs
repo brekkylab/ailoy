@@ -92,9 +92,10 @@ impl TryFromCache for ChatTemplate {
         _: &'a std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>> {
         Box::pin(async move {
-            let Some((entry, bytes)) = contents.remove_with_filename("chat_template.j2") else {
+            let Some((entry, source)) = contents.remove_with_filename("chat_template.j2") else {
                 bail!("chat_template.j2 not exists")
             };
+            let bytes = source.read_all().await?;
             let s = std::str::from_utf8(&bytes).context("Utf-8 conversion failed")?;
             Ok(ChatTemplate::new(entry.path(), s.to_owned()))
         })

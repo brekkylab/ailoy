@@ -1,6 +1,10 @@
 import { EmbeddingExceedContextWindowSizeError } from "./error";
 import { Instance, PackedFunc } from "./tvmjs";
-import { init as init_tvm_runtime, TVMRuntime } from "./tvm_runtime";
+import {
+  CacheEntries,
+  init as init_tvm_runtime,
+  TVMRuntime,
+} from "./tvm_runtime";
 
 export class TVMEmbeddingModel {
   private rt: TVMRuntime;
@@ -85,9 +89,9 @@ export class TVMEmbeddingModel {
 }
 
 export async function init(
-  cache_contents: Record<string, ArrayBuffer>
+  cacheEntries: CacheEntries
 ): Promise<TVMEmbeddingModel> {
-  const rt = await init_tvm_runtime(cache_contents);
+  const rt = await init_tvm_runtime(cacheEntries);
   const rv = new TVMEmbeddingModel(rt);
   return rv;
 }
