@@ -4527,7 +4527,7 @@ dependencies = [
 [[package]]
 name = "tvm-ffi"
 version = "0.1.0-alpha.0"
-source = "git+https://github.com/brekkylab/tvm-runtime-rs?rev=3be17e848243966af751896bd2684e240c841365#3be17e848243966af751896bd2684e240c841365"
+source = "git+https://github.com/brekkylab/tvm-runtime-rs?rev=d0edb6e77eb537837efb40c6c94ef5407b18bfa5#d0edb6e77eb537837efb40c6c94ef5407b18bfa5"
 dependencies = [
  "paste",
  "tvm-ffi-macros",
@@ -4537,7 +4537,7 @@ dependencies = [
 [[package]]
 name = "tvm-ffi-macros"
 version = "0.1.0-alpha.0"
-source = "git+https://github.com/brekkylab/tvm-runtime-rs?rev=3be17e848243966af751896bd2684e240c841365#3be17e848243966af751896bd2684e240c841365"
+source = "git+https://github.com/brekkylab/tvm-runtime-rs?rev=d0edb6e77eb537837efb40c6c94ef5407b18bfa5#d0edb6e77eb537837efb40c6c94ef5407b18bfa5"
 dependencies = [
  "proc-macro-error",
  "proc-macro2",
@@ -4548,7 +4548,7 @@ dependencies = [
 [[package]]
 name = "tvm-ffi-sys"
 version = "0.1.0-alpha.0"
-source = "git+https://github.com/brekkylab/tvm-runtime-rs?rev=3be17e848243966af751896bd2684e240c841365#3be17e848243966af751896bd2684e240c841365"
+source = "git+https://github.com/brekkylab/tvm-runtime-rs?rev=d0edb6e77eb537837efb40c6c94ef5407b18bfa5#d0edb6e77eb537837efb40c6c94ef5407b18bfa5"
 dependencies = [
  "cmake",
 ]
@@ -4556,7 +4556,7 @@ dependencies = [
 [[package]]
 name = "tvm-runtime"
 version = "0.1.0"
-source = "git+https://github.com/brekkylab/tvm-runtime-rs?rev=3be17e848243966af751896bd2684e240c841365#3be17e848243966af751896bd2684e240c841365"
+source = "git+https://github.com/brekkylab/tvm-runtime-rs?rev=d0edb6e77eb537837efb40c6c94ef5407b18bfa5#d0edb6e77eb537837efb40c6c94ef5407b18bfa5"
 dependencies = [
  "anyhow",
  "serde",
@@ -4569,7 +4569,7 @@ dependencies = [
 [[package]]
 name = "tvm-runtime-sys"
 version = "0.1.0"
-source = "git+https://github.com/brekkylab/tvm-runtime-rs?rev=3be17e848243966af751896bd2684e240c841365#3be17e848243966af751896bd2684e240c841365"
+source = "git+https://github.com/brekkylab/tvm-runtime-rs?rev=d0edb6e77eb537837efb40c6c94ef5407b18bfa5#d0edb6e77eb537837efb40c6c94ef5407b18bfa5"
 dependencies = [
  "cmake",
  "tvm-ffi-sys",
