@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 pub use tvm::EmbeddingModelInferencer;
 #[cfg(any(target_family = "unix", target_family = "windows"))]
