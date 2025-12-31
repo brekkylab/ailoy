@@ -249,12 +249,12 @@ export class MissingModelWasmError extends Error {
   }
 }
 
-export class FeatureSupportError extends Error {
+export class WebGPUFeatureSupportError extends Error {
   constructor(feature: string) {
     super(
       `This model requires feature ${feature}, which is not yet supported by this browser.`
     );
-    this.name = "FeatureSupportError";
+    this.name = "WebGPUFeatureSupportError";
   }
 }
 
@@ -268,13 +268,13 @@ export class UnsupportedFieldsError extends Error {
   }
 }
 
-export class ShaderF16SupportError extends FeatureSupportError {
+export class WebGPUShaderF16SupportError extends WebGPUFeatureSupportError {
   constructor() {
     super(
       "This model requires WebGPU extension shader-f16, which is not enabled in this browser. " +
         'You can try to launch Chrome Canary in command line with flag "--enable-dawn-features=allow_unsafe_apis".'
     );
-    this.name = "ShaderF16SupportError";
+    this.name = "WebGPUShaderF16SupportError";
   }
 }
 export class DeviceLostError extends Error {

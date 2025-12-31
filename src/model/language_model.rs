@@ -752,8 +752,9 @@ mod wasm {
 
     use super::*;
     use crate::{
-        ffi::web::stream_to_async_iterable,
-        model::{KvCacheConfig, api::APISpecification},
+        ffi::web::cache::await_cache_result,
+        ffi::web::common::stream_to_async_iterable,
+        model::{KVCacheConfig, api::APISpecification},
         value::Messages,
     };
 
@@ -765,7 +766,7 @@ mod wasm {
             typescript_type = "{
                 deviceId?: number; 
                 validateChecksum?: boolean; 
-                kvCache?: KvCacheConfig;
+                kvCache?: KVCacheConfig;
                 progressCallback?: CacheProgressCallbackFn;
             }"
         )]
@@ -776,7 +777,7 @@ mod wasm {
     pub struct JSLocalLangModelConfig {
         pub device_id: Option<i32>,
         pub validate_checksum: Option<bool>,
-        pub kv_cache: Option<KvCacheConfig>,
+        pub kv_cache: Option<KVCacheConfig>,
         pub progress_callback: Option<Function>,
     }
 
@@ -801,7 +802,7 @@ mod wasm {
             }
 
             if let Ok(val) = Reflect::get(&obj, &"kvCache".into()) {
-                let kv_cache_config = KvCacheConfig::from_js(val).unwrap_or_default();
+                let kv_cache_config = KVCacheConfig::from_js(val).unwrap_or_default();
                 config.kv_cache = Some(kv_cache_config);
             }
 
@@ -834,7 +835,7 @@ mod wasm {
                     kv_cache: config.kv_cache,
                 }),
             );
-            let inner = crate::ffi::web::await_cache_result(cache_strm, config.progress_callback)
+            let inner = await_cache_result(cache_strm, config.progress_callback)
                 .await
                 .map_err(|e| js_sys::Error::new(&e.to_string()))?;
             Ok(LangModel {
@@ -861,7 +862,7 @@ mod wasm {
                 None => JSLocalLangModelConfig::default(),
             };
             let strm = Self::download(model_name);
-            let _ = crate::ffi::web::await_cache_result(strm, config.progress_callback).await;
+            let _ = await_cache_result(strm, config.progress_callback).await;
             Ok(())
         }
 

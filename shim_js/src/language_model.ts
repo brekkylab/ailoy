@@ -60,9 +60,6 @@ class KVCache {
     this.fKVStateForkSequence = this.tvm.detachFromCurrentScope(
       this.tvm.getGlobalFunc("vm.builtin.kv_state_fork_sequence")
     );
-    this.fKVStateForkSequence = this.tvm.detachFromCurrentScope(
-      this.tvm.getGlobalFunc("vm.builtin.kv_state_fork_sequence")
-    );
     this.fKVStateBeginForward = this.tvm.detachFromCurrentScope(
       this.tvm.getGlobalFunc("vm.builtin.kv_state_begin_forward")
     );
@@ -160,20 +157,16 @@ export class TVMLanguageModel {
     this.rt = rt;
     this.tvm = this.rt.tvm;
 
-    this.tvm.beginScope();
-
     this.prefillChunkSize = this.rt.metadata.prefill_chunk_size;
 
     this.kvcache = new KVCache(this.rt, config?.kvCache);
 
-    this.fEmbed = this.rt.get_function("embed");
-    this.fPrefill = this.rt.get_function("prefill");
-    this.fDecode = this.rt.get_function("decode");
-    this.fSampleTopPfromLogits = this.tvm.detachFromCurrentScope(
-      this.tvm.getGlobalFunc("vm.builtin.sample_top_p_from_logits")
+    this.fEmbed = this.rt.getFunction("embed");
+    this.fPrefill = this.rt.getFunction("prefill");
+    this.fDecode = this.rt.getFunction("decode");
+    this.fSampleTopPfromLogits = this.rt.getGlobalFunction(
+      "vm.builtin.sample_top_p_from_logits"
     );
-
-    this.tvm.endScope();
   }
 
   private clear() {
@@ -225,17 +218,22 @@ export class TVMLanguageModel {
       );
 
       // Input NDArray<int32>[length]
-      const input_cpu = this.tvm.withNewScope(() => {
-        return this.tvm.detachFromCurrentScope(
-          this.tvm.empty([length], "int32", this.tvm.cpu())
-        );
-      });
+      // const input_cpu = this.tvm.withNewScope(() => {
+      //   return this.tvm.detachFromCurrentScope(
+      //     this.tvm.empty([length], "int32", this.tvm.cpu())
+      //   );
+      // });
+      const input_cpu = this.tvm.empty([length], "int32", this.tvm.cpu());
+
       input_cpu.copyFrom(current_new_tokens);
-      const input = this.tvm.withNewScope(() => {
-        return this.tvm.detachFromCurrentScope(
-          this.tvm.empty([length], "int32", this.rt.device)
-        );
-      });
+
+      // const input = this.tvm.withNewScope(() => {
+      //   return this.tvm.detachFromCurrentScope(
+      //     this.tvm.empty([length], "int32", this.rt.device)
+      //   );
+      // });
+      const input = this.tvm.empty([length], "int32", this.rt.device);
+
       // Copy from new_tokens[i..j) – reinterpret as Int32Array
       input.copyFrom(input_cpu);
       await this.rt.device.sync();

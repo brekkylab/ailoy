@@ -1,12 +1,12 @@
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 #[cfg(any(target_family = "unix", target_family = "windows"))]
-pub use tvm::EmbeddingModelInferencer;
+pub use native::EmbeddingModelInferencer;
 #[cfg(any(target_family = "unix", target_family = "windows"))]
-pub use tvm::LanguageModelInferencer;
+pub use native::LanguageModelInferencer;
 #[cfg(any(target_family = "wasm"))]
-pub use tvmjs_runtime::EmbeddingModelInferencer;
+pub use wasm::EmbeddingModelInferencer;
 #[cfg(any(target_family = "wasm"))]
-pub use tvmjs_runtime::LanguageModelInferencer;
+pub use wasm::LanguageModelInferencer;
 
 use crate::{
     cache::{Cache, CacheClaim, CacheEntry},
@@ -130,19 +130,19 @@ pub fn claim_files(
 }
 
 #[cfg(any(target_family = "unix", target_family = "windows"))]
-mod tvm {
+mod native {
     use std::path::PathBuf;
 
     use anyhow::anyhow;
     use tvm_ffi::{
-        AnyView, Array, DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, Function, Module, Shape,
+        AnyView, Array, DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, Function, Module,
     };
     use tvm_runtime::{Tensor, TensorCache};
 
     use super::*;
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
-        model::KvCacheConfig,
+        model::{KVCache, KVCacheConfig, KVCacheOps},
         utils::BoxFuture,
     };
 
@@ -398,234 +398,6 @@ mod tvm {
     }
 
     #[allow(dead_code)]
-    pub struct KVCache {
-        state: tvm_ffi::Any,
-
-        pub context_window_size: i64,
-        pub prefill_chunk_size: i64,
-        pub sliding_window_size: i64,
-        pub page_size: i64,
-
-        pub fkv_state_clear: Function,
-        pub fkv_state_add_sequence: Function,
-        pub fkv_state_remove_sequence: Function,
-        pub fkv_state_fork_sequence: Function,
-        pub fkv_state_begin_forward: Function,
-        pub fkv_state_end_forward: Function,
-        pub fkv_state_popn: Function,
-        pub fkv_cache_get_num_available_pages: Function,
-        pub fkv_cache_get_total_sequence_length: Function,
-    }
-
-    impl KVCache {
-        pub fn new(
-            vm: &Module,
-            context_window_size: Option<i64>,
-            prefill_chunk_size: Option<i64>,
-            sliding_window_size: Option<i64>,
-        ) -> anyhow::Result<Self> {
-            let metadata_str: tvm_ffi::String = vm
-                .get_function("_metadata")
-                .map_err(|e| anyhow!("Failed to get `_metadata` function: {:?}", e))?
-                .call_tuple(())
-                .map_err(|e| anyhow!("Failed to call `_metadata`: {:?}", e))?
-                .try_into()
-                .map_err(|e| anyhow!("Failed to convert to String: {:?}", e))?;
-            let metadata: serde_json::Value = serde_json::from_str(&metadata_str)
-                .map_err(|e| anyhow!("Failed to parse metadata json: {:?}", e))?;
-
-            let context_window_size = context_window_size.unwrap_or(
-                metadata
-                    .get("context_window_size")
-                    .ok_or(anyhow!("Failed to get `context_window_size` attribute"))?
-                    .as_i64()
-                    .ok_or(anyhow!("Failed to convert `context_window_size` to i64"))?,
-            );
-            let prefill_chunk_size = prefill_chunk_size.unwrap_or(
-                metadata
-                    .get("prefill_chunk_size")
-                    .ok_or(anyhow!("Failed to get `prefill_chunk_size` attribute"))?
-                    .as_i64()
-                    .ok_or(anyhow!("Failed to convert `prefill_chunk_size` to i64"))?,
-            );
-            let sliding_window_size = sliding_window_size.unwrap_or(
-                metadata
-                    .get("sliding_window_size")
-                    .ok_or(anyhow!("Failed to get `sliding_window_size` attribute"))?
-                    .as_i64()
-                    .ok_or(anyhow!("Failed to convert `sliding_window_size` to i64"))?,
-            );
-
-            // TVM uses a fixed page size of 16 for KV cache management
-            const PAGE_SIZE: i64 = 16;
-            let state = vm
-                .get_function("create_tir_paged_kv_cache")
-                .map_err(|e| {
-                    anyhow!(
-                        "Failed to get `create_tir_paged_kv_cache` function: {:?}",
-                        e
-                    )
-                })?
-                .call_tuple((
-                    Shape::from([1]),                                  // max_batch_size
-                    Shape::from([context_window_size]),                // max_total_seq_len
-                    Shape::from([prefill_chunk_size]),                 // prefill_chunk_size
-                    Shape::from([PAGE_SIZE]),                          // page_size
-                    Shape::from([(sliding_window_size != -1) as i64]), // support_sliding_window
-                ))
-                .map_err(|e| anyhow!("Failed to call `create_tir_paged_kv_cache`: {:?}", e))?;
-
-            let fkv_state_clear =
-                Function::get_global("vm.builtin.kv_state_clear").map_err(|e| {
-                    anyhow!(
-                        "Failed to get global function `vm.builtin.kv_state_clear`: {:?}",
-                        e
-                    )
-                })?;
-            let fkv_state_add_sequence = Function::get_global("vm.builtin.kv_state_add_sequence")
-                .map_err(|e| {
-                anyhow!(
-                    "Failed to get global function `vm.builtin.kv_state_add_sequence`: {:?}",
-                    e
-                )
-            })?;
-            let fkv_state_remove_sequence =
-                Function::get_global("vm.builtin.kv_state_remove_sequence").map_err(|e| {
-                    anyhow!(
-                        "Failed to get global function `vm.builtin.kv_state_remove_sequence`: {:?}",
-                        e
-                    )
-                })?;
-            let fkv_state_fork_sequence = Function::get_global("vm.builtin.kv_state_fork_sequence")
-                .map_err(|e| {
-                    anyhow!(
-                        "Failed to get global function `vm.builtin.kv_state_fork_sequence`: {:?}",
-                        e
-                    )
-                })?;
-            let fkv_state_begin_forward = Function::get_global("vm.builtin.kv_state_begin_forward")
-                .map_err(|e| {
-                    anyhow!(
-                        "Failed to get global function `vm.builtin.kv_state_begin_forward`: {:?}",
-                        e
-                    )
-                })?;
-            let fkv_state_end_forward = Function::get_global("vm.builtin.kv_state_end_forward")
-                .map_err(|e| {
-                    anyhow!(
-                        "Failed to get global function `vm.builtin.kv_state_end_forward`: {:?}",
-                        e
-                    )
-                })?;
-            let fkv_state_popn = Function::get_global("vm.builtin.kv_state_popn").map_err(|e| {
-                anyhow!(
-                    "Failed to get global function `vm.builtin.kv_state_popn`: {:?}",
-                    e
-                )
-            })?;
-            let fkv_cache_get_num_available_pages = Function::get_global("vm.builtin.attention_kv_cache_get_num_available_pages")
-                .map_err(|e| anyhow!("Failed to get global function `vm.builtin.attention_kv_cache_get_num_available_pages`: {:?}", e))?;
-            let fkv_cache_get_total_sequence_length = Function::get_global("vm.builtin.attention_kv_cache_get_total_sequence_length")
-                .map_err(|e| anyhow!("Failed to get global function `vm.builtin.attention_kv_cache_get_total_sequence_length`: {:?}", e))?;
-
-            let mut self_ = Self {
-                state,
-                context_window_size,
-                prefill_chunk_size,
-                sliding_window_size,
-                page_size: PAGE_SIZE,
-                fkv_state_clear,
-                fkv_state_add_sequence,
-                fkv_state_remove_sequence,
-                fkv_state_fork_sequence,
-                fkv_state_begin_forward,
-                fkv_state_end_forward,
-                fkv_state_popn,
-                fkv_cache_get_num_available_pages,
-                fkv_cache_get_total_sequence_length,
-            };
-            self_
-                .clear()
-                .map_err(|e| anyhow!("Failed to clear KV cache: {:?}", e))?;
-            Ok(self_)
-        }
-
-        pub fn get_state(&self) -> &tvm_ffi::Any {
-            &self.state
-        }
-
-        pub fn add_sequence(&mut self) -> tvm_ffi::Result<()> {
-            self.fkv_state_add_sequence.call_packed(&[
-                AnyView::from(&self.state),
-                AnyView::from(&0), // sequence id
-            ])?;
-            Ok(())
-        }
-
-        pub fn remove_sequence(&mut self) -> tvm_ffi::Result<()> {
-            self.fkv_state_remove_sequence.call_packed(&[
-                AnyView::from(&self.state),
-                AnyView::from(&0), // sequence id
-            ])?;
-            Ok(())
-        }
-
-        pub fn begin_forward(&mut self, length: impl Into<i64>) -> tvm_ffi::Result<tvm_ffi::Any> {
-            self.fkv_state_begin_forward.call_packed(&[
-                AnyView::from(&self.state),
-                AnyView::from(&Shape::from(vec![0])),
-                AnyView::from(&Shape::from(vec![length.into()])),
-            ])
-        }
-
-        pub fn end_forward(&mut self) -> tvm_ffi::Result<tvm_ffi::Any> {
-            self.fkv_state_end_forward
-                .call_packed(&[AnyView::from(&self.state)])
-        }
-
-        pub fn clear(&mut self) -> tvm_ffi::Result<()> {
-            self.fkv_state_clear
-                .call_packed(&[AnyView::from(&self.state)])?;
-            self.add_sequence()?;
-            Ok(())
-        }
-
-        pub fn popn(&mut self, num_tokens: i64) -> tvm_ffi::Result<()> {
-            self.fkv_state_popn.call_packed(&[
-                AnyView::from(&self.state),
-                AnyView::from(&0), // sequence id
-                AnyView::from(&num_tokens),
-            ])?;
-            Ok(())
-        }
-
-        pub fn get_num_available_pages(&self) -> anyhow::Result<i64> {
-            let res = self
-                .fkv_cache_get_num_available_pages
-                .call_packed(&[AnyView::from(&self.state)])
-                .map_err(|e| anyhow!("Failed to get num available pages: {:?}", e))?;
-            res.try_into()
-                .map_err(|e| anyhow!("Failed to convert to i64: {:?}", e))
-        }
-
-        pub fn get_total_sequence_length(&self) -> anyhow::Result<i64> {
-            let res = self
-                .fkv_cache_get_total_sequence_length
-                .call_packed(&[AnyView::from(&self.state)])
-                .map_err(|e| anyhow!("Failed to get total sequence length: {:?}", e))?;
-            res.try_into()
-                .map_err(|e| anyhow!("Failed to convert to i64: {:?}", e))
-        }
-    }
-
-    impl Drop for KVCache {
-        fn drop(&mut self) {
-            // Best-effort cleanup - ignore errors during drop
-            let _ = self.remove_sequence();
-        }
-    }
-
-    #[allow(dead_code)]
     pub struct LanguageModelInferencer {
         device: DLDevice,
         vm: Module,
@@ -653,7 +425,7 @@ mod tvm {
             runtime_path: &PathBuf,
             tensor_cache_path: &PathBuf,
             device: DLDevice,
-            kv_cache_config: KvCacheConfig,
+            kv_cache_config: KVCacheConfig,
         ) -> anyhow::Result<Self> {
             let exec = Module::load_from_file(runtime_path.to_string_lossy())
                 .map_err(|e| anyhow!("Failed to load TVM module: {:?}", e))?;
@@ -703,12 +475,7 @@ mod tvm {
                 .collect::<anyhow::Result<Vec<_>>>()?;
             let params = tensor_cache.get_params(param_names);
 
-            let kv_cache = KVCache::new(
-                &vm,
-                kv_cache_config.context_window_size.map(|v| v as i64),
-                None,
-                None,
-            )?;
+            let kv_cache = KVCache::new(&vm, kv_cache_config)?;
 
             let fembed = vm
                 .get_function("embed")
@@ -806,7 +573,7 @@ mod tvm {
             // Rewind the head of kv-cache to the LCP
             if lcp_index < self.history.len() {
                 self.kv_cache
-                    .popn((self.history.len() - lcp_index) as i64)
+                    .popn(0, (self.history.len() - lcp_index) as i64)
                     .map_err(|e| anyhow!("{e:?}"))?;
             }
 
@@ -833,7 +600,7 @@ mod tvm {
                 let embedding = self.embed(tokens_sliced)?;
 
                 self.kv_cache
-                    .begin_forward(length as i64)
+                    .begin_forward(0, length as i64)
                     .map_err(|e| anyhow!("{e:?}"))?;
                 self.fprefill
                     .call_packed(&[
@@ -855,7 +622,7 @@ mod tvm {
             let embedding = self.embed(&[last_token as i32])?;
 
             self.kv_cache
-                .begin_forward(1)
+                .begin_forward(0, 1)
                 .map_err(|e| anyhow!("Failed to begin forward: {:?}", e))?;
             let output = self
                 .fdecode
@@ -925,7 +692,7 @@ mod tvm {
                     serde_json::from_value(kv_cache.clone().into())
                         .map_err(|e| anyhow!("Failed to parse kv_cache config: {:?}", e))?
                 } else {
-                    KvCacheConfig::default()
+                    KVCacheConfig::default()
                 };
 
                 let runtime_filename = format!("rt.{}", get_lib_extension());
@@ -978,7 +745,7 @@ mod tvm {
 }
 
 #[cfg(any(target_family = "wasm"))]
-mod tvmjs_runtime {
+mod wasm {
     use std::fmt;
 
     use anyhow::{anyhow, bail};
@@ -993,7 +760,7 @@ mod tvmjs_runtime {
             JSTVMEmbeddingModel, JSTVMLanguageModel, init_tvm_embedding_model_js,
             init_tvm_language_model_js,
         },
-        model::KvCacheConfig,
+        model::KVCacheConfig,
         utils::{BoxFuture, float16},
     };
 
@@ -1082,7 +849,7 @@ mod tvmjs_runtime {
                     let config = Object::new();
                     if let Some(kv_cache) = ctx.get("kv_cache") {
                         let kv_cache_config =
-                            serde_json::from_value::<KvCacheConfig>(kv_cache.clone().into())
+                            serde_json::from_value::<KVCacheConfig>(kv_cache.clone().into())
                                 .unwrap_or_default();
                         Reflect::set(&config, &"kvCache".into(), &kv_cache_config.into()).unwrap();
                     }

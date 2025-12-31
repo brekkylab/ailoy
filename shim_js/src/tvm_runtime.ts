@@ -1,4 +1,4 @@
-import { FeatureSupportError, WebGPUNotAvailableError } from "./error";
+import { WebGPUFeatureSupportError, WebGPUNotAvailableError } from "./error";
 import {
   createPolyfillWASI,
   detectGPUDevice,
@@ -18,7 +18,7 @@ export async function getGPUDevice(
   }
   for (const feature of requiredFeatures) {
     if (!gpuDetectOutput.device.features.has(feature)) {
-      throw new FeatureSupportError(feature);
+      throw new WebGPUFeatureSupportError(feature);
     }
   }
   return gpuDetectOutput.device;
@@ -81,9 +81,18 @@ export class TVMRuntime {
     return this._params;
   }
 
-  public get_function(fname: string) {
+  getFunction(fname: string) {
     this._tvm.beginScope();
     const func = this._tvm.detachFromCurrentScope(this._vm.getFunction(fname));
+    this._tvm.endScope();
+    return func;
+  }
+
+  getGlobalFunction(fname: string) {
+    this._tvm.beginScope();
+    const func = this.tvm.detachFromCurrentScope(
+      this._tvm.getGlobalFunc(fname)
+    );
     this._tvm.endScope();
     return func;
   }

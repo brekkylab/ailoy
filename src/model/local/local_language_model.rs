@@ -9,7 +9,8 @@ use crate::{
     boxed,
     cache::{Cache, CacheClaim, CacheContents, CacheProgress, TryFromCache},
     model::{
-        ChatTemplate, InferenceConfig, LangModelInference, LanguageModelInferencer, Tokenizer,
+        ChatTemplate, InferenceConfig, KVCacheConfig, LangModelInference, LanguageModelInferencer,
+        Tokenizer,
     },
     utils::{BoxFuture, BoxStream},
     value::{
@@ -26,26 +27,11 @@ struct Request {
     tx_resp: mpsc::UnboundedSender<anyhow::Result<MessageDeltaOutput>>,
 }
 
-#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
-#[cfg_attr(
-    feature = "python",
-    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
-)]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KvCacheConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_window_size: Option<u32>,
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LocalLangModelConfig {
     pub device_id: Option<i32>,
     pub validate_checksum: Option<bool>,
-    pub kv_cache: Option<KvCacheConfig>,
+    pub kv_cache: Option<KVCacheConfig>,
 }
 
 impl LocalLangModelConfig {
@@ -59,27 +45,9 @@ impl LocalLangModelConfig {
         self
     }
 
-    pub fn with_kv_cache(mut self, kv_cache: &KvCacheConfig) -> Self {
+    pub fn with_kv_cache(mut self, kv_cache: &KVCacheConfig) -> Self {
         self.kv_cache = Some(kv_cache.clone());
         self
-    }
-}
-
-#[cfg(feature = "python")]
-mod py {
-    use super::*;
-    use pyo3::prelude::*;
-    use pyo3_stub_gen_derive::*;
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl KvCacheConfig {
-        #[new]
-        fn __new__(context_window_size: Option<u32>) -> Self {
-            Self {
-                context_window_size,
-            }
-        }
     }
 }
 
@@ -277,19 +245,17 @@ impl LocalLangModelImpl {
                 let temperature = config.temperature.unwrap_or(0.6);
                 let top_p = config.top_p.unwrap_or(0.9);
 
-                {
-                    #[cfg(target_family = "wasm")]
-                    let new_token = self.inferencer.decode(last_token, temperature, top_p).await;
-                    #[cfg(not(target_family = "wasm"))]
-                    let new_token = {
-                        let logits = self.inferencer.decode(last_token).unwrap();
-                        let new_token = self.inferencer.sample(logits, temperature, top_p).unwrap();
-                        new_token
-                    };
+                #[cfg(not(target_family = "wasm"))]
+                let new_token = {
+                    let logits = self.inferencer.decode(last_token).unwrap();
+                    let new_token = self.inferencer.sample(logits, temperature, top_p).unwrap();
+                    new_token
+                };
+                #[cfg(target_family = "wasm")]
+                let new_token = self.inferencer.decode(last_token, temperature, top_p).await;
 
-                    agg_tokens.push(new_token);
-                    last_token = new_token;
-                }
+                agg_tokens.push(new_token);
+                last_token = new_token;
 
                 let s = self.tokenizer.decode(agg_tokens.as_slice(), false)?;
                 if s.ends_with("�") {

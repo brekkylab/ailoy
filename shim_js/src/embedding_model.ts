@@ -20,7 +20,7 @@ export class TVMEmbeddingModel {
     this.tvm.beginScope();
 
     this.contextWindowSize = this.rt.metadata.context_window_size || 8192;
-    this.fPrefill = this.rt.get_function("prefill");
+    this.fPrefill = this.rt.getFunction("prefill");
 
     this.tvm.endScope();
   }
