@@ -31,7 +31,7 @@ export interface GPUDeviceDetectOutput {
 }
 
 /**
- * DetectGPU device in the environment.
+ * Detect GPU device in the environment.
  */
 export async function detectGPUDevice(
   powerPreference: "low-power" | "high-performance" = "high-performance"
@@ -161,6 +161,31 @@ export async function detectGPUDevice(
   } else {
     return undefined;
   }
+}
+
+/**
+ * Get detected GPUDevice in the environment.
+ */
+export async function getGPUDevice(
+  requiredFeatures: GPUFeatureName[] = ["shader-f16"]
+) {
+  const gpuDetectOutput = await detectGPUDevice();
+  if (gpuDetectOutput == undefined) {
+    throw Error(
+      "WebGPU is not supported in your current environment, but it is necessary to run the Ailoy models. " +
+        "Please make sure that your browser supports WebGPU and that it is enabled in your browser settings. " +
+        "You can also consult your browser's compatibility chart to see if it supports WebGPU. " +
+        "For more information about WebGPU support in your browser, visit https://webgpureport.org/"
+    );
+  }
+  for (const feature of requiredFeatures) {
+    if (!gpuDetectOutput.device.features.has(feature)) {
+      throw Error(
+        `This model requires feature "${feature}", which is not yet supported by this browser.`
+      );
+    }
+  }
+  return gpuDetectOutput.device;
 }
 
 /**

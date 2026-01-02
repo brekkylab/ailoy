@@ -77,13 +77,13 @@ use crate::{
 /// ```
 ///
 /// See also: [`Cache::try_create`], [`CacheClaim`], [`CacheContents`].
-pub trait TryFromCache: Sized + MaybeSend {
+pub trait TryFromCache<'this>: Sized + MaybeSend {
     /// Declare the set of files needed to construct `Self`.
     ///
     /// The returned future resolves to a list of logical entries (`dirname`/`filename`)
     /// that the caller will fetch and place into [`CacheContents`]. Return an error
     /// if the request is invalid (e.g., unknown key) or if computing the list fails.
-    fn claim_files<'a>(
+    fn claim_files<'a: 'this>(
         cache: Cache,
         key: impl AsRef<str>,
         ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
@@ -93,7 +93,7 @@ pub trait TryFromCache: Sized + MaybeSend {
     ///
     /// Implementations should verify that all required entries are present and valid,
     /// and return a descriptive `Err(String)` on failure.
-    fn try_from_contents<'a>(
+    fn try_from_contents<'a: 'this>(
         contents: &'a mut CacheContents,
         ctx: &'a std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>>;

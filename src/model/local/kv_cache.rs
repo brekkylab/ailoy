@@ -317,19 +317,18 @@ pub use native::*;
 
 #[cfg(target_family = "wasm")]
 mod wasm {
-    use anyhow::Context;
     use anyhow::{Result, anyhow};
 
     use crate::ffi::web::conversion::*;
-    use crate::ffi::web::tvmjs_bridge as tvmjs;
     use crate::ffi::web::tvmjs_bridge::PackedFunc;
+    use crate::ffi::web::tvmjs_bridge::{self as tvmjs};
     use crate::model::KVCacheConfig;
     use crate::model::KVCacheOps;
 
     const PAGE_SIZE: i64 = 16;
 
-    pub struct KVCache<'a> {
-        tvm: &'a tvmjs::Instance,
+    pub struct KVCache {
+        tvm: tvmjs::Instance,
         state: tvmjs::TVMObject,
 
         pub context_window_size: i64,
@@ -347,21 +346,14 @@ mod wasm {
         fkv_cache_get_total_sequence_length: PackedFunc,
     }
 
-    impl<'a> KVCache<'a> {
+    impl KVCache {
         pub fn new(
-            tvm: &'a tvmjs::Instance,
-            vm: tvmjs::Module,
+            tvm: tvmjs::Instance,
+            vm: &tvmjs::Module,
+            metadata: &serde_json::Value,
             config: KVCacheConfig,
         ) -> Result<Self> {
             tvm.begin_scope();
-
-            let fmetadata: PackedFunc = vm.get_function("_metadata").into();
-            let metadata_str = fmetadata
-                .call0()?
-                .as_string()
-                .ok_or(anyhow!("_metadata result should be string"))?;
-            let metadata: serde_json::Value = serde_json::from_str(metadata_str.as_str())
-                .with_context(|| "Failed to parse metadata")?;
 
             let context_window_size = config.context_window_size.map(|v| v as i64).unwrap_or(
                 metadata
@@ -439,7 +431,7 @@ mod wasm {
         }
     }
 
-    impl<'a> KVCacheOps for KVCache<'a> {
+    impl KVCacheOps for KVCache {
         fn clear(&mut self) -> Result<()> {
             self.fkv_state_clear.call1(&self.state)?;
             self.add_sequence(0)?;
@@ -494,16 +486,16 @@ mod wasm {
         }
     }
 
-    impl<'a> Drop for KVCache<'a> {
+    impl Drop for KVCache {
         fn drop(&mut self) {
-            self.fkv_cache_get_num_available_pages.dispose();
-            self.fkv_cache_get_total_sequence_length.dispose();
-            self.fkv_state_add_sequence.dispose();
-            self.fkv_state_begin_forward.dispose();
-            self.fkv_state_clear.dispose();
-            self.fkv_state_end_forward.dispose();
-            self.fkv_state_popn.dispose();
-            self.fkv_state_remove_sequence.dispose();
+            let _ = self.fkv_cache_get_num_available_pages.dispose();
+            let _ = self.fkv_cache_get_total_sequence_length.dispose();
+            let _ = self.fkv_state_add_sequence.dispose();
+            let _ = self.fkv_state_begin_forward.dispose();
+            let _ = self.fkv_state_clear.dispose();
+            let _ = self.fkv_state_end_forward.dispose();
+            let _ = self.fkv_state_popn.dispose();
+            let _ = self.fkv_state_remove_sequence.dispose();
         }
     }
 }

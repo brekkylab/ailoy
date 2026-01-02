@@ -121,8 +121,8 @@ impl LocalLangModel {
     }
 }
 
-impl TryFromCache for LocalLangModel {
-    fn claim_files<'a>(
+impl<'this> TryFromCache<'this> for LocalLangModel {
+    fn claim_files<'a: 'this>(
         cache: Cache,
         key: impl AsRef<str>,
         ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
@@ -130,7 +130,7 @@ impl TryFromCache for LocalLangModel {
         LocalLangModelImpl::claim_files(cache, key, ctx)
     }
 
-    fn try_from_contents<'a>(
+    fn try_from_contents<'a: 'this>(
         contents: &'a mut CacheContents,
         ctx: &'a std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>> {
@@ -219,10 +219,10 @@ impl LocalLangModelImpl {
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
 
             {
-                #[cfg(target_family = "wasm")]
-                self.inferencer.prefill(&input_tokens).await;
                 #[cfg(not(target_family = "wasm"))]
                 self.inferencer.prefill(&input_tokens).unwrap();
+                #[cfg(target_family = "wasm")]
+                self.inferencer.prefill(&input_tokens).await.unwrap();
             }
 
             let mut last_token = *input_tokens.last().unwrap();
@@ -252,7 +252,7 @@ impl LocalLangModelImpl {
                     new_token
                 };
                 #[cfg(target_family = "wasm")]
-                let new_token = self.inferencer.decode(last_token, temperature, top_p).await;
+                let new_token = self.inferencer.decode(last_token, temperature, top_p).await.unwrap();
 
                 agg_tokens.push(new_token);
                 last_token = new_token;
@@ -312,8 +312,8 @@ impl LocalLangModelImpl {
     }
 }
 
-impl TryFromCache for LocalLangModelImpl {
-    fn claim_files<'a>(
+impl<'this> TryFromCache<'this> for LocalLangModelImpl {
+    fn claim_files<'a: 'this>(
         cache: Cache,
         key: impl AsRef<str>,
         ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
@@ -363,7 +363,7 @@ impl TryFromCache for LocalLangModelImpl {
         })
     }
 
-    fn try_from_contents<'a>(
+    fn try_from_contents<'a: 'this>(
         contents: &'a mut CacheContents,
         ctx: &'a std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>>
@@ -587,7 +587,7 @@ mod tests {
     async fn infer_simple_chat() {
         let cache = crate::cache::Cache::new();
         let key = "Qwen/Qwen3-0.6B";
-        let mut model_strm = boxed!(cache.try_create::<LocalLangModel>(key, None, None));
+        let mut model_strm = boxed!(cache.try_create::<LocalLangModel>(key, None, Some(false)));
         let mut model: Option<LocalLangModel> = None;
 
         while let Some(progress) = model_strm.next().await {

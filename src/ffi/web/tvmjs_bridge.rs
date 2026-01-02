@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
-use js_sys::Reflect;
+use js_sys::{Array, Reflect};
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+use web_sys::GpuDevice;
 
 #[derive(Clone)]
 pub struct PackedFunc {
@@ -68,9 +70,19 @@ impl PackedFunc {
             .map_err(|e| anyhow!("PackedFunc call5 failed: {:?}", e))
     }
 
-    /// Get the underlying JavaScript function
-    pub fn as_js_function(&self) -> &js_sys::Function {
-        &self.func
+    /// Call with six arguments, returns promise
+    pub fn call6(
+        &self,
+        arg1: &JsValue,
+        arg2: &JsValue,
+        arg3: &JsValue,
+        arg4: &JsValue,
+        arg5: &JsValue,
+        arg6: &JsValue,
+    ) -> Result<JsValue> {
+        self.func
+            .call6(&JsValue::NULL, arg1, arg2, arg3, arg4, arg5, arg6)
+            .map_err(|e| anyhow!("PackedFunc call6 failed: {:?}", e))
     }
 
     pub fn dispose(&self) -> Result<()> {
@@ -102,6 +114,7 @@ extern "C" {
     //////////////
     /// Scalar ///
     //////////////
+    #[derive(Clone)]
     #[wasm_bindgen(js_name = "Scalar")]
     pub type Scalar;
 
@@ -111,6 +124,7 @@ extern "C" {
     ////////////////
     /// DLDevice ///
     ////////////////
+    #[derive(Clone)]
     #[wasm_bindgen(js_name = "DLDevice")]
     pub type DLDevice;
 
@@ -119,6 +133,12 @@ extern "C" {
 
     #[wasm_bindgen(method, js_name = toString)]
     pub fn to_string(this: &DLDevice) -> String;
+
+    #[wasm_bindgen(method, getter, js_name = deviceType)]
+    pub fn device_type(this: &DLDevice) -> u32;
+
+    #[wasm_bindgen(method, getter, js_name = deviceId)]
+    pub fn device_id(this: &DLDevice) -> u32;
 
     /////////////////
     /// TVMObject ///
@@ -135,11 +155,31 @@ extern "C" {
     #[wasm_bindgen(js_name = "Tensor", extends = TVMObject)]
     pub type Tensor;
 
+    #[wasm_bindgen(method, getter, js_name = shape)]
+    pub fn shape(this: &Tensor) -> Vec<u32>;
+
+    #[wasm_bindgen(method, getter, js_name = dtype)]
+    pub fn dtype(this: &Tensor) -> String;
+
     #[wasm_bindgen(method, js_name = view)]
-    pub fn view(this: &Tensor, shape: js_sys::Array) -> Tensor;
+    pub fn view(
+        this: &Tensor,
+        shape: Array,
+        dtype: Option<String>,
+        byte_offset: Option<u32>,
+    ) -> Tensor;
 
     #[wasm_bindgen(method, js_name = copyFrom)]
-    pub fn copy_from(this: &Tensor, data: &Tensor) -> Tensor;
+    pub fn copy_from_tensor(this: &Tensor, data: &Tensor) -> Tensor;
+
+    #[wasm_bindgen(method, js_name = copyFrom)]
+    pub fn copy_from_i32array(this: &Tensor, data: &[i32]) -> Tensor;
+
+    #[wasm_bindgen(method, js_name = toArray)]
+    pub fn to_f32array(this: &Tensor) -> Vec<f32>;
+
+    #[wasm_bindgen(method, js_name = toArray)]
+    pub fn to_u16array(this: &Tensor) -> Vec<u16>;
 
     ////////////////
     /// TVMArray ///
@@ -183,9 +223,6 @@ extern "C" {
     #[wasm_bindgen(method, js_name = systemLib)]
     pub fn system_lib(this: &Instance) -> Module;
 
-    #[wasm_bindgen(method, js_name = createVirtualMachine)]
-    pub fn create_virtual_machine(this: &Instance, device: DLDevice) -> Module;
-
     #[wasm_bindgen(method, js_name = getGlobalFunc)]
     pub fn get_global_func(this: &Instance, name: &str) -> js_sys::Function;
 
@@ -196,36 +233,39 @@ extern "C" {
     pub fn webgpu(this: &Instance, device_id: u32) -> DLDevice;
 
     #[wasm_bindgen(method, js_name = empty)]
-    pub fn empty(this: &Instance, shape: js_sys::Array, dtype: &str, dev: DLDevice) -> Tensor;
+    pub fn empty(this: &Instance, shape: Array, dtype: &str, dev: DLDevice) -> Tensor;
 
     #[wasm_bindgen(method, js_name = makeTVMArray)]
-    pub fn make_tvm_array(this: &Instance, inputs: js_sys::Array) -> TVMArray;
+    pub fn make_tvm_array(this: &Instance, inputs: Array) -> TVMArray;
 
     #[wasm_bindgen(method, js_name = makeShapeTuple)]
-    pub fn make_shape_tuple(this: &Instance, shape: js_sys::Array) -> TVMObject;
+    pub fn make_shape_tuple(this: &Instance, shape: Array) -> TVMObject;
 
     #[wasm_bindgen(method, js_name = initWebGPU)]
-    pub fn init_webgpu(this: &Instance, device: DLDevice);
+    pub fn init_webgpu(this: &Instance, device: GpuDevice);
 
-    #[wasm_bindgen(method, js_name = getParamsFromCacheByName)]
-    pub fn get_params_from_cache_by_name(this: &Instance, param_names: js_sys::Array) -> TVMObject;
-
-    #[wasm_bindgen(method, js_name = tensorCacheUpdate)]
-    pub fn tensor_cache_update(this: &Instance, name: &str, arr: Tensor);
+    #[wasm_bindgen(method, js_name = tensorCacheUpdateBuffer)]
+    pub async fn tensor_cache_update_buffer(
+        this: &Instance,
+        device: DLDevice,
+        record: TensorCacheEntry,
+        buffer: js_sys::ArrayBuffer,
+    );
 
     #[wasm_bindgen(method, js_name = tensorCacheClear)]
     pub fn tensor_cache_clear(this: &Instance);
 
-    #[wasm_bindgen(method, js_name = sampleTopPFromLogits)]
-    pub fn sample_top_p_from_logits(
-        this: &Instance,
-        logits: Tensor,
-        temperature: f64,
-        top_p: f64,
-    ) -> i64;
+    #[wasm_bindgen(method, js_name = getParamsFromCacheByName)]
+    pub fn get_params_from_cache_by_name(this: &Instance, param_names: Vec<String>) -> TVMObject;
 
     #[wasm_bindgen(js_name = instantiate)]
     pub async fn instantiate(buffer_source: js_sys::ArrayBuffer) -> Instance;
+
+    //////////////
+    /// WebGPU ///
+    //////////////
+    #[wasm_bindgen(js_name = getGPUDevice)]
+    pub async fn get_gpu_device() -> GpuDevice;
 }
 
 impl Instance {
@@ -233,4 +273,60 @@ impl Instance {
         let detached = self.detach_from_current_scope(obj.into().into());
         T::from(detached.into())
     }
+}
+
+////////////////////
+/// Tensor Cache ///
+////////////////////
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TensorFormat {
+    #[default]
+    #[serde(rename = "f32-to-bf16")]
+    F32ToBf16,
+    #[serde(rename = "raw")]
+    Raw,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, tsify::Tsify)]
+#[tsify(into_wasm_abi)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TensorCacheEntry {
+    pub name: String,
+    pub shape: Vec<u32>,
+    pub dtype: String,
+    pub format: TensorFormat,
+    pub byte_offset: usize,
+    pub nbytes: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ShardFormat {
+    #[default]
+    #[serde(rename = "raw-shard")]
+    RawShard,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TensorShardEntry {
+    pub data_path: String,
+    pub format: ShardFormat,
+    pub nbytes: usize,
+    pub records: Vec<TensorCacheEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct TensorCacheMetadata {
+    pub param_size: f32,
+    pub param_bytes: f32,
+    pub bits_per_param: f32,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct TensorCache {
+    pub metadata: TensorCacheMetadata,
+    pub records: Vec<TensorShardEntry>,
 }

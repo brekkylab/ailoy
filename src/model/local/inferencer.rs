@@ -329,8 +329,8 @@ mod native {
         }
     }
 
-    impl TryFromCache for EmbeddingModelInferencer {
-        fn claim_files<'a>(
+    impl<'this> TryFromCache<'this> for EmbeddingModelInferencer {
+        fn claim_files<'a: 'this>(
             cache: Cache,
             key: impl AsRef<str>,
             _: &'a mut std::collections::HashMap<String, crate::value::Value>,
@@ -338,7 +338,7 @@ mod native {
             claim_files(cache, key)
         }
 
-        fn try_from_contents<'a>(
+        fn try_from_contents<'a: 'this>(
             contents: &'a mut CacheContents,
             ctx: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
@@ -664,8 +664,8 @@ mod native {
         }
     }
 
-    impl TryFromCache for LanguageModelInferencer {
-        fn claim_files<'a>(
+    impl<'this> TryFromCache<'this> for LanguageModelInferencer {
+        fn claim_files<'a: 'this>(
             cache: Cache,
             key: impl AsRef<str>,
             _: &'a mut std::collections::HashMap<String, crate::value::Value>,
@@ -673,7 +673,7 @@ mod native {
             claim_files(cache, key)
         }
 
-        fn try_from_contents<'a>(
+        fn try_from_contents<'a: 'this>(
             contents: &'a mut CacheContents,
             ctx: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
@@ -748,87 +748,294 @@ mod native {
 mod wasm {
     use std::fmt;
 
-    use anyhow::{anyhow, bail};
-    use js_sys::{Float32Array, Object, Reflect, Uint8Array, Uint32Array};
+    use anyhow::{Result, anyhow};
+    use js_sys::Uint8Array;
     use wasm_bindgen::prelude::*;
-    use wasm_bindgen_futures::JsFuture;
 
     use super::*;
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
-        ffi::js_bridge::{
-            JSTVMEmbeddingModel, JSTVMLanguageModel, init_tvm_embedding_model_js,
-            init_tvm_language_model_js,
+        ffi::web::{
+            conversion::u32_slice_to_js,
+            tvmjs_bridge::{self as tvmjs},
         },
-        model::KVCacheConfig,
-        utils::{BoxFuture, float16},
+        model::{KVCache, KVCacheConfig, KVCacheOps},
+        utils::BoxFuture,
     };
 
-    fn prepare_cache_entries<'a>(
+    async fn instantiate_tvm<'a>(contents: &'a mut CacheContents) -> Result<tvmjs::Instance> {
+        let runtime_filename = "rt.wasm";
+        let runtime_bytes =
+            if let Some((_, source)) = contents.remove_with_filename(&runtime_filename) {
+                let bytes = source.read_all().await?;
+                Uint8Array::new_from_slice(bytes.as_slice())
+            } else {
+                anyhow::bail!("{} does not exist", runtime_filename)
+            };
+
+        let tvm = tvmjs::instantiate(runtime_bytes.buffer()).await;
+
+        // initialize webgpu
+        let gpu = tvmjs::get_gpu_device().await;
+        tvm.init_webgpu(gpu);
+
+        Ok(tvm)
+    }
+
+    fn initialize_vm<'a>(tvm: &tvmjs::Instance, device: &tvmjs::DLDevice) -> Result<tvmjs::Module> {
+        let fload_exec: tvmjs::PackedFunc =
+            tvm.system_lib().get_function("vm_load_executable").into();
+        let vm: tvmjs::Module = tvm.detach(fload_exec.call0()?);
+
+        let fvm_init: tvmjs::PackedFunc = vm.get_function("vm_initialization").into();
+        fvm_init.call6(
+            &tvmjs::Scalar::new(device.device_type() as f64, "int"), // webgpu device type
+            &tvmjs::Scalar::new(device.device_id() as f64, "int"),   // webgpu device id
+            &tvmjs::Scalar::new(2., "int"),                          // pooled allocator
+            &tvmjs::Scalar::new(1., "int"),                          // host device type (cpu: 1)
+            &tvmjs::Scalar::new(0., "int"),                          // host device id
+            &tvmjs::Scalar::new(2., "int"),                          // pooled allocator
+        )?;
+
+        Ok(vm)
+    }
+
+    fn get_metadata(vm: &tvmjs::Module) -> Result<serde_json::Value> {
+        let fmetadata: tvmjs::PackedFunc = vm.get_function("_metadata").into();
+        let metadata_str = fmetadata
+            .call0()?
+            .as_string()
+            .ok_or(anyhow!("_metadata result should be string"))?;
+        let metadata: serde_json::Value = serde_json::from_str(metadata_str.as_str())
+            .with_context(|| "Failed to parse metadata")?;
+        Ok(metadata)
+    }
+
+    async fn initialize_params<'a>(
+        tvm: &tvmjs::Instance,
+        device: &tvmjs::DLDevice,
+        metadata: &serde_json::Value,
         contents: &'a mut CacheContents,
-    ) -> Result<js_sys::Object, js_sys::Error> {
-        // Build CacheEntries object with file entries, including full path and optional eager data
-        let cache_entries = Object::new();
-        let root = contents.root.clone();
-        for (entry, source) in contents.drain() {
-            let entry_obj = Object::new();
-            let full_path = root.join(entry.path());
-            Reflect::set(
-                &entry_obj,
-                &JsValue::from_str("fullPath"),
-                &JsValue::from_str(&full_path.to_string_lossy()),
-            )?;
+    ) -> Result<tvmjs::TVMObject> {
+        let tensor_cache_bytes =
+            if let Some((_, source)) = contents.remove_with_filename("tensor-cache.json") {
+                source.read_all().await?
+            } else if let Some((_, source)) = contents.remove_with_filename("ndarray-cache.json") {
+                source.read_all().await?
+            } else {
+                anyhow::bail!("tensor cache json does not exist")
+            };
 
-            // If file is eager (small), pass bytes directly
-            if let Some(bytes) = source.as_eager() {
-                let u8arr = Uint8Array::new_with_length(bytes.len() as u32);
-                u8arr.copy_from(bytes);
-                Reflect::set(
-                    &entry_obj,
-                    &JsValue::from_str("eagerData"),
-                    &u8arr.buffer().into(),
-                )?;
+        let tensor_cache: tvmjs::TensorCache =
+            serde_json::from_slice(tensor_cache_bytes.as_slice())?;
+
+        for shard_entry in tensor_cache.records {
+            let buffer =
+                if let Some((_, source)) = contents.remove_with_filename(&shard_entry.data_path) {
+                    source.read_all().await?
+                } else {
+                    anyhow::bail!(
+                        "Tensor Cache shard {} does not exist",
+                        shard_entry.data_path
+                    );
+                };
+
+            for param_record in shard_entry.records {
+                let buffer_part = &buffer
+                    [param_record.byte_offset..(param_record.byte_offset + param_record.nbytes)];
+
+                tvm.tensor_cache_update_buffer(
+                    device.clone(),
+                    param_record,
+                    Uint8Array::new_from_slice(buffer_part).buffer(),
+                )
+                .await;
             }
-
-            Reflect::set(
-                &cache_entries,
-                &JsValue::from_str(entry.filename()),
-                &entry_obj,
-            )?;
         }
-        Ok(cache_entries)
+        let param_names = metadata
+            .get("params")
+            .ok_or(anyhow!("Failed to get `params` attribute"))?
+            .as_array()
+            .ok_or(anyhow!("Failed to convert `params` to array"))?
+            .iter()
+            .map(|v| {
+                v.get("name")
+                    .ok_or(anyhow!("Failed to get `name` attribute"))?
+                    .as_str()
+                    .ok_or(anyhow!("Failed to convert `name` to str"))
+                    .map(|s| s.to_string())
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let params: tvmjs::TVMObject = tvm.detach(tvm.get_params_from_cache_by_name(param_names));
+
+        Ok(params)
     }
 
     pub struct LanguageModelInferencer {
-        inner: JSTVMLanguageModel,
+        tvm: tvmjs::Instance,
+        device: tvmjs::DLDevice,
+        kv_cache: KVCache,
+        params: tvmjs::TVMObject,
+        history: Vec<u32>,
+
+        fembed: tvmjs::PackedFunc,
+        fprefill: tvmjs::PackedFunc,
+        fdecode: tvmjs::PackedFunc,
+        fsample_top_p_from_logits: tvmjs::PackedFunc,
     }
 
     impl fmt::Debug for LanguageModelInferencer {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("LanguageModelInferencer")
-                // .field("init", &self.init)
-                // .field("inner", &self.inner)
-                .finish()
+            f.debug_struct("LanguageModelInferencer").finish()
         }
     }
 
     impl LanguageModelInferencer {
-        pub async fn prefill(&mut self, tokens: &[u32]) -> () {
-            let arr = unsafe { Uint32Array::view(tokens) };
-            JsFuture::from(self.inner.prefill(arr)).await.unwrap();
+        fn clear(&mut self) -> anyhow::Result<()> {
+            self.kv_cache.clear()?;
+            self.history.clear();
+            Ok(())
         }
 
-        pub async fn decode(&mut self, last_token: u32, temperature: f64, top_p: f64) -> u32 {
-            let logits: Float32Array = JsFuture::from(self.inner.decode(last_token))
-                .await
-                .unwrap()
+        async fn embed(&self, tokens: &[i32]) -> anyhow::Result<tvmjs::Tensor> {
+            let input = self.tvm.empty(
+                u32_slice_to_js(&[tokens.len() as u32]),
+                "int32",
+                self.device.clone().into(),
+            );
+            input.copy_from_i32array(tokens);
+            self.device.sync().await;
+
+            let embedding: tvmjs::Tensor = self.fembed.call2(&input, &self.params).unwrap().into();
+            let embedding_reshaped = embedding.view(
+                u32_slice_to_js(&[1, embedding.shape()[0], embedding.shape()[1]]),
+                None,
+                None,
+            );
+
+            Ok(embedding_reshaped)
+        }
+
+        pub async fn prefill(&mut self, tokens: &[u32]) -> anyhow::Result<()> {
+            if tokens.is_empty() {
+                anyhow::bail!("Token must not be empty");
+            }
+
+            self.tvm.begin_scope();
+
+            // Make sure that kv-cache and history is sync
+            if self.kv_cache.get_total_sequence_length()? != self.history.len() as i64 {
+                self.clear()?;
+            }
+
+            // The longest common prefix (LCP) between inputs & previous conversations
+            let lcp_index = self
+                .history
+                .iter()
+                .zip(tokens.iter())
+                .take_while(|(h, t)| h == t)
+                .count();
+
+            // Rewind the head of kv-cache to the LCP
+            if lcp_index < self.history.len() {
+                self.kv_cache
+                    .popn(0, (self.history.len() - lcp_index) as i64)
+                    .map_err(|e| anyhow!("{e:?}"))?;
+            }
+
+            // Tokens to be added (without common prefixes)
+            let new_tokens: Vec<i32> = tokens[lcp_index..].iter().map(|t| *t as i32).collect();
+
+            if new_tokens.is_empty() {
+                self.history = tokens.to_vec();
+                return Ok(());
+            }
+
+            // Calculate remaining space in KV cache
+            if new_tokens.len() as i64
+                >= self.kv_cache.get_num_available_pages()? * self.kv_cache.page_size
+            {
+                anyhow::bail!("Context length limit exceed");
+            }
+
+            let prefill_chunk_size = self.kv_cache.prefill_chunk_size as usize;
+            for i in (0..new_tokens.len()).step_by(prefill_chunk_size) {
+                let j = std::cmp::min(i + prefill_chunk_size, new_tokens.len());
+                let length = j - i;
+                let tokens_sliced = &new_tokens[i..j];
+                let embedding = self.embed(tokens_sliced).await?;
+
+                self.kv_cache
+                    .begin_forward(0, length as i64)
+                    .map_err(|e| anyhow!("{e:?}"))?;
+                self.fprefill
+                    .call3(&embedding, self.kv_cache.get_state(), &self.params)
+                    .map_err(|e| anyhow!("{e:?}"))?;
+                self.kv_cache.end_forward().map_err(|e| anyhow!("{e:?}"))?;
+            }
+
+            // Update history
+            self.history = tokens.to_vec();
+
+            self.tvm.end_scope();
+
+            Ok(())
+        }
+
+        pub async fn decode(
+            &mut self,
+            last_token: u32,
+            temperature: f64,
+            top_p: f64,
+        ) -> anyhow::Result<u32> {
+            self.tvm.begin_scope();
+
+            let embedding = self.embed(&[last_token as i32]).await?;
+
+            self.kv_cache
+                .begin_forward(0, 1)
+                .map_err(|e| anyhow!("Failed to begin forward: {:?}", e))?;
+            let output: tvmjs::TVMArray = self
+                .fdecode
+                .call3(&embedding, self.kv_cache.get_state(), &self.params)
+                .map_err(|e| anyhow!("Failed to call `decode`: {:?}", e))?
                 .into();
-            self.inner.sample(logits, temperature, top_p)
+            self.kv_cache
+                .end_forward()
+                .map_err(|e| anyhow!("Failed to end forward: {:?}", e))?;
+
+            // The output of decode is an Array of 2 items: logits(Tensor) and kv cache.
+            let logits: tvmjs::Tensor = self.tvm.detach(output.get(0));
+            let logits_cpu: tvmjs::Tensor = self.tvm.detach(self.tvm.empty(
+                u32_slice_to_js(logits.shape().as_slice()),
+                &logits.dtype(),
+                self.tvm.cpu(),
+            ));
+            logits_cpu.copy_from_tensor(&logits);
+            self.device.sync().await;
+            logits.dispose();
+
+            let sampled_token = self
+                .fsample_top_p_from_logits
+                .call4(
+                    &logits_cpu,
+                    &JsValue::from_f64(temperature),
+                    &JsValue::from_f64(top_p),
+                    &JsValue::from_f64(crate::utils::get_random_f64()),
+                )
+                .unwrap()
+                .as_f64()
+                .unwrap();
+            logits_cpu.dispose();
+
+            self.tvm.end_scope();
+
+            Ok(sampled_token as u32)
         }
     }
 
-    impl TryFromCache for LanguageModelInferencer {
-        fn claim_files<'a>(
+    impl<'this> TryFromCache<'this> for LanguageModelInferencer {
+        fn claim_files<'a: 'this>(
             cache: Cache,
             key: impl AsRef<str>,
             _: &'a mut std::collections::HashMap<String, crate::value::Value>,
@@ -836,80 +1043,136 @@ mod wasm {
             claim_files(cache, key)
         }
 
-        fn try_from_contents<'a>(
+        fn try_from_contents<'a: 'this>(
             contents: &'a mut CacheContents,
             ctx: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
-                let cache_entries = prepare_cache_entries(contents)
-                    .map_err(|e| anyhow!("Failed to prepare cache entries: {:?}", e))?;
+                let tvm = instantiate_tvm(contents).await?;
+                tvm.begin_scope();
 
-                // Build model config object with kv cache settings
-                let config = {
-                    let config = Object::new();
-                    if let Some(kv_cache) = ctx.get("kv_cache") {
-                        let kv_cache_config =
-                            serde_json::from_value::<KVCacheConfig>(kv_cache.clone().into())
-                                .unwrap_or_default();
-                        Reflect::set(&config, &"kvCache".into(), &kv_cache_config.into()).unwrap();
-                    }
-                    config
+                let device = tvm.webgpu(0);
+                let vm = initialize_vm(&tvm, &device)?;
+                let metadata = get_metadata(&vm)?;
+                let params = initialize_params(&tvm, &device, &metadata, contents).await?;
+
+                let fembed: tvmjs::PackedFunc = tvm.detach(vm.get_function("embed"));
+                let fprefill: tvmjs::PackedFunc = tvm.detach(vm.get_function("prefill"));
+                let fdecode: tvmjs::PackedFunc = tvm.detach(vm.get_function("decode"));
+                let fsample_top_p_from_logits: tvmjs::PackedFunc =
+                    tvm.detach(tvm.get_global_func("vm.builtin.sample_top_p_from_logits"));
+
+                let kv_cache_config = if let Some(kv_cache) = ctx.get("kv_cache") {
+                    serde_json::from_value::<KVCacheConfig>(kv_cache.clone().into())
+                        .unwrap_or_default()
+                } else {
+                    KVCacheConfig::default()
                 };
+                let kv_cache =
+                    KVCache::new(tvm.clone().into(), &vm, &metadata, kv_cache_config).unwrap();
 
-                let prom = init_tvm_language_model_js(&cache_entries, Some(config));
-                let js_lm = match JsFuture::from(prom).await {
-                    Ok(out) => {
-                        let lm: JSTVMLanguageModel = out
-                            .dyn_into()
-                            .map_err(|e| anyhow!("Conversion failed: {:?}", e))?;
-                        lm
-                    }
-                    Err(err) => {
-                        bail!("JS inferencer init failed: {:?}", err);
-                    }
-                };
+                tvm.end_scope();
 
-                Ok(LanguageModelInferencer { inner: js_lm })
+                Ok(LanguageModelInferencer {
+                    tvm,
+                    device,
+                    kv_cache,
+                    params,
+                    history: Vec::new(),
+                    fembed,
+                    fprefill,
+                    fdecode,
+                    fsample_top_p_from_logits,
+                })
             })
         }
     }
 
     pub struct EmbeddingModelInferencer {
-        inner: JSTVMEmbeddingModel,
+        tvm: tvmjs::Instance,
+        device: tvmjs::DLDevice,
+        params: tvmjs::TVMObject,
+        fprefill: tvmjs::PackedFunc,
     }
 
     impl fmt::Debug for EmbeddingModelInferencer {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("EmbeddingModelInferencer")
-                // .field("init", &self.init)
-                // .field("inner", &self.inner)
-                .finish()
+            f.debug_struct("EmbeddingModelInferencer").finish()
         }
     }
 
     impl EmbeddingModelInferencer {
-        pub async fn infer(&mut self, tokens: &[u32]) -> Vec<f32> {
-            let arr = unsafe { js_sys::Uint32Array::view(tokens) };
-            let res = self.inner.infer(arr);
-            let result_vector = JsFuture::from(res).await.unwrap();
+        pub async fn infer(&mut self, tokens: &[u32]) -> Result<Vec<f32>> {
+            self.tvm.begin_scope();
 
-            let f32_vec = if let Some(f32_array) = result_vector.dyn_ref::<js_sys::Float32Array>() {
-                f32_array.to_vec()
-            } else if let Some(u16_array) = result_vector.dyn_ref::<js_sys::Uint16Array>() {
-                u16_array
-                    .to_vec()
+            let input: tvmjs::Tensor = self.tvm.detach(self.tvm.empty(
+                u32_slice_to_js(&[1, tokens.len() as u32]),
+                "int32",
+                self.device.clone().into(),
+            ));
+            let tokens_i32: Vec<i32> = tokens.to_vec().into_iter().map(|v| v as i32).collect();
+            input.copy_from_i32array(tokens_i32.as_slice());
+            self.device.sync().await;
+
+            let mask: tvmjs::Tensor = self.tvm.detach(self.tvm.empty(
+                u32_slice_to_js(&[1, tokens.len() as u32]),
+                "int32",
+                self.device.clone().into(),
+            ));
+            let mask_i32 = vec![1i32; tokens.len()];
+            mask.copy_from_i32array(mask_i32.as_slice());
+            self.device.sync().await;
+
+            let logits: tvmjs::Tensor = self
+                .fprefill
+                .call3(&input, &mask, &self.params)
+                .map_err(|e| anyhow!("Failed to call `prefill`: {:?}", e))?
+                .into();
+            input.dispose();
+            mask.dispose();
+
+            let logits_cpu = self.tvm.empty(
+                u32_slice_to_js(logits.shape().as_slice()),
+                &logits.dtype(),
+                self.tvm.cpu(),
+            );
+            logits_cpu.copy_from_tensor(&logits);
+            self.device.sync().await;
+            logits.dispose();
+
+            let logits_shape = logits_cpu.shape();
+            let hidden_size = logits_shape
+                .last()
+                .ok_or(anyhow!("last dim should be exist"))?
+                .clone();
+            let mut dense_shape = vec![1; logits_shape.len()];
+            dense_shape[logits_shape.len() - 1] = hidden_size;
+
+            // Copy the dense vector only
+            let logits_cpu = logits_cpu.view(u32_slice_to_js(&dense_shape), None, Some(0));
+            let dense_vec = if logits_cpu.dtype() == "float16" {
+                // Copy FP16
+                let buffer_u16: Vec<u16> = logits_cpu.to_u16array();
+                let buffer_f32: Vec<f32> = buffer_u16
                     .into_iter()
-                    .map(|val| float16::f16_to_f32(val))
-                    .collect()
+                    .map(|v| crate::utils::float16::f16_to_f32(v))
+                    .collect();
+                buffer_f32
             } else {
-                vec![]
+                // Copy FP32
+                let buffer: Vec<f32> = logits_cpu.to_f32array();
+                buffer
             };
-            f32_vec
+            logits_cpu.dispose();
+
+            self.tvm.end_scope();
+
+            Ok(dense_vec)
         }
     }
 
-    impl TryFromCache for EmbeddingModelInferencer {
-        fn claim_files<'a>(
+    impl<'this> TryFromCache<'this> for EmbeddingModelInferencer {
+        fn claim_files<'a: 'this>(
             cache: Cache,
             key: impl AsRef<str>,
             _: &'a mut std::collections::HashMap<String, crate::value::Value>,
@@ -917,28 +1180,28 @@ mod wasm {
             claim_files(cache, key)
         }
 
-        fn try_from_contents<'a>(
+        fn try_from_contents<'a: 'this>(
             contents: &'a mut CacheContents,
             _: &'a std::collections::HashMap<String, crate::value::Value>,
         ) -> BoxFuture<'a, anyhow::Result<Self>> {
             Box::pin(async move {
-                let cache_entries = prepare_cache_entries(contents)
-                    .map_err(|e| anyhow!("Failed to prepare cache entries: {:?}", e))?;
+                let tvm = instantiate_tvm(contents).await?;
+                tvm.begin_scope();
 
-                let prom = init_tvm_embedding_model_js(&cache_entries);
-                let js_em: JSTVMEmbeddingModel = match JsFuture::from(prom).await {
-                    Ok(out) => {
-                        let em: JSTVMEmbeddingModel = out
-                            .dyn_into()
-                            .map_err(|e| anyhow!("Conversion failed: {:?}", e))?;
-                        em
-                    }
-                    Err(err) => {
-                        bail!("JS inferencer init failed: {:?}", err)
-                    }
-                };
+                let device = tvm.webgpu(0);
+                let vm = initialize_vm(&tvm, &device)?;
+                let metadata = get_metadata(&vm)?;
+                let params = initialize_params(&tvm, &device, &metadata, contents).await?;
+                let fprefill: tvmjs::PackedFunc = tvm.detach(vm.get_function("prefill"));
 
-                Ok(EmbeddingModelInferencer { inner: js_em })
+                tvm.end_scope();
+
+                Ok(EmbeddingModelInferencer {
+                    tvm,
+                    device,
+                    params,
+                    fprefill,
+                })
             })
         }
     }
