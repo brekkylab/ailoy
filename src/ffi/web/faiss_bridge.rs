@@ -2,46 +2,6 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(raw_module = "./shim_js/dist/index.js")]
 extern "C" {
-    //////////////////////
-    /// Language Model ///
-    //////////////////////
-
-    #[wasm_bindgen(js_name = init_tvm_language_model)]
-    pub fn init_tvm_language_model_js(
-        cache_entries: &js_sys::Object,
-        config: Option<js_sys::Object>,
-    ) -> js_sys::Promise;
-
-    #[wasm_bindgen(js_name = "TVMLanguageModel")]
-    pub type JSTVMLanguageModel;
-
-    #[wasm_bindgen(method, js_class = "TVMLanguageModel", js_name = prefill)]
-    pub fn prefill(this: &JSTVMLanguageModel, tokens: js_sys::Uint32Array) -> js_sys::Promise;
-
-    #[wasm_bindgen(method, js_class = "TVMLanguageModel", js_name = decode)]
-    pub fn decode(this: &JSTVMLanguageModel, last_token: u32) -> js_sys::Promise;
-
-    #[wasm_bindgen(method, js_class = "TVMLanguageModel", js_name = sample)]
-    pub fn sample(
-        this: &JSTVMLanguageModel,
-        logits: js_sys::Float32Array,
-        temperature: f64,
-        top_p: f64,
-    ) -> u32;
-
-    ///////////////////////
-    /// Embedding Model ///
-    ///////////////////////
-
-    #[wasm_bindgen(js_name = init_tvm_embedding_model)]
-    pub fn init_tvm_embedding_model_js(cache_entries: &js_sys::Object) -> js_sys::Promise;
-
-    #[wasm_bindgen(js_name = "TVMEmbeddingModel")]
-    pub type JSTVMEmbeddingModel;
-
-    #[wasm_bindgen(method, js_class = "TVMEmbeddingModel", js_name = infer)]
-    pub fn infer(this: &JSTVMEmbeddingModel, tokens: js_sys::Uint32Array) -> js_sys::Promise;
-
     ///////////////////
     /// Faiss Index ///
     ///////////////////

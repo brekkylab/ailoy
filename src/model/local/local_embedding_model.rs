@@ -38,7 +38,7 @@ impl EmbeddingModelInference for LocalEmbeddingModel {
         let mut inferencer = self.inferencer.lock().await;
 
         #[cfg(target_family = "wasm")]
-        let mut embedding = inferencer.infer(&input_tokens).await;
+        let mut embedding = inferencer.infer(&input_tokens).await.unwrap();
         #[cfg(not(target_family = "wasm"))]
         let mut embedding = inferencer.infer(&input_tokens)?;
 
@@ -50,8 +50,8 @@ impl EmbeddingModelInference for LocalEmbeddingModel {
     }
 }
 
-impl TryFromCache for LocalEmbeddingModel {
-    fn claim_files<'a>(
+impl<'this> TryFromCache<'this> for LocalEmbeddingModel {
+    fn claim_files<'a: 'this>(
         cache: Cache,
         key: impl AsRef<str>,
         ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
@@ -86,7 +86,7 @@ impl TryFromCache for LocalEmbeddingModel {
         })
     }
 
-    fn try_from_contents<'a>(
+    fn try_from_contents<'a: 'this>(
         contents: &'a mut CacheContents,
         ctx: &std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>>

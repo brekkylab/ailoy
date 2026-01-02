@@ -1,7 +1,9 @@
 use std::sync::atomic::{AtomicI64, Ordering};
 
 #[cfg(target_arch = "wasm32")]
-use crate::ffi::js_bridge::{FaissIndexSearchResult, FaissMetricType, create_faiss_index};
+use crate::ffi::web::faiss_bridge::{
+    FaissIndexInner, FaissIndexSearchResult, FaissMetricType, create_faiss_index,
+};
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 use ailoy_faiss_sys::{FaissIndexSearchResult, FaissMetricType};
 
@@ -43,7 +45,7 @@ pub struct FaissIndex {
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     inner: cxx::UniquePtr<ailoy_faiss_sys::FaissIndexInner>,
     #[cfg(target_family = "wasm")]
-    inner: crate::ffi::js_bridge::FaissIndexInner,
+    inner: crate::ffi::web::faiss_bridge::FaissIndexInner,
 
     next_id: AtomicI64, // thread-safe ID Generator
 }
@@ -77,7 +79,7 @@ impl FaissIndex {
     }
 
     #[cfg(target_family = "wasm")]
-    fn inner(&self) -> &crate::ffi::js_bridge::FaissIndexInner {
+    fn inner(&self) -> &FaissIndexInner {
         &self.inner
     }
 

@@ -37,5 +37,4 @@ export {
 export type { Disposable, LibraryProvider } from "./types";
 export { assert, wasmPath, LinearCongruentialGenerator } from "./support";
 export type { GPUDeviceDetectOutput } from "./webgpu";
-export { detectGPUDevice } from "./webgpu";
-export { createPolyfillWASI } from "./compact";
+export { detectGPUDevice, getGPUDevice } from "./webgpu";

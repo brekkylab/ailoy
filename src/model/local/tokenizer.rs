@@ -35,8 +35,8 @@ impl Tokenizer {
     }
 }
 
-impl TryFromCache for Tokenizer {
-    fn claim_files<'a>(
+impl<'this> TryFromCache<'this> for Tokenizer {
+    fn claim_files<'a: 'this>(
         _: Cache,
         key: impl AsRef<str>,
         _: &'a mut std::collections::HashMap<String, crate::value::Value>,
@@ -45,9 +45,9 @@ impl TryFromCache for Tokenizer {
         Box::pin(async move { Ok(CacheClaim::new([(dirname.as_str(), "tokenizer.json")])) })
     }
 
-    fn try_from_contents<'a>(
+    fn try_from_contents<'a: 'this>(
         contents: &'a mut CacheContents,
-        _: &'a std::collections::HashMap<String, crate::value::Value>,
+        _: &std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>> {
         Box::pin(async move {
             let Some((_, source)) = contents.remove_with_filename("tokenizer.json") else {

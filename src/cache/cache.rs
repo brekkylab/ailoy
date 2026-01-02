@@ -316,7 +316,7 @@ impl Cache {
         validate_checksum: Option<bool>,
     ) -> BoxStream<'static, anyhow::Result<(CacheEntry, usize, usize, Vec<u8>)>>
     where
-        T: TryFromCache + MaybeSend + 'static,
+        for<'this> T: TryFromCache<'this> + MaybeSend + 'static,
     {
         let key = key.into();
         let this = self.clone();
@@ -387,7 +387,7 @@ impl Cache {
         validate_checksum: Option<bool>,
     ) -> BoxStream<'static, anyhow::Result<CacheProgress<T>>>
     where
-        T: TryFromCache + MaybeSend + 'static,
+        for<'this> T: TryFromCache<'this> + MaybeSend + 'static,
     {
         let root = self.root.clone();
         let cache_clone = self.clone();
