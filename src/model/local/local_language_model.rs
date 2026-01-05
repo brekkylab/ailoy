@@ -383,15 +383,17 @@ impl<'this> TryFromCache<'this> for LocalLangModelImpl {
     }
 }
 
-#[cfg(any(target_family = "unix", target_family = "windows"))]
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::value::{Delta, Part, Role};
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
-    #[tokio::test]
-    async fn infer_simple_chat() {
+    use super::*;
+    use crate::to_value;
+    use crate::value::{Delta, Part, Role, ToolDescBuilder};
+
+    #[multi_platform_test]
+    async fn local_infer_simple_chat() {
         let mut model = LocalLangModel::try_new(
             "Qwen/Qwen3-0.6B",
             Some(LocalLangModelConfig::default().with_validate_checksum(false)),
@@ -405,228 +407,126 @@ mod tests {
             Message::new(Role::User).with_contents([Part::Text {
                 text: "Hi what's your name?".to_owned(),
             }]),
-            // Message::with_role(Role::Assistant)
-            //     .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
-            //     .with_contents(vec![Part::Text(
-            //         "Hi! I'm an AI assistant. How can I assist you today? 😊".to_owned(),
-            //     )]),
-            // Message::with_role(Role::User)
-            //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
-        let config = InferenceConfig {
-            temperature: Some(0.0),
-            top_p: Some(0.0),
-            ..Default::default()
-        };
-        let mut delta = MessageDelta::new().with_role(Role::Assistant);
-        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), config);
-        while let Some(out) = strm.next().await {
-            let out = out.unwrap();
-            println!("{:?}", out);
-            delta = delta.accumulate(out.delta).unwrap();
+        let mut assistant_msg = MessageDelta::new();
+        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
         }
-        crate::info!("{:?}", delta.finish().unwrap());
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            crate::debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
     }
 
-    // #[tokio::test]
-    // async fn infer_tool_call() {
-    //     use futures::StreamExt;
+    #[multi_platform_test]
+    async fn local_infer_tool_call() {
+        let mut model = LocalLangModel::try_new(
+            "Qwen/Qwen3-0.6B",
+            Some(LocalLangModelConfig::default().with_validate_checksum(false)),
+        )
+        .await
+        .unwrap();
 
-    //     use crate::value::{MessageAggregator, Role, ToolDesc};
-    //     use local_language_model::*;
-
-    //     let cache = crate::cache::Cache::new();
-    //     let key = "Qwen/Qwen3-0.6B";
-    //     let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key));
-    //     let mut model: Option<LocalLangModel> = None;
-    //     while let Some(progress) = model_strm.next().await {
-    //         let mut progress = progress.unwrap();
-    //         println!(
-    //             "{} ({} / {})",
-    //             progress.comment, progress.current_task, progress.total_task
-    //         );
-    //         if progress.current_task == progress.total_task {
-    //             model = progress.result.take();
-    //         }
-    //     }
-    //     let mut model = model.unwrap();
-    //     model.disable_reasoning();
-    //     let tools = vec![
-    //         ToolDesc::new(
-    //             "temperature".into(),
-    //             "Get current temperature".into(),
-    //             json!({
-    //                 "type": "object",
-    //                 "properties": {
-    //                     "location": {
-    //                         "type": "string",
-    //                         "description": "The city name"
-    //                     },
-    //                     "unit": {
-    //                         "type": "string",
-    //                         "enum": ["Celsius", "Fahrenheit"]
-    //                     }
-    //                 },
-    //                 "required": ["location", "unit"]
-    //             }),
-    //             Some(json!({
-    //                 "type": "number",
-    //                 "description": "Null if the given city name is unavailable.",
-    //                 "nullable": true,
-    //             })),
-    //         )
-    //         .unwrap(),
-    //     ];
-    //     let msgs = vec![
-    //         Message::new()
-    //             .with_role(Role::User)
-    //             .with_contents(vec![Part::Text(
-    //                 "How much hot currently in Dubai?".to_owned(),
-    //             )]),
-    //     ];
-    //     let mut agg = MessageAggregator::new();
-    //     let mut strm = model.run(msgs, tools);
-    //     let mut assistant_msg: Option<Message> = None;
-    //     while let Some(delta_opt) = strm.next().await {
-    //         let delta = delta_opt.unwrap();
-    //         println!("{:?}", delta);
-    //         if let Some(msg) = agg.update(delta) {
-    //             assistant_msg = Some(msg);
-    //         }
-    //     }
-    //     let assistant_msg = assistant_msg.unwrap();
-    //     println!("Assistant message: {:?}", assistant_msg);
-    //     let tc = assistant_msg.tool_calls.get(0).unwrap();
-    //     println!("Tool call: {:?}", tc);
-    // }
-
-    // #[tokio::test]
-    // async fn infer_result_from_tool_call() {
-    //     use futures::StreamExt;
-
-    //     use crate::value::{MessageAggregator, Role, ToolDesc};
-    //     use local_language_model::*;
-
-    //     let cache = crate::cache::Cache::new();
-    //     let key = "Qwen/Qwen3-0.6B";
-    //     let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key));
-    //     let mut model: Option<LocalLangModel> = None;
-    //     while let Some(progress) = model_strm.next().await {
-    //         let mut progress = progress.unwrap();
-    //         println!(
-    //             "{} ({} / {})",
-    //             progress.comment, progress.current_task, progress.total_task
-    //         );
-    //         if progress.current_task == progress.total_task {
-    //             model = progress.result.take();
-    //         }
-    //     }
-    //     let mut model = model.unwrap();
-    //     model.disable_reasoning();
-    //     let tools = vec![
-    //         ToolDesc::new(
-    //             "temperature".into(),
-    //             "Get current temperature".into(),
-    //             json!({
-    //                 "type": "object",
-    //                 "properties": {
-    //                     "location": {
-    //                         "type": "string",
-    //                         "description": "The city name"
-    //                     },
-    //                     "unit": {
-    //                         "type": "string",
-    //                         "description": "The unit of temperature",
-    //                         "enum": ["Celsius", "Fahrenheit"]
-    //                     }
-    //                 },
-    //                 "required": ["location", "unit"]
-    //             }),
-    //             Some(json!({
-    //                 "type": "number",
-    //                 "description": "Null if the given city name is unavailable.",
-    //                 "nullable": true,
-    //             })),
-    //         )
-    //         .unwrap(),
-    //     ];
-    //     let msgs = vec![
-    //         Message::new().with_role(Role::User)
-    //             .with_contents([Part::new_text("How much hot currently in Dubai?".to_owned())]),
-    //         Message::new().with_role(Role::Assistant)
-    //             .with_contents([Part::new_text("\n\n")])
-    //             .with_tool_calls([Part::new_function_string("\n{\"name\": \"temperature\", \"arguments\": {\"location\": \"Dubai\", \"unit\": \"Celsius\"}}\n")]),
-    //         Message::new().with_role(Role::Tool).with_tool_call_id("temperature").with_contents([Part::new_text("40")])
-    //     ];
-    //     let mut agg = MessageAggregator::new();
-    //     let mut strm = model.run(msgs, tools);
-    //     let mut assistant_msg: Option<Message> = None;
-    //     while let Some(delta_opt) = strm.next().await {
-    //         let delta = delta_opt.unwrap();
-    //         if let Some(msg) = agg.update(delta) {
-    //             assistant_msg = Some(msg);
-    //         }
-    //     }
-    //     let assistant_msg = assistant_msg.unwrap();
-    //     println!("Assistant message: {:?}", assistant_msg);
-    // }
-}
-
-#[cfg(all(test, target_arch = "wasm32"))]
-#[cfg(test)]
-mod tests {
-    use futures::StreamExt as _;
-    use wasm_bindgen_test::*;
-
-    use super::*;
-    use crate::value::{Delta, Part, Role};
-
-    wasm_bindgen_test_configure!(run_in_browser);
-
-    #[wasm_bindgen_test]
-    async fn infer_simple_chat() {
-        let cache = crate::cache::Cache::new();
-        let key = "Qwen/Qwen3-0.6B";
-        let mut model_strm = boxed!(cache.try_create::<LocalLangModel>(key, None, Some(false)));
-        let mut model: Option<LocalLangModel> = None;
-
-        while let Some(progress) = model_strm.next().await {
-            let mut progress = progress.unwrap();
-            web_sys::console::log_1(
-                &format!(
-                    "{} ({} / {})",
-                    progress.comment, progress.current_task, progress.total_task
-                )
-                .into(),
-            );
-            if progress.current_task == progress.total_task {
-                model = progress.result.take();
-            }
-        }
-        let mut model = model.unwrap();
-        let msgs = vec![
-            Message::new(Role::System).with_contents(vec![Part::text("You are an assistant.")]),
-            Message::new(Role::User).with_contents(vec![Part::text("Hi what's your name?")]),
-            // Message::with_role(Role::Assistant)
-            //     .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
-            //     .with_contents(vec![Part::Text(
-            //         "Hi! I'm an AI assistant. How can I assist you today? 😊".to_owned(),
-            //     )]),
-            // Message::with_role(Role::User)
-            //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
         ];
-        let config = InferenceConfig {
-            temperature: Some(0.0),
-            top_p: Some(0.0),
-            ..Default::default()
-        };
-        let mut delta = MessageDelta::new();
-        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), config);
-        while let Some(out) = strm.next().await {
-            let out = out.unwrap();
-            crate::debug!("{:?}", out);
-            delta = delta.accumulate(out.delta).unwrap();
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents(vec![Part::text("How much hot currently in Dubai?")]),
+        ];
+
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
         }
-        crate::info!("{:?}", delta.finish().unwrap());
+        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            if let Some(tool_calls) = message.tool_calls {
+                crate::debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                tool_calls
+                    .first()
+                    .and_then(|f| f.as_function())
+                    .map(|f| f.1 == "temperature")
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        }));
+    }
+
+    #[multi_platform_test]
+    async fn local_infer_tool_response() {
+        let mut model = LocalLangModel::try_new(
+            "Qwen/Qwen3-0.6B",
+            Some(LocalLangModelConfig::default().with_validate_checksum(false)),
+        )
+        .await
+        .unwrap();
+
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
+        ];
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?".to_owned())]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "call-a560d635cdaedff2",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "fahrenheit"}),
+            )]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "call-4bc4010916f4fa08",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "celsius"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("call-a560d635cdaedff2")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("call-4bc4010916f4fa08")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+        ];
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
+        }
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            crate::debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
     }
 }

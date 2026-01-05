@@ -550,6 +550,13 @@ pub(crate) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
                 finish_reason: Some(finish_reason),
             };
         }
+        "response.function_call_arguments.done" => {
+            // Valid termination of tool call
+            return MessageDeltaOutput {
+                delta: MessageDelta::default(),
+                finish_reason: Some(FinishReason::ToolCall {}),
+            };
+        }
         _ => {
             // Ongoing stream
             let Ok(decoded) = serde_json::from_value::<Unmarshaled<_, OpenAIUnmarshal>>(val) else {
@@ -1000,7 +1007,7 @@ mod api_tests {
             assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
+        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             if let Some(tool_calls) = message.tool_calls {
                 debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
