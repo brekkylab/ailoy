@@ -7,14 +7,15 @@ use chromadb::{
 use serde_json::{Map, Value as Json};
 use uuid::Uuid;
 
-use crate::vector_store::{
-    Embedding, Metadata, VectorStoreAddInput, VectorStoreBehavior, VectorStoreGetResult,
+use super::super::base::{
+    VectorStoreAddInput, VectorStoreBehavior, VectorStoreGetResult, VectorStoreMetadata,
     VectorStoreRetrieveResult,
 };
+use crate::value::Embedding;
 
 type ChromaMetadata = Map<String, Json>;
 
-fn into_chroma_metadata(metadata: &Metadata) -> ChromaMetadata {
+fn into_chroma_metadata(metadata: &VectorStoreMetadata) -> ChromaMetadata {
     let mut map = Map::new();
     for (key, val) in metadata.iter() {
         map.insert(key.clone(), val.clone().into());
@@ -22,8 +23,8 @@ fn into_chroma_metadata(metadata: &Metadata) -> ChromaMetadata {
     map
 }
 
-fn from_chroma_metadata(metadata: &ChromaMetadata) -> Metadata {
-    let mut map = Metadata::new();
+fn from_chroma_metadata(metadata: &ChromaMetadata) -> VectorStoreMetadata {
+    let mut map = VectorStoreMetadata::new();
     for (key, val) in metadata.iter() {
         map.insert(key.clone(), val.clone().into());
     }
@@ -37,15 +38,19 @@ pub struct ChromaStore {
     collection: ChromaCollection,
 }
 
+#[allow(dead_code)]
 impl ChromaStore {
-    pub async fn new(chroma_url: &str, collection_name: Option<&str>) -> anyhow::Result<Self> {
+    pub async fn new(chroma_url: String, collection_name: Option<String>) -> anyhow::Result<Self> {
         let client = ChromaClient::new(ChromaClientOptions {
             url: Some(chroma_url.to_owned()),
             ..Default::default()
         })
         .await?;
         let collection = client
-            .get_or_create_collection(collection_name.unwrap_or(CHROMADB_DEFAULT_COLLECTION), None)
+            .get_or_create_collection(
+                &collection_name.unwrap_or(CHROMADB_DEFAULT_COLLECTION.to_owned()),
+                None,
+            )
             .await?;
         Ok(Self { client, collection })
     }

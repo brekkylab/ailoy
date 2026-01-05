@@ -9,10 +9,8 @@ use rmcp::{
     transport::{StreamableHttpClientTransport, TokioChildProcess},
 };
 
-use crate::{
-    tool::{ToolBehavior, mcp::common::handle_result},
-    value::{ToolDesc, Value},
-};
+use super::{super::ToolBehavior, common::handle_result};
+use crate::value::{ToolDesc, Value};
 
 #[derive(Debug)]
 #[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
@@ -119,9 +117,10 @@ impl ToolBehavior for MCPTool {
 
 #[cfg(test)]
 mod tests {
+    use ailoy_macros::multi_platform_test;
+
     use super::*;
     use crate::value::Value;
-    use ailoy_macros::multi_platform_test;
 
     #[tokio::test]
     async fn run_stdio() -> anyhow::Result<()> {
@@ -185,8 +184,7 @@ mod py {
     use pyo3_stub_gen_derive::gen_stub_pymethods;
     use rmcp::transport::ConfigureCommandExt;
 
-    use super::*;
-    use crate::tool::{MCPClient, Tool};
+    use super::{super::super::base::Tool, *};
 
     #[gen_stub_pymethods]
     #[pymethods]
@@ -252,6 +250,43 @@ mod py {
                 .iter()
                 .find(|tool| tool.get_description().name == name)
                 .cloned()
+        }
+    }
+}
+
+#[cfg(feature = "nodejs")]
+mod node {
+    use napi::Status;
+    use napi_derive::*;
+    use rmcp::transport::ConfigureCommandExt;
+
+    use super::{super::super::base::Tool, *};
+
+    #[napi]
+    impl MCPClient {
+        #[napi(js_name = "newStdio")]
+        pub async fn new_stdio_js(command: String, args: Vec<String>) -> napi::Result<Self> {
+            let command = tokio::process::Command::new(command).configure(|cmd| {
+                cmd.args(args);
+            });
+            MCPClient::from_stdio(command)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(js_name = "newStreamableHttp")]
+        pub async fn new_streamable_http_js(url: String) -> napi::Result<Self> {
+            Self::from_streamable_http(url)
+                .await
+                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
+        }
+
+        #[napi(getter, js_name = "tools")]
+        pub fn tools_js(&self) -> Vec<Tool> {
+            self.get_tools()
+                .into_iter()
+                .map(|t| Tool::new_mcp(t.clone()))
+                .collect()
         }
     }
 }

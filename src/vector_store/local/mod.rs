@@ -1,3 +1,3 @@
-mod faiss;
+pub(crate) mod faiss;
 
-pub use faiss::*;
+pub(crate) use faiss::*;

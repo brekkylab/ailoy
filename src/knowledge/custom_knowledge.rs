@@ -2,11 +2,8 @@ use std::{fmt::Debug, sync::Arc};
 
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 
-use crate::{
-    knowledge::{KnowledgeBehavior, KnowledgeConfig},
-    utils::BoxFuture,
-    value::Document,
-};
+use super::base::{KnowledgeBehavior, KnowledgeConfig};
+use crate::{utils::BoxFuture, value::Document};
 
 #[maybe_send_sync]
 pub(super) type CustomKnowledgeRetrieveFunc =

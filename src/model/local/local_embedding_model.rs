@@ -4,20 +4,20 @@ use ailoy_macros::multi_platform_async_trait;
 use async_stream::try_stream;
 use futures::{StreamExt as _, lock::Mutex};
 
+use super::{
+    super::embedding_model::EmbeddingModelInference, inferencer::EmbeddingModelInferencer,
+    tokenizer::Tokenizer,
+};
 use crate::{
     boxed,
     cache::{Cache, CacheClaim, CacheContents, CacheProgress, TryFromCache},
-    model::{
-        EmbeddingModelInference,
-        local::{EmbeddingModelInferencer, Tokenizer},
-    },
     to_value,
     utils::{BoxFuture, BoxStream, Normalize},
     value::{Embedding, Value},
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct LocalEmbeddingModel {
+pub struct LocalEmbeddingModel {
     tokenizer: Tokenizer,
 
     // The inferencer performs mutable operations such as KV cache updates, so the mutex is applied.

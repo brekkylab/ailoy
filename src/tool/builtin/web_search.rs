@@ -11,9 +11,9 @@ use url::Url;
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
 
+use super::super::function::{FunctionTool, ToolFunc};
 use crate::{
     to_value,
-    tool::{FunctionTool, ToolFunc},
     utils::sleep,
     value::{ToolDescBuilder, Value},
 };

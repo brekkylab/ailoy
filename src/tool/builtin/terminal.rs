@@ -1,4 +1,5 @@
-use crate::{tool::FunctionTool, value::Value};
+use super::super::function::FunctionTool;
+use crate::value::Value;
 
 pub fn create_terminal_tool(_config: Value) -> anyhow::Result<FunctionTool> {
     #[cfg(feature = "wasm")]

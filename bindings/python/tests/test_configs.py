@@ -5,7 +5,7 @@ import ailoy as ai
 pytestmark = [pytest.mark.asyncio]
 
 
-def _check_inference_config_values(config: ai.InferenceConfig, data: dict):
+def _check_inference_config_values(config: ai.LangModelInferConfig, data: dict):
     for k, v in data.items():
         if k == "document_polyfill" and v == "Qwen3":
             assert (
@@ -44,7 +44,7 @@ def _check_knowledge_config_values(config: ai.KnowledgeConfig, data: dict):
     ],
 )
 async def test_inference_config(data):
-    config = ai.InferenceConfig.from_dict(data)
+    config = ai.LangModelInferConfig.from_dict(data)
     _check_inference_config_values(config, data)
 
 

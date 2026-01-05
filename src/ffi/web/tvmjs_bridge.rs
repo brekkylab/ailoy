@@ -248,7 +248,8 @@ extern "C" {
     pub async fn tensor_cache_update_buffer(
         this: &Instance,
         device: DLDevice,
-        record: TensorCacheEntry,
+        // record: TensorCacheEntry,
+        record: JsValue,
         buffer: js_sys::ArrayBuffer,
     );
 
@@ -291,8 +292,7 @@ pub enum TensorFormat {
     Raw,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, tsify::Tsify)]
-#[tsify(into_wasm_abi)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TensorCacheEntry {
     pub name: String,

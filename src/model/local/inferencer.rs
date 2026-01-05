@@ -1,13 +1,10 @@
 use anyhow::Context;
 #[cfg(any(target_family = "unix", target_family = "windows"))]
-pub use native::EmbeddingModelInferencer;
-#[cfg(any(target_family = "unix", target_family = "windows"))]
-pub use native::LanguageModelInferencer;
+pub use native::{EmbeddingModelInferencer, LanguageModelInferencer};
 #[cfg(any(target_family = "wasm"))]
-pub use wasm::EmbeddingModelInferencer;
-#[cfg(any(target_family = "wasm"))]
-pub use wasm::LanguageModelInferencer;
+pub use wasm::{EmbeddingModelInferencer, LanguageModelInferencer};
 
+use super::kv_cache::{KVCache, KVCacheConfig, KVCacheOps};
 use crate::{
     cache::{Cache, CacheClaim, CacheEntry},
     utils::BoxFuture,
@@ -142,7 +139,6 @@ mod native {
     use super::*;
     use crate::{
         cache::{Cache, CacheContents, TryFromCache},
-        model::{KVCache, KVCacheConfig, KVCacheOps},
         utils::BoxFuture,
     };
 
@@ -759,7 +755,6 @@ mod wasm {
             conversion::u32_slice_to_js,
             tvmjs_bridge::{self as tvmjs},
         },
-        model::{KVCache, KVCacheConfig, KVCacheOps},
         utils::BoxFuture,
     };
 
@@ -846,7 +841,8 @@ mod wasm {
 
                 tvm.tensor_cache_update_buffer(
                     device.clone(),
-                    param_record,
+                    tsify::serde_wasm_bindgen::to_value(&param_record)
+                        .expect("Failed to deserialize param_record to JsValue"),
                     Uint8Array::new_from_slice(buffer_part).buffer(),
                 )
                 .await;

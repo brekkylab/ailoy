@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use ailoy_macros::maybe_send_sync;
 
+use super::language_model::{LangModelInferConfig, LangModelInference};
 use crate::{
-    model::{InferenceConfig, LangModelInference},
     utils::BoxStream,
     value::{Document, Message, MessageDeltaOutput, ToolDesc},
 };
@@ -14,7 +14,7 @@ pub(super) type CustomLangModelInferFunc =
         Vec<Message>,
         Vec<ToolDesc>,
         Vec<Document>,
-        InferenceConfig,
+        LangModelInferConfig,
     ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>>;
 
 #[derive(Clone)]
@@ -28,7 +28,7 @@ impl LangModelInference for CustomLangModel {
         msg: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
-        config: InferenceConfig,
+        config: LangModelInferConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         (self.infer_func)(msg, tools, docs, config)
     }

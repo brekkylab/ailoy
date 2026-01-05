@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     knowledge::{Knowledge, KnowledgeBehavior as _, KnowledgeConfig},
-    model::{InferenceConfig, LangModel, LangModelInference as _},
+    model::{LangModel, LangModelInferConfig, LangModelInference as _},
     tool::{Tool, ToolBehavior as _},
     utils::{BoxFuture, BoxStream, log},
     value::{
@@ -25,7 +25,7 @@ use crate::{
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct AgentConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub inference: Option<InferenceConfig>,
+    pub inference: Option<LangModelInferConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub knowledge: Option<KnowledgeConfig>,
 }
@@ -319,12 +319,10 @@ mod py {
     use super::*;
     use crate::{
         boxed,
-        value::{
-            Messages,
-            py::{
-                MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
-                MessageOutputSyncIterator,
-            },
+        model::LangModelInferConfig,
+        value::message::py::{
+            MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
+            MessageOutputSyncIterator, Messages,
         },
     };
 
@@ -385,7 +383,10 @@ mod py {
     impl AgentConfig {
         #[new]
         #[pyo3(signature = (inference=None, knowledge=None))]
-        fn __new__(inference: Option<InferenceConfig>, knowledge: Option<KnowledgeConfig>) -> Self {
+        fn __new__(
+            inference: Option<LangModelInferConfig>,
+            knowledge: Option<KnowledgeConfig>,
+        ) -> Self {
             Self {
                 inference,
                 knowledge,
@@ -399,14 +400,14 @@ mod py {
             py: Python<'_>,
             config: &Bound<'_, PyDict>,
         ) -> PyResult<AgentConfig> {
-            let inference_config_cls = py.get_type::<InferenceConfig>();
+            let inference_config_cls = py.get_type::<LangModelInferConfig>();
             let knowledge_config_cls = py.get_type::<KnowledgeConfig>();
 
             // get InferenceConfig if valid, else None
             let inference = config.get_item("inference")?.and_then(|item| {
-                item.cast::<PyDict>()
-                    .ok()
-                    .and_then(|dict| InferenceConfig::from_dict(&inference_config_cls, &dict).ok())
+                item.cast::<PyDict>().ok().and_then(|dict| {
+                    LangModelInferConfig::from_dict(&inference_config_cls, &dict).ok()
+                })
             });
             // get KnowledgeConfig if valid, else None
             let knowledge = config.get_item("knowledge")?.and_then(|item| {
@@ -549,10 +550,7 @@ mod node {
     use crate::{
         boxed,
         ffi::node::common::get_or_create_runtime,
-        value::{
-            Messages,
-            node::{MessageDeltaOutputIterator, MessageOutputIterator},
-        },
+        value::message::node::{MessageDeltaOutputIterator, MessageOutputIterator, Messages},
     };
 
     #[napi]
@@ -674,7 +672,7 @@ mod wasm {
     use wasm_bindgen::prelude::*;
 
     use super::*;
-    use crate::{ffi::web::common::stream_to_async_iterable, value::Messages};
+    use crate::{ffi::web::common::stream_to_async_iterable, value::message::wasm::Messages};
 
     #[wasm_bindgen]
     impl Agent {

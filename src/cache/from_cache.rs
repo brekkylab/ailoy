@@ -107,6 +107,7 @@ pub trait TryFromCache<'this>: Sized + MaybeSend {
 ///
 /// This trait follows the same pipeline as `TryFromCache`:
 /// `claim_files` → (download & aggregate into [`CacheContents`]) → `try_from_contents`.
+#[allow(dead_code)]
 pub trait FromCache: Sized + MaybeSend {
     /// Declare the set of files needed to construct `Self`.
     ///

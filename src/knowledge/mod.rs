@@ -79,10 +79,8 @@
 //! - [`crate::model::DocumentPolyfill`]: For making non-native models accept knowledge documents.
 //! - [`crate::tool::ToolBehavior`]: For exposing knowledge as a model-invocable tool.
 //! - [`crate::vector_store::VectorStore`]: For building custom vector-based retrieval backends.
-mod base;
-mod custom_knowledge;
-mod vector_store_knowledge;
+pub(crate) mod base;
+pub(crate) mod custom_knowledge;
+pub(crate) mod vector_store_knowledge;
 
-pub use base::*;
-pub use custom_knowledge::*;
-pub use vector_store_knowledge::*;
+pub use base::{Knowledge, KnowledgeBehavior, KnowledgeConfig, KnowledgeTool};

@@ -1,3 +1,3 @@
-mod agent;
+pub(crate) mod base;
 
-pub use agent::*;
+pub use base::{Agent, AgentConfig};

@@ -137,6 +137,7 @@ pub struct Cache {
     manifests: Arc<RwLock<HashMap<String, ManifestDirectory>>>,
 }
 
+#[allow(dead_code)]
 impl Cache {
     /// Create a new cache instance using environment defaults.
     /// You can control the root or remote url with environment variable:
