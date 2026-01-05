@@ -258,6 +258,9 @@ extern "C" {
     #[wasm_bindgen(method, js_name = getParamsFromCacheByName)]
     pub fn get_params_from_cache_by_name(this: &Instance, param_names: Vec<String>) -> TVMObject;
 
+    #[wasm_bindgen(method, js_name = dispose)]
+    pub fn dispose(this: &Instance);
+
     #[wasm_bindgen(js_name = instantiate)]
     pub async fn instantiate(buffer_source: js_sys::ArrayBuffer) -> Instance;
 

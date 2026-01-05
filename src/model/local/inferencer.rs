@@ -873,6 +873,7 @@ mod wasm {
 
     pub struct LanguageModelInferencer {
         tvm: tvmjs::Instance,
+        vm: tvmjs::Module,
         device: tvmjs::DLDevice,
         kv_cache: KVCache,
         params: tvmjs::TVMObject,
@@ -1075,6 +1076,7 @@ mod wasm {
 
                 Ok(LanguageModelInferencer {
                     tvm,
+                    vm,
                     device,
                     kv_cache,
                     params,
@@ -1088,8 +1090,22 @@ mod wasm {
         }
     }
 
+    impl Drop for LanguageModelInferencer {
+        fn drop(&mut self) {
+            let _ = self.fembed.dispose();
+            let _ = self.fprefill.dispose();
+            let _ = self.fdecode.dispose();
+            let _ = self.fsample_top_p_from_logits.dispose();
+            let _ = self.params.dispose();
+            let _ = self.vm.dispose();
+            let _ = self.tvm.dispose();
+            self.history.clear();
+        }
+    }
+
     pub struct EmbeddingModelInferencer {
         tvm: tvmjs::Instance,
+        vm: tvmjs::Module,
         device: tvmjs::DLDevice,
         params: tvmjs::TVMObject,
         fprefill: tvmjs::PackedFunc,
@@ -1198,11 +1214,21 @@ mod wasm {
 
                 Ok(EmbeddingModelInferencer {
                     tvm,
+                    vm,
                     device,
                     params,
                     fprefill,
                 })
             })
+        }
+    }
+
+    impl Drop for EmbeddingModelInferencer {
+        fn drop(&mut self) {
+            let _ = self.fprefill.dispose();
+            let _ = self.params.dispose();
+            let _ = self.vm.dispose();
+            let _ = self.tvm.dispose();
         }
     }
 }
