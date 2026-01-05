@@ -11,6 +11,7 @@ use crate::{
         EmbeddingModelInference,
         local::{EmbeddingModelInferencer, Tokenizer},
     },
+    to_value,
     utils::{BoxFuture, BoxStream, Normalize},
     value::{Embedding, Value},
 };
@@ -29,6 +30,18 @@ pub(crate) struct LocalEmbeddingModel {
 pub struct LocalEmbeddingModelConfig {
     pub device_id: Option<i32>,
     pub validate_checksum: Option<bool>,
+}
+
+impl LocalEmbeddingModelConfig {
+    pub fn with_device_id(mut self, device_id: i32) -> Self {
+        self.device_id = Some(device_id);
+        self
+    }
+
+    pub fn with_validate_checksum(mut self, validate_checksum: bool) -> Self {
+        self.validate_checksum = Some(validate_checksum);
+        self
+    }
 }
 
 #[multi_platform_async_trait]
@@ -54,14 +67,14 @@ impl<'this> TryFromCache<'this> for LocalEmbeddingModel {
     fn claim_files<'a: 'this>(
         cache: Cache,
         key: impl AsRef<str>,
-        ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
+        ctx: &'a mut std::collections::HashMap<String, Value>,
     ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
         let key = key.as_ref().to_owned();
         Box::pin(async move {
             let mut tokenizer_claim = Tokenizer::claim_files(cache.clone(), &key, ctx).await?;
             let mut tokenizer_entries = Vec::new();
             for entry in tokenizer_claim.entries.iter() {
-                tokenizer_entries.push(crate::to_value!({
+                tokenizer_entries.push(to_value!({
                     dirname: entry.dirname().to_owned(),
                     filename: entry.filename().to_owned()
                 }));
@@ -72,7 +85,7 @@ impl<'this> TryFromCache<'this> for LocalEmbeddingModel {
                 EmbeddingModelInferencer::claim_files(cache.clone(), &key, ctx).await?;
             let mut inferencer_entries = Vec::new();
             for entry in inferencer_claim.entries.iter() {
-                inferencer_entries.push(crate::to_value!({
+                inferencer_entries.push(to_value!({
                     dirname: entry.dirname().to_owned(),
                     filename: entry.filename().to_owned()
                 }));
@@ -88,7 +101,7 @@ impl<'this> TryFromCache<'this> for LocalEmbeddingModel {
 
     fn try_from_contents<'a: 'this>(
         contents: &'a mut CacheContents,
-        ctx: &std::collections::HashMap<String, crate::value::Value>,
+        ctx: &std::collections::HashMap<String, Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>>
     where
         Self: Sized,
@@ -170,62 +183,32 @@ impl LocalEmbeddingModel {
 #[cfg(test)]
 mod tests {
     use ailoy_macros::multi_platform_test;
-    use futures::StreamExt;
 
     use super::*;
+    use crate::debug;
 
     #[multi_platform_test]
     async fn infer_embedding() {
-        let cache = Cache::new();
-        let key = "BAAI/bge-m3";
-
-        let mut model_strm =
-            Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, Some(false)));
-        let mut model: Option<LocalEmbeddingModel> = None;
-        while let Some(progress) = model_strm.next().await {
-            let mut progress = progress.unwrap();
-            crate::info!(
-                "{} ({} / {})",
-                progress.comment,
-                progress.current_task,
-                progress.total_task
-            );
-            if progress.current_task == progress.total_task {
-                model = progress.result.take();
-            }
-        }
-        let model = model.unwrap();
+        let model = LocalEmbeddingModel::try_new(
+            "BAAI/bge-m3",
+            Some(LocalEmbeddingModelConfig::default().with_validate_checksum(false)),
+        )
+        .await
+        .unwrap();
 
         let embedding = model.infer("What is BGE M3?".to_owned()).await.unwrap();
         assert_eq!(embedding.len(), 1024);
-        crate::debug!("{:?}", embedding.normalized());
+        debug!("{:?}", embedding.normalized());
     }
 
     #[multi_platform_test]
     async fn check_similarity() {
-        use futures::StreamExt;
-
-        use super::*;
-
-        let cache = Cache::new();
-        let key = "BAAI/bge-m3";
-
-        let mut model_strm =
-            Box::pin(cache.try_create::<LocalEmbeddingModel>(key, None, Some(false)));
-        let mut model: Option<LocalEmbeddingModel> = None;
-        while let Some(progress) = model_strm.next().await {
-            let mut progress = progress.unwrap();
-            crate::info!(
-                "{} ({} / {})",
-                progress.comment,
-                progress.current_task,
-                progress.total_task,
-            );
-            if progress.current_task == progress.total_task {
-                model = progress.result.take();
-            }
-        }
-        let model = model.unwrap();
+        let model = LocalEmbeddingModel::try_new(
+            "BAAI/bge-m3",
+            Some(LocalEmbeddingModelConfig::default().with_validate_checksum(false)),
+        )
+        .await
+        .unwrap();
 
         let query_embedding1 = model
             .infer("What is BGE M3?".to_owned())

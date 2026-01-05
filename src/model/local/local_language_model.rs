@@ -12,7 +12,8 @@ use crate::{
         ChatTemplate, InferenceConfig, KVCacheConfig, LangModelInference, LanguageModelInferencer,
         Tokenizer,
     },
-    utils::{BoxFuture, BoxStream},
+    to_value,
+    utils::{BoxFuture, BoxStream, generate_random_hex_string},
     value::{
         Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, PartDelta,
         PartDeltaFunction, Role, ToolDesc, Value,
@@ -125,14 +126,14 @@ impl<'this> TryFromCache<'this> for LocalLangModel {
     fn claim_files<'a: 'this>(
         cache: Cache,
         key: impl AsRef<str>,
-        ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
+        ctx: &'a mut std::collections::HashMap<String, Value>,
     ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
         LocalLangModelImpl::claim_files(cache, key, ctx)
     }
 
     fn try_from_contents<'a: 'this>(
         contents: &'a mut CacheContents,
-        ctx: &'a std::collections::HashMap<String, crate::value::Value>,
+        ctx: &'a std::collections::HashMap<String, Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>> {
         Box::pin(async move {
             let mut body = LocalLangModelImpl::try_from_contents(contents, ctx).await?;
@@ -172,7 +173,7 @@ impl LangModelInference for LocalLangModel {
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
         config: InferenceConfig,
-    ) -> crate::utils::BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
+    ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         let (tx_resp, mut rx_resp) = tokio::sync::mpsc::unbounded_channel();
         let req = Request {
             msgs,
@@ -274,7 +275,7 @@ impl LocalLangModelImpl {
                     mode = "tool_call".to_owned();
                     // Generate a random tool call id
                     let delta = delta.with_tool_calls([PartDelta::Function{
-                        id: Some(format!("call-{}", crate::utils::generate_random_hex_string(8).unwrap())),
+                        id: Some(format!("call-{}", generate_random_hex_string(8).unwrap())),
                         function: PartDeltaFunction::Verbatim{text: "".into()}
                     }]);
                     yield MessageDeltaOutput{delta, finish_reason: None};
@@ -316,7 +317,7 @@ impl<'this> TryFromCache<'this> for LocalLangModelImpl {
     fn claim_files<'a: 'this>(
         cache: Cache,
         key: impl AsRef<str>,
-        ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
+        ctx: &'a mut std::collections::HashMap<String, Value>,
     ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
         let key = key.as_ref().to_owned();
         Box::pin(async move {
@@ -324,7 +325,7 @@ impl<'this> TryFromCache<'this> for LocalLangModelImpl {
                 ChatTemplate::claim_files(cache.clone(), &key, ctx).await?;
             let mut chat_template_entries = Vec::new();
             for entry in chat_template_claim.entries.iter() {
-                chat_template_entries.push(crate::to_value!({
+                chat_template_entries.push(to_value!({
                     dirname: entry.dirname().to_owned(),
                     filename: entry.filename().to_owned()
                 }));
@@ -337,7 +338,7 @@ impl<'this> TryFromCache<'this> for LocalLangModelImpl {
             let mut tokenizer_claim = Tokenizer::claim_files(cache.clone(), &key, ctx).await?;
             let mut tokenizer_entries = Vec::new();
             for entry in tokenizer_claim.entries.iter() {
-                tokenizer_entries.push(crate::to_value!({
+                tokenizer_entries.push(to_value!({
                     dirname: entry.dirname().to_owned(),
                     filename: entry.filename().to_owned()
                 }));
@@ -348,7 +349,7 @@ impl<'this> TryFromCache<'this> for LocalLangModelImpl {
                 LanguageModelInferencer::claim_files(cache.clone(), &key, ctx).await?;
             let mut inferencer_entries = Vec::new();
             for entry in inferencer_claim.entries.iter() {
-                inferencer_entries.push(crate::to_value!({
+                inferencer_entries.push(to_value!({
                     dirname: entry.dirname().to_owned(),
                     filename: entry.filename().to_owned()
                 }));
@@ -365,7 +366,7 @@ impl<'this> TryFromCache<'this> for LocalLangModelImpl {
 
     fn try_from_contents<'a: 'this>(
         contents: &'a mut CacheContents,
-        ctx: &'a std::collections::HashMap<String, crate::value::Value>,
+        ctx: &'a std::collections::HashMap<String, Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>>
     where
         Self: Sized,
@@ -389,8 +390,8 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::to_value;
     use crate::value::{Delta, Part, Role, ToolDescBuilder};
+    use crate::{debug, to_value};
 
     #[multi_platform_test]
     async fn local_infer_simple_chat() {
@@ -418,7 +419,7 @@ mod tests {
         }
         assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
-            crate::debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
     }
@@ -459,7 +460,7 @@ mod tests {
         assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             if let Some(tool_calls) = message.tool_calls {
-                crate::debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
                 tool_calls
                     .first()
                     .and_then(|f| f.as_function())
@@ -525,7 +526,7 @@ mod tests {
         }
         assert_eq!(finish_reason, Some(FinishReason::Stop {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
-            crate::debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
             message.contents.len() > 0
         }));
     }
