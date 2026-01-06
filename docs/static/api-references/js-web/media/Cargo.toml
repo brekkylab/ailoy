@@ -7,11 +7,11 @@ members = [
 
 [package]
 name = "ailoy"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 
 [lib]
-crate-type = ["rlib", "dylib"]
+crate-type = ["rlib", "cdylib"]
 path = "src/lib.rs"
 
 [[bin]]
@@ -49,7 +49,9 @@ chromadb = { git = "https://github.com/brekkylab/chromadb-rs.git", branch = "mas
 clap = { version = "4.5.48", optional = true, features = ["derive"] }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
+fancy-regex = "0.16"
 futures = "0.3.31"
+hex = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
 indicatif = { version = "0.18.0", optional = true }
@@ -59,12 +61,13 @@ minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 napi = { version = "3.4.0", features = ["tokio_rt", "napi8", "serde-json"], optional = true }
 napi-derive = { version = "3.3.0", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
+png = "0.18"
 pyo3 = { version = "0.27.0", features = ["abi3-py310", "experimental-async", "macros", "anyhow"], optional = true }
 pyo3-async-runtimes = { version = "0.27.0", features = ["attributes", "tokio-runtime"], optional = true }
 pyo3-stub-gen = { version = "0.17.2", optional = true }
 pyo3-stub-gen-derive = { version = "0.17.2", optional = true }
 reqwest = { version = "0.12", features = ["json", "stream"] }
-rmcp = { version = "0.5.0", features = ["default"] }
+rmcp = { version = "0.11.0", features = ["default"] }
 scraper = "0.24"
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
@@ -78,15 +81,22 @@ url = "2.5.4"
 urlencoding = "2.1"
 version-compare = "0.2.1"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "d0edb6e77eb537837efb40c6c94ef5407b18bfa5", features = ["metal"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "d0edb6e77eb537837efb40c6c94ef5407b18bfa5", features = ["vulkan"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ailoy-faiss-sys = { path = "./crates/faiss-sys" }
-cxx = "1.0.189"
+cxx = "1.0"
+getrandom = "0.3"
 log = "0.4.27"
-onig = { version = "6", default-features = false }
 parking_lot = "0.12.4"
-rmcp = { version = "0.5.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client"] }
-tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
+rmcp = { version = "0.11.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
+tokenizers = { version = "0.22.2", default-features = false, features = ["onig"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+tvm-ffi = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "d0edb6e77eb537837efb40c6c94ef5407b18bfa5" }
 uuid = { version = "1.18.0", features = ["v4"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -95,7 +105,7 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 js-sys = "0.3"
 regex = "1.12"
 sse-stream = "0.2"
-tokenizers = { version = "0.21.4", default-features = false, features = ["fancy-regex"] }
+tokenizers = { version = "0.22.2", default-features = false, features = ["unstable_wasm"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt", "sync"] }
 tsify = { version = "0.5.5", default-features = false, features = ["js"] }
 uuid = { version = "1.18.0", features = ["v4", "js"] }
@@ -112,7 +122,10 @@ web-sys = { version = "0.3", features = [
     "Navigator",
     "Storage",
     "StorageManager",
-    "console"
+    "WorkerNavigator",
+    "console",
+    "Gpu",
+    "GpuDevice",
 ] }
 web-time = "1.1"
 

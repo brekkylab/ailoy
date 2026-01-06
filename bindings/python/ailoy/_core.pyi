@@ -57,7 +57,7 @@ class AgentConfig:
     r"""
     Configuration for running the agent.
     
-    See `InferenceConfig` and `KnowledgeConfig` for more details.
+    See `LangModelInferConfig` and `KnowledgeConfig` for more details.
     """
     @property
     def inference(self) -> typing.Optional[LangModelInferConfig]: ...
