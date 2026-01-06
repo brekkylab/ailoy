@@ -1,2 +1,5 @@
 #[cfg(feature = "ailoy-model-cli")]
-pub mod ailoy_model;
+pub(crate) mod ailoy_model;
+
+#[cfg(feature = "ailoy-model-cli")]
+pub use ailoy_model::ailoy_model_cli;

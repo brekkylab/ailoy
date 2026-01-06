@@ -169,6 +169,7 @@ pub struct ManifestDirectory {
     pub files: ManifestFiles,
 }
 
+#[allow(dead_code)]
 impl ManifestDirectory {
     pub fn new() -> Self {
         ManifestDirectory {

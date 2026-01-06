@@ -112,7 +112,7 @@ async def test_simple_chat(agent: ai.Agent, simple_chat_messages):
     async for resp in agent.run_delta(
         simple_chat_messages,
         config=ai.AgentConfig(
-            inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+            inference=ai.LangModelInferConfig(temperature=0.0, think_effort="disable")
         ),
     ):
         acc += resp.delta
@@ -152,7 +152,9 @@ async def test_simple_multiturn(agent: ai.Agent):
         async for resp in agent.run(
             messages,
             config=ai.AgentConfig(
-                inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+                inference=ai.LangModelInferConfig(
+                    temperature=0.0, think_effort="disable"
+                )
             ),
         ):
             result = resp.message
@@ -174,7 +176,7 @@ async def test_agent_builtin_terminal_tool(agent: ai.Agent):
     async for resp in agent.run_delta(
         "List the files in the current directory.",
         config=ai.AgentConfig(
-            inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+            inference=ai.LangModelInferConfig(temperature=0.0, think_effort="disable")
         ),
     ):
         acc += resp.delta
@@ -222,7 +224,7 @@ async def test_agent_builtin_web_search_tool(agent: ai.Agent):
     async for resp in agent.run_delta(
         "Search and navigate to Ailoy (AI agent framework) documentation page, and describe its functionalities.",
         config=ai.AgentConfig(
-            inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+            inference=ai.LangModelInferConfig(temperature=0.0, think_effort="disable")
         ),
     ):
         acc += resp.delta
@@ -286,7 +288,7 @@ async def test_python_async_function_tool(agent: ai.Agent):
     async for resp in agent.run_delta(
         "What is the temperature in Seoul now?",
         config=ai.AgentConfig(
-            inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+            inference=ai.LangModelInferConfig(temperature=0.0, think_effort="disable")
         ),
     ):
         acc += resp.delta
@@ -358,7 +360,7 @@ async def test_python_async_function_tool(agent: ai.Agent):
 
 #     async for resp in agent.run(
 #         "Tell me the weather in Seoul both temperature and wind.",
-#         config=ai.AgentConfig(inference=ai.InferenceConfig(think_effort="disable")),
+#         config=ai.AgentConfig(inference=ai.LangModelInferConfig(think_effort="disable")),
 #     ):
 #         for content in resp.message.contents:
 #             if isinstance(content, ai.Part.Text):
@@ -393,7 +395,7 @@ async def test_mcp_tools(agent: ai.Agent):
     async for resp in agent.run_delta(
         "What time is it currently in Asia/Seoul?",
         config=ai.AgentConfig(
-            inference=ai.InferenceConfig(temperature=0.0, think_effort="disable")
+            inference=ai.LangModelInferConfig(temperature=0.0, think_effort="disable")
         ),
     ):
         acc += resp.delta

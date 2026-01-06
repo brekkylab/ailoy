@@ -1,12 +1,15 @@
-pub mod anthropic;
-pub mod chat_completion;
-pub mod gemini;
-pub mod openai;
-mod stream;
+pub(crate) mod anthropic;
+pub(crate) mod chat_completion;
+pub(crate) mod gemini;
+pub(crate) mod openai;
+pub(crate) mod stream;
+
+pub use stream::StreamAPILangModel;
 
 use serde::{Deserialize, Serialize};
-pub(super) use stream::*;
 use strum_macros::{Display, EnumString};
+
+use crate::model::language_model::ThinkEffort;
 
 #[derive(Clone, Debug, PartialEq)]
 struct RequestConfig {
@@ -16,7 +19,7 @@ struct RequestConfig {
 
     pub stream: bool,
 
-    pub think_effort: crate::model::ThinkEffort,
+    pub think_effort: ThinkEffort,
 
     pub temperature: Option<f64>,
 

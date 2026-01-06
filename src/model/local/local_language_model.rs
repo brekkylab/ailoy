@@ -5,13 +5,16 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
+use super::{
+    super::language_model::{LangModelInferConfig, LangModelInference},
+    chat_template::ChatTemplate,
+    inferencer::LanguageModelInferencer,
+    kv_cache::KVCacheConfig,
+    tokenizer::Tokenizer,
+};
 use crate::{
     boxed,
     cache::{Cache, CacheClaim, CacheContents, CacheProgress, TryFromCache},
-    model::{
-        ChatTemplate, InferenceConfig, KVCacheConfig, LangModelInference, LanguageModelInferencer,
-        Tokenizer,
-    },
     to_value,
     utils::{BoxFuture, BoxStream, generate_random_hex_string},
     value::{
@@ -24,7 +27,7 @@ struct Request {
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
     docs: Vec<Document>,
-    config: InferenceConfig,
+    config: LangModelInferConfig,
     tx_resp: mpsc::UnboundedSender<anyhow::Result<MessageDeltaOutput>>,
 }
 
@@ -172,7 +175,7 @@ impl LangModelInference for LocalLangModel {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
-        config: InferenceConfig,
+        config: LangModelInferConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         let (tx_resp, mut rx_resp) = tokio::sync::mpsc::unbounded_channel();
         let req = Request {
@@ -208,7 +211,7 @@ impl LocalLangModelImpl {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
-        config: InferenceConfig,
+        config: LangModelInferConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         let strm = try_stream! {
             let prompt = if let Some(polyfill) = config.document_polyfill {
@@ -390,8 +393,10 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::value::{Delta, Part, Role, ToolDescBuilder};
-    use crate::{debug, to_value};
+    use crate::{
+        debug, to_value,
+        value::{Delta, Part, Role, ToolDescBuilder},
+    };
 
     #[multi_platform_test]
     async fn local_infer_simple_chat() {
@@ -410,7 +415,12 @@ mod tests {
             }]),
         ];
         let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(
+            msgs,
+            Vec::new(),
+            Vec::new(),
+            LangModelInferConfig::default(),
+        );
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -449,7 +459,7 @@ mod tests {
                 .with_contents(vec![Part::text("How much hot currently in Dubai?")]),
         ];
 
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
@@ -516,7 +526,7 @@ mod tests {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
         ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {

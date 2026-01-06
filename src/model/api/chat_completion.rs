@@ -1,13 +1,12 @@
 use anyhow::{Context, bail};
 
+use super::{super::language_model::ThinkEffort, RequestConfig, stream::ServerEvent};
 use crate::{
-    debug,
-    model::{ServerEvent, ThinkEffort, api::RequestConfig},
-    to_value,
+    debug, to_value,
     value::{
-        FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageDeltaOutput, Part,
-        PartDelta, PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
-        Unmarshaled, Value,
+        FinishReason, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
+        PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Value,
+        marshal::{Marshal, Marshaled, Unmarshal, Unmarshaled},
     },
 };
 
@@ -348,7 +347,7 @@ pub(super) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
 #[cfg(test)]
 mod dialect_tests {
     use super::*;
-    use crate::value::{Delta, Marshaled, Message, Role};
+    use crate::value::{Delta, Message, Role};
 
     #[test]
     pub fn serialize_text() {
@@ -579,14 +578,15 @@ mod openai_chatcompletion_api_tests {
     use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
-    use crate::{
-        debug,
-        model::{
-            InferenceConfig, LangModelInference as _, StreamAPILangModel, api::APISpecification,
+    use super::{
+        super::{
+            super::language_model::{LangModelInferConfig, LangModelInference},
+            APISpecification,
+            stream::StreamAPILangModel,
         },
-        to_value,
-        value::{Delta, FinishReason, Message, MessageDelta, Part, Role, ToolDescBuilder},
+        *,
     };
+    use crate::{Delta, ToolDescBuilder, debug};
 
     static OPENAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
         option_env!("OPENAI_API_KEY")
@@ -603,7 +603,12 @@ mod openai_chatcompletion_api_tests {
             Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
         ];
         let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(
+            msgs,
+            Vec::new(),
+            Vec::new(),
+            LangModelInferConfig::default(),
+        );
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -637,7 +642,7 @@ mod openai_chatcompletion_api_tests {
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
         let mut assistant_msg = MessageDelta::default();
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -698,7 +703,7 @@ mod openai_chatcompletion_api_tests {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
         ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
@@ -721,14 +726,15 @@ mod grok_api_tests {
     use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
-    use crate::{
-        debug,
-        model::{
-            InferenceConfig, LangModelInference as _, StreamAPILangModel, api::APISpecification,
+    use super::{
+        super::{
+            super::language_model::{LangModelInferConfig, LangModelInference},
+            APISpecification,
+            stream::StreamAPILangModel,
         },
-        to_value,
-        value::{Delta, FinishReason, Message, MessageDelta, Part, Role, ToolDescBuilder},
+        *,
     };
+    use crate::{Delta, ToolDescBuilder, debug};
 
     static XAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
         option_env!("XAI_API_KEY")
@@ -745,7 +751,12 @@ mod grok_api_tests {
             Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
         ];
         let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(
+            msgs,
+            Vec::new(),
+            Vec::new(),
+            LangModelInferConfig::default(),
+        );
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -779,7 +790,7 @@ mod grok_api_tests {
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
         let mut assistant_msg = MessageDelta::default();
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -840,7 +851,7 @@ mod grok_api_tests {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
         ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {

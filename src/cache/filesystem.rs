@@ -56,8 +56,7 @@ mod opfs {
 
     use anyhow::{anyhow, bail};
     use js_sys::Uint8Array;
-    use wasm_bindgen::JsCast as _;
-    use wasm_bindgen::prelude::*;
+    use wasm_bindgen::{JsCast as _, prelude::*};
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{
         FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemGetFileOptions,
@@ -194,7 +193,7 @@ mod opfs {
             .map_err(|_| anyhow!("`write_with_u8_array` failed"))?;
         JsFuture::from(promise)
             .await
-            .map_err(|_| anyhow!("Failed to write to file"))?;
+            .map_err(|e| anyhow!("Failed to write to file: {:?}", e.as_string()))?;
 
         // Close stream
         let close_promise = stream.close();

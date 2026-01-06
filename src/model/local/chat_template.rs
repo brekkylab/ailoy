@@ -4,9 +4,9 @@ use anyhow::{Context, bail};
 use minijinja::{Environment, context};
 use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
+use super::super::ThinkEffort;
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, TryFromCache},
-    model::ThinkEffort,
     utils::BoxFuture,
     value::{Document, Message, ToolDesc},
 };

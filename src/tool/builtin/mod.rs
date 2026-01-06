@@ -17,5 +17,5 @@ pub enum BuiltinToolKind {
     WebFetch,
 }
 
-pub use terminal::*;
-pub use web_search::*;
+pub use terminal::create_terminal_tool;
+pub use web_search::{create_web_fetch_tool, create_web_search_duckduckgo_tool};

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 use serde::{Deserialize, Serialize};
 
+use super::{custom_knowledge::CustomKnowledge, vector_store_knowledge::VectorStoreKnowledge};
 use crate::{
-    knowledge::{CustomKnowledge, VectorStoreKnowledge},
     model::EmbeddingModel,
     to_value,
     tool::ToolBehavior,

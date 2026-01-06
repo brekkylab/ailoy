@@ -6,15 +6,15 @@ use futures::StreamExt as _;
 
 use crate::{
     model::{
-        InferenceConfig, LangModelInference,
         api::{APISpecification, RequestConfig},
+        language_model::{LangModelInferConfig, LangModelInference},
     },
     utils::BoxStream,
     value::{Document, Message, MessageDeltaOutput, Role, ToolDesc},
 };
 
 #[derive(Clone, Debug)]
-pub(crate) struct ServerEvent {
+pub struct ServerEvent {
     pub event: String,
     pub data: String,
 }
@@ -60,7 +60,7 @@ type MakeRequestFunc =
 type HandleRequestFunc = dyn Fn(ServerEvent) -> MessageDeltaOutput;
 
 #[derive(Clone)]
-pub(crate) struct StreamAPILangModel {
+pub struct StreamAPILangModel {
     name: String,
     make_request: Arc<MakeRequestFunc>,
     handle_event: Arc<HandleRequestFunc>,
@@ -133,7 +133,7 @@ impl LangModelInference for StreamAPILangModel {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
-        config: InferenceConfig,
+        config: LangModelInferConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         let strm = async_stream::try_stream! {
             // Polyfill documents

@@ -2,29 +2,30 @@ use std::collections::HashMap;
 
 use ailoy_macros::multi_platform_async_trait;
 
+use super::super::base::{
+    VectorStoreAddInput, VectorStoreBehavior, VectorStoreGetResult, VectorStoreMetadata,
+    VectorStoreRetrieveResult,
+};
 use crate::{
-    ffi,
-    vector_store::{
-        Embedding, Metadata, VectorStoreAddInput, VectorStoreBehavior, VectorStoreGetResult,
-        VectorStoreRetrieveResult,
-    },
+    ffi::faiss_wrap::{FaissIndex, FaissIndexBuilder},
+    value::Embedding,
 };
 
-pub struct DocEntry {
+struct DocEntry {
     pub document: String,
-    pub metadata: Option<Metadata>,
+    pub metadata: Option<VectorStoreMetadata>,
 }
 type DocStore = HashMap<String, DocEntry>;
 
 pub struct FaissStore {
-    index: ffi::FaissIndex,
+    index: FaissIndex,
     doc_store: DocStore,
 }
 
 impl FaissStore {
-    pub async fn new(dim: i32) -> anyhow::Result<Self> {
+    pub async fn new(dim: u32) -> anyhow::Result<Self> {
         // use only default type("IdMap2,Flat", InnerProduct) Index for now
-        let index = ffi::FaissIndexBuilder::new(dim).build().await.unwrap();
+        let index = FaissIndexBuilder::new(dim as i32).build().await.unwrap();
         Ok(Self {
             index,
             doc_store: HashMap::new(),
@@ -240,7 +241,7 @@ mod tests {
         let mut store = setup_test_store().await?;
         let test_embedding: Embedding = vec![1.1, 2.2, 3.3].into();
         let test_document = "This is a test document.".to_owned();
-        let test_metadata: Metadata =
+        let test_metadata: VectorStoreMetadata =
             from_value(json!({"source": "test_add_and_get_vector"})).unwrap();
 
         let input = VectorStoreAddInput {

@@ -808,9 +808,9 @@ pub(crate) mod py {
 
     #[gen_stub_pyclass]
     #[pyclass(module = "ailoy._core", unsendable)]
-    pub(crate) struct MessageDeltaOutputIterator {
-        pub(crate) _rt: tokio::runtime::Runtime,
-        pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>>>,
+    pub struct MessageDeltaOutputIterator {
+        pub _rt: tokio::runtime::Runtime,
+        pub rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>>>,
     }
 
     #[gen_stub_pymethods]
@@ -859,9 +859,9 @@ pub(crate) mod py {
 
     #[gen_stub_pyclass]
     #[pyclass(module = "ailoy._core", unsendable)]
-    pub(crate) struct MessageOutputIterator {
-        pub(crate) _rt: tokio::runtime::Runtime,
-        pub(crate) rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>>>,
+    pub struct MessageOutputIterator {
+        pub _rt: tokio::runtime::Runtime,
+        pub rx: Arc<Mutex<mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>>>,
     }
 
     #[gen_stub_pymethods]
@@ -909,9 +909,6 @@ pub(crate) mod py {
     }
 }
 
-#[cfg(feature = "python")]
-pub use py::*;
-
 #[cfg(feature = "nodejs")]
 pub(crate) mod node {
     use std::sync::Arc;
@@ -924,6 +921,7 @@ pub(crate) mod node {
     use super::*;
 
     #[napi]
+    #[allow(dead_code)]
     pub fn accumulate_message_delta(
         a: MessageDelta,
         b: MessageDelta,
@@ -933,6 +931,7 @@ pub(crate) mod node {
     }
 
     #[napi]
+    #[allow(dead_code)]
     pub fn finish_message_delta(delta: MessageDelta) -> napi::Result<Message> {
         delta
             .finish()
@@ -1073,11 +1072,8 @@ pub(crate) mod node {
     }
 }
 
-#[cfg(feature = "nodejs")]
-pub use node::*;
-
 #[cfg(feature = "wasm")]
-mod wasm {
+pub(crate) mod wasm {
     use js_sys::Array;
     use tsify::serde_wasm_bindgen;
     use wasm_bindgen::prelude::*;
@@ -1144,6 +1140,3 @@ mod wasm {
         }
     }
 }
-
-#[cfg(feature = "wasm")]
-pub use wasm::*;

@@ -1,12 +1,9 @@
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 use futures::StreamExt as _;
 
-use crate::{
-    cache::CacheProgress,
-    model::local::{LocalEmbeddingModel, LocalEmbeddingModelConfig},
-    utils::BoxStream,
-    value::Embedding,
-};
+pub use super::local::LocalEmbeddingModelConfig;
+use super::local::local_embedding_model::LocalEmbeddingModel;
+use crate::{cache::CacheProgress, utils::BoxStream, value::Embedding};
 
 #[maybe_send_sync]
 #[multi_platform_async_trait]

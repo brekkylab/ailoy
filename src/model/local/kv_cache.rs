@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
     feature = "python",
     pyo3::pyclass(module = "ailoy._core", get_all, set_all)
 )]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
+#[cfg_attr(
+    feature = "nodejs",
+    napi_derive::napi(object, js_name = "KVCacheConfig")
+)]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -26,17 +29,24 @@ pub struct KVCacheConfig {
 
 #[cfg(feature = "python")]
 mod py {
-    use super::*;
     use pyo3::prelude::*;
     use pyo3_stub_gen_derive::*;
+
+    use super::*;
 
     #[gen_stub_pymethods]
     #[pymethods]
     impl KVCacheConfig {
         #[new]
-        fn __new__(context_window_size: Option<u32>) -> Self {
+        fn __new__(
+            context_window_size: Option<u32>,
+            prefill_chunk_size: Option<u32>,
+            sliding_window_size: Option<u32>,
+        ) -> Self {
             Self {
                 context_window_size,
+                prefill_chunk_size,
+                sliding_window_size,
             }
         }
     }
@@ -76,6 +86,7 @@ mod native {
 
     const PAGE_SIZE: i64 = 16;
 
+    #[allow(dead_code)]
     pub struct KVCache {
         state: tvm_ffi::Any,
 
@@ -319,14 +330,17 @@ pub use native::*;
 mod wasm {
     use anyhow::{Result, anyhow};
 
-    use crate::ffi::web::conversion::*;
-    use crate::ffi::web::tvmjs_bridge::PackedFunc;
-    use crate::ffi::web::tvmjs_bridge::{self as tvmjs};
-    use crate::model::KVCacheConfig;
-    use crate::model::KVCacheOps;
+    use super::{KVCacheConfig, KVCacheOps};
+    use crate::ffi::web::{
+        conversion::*,
+        tvmjs_bridge::{
+            PackedFunc, {self as tvmjs},
+        },
+    };
 
     const PAGE_SIZE: i64 = 16;
 
+    #[allow(dead_code)]
     pub struct KVCache {
         tvm: tvmjs::Instance,
         state: tvmjs::TVMObject,
@@ -488,6 +502,8 @@ mod wasm {
 
     impl Drop for KVCache {
         fn drop(&mut self) {
+            let _ = self.remove_sequence(0);
+
             let _ = self.fkv_cache_get_num_available_pages.dispose();
             let _ = self.fkv_cache_get_total_sequence_length.dispose();
             let _ = self.fkv_state_add_sequence.dispose();
@@ -496,6 +512,7 @@ mod wasm {
             let _ = self.fkv_state_end_forward.dispose();
             let _ = self.fkv_state_popn.dispose();
             let _ = self.fkv_state_remove_sequence.dispose();
+            let _ = self.state.dispose();
         }
     }
 }

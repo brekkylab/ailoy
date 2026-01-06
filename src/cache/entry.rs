@@ -6,6 +6,7 @@ pub struct CacheEntry {
     filename: String,
 }
 
+#[allow(dead_code)]
 impl CacheEntry {
     pub fn new(dirname: impl AsRef<str>, filename: impl AsRef<str>) -> Self {
         Self {

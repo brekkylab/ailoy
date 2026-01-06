@@ -1,3 +1,3 @@
-mod chroma;
+pub(crate) mod chroma;
 
-pub use chroma::ChromaStore;
+pub(crate) use chroma::ChromaStore;

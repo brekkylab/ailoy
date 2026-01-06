@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use crate::cache::{CacheEntry, filesystem};
 
@@ -14,6 +17,7 @@ pub enum ByteSource {
     Lazy(PathBuf),
 }
 
+#[allow(dead_code)]
 impl ByteSource {
     /// Read all bytes from this source.
     ///
@@ -67,12 +71,14 @@ impl ByteSource {
 /// This type makes minimal assumptions about how it's filled or consumed. It merely
 /// stores entries and offers basic operations to inspect or remove them. The exact
 /// construction pipeline and access patterns are up to the caller.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct CacheContents {
     pub root: PathBuf,
     pub entries: BTreeMap<CacheEntry, ByteSource>,
 }
 
+#[allow(dead_code)]
 impl CacheContents {
     /// Drain all entries, converting ByteSources to Vec<u8>.
     ///

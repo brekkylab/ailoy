@@ -105,7 +105,7 @@ export class LangModel {
     config?: {
       deviceId?: number;
       validateChecksum?: boolean;
-      kvCache?: KvCacheConfig;
+      kvCache?: KVCacheConfig;
       progressCallback?: CacheProgressCallbackFn;
     } | null
   ): Promise<void>;
@@ -114,7 +114,7 @@ export class LangModel {
     config?: {
       deviceId?: number;
       validateChecksum?: boolean;
-      kvCache?: KvCacheConfig;
+      kvCache?: KVCacheConfig;
       progressCallback?: CacheProgressCallbackFn;
     } | null
   ): Promise<LangModel>;
@@ -122,7 +122,7 @@ export class LangModel {
     messages: Array<Message | SingleTextMessage> | string,
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
-    config?: InferenceConfig | null
+    config?: LangModelInferConfig | null
   ): AsyncIterable<MessageDeltaOutput>;
   static newStreamAPI(
     spec: APISpecification,
@@ -133,7 +133,7 @@ export class LangModel {
     messages: Array<Message | SingleTextMessage> | string,
     tools?: ToolDesc[] | null,
     docs?: Document[] | null,
-    config?: InferenceConfig | null
+    config?: LangModelInferConfig | null
   ): Promise<MessageOutput>;
   static remove(modelName: string): Promise<void>;
 }
@@ -185,7 +185,7 @@ export class VectorStore {
  * See `InferenceConfig` and `KnowledgeConfig` for more details.
  */
 export interface AgentConfig {
-  inference?: InferenceConfig;
+  inference?: LangModelInferConfig;
   knowledge?: KnowledgeConfig;
 }
 
@@ -246,10 +246,18 @@ export type Grammar =
   | { type: "regex"; regex: string }
   | { type: "cfg"; cfg: string };
 
+export interface KnowledgeConfig {
+  topK?: number;
+}
+
+export interface KVCacheConfig {
+  contextWindowSize?: number;
+  prefillChunkSize?: number;
+  slidingWindowSize?: number;
+}
+
 /**
- * Configuration parameters that control the behavior of model inference.
- *
- * `InferenceConfig` encapsulates all the configuration, controlling behavior of `LanguageModel`` inference.
+ * Configuration parameters that control the behavior of language model inference.
  *
  * # Fields
  *
@@ -258,7 +266,7 @@ export type Grammar =
  * If `None`, it does not perform any polyfill, (ignoring documents).
  *
  * ## `think_effort`
- * Controls the model’s reasoning intensity.
+ * Controls the model\'s reasoning intensity.
  * In local models, `low`, `medium`, `high` is ignored.
  * In API models, it is up to it\'s API. See API parameters.
  *
@@ -284,21 +292,13 @@ export type Grammar =
  * - `Regex { regex }`: constrains generation by a regular expression
  * - `CFG { cfg }`: uses a context-free grammar definition
  */
-export interface InferenceConfig {
+export interface LangModelInferConfig {
   documentPolyfill?: DocumentPolyfill;
   thinkEffort?: ThinkEffort;
   temperature?: number;
   topP?: number;
   maxTokens?: number;
   grammar?: Grammar;
-}
-
-export interface KnowledgeConfig {
-  topK?: number;
-}
-
-export interface KvCacheConfig {
-  contextWindowSize?: number;
 }
 
 /**
@@ -412,8 +412,6 @@ export interface MessageOutput {
   message: Message;
   finish_reason: FinishReason;
 }
-
-type Metadata = Record<string, any>;
 
 /**
  * Represents a semantically meaningful content unit exchanged between the model and the user.
@@ -669,20 +667,22 @@ export type Value =
 export interface VectorStoreAddInput {
   embedding: Embedding;
   document: string;
-  metadata?: Metadata;
+  metadata?: VectorStoreMetadata;
 }
 
 export interface VectorStoreGetResult {
   id: string;
   document: string;
-  metadata?: Metadata;
+  metadata?: VectorStoreMetadata;
   embedding: Embedding;
 }
+
+type VectorStoreMetadata = Record<string, any>;
 
 export interface VectorStoreRetrieveResult {
   id: string;
   document: string;
-  metadata?: Metadata;
+  metadata?: VectorStoreMetadata;
   distance: number;
 }
 
@@ -696,8 +696,6 @@ export function finishMessageDelta(delta: MessageDelta): Message;
 export function getDocumentPolyfill(
   kind: DocumentPolyfillKind
 ): DocumentPolyfill;
-
-export function getQwen3Polyfill(): DocumentPolyfill;
 
 export function imageFromBase64(data: string): Part;
 
