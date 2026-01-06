@@ -674,7 +674,7 @@ mod wasm {
     use wasm_bindgen::prelude::*;
 
     use super::*;
-    use crate::{ffi::web::stream_to_async_iterable, value::Messages};
+    use crate::{ffi::web::common::stream_to_async_iterable, value::Messages};
 
     #[wasm_bindgen]
     impl Agent {

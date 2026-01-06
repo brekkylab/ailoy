@@ -1,5 +1,3 @@
-#[cfg(target_family = "wasm")]
-pub mod js_bridge;
 #[cfg(feature = "nodejs")]
 pub(crate) mod node;
 #[cfg(feature = "python")]
