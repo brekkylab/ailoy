@@ -248,7 +248,6 @@ extern "C" {
     pub async fn tensor_cache_update_buffer(
         this: &Instance,
         device: DLDevice,
-        // record: TensorCacheEntry,
         record: JsValue,
         buffer: js_sys::ArrayBuffer,
     );

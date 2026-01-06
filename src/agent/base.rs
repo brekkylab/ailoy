@@ -786,14 +786,18 @@ mod wasm {
 #[cfg(test)]
 mod tests {
     use ailoy_macros::multi_platform_test;
+    use futures::StreamExt;
+
+    use super::*;
+    use crate::{
+        model::LangModel,
+        to_value,
+        tool::ToolFunc,
+        value::{ToolDesc, Value},
+    };
 
     #[multi_platform_test]
     async fn run_simple_chat() {
-        use futures::StreamExt;
-
-        use super::*;
-        use crate::model::LangModel;
-
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
             .await
             .unwrap();
@@ -807,23 +811,17 @@ mod tests {
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            accumulated = accumulated.accumulate(output.delta).unwrap();
+            if let Some(finish_reason) = output.finish_reason {
+                let msg = accumulated.clone().finish().unwrap();
+                println!("message: {:?}, finish_reason: {:?}", msg, finish_reason);
+            } else {
+                accumulated = accumulated.accumulate(output.delta).unwrap();
+            }
         }
-        println!("message: {:?}", accumulated.finish().unwrap());
     }
 
     #[multi_platform_test]
     async fn run_tool_call() {
-        use futures::StreamExt;
-
-        use super::*;
-        use crate::{
-            model::LangModel,
-            to_value,
-            tool::ToolFunc,
-            value::{ToolDesc, Value},
-        };
-
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
             .await
             .unwrap();
@@ -886,19 +884,21 @@ mod tests {
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            accumulated = accumulated.accumulate(output.delta).unwrap();
+            if let Some(finish_reason) = output.finish_reason {
+                let msg = accumulated.clone().finish().unwrap();
+                println!("message: {:?}, finish_reason: {:?}", msg, finish_reason);
+            } else {
+                accumulated = accumulated.accumulate(output.delta).unwrap();
+            }
         }
-        println!("message: {:?}", accumulated.finish().unwrap());
     }
 
     #[cfg(any(target_family = "unix", target_family = "windows"))]
     #[tokio::test]
     async fn run_mcp_stdio_tool_call() {
-        use futures::StreamExt;
         use rmcp::transport::ConfigureCommandExt;
 
-        use super::*;
-        use crate::{model::LangModel, tool::MCPClient};
+        use crate::tool::MCPClient;
 
         let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
             .await
@@ -931,8 +931,12 @@ mod tests {
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
             println!("delta: {:?}", output.delta);
-            accumulated = accumulated.accumulate(output.delta).unwrap();
+            if let Some(finish_reason) = output.finish_reason {
+                let msg = accumulated.clone().finish().unwrap();
+                println!("message: {:?}, finish_reason: {:?}", msg, finish_reason);
+            } else {
+                accumulated = accumulated.accumulate(output.delta).unwrap();
+            }
         }
-        println!("message: {:?}", accumulated.finish().unwrap());
     }
 }
