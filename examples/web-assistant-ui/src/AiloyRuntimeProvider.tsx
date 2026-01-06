@@ -46,7 +46,7 @@ function convertMessage(
       }),
     };
   } else if (message.role === "assistant") {
-    let contents = [];
+    const contents = [];
     if (message.thinking) {
       contents.push({
         type: "reasoning",
@@ -97,7 +97,7 @@ function convertMessageDelta(
   delta: ai.MessageDelta
 ): useExternalMessageConverter.Message {
   if (delta.role === "assistant") {
-    let contents = [];
+    const contents = [];
     if (delta.thinking !== undefined) {
       contents.push({
         type: "reasoning",
@@ -193,7 +193,7 @@ export function AiloyRuntimeProvider({
   const onNew = async (message: AppendMessage) => {
     if (agent === undefined) throw new Error("Agent is not initialized yet");
 
-    let userContents: ai.Part[] = [];
+    const userContents: ai.Part[] = [];
 
     // Add attachments
     if (message.attachments !== undefined) {
@@ -233,7 +233,7 @@ export function AiloyRuntimeProvider({
       setOngoingMessage({ ...accumulated });
 
       if (finish_reason !== undefined) {
-        let newMessage = ai.finishMessageDelta(accumulated);
+        const newMessage = ai.finishMessageDelta(accumulated);
         setMessages((prevMessages) => [...prevMessages, newMessage]);
         setOngoingMessage(null);
         accumulated = null;
@@ -246,7 +246,7 @@ export function AiloyRuntimeProvider({
     useMemo(() => {
       let converted = messages.map(convertMessage);
       if (ongoingMessage !== null) {
-        let convertedDelta = convertMessageDelta(ongoingMessage);
+        const convertedDelta = convertMessageDelta(ongoingMessage);
         converted = [...converted, convertedDelta];
       }
       return converted;
