@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "ailoy"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "ailoy-faiss-sys",
  "ailoy-macros",
@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "ailoy-faiss-sys"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "cmake",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "ailoy-macros"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "async-trait",
  "convert_case",
