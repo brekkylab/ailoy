@@ -182,7 +182,7 @@ export class VectorStore {
 /**
  * Configuration for running the agent.
  *
- * See `InferenceConfig` and `KnowledgeConfig` for more details.
+ * See `LangModelInferConfig` and `KnowledgeConfig` for more details.
  */
 export interface AgentConfig {
   inference?: LangModelInferConfig;

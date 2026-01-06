@@ -15,7 +15,7 @@ use crate::{
 
 /// Configuration for running the agent.
 ///
-/// See `InferenceConfig` and `KnowledgeConfig` for more details.
+/// See `LangModelInferConfig` and `KnowledgeConfig` for more details.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
@@ -403,7 +403,7 @@ mod py {
             let inference_config_cls = py.get_type::<LangModelInferConfig>();
             let knowledge_config_cls = py.get_type::<KnowledgeConfig>();
 
-            // get InferenceConfig if valid, else None
+            // get LangModelInferConfig if valid, else None
             let inference = config.get_item("inference")?.and_then(|item| {
                 item.cast::<PyDict>().ok().and_then(|dict| {
                     LangModelInferConfig::from_dict(&inference_config_cls, &dict).ok()
