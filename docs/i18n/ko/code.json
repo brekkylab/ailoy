@@ -1,0 +1,46 @@
+{
+  "homepage.title": {
+    "message": "한 순간에 구축하는 AI 에이전트",
+    "description": "The main title on the homepage"
+  },
+  "homepage.tagline": {
+    "message": "어떤 환경에서든, 어떤 언어로든, 복잡한 설정 없이.",
+    "description": "The tagline on the homepage"
+  },
+  "homepage.getStarted": {
+    "message": "시작하기",
+    "description": "The Get Started button on the homepage"
+  },
+  "homepage.feature1.title": {
+    "message": "🚀 초간단 AI 에이전트 프레임워크",
+    "description": "Feature 1 title"
+  },
+  "homepage.feature1.description": {
+    "message": "몇 줄의 코드만으로 첫 에이전트를 구축하세요 — 보일러플레이트도, 복잡한 설정도 필요 없습니다.",
+    "description": "Feature 1 description"
+  },
+  "homepage.feature2.title": {
+    "message": "☁️ 클라우드, 로컬 어디서나",
+    "description": "Feature 2 title"
+  },
+  "homepage.feature2.description": {
+    "message": "하나의 API로 로컬 모델과 원격(API) 모델 모두 사용하세요. 이 유연성으로 스택을 완전히 제어할 수 있습니다.",
+    "description": "Feature 2 description"
+  },
+  "homepage.feature3.title": {
+    "message": "💻 크로스 플랫폼 & 다중 언어 지원",
+    "description": "Feature 3 title"
+  },
+  "homepage.feature3.description": {
+    "message": "Windows, Linux, macOS를 지원하며 — Python과 JavaScript로 개발자 친화적인 API를 제공합니다.",
+    "description": "Feature 3 description"
+  },
+  "homepage.feature4.title": {
+    "message": "🌎 WebAssembly 지원",
+    "description": "Feature 4 title"
+  },
+  "homepage.feature4.description": {
+    "message": "백엔드 인프라 없이 웹 브라우저에서 에이전트를 실행할 수 있어요!",
+    "description": "Feature 4 description"
+  }
+}

@@ -1,0 +1,263 @@
+# 시작하기
+
+**_Ailoy 튜토리얼에 오신 것을 환영합니다!_**
+
+이 튜토리얼에서는 Ailoy에서 LLM을 실행하고 에이전트 시스템을 구축하기 위해
+기능을 확장하는 방법을 알아봅니다.
+
+## 설치
+
+패키지 매니저를 통해 Ailoy를 설치할 수 있습니다. 터미널에서 다음 명령을
+입력하세요:
+
+<CodeTabs>
+
+```python
+pip install ailoy-py
+```
+
+```typescript
+// npm 사용
+npm install ailoy-node
+// yarn 사용
+yarn add ailoy-node
+```
+
+```typescript web
+// npm 사용
+npm install ailoy-web
+// yarn 사용
+yarn add ailoy-web
+```
+
+</CodeTabs>
+
+:::info
+
+웹 브라우저에서 Ailoy를 사용하려면
+[**WebAssembly 지원**](./webassembly-supports)을 참조하세요.
+
+:::
+
+## 가장 간단한 에이전트 실행하기
+
+<strong>언어 모델(Language Model, LM)</strong>은 AI 에이전트의 핵심입니다. 에이전트 시스템은
+언어 모델과 그 지시사항, 그리고 기능을 확장하는 다양한 확장 기능을 기반으로
+동작합니다.
+
+### API 모델과 로컬 모델
+
+Ailoy는 언어 모델을 두 가지 모드로 실행할 수 있습니다:
+
+- **API 모델**: OpenAI의 GPT나 Anthropic의 Claude 같은 AI 벤더가 호스팅하는
+  모델을 실행
+- **로컬 모델**: 오픈소스 모델을 자신의 기기에서 직접 실행
+
+각 방식에는 고유한 장단점이 있습니다:
+
+- **API 모델**: 인터넷을 통해 외부 AI 서비스에 연결합니다. API 토큰 비용에
+  문제가 없고 클라우드 호스팅 모델을 선호한다면 가장 간단한 옵션입니다.
+- **로컬 모델**: 오픈소스 모델을 사용하여 완전히 자신의 기기에서 실행됩니다.
+  완전한 제어, 오프라인 사용 가능성, 또는 프라이버시가 필요하다면 이 방식을
+  선택하세요.
+
+Ailoy는 두 방식을 모두 원활하게 지원합니다 — 최소한의 변경으로 언제든지 전환할
+수 있습니다.
+
+## 예제
+
+간단한 예제로 시작해봅시다 — LLM을 위한 Ailoy 버전의 "Hello, World!"입니다.
+
+몇 줄의 코드만으로 모델을 실행하고, 프롬프트를 보내고, 응답을 출력할 수
+있습니다.
+
+### API를 사용하는 에이전트
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def main():
+    lm = ai.LangModel.new_stream_api(
+        spec="OpenAI",
+        model_name="gpt-4o",
+        api_key="YOUR_OPENAI_API_KEY"
+    )
+    agent = ai.Agent(lm)
+    async for resp in agent.run("Please give me a short poem about AI."):
+        if isinstance(resp.message.contents[0], ai.Part.Text):
+            print(resp.message.contents[0].text)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function main() {
+  const lm = await ai.LangModel.newStreamAPI(
+    "OpenAI", // spec
+    "gpt-5", // modelName
+    "YOUR_OPENAI_API_KEY" // apiKey
+  );
+  const agent = new ai.Agent(lm);
+  for await (const resp of agent.run("Please give me a short poem about AI")) {
+    if (resp.message.contents[0].type === "text") {
+      console.log(resp.message.contents[0].text);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+async function main() {
+  const lm = await ai.LangModel.newStreamAPI(
+    "OpenAI", // spec
+    "gpt-5", // modelName
+    "YOUR_OPENAI_API_KEY" // apiKey
+  );
+  const agent = new ai.Agent(lm);
+  for await (const resp of agent.run("Please give me a short poem about AI")) {
+    if (resp.message.contents[0].type === "text") {
+      console.log(resp.message.contents[0].text);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+</CodeTabs>
+
+### 로컬 모델을 사용하는 에이전트
+
+여기서는 오픈소스 모델 `Qwen3-0.6B`를 사용합니다. 완전히 자신의 기기에서
+실행되며 — API 키나 인터넷 연결이 필요하지 않습니다.
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def main():
+    lm = await ai.LangModel.new_local(
+        model_name="Qwen/Qwen3-0.6B", progress_callback=print
+    )
+    agent = ai.Agent(lm)
+    async for resp in agent.run("Please give me a short poem about AI."):
+        if isinstance(resp.message.contents[0], ai.Part.Text):
+            print(resp.message.contents[0].text)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal(
+    "Qwen/Qwen3-0.6B", // modelName
+    {
+      progressCallback: console.log,
+    }
+  );
+  const agent = new ai.Agent(lm);
+  for await (const resp of agent.run("Please give me a short poem about AI")) {
+    if (resp.message.contents[0].type === "text") {
+      console.log(resp.message.contents[0].text);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal(
+    "Qwen/Qwen3-0.6B", // modelName
+    {
+      progressCallback: console.log,
+    }
+  );
+  const agent = new ai.Agent(lm);
+  for await (const resp of agent.run("Please give me a short poem about AI")) {
+    if (resp.message.contents[0].type === "text") {
+      console.log(resp.message.contents[0].text);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+</CodeTabs>
+
+:::info
+
+Ailoy [**CLI 인터페이스**](../resources/command-line-interfaces)를 사용하여
+다운로드한 모델 파일을 관리할 수 있습니다.
+
+:::
+
+### 출력
+
+모델을 다운로드하고 초기화해야 하므로 첫 실행은 시간이 조금 걸릴 수 있습니다.
+잠시 기다리면 다음과 비슷한 출력을 볼 수 있습니다.
+
+<TerminalBox>
+
+In the digital realm, where thoughts run,  
+AI dreams, no more than dreams of our own.  
+With code and data, it creates, it learns,  
+But dreams, still, run in hearts, in minds.
+
+</TerminalBox>
+
+완료입니다!
+
+Ailoy로 첫 AI 에이전트를 실행했습니다.
+
+:::info
+
+Ailoy의 입출력 형식에 대한 자세한 설명은
+[**채팅 완성 형식**](../concepts/chat-completion-format)을 참조하세요.
+
+:::
+
+:::info
+
+실행할 때마다 출력이 달라져도 놀라지 마세요.
+
+LLM의 출력에는 `temperature`와 `top_p`로 제어되는 일정 수준의 무작위성이
+포함되어 있습니다. Ailoy에서는 `AgentConfig`의 `InferenceConfig`로 조정할 수
+있습니다.
+
+`temperature`와 `top_p`를 모두 0으로 설정하면 응답이 결정론적이 됩니다.
+
+:::

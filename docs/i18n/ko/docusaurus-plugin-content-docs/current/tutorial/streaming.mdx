@@ -1,22 +1,12 @@
-# Streaming
+# 스트리밍
 
-Agent and its underlying LLM sequentially generate partial strings(tokens) one
-by one, and each generated token is accumulated to form the final output. The
-longer the generation process, the longer it takes to complete the result, so
-it’s often useful to utilize these intermediate results. Those can be streamed
-as the increments(deltas) of the entire result.
+Agent와 기본 LLM은 부분 문자열(토큰)을 하나씩 순차적으로 생성하고, 생성된 각 토큰이 누적되어 최종 출력을 형성합니다. 생성 과정이 길수록 결과를 완성하는 데 더 오래 걸리므로, 이러한 중간 결과를 활용하는 것이 종종 유용합니다. 이것들은 전체 결과의 증분(델타)으로 스트리밍될 수 있습니다.
 
-This is useful in cases where users may want to stop content generation after
-reviewing the partial results, or for agent-based application developers who
-want to stream partial results to users in real time to make their applications
-more responsive.
+이는 사용자가 부분 결과를 검토한 후 콘텐츠 생성을 중지하고 싶을 때나, 에이전트 기반 애플리케이션 개발자가 애플리케이션의 반응성을 높이기 위해 부분 결과를 실시간으로 사용자에게 스트리밍하고 싶을 때 유용합니다.
 
-## How to Stream Deltas
+## 델타 스트리밍 방법
 
-The `run()` method from the `Agent`, which we’ve been using so far, returns
-complete messages one by one. In contrast, the `run_delta()` (Python, Rust) or
-`runDelta()` (Node.js, Web) method returns a sequence of partial results for
-each LLM generation step, referred to as _message deltas_.
+지금까지 사용해 온 `Agent`의 `run()` 메서드는 완전한 메시지를 순차적으로 반환하는 반면, `run_delta()`(Python, Rust) 또는 `runDelta()`(Nodejs, Web) 메서드는 각 LLM 생성 단계에 대한 부분 결과의 시퀀스를 반환하며, 이를 메시지의 _델타_ 라고 합니다.
 
 <CodeTabs>
 
@@ -32,7 +22,7 @@ async def main():
 
     async for resp in agent.run_delta("Please give me a short poem about AI."):
         if resp.delta.contents and isinstance(resp.delta.contents[0], ai.PartDelta.Text):
-            # print text deltas without line break
+            # 줄바꿈 없이 텍스트 델타 출력
             print(resp.delta.contents[0].text, end="")
     print()
 
@@ -52,7 +42,7 @@ async function main() {
     "Please give me a short poem about AI."
   )) {
     if (resp.delta.contents?.[0]?.type === "text") {
-      // print text deltas without line break
+      // 줄바꿈 없이 텍스트 델타 출력
       process.stdout.write(resp.delta.contents[0].text);
     }
   }
@@ -88,14 +78,11 @@ main().catch((err) => {
 
 </CodeTabs>
 
-## Delta to Completed Message
+## 델타를 완성된 메시지로 변환
 
-You can also construct a complete message by accumulating message deltas
-sequentially.
+메시지 델타를 순차적으로 누적하여 완전한 메시지를 구성할 수도 있습니다.
 
-A finish reason is provided when the message has been fully generated.
-Accumulate the message deltas until the finish reason appears, then call
-`finish()` to produce the complete message.
+메시지가 완전히 생성되면 완료 이유(finish reason)가 제공됩니다. 완료 이유가 나타날 때까지 메시지 델타를 누적한 다음 `finish()`를 호출하여 완전한 메시지를 생성합니다.
 
 <CodeTabs>
 
@@ -112,19 +99,19 @@ async def main():
     GREEN = "\x1b[32m"
     RESET = "\x1b[0m"
 
-    acc = ai.MessageDelta()  # the base of accumulation
+    acc = ai.MessageDelta()  # 누적의 기반
     async for resp in agent.run_delta("Please give me a short poem about AI."):
         if resp.delta.contents and isinstance(resp.delta.contents[0], ai.PartDelta.Text):
-            # print text deltas in green
+            # 텍스트 델타를 녹색으로 출력
             print(GREEN + resp.delta.contents[0].text + RESET, end="")
-        acc += resp.delta  # accumulate newly generated delta into the base
+        acc += resp.delta  # 새로 생성된 델타를 기반에 누적
 
-        # if finish_reason exists, it means that a whole message is generated.
+        # finish_reason이 존재하면 전체 메시지가 생성된 것입니다.
         if resp.finish_reason is not None:
             message = acc.to_message()
             if isinstance(message.contents[0], ai.Part.Text):
                 print("\n\n" + message.contents[0].text)
-            acc = ai.MessageDelta()  # re-initialize the base
+            acc = ai.MessageDelta()  # 기반을 다시 초기화
     print()
 
 
@@ -145,18 +132,18 @@ async function main() {
   let acc = {
     contents: [],
     tool_calls: [],
-  } as ai.MessageDelta; // the base of accumulation
+  } as ai.MessageDelta; // 누적의 기반
   for await (const resp of agent.runDelta(
     "Please give me a short poem about AI."
   )) {
     if (resp.delta.contents?.[0]?.type === "text") {
-      // print text deltas in green
+      // 텍스트 델타를 녹색으로 출력
       process.stdout.write(GREEN + resp.delta.contents[0].text + RESET);
     }
-    // accumulate newly generated delta into the base
+    // 새로 생성된 델타를 기반에 누적
     acc = ai.accumulateMessageDelta(acc, resp.delta);
 
-    // if finish_reason exists, it means that a whole message is generated.
+    // finish_reason이 존재하면 전체 메시지가 생성된 것입니다.
     if (resp.finish_reason !== undefined) {
       const message = ai.finishMessageDelta(acc);
       if (message.contents?.[0]?.type === "text")
@@ -164,7 +151,7 @@ async function main() {
       acc = {
         contents: [],
         tool_calls: [],
-      } as ai.MessageDelta; // re-initialize the base
+      } as ai.MessageDelta; // 기반을 다시 초기화
     }
   }
   console.log();
@@ -188,18 +175,18 @@ async function main() {
   let acc = {
     contents: [],
     tool_calls: [],
-  }; // the base of accumulation
+  }; // 누적의 기반
   for await (const resp of agent.runDelta(
     "Please give me a short poem about AI."
   )) {
     if (resp.delta.contents?.[0]?.type === "text") {
-      // print text deltas in green
+      // 텍스트 델타를 녹색으로 출력
       console.log(GREEN + resp.delta.contents[0].text + RESET);
     }
-    // accumulate newly generated delta into the base
+    // 새로 생성된 델타를 기반에 누적
     acc = ai.accumulateMessageDelta(acc, resp.delta);
 
-    // if finish_reason exists, it means that a whole message is generated.
+    // finish_reason이 존재하면 전체 메시지가 생성된 것입니다.
     if (resp.finish_reason !== undefined) {
       const message = ai.finishMessageDelta(acc);
       if (message.contents?.[0]?.type === "text")
@@ -207,7 +194,7 @@ async function main() {
       acc = {
         contents: [],
         tool_calls: [],
-      }; // re-initialize the base
+      }; // 기반을 다시 초기화
     }
   }
   console.log();

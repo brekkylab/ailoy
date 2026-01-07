@@ -1,0 +1,740 @@
+# Tool 사용하기
+
+Ailoy의 가장 강력한 기능 중 하나는 Tool Call 시스템입니다. 이를 통해 LLM을 외부
+Tool나 API에 연결하여 기능을 확장할 수 있습니다. 이렇게 하면 에이전트가 모델의
+학습 데이터에 포함되지 않은 실시간 또는 도메인별 정보에 접근할 수 있습니다.
+
+Tool을 사용하려면 두 가지 구성 요소를 정의해야 합니다: **Tool Description**과
+**Tool Behavior**.
+
+:::note
+
+Tool 아키텍처에 대한 자세한 내용은 [**아키텍처**](../concepts/architecture#tool)
+섹션을 참조하세요.
+
+:::
+
+Ailoy에서 *Tool 인식 에이전트*를 만드는 방법을 살펴보겠습니다.
+
+## Tool 사용하기
+
+이 예제에서는 [**Frankfurter API**](https://frankfurter.dev/)를 사용하여
+에이전트가 실시간 환율 정보를 조회할 수 있도록 합니다.
+
+:::note
+
+Ailoy는 Tool로서 [**MCP**](https://modelcontextprotocol.io/)도 지원합니다. MCP
+Tool 사용에 대해서는 [**MCP 통합**](./mcp-integration) 섹션을 참조하세요.
+
+:::
+
+### Tool Description 정의
+
+Tool Description은 Tool이 모델에 어떻게 노출되는지를 정의합니다. Tool의 이름,
+목적, 매개변수, 그리고 선택적으로 반환 타입을 포함합니다. 이 스키마는 모델이
+Tool을 올바르게 호출하는 방법을 이해하는 데 도움이 됩니다.
+
+매개변수는 일반적으로 JSON Schema 형식으로 표현됩니다.
+
+:::info
+
+JSON Schema 형식으로 Tool을 정의하는 방법에 대한 자세한 내용은
+[**OpenAI 문서**](https://platform.openai.com/docs/guides/function-calling#defining-functions)
+또는
+[**Huggingface 문서**](https://huggingface.co/docs/transformers/main/en/chat_templating_writing#tool-definitions)를
+참조하세요.
+
+:::
+
+<CodeTabs>
+
+```python
+import ailoy as ai
+
+tool_desc = ai.ToolDesc(
+    name="frankfurter",
+    description="Get the latest currency exchange rates of target currencies based on the 'base' currency",
+    parameters={
+        "type": "object",
+        "properties": {
+            "base": {
+                "type": "string",
+                "description": "The ISO 4217 currency code to be the divider of the currency rate to be got."
+            },
+            "symbols": {
+                "type": "string",
+                "description": "The target ISO 4217 currency codes separated by comma."
+            }
+        },
+    }
+)
+```
+
+```typescript
+const tool_desc: ToolDesc = {
+  name: "frankfurter",
+  description:
+    "Get the latest currency exchange rates of target currencies based on the 'base' currency",
+  parameters: {
+    type: "object",
+    properties: {
+      base: {
+        type: "string",
+        description:
+          "The ISO 4217 currency code to be the divider of the currency rate to be got.",
+      },
+      symbols: {
+        type: "string",
+        description: "The target ISO 4217 currency codes separated by comma.",
+      },
+    },
+  },
+};
+```
+
+</CodeTabs>
+
+### Tool Behavior 정의
+
+Tool Behavior은 Tool이 호출될 때 실제로 수행하는 작업을 정의합니다. 모델이
+Tool을 호출할 때 실행되는 실행 가능한 로직을 나타냅니다.
+
+함수는 Tool Description에 지정된 매개변수를 받아 예상 스키마와 일치하는 결과를
+반환합니다.
+
+에이전트가 실행되면 모델은 대화 컨텍스트와 제공된 Tool Description을 기반으로 이
+함수를 언제 어떻게 호출할지 결정합니다.
+
+<CodeTabs>
+
+```python
+def tool_behavior(base, symbols):
+    if not base:
+        raise ValueError("Missing 'base'")
+    if not symbols:
+        raise ValueError("Missing 'symbols'")
+
+    query = parse.urlencode({"from": base, "to": symbols})
+    url = f"https://api.frankfurter.app/latest?{query}"
+
+    try:
+        with request.urlopen(url, timeout=10) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Frankfurter API returned HTTP {resp.status}")
+            payload = json.loads(resp.read().decode("utf-8"))
+    except error.URLError as e:
+        raise RuntimeError(f"Failed to reach Frankfurter API: {e}") from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError("Failed to parse Frankfurter API response as JSON.") from e
+
+    return payload
+```
+
+```typescript
+async function toolBehavior(args) {
+  const { base, symbols } = args;
+  if (!base) {
+    throw new Error("Missing 'base'");
+  }
+  if (!symbols) {
+    throw new Error("Missing 'symbols'");
+  }
+
+  const params = new URLSearchParams({ from: base, to: symbols });
+  const url = `https://api.frankfurter.app/latest?${params.toString()}`;
+
+  let resp;
+  try {
+    resp = await fetch(url, { timeout: 10000 });
+  } catch (err) {
+    throw new Error(`Failed to reach Frankfurter API: ${err.message}`);
+  }
+
+  if (!resp.ok) {
+    throw new Error(`Frankfurter API returned HTTP ${resp.status}`);
+  }
+
+  try {
+    return await resp.json();
+  } catch {
+    throw new Error("Failed to parse Frankfurter API response as JSON.");
+  }
+}
+```
+
+</CodeTabs>
+
+### 에이전트에 Tool 등록
+
+Tool이 정의되면 Agent는 모델이 Tool을 호출하려고 할 때 자동으로 감지하고 다음
+반복에서 해당 함수를 실행합니다.
+
+`Agent` 생성자에 Tool을 전달하여 등록할 수 있습니다.
+
+<CodeTabs>
+
+```python
+lm = await ai.LangModel.new_local("Qwen/Qwen3-4B")
+tools = [ai.Tool.new_py_function(tool_behavior, tool_desc)]
+agent = ai.Agent(lm, tools)
+```
+
+```typescript
+const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
+const agent = new ai.Agent(lm, tools);
+```
+
+</CodeTabs>
+
+또는 `add_tool` 또는 `add_tools` 메서드를 사용하여 에이전트를 생성한 **후에**
+Tool을 등록할 수 있습니다.
+
+<CodeTabs>
+
+```python
+agent = ...
+
+# Add a single tool
+tool = ai.Tool.new_py_function(...)
+agent.add_tool(tool)
+
+# Add multiple tools
+tool1 = ai.Tool.new_py_function(...)
+tool2 = ai.Tool.new_py_function(...)
+agent.add_tools([tool1, tool2])
+```
+
+```typescript
+const agent = ...
+
+// Add a single tool
+const tool = ai.Tool.newFunction(...);
+agent.addTool(tool);
+
+// Add multiple tools
+const tool1 = ai.Tool.newFunction(...);
+const tool2 = ai.Tool.newFunction(...);
+agent.addTools([tool1, tool2]);
+```
+
+</CodeTabs>
+
+`agent.run()` 또는 `agent.run_delta()`가 반환하는 응답에서 에이전트가 호출한
+Tool와 생성된 결과를 확인할 수 있습니다. `agent.run()` 함수에는 `tool_calls`라는
+필드가 포함되어 있습니다. 이 필드에 값이 있으면 LLM의 출력이 하나 이상의 **Tool
+호출**을 트리거했음을 나타냅니다.
+
+### Tool Description 자동 생성 (Python 전용)
+
+Python에서는 함수 객체를 통해 함수의 메타데이터에 접근할 수 있습니다. 이를 통해
+Ailoy는 함수의 매개변수 타입 힌트와 독스트링에서 Tool Description을 자동으로
+생성할 수 있습니다.
+
+[**transformers**](https://huggingface.co/docs/transformers/v4.57.1/en/chat_extras#passing-tools)와
+같은 라이브러리와 유사하게, Ailoy는 *Google 스타일 독스트링*과 매개변수에 대한
+타입 힌트를 모두 포함하는 Python 함수에서 Tool을 정의할 때 자동으로 Tool
+Description을 생성할 수 있습니다. 이 경우 `ToolDesc`를 수동으로 생성할 필요가
+없습니다.
+
+<details>
+  <summary>**Python 코드 예제 보기**</summary>
+<CodeTabs>
+
+```python
+def frankfurter(base: str, symbols: str):
+    """
+        Get the latest currency exchange rates of target currencies based on the 'base' currency
+
+        Args:
+            base: The ISO 4217 currency code to be the divider of the currency rate to be got.
+            unit: The target ISO 4217 currency codes separated by comma.
+    """
+
+    if not base:
+        raise ValueError("Missing 'base'")
+    if not symbols:
+        raise ValueError("Missing 'symbols'")
+
+    query = parse.urlencode({"from": base, "to": symbols})
+    url = f"https://api.frankfurter.app/latest?{query}"
+
+    try:
+        with request.urlopen(url, timeout=10) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Frankfurter API returned HTTP {resp.status}")
+            payload = json.loads(resp.read().decode("utf-8"))
+    except error.URLError as e:
+        raise RuntimeError(f"Failed to reach Frankfurter API: {e}") from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError("Failed to parse Frankfurter API response as JSON.") from e
+
+    return payload
+
+tool = ai.Tool.new_py_function(tool_behavior)  # don't need to provide `tool_desc` here
+# tool = ai.Tool.new_py_function(tool_behavior, tool_desc)  # if you provide, it will override
+agent.add_tool(tool)
+```
+
+</CodeTabs>
+
+</details>
+
+### 전체 예제
+
+<CodeTabs>
+
+```python
+import asyncio
+import json
+from urllib import error, parse, request
+
+import ailoy as ai
+
+tool_desc = ai.ToolDesc(
+    name="frankfurter",
+    description="Get the latest currency exchange rates of target currencies based on the 'base' currency",
+    parameters={
+        "type": "object",
+        "properties": {
+            "base": {
+                "type": "string",
+                "description": "The ISO 4217 currency code to be the divider of the currency rate to be got.",
+            },
+            "symbols": {
+                "type": "string",
+                "description": "The target ISO 4217 currency codes separated by comma.",
+            },
+        },
+    },
+)
+
+
+def tool_behavior(base, symbols):
+    if not base:
+        raise ValueError("Missing 'base'")
+    if not symbols:
+        raise ValueError("Missing 'symbols'")
+
+    query = parse.urlencode({"from": base, "to": symbols})
+    url = f"https://api.frankfurter.app/latest?{query}"
+
+    try:
+        with request.urlopen(url, timeout=10) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Frankfurter API returned HTTP {resp.status}")
+            payload = json.loads(resp.read().decode("utf-8"))
+    except error.URLError as e:
+        raise RuntimeError(f"Failed to reach Frankfurter API: {e}") from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError("Failed to parse Frankfurter API response as JSON.") from e
+
+    return payload
+
+
+async def main():
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B", progress_callback=print)
+    tools = [ai.Tool.new_py_function(tool_behavior, tool_desc)]
+    agent = ai.Agent(lm, tools)
+    query = "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take? Get the currency data if you need."
+    print("Query:", query, "\n")
+    async for resp in agent.run(query):
+        if resp.message.role == "assistant":
+            if len(resp.message.tool_calls) > 0:
+                print("Tool call:", resp.message.tool_calls[0].function, "\n")
+            else:
+                print(resp.message.contents[0].text, "\n")
+        elif resp.message.role == "tool":
+            print("Tool response:", resp.message.contents[0].value, "\n")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+const toolDesc = {
+  name: "frankfurter",
+  description:
+    "Get the latest currency exchange rates of target currencies based on the 'base' currency",
+  parameters: {
+    type: "object",
+    properties: {
+      base: {
+        type: "string",
+        description:
+          "The ISO 4217 currency code to be the divider of the currency rate to be got.",
+      },
+      symbols: {
+        type: "string",
+        description: "The target ISO 4217 currency codes separated by comma.",
+      },
+    },
+  },
+};
+
+async function toolBehavior(args) {
+  const { base, symbols } = args;
+  if (!base) {
+    throw new Error("Missing 'base'");
+  }
+  if (!symbols) {
+    throw new Error("Missing 'symbols'");
+  }
+
+  const params = new URLSearchParams({ from: base, to: symbols });
+  const url = `https://api.frankfurter.app/latest?${params.toString()}`;
+
+  let resp;
+  try {
+    resp = await fetch(url, { timeout: 10000 });
+  } catch (err) {
+    throw new Error(`Failed to reach Frankfurter API: ${err.message}`);
+  }
+
+  if (!resp.ok) {
+    throw new Error(`Frankfurter API returned HTTP ${resp.status}`);
+  }
+
+  try {
+    return await resp.json();
+  } catch {
+    throw new Error("Failed to parse Frankfurter API response as JSON.");
+  }
+}
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", {
+    progressCallback: console.log,
+  });
+  const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
+  const agent = new ai.Agent(lm, tools);
+  const query =
+    "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take? Get the currency data if you need.";
+  for await (const resp of agent.run(query)) {
+    if (resp.message.role === "assistant") {
+      if (resp.message.tool_calls?.length > 0) {
+        console.log("Tool call:", resp.message.tool_calls[0].function, "\n");
+      } else {
+        console.log(resp.message.contents[0].text, "\n");
+      }
+    } else if (resp.message.role === "tool") {
+      console.log("Tool response:", resp.message.contents[0].value, "\n");
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+const toolDesc = {
+  name: "frankfurter",
+  description:
+    "Get the latest currency exchange rates of target currencies based on the 'base' currency",
+  parameters: {
+    type: "object",
+    properties: {
+      base: {
+        type: "string",
+        description:
+          "The ISO 4217 currency code to be the divider of the currency rate to be got.",
+      },
+      symbols: {
+        type: "string",
+        description: "The target ISO 4217 currency codes separated by comma.",
+      },
+    },
+  },
+};
+
+async function toolBehavior(args) {
+  const { base, symbols } = args;
+  if (!base) {
+    throw new Error("Missing 'base'");
+  }
+  if (!symbols) {
+    throw new Error("Missing 'symbols'");
+  }
+
+  const params = new URLSearchParams({ from: base, to: symbols });
+  const url = `https://api.frankfurter.app/latest?${params.toString()}`;
+
+  let resp;
+  try {
+    resp = await fetch(url, { timeout: 10000 });
+  } catch (err) {
+    throw new Error(`Failed to reach Frankfurter API: ${err.message}`);
+  }
+
+  if (!resp.ok) {
+    throw new Error(`Frankfurter API returned HTTP ${resp.status}`);
+  }
+
+  try {
+    return await resp.json();
+  } catch {
+    throw new Error("Failed to parse Frankfurter API response as JSON.");
+  }
+}
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", {
+    progressCallback: console.log,
+  });
+  const tools = [ai.Tool.newFunction(toolDesc, toolBehavior)];
+  const agent = new ai.Agent(lm, tools);
+  const query =
+    "I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take? Get the currency data if you need.";
+  for await (const resp of agent.run(query)) {
+    if (resp.message.role === "assistant") {
+      if (resp.message.tool_calls?.length > 0) {
+        console.log("Tool call:", resp.message.tool_calls[0].function, "\n");
+      } else {
+        console.log(resp.message.contents[0].text, "\n");
+      }
+    } else if (resp.message.role === "tool") {
+      console.log("Tool response:", resp.message.contents[0].value, "\n");
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+</CodeTabs>
+
+### 출력
+
+에이전트가 Frankfurter API를 사용하여 응답에 실시간 환율 정보를 포함하는 것을 볼
+수 있습니다.
+
+출력은 다음과 같습니다:
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
+{`Query: I want to buy 250 U.S. Dollar and 350 Chinese Yuan with my Korean Won. How much do I need to take?
+
+Tool call: frankfurter(symbols="USD,CNY", base="KRW")
+
+Tool response: {"CNY": 0.00518, "USD": 0.00072}
+
+To buy 250 U.S. Dollars (USD) and 350 Chinese Yuan (CNY) using Korean Won (KRW), you need to calculate the total amount of KRW required based on the exchange rates:
+
+- **1 USD = 0.00072 KRW**
+- **1 CNY = 0.00518 KRW**
+
+### Calculation:
+- **For USD**:  
+  $ 250 \\, \\text{USD} \\times \\frac{1}{0.00072} = 250 \\times 1388.89 = 347,222.22 \\, \\text{KRW} $
+
+- **For CNY**:  
+  $ 350 \\, \\text{CNY} \\times \\frac{1}{0.00518} = 350 \\times 193.18 = 67,613.39 \\, \\text{KRW} $
+
+### Total:
+- **KRW needed**: $ 347,222.22 + 67,613.39 = 414,835.61 \\, \\text{KRW} $
+
+You will need approximately **414,835.61 KRW** to buy 250 USD and 350 CNY.`}
+
+</TerminalBox>
+
+{/* prettier-ignore-end */}
+
+:::warning
+
+Tool은 무료가 아닙니다 — 모든 토큰이 계산됩니다.
+
+과도한 Tool 사용은 AI가 처리해야 할 많은 정보를 유발할 수 있으며, 잠재적으로 더
+긴 컨텍스트 길이와 성능 저하로 이어질 수 있습니다.
+
+각 Tool Call은 토큰을 소비합니다. API 호출은 예상치 못한 비용으로 이어질 수
+있으며, 온디바이스 모델은 기기 속도를 늦추거나 충돌을 일으킬 수 있습니다.
+
+비효율성을 피하기 위해 필요한 Tool만 사용하고 채팅 컨텍스트를 집중적이고
+간결하게 유지하세요.
+
+:::
+
+## 기본 제공 Tool 사용
+
+Ailoy는 여러 기본 제공 Tool을 제공합니다. 이러한 Tool을 사용하기 위해 Tool
+Description과 Behavior을 정의할 필요가 없습니다.
+
+사용 가능한 기본 제공 Tool 목록은
+[**리소스 > 기본 제공 Tool**](../resources/builtin-tools)를 참조하세요.
+
+### Tool 생성
+
+이 예제에서는 셸 명령을 실행하기 위해 `terminal` Tool을 사용합니다.
+
+:::info
+
+`terminal` Tool은 웹 환경에서는 사용할 수 없습니다.
+
+:::
+
+다음과 같이 기본 제공 Tool을 생성할 수 있습니다:
+
+<CodeTabs>
+
+```python
+import ailoy as ai
+
+tool = ai.Tool.new_builtin("terminal")
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+const tool = ai.Tool.newBuiltin("terminal");
+```
+
+</CodeTabs>
+
+### Tool 등록
+
+<CodeTabs>
+
+```python
+agent = ...
+
+agent.add_tool(tool)
+```
+
+```typescript
+const agent = ...
+
+agent.addTool(tool);
+```
+
+</CodeTabs>
+
+### 전체 예제
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def main():
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B", progress_callback=print)
+    agent = ai.Agent(lm)
+
+    tool = ai.Tool.new_builtin("terminal")
+    agent.add_tool(tool)
+
+    query = "List the files and directories in the home directory."
+    print(f"Query: {query}\n")
+    async for resp in agent.run(query):
+        if resp.message.role == "assistant":
+            if len(resp.message.tool_calls) > 0:
+                print("Tool call:", resp.message.tool_calls[0].function, "\n")
+            else:
+                print(resp.message.contents[0].text, "\n")
+        elif resp.message.role == "tool":
+            print("Tool response:", resp.message.contents[0].value, "\n")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", {
+    progressCallback: console.log,
+  });
+  const agent = new ai.Agent(lm);
+
+  const tool = ai.Tool.newBuiltin("terminal");
+  const query = "List the files and directories in the home directory.";
+  console.log(query);
+  for await (const resp of agent.run(query)) {
+    if (resp.message.role === "assistant") {
+      if (resp.message.tool_calls?.length > 0) {
+        console.log("Tool call:", resp.message.tool_calls[0].function, "\n");
+      } else {
+        console.log(resp.message.contents[0].text, "\n");
+      }
+    } else if (resp.message.role === "tool") {
+      console.log("Tool response:", resp.message.contents[0].value, "\n");
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+</CodeTabs>
+
+### 출력
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
+{`
+List the files and directories in the current directory, including hidden files.
+Tool call: { name: 'terminal', arguments: { command: 'ls -a' } } 
+
+Tool response: {
+  stdout: '.\\n' +
+    '..\\n' +
+    '.env.template\\n' +
+    '.gitignore\\n' +
+    '.prettierrc.json\\n' +
+    'npm\\n' +
+    'package-lock.json\\n' +
+    'package.json\\n' +
+    'README.md\\n' +
+    'scripts\\n' +
+    'src\\n' +
+    'tests\\n' +
+    'tsconfig.json\\n' +
+    'typedoc.json\\n' +
+    'vite.config.ts\\n' +
+    'vitest.config.ts\\n',
+  stderr: '',
+  exit_code: 0
+} 
+
+The files and directories in the current directory, including hidden ones, are as follows:
+
+- \`.\` (current directory)
+- \`..\` (parent directory)
+- \`.env.template\`
+- \`.gitignore\`
+- \`.prettierrc.json\`
+- \`npm\`
+- \`package-lock.json\`
+- \`package.json\`
+- \`README.md\`
+- \`scripts\`
+- \`src\`
+- \`tests\`
+- \`tsconfig.json\`
+- \`typedoc.json\`
+- \`vite.config.ts\`
+- \`vitest.config.ts\` 
+`}
+
+</TerminalBox>
+
+{/* prettier-ignore-end */}

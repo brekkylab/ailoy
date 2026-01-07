@@ -1,0 +1,68 @@
+# 모델 파일 관리
+
+언어 모델은 일반적으로 매우 많은 수의 파라미터를 포함하며, 총 크기는
+메가바이트에서 기가바이트에 이릅니다. 또한 채팅 템플릿, 토큰화 및 기타 보조
+데이터를 위한 추가 파일이 필요합니다.
+
+기본적으로 Ailoy는 시스템에 필요한 모델 파일이 없는 경우 자동으로
+다운로드합니다. 이 파일들은 환경에 따라 다음 위치에 저장됩니다:
+
+| 환경        | 모델 캐시 루트 경로                                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Linux       | `~/.cache/ailoy`                                                                                                                 |
+| macOS       | `~/.cache/ailoy`                                                                                                                 |
+| Windows     | `%LOCALAPPDATA%\ailoy`                                                                                                           |
+| WebAssembly | [Origin Private File System (OPFS)](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system) |
+
+## CLI Tool
+
+Ailoy는 모델 파일을 직접 관리할 수 있는 Command Line Inferface(CLI) Tool도
+제공합니다.
+
+{/* prettier-ignore-start */}
+
+:::note
+모델 ID는 <SmallIcon src="https://huggingface.co/favicon.ico" /> HuggingFace에 등록된 것과 동일한 명명 규칙을 따릅니다.
+:::
+
+:::info
+CLI에 대한 자세한 내용은 [**Command Line Inferface**](../resources/command-line-interfaces)를 참조하세요.
+:::
+
+{/* prettier-ignore-end */}
+
+### 목록 조회
+
+_로컬 캐시 디렉토리에 있는 모든 사용 가능한 모델을 나열합니다._
+
+<CodeTabs>
+
+```bash
+ailoy-model list
+```
+
+</CodeTabs>
+
+### 다운로드
+
+_모델 ID로 지정된 모델을 다운로드합니다._
+
+<CodeTabs>
+
+```bash
+ailoy-model download Qwen/Qwen3-0.6B
+```
+
+</CodeTabs>
+
+### 삭제
+
+_모델 ID로 지정된 모델을 삭제합니다._
+
+<CodeTabs>
+
+```bash
+ailoy-model remove Qwen/Qwen3-0.6B
+```
+
+</CodeTabs>

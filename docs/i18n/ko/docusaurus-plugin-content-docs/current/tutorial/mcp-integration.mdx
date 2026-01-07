@@ -1,0 +1,234 @@
+# MCP 통합
+
+<strong>모델 컨텍스트 프로토콜(MCP)</strong>은 Anthropic이 개발한 오픈
+프로토콜로, 언어 모델이 Tool, 메모리 백엔드, 컨텍스트 관리자와 같은 외부
+시스템과 상호작용하는 방식을 표준화합니다. MCP는 LLM과 환경 간의 구조화되고
+동적인 통신을 가능하게 하여, 모델이 외부 Tool에 접근하고 실시간 정보를 검색하며
+복잡한 다단계 추론을 수행할 수 있도록 합니다.
+
+:::info
+
+웹 환경에서는 표준 입출력을 사용할 수 없습니다. 따라서 웹 환경에서는 스트리밍
+가능한 HTTP 기반의 MCP Tool만 사용할 수 있습니다. 웹 환경에서의 MCP 통합에 대한
+정보는 [**WebAssembly 지원**](webassembly-supports#using-mcp-tools)을
+참조하세요.
+
+다음 예제는 네이티브 환경에서만 표준 입출력을 사용하는 MCP Tool을 보여줍니다.
+
+:::
+
+## 단계별 가이드
+
+### MCP 클라이언트 로드
+
+MCPClient 인터페이스를 사용하여 모든 MCP 서버에 연결할 수 있습니다. 예를 들어,
+아래 코드는 공식 GitHub MCP 서버에 연결합니다.
+
+<CodeTabs>
+
+```python
+client = await ai.MCPClient.from_stdio(
+    "npx", ["-y", "@modelcontextprotocol/server-github"]
+)
+```
+
+```typescript
+const client = await ai.MCPClient.newStdio("npx", [
+  "-y",
+  "@modelcontextprotocol/server-github",
+]);
+```
+
+</CodeTabs>
+
+이렇게 하면 통신을 위해 표준 I/O를 사용하여 GitHub MCP 서버가 서브프로세스로
+실행됩니다. 에이전트는 서버가 노출하는 Tool을 자동으로 검색하고 내부 Tool 세트에
+등록합니다.
+
+### MCP Tool 추출
+
+각 MCP 서버는 여러 Tool을 노출할 수 있습니다. 컨텍스트 사용을 최적화하기 위해
+모든 Tool을 등록하는 대신 Tool의 하위 집합을 선택적으로 추출할 수 있습니다.
+
+<CodeTabs>
+
+```python
+tools = [
+    client.get_tool("search_repositories"),
+    client.get_tool("get_file_contents"),
+]
+```
+
+```typescript
+const tools = [
+  client.getTool("search_repositories"),
+  client.getTool("get_file_contents"),
+];
+```
+
+</CodeTabs>
+
+### 에이전트에 Tool 등록
+
+MCP Tool을 LM과 통합하려면 `Agent`에 등록해야 합니다. 등록되면 에이전트는 추론
+중이나 사용자 쿼리에 응답할 때 이러한 Tool을 자동으로 호출할 수 있습니다.
+
+<CodeTabs>
+
+```python
+lm = await ai.LangModel.new_local("Qwen/Qwen3-8B", progress_callback=print)
+agent = ai.Agent(lm, tools)
+```
+
+```typescrpt
+const lm = await ai.LangModel.newLocal("Qwen/Qwen3-8B", null, console.log);
+const agent = new ai.Agent(lm, tools);
+```
+
+</CodeTabs>
+
+### MCP Tool을 통한 쿼리
+
+Tool이 등록되면 `run()` 또는 `run_delta()`를 호출할 때 에이전트가 자동으로
+Tool을 사용할 수 있습니다.
+
+<CodeTabs>
+
+```python
+question = "Search the repository named brekkylab/ailoy and describe what it does based on its README.md."
+async for resp in agent.run(question):
+    agent.print(resp)
+```
+
+```typescript
+const question =
+  "Search the repository named brekkylab/ailoy and describe what it does based on its README.md.";
+for await (const resp of agent.run(question)) {
+  agent.print(resp);
+}
+```
+
+</CodeTabs>
+
+이것은 에이전트가 GitHub MCP Tool을 활용하여 저장소를 검색하고 내용을 요약하는
+방법을 보여줍니다.
+
+## 전체 예제
+
+다음 End-to-End 예제는 에이전트를 설정하고 GitHub MCP 서버에 연결하고 쿼리를
+발행하는 방법을 보여줍니다.
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def main():
+    client = await ai.MCPClient.from_stdio(
+        "npx", ["-y", "@modelcontextprotocol/server-github"]
+    )
+    tools = [
+        client.get_tool("search_repositories"),
+        client.get_tool("get_file_contents"),
+    ]
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B", progress_callback=print)
+    agent = ai.Agent(lm, tools)
+    query = "Search the repository named brekkylab/ailoy and describe what it does based on its README.md."
+    async for resp in agent.run(query):
+        print(resp)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function main() {
+  const client = await ai.MCPClient.newStdio("npx", [
+    "-y",
+    "@modelcontextprotocol/server-github",
+  ]);
+  const tools = [
+    client.getTool("search_repositories"),
+    client.getTool("get_file_contents"),
+  ];
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", null, console.log);
+  const agent = new ai.Agent(lm, tools);
+  const query =
+    "Search the repository named brekkylab/ailoy and describe what it does based on its README.md.";
+  for await (const resp of agent.run(query)) {
+    console.log(resp.message);
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+</CodeTabs>
+
+## 출력
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+{`
+╭─ Tool Call: github-get_file_contents ────────────────────────────────╮
+│ {                                                                    │
+│   "repo": "ailoy",                                                   │
+│   "path": "README.md",                                               │
+│   "owner": "brekkylab",                                              │
+│   "branch": "feature/add-qwen3-big-models"                           │
+│ }                                                                    │
+╰──────────────────────────────────────────────────────────────────────╯
+╭─ Tool Result ────────────────────────────────────────────────────────╮
+│ [                                                                    │
+│   "{\\"name\\": \\"README.md\\", \\"path\\": \\"README.md\\", \\"sha\\":       │
+│ \\"563dde166b65319e7614b81a9d8330eee06537d3\\", \\"size\\": 4443,        │
+│ \\"url\\":                                                             │
+│ \\"https://api.github.com/repos/brekkylab/ailoy/contents/README.md?re │
+│ f=feature/add-qwen3-big-models\\", \\"html_url\\":                      │
+│ \\"https://github.com/brekkylab/ailoy/blob/feature/add-qwen3-big-mode │
+│ ls/README.md\\", \\"git_url\\":                                         │
+│ \\"https://api.github.com/repos/brekkylab/ailoy/git/blobs/563dde166b6 │
+│ 5319e7614b81a9d8330eee06537d3\\", \\"download_url\\":                   │
+│ \\"https://raw.githubusercontent....(truncated)                       │
+╰──────────────────────────────────────────────────────────────────────╯
+The repository **brekkylab/ailoy** is a **lightweight library** for building AI applications, such as **agent systems** or **RAG (Retrieval-Augmented Generation) pipelines**. It is designed to simplify the integration and usage of AI models, allowing developers to import and use AI capabilities with minimal effort.
+
+### Key Features:
+- **Support for Local and Cloud AI Models**: It enables the use of local AI models (e.g., Qwen3 variants) and cloud APIs (e.g., OpenAI, Gemini, Claude).
+- **Multi-turn Conversations**: Supports conversational agents with customizable system messages.
+- **Reasoning and Tool Calling**: Facilitates reasoning-based workflows and integration with tools (including \`MCP\`).
+- **Vector Store Support**: Built-in integration with vector databases like \`Faiss\` and \`ChromaDB\`.
+- **Cross-Platform Compatibility**: Works on Windows, macOS (Apple Silicon), and Linux, with specific hardware requirements for local model execution.
+
+### Supported Models:
+- **Local Language Models**: Qwen3 variants (0.6B, 1.7B, 4B, 8B, 14B, 32B, 30B-A3B).
+- **Cloud Models**: OpenAI, Gemini, and Claude.
+- **Embedding Models**: BAAI/bge-m3.
+
+### Use Cases:
+- **Chatbots**: Build simple or advanced chatbots with local or cloud models.
+- **RAG Pipelines**: Combine retrieval and generation for enhanced AI applications.
+- **Custom AI Agents**: Create agents with reasoning capabilities and tool integration.
+
+### Requirements:
+- **Hardware**: At least 8GB of GPU memory is recommended for most models, with higher requirements for larger models like Qwen3-8B (12GB).
+- **OS**: Windows, macOS (Apple Silicon), or Linux with specific versions and drivers.
+
+### Getting Started:
+- **Node.js**: Install via \`npm install ailoy-node\` and use TypeScript examples.
+- **Python**: Install via \`pip install ailoy-py\` and use Python examples.
+
+This repository is in an **early development stage**, and APIs may change. For more details, refer to the [official documentation](https://brekkylab.github.io/ailoy/).
+`}
+</TerminalBox>
+
+{/* prettier-ignore-end */}

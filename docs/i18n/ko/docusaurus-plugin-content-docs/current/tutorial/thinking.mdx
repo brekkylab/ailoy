@@ -1,0 +1,184 @@
+# Thinking
+
+사고(Thinking or reasoning)는 AI가 명시적이고 단계별 논리적 추론을 통해 복잡한
+작업을 처리할 수 있게 하는 고급 기능입니다. 사고 모델은 문제를 한 번에 해결하는
+대신 더 작은 추론 단계로 나눕니다. 직접 답변 생성과 비교했을 때 두 가지 주요
+이점을 제공합니다:
+
+1. 향상된 문제 해결 능력
+2. 투명하고 추적 가능한 중간 사고 단계
+
+이 기능은 과학적 분석, 법적 해석, 전략적 의사결정 등 다단계 사고가 필요한 분야에
+특히 적합합니다. 그러나 사고 단계에는 추가 연산과 메모리 사용이 필요하므로 지연
+시간과 전체 리소스 소비가 증가할 수 있습니다. 따라서 사용 사례의 복잡성에 따라
+필요할 때만 사고를 사용하는 것이 중요합니다.
+
+:::info
+
+`Qwen3-0.6B`와 같은 소형 모델은 일반적으로 효과적인 추론을 수행하기에 너무
+제한적입니다. 복잡한 작업의 경우 충분히 큰 모델을 사용하는 것이 좋습니다.
+
+:::
+
+## 하이브리드 사고 모델
+
+Qwen3와 같은 일부 최신 모델은 하이브리드 사고 모델로 설계되었습니다. 이러한
+모델은 구성 설정에 따라 표준(직접 생성) 모드와 사고 모드 간에 전환할 수
+있습니다.
+
+Ailoy는 이 하이브리드 기능을 완전히 지원합니다. thinking 옵션을 통해 사고 과정을
+명시적으로 켜거나 끌 수 있습니다. 활성화되면 모델은 최종 답변 전에 상세한 "사고
+트레이스"를 생성하는 구조화된 단계별 추론에 참여합니다.
+
+### 사고 활성화 방법
+
+사고를 활성화하려면 에이전트 실행 시 추론 구성에서 `think_effort`를 지정하기만
+하면 됩니다. 에이전트 구성 내의 `inference` 키 아래에 추론 구성을 전달하면 내부
+`LangModel`에 전달됩니다.
+
+:::note
+
+사고를 활성화하면 전체 메시지를 생성하는 데 필요한 시간이 상당히 늘어날 수 있어
+애플리케이션의 반응성이 떨어져 보일 수 있으므로
+[**스트리밍**](/docs/tutorial/streaming)으로 에이전트를 실행하는 것이 좋을 수
+있습니다.
+
+:::
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def main():
+    lm = await ai.LangModel.new_local("Qwen/Qwen3-4B")
+    agent = ai.Agent(lm)
+
+    GREEN = "\x1b[32m"
+    RESET = "\x1b[0m"
+
+    async for resp in agent.run_delta(
+        "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
+        config=ai.AgentConfig(inference=ai.InferenceConfig(think_effort="enable")),
+    ):
+        if resp.delta.thinking:
+            # 사고 텍스트는 녹색으로 출력됩니다.
+            print(GREEN + resp.delta.thinking + RESET, end="")
+        if resp.delta.contents and isinstance(
+            resp.delta.contents[0], ai.PartDelta.Text
+        ):
+            print(resp.delta.contents[0].text, end="")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B");
+  const agent = new ai.Agent(lm);
+
+  const GREEN = "\x1b[32m";
+  const RESET = "\x1b[0m";
+
+  for await (const resp of agent.runDelta(
+    "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
+    { inference: { thinkEffort: "enable" } }
+  )) {
+    if (resp.delta.thinking !== undefined) {
+      // 사고 텍스트는 녹색으로 출력됩니다.
+      process.stdout.write(GREEN + resp.delta.thinking + RESET);
+    }
+    if (
+      resp.delta.contents.length !== 0 &&
+      resp.delta.contents[0].type === "text"
+    ) {
+      process.stdout.write(resp.delta.contents[0].text);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+async function main() {
+  const lm = await ai.LangModel.newLocal("Qwen/Qwen3-4B", {
+    progressCallback: console.log,
+  });
+  const agent = new ai.Agent(lm);
+
+  const GREEN = "\x1b[32m";
+  const RESET = "\x1b[0m";
+
+  for await (const resp of agent.runDelta(
+    "Please solve me a simultaneous equation: x+y=3, 4x+3y=12",
+    { inference: { thinkEffort: "enable" } }
+  )) {
+    if (resp.delta.thinking !== undefined) {
+      // 사고 텍스트는 녹색으로 출력됩니다.
+      console.log(GREEN + resp.delta.thinking + RESET);
+    }
+    if (
+      resp.delta.contents.length !== 0 &&
+      resp.delta.contents[0].type === "text"
+    ) {
+      console.log(resp.delta.contents[0].text);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+</CodeTabs>
+
+## `think_effort` 조정
+
+`think_effort` 옵션은 **모델이 답변하기 전에 얼마나 많은 추론 능력을
+사용하는지**를 결정합니다. 이 값을 높이면 논리적이고 체계적인 사고가 향상되지만
+더 많은 시간과 리소스를 소비합니다. 이를 **지능**과 **예산 또는 반응성** 간의
+균형으로 생각할 수 있습니다:
+
+간단히 말해:
+
+- 높은 `think_effort` → 더 똑똑하지만 느림.
+- 낮은 `think_effort` → 더 빠르지만 얕음.
+
+`think_effort`는 구성에서 다음 값 중 하나를 가질 수 있습니다:
+
+- `"disable"`
+- `"enable"`
+- `"low"`
+- `"medium"`
+- `"high"`
+
+그러나 모든 모델이 하이브리드 사고 모델이거나 사고 노력의 세밀한 조정이 가능한
+것은 아닙니다. 따라서 모델의 특성에 따라 `think_effort`가 명시적 경고 없이
+지정된 값과 다르게 적용될 수 있습니다.
+
+예를 들어,
+
+- OpenAI의 `gpt-4` 모델은 사고를 지원하지 않으므로 어떤 값을 적용해도
+  `"disable"`로 적용됩니다.
+- OpenAI의 `o4` 모델은 `"low"`, `"medium"`, `"high"`를 지원하지만 `"disable"`은
+  지원하지 않으므로 "disable"을 지정하면 `"low"`로 적용됩니다.
+- `grok-4-fast` 모델은 `"low"` 또는 `"high"`만 지원하므로 `"medium"`을 지정하면
+  `"low"`로 적용됩니다.
+- 모든 Qwen3 모델은 `think_effort` 조정을 지원하지 않으므로 `"disable"` 이외의
+  모든 값은 `"enable"`과 동일합니다.
+
+`think_effort`는 지원되는 범위 내에서 사용자가 지정한 것과 가장 유사한 것으로
+적용되지만, 예측 가능한 모델 동작을 위해 모델 사양을 확인하는 것이 좋습니다.

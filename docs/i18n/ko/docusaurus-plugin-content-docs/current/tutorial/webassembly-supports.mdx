@@ -1,54 +1,53 @@
-# WebAssembly Supports
+# WebAssembly 지원
 
 :::warning
 
-WebAssembly support is currently **experimental**, and you may encounter
-unexpected errors. If you do, please report them via our
-[**GitHub Issues**](https://github.com/brekkylab/ailoy/issues) or
-[**Discord**](https://discord.gg/27rx3EJy3P) channel so we can address them
-promptly.
+WebAssembly 지원은 현재 **실험적**이며, 예상치 못한 오류가 발생할 수 있습니다.
+오류가 발생하면 [**GitHub Issues**](https://github.com/brekkylab/ailoy/issues)
+또는 [**Discord**](https://discord.gg/27rx3EJy3P) 채널을 통해 신고해 주시면
+신속하게 처리하겠습니다.
 
 :::
 
-Ailoy supports running agents entirely in modern web browsers using
-**WebAssembly (WASM)**. This enables AI workloads directly in the browser with
-no backend required.
+Ailoy는 <strong>WebAssembly (WASM)</strong>을 사용하여 최신 웹 브라우저에서
+에이전트를 완전히 실행할 수 있도록 지원합니다. 이를 통해 백엔드 없이
+브라우저에서 직접 AI 워크로드를 실행할 수 있습니다.
 
-**Key capabilities**
+**주요 기능**
 
-- Run local models accelerated by **WebGPU**—supports both **LangModel**s and
-  **EmbeddingModel**s.
-- Use API models just like you would in native environments.
-- Register your own **custom tools** or **MCP tools** (via Streamable HTTP
-  transport) on agents.
-- Use **vector stores** to construct a RAG pipeline.
+- **WebGPU**로 가속되는 로컬 모델 실행 — **LangModel**과 **EmbeddingModel** 모두
+  지원
+- 네이티브 환경과 동일하게 API 모델 사용
+- 에이전트에 **커스텀 Tool** 또는 **MCP Tool**(스트리밍 가능한 HTTP 트랜스포트를
+  통해) 등록
+- **벡터 스토어**를 사용한 RAG 파이프라인 구축
 
-This guide walks you through setting up and using `ailoy-web` in your
-browser-based applications.
+이 가이드에서는 브라우저 기반 애플리케이션에서 `ailoy-web`을 설정하고 사용하는
+방법을 안내합니다.
 
-## Hardware Requirements
+## 하드웨어 요구 사항
 
-If you plan to run local models with WebGPU, make sure your system has the
-necessary hardware accelerators and drivers installed. See
-[**Supported Environments**](../resources/supported-environments.mdx) for more
-details.
+WebGPU로 로컬 모델을 실행하려면 시스템에 필요한 하드웨어 가속기와 드라이버가
+설치되어 있어야 합니다. 자세한 내용은
+[**지원 환경**](../resources/supported-environments)을 참조하세요.
 
-- **MacOS with Apple Silicon**: Fully supported, typically works out of the box.
-- **Windows / Linux with NVIDIA or AMD GPUs**: Ensure that the latest GPU
-  drivers are installed.
+- **Apple Silicon이 탑재된 macOS**: 완전히 지원되며, 일반적으로 별도의 설정 없이
+  작동합니다.
+- **NVIDIA 또는 AMD GPU가 있는 Windows / Linux**: 최신 GPU 드라이버가 설치되어
+  있는지 확인하세요.
 
-In addition, WebGPU must support certain features—such as `shader-f16`. You can
-quickly verify your setup using the `isWebGPUSupported` utility:
+또한 WebGPU는 `shader-f16`과 같은 특정 기능을 지원해야 합니다.
+`isWebGPUSupported` 유틸리티를 사용하여 설정을 빠르게 확인할 수 있습니다:
 
 ```javascript
 import { isWebGPUSupported } from "ailoy-web";
 
 const { supported, reason } = await isWebGPUSupported();
 if (supported) {
-  // WebGPU is supported
+  // WebGPU가 지원됨
   console.log("✅ WebGPU is available!");
 } else {
-  // WebGPU is not supported
+  // WebGPU가 지원되지 않음
   console.log(
     "❌ WebGPU is not available due to the following reason: ",
     reason
@@ -58,27 +57,28 @@ if (supported) {
 
 :::info
 
-If WebGPU is not supported, consider showing users a clear message in your UI
-that explains why—using the `reason` value returned by the function.
+WebGPU가 지원되지 않는 경우, 함수가 반환하는 `reason` 값을 사용하여 사용자에게
+이유를 설명하는 명확한 메시지를 UI에 표시하는 것이 좋습니다.
 
 :::
 
-## Building a Simple Chat UI
+## 간단한 채팅 UI 만들기
 
-In this tutorial, we're going to build a simple chat UI application using Ailoy.
-You can see the full example codes in
-**[our repository](https://github.com/brekkylab/ailoy/tree/main/examples/web-assistant-ui)**.
+이 튜토리얼에서는 Ailoy를 사용하여 간단한 채팅 UI 애플리케이션을 만들어
+보겠습니다. 전체 예제 코드는
+[**저장소**](https://github.com/brekkylab/ailoy/tree/main/examples/web-assistant-ui)에서
+확인할 수 있습니다.
 
-### Setup Vite and install `ailoy-web`
+### Vite 설정 및 `ailoy-web` 설치
 
-We recommend using **[Vite](https://vite.dev/)** for a fast development
-environment and optimized builds. Still you can use another build tools you
-prefer, such as Webpack, Rollup, or Parcel.
+빠른 개발 환경과 최적화된 빌드를 위해 [**Vite**](https://vite.dev/)를 사용하는
+것이 좋습니다. Webpack, Rollup, Parcel 등 선호하는 다른 빌드 Tool을 사용할 수도
+있습니다.
 
-In this example, we use Vite to create a project with **React + TypeScript**
-configuration.
+이 예제에서는 Vite를 사용하여 **React + TypeScript** 구성으로 프로젝트를
+생성합니다.
 
-1. Let's create a Vite project by running `npm create vite@latest`.
+1. `npm create vite@latest`를 실행하여 Vite 프로젝트를 생성합니다.
 
 {/* prettier-ignore-start */}
 
@@ -111,8 +111,8 @@ $ npm create vite@latest
 
 {/* prettier-ignore-end */}
 
-2. Next, navigate to your new project and install `ailoy-web`. This will also
-   install packages preconfigured in `package.json`.
+2. 새 프로젝트로 이동하여 `ailoy-web`을 설치합니다. 이렇게 하면 `package.json`에
+   미리 구성된 패키지도 함께 설치됩니다.
 
 {/* prettier-ignore-start */}
 
@@ -132,12 +132,10 @@ found 0 vulnerabilities
 
 {/* prettier-ignore-end */}
 
-3. To ensure optimal performance and compatibility, update your `vite.config.ts`
-   with the following settings:
-   - Exclude `ailoy-web` from dependency optimization (`optimizeDeps.exclude`)
-   - Enable cross-origin isolation (required for `SharedArrayBuffer` in WASM
-     threading)
-   - Optimize bundle size by grouping `ailoy-web` into its own build chunk
+3. 최적의 성능과 호환성을 위해 다음 설정으로 `vite.config.ts`를 업데이트합니다:
+   - 의존성 최적화에서 `ailoy-web` 제외 (`optimizeDeps.exclude`)
+   - 교차 출처 격리 활성화 (WASM 스레딩의 `SharedArrayBuffer`에 필요)
+   - `ailoy-web`을 별도의 빌드 청크로 그룹화하여 번들 크기 최적화
 
 ```typescript
 import react from "@vitejs/plugin-react";
@@ -166,16 +164,17 @@ export default defineConfig({
 });
 ```
 
-### Install and configure `assistant-ui`
+### `assistant-ui` 설치 및 구성
 
-For this quick demo, we'll use [**assistant-ui**](https://www.assistant-ui.com/)
-package to create a basic chat interface.
+이 빠른 데모에서는 기본 채팅 인터페이스를 만들기 위해
+[**assistant-ui**](https://www.assistant-ui.com/) 패키지를 사용합니다.
 
-It relies on [**shadcn**](https://ui.shadcn.com/docs/installation/vite), so
-we'll set that up first. Follow the guide from
-[**shadcn's documentation**](https://ui.shadcn.com/docs/installation/vite).
+이 패키지는 [**shadcn**](https://ui.shadcn.com/docs/installation/vite)에
+의존하므로 먼저 설정해야 합니다.
+[**shadcn 문서**](https://ui.shadcn.com/docs/installation/vite)의 가이드를
+따르세요.
 
-1. Edit `tsconfig.json`.
+1. `tsconfig.json`을 수정합니다.
 
 ```json {11-16}
 {
@@ -197,7 +196,7 @@ we'll set that up first. Follow the guide from
 }
 ```
 
-2. Edit `tsconfig.app.json`
+2. `tsconfig.app.json`을 수정합니다.
 
 ```json {4-7}
 {
@@ -212,7 +211,7 @@ we'll set that up first. Follow the guide from
 }
 ```
 
-3. Install `tailwind` and update `vite.config.ts`.
+3. `tailwind`를 설치하고 `vite.config.ts`를 업데이트합니다.
 
 <TerminalBox>
 
@@ -240,17 +239,17 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  // other configs
+  // 기타 설정
 });
 ```
 
-4. Update `src/index.css` to use tailwindcss.
+4. tailwindcss를 사용하도록 `src/index.css`를 업데이트합니다.
 
 ```css
 @import "tailwindcss";
 ```
 
-5. Install `assistant-ui` and add thread component.  
+5. `assistant-ui`를 설치하고 thread 컴포넌트를 추가합니다.
    `npx assistant-ui add thread`
 
 {/* prettier-ignore-start */}
@@ -275,8 +274,7 @@ $ npx assistant-ui add thread
 
 {/* prettier-ignore-end */}
 
-6. Install `framer-motion` package which is required by `assistant-ui`'s
-   thread.  
+6. `assistant-ui`의 thread에 필요한 `framer-motion` 패키지를 설치합니다.
    `npm install framer-motion`
 
 {/* prettier-ignore-start */}
@@ -296,8 +294,8 @@ found 0 vulnerabilities
 
 {/* prettier-ignore-end */}
 
-7. Due to `"verbatimModuleSyntax": true` configuration, you need to fix
-   `src/components/assistant-ui/tool-fallback.tsx` to prevent compile error.
+7. `"verbatimModuleSyntax": true` 설정으로 인해 컴파일 오류를 방지하려면
+   `src/components/assistant-ui/tool-fallback.tsx`를 수정해야 합니다.
 
 ```typescript {1}
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
@@ -306,16 +304,16 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 // ...
 ```
 
-### Implementation
+### 구현
 
-We use assistant-ui's
+assistant-ui의
 [**ExternalStoreRuntime**](https://www.assistant-ui.com/docs/runtimes/custom/external-store)
-feature to ingest messages converted from states where raw messages are stored
-in Ailoy format.
+기능을 사용하여 Ailoy 형식으로 저장된 원시 메시지 상태에서 변환된 메시지를
+가져옵니다.
 
-1. Let's start from writing conversion logics from Ailoy's `Message` and
-   `MessageDelta` to assistant-ui's `useExternalMessageConverter.Message`.  
-   Create `src/AiloyRuntimeProvider.tsx` and write the code as follow:
+1. Ailoy의 `Message`와 `MessageDelta`를 assistant-ui의
+   `useExternalMessageConverter.Message`로 변환하는 로직을 작성하는 것부터
+   시작합니다. `src/AiloyRuntimeProvider.tsx`를 생성하고 다음 코드를 작성합니다:
 
 ```typescript
 import { useExternalMessageConverter } from "@assistant-ui/react";
@@ -456,7 +454,7 @@ function convertMessageDelta(
       result: toolResult,
     } as useExternalMessageConverter.Message;
   } else {
-    // Consider this case as an empty assistant message
+    // 이 경우는 빈 어시스턴트 메시지로 간주
     return {
       role: "assistant",
       content: [],
@@ -465,7 +463,7 @@ function convertMessageDelta(
 }
 ```
 
-2. Write `AiloyRuntimeProvider` component as follow:
+2. 다음과 같이 `AiloyRuntimeProvider` 컴포넌트를 작성합니다:
 
 ```typescript
 "use client";
@@ -479,16 +477,16 @@ import {
 } from "@assistant-ui/react";
 import * as ai from "ailoy-web";
 
-/// Conversion logics
+/// 변환 로직
 
 export function AiloyRuntimeProvider({
   children,
 }: Readonly<{ children: ReactNode }>) {
   const [agent, setAgent] = useState<ai.Agent | undefined>(undefined);
   const [agentLoading, setAgentLoading] = useState<boolean>(false);
-  // This stores the complete messages
+  // 완성된 메시지를 저장
   const [messages, setMessages] = useState<ai.Message[]>([]);
-  // This stores the ongoing accumulated message delta
+  // 진행 중인 누적 메시지 델타를 저장
   const [ongoingMessage, setOngoingMessage] = useState<ai.MessageDelta | null>(
     null
   );
@@ -496,7 +494,7 @@ export function AiloyRuntimeProvider({
 
   useEffect(() => {
     (async () => {
-      // Check if WebGPU is available first
+      // 먼저 WebGPU 사용 가능 여부 확인
       const { supported, reason } = await ai.isWebGPUSupported();
       if (!supported) {
         alert(`WebGPU is not supported: ${reason!}`);
@@ -505,7 +503,7 @@ export function AiloyRuntimeProvider({
 
       setAgentLoading(true);
 
-      // Initialize the agent with local LangModel
+      // 로컬 LangModel로 에이전트 초기화
       const agent = new ai.Agent(
         await ai.LangModel.newLocal("Qwen/Qwen3-0.6B")
       );
@@ -518,11 +516,11 @@ export function AiloyRuntimeProvider({
   const onNew = async (message: AppendMessage) => {
     if (agent === undefined) throw new Error("Agent is not initialized yet");
 
-    // Add text content
+    // 텍스트 콘텐츠 추가
     if (message.content[0]?.type !== "text")
       throw new Error("Only text messages are supported");
 
-    // Append a new user message
+    // 새 사용자 메시지 추가
     const newMessage: ai.Message = {
       role: "user",
       contents: [{ type: "text", text: message.content[0].text }],
@@ -535,14 +533,14 @@ export function AiloyRuntimeProvider({
       ...messages,
       newMessage,
     ])) {
-      // Store accumulated message delta
+      // 누적된 메시지 델타 저장
       accumulated =
         accumulated === null
           ? delta
           : ai.accumulateMessageDelta(accumulated, delta);
       setOngoingMessage(accumulated);
 
-      // Finish the delta and append to messages on `finish_reason` arrived
+      // `finish_reason`이 도착하면 델타를 완성하고 메시지에 추가
       if (finish_reason !== undefined) {
         let newMessage = ai.finishMessageDelta(accumulated);
         setMessages((prevMessages) => [...prevMessages, newMessage]);
@@ -553,7 +551,7 @@ export function AiloyRuntimeProvider({
     setIsAnswering(false);
   };
 
-  // Converted messages derived from raw messages and message delta
+  // 원시 메시지와 메시지 델타에서 파생된 변환된 메시지
   const convertedMessages: useExternalMessageConverter.Message[] =
     useMemo(() => {
       let converted = messages.map(convertMessage);
@@ -564,7 +562,7 @@ export function AiloyRuntimeProvider({
       return converted;
     }, [messages, ongoingMessage]);
 
-  // Create ExternalStoreRuntime
+  // ExternalStoreRuntime 생성
   const runtime = useExternalStoreRuntime({
     isLoading: agentLoading,
     isDisabled: agent === undefined,
@@ -585,7 +583,8 @@ export function AiloyRuntimeProvider({
 }
 ```
 
-3. Update `src/App.tsx` to wrap `<Thread />` inside `<AiloyRuntimeProvider>`.
+3. `<AiloyRuntimeProvider>` 안에 `<Thread />`를 감싸도록 `src/App.tsx`를
+   업데이트합니다.
 
 ```typescript
 import { Thread } from "@/components/assistant-ui/thread";
@@ -602,9 +601,8 @@ function App() {
 export default App;
 ```
 
-4. React’s `<StrictMode>` can cause components to mount twice during
-   development.  
-   To avoid double state updates, remove `<StrictMode>` from `src/main.tsx`:
+4. React의 `<StrictMode>`는 개발 중에 컴포넌트가 두 번 마운트될 수 있습니다.
+   중복 상태 업데이트를 피하려면 `src/main.tsx`에서 `<StrictMode>`를 제거합니다:
 
 ```typescript
 // import { StrictMode } from 'react'
@@ -619,7 +617,7 @@ createRoot(document.getElementById('root')!).render(
 )
 ```
 
-5. Start the development server with `npm run dev`.
+5. `npm run dev`로 개발 서버를 시작합니다.
 
 {/* prettier-ignore-start */}
 
@@ -637,36 +635,35 @@ $ npm run dev
 
 {/* prettier-ignore-end */}
 
-6. Visit http://localhost:5173 — your chat UI should be live.
+6. http://localhost:5173 에 접속하면 채팅 UI가 실행됩니다.
 
 ![](/img/webassembly-supports/chat-ui.png)
 
 {/* prettier-ignore-start */}
 
 :::info
-When the agent initializes for the first time, model parameters are downloaded
-from Ailoy’s file server. These files are stored in the browser’s
-[**Origin Private File System(OPFS)**](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system)
-which is isolated per origin and managed internally by the browser.
+에이전트가 처음 초기화될 때 Ailoy의 파일 서버에서 모델 파라미터가 다운로드됩니다.
+이 파일들은 브라우저의
+[<strong>Origin Private File System(OPFS)</strong>](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system)에
+저장되며, 이는 출처별로 격리되어 브라우저가 내부적으로 관리합니다.
 
-Once initialization completes, you can start chatting with the agent.
+초기화가 완료되면 에이전트와 채팅을 시작할 수 있습니다.
 :::
 
 {/* prettier-ignore-end */}
 
-6. Try to start a conversation with the agent running _on your web browser_.
+6. _웹 브라우저에서_ 실행되는 에이전트와 대화를 시작해 보세요.
 
 ![](/img/webassembly-supports/simple-chat.gif)
 
-🎉 **Congratulations!** You now have a fully local AI agent running **entirely
-in your browser** with zero backend servers!
+**축하합니다!** 이제 백엔드 서버 없이 **브라우저에서 완전히** 실행되는 로컬 AI
+에이전트가 준비되었습니다!
 
-## Additional Features
+## 추가 기능
 
-### Using API models
+### API 모델 사용하기
 
-You can easily switch to API models by changing the model configuration as
-below.
+아래와 같이 모델 구성을 변경하여 쉽게 API 모델로 전환할 수 있습니다.
 
 ```typescript
 const agent = new ai.Agent(
@@ -679,31 +676,31 @@ const agent = new ai.Agent(
 );
 ```
 
-You can use any API models listed in
-[**Available Models**](../resources/available-models.mdx).
+[**사용 가능한 모델**](../resources/available-models)에 나열된 모든 API 모델을
+사용할 수 있습니다.
 
 :::warning
 
-The above code is for test purpose. **You should never hardcode your API keys in
-your frontend codes!** For example, consider making an input box to get API key
-from users and initialize agents using the key.
+위의 코드는 테스트 목적입니다. **프론트엔드 코드에 API 키를 절대 하드코딩하지
+마세요!** 예를 들어, 사용자로부터 API 키를 받는 입력 박스를 만들고 해당 키를
+사용하여 에이전트를 초기화하는 것을 고려하세요.
 
 :::
 
-### Multi-Modal Inputs
+### 멀티모달 입력
 
 :::info
 
-Image inputs are currently supported only on API models as described in
-[**Image Inputs**](./image-inputs.mdx).
+이미지 입력은 현재 [**이미지 입력**](./image-inputs)에 설명된 대로 API
+모델에서만 지원됩니다.
 
 :::
 
-Follow the guide in assistant-ui's
-[**Attachments documentation**](https://www.assistant-ui.com/docs/guides/Attachments)
-to enable file attachment functionality.
+assistant-ui의
+[**첨부 파일 문서**](https://www.assistant-ui.com/docs/guides/Attachments)의
+가이드를 따라 파일 첨부 기능을 활성화하세요.
 
-Install attachment UI component.
+첨부 파일 UI 컴포넌트를 설치합니다.
 
 <TerminalBox>
 
@@ -711,8 +708,8 @@ $ npx shadcn@latest add "https://r.assistant-ui.com/attachment"
 
 </TerminalBox>
 
-Similar to what we did for Thread component, edit
-`src/components/assistant-ui/attachment.tsx` as below to fix compile error.
+Thread 컴포넌트에서 했던 것과 유사하게 컴파일 오류를 수정하려면
+`src/components/assistant-ui/attachment.tsx`를 아래와 같이 수정합니다.
 
 {/* prettier-ignore-start */}
 
@@ -723,7 +720,8 @@ import { CircleXIcon, FileIcon, PaperclipIcon } from "lucide-react";
 
 {/* prettier-ignore-end */}
 
-Edit `src/components/assistant-ui/thread.tsx` to add attachment components.
+`src/components/assistant-ui/thread.tsx`를 수정하여 첨부 파일 컴포넌트를
+추가합니다.
 
 ```typescript {1-5,15-17,29-31,44}
 import {
@@ -732,7 +730,7 @@ import {
   UserMessageAttachments,
 } from "./attachment";
 
-// Update Composer
+// Composer 업데이트
 const Composer: FC = () => {
   return (
     <div ...>
@@ -750,7 +748,7 @@ const Composer: FC = () => {
   )
 }
 
-// Update ComposerAction
+// ComposerAction 업데이트
 const ComposerAction: FC = () => {
   return (
     <div ...>
@@ -762,7 +760,7 @@ const ComposerAction: FC = () => {
   )
 }
 
-// Update UserMessage
+// UserMessage 업데이트
 const UserMessage: FC = () => {
   return (
     <MessagePrivitive.Root asChild>
@@ -778,7 +776,8 @@ const UserMessage: FC = () => {
 }
 ```
 
-In `src/AiloyRuntimeProvider.tsx`, update `onNew` to handle image contents.
+`src/AiloyRuntimeProvider.tsx`에서 이미지 콘텐츠를 처리하도록 `onNew`를
+업데이트합니다.
 
 ```typescript {4-30}
 const onNew = async (message: AppendMessage) => {
@@ -786,26 +785,26 @@ const onNew = async (message: AppendMessage) => {
 
   let userContents: ai.Part[] = [];
 
-  // Add attachments
+  // 첨부 파일 추가
   if (message.attachments !== undefined) {
     for (const attach of message.attachments) {
-      // Add image content
+      // 이미지 콘텐츠 추가
       if (attach.type === "image") {
         const ab = await attach.file!.arrayBuffer();
         const arr = new Uint8Array(ab);
         const imagePart = ai.imageFromBytes(arr);
         userContents.push(imagePart);
       }
-      // other types are skipped
+      // 다른 타입은 건너뜀
     }
   }
 
-  // Add text content
+  // 텍스트 콘텐츠 추가
   if (message.content[0]?.type !== "text")
     throw new Error("Only text messages are supported");
   userContents.push({ type: "text", text: message.content[0].text });
 
-  // Append a new user message
+  // 새 사용자 메시지 추가
   const newMessage: ai.Message = {
     role: "user",
     contents: userContents,
@@ -815,7 +814,8 @@ const onNew = async (message: AppendMessage) => {
   // ...
 ```
 
-Add `adapters` on `useExternalStoreRuntime` to handle image file attachments.
+이미지 파일 첨부를 처리하기 위해 `useExternalStoreRuntime`에 `adapters`를
+추가합니다.
 
 ```typescript {1-5,9-14}
 import {
@@ -835,20 +835,19 @@ const runtime = useExternalStoreRuntime({
 });
 ```
 
-You don't need to modify the message conversion logics further, since it already
-handles image type contents.
+메시지 변환 로직은 이미 이미지 타입 콘텐츠를 처리하므로 추가 수정이 필요
+없습니다.
 
-Now you can attach images and ask about them.
+이제 이미지를 첨부하고 질문할 수 있습니다.
 
 ![](/img/webassembly-supports/image-input.gif)
 
-### Reasoning
+### 추론(Reasoning)
 
-Follow the guide in assistant-ui's
-[**Reasoning documentation**](https://www.assistant-ui.com/docs/ui/Reasoning) to
-enable reasoning UI.
+assistant-ui의 [**Reasoning 문서**](https://www.assistant-ui.com/docs/ui/Reasoning)의
+가이드를 따라 Reasoning UI를 활성화하세요.
 
-Install reasoning UI component.
+Reasoning UI 컴포넌트를 설치합니다.
 
 <TerminalBox>
 
@@ -856,8 +855,8 @@ $ npx assistant-ui@latest add reasoning
 
 </TerminalBox>
 
-Pass the `Reasoning` and `ReasoningGroup` components to the
-`MessagePrimitive.Parts` component in `src/components/assistant-ui/thread.tsx`:
+`src/components/assistant-ui/thread.tsx`의 `MessagePrimitive.Parts` 컴포넌트에
+`Reasoning`과 `ReasoningGroup` 컴포넌트를 전달합니다:
 
 ```typescript {1,11-12}
 import {Reasoning, ReasoningGroup} from "./reasoning";
@@ -881,7 +880,8 @@ const AssistantMessage: FC = () => {
 }
 ```
 
-Now you can see how reasoning is visualized by adding agent config as follow:
+다음과 같이 에이전트 구성을 추가하여 추론이 어떻게 시각화되는지 확인할 수
+있습니다:
 
 ```typescript {3-7}
 for await (const { delta, finish_reason } of agent.runDelta(
@@ -898,13 +898,13 @@ for await (const { delta, finish_reason } of agent.runDelta(
 
 ![](/img/webassembly-supports/reasoning.gif)
 
-### Using Tools
+### Tool 사용하기
 
-You can register tools to agents with the same APIs as described in
-[**Using Tools**](./using-tools.mdx). Let's add a simple tool and see how the
-tool calls and results are handled.
+[**Tool 사용하기**](./using-tools)에 설명된 것과 동일한 API로 에이전트에 Tool을
+등록할 수 있습니다. 간단한 Tool을 추가하고 Tool Call과 결과가 어떻게 처리되는지
+살펴보겠습니다.
 
-Define `calculator-add` tool and register to agent as below.
+`calculator-add` Tool을 정의하고 아래와 같이 에이전트에 등록합니다.
 
 ```typescript
 const agent = ...;
@@ -912,17 +912,17 @@ const agent = ...;
 const tool = ai.Tool.newFunction(
   {
     name: "calculator-add",
-    description: "Get two numbers and return the addition.",
+    description: "두 숫자를 받아서 더한 값을 반환합니다.",
     parameters: {
       type: "object",
       properties: {
         a: {
           type: "integer",
-          description: "The first number",
+          description: "첫 번째 숫자",
         },
         b: {
           type: "integer",
-          description: "The second number",
+          description: "두 번째 숫자",
         },
       },
     },
@@ -934,45 +934,44 @@ const tool = ai.Tool.newFunction(
 agent.addTool(tool);
 ```
 
-Test the tool calling with the prompt that might invoke the `calculator-add`
-tool.
+`calculator-add` Tool을 호출할 수 있는 프롬프트로 Tool Call을 테스트합니다.
 
-![tool calling](/img/webassembly-supports/simple-tool.gif)
+![Tool Call](/img/webassembly-supports/simple-tool.gif)
 
-### Using MCP Tools
+### MCP Tool 사용하기
 
-You can initialize MCP clients and use their tools in agents via
-[**Streamable HTTP**](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
-transport. Note that
+[**스트리밍 가능한 HTTP**](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
+트랜스포트를 통해 MCP 클라이언트를 초기화하고 에이전트에서 해당 Tool을 사용할 수
+있습니다. 브라우저에서는 stdio 프로세스를 실행할 수 없으므로
 [**stdio**](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#stdio)
-transport is not supported in browsers because they cannot run a stdio process.
+트랜스포트는 지원되지 않습니다.
 
 :::warning
 
-When connecting to MCP servers from browsers, make sure the server is configured
-to use **CORS middleware** with allowing your origins and exposing required
-headers such as `Mcp-Session-Id`. See
-[**the official documentation**](https://github.com/modelcontextprotocol/typescript-sdk?tab=readme-ov-file#cors-configuration-for-browser-based-clients)
-for more details.
+브라우저에서 MCP 서버에 연결할 때 서버가 **CORS 미들웨어**를 사용하여 출처를
+허용하고 `Mcp-Session-Id`와 같은 필수 헤더를 노출하도록 구성되어 있는지
+확인하세요. 자세한 내용은
+[**공식 문서**](https://github.com/modelcontextprotocol/typescript-sdk?tab=readme-ov-file#cors-configuration-for-browser-based-clients)를
+참조하세요.
 
 :::
 
-Let's create a simple MCP server for testing MCP tools availability.
+MCP Tool 가용성을 테스트하기 위한 간단한 MCP 서버를 만들어 보겠습니다.
 
-Install the following packages.
+다음 패키지를 설치합니다.
 
 {/* prettier-ignore-start */}
 
 <TerminalBox>
 
-$ npm install express cors zod @modelcontextprotocol/sdk 
+$ npm install express cors zod @modelcontextprotocol/sdk
 $ npm install --save-dev @types/express @types/cors
 
 </TerminalBox>
 
 {/* prettier-ignore-end */}
 
-Create `src/mcpServer.ts` and write the code as below:
+`src/mcpServer.ts`를 생성하고 다음 코드를 작성합니다:
 
 ```typescript
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -981,18 +980,18 @@ import cors from "cors";
 import express, { type Request, type Response } from "express";
 import * as z from "zod/v3";
 
-// Create an MCP server
+// MCP 서버 생성
 const server = new McpServer({
   name: "demo-server",
   version: "1.0.0",
 });
 
-// Add an addition tool
+// 덧셈 Tool 추가
 server.registerTool(
   "add",
   {
     title: "Addition Tool",
-    description: "Add two numbers",
+    description: "두 숫자를 더합니다",
     inputSchema: { a: z.number(), b: z.number() },
   },
   async ({ a, b }) => ({
@@ -1042,18 +1041,17 @@ app.listen(PORT, () => {
 
 :::warning
 
-Note that we used `zod/v3` since the current latest version of MCP sdk does not
-work with zod v4.
-([**related issue**](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1072))
+현재 최신 버전의 MCP SDK가 zod v4와 호환되지 않으므로 `zod/v3`를 사용했습니다.
+([**관련 이슈**](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1072))
 
 :::
 
-This MCP server runs on streamable HTTP transport and has a single tool `add`
-which takes two numbers and return the addition. The server runs on
-`localhost:3000` and uses CORS middleware to allow any origins.
+이 MCP 서버는 스트리밍 가능한 HTTP 트랜스포트에서 실행되며 두 숫자를 받아 더한
+값을 반환하는 단일 Tool `add`를 가지고 있습니다. 서버는 `localhost:3000`에서
+실행되며 모든 출처를 허용하는 CORS 미들웨어를 사용합니다.
 
-Install `vite-node` and add a script in `package.json` to run this server using
-`vite-node`.
+`vite-node`를 설치하고 `package.json`에 이 서버를 `vite-node`으로 실행하는
+스크립트를 추가합니다.
 
 <TerminalBox>
 
@@ -1068,7 +1066,7 @@ $ npm install --save-dev vite-node
   }
 ```
 
-Run the MCP server.
+MCP 서버를 실행합니다.
 
 {/* prettier-ignore-start */}
 
@@ -1085,8 +1083,7 @@ MCP server listening on 3000
 
 {/* prettier-ignore-end */}
 
-In `src/AiloyRuntimeProvider.tsx`, add MCP tools after the agent has been
-initialized.
+`src/AiloyRuntimeProvider.tsx`에서 에이전트가 초기화된 후 MCP Tool을 추가합니다.
 
 ```typescript {3-4}
 const agent = ...;
@@ -1095,21 +1092,21 @@ const mcpClient = await ai.MCPClient.streamableHttp("http://localhost:3000/mcp")
 agent.addTools(mcpClient.tools);
 ```
 
-Check if MCP tools work as expected.
+MCP Tool이 예상대로 작동하는지 확인합니다.
 
 ![](/img/webassembly-supports/mcp-tool.gif)
 
-## Using Vector Stores
+## 벡터 스토어 사용하기
 
-You can interact with Vector Stores in Ailoy Web using the same APIs described
-in [**RAG Using Documents**](./rag-using-documents.mdx).
+[**문서를 활용한 RAG**](./rag-using-documents)에 설명된 것과 동일한 API를
+사용하여 Ailoy Web에서 벡터 스토어와 상호작용할 수 있습니다.
 
-When combined with **local embedding models** and **in-memory vector stores**
-such as **Faiss**, you can build a fully client-side RAG application that runs
-entirely inside the user's browser—no backend servers required. This approach is
-ideal for privacy-preserving, offline-capable AI assistants.
+**로컬 임베딩 모델**과 **Faiss**와 같은 **인메모리 벡터 스토어**를 결합하면
+사용자의 브라우저 내에서 완전히 실행되는 완전한 클라이언트 측 RAG 애플리케이션을
+구축할 수 있습니다—백엔드 서버가 필요 없습니다. 이 접근 방식은 프라이버시를
+보호하고 오프라인 지원이 가능한 AI 어시스턴트에 이상적입니다.
 
-### Creating an EmbeddingModel
+### EmbeddingModel 생성하기
 
 ```typescript
 import * as ai from "ailoy-web";
@@ -1117,47 +1114,46 @@ import * as ai from "ailoy-web";
 const em = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
 ```
 
-### Creating a VectorStore
+### VectorStore 생성하기
 
 ```typescript
 import * as ai from "ailoy-web";
 
-// Using an in-memory Faiss vectorstore
+// 인메모리 Faiss 벡터스토어 사용
 const vectorstore = await ai.VectorStore.newFaiss(1024);
 
-// Using an external ChromaDB server
+// 외부 ChromaDB 서버 사용
 const vectorstore = await ai.VectorStore.newChroma(
-  "http://localhost:8000", // Replace with your ChromaDB endpoint
-  "my-collection",  // Your target collection name
+  "http://localhost:8000", // ChromaDB 엔드포인트로 교체
+  "my-collection",  // 대상 컬렉션 이름
 );
 ```
 
 :::warning
 
-When using external vector stores such as ChromaDB, make sure they're configured
-to use **CORS middleware** to allow your origin. For ChromaDB, refer the
-[**CORS configuration**](https://cookbook.chromadb.dev/strategies/cors/).
+ChromaDB와 같은 외부 벡터 스토어를 사용할 때 출처를 허용하도록 **CORS
+미들웨어**가 구성되어 있는지 확인하세요. ChromaDB의 경우
+[**CORS 구성**](https://cookbook.chromadb.dev/strategies/cors/)을 참조하세요.
 
 :::
 
-### Inserting Documents
+### 문서 삽입하기
 
-Before you can retrieve documents, you must insert them into the vector store
-along with optional metadata.
+문서를 검색하기 전에 선택적 메타데이터와 함께 벡터 스토어에 삽입해야 합니다.
 
-Typically, you'll chunk your text into smaller pieces before insertion for
-better retrieval accuracy.
+일반적으로 더 나은 검색 정확도를 위해 삽입 전에 텍스트를 더 작은 조각으로
+청킹합니다.
 
 ```typescript
 const items = [
   {
     document:
-      "BGE M3 is an embedding model supporting dense retrieval, lexical matching and multi-vector interaction.",
+      "BGE M3는 밀집 검색, 어휘 매칭 및 다중 벡터 상호작용을 지원하는 임베딩 모델입니다.",
     metadata: { topic: "bge-m3" },
   },
   {
     document:
-      "BM25 is a bag-of-words retrieval function that ranks a set of documents based on the query terms appearing in each document",
+      "BM25는 각 문서에 나타나는 쿼리 용어를 기반으로 문서 집합의 순위를 매기는 백 오브 워즈 검색 함수입니다",
     metadata: { topic: "bm25" },
   },
 ];
@@ -1165,26 +1161,26 @@ const items = [
 for (const item of items) {
   const embedding = await em.infer(item.document);
   const result = await vectorstore.addVector({ embedding, ...item });
-  console.log(result); // Example: "1"
+  console.log(result); // 예: "1"
 }
 ```
 
-### Retrieving Documents
+### 문서 검색하기
 
-You can retrieve the most relevant documents by similarity score, which is
-computed using vector embeddings.
+벡터 임베딩을 사용하여 계산된 유사도 점수로 가장 관련성 높은 문서를 검색할 수
+있습니다.
 
 ```typescript
-const queryEmbedding = await em.infer("What is BGE-M3?");
-// Retrieve the top 1 item most similar to the query
+const queryEmbedding = await em.infer("BGE-M3란 무엇인가요?");
+// 쿼리와 가장 유사한 상위 1개 항목 검색
 const retrievedItems = await vectorstore.retrieve(queryEmbedding, 1);
 console.log(retrievedItems);
-// Expected: returns the document related to "bge-m3"
+// 예상: "bge-m3" 관련 문서 반환
 ```
 
-### Clearing the Vector Store
+### 벡터 스토어 비우기
 
-If you need to reset or remove all entries from the vector store:
+벡터 스토어의 모든 항목을 재설정하거나 제거해야 하는 경우:
 
 ```typescript
 await vectorstore.clear();

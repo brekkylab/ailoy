@@ -1,0 +1,293 @@
+# 채팅 완성 형식
+
+관례적으로 채팅 완성 설정에서 **입력**과 **출력** 모두 구조화된 형식을 따릅니다.
+메시지는 일반적으로 다음과 같이 표현됩니다:
+
+```
+[
+  {
+    "role": "system",
+    "contents": [
+      { "type": "text", "text": "You are a friendly and knowledgeable assistant." }
+    ]
+  },
+  {
+    "role": "user",
+    "contents": [
+      { "type": "text", "text": "Can you explain how photosynthesis works?" }
+    ]
+  }
+]
+```
+
+실행되면 출력은 다음과 같을 수 있습니다:
+
+```
+{
+    "role": "assistant",
+    "contents": [
+        {
+            "type": "text",
+            "text": "Photosynthesis is the process by which plants convert sunlight, water, and carbon dioxide into energy. They use sunlight to produce glucose (a form of sugar) and release oxygen as a byproduct."
+        }
+    ]
+}
+```
+
+:::info
+
+이 스키마에 대한 자세한 내용은 다음을 참조하세요.
+
+- [Transformers apply_chat_template](https://huggingface.co/docs/transformers/main/chat_templating)
+- [OpenAI chat completion API](https://platform.openai.com/docs/api-reference/chat/create)
+
+:::
+
+## Message
+
+`Message`는 하나의 대화 턴을 나타냅니다 — 한 참가자(시스템, 사용자 또는
+어시스턴트)가 말하거나 수행하는 것입니다.
+
+각 메시지에는 다음이 포함됩니다:
+
+- 누가 말하고 있는지를 나타내는 <strong>역할(role)</strong>,
+- 무엇을 말했거나 보냈는지를 설명하는 <strong>콘텐츠(contents)</strong> 집합.
+
+### Role
+
+| 역할          | 설명                                                                                                |
+| ------------- | --------------------------------------------------------------------------------------------------- |
+| **System**    | 어시스턴트에게 제공되는 시스템 지침 및 제약 조건. 일반적으로 모델의 동작이나 페르소나를 정의합니다. |
+| **User**      | 사용자가 작성한 콘텐츠.                                                                             |
+| **Assistant** | 어시스턴트/AI 모델이 자동으로 생성한 콘텐츠.                                                        |
+| **Tool**      | 외부 Tool/함수가 생성한 실행 결과.                                                                  |
+
+### Contents
+
+각 역할에서 말하는 것을 일반적으로 콘텐츠라고 합니다. 그러나 모델은 다양한
+모드로 작동하여 다른 목적을 수행하는 출력을 생성할 수 있습니다. 이러한 출력은
+모델이 말하거나 수행하는 것 뒤에 있는 **의도**를 반영합니다.
+
+| 의도                    | 설명                                                                                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Content**             | 일반 출력.                                                                                                                                                                                        |
+| <strong>Thinking(Reasoning)</strong> | 일부 모델은 최종 답변을 생성하기 전에 중간 사고나 사고 추적을 생성합니다. 이들은 thinking 필드에 저장되며(종종 사용자에게 숨겨짐) 모델의 내부 결정 과정을 추적하거나 시각화하는 데 도움이 됩니다. |
+| **Tool call**           | 모델이 일반 텍스트를 생성하는 대신 외부 함수나 API를 호출하기로 결정할 때. 이들은 호출할 함수(이름)와 인수를 설명하는 구조화된 객체로 표현됩니다.                                                 |
+
+이러한 유형의 출력은 메시지 내의 별도 필드에 저장되어 일반 대화와 구분할 수
+있습니다.
+
+**예시**
+
+```
+[
+  Message {
+      role: "assistant",
+      thinking: "Let's reason step by step: photosynthesis converts light energy into chemical energy...",
+      contents: [
+          { type: "text", text: "Photosynthesis is the process by which plants convert sunlight, water, and carbon dioxide into energy." }
+      ],
+      tool_calls: [
+          {
+            type: "function",
+            function: {
+              id: "func_call_1234abcd",
+              name: "get_current_location",
+              arguments: ...
+            }
+          }
+      ],
+  },
+]
+```
+
+### Part
+
+`Contents`는 메시지의 의도를 설명하는 반면, `Part`는 해당 메시지의 **데이터
+유형**을 정의합니다.
+
+`Part`는 대화 내에서 가장 작은 의미 단위로 간주할 수 있습니다. 각 `Message`에는
+`Part` 객체 목록이 포함됩니다. `Part`는 텍스트, 이미지, 함수 호출 또는 구조화된
+값을 나타낼 수 있어 풍부한 멀티모달 통신이 가능합니다.
+
+| Part         | 설명                                                        |
+| ------------ | ----------------------------------------------------------- |
+| **Text**     | 자연어 텍스트 콘텐츠                                        |
+| **Image**    | 시각적 데이터 또는 참조 (예: 바이너리, URL 또는 메타데이터) |
+| **Function** | 구조화된 Tool 또는 함수 호출                                |
+| **Value**    | 임의의 데이터 (숫자, 객체, JSON 값 등)                      |
+
+예를 들어, 사용자가 이미지에 대해 질문하면 메시지는 다음과 같을 수 있습니다:
+
+```
+contents: [
+  {type: "image", "image": {data: "..."}}
+  {type: "text", text: "What you can see in this image?"}
+]
+```
+
+이러한 파트들이 함께 Ailoy의 멀티모달 대화를 표현합니다.
+
+### Delta
+
+언어 모델의 추론은 상당한 시간이 걸릴 수 있습니다. 실시간 응답성을 개선하기 위해
+많은 AI 시스템은 토큰이 생성됨에 따라 스트리밍합니다. 이러한 스트리밍된 출력은
+일반적으로 **델타** 형태로 전달됩니다.
+
+**델타**(`MessageDelta` 또는 `PartDelta`)는 스트리밍 응답 중에 업데이트되는 이
+단계(추론)의 출력을 나타냅니다. 모델이 토큰별로 텍스트를 생성함에 따라 각 증분
+추가는 델타로 출력되며, 나중에 완전한 `Message`로 병합됩니다.
+
+Ailoy는 델타를 검색하고 집계하는 간단한 방법을 제공합니다. `accumulate`와
+`finish` 함수를 사용할 수 있습니다.
+
+## Tool
+
+Tool은 모델이 행동할 수 있게 합니다 — 외부 함수를 실행하거나, API에 접근하거나,
+일반 텍스트 생성 이상의 작업을 수행합니다.
+
+각 Tool에는 두 부분이 있습니다:
+
+- Description (선언적) — Tool이 무엇이고 어떻게 호출할 수 있는지 정의합니다.
+- Behavior (명령적) — Tool이 호출될 때 코드가 실제로 수행하는 작업을 정의합니다.
+
+이들은 함께 추론과 실행을 논리적으로 분리하면서 모델이 외부 기능을 동적으로
+호출할 수 있게 합니다.
+
+:::info
+
+Tool 스키마 규약에 대한 자세한 내용은 다음 리소스를 참조하세요.
+
+- [Transformers tool_use](https://huggingface.co/docs/transformers/main/chat_extras)
+- [OpenAI chat completion API](https://platform.openai.com/docs/api-reference/chat/create#chat-create-tool_choice-function-tool-choice)
+- [MCP](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#data-types)
+  :::
+
+### Tool Description
+
+Ailoy는 Tool 인수와 선택적 반환 스키마를 설명하기 위해 JSON-Schema와 유사한
+규약을 따릅니다. 이를 통해 언어 모델이 유효한 함수 호출을 안정적으로 구성할 수
+있습니다 — 스키마는 허용된 매개변수, 필수 필드 및 예상 반환 구조를 정확하게
+정의합니다.
+
+```
+{
+  "name": "get_temperature",
+  "description": "Retrieve current temperature for a specific city.",
+  "parameters": {
+    "type": "object",
+    "required": ["city"],
+    "properties": {
+      "city": { "type": "string", "description": "City name" },
+      "unit": { "type": "string", "enum": ["celcius", "fahrenheit"], "default": "celcius" }
+    },
+    "additionalProperties": false
+  },
+  "returns": {
+    "type": "number"
+  }
+}
+```
+
+### Tool Call
+
+모델이 일반 텍스트를 생성하는 대신 Tool을 사용하기로 결정하면 Tool Call을
+출력합니다. 이것은 어시스턴트 메시지 내에서 발생합니다 — 어시스턴트가 Tool을
+호출하기로 결정하는 것이므로 — 하지만 호출은 tool_calls 필드에
+배치됩니다(contents가 아님).
+
+일반적인 Tool Call 메시지는 다음과 같습니다:
+
+```
+{
+  "role": "assistant",
+  "contents": [
+    { "type": "text", "text": "Let me check the current weather for you." }
+  ],
+  "tool_calls": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "arguments": { "city": "Seoul", "unit": "celcius" }
+      },
+      "id": "call_01HZX2..."
+    }
+  ]
+}
+```
+
+설명:
+
+- 어시스턴트는 `tool_calls` 세그먼트에 구조화된 Tool Call을 출력합니다.
+- 런타임은 이름과 인수를 기반으로 해당 함수를 실행합니다.
+- `id` 필드는 선택적으로 태그를 지정할 수 있으며, 이 Tool Call을 고유하게
+  식별하여 Tool의 응답이 올바르게 연결될 수 있게 합니다.
+
+### Tool Response
+
+런타임이 Tool의 동작을 실행하면 역할이 "tool"로 설정된 새 메시지를 대화에
+추가해야 합니다. 또한 결과는 `contents` 필드 내에 저장됩니다.
+
+예를 들어
+
+```
+{
+  "role": "tool",
+  "tool_call_id": "call_01HZX2...",
+  "name": "get_weather",
+  "contents": [
+    { "type": "text", "text": "12.3" }
+  ]
+}
+```
+
+Tool에서 오류가 발생하면 모델이 인식하고 처리할 수 있도록 여전히 전달되어야
+합니다.
+
+```
+{
+  "role": "tool",
+  "tool_call_id": "call_01HZX2...",
+  "name": "get_weather",
+  "contents": [
+    { "type": "text", "text": "{ \"code\": \"NOT_FOUND\" }" }
+  ]
+}
+```
+
+## Document
+
+**Document**는 검색 가능한 모든 지식 항목의 정규화된 표현입니다. **제목**과
+**텍스트 본문**이라는 두 가지 구성 요소로 이루어집니다.
+
+```json
+{
+  "title": "...",
+  "text": "..."
+}
+```
+
+- **`title`** 문서를 식별하는 데 도움이 되는 짧고 설명적인 레이블입니다. 제목은
+  **모델 추론의 일부로 사용되지 않습니다** — 주로 인덱싱, 표시 및 검색 순위
+  지정을 위한 것입니다. 파일 이름이나 헤드라인과 유사한 메타데이터 또는 요약으로
+  생각할 수 있습니다.
+
+- **`text`** 문서의 실제 **콘텐츠**입니다. 이 필드는 검색 증강 추론 중에 언어
+  모델에 직접 공급됩니다. 모델이 읽고, 추론하고, 응답을 생성하는 데 사용할 수
+  있는 의미 있는 정보가 포함됩니다.
+
+모든 검색된 지식 소스(예: 벡터 데이터베이스, API 또는 로컬 파일에서)는 모델에
+전달되기 전에 이 통일된 `"document"` 형식으로 정규화됩니다. 이를 통해 원본
+소스나 스키마에 관계없이 모델이 항상 일관된 입력을 받습니다.
+
+예를 들어:
+
+| 소스             | 정규화된 형태                                                          |
+| ---------------- | ---------------------------------------------------------------------- |
+| 웹 기사          | `{ "title": "Article Title", "text": "Full article content..." }`      |
+| PDF 추출         | `{ "title": "File: research.pdf", "text": "Extracted paragraph..." }`  |
+| 지식 베이스 항목 | `{ "title": "FAQ: Model Loading", "text": "To load a model, use..." }` |
+
+이 설계는 검색을 단순화하고 Ailoy의 지식 파이프라인 내에서 하위 처리를
+통합합니다.

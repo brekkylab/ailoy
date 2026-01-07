@@ -1,0 +1,89 @@
+# Command Line Inferface
+
+Ailoy에는 Ailoy 에코시스템 내에서 사용되는 리소스를 관리할 수 있는 Command Line
+Inferface(CLI)가 포함되어 있습니다. CLI는 Python 환경에서 Ailoy 패키지와 함께
+설치됩니다.
+
+설치를 완료하면 `ailoy-model` 명령을 실행할 수 있습니다. 자세한 내용은
+`ailoy-model --help`를 실행하세요.
+
+{/* prettier-ignore-start */}
+
+:::note
+이 문서의 터미널 출력은 CLI가 Python 패키지를 통해 설치되었다고 가정합니다.
+Node.js 패키지를 통해 설치한 경우 출력이 약간 다를 수 있습니다.
+:::
+
+{/* prettier-ignore-end */}
+
+## `ailoy-model`
+
+Ailoy에서 사용하는 AI 모델을 관리합니다.
+
+### `ailoy-model list`
+
+_로컬 캐시 디렉토리에 있는 모든 사용 가능한 모델을 나열합니다._
+
+#### 출력
+
+```bash
+$ ailoy-model list
+Cache root: "/Users/<username>/.cache/ailoy"
+* BAAI/bge-m3 (325.18 MB)
+* Qwen/Qwen3-0.6B (344.42 MB)
+* Qwen/Qwen3-1.7B (954.35 MB)
+* Qwen/Qwen3-14B (7944.28 MB)
+* Qwen/Qwen3-30B-A3B (16421.57 MB)
+* Qwen/Qwen3-32B (17598.82 MB)
+* Qwen/Qwen3-4B (2188.11 MB)
+* Qwen/Qwen3-8B (4423.09 MB)
+```
+
+### `ailoy-model download <model-id>`
+
+_주어진 모델 ID와 필요한 속성을 사용하여 지정된 모델을 다운로드합니다._
+
+{/* prettier-ignore-start */}
+
+:::note
+사용 가능한 로컬 모델을 확인하려면 [**사용 가능한 모델**](available-models) 페이지를 참조하세요.
+:::
+
+{/* prettier-ignore-end */}
+
+#### 출력
+
+```bash
+$ ailoy-model download BAAI/bge-m3
+Downloading BAAI--bge-m3
+- Platform: aarch64-apple-darwin
+- Device: metal
+- Download path: "/Users/<username>/.cache/ailoy"
+  BAAI--bge-m3/ndarray-cache.json [############################] 144.42 KiB/144.42 KiB [00:00:00]
+  BAAI--bge-m3/params_shard_0.bin [############################] 122.07 MiB/122.07 MiB [00:00:05]
+  BAAI--bge-m3/params_shard_1.bin [##############################] 31.06 MiB/31.06 MiB [00:00:01]
+  BAAI--bge-m3/params_shard_2.bin [##############################] 31.62 MiB/31.62 MiB [00:00:01]
+  BAAI--bge-m3/params_shard_3.bin [##############################] 31.62 MiB/31.62 MiB [00:00:01]
+  BAAI--bge-m3/params_shard_4.bin [##############################] 31.62 MiB/31.62 MiB [00:00:01]
+  BAAI--bge-m3/params_shard_5.bin [##############################] 31.62 MiB/31.62 MiB [00:00:01]
+  BAAI--bge-m3/params_shard_6.bin [##############################] 24.84 MiB/24.84 MiB [00:00:00]
+  BAAI--bge-m3/tokenizer.json [##################################] 16.31 MiB/16.31 MiB [00:00:00]
+  BAAI--bge-m3--aarch64-apple-darwin--metal/rt.dylib [#########] 847.52 KiB/847.52 KiB [00:00:00]
+🎉 Download complete!
+```
+
+### `ailoy-model remove <model-id>`
+
+_ID로 지정된 모델과 관련된 모든 파일을 제거합니다._ `Y`(`y`) 또는 `N`(`n`)을
+입력하여 삭제를 확인하라는 메시지가 표시됩니다.
+
+```bash
+$ ailoy-model remove BAAI/bge-m3
+Cache root: "/Users/<username>/.cache/ailoy"
+-----------------------------------------------
+BAAI--bge-m3                                 320.89 MB
+BAAI--bge-m3--aarch64-apple-darwin--metal       0.83 MB
+About to remove 2 directories, freeing approximately 321.72 MB total.
+Proceed with deletion? (y/N): y
+Removed, freed 321.72 MB total.
+```
