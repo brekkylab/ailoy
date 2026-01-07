@@ -59,3 +59,11 @@ This document is a guide for translating Ailoy documentation into other language
 <strong>채팅 완성(chat completion)</strong>
 <strong>RAG(Retrieval-Augmented Generation)</strong>
 ```
+
+
+## Korean Translation Rules
+
+### 1. 조사 사용 규칙
+
+- 영어로된 용어 뒤에 은/는/이/가와 같은 조사를 쓸때 외래어 발음에 따라 적절하게 사용하라.
+- 예: Tool는 (는 ❌) → Tool은 (은 ❌)
