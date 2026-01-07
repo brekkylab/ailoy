@@ -1,12 +1,12 @@
 use anyhow::{Context, bail};
 
+use super::{super::language_model::ThinkEffort, RequestConfig, stream::ServerEvent};
 use crate::{
-    model::{ServerEvent, ThinkEffort, api::RequestConfig},
     to_value,
     value::{
-        FinishReason, Marshal, Marshaled, Message, MessageDelta, MessageDeltaOutput, Part,
-        PartDelta, PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
-        Unmarshaled, Value,
+        FinishReason, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
+        PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Value,
+        marshal::{Marshal, Marshaled, Unmarshal, Unmarshaled},
     },
 };
 
@@ -550,6 +550,13 @@ pub(crate) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
                 finish_reason: Some(finish_reason),
             };
         }
+        "response.function_call_arguments.done" => {
+            // Valid termination of tool call
+            return MessageDeltaOutput {
+                delta: MessageDelta::default(),
+                finish_reason: Some(FinishReason::ToolCall {}),
+            };
+        }
         _ => {
             // Ongoing stream
             let Ok(decoded) = serde_json::from_value::<Unmarshaled<_, OpenAIUnmarshal>>(val) else {
@@ -566,7 +573,7 @@ pub(crate) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
 #[cfg(test)]
 mod dialect_tests {
     use super::*;
-    use crate::value::{Delta, Marshaled, Message, Role};
+    use crate::value::{Delta, Message, Role};
 
     #[test]
     pub fn serialize_text() {
@@ -936,15 +943,15 @@ mod api_tests {
     use ailoy_macros::multi_platform_test;
     use futures::StreamExt as _;
 
-    use crate::{
-        debug,
-        model::{
-            InferenceConfig, LangModelInference as _,
-            api::{APISpecification, StreamAPILangModel},
+    use super::{
+        super::{
+            super::language_model::{LangModelInferConfig, LangModelInference},
+            APISpecification,
+            stream::StreamAPILangModel,
         },
-        to_value,
-        value::{Delta, FinishReason, Message, MessageDelta, Part, Role, ToolDescBuilder},
+        *,
     };
+    use crate::{Delta, ToolDescBuilder, debug};
 
     static OPENAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
         option_env!("OPENAI_API_KEY")
@@ -959,7 +966,12 @@ mod api_tests {
         let msgs =
             vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
         let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(
+            msgs,
+            Vec::new(),
+            Vec::new(),
+            LangModelInferConfig::default(),
+        );
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
             let output = output_opt.unwrap();
@@ -992,7 +1004,7 @@ mod api_tests {
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
         ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {
@@ -1000,7 +1012,7 @@ mod api_tests {
             assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
             finish_reason = output.finish_reason;
         }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
+        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
         assert!(assistant_msg.finish().is_ok_and(|message| {
             if let Some(tool_calls) = message.tool_calls {
                 debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
@@ -1054,7 +1066,7 @@ mod api_tests {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
         ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), InferenceConfig::default());
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
         let mut assistant_msg = MessageDelta::default();
         let mut finish_reason = None;
         while let Some(output_opt) = strm.next().await {

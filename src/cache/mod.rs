@@ -1,14 +1,13 @@
-mod cache;
-mod claim;
-mod contents;
-mod entry;
-mod filesystem;
-mod from_cache;
-mod manifest;
+pub(crate) mod cache;
+pub(crate) mod claim;
+pub(crate) mod contents;
+pub(crate) mod entry;
+pub(crate) mod filesystem;
+pub(crate) mod from_cache;
+pub(crate) mod manifest;
 
-pub use cache::*;
-pub use claim::*;
-pub use contents::*;
-pub use entry::*;
-pub use from_cache::*;
-pub use manifest::*;
+pub(crate) use cache::*;
+pub(crate) use claim::*;
+pub(crate) use contents::*;
+pub(crate) use entry::*;
+pub(crate) use from_cache::*;

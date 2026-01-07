@@ -7,7 +7,7 @@ members = [
 
 [package]
 name = "ailoy"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 
 [lib]
@@ -123,7 +123,9 @@ web-sys = { version = "0.3", features = [
     "Storage",
     "StorageManager",
     "WorkerNavigator",
-    "console"
+    "console",
+    "Gpu",
+    "GpuDevice",
 ] }
 web-time = "1.1"
 

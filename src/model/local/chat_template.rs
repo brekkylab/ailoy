@@ -4,9 +4,9 @@ use anyhow::{Context, bail};
 use minijinja::{Environment, context};
 use minijinja_contrib::{add_to_environment, pycompat::unknown_method_callback};
 
+use super::super::ThinkEffort;
 use crate::{
     cache::{Cache, CacheClaim, CacheContents, TryFromCache},
-    model::ThinkEffort,
     utils::BoxFuture,
     value::{Document, Message, ToolDesc},
 };
@@ -77,8 +77,8 @@ impl ChatTemplate {
     }
 }
 
-impl TryFromCache for ChatTemplate {
-    fn claim_files<'a>(
+impl<'this> TryFromCache<'this> for ChatTemplate {
+    fn claim_files<'a: 'this>(
         _: Cache,
         key: impl AsRef<str>,
         _: &'a mut std::collections::HashMap<String, crate::value::Value>,
@@ -87,7 +87,7 @@ impl TryFromCache for ChatTemplate {
         Box::pin(async move { Ok(CacheClaim::new([(dirname.as_str(), "chat_template.j2")])) })
     }
 
-    fn try_from_contents<'a>(
+    fn try_from_contents<'a: 'this>(
         contents: &'a mut CacheContents,
         _: &'a std::collections::HashMap<String, crate::value::Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>> {

@@ -586,9 +586,10 @@ export class Tensor extends TVMObject {
    * Create a view of the array.
    * @param shape The shape of the view.
    * @param dtype The data type of the new array.
+   * @param byteOffset The relative byte offset to slice from.
    * @returns The new sliced ndarray.
    */
-  view(shape: Array<number>, dtype?: string): Tensor {
+  view(shape: Array<number>, dtype?: string, byteOffset?: number): Tensor {
     const shapeArray = shape.map((value) => new Scalar(value, "int"));
     if (dtype === undefined) {
       dtype = this.dtype;
@@ -597,7 +598,7 @@ export class Tensor extends TVMObject {
       this,
       this.ctx.makeShapeTuple(...shapeArray),
       this.dtype,
-      /*relative_byte_offset=*/ new Scalar(0, "int")
+      /*relative_byte_offset=*/ new Scalar(byteOffset ?? 0, "int")
     );
   }
   /**
@@ -2329,6 +2330,9 @@ export function instantiate(
   importObject: Record<string, any> = {},
   logger: (msg: string) => void = console.log
 ): Promise<Instance> {
+  if (Object.keys(importObject).length === 0) {
+    importObject = compact.createPolyfillWASI();
+  }
   const env = new Environment(importObject, logger);
 
   return WebAssembly.instantiate(bufferSource, env.imports).then(

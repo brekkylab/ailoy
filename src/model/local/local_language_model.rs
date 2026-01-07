@@ -5,13 +5,18 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
+use super::{
+    super::language_model::{LangModelInferConfig, LangModelInference},
+    chat_template::ChatTemplate,
+    inferencer::LanguageModelInferencer,
+    kv_cache::KVCacheConfig,
+    tokenizer::Tokenizer,
+};
 use crate::{
     boxed,
     cache::{Cache, CacheClaim, CacheContents, CacheProgress, TryFromCache},
-    model::{
-        ChatTemplate, InferenceConfig, LangModelInference, LanguageModelInferencer, Tokenizer,
-    },
-    utils::{BoxFuture, BoxStream},
+    to_value,
+    utils::{BoxFuture, BoxStream, generate_random_hex_string},
     value::{
         Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, PartDelta,
         PartDeltaFunction, Role, ToolDesc, Value,
@@ -22,30 +27,15 @@ struct Request {
     msgs: Vec<Message>,
     tools: Vec<ToolDesc>,
     docs: Vec<Document>,
-    config: InferenceConfig,
+    config: LangModelInferConfig,
     tx_resp: mpsc::UnboundedSender<anyhow::Result<MessageDeltaOutput>>,
-}
-
-#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
-#[cfg_attr(
-    feature = "python",
-    pyo3::pyclass(module = "ailoy._core", get_all, set_all)
-)]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KvCacheConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_window_size: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LocalLangModelConfig {
     pub device_id: Option<i32>,
     pub validate_checksum: Option<bool>,
-    pub kv_cache: Option<KvCacheConfig>,
+    pub kv_cache: Option<KVCacheConfig>,
 }
 
 impl LocalLangModelConfig {
@@ -59,27 +49,9 @@ impl LocalLangModelConfig {
         self
     }
 
-    pub fn with_kv_cache(mut self, kv_cache: &KvCacheConfig) -> Self {
+    pub fn with_kv_cache(mut self, kv_cache: &KVCacheConfig) -> Self {
         self.kv_cache = Some(kv_cache.clone());
         self
-    }
-}
-
-#[cfg(feature = "python")]
-mod py {
-    use super::*;
-    use pyo3::prelude::*;
-    use pyo3_stub_gen_derive::*;
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl KvCacheConfig {
-        #[new]
-        fn __new__(context_window_size: Option<u32>) -> Self {
-            Self {
-                context_window_size,
-            }
-        }
     }
 }
 
@@ -153,18 +125,18 @@ impl LocalLangModel {
     }
 }
 
-impl TryFromCache for LocalLangModel {
-    fn claim_files<'a>(
+impl<'this> TryFromCache<'this> for LocalLangModel {
+    fn claim_files<'a: 'this>(
         cache: Cache,
         key: impl AsRef<str>,
-        ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
+        ctx: &'a mut std::collections::HashMap<String, Value>,
     ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
         LocalLangModelImpl::claim_files(cache, key, ctx)
     }
 
-    fn try_from_contents<'a>(
+    fn try_from_contents<'a: 'this>(
         contents: &'a mut CacheContents,
-        ctx: &'a std::collections::HashMap<String, crate::value::Value>,
+        ctx: &'a std::collections::HashMap<String, Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>> {
         Box::pin(async move {
             let mut body = LocalLangModelImpl::try_from_contents(contents, ctx).await?;
@@ -203,8 +175,8 @@ impl LangModelInference for LocalLangModel {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
-        config: InferenceConfig,
-    ) -> crate::utils::BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
+        config: LangModelInferConfig,
+    ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         let (tx_resp, mut rx_resp) = tokio::sync::mpsc::unbounded_channel();
         let req = Request {
             msgs,
@@ -239,7 +211,7 @@ impl LocalLangModelImpl {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
-        config: InferenceConfig,
+        config: LangModelInferConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         let strm = try_stream! {
             let prompt = if let Some(polyfill) = config.document_polyfill {
@@ -251,10 +223,10 @@ impl LocalLangModelImpl {
             let input_tokens = self.tokenizer.encode(&prompt, true)?;
 
             {
-                #[cfg(target_family = "wasm")]
-                self.inferencer.prefill(&input_tokens).await;
                 #[cfg(not(target_family = "wasm"))]
                 self.inferencer.prefill(&input_tokens).unwrap();
+                #[cfg(target_family = "wasm")]
+                self.inferencer.prefill(&input_tokens).await.unwrap();
             }
 
             let mut last_token = *input_tokens.last().unwrap();
@@ -277,19 +249,17 @@ impl LocalLangModelImpl {
                 let temperature = config.temperature.unwrap_or(0.6);
                 let top_p = config.top_p.unwrap_or(0.9);
 
-                {
-                    #[cfg(target_family = "wasm")]
-                    let new_token = self.inferencer.decode(last_token, temperature, top_p).await;
-                    #[cfg(not(target_family = "wasm"))]
-                    let new_token = {
-                        let logits = self.inferencer.decode(last_token).unwrap();
-                        let new_token = self.inferencer.sample(logits, temperature, top_p).unwrap();
-                        new_token
-                    };
+                #[cfg(not(target_family = "wasm"))]
+                let new_token = {
+                    let logits = self.inferencer.decode(last_token).unwrap();
+                    let new_token = self.inferencer.sample(logits, temperature, top_p).unwrap();
+                    new_token
+                };
+                #[cfg(target_family = "wasm")]
+                let new_token = self.inferencer.decode(last_token, temperature, top_p).await.unwrap();
 
-                    agg_tokens.push(new_token);
-                    last_token = new_token;
-                }
+                agg_tokens.push(new_token);
+                last_token = new_token;
 
                 let s = self.tokenizer.decode(agg_tokens.as_slice(), false)?;
                 if s.ends_with("�") {
@@ -308,7 +278,7 @@ impl LocalLangModelImpl {
                     mode = "tool_call".to_owned();
                     // Generate a random tool call id
                     let delta = delta.with_tool_calls([PartDelta::Function{
-                        id: Some(format!("call-{}", crate::utils::generate_random_hex_string(8).unwrap())),
+                        id: Some(format!("call-{}", generate_random_hex_string(8).unwrap())),
                         function: PartDeltaFunction::Verbatim{text: "".into()}
                     }]);
                     yield MessageDeltaOutput{delta, finish_reason: None};
@@ -346,11 +316,11 @@ impl LocalLangModelImpl {
     }
 }
 
-impl TryFromCache for LocalLangModelImpl {
-    fn claim_files<'a>(
+impl<'this> TryFromCache<'this> for LocalLangModelImpl {
+    fn claim_files<'a: 'this>(
         cache: Cache,
         key: impl AsRef<str>,
-        ctx: &'a mut std::collections::HashMap<String, crate::value::Value>,
+        ctx: &'a mut std::collections::HashMap<String, Value>,
     ) -> BoxFuture<'a, anyhow::Result<CacheClaim>> {
         let key = key.as_ref().to_owned();
         Box::pin(async move {
@@ -358,7 +328,7 @@ impl TryFromCache for LocalLangModelImpl {
                 ChatTemplate::claim_files(cache.clone(), &key, ctx).await?;
             let mut chat_template_entries = Vec::new();
             for entry in chat_template_claim.entries.iter() {
-                chat_template_entries.push(crate::to_value!({
+                chat_template_entries.push(to_value!({
                     dirname: entry.dirname().to_owned(),
                     filename: entry.filename().to_owned()
                 }));
@@ -371,7 +341,7 @@ impl TryFromCache for LocalLangModelImpl {
             let mut tokenizer_claim = Tokenizer::claim_files(cache.clone(), &key, ctx).await?;
             let mut tokenizer_entries = Vec::new();
             for entry in tokenizer_claim.entries.iter() {
-                tokenizer_entries.push(crate::to_value!({
+                tokenizer_entries.push(to_value!({
                     dirname: entry.dirname().to_owned(),
                     filename: entry.filename().to_owned()
                 }));
@@ -382,7 +352,7 @@ impl TryFromCache for LocalLangModelImpl {
                 LanguageModelInferencer::claim_files(cache.clone(), &key, ctx).await?;
             let mut inferencer_entries = Vec::new();
             for entry in inferencer_claim.entries.iter() {
-                inferencer_entries.push(crate::to_value!({
+                inferencer_entries.push(to_value!({
                     dirname: entry.dirname().to_owned(),
                     filename: entry.filename().to_owned()
                 }));
@@ -397,9 +367,9 @@ impl TryFromCache for LocalLangModelImpl {
         })
     }
 
-    fn try_from_contents<'a>(
+    fn try_from_contents<'a: 'this>(
         contents: &'a mut CacheContents,
-        ctx: &'a std::collections::HashMap<String, crate::value::Value>,
+        ctx: &'a std::collections::HashMap<String, Value>,
     ) -> BoxFuture<'a, anyhow::Result<Self>>
     where
         Self: Sized,
@@ -417,15 +387,19 @@ impl TryFromCache for LocalLangModelImpl {
     }
 }
 
-#[cfg(any(target_family = "unix", target_family = "windows"))]
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::value::{Delta, Part, Role};
+    use ailoy_macros::multi_platform_test;
     use futures::StreamExt;
 
-    #[tokio::test]
-    async fn infer_simple_chat() {
+    use super::*;
+    use crate::{
+        debug, to_value,
+        value::{Delta, Part, Role, ToolDescBuilder},
+    };
+
+    #[multi_platform_test]
+    async fn local_infer_simple_chat() {
         let mut model = LocalLangModel::try_new(
             "Qwen/Qwen3-0.6B",
             Some(LocalLangModelConfig::default().with_validate_checksum(false)),
@@ -439,228 +413,131 @@ mod tests {
             Message::new(Role::User).with_contents([Part::Text {
                 text: "Hi what's your name?".to_owned(),
             }]),
-            // Message::with_role(Role::Assistant)
-            //     .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
-            //     .with_contents(vec![Part::Text(
-            //         "Hi! I'm an AI assistant. How can I assist you today? 😊".to_owned(),
-            //     )]),
-            // Message::with_role(Role::User)
-            //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
         ];
-        let config = InferenceConfig {
-            temperature: Some(0.0),
-            top_p: Some(0.0),
-            ..Default::default()
-        };
-        let mut delta = MessageDelta::new().with_role(Role::Assistant);
-        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), config);
-        while let Some(out) = strm.next().await {
-            let out = out.unwrap();
-            println!("{:?}", out);
-            delta = delta.accumulate(out.delta).unwrap();
+        let mut assistant_msg = MessageDelta::new();
+        let mut strm = model.infer_delta(
+            msgs,
+            Vec::new(),
+            Vec::new(),
+            LangModelInferConfig::default(),
+        );
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
         }
-        crate::info!("{:?}", delta.finish().unwrap());
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
     }
 
-    // #[tokio::test]
-    // async fn infer_tool_call() {
-    //     use futures::StreamExt;
+    #[multi_platform_test]
+    async fn local_infer_tool_call() {
+        let mut model = LocalLangModel::try_new(
+            "Qwen/Qwen3-0.6B",
+            Some(LocalLangModelConfig::default().with_validate_checksum(false)),
+        )
+        .await
+        .unwrap();
 
-    //     use crate::value::{MessageAggregator, Role, ToolDesc};
-    //     use local_language_model::*;
-
-    //     let cache = crate::cache::Cache::new();
-    //     let key = "Qwen/Qwen3-0.6B";
-    //     let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key));
-    //     let mut model: Option<LocalLangModel> = None;
-    //     while let Some(progress) = model_strm.next().await {
-    //         let mut progress = progress.unwrap();
-    //         println!(
-    //             "{} ({} / {})",
-    //             progress.comment, progress.current_task, progress.total_task
-    //         );
-    //         if progress.current_task == progress.total_task {
-    //             model = progress.result.take();
-    //         }
-    //     }
-    //     let mut model = model.unwrap();
-    //     model.disable_reasoning();
-    //     let tools = vec![
-    //         ToolDesc::new(
-    //             "temperature".into(),
-    //             "Get current temperature".into(),
-    //             json!({
-    //                 "type": "object",
-    //                 "properties": {
-    //                     "location": {
-    //                         "type": "string",
-    //                         "description": "The city name"
-    //                     },
-    //                     "unit": {
-    //                         "type": "string",
-    //                         "enum": ["Celsius", "Fahrenheit"]
-    //                     }
-    //                 },
-    //                 "required": ["location", "unit"]
-    //             }),
-    //             Some(json!({
-    //                 "type": "number",
-    //                 "description": "Null if the given city name is unavailable.",
-    //                 "nullable": true,
-    //             })),
-    //         )
-    //         .unwrap(),
-    //     ];
-    //     let msgs = vec![
-    //         Message::new()
-    //             .with_role(Role::User)
-    //             .with_contents(vec![Part::Text(
-    //                 "How much hot currently in Dubai?".to_owned(),
-    //             )]),
-    //     ];
-    //     let mut agg = MessageAggregator::new();
-    //     let mut strm = model.run(msgs, tools);
-    //     let mut assistant_msg: Option<Message> = None;
-    //     while let Some(delta_opt) = strm.next().await {
-    //         let delta = delta_opt.unwrap();
-    //         println!("{:?}", delta);
-    //         if let Some(msg) = agg.update(delta) {
-    //             assistant_msg = Some(msg);
-    //         }
-    //     }
-    //     let assistant_msg = assistant_msg.unwrap();
-    //     println!("Assistant message: {:?}", assistant_msg);
-    //     let tc = assistant_msg.tool_calls.get(0).unwrap();
-    //     println!("Tool call: {:?}", tc);
-    // }
-
-    // #[tokio::test]
-    // async fn infer_result_from_tool_call() {
-    //     use futures::StreamExt;
-
-    //     use crate::value::{MessageAggregator, Role, ToolDesc};
-    //     use local_language_model::*;
-
-    //     let cache = crate::cache::Cache::new();
-    //     let key = "Qwen/Qwen3-0.6B";
-    //     let mut model_strm = Box::pin(cache.try_create::<LocalLangModel>(key));
-    //     let mut model: Option<LocalLangModel> = None;
-    //     while let Some(progress) = model_strm.next().await {
-    //         let mut progress = progress.unwrap();
-    //         println!(
-    //             "{} ({} / {})",
-    //             progress.comment, progress.current_task, progress.total_task
-    //         );
-    //         if progress.current_task == progress.total_task {
-    //             model = progress.result.take();
-    //         }
-    //     }
-    //     let mut model = model.unwrap();
-    //     model.disable_reasoning();
-    //     let tools = vec![
-    //         ToolDesc::new(
-    //             "temperature".into(),
-    //             "Get current temperature".into(),
-    //             json!({
-    //                 "type": "object",
-    //                 "properties": {
-    //                     "location": {
-    //                         "type": "string",
-    //                         "description": "The city name"
-    //                     },
-    //                     "unit": {
-    //                         "type": "string",
-    //                         "description": "The unit of temperature",
-    //                         "enum": ["Celsius", "Fahrenheit"]
-    //                     }
-    //                 },
-    //                 "required": ["location", "unit"]
-    //             }),
-    //             Some(json!({
-    //                 "type": "number",
-    //                 "description": "Null if the given city name is unavailable.",
-    //                 "nullable": true,
-    //             })),
-    //         )
-    //         .unwrap(),
-    //     ];
-    //     let msgs = vec![
-    //         Message::new().with_role(Role::User)
-    //             .with_contents([Part::new_text("How much hot currently in Dubai?".to_owned())]),
-    //         Message::new().with_role(Role::Assistant)
-    //             .with_contents([Part::new_text("\n\n")])
-    //             .with_tool_calls([Part::new_function_string("\n{\"name\": \"temperature\", \"arguments\": {\"location\": \"Dubai\", \"unit\": \"Celsius\"}}\n")]),
-    //         Message::new().with_role(Role::Tool).with_tool_call_id("temperature").with_contents([Part::new_text("40")])
-    //     ];
-    //     let mut agg = MessageAggregator::new();
-    //     let mut strm = model.run(msgs, tools);
-    //     let mut assistant_msg: Option<Message> = None;
-    //     while let Some(delta_opt) = strm.next().await {
-    //         let delta = delta_opt.unwrap();
-    //         if let Some(msg) = agg.update(delta) {
-    //             assistant_msg = Some(msg);
-    //         }
-    //     }
-    //     let assistant_msg = assistant_msg.unwrap();
-    //     println!("Assistant message: {:?}", assistant_msg);
-    // }
-}
-
-#[cfg(all(test, target_arch = "wasm32"))]
-#[cfg(test)]
-mod tests {
-    use futures::StreamExt as _;
-    use wasm_bindgen_test::*;
-
-    use super::*;
-    use crate::value::{Delta, Part, Role};
-
-    wasm_bindgen_test_configure!(run_in_browser);
-
-    #[wasm_bindgen_test]
-    async fn infer_simple_chat() {
-        let cache = crate::cache::Cache::new();
-        let key = "Qwen/Qwen3-0.6B";
-        let mut model_strm = boxed!(cache.try_create::<LocalLangModel>(key, None, None));
-        let mut model: Option<LocalLangModel> = None;
-
-        while let Some(progress) = model_strm.next().await {
-            let mut progress = progress.unwrap();
-            web_sys::console::log_1(
-                &format!(
-                    "{} ({} / {})",
-                    progress.comment, progress.current_task, progress.total_task
-                )
-                .into(),
-            );
-            if progress.current_task == progress.total_task {
-                model = progress.result.take();
-            }
-        }
-        let mut model = model.unwrap();
-        let msgs = vec![
-            Message::new(Role::System).with_contents(vec![Part::text("You are an assistant.")]),
-            Message::new(Role::User).with_contents(vec![Part::text("Hi what's your name?")]),
-            // Message::with_role(Role::Assistant)
-            //     .with_reasoning("\nOkay, the user asked, \"Hi what's your name?\" So I need to respond appropriately.\n\nFirst, I should acknowledge their question. Since I'm an AI assistant, I don't have a name, but I can say something like, \"Hi! I'm an AI assistant. How can I assist you today?\" That shows I'm here to help. I should keep it friendly and open. Let me make sure the response is polite and professional.\n")
-            //     .with_contents(vec![Part::Text(
-            //         "Hi! I'm an AI assistant. How can I assist you today? 😊".to_owned(),
-            //     )]),
-            // Message::with_role(Role::User)
-            //     .with_contents(vec![Part::Text("Who made you?".to_owned())]),
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
         ];
-        let config = InferenceConfig {
-            temperature: Some(0.0),
-            top_p: Some(0.0),
-            ..Default::default()
-        };
-        let mut delta = MessageDelta::new();
-        let mut strm = model.infer_delta(msgs, Vec::new(), Vec::new(), config);
-        while let Some(out) = strm.next().await {
-            let out = out.unwrap();
-            crate::debug!("{:?}", out);
-            delta = delta.accumulate(out.delta).unwrap();
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents(vec![Part::text("How much hot currently in Dubai?")]),
+        ];
+
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
         }
-        crate::info!("{:?}", delta.finish().unwrap());
+        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            if let Some(tool_calls) = message.tool_calls {
+                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
+                tool_calls
+                    .first()
+                    .and_then(|f| f.as_function())
+                    .map(|f| f.1 == "temperature")
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        }));
+    }
+
+    #[multi_platform_test]
+    async fn local_infer_tool_response() {
+        let mut model = LocalLangModel::try_new(
+            "Qwen/Qwen3-0.6B",
+            Some(LocalLangModelConfig::default().with_validate_checksum(false)),
+        )
+        .await
+        .unwrap();
+
+        let tools = vec![
+            ToolDescBuilder::new("temperature")
+                .description("Get current temperature")
+                .parameters(to_value!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
+                    }
+                })).build(),
+        ];
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("How much hot currently in Dubai?".to_owned())]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "call-a560d635cdaedff2",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "fahrenheit"}),
+            )]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
+                "call-4bc4010916f4fa08",
+                "temperature",
+                to_value!({"location": "Dubai", "unit": "celsius"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("call-a560d635cdaedff2")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("call-4bc4010916f4fa08")
+                .with_contents([Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+        ];
+        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
+        let mut assistant_msg = MessageDelta::default();
+        let mut finish_reason = None;
+        while let Some(output_opt) = strm.next().await {
+            let output = output_opt.unwrap();
+            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
+            finish_reason = output.finish_reason;
+        }
+        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
+        assert!(assistant_msg.finish().is_ok_and(|message| {
+            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
+            message.contents.len() > 0
+        }));
     }
 }

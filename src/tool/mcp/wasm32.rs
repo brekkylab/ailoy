@@ -13,9 +13,12 @@ use sse_stream::{Error as SseError, Sse, SseStream};
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 
+use super::{
+    super::base::{Tool, ToolBehavior},
+    common::handle_result,
+};
 use crate::{
     boxed,
-    tool::{ToolBehavior, mcp::common::handle_result},
     value::{ToolDesc, Value},
 };
 
@@ -339,6 +342,25 @@ impl MCPClient {
             _client: Rc::new(client),
             tools,
         })
+    }
+}
+
+#[wasm_bindgen]
+impl MCPClient {
+    #[wasm_bindgen(js_name = "streamableHttp")]
+    pub async fn from_streamable_http_js(url: String) -> Result<Self, js_sys::Error> {
+        Self::from_streamable_http(url)
+            .await
+            .map_err(|e| js_sys::Error::new(&e.to_string()))
+    }
+
+    #[wasm_bindgen(getter, js_name = "tools")]
+    pub fn tools_js(&self) -> Vec<Tool> {
+        self.tools
+            .clone()
+            .into_iter()
+            .map(|t| Tool::new_mcp(t))
+            .collect()
     }
 }
 

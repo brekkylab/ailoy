@@ -257,8 +257,8 @@ refer to **[Chat Completion Format](../concepts/chat-completion-format)**.
 Don't be surprised if the output changes each time you run it.
 
 An LLM's output includes a certain level of randomness, controlled by the
-`temperature` and `top_p`. In ailoy, it can be adjusted with `InferenceConfig`
-in `AgentConfig`.
+`temperature` and `top_p`. In ailoy, it can be adjusted with
+`LangModelInferConfig` in `AgentConfig`.
 
 If both `temperature` and `top_p` are set to 0, the answer becomes
 deterministic.

@@ -1,12 +1,9 @@
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 use futures::StreamExt as _;
 
-use crate::{
-    cache::CacheProgress,
-    model::local::{LocalEmbeddingModel, LocalEmbeddingModelConfig},
-    utils::BoxStream,
-    value::Embedding,
-};
+pub use super::local::LocalEmbeddingModelConfig;
+use super::local::local_embedding_model::LocalEmbeddingModel;
+use crate::{cache::CacheProgress, utils::BoxStream, value::Embedding};
 
 #[maybe_send_sync]
 #[multi_platform_async_trait]
@@ -261,6 +258,7 @@ mod wasm {
     use wasm_bindgen::prelude::*;
 
     use super::*;
+    use crate::ffi::web::cache::await_cache_result;
 
     #[wasm_bindgen]
     extern "C" {
@@ -327,7 +325,7 @@ mod wasm {
                     validate_checksum: config.validate_checksum,
                 }),
             );
-            let inner = crate::ffi::web::await_cache_result(cache_strm, config.progress_callback)
+            let inner = await_cache_result(cache_strm, config.progress_callback)
                 .await
                 .map_err(|e| js_sys::Error::new(&e.to_string()))?;
             Ok(Self {
@@ -345,7 +343,7 @@ mod wasm {
                 None => JSLocalEmbeddingModelConfig::default(),
             };
             let strm = Self::download(model_name);
-            let _ = crate::ffi::web::await_cache_result(strm, config.progress_callback).await;
+            let _ = await_cache_result(strm, config.progress_callback).await;
             Ok(())
         }
 

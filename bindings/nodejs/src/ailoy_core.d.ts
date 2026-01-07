@@ -160,10 +160,10 @@ export declare function accumulateMessageDelta(
 /**
  * Configuration for running the agent.
  *
- * See `InferenceConfig` and `KnowledgeConfig` for more details.
+ * See `LangModelInferConfig` and `KnowledgeConfig` for more details.
  */
 export interface AgentConfig {
-  inference?: InferenceConfig;
+  inference?: LangModelInferConfig;
   knowledge?: KnowledgeConfig;
 }
 
@@ -217,8 +217,6 @@ export declare function getDocumentPolyfill(
   kind: DocumentPolyfillKind
 ): DocumentPolyfill;
 
-export declare function getQwen3Polyfill(): DocumentPolyfill;
-
 export type Grammar =
   | { type: "plain" }
   | { type: "json" }
@@ -232,10 +230,18 @@ export declare function imageFromBytes(data: Uint8Array): Part;
 
 export declare function imageFromUrl(url: string): Part;
 
+export interface KnowledgeConfig {
+  topK?: number;
+}
+
+export interface KVCacheConfig {
+  contextWindowSize?: number;
+  prefillChunkSize?: number;
+  slidingWindowSize?: number;
+}
+
 /**
- * Configuration parameters that control the behavior of model inference.
- *
- * `InferenceConfig` encapsulates all the configuration, controlling behavior of `LanguageModel`` inference.
+ * Configuration parameters that control the behavior of language model inference.
  *
  * # Fields
  *
@@ -244,7 +250,7 @@ export declare function imageFromUrl(url: string): Part;
  * If `None`, it does not perform any polyfill, (ignoring documents).
  *
  * ## `think_effort`
- * Controls the model’s reasoning intensity.
+ * Controls the model's reasoning intensity.
  * In local models, `low`, `medium`, `high` is ignored.
  * In API models, it is up to it's API. See API parameters.
  *
@@ -270,21 +276,13 @@ export declare function imageFromUrl(url: string): Part;
  * - `Regex { regex }`: constrains generation by a regular expression
  * - `CFG { cfg }`: uses a context-free grammar definition
  */
-export interface InferenceConfig {
+export interface LangModelInferConfig {
   documentPolyfill?: DocumentPolyfill;
   thinkEffort?: ThinkEffort;
   temperature?: number;
   topP?: number;
   maxTokens?: number;
   grammar?: Grammar;
-}
-
-export interface KnowledgeConfig {
-  topK?: number;
-}
-
-export interface KvCacheConfig {
-  contextWindowSize?: number;
 }
 
 export interface LocalEmbeddingModelConfig {
@@ -296,7 +294,7 @@ export interface LocalEmbeddingModelConfig {
 export interface LocalLangModelConfig {
   deviceId?: number;
   validateChecksum?: boolean;
-  kvCache?: KvCacheConfig;
+  kvCache?: KVCacheConfig;
   progressCallback?: (arg: CacheProgress) => void;
 }
 
@@ -413,8 +411,6 @@ export interface MessageOutputIteratorResult {
 }
 
 export type Messages = Array<Message | SingleTextMessage> | string;
-
-export type Metadata = Record<string, any>;
 
 /**
  * Represents a semantically meaningful content unit exchanged between the model and the user.
@@ -653,19 +649,21 @@ export interface ToolDesc {
 export interface VectorStoreAddInput {
   embedding: Embedding;
   document: string;
-  metadata?: Metadata;
+  metadata?: VectorStoreMetadata;
 }
 
 export interface VectorStoreGetResult {
   id: string;
   document: string;
-  metadata?: Metadata;
+  metadata?: VectorStoreMetadata;
   embedding: Embedding;
 }
+
+export type VectorStoreMetadata = Record<string, any>;
 
 export interface VectorStoreRetrieveResult {
   id: string;
   document: string;
-  metadata?: Metadata;
+  metadata?: VectorStoreMetadata;
   distance: number;
 }

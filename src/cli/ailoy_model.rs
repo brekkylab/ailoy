@@ -8,9 +8,12 @@ use tokio::io::AsyncWriteExt;
 use url::Url;
 
 use crate::{
-    cache::{Cache, Manifest, ManifestDirectory},
+    cache::{
+        Cache,
+        manifest::{Manifest, ManifestDirectory},
+    },
     constants::AILOY_VERSION,
-    model::get_accelerator,
+    model::local::inferencer::get_accelerator,
 };
 
 #[derive(Parser, Debug)]
@@ -79,6 +82,7 @@ enum Commands {
     },
 }
 
+#[doc(hidden)]
 pub async fn ailoy_model_cli(args: Vec<String>) -> anyhow::Result<()> {
     let cli = Cli::parse_from(args.clone());
 

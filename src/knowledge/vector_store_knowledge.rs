@@ -1,7 +1,7 @@
 use ailoy_macros::multi_platform_async_trait;
 
+use super::base::{KnowledgeBehavior, KnowledgeConfig};
 use crate::{
-    knowledge::{KnowledgeConfig, base::KnowledgeBehavior},
     model::{EmbeddingModel, EmbeddingModelInference},
     value::Document,
     vector_store::{VectorStore, VectorStoreRetrieveResult},
@@ -71,18 +71,20 @@ mod tests {
     use ailoy_macros::multi_platform_test;
     use futures::{lock::Mutex, stream::StreamExt};
 
-    use super::*;
+    use super::{
+        super::{Knowledge, KnowledgeTool},
+        *,
+    };
     use crate::{
         agent::Agent,
-        knowledge::{Knowledge, KnowledgeTool},
         model::{EmbeddingModel, LangModel},
         tool::{Tool, ToolBehavior as _},
         value::{Delta as _, Message, MessageDelta, Part, Role},
-        vector_store::{FaissStore, VectorStoreAddInput},
+        vector_store::VectorStoreAddInput,
     };
 
     async fn prepare_knowledge() -> anyhow::Result<Knowledge> {
-        let mut store = VectorStore::new_faiss(FaissStore::new(1024).await.unwrap());
+        let mut store = VectorStore::new_faiss(1024).await.unwrap();
         let embedding_model = EmbeddingModel::try_new_local("BAAI/bge-m3", None)
             .await
             .unwrap();

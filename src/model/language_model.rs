@@ -5,14 +5,15 @@ use futures::StreamExt as _;
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString};
 
+pub use super::local::{KVCacheConfig, LocalLangModelConfig};
+use super::{
+    api::{APISpecification, StreamAPILangModel},
+    custom::{CustomLangModel, CustomLangModelInferFunc},
+    local::local_language_model::LocalLangModel,
+    polyfill::DocumentPolyfill,
+};
 use crate::{
     cache::CacheProgress,
-    model::{
-        LocalLangModel, LocalLangModelConfig, StreamAPILangModel,
-        api::APISpecification,
-        custom::{CustomLangModel, CustomLangModelInferFunc},
-        polyfill::DocumentPolyfill,
-    },
     utils::{BoxFuture, BoxStream},
     value::{
         Delta, Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput,
@@ -60,9 +61,7 @@ impl Default for Grammar {
     }
 }
 
-/// Configuration parameters that control the behavior of model inference.
-///
-/// `InferenceConfig` encapsulates all the configuration, controlling behavior of `LanguageModel`` inference.
+/// Configuration parameters that control the behavior of language model inference.
 ///
 /// # Fields
 ///
@@ -71,7 +70,7 @@ impl Default for Grammar {
 /// If `None`, it does not perform any polyfill, (ignoring documents).
 ///
 /// ## `think_effort`
-/// Controls the model’s reasoning intensity.
+/// Controls the model's reasoning intensity.
 /// In local models, `low`, `medium`, `high` is ignored.
 /// In API models, it is up to it's API. See API parameters.
 ///
@@ -106,7 +105,7 @@ impl Default for Grammar {
 #[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
-pub struct InferenceConfig {
+pub struct LangModelInferConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub document_polyfill: Option<DocumentPolyfill>,
 
@@ -126,7 +125,7 @@ pub struct InferenceConfig {
     pub grammar: Option<Grammar>,
 }
 
-impl Default for InferenceConfig {
+impl Default for LangModelInferConfig {
     fn default() -> Self {
         Self {
             document_polyfill: Some(DocumentPolyfill::default()),
@@ -147,7 +146,7 @@ pub trait LangModelInference {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
-        config: InferenceConfig,
+        config: LangModelInferConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>>;
 
     fn infer<'a>(
@@ -155,7 +154,7 @@ pub trait LangModelInference {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
-        config: InferenceConfig,
+        config: LangModelInferConfig,
     ) -> BoxFuture<'a, anyhow::Result<MessageOutput>> {
         Box::pin(async move {
             let mut strm = self.infer_delta(msgs, tools, docs, config);
@@ -266,7 +265,7 @@ impl LangModelInference for LangModel {
         msgs: Vec<Message>,
         tools: Vec<ToolDesc>,
         docs: Vec<Document>,
-        config: InferenceConfig,
+        config: LangModelInferConfig,
     ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
         match &mut self.inner {
             LangModelInner::Local(model) => model.infer_delta(msgs, tools, docs, config),
@@ -286,17 +285,15 @@ mod py {
     use pyo3_stub_gen_derive::*;
     use tokio::sync::mpsc;
 
-    use super::*;
+    use super::{super::local::KVCacheConfig, *};
     use crate::{
         boxed,
         ffi::py::{
             base::{await_future, python_to_value},
             cache_progress::await_cache_result,
         },
-        model::KvCacheConfig,
-        value::{
-            Messages,
-            py::{MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator},
+        value::message::py::{
+            MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, Messages,
         },
     };
 
@@ -305,7 +302,7 @@ mod py {
         messages: Vec<Message>,
         tools: Vec<ToolDesc>,
         documents: Vec<Document>,
-        config: InferenceConfig,
+        config: LangModelInferConfig,
     ) -> anyhow::Result<(
         tokio::runtime::Runtime,
         mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>,
@@ -336,7 +333,7 @@ mod py {
             model_name: String,
             device_id: Option<i32>,
             validate_checksum: Option<bool>,
-            kv_cache: Option<KvCacheConfig>,
+            kv_cache: Option<KVCacheConfig>,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Bound<'a, PyAny>> {
@@ -368,7 +365,7 @@ mod py {
             model_name: String,
             device_id: Option<i32>,
             validate_checksum: Option<bool>,
-            kv_cache: Option<KvCacheConfig>,
+            kv_cache: Option<KVCacheConfig>,
             #[gen_stub(override_type(type_repr = "typing.Callable[[CacheProgress], None]"))]
             progress_callback: Option<Py<PyAny>>,
         ) -> PyResult<Py<Self>> {
@@ -432,7 +429,7 @@ mod py {
             messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
-            config: Option<InferenceConfig>,
+            config: Option<LangModelInferConfig>,
         ) -> anyhow::Result<MessageDeltaOutputIterator> {
             let (_rt, rx) = spawn_delta(
                 self.clone(),
@@ -453,7 +450,7 @@ mod py {
             messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
-            config: Option<InferenceConfig>,
+            config: Option<LangModelInferConfig>,
         ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
             let (_rt, rx) = spawn_delta(
                 self.clone(),
@@ -473,7 +470,7 @@ mod py {
             messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
-            config: Option<InferenceConfig>,
+            config: Option<LangModelInferConfig>,
         ) -> PyResult<Py<PyAny>> {
             let mut this = self.clone();
             let fut = async move {
@@ -498,7 +495,7 @@ mod py {
             messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             documents: Option<Vec<Document>>,
-            config: Option<InferenceConfig>,
+            config: Option<LangModelInferConfig>,
         ) -> PyResult<Py<MessageOutput>> {
             let mut this = self.clone();
             let fut = async move {
@@ -528,7 +525,7 @@ mod py {
 
     #[gen_stub_pymethods]
     #[pymethods]
-    impl InferenceConfig {
+    impl LangModelInferConfig {
         #[new]
         // #[pyo3(signature = (document_polyfill=None, think_effort=None, temperature=None, top_p=None, max_tokens=None, grammar=None))]
         #[pyo3(signature = (document_polyfill=None, think_effort=None, temperature=None, top_p=None, max_tokens=None))]
@@ -539,7 +536,7 @@ mod py {
             top_p: Option<f64>,
             max_tokens: Option<i32>,
             // grammar: Option<Grammar>,
-        ) -> InferenceConfig {
+        ) -> LangModelInferConfig {
             Self {
                 document_polyfill: document_polyfill,
                 think_effort: think_effort,
@@ -555,7 +552,7 @@ mod py {
         pub fn from_dict(
             _cls: &Bound<'_, PyType>,
             config: &Bound<'_, PyDict>,
-        ) -> PyResult<InferenceConfig> {
+        ) -> PyResult<LangModelInferConfig> {
             use std::str::FromStr;
 
             use crate::model::DocumentPolyfillKind;
@@ -593,7 +590,7 @@ mod py {
             //     .and_then(|grammar| {
             //         serde_json::from_str::<Grammar>(grammar.as_str().unwrap_or("{}")).ok()
             //     });
-            Ok(InferenceConfig {
+            Ok(LangModelInferConfig {
                 document_polyfill,
                 think_effort,
                 temperature,
@@ -614,15 +611,14 @@ mod node {
     use napi_derive::napi;
     use tokio::sync::mpsc;
 
-    use super::*;
+    use super::{super::local::kv_cache::KVCacheConfig, *};
     use crate::{
         boxed,
         ffi::node::{
             cache::{JsCacheProgress, await_cache_result},
             common::get_or_create_runtime,
         },
-        model::KvCacheConfig,
-        value::Messages,
+        value::message::node::{MessageDeltaOutputIterator, Messages},
     };
 
     #[derive(Default)]
@@ -630,7 +626,7 @@ mod node {
     pub struct JSLocalLangModelConfig {
         pub device_id: Option<i32>,
         pub validate_checksum: Option<bool>,
-        pub kv_cache: Option<KvCacheConfig>,
+        pub kv_cache: Option<KVCacheConfig>,
         pub progress_callback:
             Option<ThreadsafeFunction<JsCacheProgress, (), JsCacheProgress, Status, false>>,
     }
@@ -706,7 +702,7 @@ mod node {
                     messages.into(),
                     tools.unwrap_or(vec![]),
                     docs.unwrap_or(vec![]),
-                    InferenceConfig::default(),
+                    LangModelInferConfig::default(),
                 ));
 
                 while let Some(item) = stream.next().await {
@@ -717,7 +713,7 @@ mod node {
                 }
             });
 
-            let it = crate::value::node::MessageDeltaOutputIterator {
+            let it = MessageDeltaOutputIterator {
                 rx: Arc::new(Mutex::new(rx)),
             };
             it.to_async_iterator(env)
@@ -735,7 +731,7 @@ mod node {
                     messages.into(),
                     tools.unwrap_or(vec![]),
                     docs.unwrap_or(vec![]),
-                    InferenceConfig::default(),
+                    LangModelInferConfig::default(),
                 )
                 .await
                 .map_err(|v| napi::Error::from_reason(v.to_string()));
@@ -752,9 +748,9 @@ mod wasm {
 
     use super::*;
     use crate::{
-        ffi::web::stream_to_async_iterable,
-        model::{KvCacheConfig, api::APISpecification},
-        value::Messages,
+        ffi::web::{cache::await_cache_result, common::stream_to_async_iterable},
+        model::{KVCacheConfig, api::APISpecification},
+        value::message::wasm::Messages,
     };
 
     #[wasm_bindgen]
@@ -765,7 +761,7 @@ mod wasm {
             typescript_type = "{
                 deviceId?: number; 
                 validateChecksum?: boolean; 
-                kvCache?: KvCacheConfig;
+                kvCache?: KVCacheConfig;
                 progressCallback?: CacheProgressCallbackFn;
             }"
         )]
@@ -776,7 +772,7 @@ mod wasm {
     pub struct JSLocalLangModelConfig {
         pub device_id: Option<i32>,
         pub validate_checksum: Option<bool>,
-        pub kv_cache: Option<KvCacheConfig>,
+        pub kv_cache: Option<KVCacheConfig>,
         pub progress_callback: Option<Function>,
     }
 
@@ -801,7 +797,7 @@ mod wasm {
             }
 
             if let Ok(val) = Reflect::get(&obj, &"kvCache".into()) {
-                let kv_cache_config = KvCacheConfig::from_js(val).unwrap_or_default();
+                let kv_cache_config = KVCacheConfig::from_js(val).unwrap_or_default();
                 config.kv_cache = Some(kv_cache_config);
             }
 
@@ -834,7 +830,7 @@ mod wasm {
                     kv_cache: config.kv_cache,
                 }),
             );
-            let inner = crate::ffi::web::await_cache_result(cache_strm, config.progress_callback)
+            let inner = await_cache_result(cache_strm, config.progress_callback)
                 .await
                 .map_err(|e| js_sys::Error::new(&e.to_string()))?;
             Ok(LangModel {
@@ -861,7 +857,7 @@ mod wasm {
                 None => JSLocalLangModelConfig::default(),
             };
             let strm = Self::download(model_name);
-            let _ = crate::ffi::web::await_cache_result(strm, config.progress_callback).await;
+            let _ = await_cache_result(strm, config.progress_callback).await;
             Ok(())
         }
 
@@ -880,7 +876,7 @@ mod wasm {
             messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             docs: Option<Vec<Document>>,
-            config: Option<InferenceConfig>,
+            config: Option<LangModelInferConfig>,
         ) -> Result<JsValue, js_sys::Error> {
             let mut model = self.clone();
             let messages: Vec<Message> = messages.try_into()?;
@@ -905,7 +901,7 @@ mod wasm {
             messages: Messages,
             tools: Option<Vec<ToolDesc>>,
             docs: Option<Vec<Document>>,
-            config: Option<InferenceConfig>,
+            config: Option<LangModelInferConfig>,
         ) -> Result<MessageOutput, JsValue> {
             let messages = messages.try_into()?;
             self.infer(
