@@ -61,9 +61,13 @@ Just **Copy&Paste** to build your own web agent in minutes.
 
 ## Key Features
 
-### 🚀 Super Simple Framework for AI Agents
+### 🚀 Super Simple Framework and Powerful Features for AI Agents
 
 - No boilerplate, no complex setup
+- Reasoning: Extend thinking effortlessly
+- Multi-Modal Inputs: Process both text and images
+- Extensible Tool Calling: User-defined functions and Model Context Protocol (MCP) tools
+- Retrieval-Augmented Generation (RAG): Integrates external knowledge bases without boilerplate
 
 ### 💻 Cross-Platform & Multi-Language APIs
 
@@ -77,17 +81,16 @@ Just **Copy&Paste** to build your own web agent in minutes.
 
 - Run AI entirely in the browser - no server needed!
 
-### ☁️ Cloud API or 💻 Local Model, whatever you want!
+### ⚡ Flexible Model Adoption, ☁️ Cloud API or 💻 Local Model, whateve
 
-- Use a single API to work with both local and remote (API) models. That flexibility keeps you in full control of your stack.
+- Supports both local AI execution and cloud AI providers
+- Effortlessly switch between open-source and AI services
+- Minimal software dependencies — deploy anywhere, from cloud to edge
 
-
-### 🔧 Built-in RAG & Tools
-
-- Vector stores, MCP integration, function calling out of the box
 
 ### <img src="https://cdn.simpleicons.org/rust" width="16"/> Rust-Powered
 - Fast, memory-safe, minimal dependencies
+- Best choice for edge computing and low-resource devices
 
 ### 📚 Documentation & Community
 
