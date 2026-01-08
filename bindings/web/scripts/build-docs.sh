@@ -22,10 +22,10 @@ if [ -n "$OUT_DIR" ]; then
   TYPEDOC_ARGS="$TYPEDOC_ARGS --out $OUT_DIR"
 fi
 
-# Change cwd to the base of nodejs binding
+# Change cwd to the base of web binding
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NODEJS_BINDING_DIR="$(cd "$SCRIPT_DIR/../" && pwd)"
-pushd "$NODEJS_BINDING_DIR" > /dev/null
+WEB_BINDING_DIR="$(cd "$SCRIPT_DIR/../" && pwd)"
+pushd "$WEB_BINDING_DIR" > /dev/null
 
 npx typedoc $TYPEDOC_ARGS
 
