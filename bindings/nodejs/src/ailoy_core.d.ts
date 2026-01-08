@@ -245,36 +245,29 @@ export interface KVCacheConfig {
  *
  * # Fields
  *
- * ## `document_polyfill`
- * Configuration describing how retrieved documents are embedded into the model input.
- * If `None`, it does not perform any polyfill, (ignoring documents).
+ * - **`document_polyfill`**: Configuration describing how retrieved documents are embedded into the model input.
+ *   If `None`, it does not perform any polyfill, (ignoring documents).
  *
- * ## `think_effort`
- * Controls the model's reasoning intensity.
- * In local models, `low`, `medium`, `high` is ignored.
- * In API models, it is up to it's API. See API parameters.
+ * - **`think_effort`**: Controls the model's reasoning intensity.
+ *   In local models, `low`, `medium`, `high` is ignored.
+ *   In API models, it is up to it's API. See API parameters.
+ *   Possible values: `disable`, `enable`, `low`, `medium`, `high`.
  *
- * Possible values: `disable`, `enable`, `low`, `medium`, `high`.
+ * - **`temperature`**: Sampling temperature controlling randomness of output.
+ *   Lower values make output more deterministic; higher values increase diversity.
  *
- * ## `temperature`
- * Sampling temperature controlling randomness of output.
- * Lower values make output more deterministic; higher values increase diversity.
+ * - **`top_p`**: Nucleus sampling parameter (probability mass cutoff).
+ *   Limits token sampling to a cumulative probability ≤ `top_p`.`
  *
- * ## `top_p`
- * Nucleus sampling parameter (probability mass cutoff).
- * Limits token sampling to a cumulative probability ≤ `top_p`.`
+ * - **`max_tokens`**: Maximum number of tokens to generate for a single inference.
  *
- * ## `max_tokens`
- * Maximum number of tokens to generate for a single inference.
- *
- * ## `grammar`
- * Optional grammar constraint that restricts valid output forms.
- * Supported types include:
- * - `Plain`: unconstrained text
- * - `JSON`: ensures valid JSON output
- * - `JSONSchema { schema }`: validates JSON against the given schema
- * - `Regex { regex }`: constrains generation by a regular expression
- * - `CFG { cfg }`: uses a context-free grammar definition
+ * - **`grammar`**: Optional grammar constraint that restricts valid output forms.
+ *   Supported types include:
+ *   `Plain` (unconstrained text),
+ *   `JSON` (ensures valid JSON output),
+ *   `JSONSchema { schema }` (validates JSON against the given schema),
+ *   `Regex { regex }` (constrains generation by a regular expression),
+ *   `CFG { cfg }` (uses a context-free grammar definition).
  */
 export interface LangModelInferConfig {
   documentPolyfill?: DocumentPolyfill;
