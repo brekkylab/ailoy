@@ -99,6 +99,18 @@ Just **Copy&Paste** to build your own web agent in minutes.
 - <img src="https://cdn.simpleicons.org/discord" width="16"/> [Discord Community](https://discord.gg/27rx3EJy3P) - Join to ask questions, share your projects, and get help.
 
 
+## Example Projects
+
+> [!WARNING]
+> Ailoy is under active development. APIs may change with version updates.
+
+
+| Project                                            | Description                          |
+| -------------------------------------------------- | ------------------------------------ |
+| [Gradio Chatbot](./examples/gradio_chatbot)        | Web UI chatbot with tool integration |
+| [Web Assistant](./examples/web-assistant-ui)       | Browser-based AI assistant (WASM)    |
+| [RAG Electron App](./examples/simple_rag_electron) | Desktop app with document Q&A        |
+| [MCP Integration](./examples/mcp_examples)         | GitHub & Playwright tools via MCP    |
 <br/>
 
 ## Usage & Installation
@@ -141,19 +153,8 @@ npm install ailoy-web     # Browser (WebAssembly)
 - <img src="https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg" width="16"/> **Linux** and <img src="https://www.microsoft.com/favicon.ico?v2" width="16"/> **Windows**: Vulkan 1.3 compatible GPU
 - <img src="https://cdn.simpleicons.org/webassembly" width="16"/> **Web Browser**: WebGPU with shader-f16 support
 
-## Example Projects
-
-| Project                                            | Description                          |
-| -------------------------------------------------- | ------------------------------------ |
-| [Gradio Chatbot](./examples/gradio_chatbot)        | Web UI chatbot with tool integration |
-| [Web Assistant](./examples/web-assistant-ui)       | Browser-based AI assistant (WASM)    |
-| [RAG Electron App](./examples/simple_rag_electron) | Desktop app with document Q&A        |
-| [MCP Integration](./examples/mcp_examples)         | GitHub & Playwright tools via MCP    |
 
 ---
-
-> [!WARNING]
-> Ailoy is under active development. APIs may change with version updates.
 
 > [!TIP]
 > Questions? Join our [Discord](https://discord.gg/27rx3EJy3P)!
