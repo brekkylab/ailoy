@@ -1,0 +1,69 @@
+# 사용 가능한 모델
+
+현재 다음 AI 모델이 지원됩니다:
+
+{/* prettier-ignore-start */}
+## 언어 모델
+
+### 로컬 모델
+- <SmallIcon
+    src="https://assets.alicdn.com/g/qwenweb/qwen-webui-fe/0.0.239/static/favicon.png"
+  />
+  Qwen3
+  - `Qwen/Qwen3-0.6B`
+  - `Qwen/Qwen3-1.7B`
+  - `Qwen/Qwen3-4B`
+  - `Qwen/Qwen3-8B`
+  - `Qwen/Qwen3-14B`
+  - `Qwen/Qwen3-32B`
+  - `Qwen/Qwen3-30B-A3B` (MoE)
+
+### API 모델
+- <SmallIcon
+    src="https://openai.com/favicon.svg"
+  />
+  OpenAI
+- <SmallIcon
+    src="https://gemini.google/images/spark_4c.png"
+  />
+  Gemini
+- <SmallIcon
+    src="https://claude.ai/favicon.ico"
+  />
+  Claude
+- <SmallIcon
+    src="https://console.x.ai/_next/static/media/favicon.20ac9181.ico"
+  />
+  Grok
+
+## 임베딩 모델
+
+### 로컬 모델
+- <SmallIcon
+    src="https://registry.npmmirror.com/@lobehub/icons-static-png/latest/files/dark/baai.png"
+  />
+  BAAI/bge-m3
+
+{/* prettier-ignore-end */}
+
+### VRAM 요구 사항
+
+{/* prettier-ignore-start */}
+
+:::warning 이 값은 환경과 상황에 따라 달라질 수 있습니다.
+:::
+
+{/* prettier-ignore-end */}
+
+모델별 필요한 가용 VRAM 크기 요구 사항은 다음과 같이 추정됩니다:
+
+| 모델 | 컨텍스트 길이 | VRAM (파라미터) | VRAM (총) |
+| -------------------- | :------------: | :-----------: | :----------: |
+| `BAAI/bge-m3`        |       8k       |   ≈ 0.3 GB    |   ≈ 0.3 GB   |
+| `Qwen/Qwen3-0.6B`    |      40k       |   ≈ 0.5 GB    |   ≈ 5.0 GB   |
+| `Qwen/Qwen3-1.7B`    |      40k       |   ≈ 1.0 GB    |   ≈ 5.5 GB   |
+| `Qwen/Qwen3-4B`      |      40k       |   ≈ 2.4 GB    |   ≈ 8.0 GB   |
+| `Qwen/Qwen3-8B`      |      40k       |   ≈ 4.5 GB    |  ≈ 10.5 GB   |
+| `Qwen/Qwen3-14B`     |      40k       |   ≈ 8.0 GB    |  ≈ 14.5 GB   |
+| `Qwen/Qwen3-32B`     |      40k       |   ≈ 17.6 GB   |   ≈ 25 GB    |
+| `Qwen/Qwen3-30B-A3B` |      40k       |   ≈ 16.5 GB   |   ≈ 24 GB    |

@@ -1,0 +1,634 @@
+# 문서를 활용한 RAG
+
+<strong>RAG(Retrieval-Augmented Generation)</strong> 는 AI 모델이 추론 과정에서 사용자의
+문서를 활용할 수 있게 해줍니다. 모델 학습 중에 습득한 정보에만 의존하는 대신,
+RAG를 통해 모델은 외부 소스에서 관련 지식을 동적으로 검색할 수 있습니다.
+
+이를 통해 AI는 문서 데이터에 기반하여 더 정확하고, 최신이며, 컨텍스트를 인식하는
+응답을 생성할 수 있습니다.
+
+**Ailoy**에서 RAG는 `Agent` 외에 세 가지 핵심 구성 요소로 이루어집니다:
+
+- **`EmbeddingModel`** — 유사도 검색을 위해 텍스트를 벡터 표현으로 변환합니다.
+- **`VectorStore`** — 벡터와 원본 텍스트를 저장하고 검색합니다.
+- **`Knowledge`** — 검색을 수행하고 그 결과를 에이전트의 프롬프트에 전달하는
+  런타임 컴포넌트입니다.
+
+**준비 단계**에서는 `EmbeddingModel`을 사용하여 문서를 인코딩하고
+`VectorStore`에 저장합니다. **런타임 단계**에서는 `Knowledge`를 사용하여 각
+쿼리에 대해 관련 문서를 검색하고 에이전트의 컨텍스트에 포함시킵니다.
+
+자세한 내용은 [**아키텍처**](../concepts/architecture#knowledge) 섹션을
+참조하세요.
+
+## 단계별 가이드
+
+### 임베딩 모델과 벡터 스토어 초기화
+
+{/* prettier-ignore-start */}
+
+<CodeTabs>
+
+```python
+import ailoy as ai
+
+async def prepare_knowledge():
+    # 임베딩 모델 생성
+    model = await ai.EmbeddingModel.new_local(
+        model_name="BAAI/bge-m3",
+        progress_callback=print,
+    )
+    # 차원 1024의 벡터 스토어 생성
+    vs = ai.VectorStore.new_faiss(dim=1024)
+
+if __name__ == "__main__":
+    asyncio.run(prepare_knowledge())
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function prepare_knowledge() {
+  // 임베딩 모델 생성
+  const model = await ai.EmbeddingModel.newLocal(
+    "BAAI/bge-m3", // modelName
+    {
+      progressCallback: console.log,
+    }
+  );
+  // 차원 1024의 벡터 스토어 생성
+  const vs = await ai.VectorStore.newFaiss(1024);
+}
+
+prepare_knowledge().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+async function prepare_knowledge() {
+  // 임베딩 모델 생성
+  const model = await ai.EmbeddingModel.newLocal(
+    "BAAI/bge-m3", // modelName
+    {
+      progressCallback: console.log,
+    }
+  );
+  // 차원 1024의 벡터 스토어 생성
+  const vs = await ai.VectorStore.newFaiss(1024);
+}
+
+prepare_knowledge().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+</CodeTabs>
+
+:::note
+현재 지원되는 임베딩 모델은 [**`BAAI/bge-m3`**](https://huggingface.co/BAAI/bge-m3)만 있습니다. 향후 릴리스에서 추가 임베딩 모델이 지원될 예정입니다.
+:::
+
+{/* prettier-ignore-end */}
+
+### 벡터 스토어로 문서 준비하기
+
+RAG를 실행하기 전에 검색을 위한 문서 임베딩을 저장할 벡터 스토어를 생성합니다.
+이 단계는 시맨틱 검색을 위한 데이터를 준비하며, 일반적으로 데이터셋당 한 번만
+수행하면 됩니다.
+
+{/* prettier-ignore-start */}
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+CHUNKS = [...]
+
+async def prepare_knowledge() -> ai.Knowledge:
+    model = await ai.EmbeddingModel.new_local("BAAI/bge-m3")
+    vs = ai.VectorStore.new_faiss(1024)
+    for i, chunk in enumerate(CHUNKS):
+        # 청크를 시맨틱 벡터로 임베딩
+        embedding = await model.infer(chunk)
+        # 시맨틱 벡터 저장
+        vs.add_vector(
+            ai.VectorStoreAddInput(
+                embedding,
+                chunk,
+                {"title": "The Old Man and the Sea", "index": i}
+            )
+        )
+
+    # 벡터 스토어를 기반으로 knowledge 생성
+    return ai.Knowledge.new_vector_store(vs, model)
+
+if __name__ == "__main__":
+    asyncio.run(prepare_knowledge())
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+const CHUNKS = [...];
+
+async function prepare_knowledge() {
+  const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
+  const vs = await ai.VectorStore.newFaiss(1024);
+  for (const [i, chunk] of CHUNKS.entries()) {
+    // 청크를 시맨틱 벡터로 임베딩
+    const embedding = await model.infer(chunk);
+    // 시맨틱 벡터 저장
+    await vs.addVector({
+      embedding: embedding,
+      document: chunk,
+      metadata: {
+        title: "The Old Man and the Sea",
+        index: i,
+      },
+    });
+  }
+
+  // 벡터 스토어를 기반으로 knowledge 생성
+  return ai.Knowledge.newVectorStore(vs, model);
+}
+
+prepare_knowledge().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+const CHUNKS = [...];
+
+async function prepare_knowledge() {
+  const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
+  const vs = await ai.VectorStore.newFaiss(1024);
+  for (const [i, chunk] of CHUNKS.entries()) {
+    // 청크를 시맨틱 벡터로 임베딩
+    const embedding = await model.infer(chunk);
+    // 시맨틱 벡터 저장
+    await vs.addVector({
+      embedding: embedding,
+      document: chunk,
+      metadata: {
+        title: "The Old Man and the Sea",
+        index: i,
+      },
+    });
+  }
+
+  // 벡터 스토어를 기반으로 knowledge 생성
+  return ai.Knowledge.newVectorStore(vs, model);
+}
+
+prepare_knowledge().catch((err) => {
+  console.error("Error:", err);
+});
+
+```
+
+</CodeTabs>
+
+{/* prettier-ignore-end */}
+
+> Ailoy는 현재 벡터 스토어 백엔드로
+> [**FAISS**](https://github.com/facebookresearch/faiss)와
+> [**ChromaDB**](https://www.trychroma.com/)를 모두 지원합니다. 백엔드별 옵션은
+> 공식 구성 가이드를 참조하세요.
+
+### Knowledge를 포함한 에이전트 정의
+
+이제 벡터 스토어와 임베딩 모델을 통합하는 `Knowledge` 모듈과 함께 `Agent`를
+생성할 수 있습니다.
+
+{/* prettier-ignore-start */}
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def prepare_knowledge():
+    ...
+
+
+async def main(knowledge: ai.Knowledge):
+    # knowledge를 포함한 에이전트 생성
+    agent = ai.Agent(
+        await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
+        knowledge=knowledge,
+    )
+
+if __name__ == "__main__":
+    knowledge = asyncio.run(prepare_knowledge())
+    asyncio.run(main(knowledge))
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function prepare_knowledge() {...}
+
+async function main(knowledge: ai.Knowledge) {
+  // knowledge를 포함한 에이전트 생성
+  const agent = new ai.Agent(
+    await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
+    undefined,  // tools (여기서는 사용하지 않음)
+    knowledge   // knowledge
+  );
+}
+
+prepare_knowledge()
+  .then((knowledge) => main(knowledge))
+  .catch((err) => {
+    console.error("Error:", err);
+  });
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+async function prepare_knowledge() {...}
+
+async function main(knowledge: ai.Knowledge) {
+  // knowledge를 포함한 에이전트 생성
+  const agent = new ai.Agent(
+    await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
+    undefined,  // tools (여기서는 사용하지 않음)
+    knowledge   // knowledge
+  );
+}
+
+prepare_knowledge()
+  .then((knowledge) => main(knowledge))
+  .catch((err) => {
+    console.error("Error:", err);
+  });
+```
+
+</CodeTabs>
+
+{/* prettier-ignore-end */}
+
+### RAG 수행하기
+
+검색을 수행하고 근거 기반 응답을 생성하려면:
+
+{/* prettier-ignore-start */}
+
+:::note
+모든 모델이 `documents`를 기본적으로 지원하는 것은 아닙니다.
+이러한 모델에서 검색 기반 추론을 활성화하려면 에이전트의 프롬프트 구조를
+검색된 문서를 포함하도록 조정하는 **문서 폴리필**을 적용해야 합니다.
+:::
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+
+async def prepare_knowledge():
+    ...
+
+
+async def main(knowledge: ai.Knowledge):
+    agent = ai.Agent(
+        await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
+        knowledge=knowledge,
+    )
+    config = ai.AgentConfig.from_dict({
+        # Qwen3는 기본적으로 'documents'를 지원하지 않으므로 폴리필이 필요합니다
+        "inference": {"document_polyfill": "Qwen3"},
+        # 유사도가 높은 상위 `top_k`개의 문서를 사용하도록 설정합니다. 기본값 `top_k`=1
+        "knowledge": {"top_k": 1},
+    })
+    async for resp in agent.run("Why did the boy stop fishing with the old man?", config):
+        print(resp.message.contents[0].text)
+
+if __name__ == "__main__":
+    knowledge = asyncio.run(prepare_knowledge())
+    asyncio.run(main(knowledge))
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+async function prepare_knowledge() {...}
+
+async function main(knowledge: ai.Knowledge) {
+  const agent = new ai.Agent(
+    await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
+    undefined,
+    knowledge
+  );
+  const config = {
+    // Qwen3는 기본적으로 'documents'를 지원하지 않으므로 폴리필이 필요합니다
+    inference: { documentPolyfill: ai.getDocumentPolyfill("Qwen3") },
+    // 유사도가 높은 상위 `topK`개의 문서를 사용하도록 설정합니다. 기본값 `topK`=1
+    knowledge: { topK: 1 }
+  };
+  for await (const resp of agent.run(
+    "Why did the boy stop fishing with the old man?",
+    config
+  )) {
+    if (resp.message.contents?.[0]?.type === "text")
+      console.log(resp.message.contents?.[0]?.text);
+  }
+}
+
+prepare_knowledge()
+  .then((knowledge) => main(knowledge))
+  .catch((err) => {
+    console.error("Error:", err);
+  });
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+async function prepare_knowledge() {...}
+
+async function main(knowledge: ai.Knowledge) {
+  const agent = new ai.Agent(
+    await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
+    undefined,
+    knowledge
+  );
+  const config = {
+    // Qwen3는 기본적으로 'documents'를 지원하지 않으므로 폴리필이 필요합니다
+    inference: { documentPolyfill: ai.getDocumentPolyfill("Qwen3") },
+    // 유사도가 높은 상위 `topK`개의 문서를 사용하도록 설정합니다. 기본값 `topK`=1
+    knowledge: { topK: 1 }
+  };
+  for await (const resp of agent.run(
+    "Why did the boy stop fishing with the old man?",
+    config
+  )) {
+    if (resp.message.contents?.[0]?.type === "text")
+      console.log(resp.message.contents?.[0]?.text);
+  }
+}
+
+prepare_knowledge()
+  .then((knowledge) => main(knowledge))
+  .catch((err) => {
+    console.error("Error:", err);
+  });
+```
+
+</CodeTabs>
+
+{/* prettier-ignore-end */}
+
+## 전체 예제
+
+{/* prettier-ignore-start */}
+
+<CodeTabs>
+
+```python
+import asyncio
+
+import ailoy as ai
+
+CHUNKS = [
+    """
+He was an old man who fished alone in a skiff in the Gulf Stream and he had gone
+eighty-four days now without taking a fish. In the first forty days a boy had been with him.
+But after forty days without a fish the boy's parents had told him that the old man was
+now definitely and finally salao, which is the worst form of unlucky, and the boy had gone
+at their orders in another boat which caught three good fish the first week. It made the
+boy sad to see the old man come in each day with his skiff empty and he always went
+down to help him carry either the coiled lines or the gaff and harpoon and the sail that
+was furled around the mast. The sail was patched with flour sacks and, furled, it looked
+like the flag of permanent defeat.
+""",
+    """
+The old man was thin and gaunt with deep wrinkles in the back of his neck. The
+brown blotches of the benevolent skin cancer the sun brings from its [9] reflection on the
+tropic sea were on his cheeks. The blotches ran well down the sides of his face and his
+hands had the deep-creased scars from handling heavy fish on the cords. But none of
+these scars were fresh. They were as old as erosions in a fishless desert.
+""",
+    """
+Everything about him was old except his eyes and they were the same color as the
+sea and were cheerful and undefeated.
+"Santiago," the boy said to him as they climbed the bank from where the skiff was
+hauled up. "I could go with you again. We've made some money."
+The old man had taught the boy to fish and the boy loved him.
+"No," the old man said. "You're with a lucky boat. Stay with them."
+""",
+]
+
+async def prepare_knowledge():
+    model = await ai.EmbeddingModel.new_local("BAAI/bge-m3")
+    vs = ai.VectorStore.new_faiss(1024)
+    for i, chunk in enumerate(CHUNKS):
+        embedding = await model.infer(chunk)
+        vs.add_vector(
+            ai.VectorStoreAddInput(
+                embedding, chunk, {"title": "The Old Man and the Sea", "index": i}
+            )
+        )
+
+    return ai.Knowledge.new_vector_store(vs, model)
+
+
+async def main(knowledge: ai.Knowledge):
+    agent = ai.Agent(
+        await ai.LangModel.new_local("Qwen/Qwen3-0.6B"),
+        knowledge=knowledge,
+    )
+    config = ai.AgentConfig.from_dict({"inference": {"document_polyfill": "Qwen3"}})
+    async for resp in agent.run("Why did the boy stop fishing with the old man?", config):
+        print(resp.message.contents[0].text)
+
+
+if __name__ == "__main__":
+    knowledge = asyncio.run(prepare_knowledge())
+    asyncio.run(main(knowledge))
+```
+
+```typescript
+import * as ai from "ailoy-node";
+
+const CHUNKS = [
+  `
+He was an old man who fished alone in a skiff in the Gulf Stream and he had gone
+eighty-four days now without taking a fish. In the first forty days a boy had been with him.
+But after forty days without a fish the boy's parents had told him that the old man was
+now definitely and finally salao, which is the worst form of unlucky, and the boy had gone
+at their orders in another boat which caught three good fish the first week. It made the
+boy sad to see the old man come in each day with his skiff empty and he always went
+down to help him carry either the coiled lines or the gaff and harpoon and the sail that
+was furled around the mast. The sail was patched with flour sacks and, furled, it looked
+like the flag of permanent defeat.
+`,
+  `
+The old man was thin and gaunt with deep wrinkles in the back of his neck. The
+brown blotches of the benevolent skin cancer the sun brings from its [9] reflection on the
+tropic sea were on his cheeks. The blotches ran well down the sides of his face and his
+hands had the deep-creased scars from handling heavy fish on the cords. But none of
+these scars were fresh. They were as old as erosions in a fishless desert.
+`,
+  `
+Everything about him was old except his eyes and they were the same color as the
+sea and were cheerful and undefeated.
+"Santiago," the boy said to him as they climbed the bank from where the skiff was
+hauled up. "I could go with you again. We've made some money."
+The old man had taught the boy to fish and the boy loved him.
+"No," the old man said. "You're with a lucky boat. Stay with them."
+`,
+];
+
+async function prepare_knowledge() {
+  const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
+  const vs = await ai.VectorStore.newFaiss(1024);
+  for (const [i, chunk] of CHUNKS.entries()) {
+    const embedding = await model.infer(chunk);
+    await vs.addVector({
+      embedding: embedding,
+      document: chunk,
+      metadata: {
+        title: "The Old Man and the Sea",
+        index: i,
+      },
+    });
+  }
+
+  return ai.Knowledge.newVectorStore(vs, model);
+}
+
+async function main(knowledge: ai.Knowledge) {
+  const agent = new ai.Agent(
+    await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
+    undefined,
+    knowledge
+  );
+
+  const config = { inference: { documentPolyfill: ai.getDocumentPolyfill("Qwen3") } };
+  for await (const resp of agent.run(
+    "Why did the boy stop fishing with the old man?",
+    config
+  )) {
+    if (resp.message.contents?.[0]?.type === "text")
+      console.log(resp.message.contents?.[0]?.text);
+  }
+}
+
+prepare_knowledge()
+  .then((knowledge) => main(knowledge))
+  .catch((err) => {
+    console.error("Error:", err);
+  });
+```
+
+```typescript web
+import * as ai from "ailoy-web";
+
+const CHUNKS = [
+  `
+He was an old man who fished alone in a skiff in the Gulf Stream and he had gone
+eighty-four days now without taking a fish. In the first forty days a boy had been with him.
+But after forty days without a fish the boy's parents had told him that the old man was
+now definitely and finally salao, which is the worst form of unlucky, and the boy had gone
+at their orders in another boat which caught three good fish the first week. It made the
+boy sad to see the old man come in each day with his skiff empty and he always went
+down to help him carry either the coiled lines or the gaff and harpoon and the sail that
+was furled around the mast. The sail was patched with flour sacks and, furled, it looked
+like the flag of permanent defeat.
+`,
+  `
+The old man was thin and gaunt with deep wrinkles in the back of his neck. The
+brown blotches of the benevolent skin cancer the sun brings from its [9] reflection on the
+tropic sea were on his cheeks. The blotches ran well down the sides of his face and his
+hands had the deep-creased scars from handling heavy fish on the cords. But none of
+these scars were fresh. They were as old as erosions in a fishless desert.
+`,
+  `
+Everything about him was old except his eyes and they were the same color as the
+sea and were cheerful and undefeated.
+"Santiago," the boy said to him as they climbed the bank from where the skiff was
+hauled up. "I could go with you again. We've made some money."
+The old man had taught the boy to fish and the boy loved him.
+"No," the old man said. "You're with a lucky boat. Stay with them."
+`,
+];
+
+async function prepare_knowledge() {
+  const model = await ai.EmbeddingModel.newLocal("BAAI/bge-m3");
+  const vs = await ai.VectorStore.newFaiss(1024);
+  for (const [i, chunk] of CHUNKS.entries()) {
+    const embedding = await model.infer(chunk);
+    await vs.addVector({
+      embedding: embedding,
+      document: chunk,
+      metadata: {
+        title: "The Old Man and the Sea",
+        index: i,
+      },
+    });
+  }
+
+  return ai.Knowledge.newVectorStore(vs, model);
+}
+
+async function main(knowledge: ai.Knowledge) {
+  const agent = new ai.Agent(
+    await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"),
+    undefined,
+    knowledge
+  );
+
+  const config = { inference: { documentPolyfill: ai.getDocumentPolyfill("Qwen3") } };
+  for await (const resp of agent.run(
+    "Why did the boy stop fishing with the old man?",
+    config
+  )) {
+    if (resp.message.contents?.[0]?.type === "text")
+      console.log(resp.message.contents?.[0]?.text);
+  }
+}
+
+prepare_knowledge()
+  .then((knowledge) => main(knowledge))
+  .catch((err) => {
+    console.error("Error:", err);
+  });
+```
+
+</CodeTabs>
+
+{/* prettier-ignore-start */}
+
+:::note
+최상의 결과를 위해 문서를 의미적으로(예: 단락이나 섹션별로) 청킹하세요.
+:::
+
+{/* prettier-ignore-end */}
+
+## 출력
+
+{/* prettier-ignore-start */}
+
+<TerminalBox>
+
+The boy stopped fishing with the old man because he was with a lucky boat, not because he was in possession of a boat or because he was with the old man. The boy was with a boat, not a person. The old man had taught the boy to fish, and the boy loved him, but the reason for stopping fishing was related to the boat.
+
+</TerminalBox>
+
+{/* prettier-ignore-end */}

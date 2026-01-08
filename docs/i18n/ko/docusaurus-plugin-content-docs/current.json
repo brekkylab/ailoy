@@ -1,0 +1,94 @@
+{
+  "sidebar.documentSidebar.category.Tutorial": {
+    "message": "튜토리얼",
+    "description": "The label for category Tutorial in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.category.Concepts": {
+    "message": "개념",
+    "description": "The label for category Concepts in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.category.Resources": {
+    "message": "리소스",
+    "description": "The label for category Resources in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.category.API References": {
+    "message": "API 레퍼런스",
+    "description": "The label for category API References in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Getting Started": {
+    "message": "시작하기",
+    "description": "The label for link Getting Started in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.System Message": {
+    "message": "시스템 메시지",
+    "description": "The label for link System Message in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Multi-Turn Conversation": {
+    "message": "멀티턴 대화",
+    "description": "The label for link Multi-Turn Conversation in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Image Inputs": {
+    "message": "이미지 입력",
+    "description": "The label for link Image Inputs in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Streaming": {
+    "message": "스트리밍",
+    "description": "The label for link Streaming in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Thinking": {
+    "message": "사고 (추론)",
+    "description": "The label for link Thinking in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Using Tools": {
+    "message": "Tool 사용하기",
+    "description": "The label for link Using Tools in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.MCP Integration": {
+    "message": "MCP 통합",
+    "description": "The label for link MCP Integration in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.RAG Using Documents": {
+    "message": "문서를 활용한 RAG",
+    "description": "The label for link RAG Using Documents in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Managing Model Files": {
+    "message": "모델 파일 관리",
+    "description": "The label for link Managing Model Files in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.WebAssembly Supports": {
+    "message": "WebAssembly 지원",
+    "description": "The label for link WebAssembly Supports in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.How Agent Works": {
+    "message": "에이전트 작동 방식",
+    "description": "The label for link How Agent Works in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Architecture": {
+    "message": "아키텍처",
+    "description": "The label for link Architecture in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Chat Completion Format": {
+    "message": "채팅 완성 형식",
+    "description": "The label for link Chat Completion Format in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Available Models": {
+    "message": "사용 가능한 모델",
+    "description": "The label for link Available Models in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Builtin Tools": {
+    "message": "기본 제공 Tool",
+    "description": "The label for link Builtin Tools in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Supported Environments": {
+    "message": "지원 환경",
+    "description": "The label for link Supported Environments in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Command Line Interfaces": {
+    "message": "Command Line Inferface",
+    "description": "The label for link Command Line Interfaces in sidebar documentSidebar"
+  },
+  "sidebar.documentSidebar.link.Troubleshooting": {
+    "message": "문제 해결",
+    "description": "The label for link Troubleshooting in sidebar documentSidebar"
+  }
+}

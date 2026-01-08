@@ -1,0 +1,60 @@
+# 지원 환경
+
+## LLM API를 사용하는 에이전트
+
+OpenAI, Claude, Gemini 또는 Grok과 같은 외부 API를 사용하여 **Ailoy**로 _자신만의 에이전트_를 만들 수 있습니다.
+이러한 API를 사용하면 시스템이 하드웨어 요구 사항을 충족할 필요가 없습니다.
+
+- <SmallIcon src="https://www.microsoft.com/favicon.ico?v2" />
+  Windows (x86_64)
+- <SmallIcon src="https://www.apple.com/favicon.ico" />
+  macOS (Apple Silicon)
+- <SmallIcon src="https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg" />
+  Linux (x86_64)
+- 🌐 웹 브라우저
+
+## 로컬에서 AI를 실행하는 에이전트
+
+**로컬 AI**는 Ailoy를 다른 AI Tool와 차별화하는 가장 큰 기능 중 하나입니다. 이를 가능하게 하려면 AI를 실행하기 위한 기기 및 환경 조건을 확인해야 할 수 있습니다.
+
+{/* prettier-ignore-start */}
+
+- <SmallIcon src="https://www.microsoft.com/favicon.ico?v2" />
+  Windows (x86_64,
+  <SmallIcon src="https://www.vulkan.org/user/themes/vulkan/images/favicon.png" />
+  Vulkan 지원)
+  - **CPU**: Intel Skylake 이상 (및 호환 AMD), x86_64 필수
+  - **GPU**: 최소 8GB VRAM 및 Vulkan 1.3 지원
+  - Vulkan 1.3 이상을 지원하는 **NVIDIA/AMD/Intel 그래픽 드라이버**
+  - **OS**: Windows 11 또는 Windows Server 2022 (이전 버전도 작동할 수 있지만 공식 테스트되지 않음)
+- <SmallIcon src="https://www.apple.com/favicon.ico" />
+  macOS (Apple Silicon,
+  <SmallIcon src="https://developer.apple.com/assets/elements/icons/metal/metal-256x256.png" />
+  Metal 지원)
+  - **기기**: Metal을 지원하는 Apple Silicon
+  - **메모리**: 최소 8GB의 통합 메모리
+  - **OS**: macOS 15 이상
+- <SmallIcon src="https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg" />
+  Linux (x86_64,
+  <SmallIcon src="https://www.vulkan.org/user/themes/vulkan/images/favicon.png" />
+  Vulkan 지원)
+  - **CPU**: Intel Skylake 이상 (및 호환 AMD), x86_64 필수
+  - **GPU**: 최소 8GB VRAM 및 Vulkan 1.3 지원
+  - Vulkan 1.3 이상을 지원하는 **NVIDIA/AMD/Intel 그래픽 드라이버**
+  - **OS**: Debian 10 / Ubuntu 21.04 이상 (glibc 2.28 이상이 설치된 OS)
+- 🌐 최신 웹 브라우저 (wasm32,
+  <SmallIcon src="https://www.w3.org/2023/02/webgpu-logos/webgpu-notext.svg" />
+  WebGPU 지원)
+  - **브라우저**: WebGPU를 지원하는 최신 브라우저:
+    <SmallIcon src="https://www.google.co.kr/chrome/static/images/favicons/favicon-32x32.png" />
+    **Chrome 브라우저**를 권장합니다.
+  - **GPU**: `"shader-f16"` 지원이 있는 WebGPU
+  - Qualcomm AP가 탑재된 모바일 기기에서는 작동하지 않을 수 있습니다.
+
+{/* prettier-ignore-end */}
+
+AI 모델은 일반적으로 상당한 양의 메모리를 소비합니다.
+
+정확한 사용량은 모델 크기에 따라 다르지만, 최소 **8GB의 GPU 메모리**를 권장합니다. Qwen 8B 모델을 실행하려면 최소 **12GB의 GPU 메모리**가 필요합니다. macOS에서는 Apple Silicon이 공유 메모리 아키텍처를 사용하므로 통합 메모리를 의미합니다.
+
+자세한 내용은 [**사용 가능한 모델**](available-models#vram-요구-사항)을 참조하세요.

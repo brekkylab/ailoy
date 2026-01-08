@@ -24,12 +24,14 @@ const config: Config = {
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "warn",
 
-  // Even if you don't use internationalization, you can use this field to set
-  // useful metadata like html lang. For example, if your site is Chinese, you
-  // may want to replace "en" with "zh-Hans".
+  // Internationalization configuration
   i18n: {
     defaultLocale: "en",
-    locales: ["en"],
+    locales: ["en", "ko"],
+    localeConfigs: {
+      en: { label: "English" },
+      ko: { label: "한국어" },
+    },
   },
 
   presets: [
@@ -91,6 +93,10 @@ const config: Config = {
           href: "https://discord.gg/27rx3EJy3P",
           position: "right",
           className: "navbar--discord-link",
+        },
+        {
+          type: "localeDropdown",
+          position: "right",
         },
       ],
     },
