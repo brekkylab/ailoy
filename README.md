@@ -20,7 +20,7 @@
 
 ## 🚀 See how it is easy by an example
 
-### Get your agent just in a **single line of code**. 
+### Get your agent just in a **single line of code**. (Python ver.)
 
 
 
@@ -35,7 +35,7 @@ response = agent.run("Explain quantum computing in one sentence")
 print(response.contents[0].text)
 ```
 
-### 🌐 Browser-Native AI (WebAssembly)
+### 🌐 Browser-Native AI (WebAssembly) (JavaScript ver.)
 
 You can build your agent entirely in the browser using WebAssembly just in a few lines of code.
 
