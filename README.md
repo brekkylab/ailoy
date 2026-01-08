@@ -81,11 +81,11 @@ Just **Copy&Paste** to build your own web agent in minutes.
 
 - Run AI entirely in the browser - no server needed!
 
-### ⚡ Flexible Model Adoption, ☁️ Cloud API or 💻 Local Model, whateve
+### ⚡ Flexible Model Adoption
 
-- Supports both local AI execution and cloud AI providers
+- Supports both 💻 **local AI** execution and ☁️ **cloud AI** providers
 - Effortlessly switch between open-source and AI services
-- Minimal software dependencies — deploy anywhere, from cloud to edge
+- Minimal software dependencies — deploy anywhere, from cloud to **edge**
 
 
 ### <img src="https://cdn.simpleicons.org/rust" width="16"/> Rust-Powered
