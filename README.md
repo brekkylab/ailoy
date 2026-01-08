@@ -94,7 +94,8 @@ Just **Copy&Paste** to build your own web agent in minutes.
 
 ### 📚 Documentation & Community
 
-- 📚 [Documentation](https://brekkylab.github.io/ailoy/) - English and Korean. (To be translated into other languages)
+- 📚 [Documentation](https://brekkylab.github.io/ailoy/) -  🇺🇸 English and 🇰🇷 Korean Ver. 
+  - (To be translated into other languages soon)
 - <img src="https://cdn.simpleicons.org/discord" width="16"/> [Discord Community](https://discord.gg/27rx3EJy3P) - Join to ask questions, share your projects, and get help.
 
 
