@@ -127,14 +127,14 @@ npm install ailoy-web     # Browser (WebAssembly)
 
 **Local** (runs on your hardware):
 
-- Qwen3-0.6B, 1.7B, 4B, 8B, 14B, 32B
+- <img src="https://assets.alicdn.com/g/qwenweb/qwen-webui-fe/0.0.239/static/favicon.png" width="16"/> Qwen3-0.6B, 1.7B, 4B, 8B, 14B, 32B
 
 **Cloud APIs**:
 
-- OpenAI (GPT-4o, etc.)
-- Anthropic (Claude)
-- Google (Gemini)
-- Grok
+- <img src="https://openai.com/favicon.svg" width="16"/> OpenAI (GPT-4o, etc.)
+- <img src="https://claude.ai/favicon.ico" width="16"/> Anthropic (Claude)
+- <img src="https://gemini.google/images/spark_4c.png" width="16"/> Google (Gemini)
+- <img src="https://console.x.ai/_next/static/media/favicon.20ac9181.ico" width="16"/> Grok
 
 ### Platform Support
 
