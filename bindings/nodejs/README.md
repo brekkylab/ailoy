@@ -55,14 +55,6 @@ await main();
 
 ### Setup development environment
 
-> [!WARNING]
-> To build binding, you must change the crate type to **`cdylib`** in [Cargo.toml](../../Cargo.toml).
->
-> ```toml
-> [lib]
-> crate-type = ["dylib"] # <- Change this to ["cdylib"]
-> ```
-
 ```bash
 # Install dev dependencies
 npm install
