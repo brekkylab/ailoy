@@ -25,6 +25,8 @@
 
 
 ```python
+# pip install ailoy-py
+
 import ailoy as ai
 
 # Create an agent with a local model in a single line of code.
