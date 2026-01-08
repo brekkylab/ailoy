@@ -19,35 +19,33 @@ export const initializeComponents = async (mainWindow: BrowserWindow) => {
   await delay(1000);
 
   if (knowledge === undefined) {
-    embeddingModel = await ai.EmbeddingModel.newLocal(
-      "BAAI/bge-m3",
-      undefined,
-      (prog) => {
+    embeddingModel = await ai.EmbeddingModel.newLocal("BAAI/bge-m3", {
+      progressCallback: (prog) => {
         const percent = Math.round((prog.current / prog.total) * 100);
         mainWindow.webContents.send(
           "indicate-loading",
           `Initializing Embedding Model... ${percent}%`,
           false
         );
-      }
-    );
+      },
+      validateChecksum: true,
+    });
     vectorstore = await ai.VectorStore.newFaiss(1024);
     knowledge = ai.Knowledge.newVectorStore(vectorstore, embeddingModel);
   }
 
   if (agent === undefined) {
-    const langmodel = await ai.LangModel.newLocal(
-      "Qwen/Qwen3-8B",
-      undefined,
-      (prog) => {
+    const langmodel = await ai.LangModel.newLocal("Qwen/Qwen3-8B", {
+      progressCallback: (prog) => {
         const percent = Math.round((prog.current / prog.total) * 100);
         mainWindow.webContents.send(
           "indicate-loading",
           `Initializing Language Model... ${percent}%`,
           false
         );
-      }
-    );
+      },
+      validateChecksum: true,
+    });
     agent = new ai.Agent(langmodel);
     agent.setKnowledge(knowledge);
   }
@@ -109,7 +107,7 @@ export const registerIpcHandlers = async (mainWindow: BrowserWindow) => {
 
     let chunkIdx = 0;
     for (const chunk of chunks) {
-      let embedding = await embeddingModel.infer(chunk);
+      const embedding = await embeddingModel.infer(chunk);
       await vectorstore.addVector({
         embedding,
         document: chunk,
@@ -128,7 +126,7 @@ export const registerIpcHandlers = async (mainWindow: BrowserWindow) => {
   ipcMain.handle("infer-language-model", async (event, messages: Message[]) => {
     for await (const resp of agent.runDelta(messages, {
       inference: {
-        documentPolyfill: ai.getQwen3Polyfill(),
+        documentPolyfill: ai.getDocumentPolyfill("Qwen3"),
       },
       knowledge: {
         topK: 5,

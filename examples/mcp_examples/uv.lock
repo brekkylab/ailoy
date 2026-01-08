@@ -19,12 +19,10 @@ requires-dist = [
 
 [[package]]
 name = "ailoy-py"
-version = "0.2.2"
+version = "0.2.4"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/49/68df1b97e94b4c835aa2644e5f4276d05e39b96f671f016e74c78c31e68c/ailoy_py-0.2.2-cp310-abi3-macosx_15_0_arm64.whl", hash = "sha256:0abb501e31c76e561b516058df97fa0aefa0383592447b23493afede9427c672", size = 12165583, upload-time = "2025-12-02T07:04:25.885Z" },
-    { url = "https://files.pythonhosted.org/packages/29/bb/9c786a6ad9016ae256652f6ab17258404636cff28a06039ae76938da92d0/ailoy_py-0.2.2-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:84d67767d5c20dc6afdd733fdb974dc1d11a8754cbc288716b16ccfb28b70117", size = 17049298, upload-time = "2025-12-02T07:07:52.477Z" },
-    { url = "https://files.pythonhosted.org/packages/02/a8/2768bde8a10971e5ba8c10460a31efc5a60ee685c24024d0fd9ce63f6647/ailoy_py-0.2.2-cp310-abi3-win_amd64.whl", hash = "sha256:d9c92d043990a61f4d337f61b679ffaa3e78e140ad643c0c91bf799b6678d68b", size = 17918607, upload-time = "2025-12-02T07:18:02.377Z" },
+    { url = "https://files.pythonhosted.org/packages/47/a0/e8e5d6f4bfb00b7fd1efbab4e119ca94887539a208e98b33fc09c623c37a/ailoy_py-0.2.4-cp310-abi3-macosx_15_0_arm64.whl", hash = "sha256:7ba071f098a22a6267a7330a9aaac59ad4ab5df290d920b93649f68e12910d46", size = 12963753, upload-time = "2026-01-06T12:14:38.077Z" },
 ]
 
 [[package]]
