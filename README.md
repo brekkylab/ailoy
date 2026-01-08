@@ -101,9 +101,7 @@ Just **Copy&Paste** to build your own web agent in minutes.
 
 <br/>
 
-## Usage
-
-### Installation
+## Usage & Installation
 
 ```bash
 pip install ailoy-py      # Python
