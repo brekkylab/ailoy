@@ -18,7 +18,7 @@
   <a href="https://x.com/ailoy_co"><img src="https://img.shields.io/badge/X-000000?logo=x&logoColor=white" alt="X"></a>
 </p>
 
-## 🚀 See how it is easy by an example
+## See how it is easy by an example
 
 ### Get your agent just in a **single line of code**. (Python ver.)
 
@@ -35,7 +35,7 @@ response = agent.run("Explain quantum computing in one sentence")
 print(response.contents[0].text)
 ```
 
-### 🌐 Browser-Native AI (WebAssembly) (JavaScript ver.)
+### Browser-Native AI (WebAssembly) (JavaScript ver.)
 
 You can build your agent entirely in the browser using WebAssembly just in a few lines of code.
 
@@ -51,7 +51,7 @@ const agent = new ai.Agent(
 );
 ```
 
-### 🔥 Quick-customizable Web Agent UI Boilerplate
+### Quick-customizable Web Agent UI Boilerplate
 
 Just **Copy&Paste** to build your own web agent in minutes.
 
@@ -61,7 +61,7 @@ Just **Copy&Paste** to build your own web agent in minutes.
 
 ## Key Features
 
-### 🚀 Super Simple Framework and Powerful Features for AI Agents
+### Simple Framework and Powerful Features for AI Agents
 
 - No boilerplate, no complex setup
 - Reasoning: Extend thinking effortlessly
@@ -69,7 +69,7 @@ Just **Copy&Paste** to build your own web agent in minutes.
 - Extensible Tool Calling: User-defined functions and Model Context Protocol (MCP) tools
 - Retrieval-Augmented Generation (RAG): Integrates external knowledge bases without boilerplate
 
-### 💻 Cross-Platform & Multi-Language APIs
+### Cross-Platform & Multi-Language APIs
 
 - Provide <img src="https://cdn.simpleicons.org/python" width="16"/> **Python** and <img src="https://cdn.simpleicons.org/nodedotjs" width="16"/> **JavaScript** APIs
 
@@ -77,26 +77,26 @@ Just **Copy&Paste** to build your own web agent in minutes.
 
 - Support Synchronous and Asynchronous APIs
 
-### 🌐 Browser-Native AI (WebAssembly)
+### Browser-Native AI (WebAssembly) 
 
 - Run AI entirely in the browser - no server needed!
 
-### ⚡ Flexible Model Adoption
+### Flexible Model Adoption
 
-- Supports both 💻 **local AI** execution and ☁️ **cloud AI** providers
+- Supports both **local AI** execution and **cloud AI** providers
 - Effortlessly switch between open-source and AI services
 - Minimal software dependencies — deploy anywhere, from cloud to **edge**
 
 
-### <img src="https://cdn.simpleicons.org/rust" width="16"/> Rust-Powered
+### Rust-Powered <img src="https://cdn.simpleicons.org/rust" width="16"/> 
 - Fast, memory-safe, minimal dependencies
 - Best choice for edge computing and low-resource devices
 
-### 📚 Documentation & Community
+### Documentation & Community
 
-- 📚 [Documentation](https://brekkylab.github.io/ailoy/) -  🇺🇸 English and 🇰🇷 Korean Ver. 
+- [Documentation](https://brekkylab.github.io/ailoy/) - English and Korean Ver. 
   - (To be translated into other languages soon)
-- <img src="https://cdn.simpleicons.org/discord" width="16"/> [Discord Community](https://discord.gg/27rx3EJy3P) - Join to ask questions, share your projects, and get help.
+- [Discord Community](https://discord.gg/27rx3EJy3P) - Join to ask questions, share your projects, and get help.
 
 
 > [!TIP]
