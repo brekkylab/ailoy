@@ -11,7 +11,7 @@ async def main():
     if openai_api_key is None:
         openai_api_key = input("Enter OPENAI_API_KEY: ")
 
-    model = ai.LangModel.new_stream_api("OpenAI", "gpt-4o", openai_api_key)
+    model = ai.LangModel.new_stream_api("OpenAI", "gpt-5.2", openai_api_key)
     agent = ai.Agent(model)
 
     mcp_client = await ai.MCPClient.from_stdio("npx", ["@playwright/mcp@latest"])

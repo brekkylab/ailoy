@@ -74,7 +74,7 @@ with gr.Blocks() as demo:
                         return delta
 
                     elif option["value"] == "thinking":
-                        delta.thinking = message["content"]
+                        delta.thinking = message["content"][0]["text"]
                         return delta
 
             if len(message["content"]) > 0:
@@ -152,7 +152,9 @@ with gr.Blocks() as demo:
         delta_acc = ai.MessageDelta()
         for resp in agent.run_delta_sync(
             converted_messages,
-            config=ai.AgentConfig(inference=ai.InferenceConfig(think_effort="enable")),
+            config=ai.AgentConfig(
+                inference=ai.LangModelInferConfig(think_effort="enable")
+            ),
         ):
             delta_acc += resp.delta
             if resp.finish_reason:

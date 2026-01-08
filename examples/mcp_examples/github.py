@@ -50,7 +50,7 @@ async def main():
                     if isinstance(content, ai.PartDelta.Text):
                         print(content.text, end="", flush=True)
                     elif isinstance(content, ai.PartDelta.Value):
-                        print(content.value)
+                        print(content.value[:100])
                     else:
                         raise ValueError(
                             f"Content has invalid part_type: {content.part_type}"
