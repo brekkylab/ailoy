@@ -169,6 +169,6 @@ npm install ailoy-web
 |----------|---------|  
 | Windows | Vulkan 1.3 compatible GPU |
 | Linux | Vulkan 1.3 compatible GPU |
-| OS X (mac) | Apple Silicon with Metal |
+| macOS | Apple Silicon with Metal |
 | Web Browser | WebGPU with shader-f16 support |
 
