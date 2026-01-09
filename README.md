@@ -165,8 +165,8 @@ npm install ailoy-web
 
 | Supported Platform | (for Local AI) System Requirements |
 |----------|---------|  
-| <img src="https://www.microsoft.com/favicon.ico?v2" width="16"/> Windows | Vulkan 1.3 compatible GPU |
-| <img src="https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg" width="16"/> Linux | Vulkan 1.3 compatible GPU |
-| <img src="https://www.apple.com/favicon.ico" width="16"/> macOS | Apple Silicon with Metal |
-| <img src="https://cdn.simpleicons.org/webassembly" width="16"/> Web Browser | WebGPU with shader-f16 support |
+| Windows | Vulkan 1.3 compatible GPU |
+| Linux | Vulkan 1.3 compatible GPU |
+| OS X (mac) | Apple Silicon with Metal |
+| Web Browser | WebGPU with shader-f16 support |
 
