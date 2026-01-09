@@ -71,10 +71,10 @@ Just **Copy&Paste** to build your own web agent in minutes.
 ### Simple Framework and Powerful Features for AI Agents
 
 - No boilerplate, no complex setup
-- Reasoning: Extend thinking effortlessly
-- Multi-Modal Inputs: Process both text and images
-- Extensible Tool Calling: User-defined functions and Model Context Protocol (MCP) tools
-- Retrieval-Augmented Generation (RAG): Integrates external knowledge bases without boilerplate
+- **Reasoning**: Extend thinking effortlessly
+- **Multi-Modal Inputs**: Process both text and images
+- **Extensible Tool Calling**: User-defined functions and **Model Context Protocol (MCP)** tools
+- **Retrieval-Augmented Generation (RAG)**: Integrates external knowledge bases without boilerplate
 
 ### Cross-Platform & Multi-Language APIs
 
