@@ -20,7 +20,7 @@
 
 <br>
 
-## 🚀 Quick-start Examples
+## 🚀 Quick Start
 
 See how easy to use Ailoy through below examples.
 
