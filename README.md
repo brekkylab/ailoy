@@ -159,7 +159,7 @@ npm install ailoy-web
 | Language | Version |
 |----------|---------|
 | Python | 3.10+ |
-| JavaScript | 18+ |
+| JavaScript | ES5+, Node.js 20+ |
 
 ### Supported Platforms
 
