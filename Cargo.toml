@@ -82,10 +82,10 @@ urlencoding = "2.1"
 version-compare = "0.2.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "d0edb6e77eb537837efb40c6c94ef5407b18bfa5", features = ["metal"] }
+tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "ee8c5626e5309827b00af9e46111fe23b0307308", features = ["metal"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
-tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "d0edb6e77eb537837efb40c6c94ef5407b18bfa5", features = ["vulkan"] }
+tvm-runtime = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "ee8c5626e5309827b00af9e46111fe23b0307308", features = ["vulkan"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ailoy-faiss-sys = { path = "./crates/faiss-sys" }
@@ -96,7 +96,7 @@ parking_lot = "0.12.4"
 rmcp = { version = "0.11.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 tokenizers = { version = "0.22.2", default-features = false, features = ["onig"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
-tvm-ffi = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "d0edb6e77eb537837efb40c6c94ef5407b18bfa5" }
+tvm-ffi = { git = "https://github.com/brekkylab/tvm-runtime-rs", rev = "ee8c5626e5309827b00af9e46111fe23b0307308" }
 uuid = { version = "1.18.0", features = ["v4"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

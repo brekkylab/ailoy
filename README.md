@@ -43,8 +43,7 @@ response = agent.run("Explain quantum computing in one sentence")
 print(response.contents[0].text)
 ```
 
-
-### Easy to integrate LLM APIs 
+### Easy to integrate LLM APIs
 
 Here's the simple javascript example with LLM APIs.
 
@@ -91,8 +90,6 @@ const { supported } = await ai.isWebGPUSupported();
 // Run AI entirely in the browser - no server needed!
 const agent = new ai.Agent(await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"));
 ```
-
-
 
 ### Quick-customizable Web Agent UI Template
 
@@ -182,13 +179,13 @@ npm install ailoy-web
 
 ### Supported AI Models
 
-| Type        | Provider & Models                                                                                                                        |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Type        | Provider & Models                                                                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Local Model | <img src="https://assets.alicdn.com/g/qwenweb/qwen-webui-fe/0.0.239/static/favicon.png" width="16"/> Qwen3 (0.6B, 1.7B, 4B, 8B, 14B, 32B, 30B-A3B) |
-| Cloud API   | <img src="https://openai.com/favicon.svg" width="16"/> OpenAI (GPT)                                                                      |
-| Cloud API   | <img src="https://claude.ai/favicon.ico" width="16"/> Anthropic (Claude)                                                                 |
-| Cloud API   | <img src="https://gemini.google/images/spark_4c.png" width="16"/> Google (Gemini)                                                        |
-| Cloud API   | <img src="https://console.x.ai/_next/static/media/favicon.20ac9181.ico" width="16"/> xAI (Grok)                                          |
+| Cloud API   | <img src="https://openai.com/favicon.svg" width="16"/> OpenAI (GPT)                                                                                |
+| Cloud API   | <img src="https://claude.ai/favicon.ico" width="16"/> Anthropic (Claude)                                                                           |
+| Cloud API   | <img src="https://gemini.google/images/spark_4c.png" width="16"/> Google (Gemini)                                                                  |
+| Cloud API   | <img src="https://console.x.ai/_next/static/media/favicon.20ac9181.ico" width="16"/> xAI (Grok)                                                    |
 
 ### Supported Languags
 
@@ -203,5 +200,5 @@ npm install ailoy-web
 | ------------------ | ---------------------------------- |
 | Windows            | Vulkan 1.4 compatible GPU          |
 | Linux              | Vulkan 1.4 compatible GPU          |
-| OS X (mac)         | Apple Silicon with Metal           |
+| macOS              | Apple Silicon with Metal           |
 | Web Browser        | WebGPU with shader-f16 support     |
