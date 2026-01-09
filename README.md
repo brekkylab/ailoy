@@ -18,7 +18,9 @@
   <a href="https://x.com/ailoy_co"><img src="https://img.shields.io/badge/X-000000?logo=x&logoColor=white" alt="X"></a>
 </p>
 
-## See how it is easy by an example
+<br>
+
+## 🚀 See how easy through Quick-start example
 
 ### Get your agent just in a **single line of code**. (Python ver.)
 
@@ -51,15 +53,16 @@ const agent = new ai.Agent(
 );
 ```
 
-### Quick-customizable Web Agent UI Boilerplate
+### Quick-customizable Web Agent UI Template
 
 Just **Copy&Paste** to build your own web agent in minutes.
 
 - https://github.com/brekkylab/ailoy-web-ui
 
 
+<br/>
 
-## Key Features
+## 🔥 Key Features
 
 ### Simple Framework and Powerful Features for AI Agents
 
