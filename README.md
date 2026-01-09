@@ -20,7 +20,9 @@
 
 <br>
 
-## 🚀 See how easy through Quick-start example
+## 🚀 Quick-start Examples
+
+See how easy to use Ailoy through below examples.
 
 ### Get your agent just in a **single line of code**. (Python ver.)
 
@@ -78,7 +80,7 @@ Just **Copy&Paste** to build your own web agent in minutes.
 
 ### Cross-Platform & Multi-Language APIs
 
-- Provide <img src="https://cdn.simpleicons.org/python" width="16"/> **Python** and <img src="https://cdn.simpleicons.org/nodedotjs" width="16"/> **JavaScript** APIs
+- Provide <img src="https://cdn.simpleicons.org/python" width="16"/> **Python** and <img src="https://cdn.simpleicons.org/javascript" width="16"/> **JavaScript** APIs
 
 - Support <img src="https://www.microsoft.com/favicon.ico?v2" width="16"/> **Windows**, <img src="https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg" width="16"/> **Linux**, and <img src="https://www.apple.com/favicon.ico" width="16"/> **macOS**
 
