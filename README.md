@@ -24,12 +24,14 @@
 
 See how easy to use Ailoy through below examples.
 
-### Get your agent just in a **single line of code**. (Python ver.)
+### Get your agent just in _a single line of code_
 
+Check out the simplest python example to build your agent with local models.
 
 ```sh
 pip install ailoy-py
 ```
+
 ```python
 import ailoy as ai
 
@@ -41,12 +43,45 @@ response = agent.run("Explain quantum computing in one sentence")
 print(response.contents[0].text)
 ```
 
-### Browser-Native AI (WebAssembly) (JavaScript ver.)
+
+### Easy to integrate LLM APIs 
+
+Here's the simple javascript example with LLM APIs.
+
+```sh
+npm install ailoy-node
+```
+
+```js
+import * as ai from "ailoy-node";
+
+async function main() {
+  const lm = await ai.LangModel.newStreamAPI(
+    "OpenAI", // spec
+    "gpt-5", // modelName
+    "YOUR_OPENAI_API_KEY" // apiKey
+  );
+  const agent = new ai.Agent(lm);
+  for await (const resp of agent.run("Please give me a short poem about AI")) {
+    if (resp.message.contents[0].type === "text") {
+      console.log(resp.message.contents[0].text);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error("Error:", err);
+});
+```
+
+### Browser-Native AI (WebAssembly)
 
 You can build your agent entirely in the browser using WebAssembly just in a few lines of code.
+
 ```sh
 npm install ailoy-web
 ```
+
 ```typescript
 import * as ai from "ailoy-web";
 
@@ -54,17 +89,16 @@ import * as ai from "ailoy-web";
 const { supported } = await ai.isWebGPUSupported();
 
 // Run AI entirely in the browser - no server needed!
-const agent = new ai.Agent(
-  await ai.LangModel.newLocal("Qwen/Qwen3-0.6B")
-);
+const agent = new ai.Agent(await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"));
 ```
+
+
 
 ### Quick-customizable Web Agent UI Template
 
-Just **Copy&Paste** to build your own web agent in minutes.
+Just **Clone** to build your own web agent in minutes.
 
 - https://github.com/brekkylab/ailoy-web-ui
-
 
 <br/>
 
@@ -86,7 +120,7 @@ Just **Copy&Paste** to build your own web agent in minutes.
 
 - Support Synchronous and Asynchronous APIs
 
-### Support Web-browser Native AI (WebAssembly) 
+### Support Web-browser Native AI (WebAssembly)
 
 - Run AI entirely in the browser - no server needed!
 
@@ -94,31 +128,23 @@ Just **Copy&Paste** to build your own web agent in minutes.
 
 - Supports both **local AI** execution and **cloud AI** providers
 - Effortlessly switch between open-source and AI services
-- Minimal software dependencies — deploy anywhere, from cloud to **edge**
+- Minimal software dependencies — deploy anywhere, from **cloud** to **edge**
 
+### Rust-Powered <img src="https://cdn.simpleicons.org/rust" width="16"/>
 
-### Rust-Powered <img src="https://cdn.simpleicons.org/rust" width="16"/> 
 - Fast, memory-safe, minimal dependencies
 - Best choice for edge computing and low-resource devices
 
 ### Documentation & Community
 
-- [Documentation](https://brekkylab.github.io/ailoy/) - English and Korean Ver. 
-  - (To be translated into other languages soon)
+- [Documentation (Eng.)](https://brekkylab.github.io/ailoy/)
+- [Documentation (Kor.)](https://brekkylab.github.io/ailoy/ko/)
+
 - [Discord Community](https://discord.gg/27rx3EJy3P) - Join to ask questions, share your projects, and get help.
-
-
-> [!TIP]
-> Questions? Join our [Discord](https://discord.gg/27rx3EJy3P)!
-
 
 <br/>
 
 ## Example Projects
-
-> [!WARNING]
-> Ailoy is under active development. APIs may change with version updates.
-
 
 | Project                                            | Description                          |
 | -------------------------------------------------- | ------------------------------------ |
@@ -126,21 +152,28 @@ Just **Copy&Paste** to build your own web agent in minutes.
 | [Web Assistant](./examples/web-assistant-ui)       | Browser-based AI assistant (WASM)    |
 | [RAG Electron App](./examples/simple_rag_electron) | Desktop app with document Q&A        |
 | [MCP Integration](./examples/mcp_examples)         | GitHub & Playwright tools via MCP    |
+
 <br/>
 
 ## Installation
 
+> [!WARNING]
+> Ailoy is under active development. APIs may change with version updates.
+
 ### Python
+
 ```sh
 pip install ailoy-py
 ```
 
 ### Node.js
+
 ```sh
 npm install ailoy-node
 ```
 
 ### Browser (WebAssembly)
+
 ```sh
 npm install ailoy-web
 ```
@@ -149,26 +182,26 @@ npm install ailoy-web
 
 ### Supported AI Models
 
-| Type | Provider & Models |
-|------|-------------------|
-| Local Model | <img src="https://assets.alicdn.com/g/qwenweb/qwen-webui-fe/0.0.239/static/favicon.png" width="16"/> Qwen  (0.6B, 1.7B, 4B, 8B, 14B, 32B) |
-| Cloud API | <img src="https://openai.com/favicon.svg" width="16"/> OpenAI  (GPT) |
-| Cloud API | <img src="https://claude.ai/favicon.ico" width="16"/> Anthropic  (Claude) |
-| Cloud API | <img src="https://gemini.google/images/spark_4c.png" width="16"/> Google  (Gemini) |
-| Cloud API | <img src="https://console.x.ai/_next/static/media/favicon.20ac9181.ico" width="16"/> xAI  (Grok) |
+| Type        | Provider & Models                                                                                                                        |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Local Model | <img src="https://assets.alicdn.com/g/qwenweb/qwen-webui-fe/0.0.239/static/favicon.png" width="16"/> Qwen3 (0.6B, 1.7B, 4B, 8B, 14B, 32B, 30B-A3B) |
+| Cloud API   | <img src="https://openai.com/favicon.svg" width="16"/> OpenAI (GPT)                                                                      |
+| Cloud API   | <img src="https://claude.ai/favicon.ico" width="16"/> Anthropic (Claude)                                                                 |
+| Cloud API   | <img src="https://gemini.google/images/spark_4c.png" width="16"/> Google (Gemini)                                                        |
+| Cloud API   | <img src="https://console.x.ai/_next/static/media/favicon.20ac9181.ico" width="16"/> xAI (Grok)                                          |
 
 ### Supported Languags
-| Language | Version |
-|----------|---------|
-| Python | 3.10+ |
+
+| Language   | Version           |
+| ---------- | ----------------- |
+| Python     | 3.10+             |
 | JavaScript | ES5+, Node.js 20+ |
 
 ### Supported Platforms
 
-| Supported Platform | (for Local AI) System Requirements |
-|----------|---------|  
-| Windows | Vulkan 1.3 compatible GPU |
-| Linux | Vulkan 1.3 compatible GPU |
-| OS X (mac) | Apple Silicon with Metal |
-| Web Browser | WebGPU with shader-f16 support |
-
+| Supported Platform | System Requirements (for Local AI) |
+| ------------------ | ---------------------------------- |
+| Windows            | Vulkan 1.4 compatible GPU          |
+| Linux              | Vulkan 1.4 compatible GPU          |
+| OS X (mac)         | Apple Silicon with Metal           |
+| Web Browser        | WebGPU with shader-f16 support     |
