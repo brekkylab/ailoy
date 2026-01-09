@@ -571,15 +571,11 @@ mod native {
                 self.kv_cache
                     .popn(0, (self.history.len() - lcp_index) as i64)
                     .map_err(|e| anyhow!("{e:?}"))?;
+                self.history.drain(lcp_index..);
             }
 
             // Tokens to be added (without common prefixes)
             let new_tokens: Vec<i32> = tokens[lcp_index..].iter().map(|t| *t as i32).collect();
-
-            if new_tokens.is_empty() {
-                self.history = tokens.to_vec();
-                return Ok(());
-            }
 
             // Calculate remaining space in KV cache
             if new_tokens.len() as i64
@@ -606,10 +602,10 @@ mod native {
                     ])
                     .map_err(|e| anyhow!("{e:?}"))?;
                 self.kv_cache.end_forward().map_err(|e| anyhow!("{e:?}"))?;
-            }
 
-            // Update history
-            self.history = tokens.to_vec();
+                // Update history
+                self.history.extend(tokens_sliced.iter().map(|&v| v as u32));
+            }
 
             Ok(())
         }
@@ -938,15 +934,11 @@ mod wasm {
                 self.kv_cache
                     .popn(0, (self.history.len() - lcp_index) as i64)
                     .map_err(|e| anyhow!("{e:?}"))?;
+                self.history.drain(lcp_index..);
             }
 
             // Tokens to be added (without common prefixes)
             let new_tokens: Vec<i32> = tokens[lcp_index..].iter().map(|t| *t as i32).collect();
-
-            if new_tokens.is_empty() {
-                self.history = tokens.to_vec();
-                return Ok(());
-            }
 
             // Calculate remaining space in KV cache
             if new_tokens.len() as i64
@@ -969,10 +961,10 @@ mod wasm {
                     .call3(&embedding, self.kv_cache.get_state(), &self.params)
                     .map_err(|e| anyhow!("{e:?}"))?;
                 self.kv_cache.end_forward().map_err(|e| anyhow!("{e:?}"))?;
-            }
 
-            // Update history
-            self.history = tokens.to_vec();
+                // Update history
+                self.history.extend(tokens_sliced.iter().map(|&v| v as u32));
+            }
 
             self.tvm.end_scope();
 
@@ -1022,12 +1014,13 @@ mod wasm {
                 )
                 .unwrap()
                 .as_f64()
-                .unwrap();
+                .unwrap() as u32;
             logits_cpu.dispose();
+            self.history.push(sampled_token);
 
             self.tvm.end_scope();
 
-            Ok(sampled_token as u32)
+            Ok(sampled_token)
         }
     }
 
