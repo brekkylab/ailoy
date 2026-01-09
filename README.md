@@ -126,43 +126,47 @@ Just **Copy&Paste** to build your own web agent in minutes.
 | [MCP Integration](./examples/mcp_examples)         | GitHub & Playwright tools via MCP    |
 <br/>
 
-## Usage & Installation
+## Installation
 
-```bash
-pip install ailoy-py      # Python
-npm install ailoy-node    # Node.js
-npm install ailoy-web     # Browser (WebAssembly)
+### Python
+```sh
+pip install ailoy-py
 ```
 
+### Node.js
+```sh
+npm install ailoy-node
+```
 
+### Browser (WebAssembly)
+```sh
+npm install ailoy-web
+```
 
-### Supported Models
+## Support Specifications
 
-**Local** (runs on your hardware):
+### Supported AI Models
 
-- <img src="https://assets.alicdn.com/g/qwenweb/qwen-webui-fe/0.0.239/static/favicon.png" width="16"/> Qwen3-0.6B, 1.7B, 4B, 8B, 14B, 32B
+| Type | Provider & Models |
+|------|-------------------|
+| Local Model | <img src="https://assets.alicdn.com/g/qwenweb/qwen-webui-fe/0.0.239/static/favicon.png" width="16"/> Qwen  (0.6B, 1.7B, 4B, 8B, 14B, 32B) |
+| Cloud API| <img src="https://openai.com/favicon.svg" width="16"/> OpenAI  (GPT-4o, ETC) |
+| Cloud API | <img src="https://claude.ai/favicon.ico" width="16"/> Anthropic  (Claude)) |
+| Cloud API | <img src="https://gemini.google/images/spark_4c.png" width="16"/> Google  (Gemini) |
+| Cloud API | <img src="https://console.x.ai/_next/static/media/favicon.20ac9181.ico" width="16"/> xAI  Grok |
 
-**Cloud APIs**:
+### Supported Languags
+| Language | Version |
+|----------|---------|
+| Python | 3.10+ |
+| JavaScript | 18+ |
 
-- <img src="https://openai.com/favicon.svg" width="16"/> OpenAI (GPT-4o, etc.)
-- <img src="https://claude.ai/favicon.ico" width="16"/> Anthropic (Claude)
-- <img src="https://gemini.google/images/spark_4c.png" width="16"/> Google (Gemini)
-- <img src="https://console.x.ai/_next/static/media/favicon.20ac9181.ico" width="16"/> Grok
+### Supported Platforms
 
-### Platform Support
-
-**Languages**
-- <img src="https://cdn.simpleicons.org/python" width="16"/> **Python**
-- <img src="https://cdn.simpleicons.org/nodedotjs" width="16"/> **JavaScript**
-
-**Platforms**
-- <img src="https://www.microsoft.com/favicon.ico?v2" width="16"/> **Windows**
-- <img src="https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg" width="16"/> **Linux**
-- <img src="https://www.apple.com/favicon.ico" width="16"/> **macOS**
-
-**System Requirements for Local AI:**
-
-- <img src="https://www.apple.com/favicon.ico" width="16"/> **macOS**: Apple Silicon with Metal
-- <img src="https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg" width="16"/> **Linux** and <img src="https://www.microsoft.com/favicon.ico?v2" width="16"/> **Windows**: Vulkan 1.3 compatible GPU
-- <img src="https://cdn.simpleicons.org/webassembly" width="16"/> **Web Browser**: WebGPU with shader-f16 support
+| Supported Platform | (for Local AI) System Requirements |
+|----------|---------|  
+| <img src="https://www.microsoft.com/favicon.ico?v2" width="16"/> Windows | Vulkan 1.3 compatible GPU |
+| <img src="https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg" width="16"/> Linux | Vulkan 1.3 compatible GPU |
+| <img src="https://www.apple.com/favicon.ico" width="16"/> macOS | Apple Silicon with Metal |
+| <img src="https://cdn.simpleicons.org/webassembly" width="16"/> Web Browser | WebGPU with shader-f16 support |
 
