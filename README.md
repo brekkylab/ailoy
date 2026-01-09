@@ -27,6 +27,8 @@
 
 
 ```python
+# pip install ailoy-py
+
 import ailoy as ai
 
 # Create an agent with a local model in a single line of code.
@@ -42,6 +44,8 @@ print(response.contents[0].text)
 You can build your agent entirely in the browser using WebAssembly just in a few lines of code.
 
 ```typescript
+// npm install ailoy-web
+
 import * as ai from "ailoy-web";
 
 // Check WebGPU support
