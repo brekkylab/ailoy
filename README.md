@@ -153,7 +153,7 @@ npm install ailoy-web
 | Cloud API | <img src="https://openai.com/favicon.svg" width="16"/> OpenAI  (GPT) |
 | Cloud API | <img src="https://claude.ai/favicon.ico" width="16"/> Anthropic  (Claude)) |
 | Cloud API | <img src="https://gemini.google/images/spark_4c.png" width="16"/> Google  (Gemini) |
-| Cloud API | <img src="https://console.x.ai/_next/static/media/favicon.20ac9181.ico" width="16"/> xAI  Grok |
+| Cloud API | <img src="https://console.x.ai/_next/static/media/favicon.20ac9181.ico" width="16"/> xAI  (Grok) |
 
 ### Supported Languags
 | Language | Version |
