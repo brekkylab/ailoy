@@ -84,7 +84,7 @@ Just **Copy&Paste** to build your own web agent in minutes.
 
 - Support Synchronous and Asynchronous APIs
 
-### Browser-Native AI (WebAssembly) 
+### Support <img src="https://cdn.simpleicons.org/webassembly" width="16"/> Web-browser Native AI (WebAssembly) 
 
 - Run AI entirely in the browser - no server needed!
 
