@@ -10,7 +10,7 @@
     "build:web": "../bindings/web/scripts/build-docs.sh ./build/docs/api-references/js-web",
     "build": "docusaurus build && npm run build:python && npm run build:nodejs && npm run build:web",
     "swizzle": "docusaurus swizzle",
-    "deploy": "docusaurus deploy",
+    "deploy": "docusaurus deploy --skip-build",
     "clear": "docusaurus clear",
     "serve": "docusaurus serve",
     "write-translations": "docusaurus write-translations",
