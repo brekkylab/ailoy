@@ -57,17 +57,17 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: "html",
-          value: `<a href="/ailoy/api-references/python/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Python API References</a>`,
+          value: `<a href="/ailoy/docs/api-references/python/" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">Python API References</a>`,
           defaultStyle: true,
         },
         {
           type: "html",
-          value: `<a href="/ailoy/api-references/nodejs/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">JavaScript(Node.js) API References</a>`,
+          value: `<a href="/ailoy/docs/api-references/nodejs/" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">JavaScript(Node.js) API References</a>`,
           defaultStyle: true,
         },
         {
           type: "html",
-          value: `<a href="/ailoy/api-references/js-web/index.html" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">JavaScript(Web) API References</a>`,
+          value: `<a href="/ailoy/docs/api-references/js-web/" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">JavaScript(Web) API References</a>`,
           defaultStyle: true,
         },
       ],

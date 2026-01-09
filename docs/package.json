@@ -5,7 +5,10 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
-    "build": "docusaurus build",
+    "build:python": "../bindings/python/scripts/build-docs.sh ./build/docs/api-references/python",
+    "build:nodejs": "../bindings/nodejs/scripts/build-docs.sh ./build/docs/api-references/nodejs",
+    "build:web": "../bindings/web/scripts/build-docs.sh ./build/docs/api-references/js-web",
+    "build": "docusaurus build && npm run build:python && npm run build:nodejs && npm run build:web",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",
