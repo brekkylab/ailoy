@@ -1,0 +1,36 @@
+name: Build All Platforms
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish:
+        type: boolean
+        required: false
+        description: 'Publish packages'
+
+jobs:
+  # Python builds
+  build-python:
+    name: Build Python Packages
+    uses: ./.github/workflows/build_python.yaml
+    with:
+      publish: ${{ github.event_name == 'release' || inputs.publish }}
+    secrets: inherit
+
+  # Node.js builds
+  build-node:
+    name: Build Node.js Packages
+    uses: ./.github/workflows/build_nodejs.yaml
+    with:
+      publish: ${{ github.event_name == 'release' || inputs.publish }}
+    secrets: inherit
+
+  # Web build
+  build-web:
+    name: Build Web Package
+    uses: ./.github/workflows/build_js_web.yaml
+    with:
+      publish: ${{ github.event_name == 'release' || inputs.publish }}
+    secrets: inherit

@@ -1,4 +1,4 @@
-name: Build - Web
+name: Build - Node.js All Platforms
 
 on:
   workflow_call:
@@ -18,56 +18,59 @@ env:
   NODE_VERSION: "20.19.4"
 
 jobs:
-  build:
+  # Build platform-specific packages
+  build-linux:
+    uses: ./.github/workflows/build_node_linux.yaml
+    with:
+      publish: ${{ inputs.publish }}
+
+  build-macos:
+    uses: ./.github/workflows/build_node_macos.yaml
+
+  build-windows:
+    uses: ./.github/workflows/build_node_windows.yaml
+
+  # Build main package
+  build-main:
     runs-on: ubuntu-latest
+    needs: [build-linux, build-macos, build-windows]
 
     outputs:
-      package_name: ${{ steps.create-package.outputs.package_name }}
+      package_name: ${{ steps.build-package.outputs.package_name }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          registry-url: 'https://registry.npmjs.org'
 
-      - name: Set up Docker
-        uses: docker/setup-docker-action@v4
-      
-      - name: Install wasm-pack
-        run: |
-          cargo install wasm-pack
-      
       - name: Install dependencies
-        working-directory: ${{ github.workspace }}/bindings/web
+        working-directory: ${{ github.workspace }}/bindings/nodejs
         run: |
           npm install
 
-      - name: Build binary
-        working-directory: ${{ github.workspace }}/bindings/web
+      - name: Build package
+        id: build-package
+        working-directory: ${{ github.workspace }}/bindings/nodejs
         run: |
-          npm run build
-
-      - name: Create a package
-        id: create-package
-        working-directory: ${{ github.workspace }}/bindings/web
-        run: |
+          npm run build:ts
           npm pack
-          PACKAGE_NAME=$(ls -1t ailoy-web-*.tgz | head -n 1)
+          PACKAGE_NAME=$(ls -1t ailoy-*.tgz | head -n 1)
           echo "PACKAGE_NAME=$PACKAGE_NAME"
           echo "package_name=$PACKAGE_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.create-package.outputs.package_name }}
-          path: ${{ github.workspace }}/bindings/web/${{ steps.create-package.outputs.package_name }}
+          name: ${{ steps.build-package.outputs.package_name }}
+          path: ${{ github.workspace }}/bindings/nodejs/${{ steps.build-package.outputs.package_name }}
 
-  publish:
+  publish-main:
     runs-on: ubuntu-latest
-    needs: build
+    needs: build-main
     if: ${{ inputs.publish }}
     permissions:
       id-token: write
@@ -81,7 +84,7 @@ jobs:
       - name: Download wheel artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.build.outputs.package_name }}
+          name: ${{ needs.build-main.outputs.package_name }}
           path: dist
 
       - name: Publish package to NPM
