@@ -106,4 +106,4 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 30
           command: |
-            npm publish --access=public dist/*
+            npm publish --access=public ${{ github.workspace }}/dist/${{ needs.build-main.outputs.package_name }}
