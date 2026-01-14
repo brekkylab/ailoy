@@ -14,6 +14,11 @@ on:
         required: false
         description: 'Publish package to NPM'
 
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+
 env:
   NODE_VERSION: "20.19.4"
 
