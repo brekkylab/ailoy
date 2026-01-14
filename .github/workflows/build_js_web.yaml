@@ -20,7 +20,8 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    permissions:
+      packages: read
     outputs:
       package_name: ${{ steps.create-package.outputs.package_name }}
 
@@ -71,7 +72,6 @@ jobs:
     if: ${{ inputs.publish }}
     permissions:
       id-token: write
-      contents: read
 
     steps:
       - uses: actions/setup-node@v6
@@ -91,4 +91,4 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 30
           command: |
-            npm publish --access=public dist/*
+            npm publish --access=public dist/${{ needs.build.outputs.package_name }}

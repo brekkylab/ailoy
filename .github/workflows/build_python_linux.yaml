@@ -21,7 +21,8 @@ jobs:
       image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251126
     env:
       PYTHON_BIN: /opt/python/cp310-cp310/bin
-
+    permissions:
+      packages: read
     outputs:
       wheel_filename: ${{ steps.save_wheel_name.outputs.wheel_filename }}
 
