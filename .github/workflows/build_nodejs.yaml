@@ -16,7 +16,6 @@ on:
 
 permissions:
   id-token: write
-  contents: read
   packages: read
 
 env:
@@ -46,7 +45,6 @@ jobs:
   build-main:
     runs-on: ubuntu-latest
     needs: [build-linux, build-macos, build-windows]
-
     outputs:
       package_name: ${{ steps.build-package.outputs.package_name }}
 
@@ -86,7 +84,6 @@ jobs:
     if: ${{ inputs.publish }}
     permissions:
       id-token: write
-      contents: read
 
     steps:
       - uses: actions/setup-node@v6
