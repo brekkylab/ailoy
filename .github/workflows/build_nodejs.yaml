@@ -14,21 +14,32 @@ on:
         required: false
         description: 'Publish package to NPM'
 
+permissions:
+  id-token: write
+  contents: read
+
 env:
   NODE_VERSION: "20.19.4"
 
 jobs:
   # Build platform-specific packages
   build-linux:
-    uses: ./.github/workflows/build_node_linux.yaml
+    uses: ./.github/workflows/build_nodejs_linux.yaml
     with:
       publish: ${{ inputs.publish }}
+    secrets: inherit
 
   build-macos:
-    uses: ./.github/workflows/build_node_macos.yaml
+    uses: ./.github/workflows/build_nodejs_macos.yaml
+    with:
+      publish: ${{ inputs.publish }}
+    secrets: inherit
 
   build-windows:
-    uses: ./.github/workflows/build_node_windows.yaml
+    uses: ./.github/workflows/build_nodejs_windows.yaml
+    with:
+      publish: ${{ inputs.publish }}
+    secrets: inherit
 
   # Build main package
   build-main:
