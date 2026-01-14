@@ -16,6 +16,7 @@ on:
 
 permissions:
   id-token: write
+  contents: read
   packages: read
 
 env:
@@ -84,6 +85,7 @@ jobs:
     if: ${{ inputs.publish }}
     permissions:
       id-token: write
+      contents: read
 
     steps:
       - uses: actions/setup-node@v6
