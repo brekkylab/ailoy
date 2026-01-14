@@ -1,22 +1,31 @@
 name: Build - Node.js Linux
 
 on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        required: false
+        description: 'Publish package to NPM'
   workflow_dispatch:
     inputs:
       publish:
         type: boolean
         required: false
         description: 'Publish package to NPM'
-  
+
 env:
   NODE_VERSION: "20.19.4"
 
 jobs:
-  build-linux:
+  build:
     runs-on: ubuntu-latest
 
     container:
       image: ghcr.io/brekkylab/ailoy-buildpack-linux:20251126
+
+    outputs:
+      package_name: ${{ steps.create-package.outputs.package_name }}
 
     steps:
       - name: Checkout source
@@ -28,7 +37,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -51,22 +59,44 @@ jobs:
           RUSTFLAGS: -L/opt/rh/gcc-toolset-14/root/lib/gcc/x86_64-redhat-linux/14
 
       - name: Create a package
+        id: create-package
         working-directory: ${{ github.workspace }}/bindings/nodejs/npm/linux-x64-gnu
         run: |
           npm pack
           PACKAGE_NAME=$(ls -1t ailoy-*.tgz | head -n 1)
           echo "PACKAGE_NAME=$PACKAGE_NAME"
-          echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
+          echo "package_name=$PACKAGE_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload npm package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PACKAGE_NAME }}
-          path: ${{ github.workspace }}/bindings/nodejs/npm/linux-x64-gnu/${{ env.PACKAGE_NAME }}
+          name: ${{ steps.create-package.outputs.package_name }}
+          path: ${{ github.workspace }}/bindings/nodejs/npm/linux-x64-gnu/${{ steps.create-package.outputs.package_name }}
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ inputs.publish }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.package_name }}
+          path: dist
 
       - name: Publish package to NPM
-        if: ${{ inputs.publish }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.AILOY_NPM_TOKEN }}
-        run: |
-          npm publish --access=public ${{ github.workspace }}/bindings/nodejs/npm/linux-x64-gnu/${{ env.PACKAGE_NAME }}
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: |
+            npm publish --access=public dist/*

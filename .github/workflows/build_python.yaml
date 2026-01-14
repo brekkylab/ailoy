@@ -1,0 +1,35 @@
+name: Build - Python All Platforms
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        type: boolean
+        required: false
+        description: 'Publish package to PyPI'
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        required: false
+        description: 'Publish package to PyPI'
+
+jobs:
+  # Build platform-specific wheels in parallel
+  build-linux:
+    uses: ./.github/workflows/build_python_linux.yaml
+    with:
+      publish: ${{ inputs.publish }}
+    secrets: inherit
+
+  build-macos:
+    uses: ./.github/workflows/build_python_macos.yaml
+    with:
+      publish: ${{ inputs.publish }}
+    secrets: inherit
+
+  build-windows:
+    uses: ./.github/workflows/build_python_windows.yaml
+    with:
+      publish: ${{ inputs.publish }}
+    secrets: inherit
