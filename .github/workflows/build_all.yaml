@@ -1,4 +1,4 @@
-name: Build All Platforms
+name: Build - All
 
 on:
   release:
@@ -9,6 +9,11 @@ on:
         type: boolean
         required: false
         description: 'Publish packages'
+
+permissions:
+  id-token: write
+  contents: read
+  packages: read
 
 jobs:
   # Python builds

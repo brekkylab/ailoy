@@ -17,7 +17,6 @@ on:
 jobs:
   build:
     runs-on: macos-15
-
     outputs:
       wheel_filename: ${{ steps.save_wheel_name.outputs.wheel_filename }}
 

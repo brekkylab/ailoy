@@ -21,7 +21,8 @@ env:
 jobs:
   build:
     runs-on: windows-2022
-
+    permissions:
+      packages: read
     outputs:
       package_name: ${{ steps.get-package-name.outputs.package_name }}
 
@@ -168,6 +169,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v6
         with:
+          node-version: 24
           registry-url: 'https://registry.npmjs.org'
 
       - name: Download wheel artifact
@@ -183,4 +185,4 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 30
           command: |
-            npm publish --access=public dist/*
+            npm publish --access=public ${{ github.workspace }}/dist/${{ needs.build.outputs.package_name }}

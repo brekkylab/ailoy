@@ -7,7 +7,7 @@
     "homepage": "https://brekkylab.github.io/ailoy",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/brekkylab/ailoy"
+        "url": "https://github.com/brekkylab/ailoy"
     },
     "type": "commonjs",
     "main": "dist/index.js",

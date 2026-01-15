@@ -14,6 +14,10 @@ on:
         required: false
         description: 'Publish package to PyPI'
 
+permissions:
+  id-token: write
+  packages: read
+
 jobs:
   # Build platform-specific wheels in parallel
   build-linux:
