@@ -48,11 +48,6 @@ use crate::value::Value;
 /// assert_eq!(desc.name, "temperature");
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct ToolDesc {
     /// The unique name of the tool or function.
     pub name: String,
@@ -169,92 +164,6 @@ impl ToolDescBuilder {
     }
 }
 
-#[cfg(feature = "python")]
-pub(crate) mod py {
-    use pyo3::{Py, PyResult, Python, prelude::*, pymethods, types::PyDict};
-    use pyo3_stub_gen::derive::*;
-
-    use super::*;
-    use crate::ffi::py::base::{python_to_value, value_to_python};
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl ToolDesc {
-        #[new]
-        #[pyo3(signature = (name, description, parameters, *, returns=None))]
-        fn __new__(
-            py: Python<'_>,
-            name: String,
-            description: Option<String>,
-            parameters: Py<PyDict>,
-            returns: Option<Py<PyDict>>,
-        ) -> PyResult<Self> {
-            let parameters = python_to_value(parameters.bind(py))?;
-            let returns = if let Some(returns) = returns {
-                Some(python_to_value(returns.bind(py))?)
-            } else {
-                None
-            };
-            anyhow::Ok(Self::new(
-                name,
-                description,
-                parameters.into(),
-                returns.map(|returns| returns.into()),
-            ))
-            .map_err(Into::into)
-        }
-
-        pub fn __repr__(&self) -> String {
-            let returns_display = self
-                .returns
-                .clone()
-                .and_then(|v| serde_json::to_string(&v).ok());
-
-            if let Some(returns_display) = returns_display {
-                format!(
-                    "ToolDesc(name=\"{}\", description={}, parameters={}, returns={})",
-                    self.name,
-                    self.description.clone().unwrap_or_default(),
-                    serde_json::to_string(&self.parameters).expect("Invalid parameters"),
-                    returns_display,
-                )
-            } else {
-                format!(
-                    "ToolDesc(name=\"{}\", description={}, parameters={})",
-                    self.name,
-                    self.description.clone().unwrap_or_default(),
-                    serde_json::to_string(&self.parameters).expect("Invalid parameters"),
-                )
-            }
-        }
-
-        #[getter]
-        fn name(&self) -> String {
-            self.name.clone()
-        }
-
-        #[getter]
-        fn description(&self) -> Option<String> {
-            self.description.clone()
-        }
-
-        #[getter]
-        fn parameters<'py>(&self, py: Python<'py>) -> Bound<'py, PyDict> {
-            value_to_python(py, &self.parameters)
-                .unwrap()
-                .cast_into()
-                .unwrap()
-        }
-
-        #[getter]
-        fn returns<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyDict>> {
-            self.returns
-                .as_ref()
-                .and_then(|returns| value_to_python(py, returns).ok()?.cast_into().ok())
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -282,7 +191,7 @@ mod test {
             .build();
 
         let serialized = {
-            let expected = r#"{"name":"temperature","description":"Get current temperature","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city name"},"unit":{"type":"string","description":"Default: Celsius","enum":["Celsius","Fahrenheit"]}},"required":["location"]},"returns":{"type":"number"}}"#;
+            let expected = r#"{"name":"temperature","description":"Get current temperature","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city name"},"unit":{"type":"string","description":"Default: Celsius","enum":["Celsius","Fahrenheit"]}},"required":["location"]}}"#;
             let actual = serde_json::to_string(&desc).unwrap();
             assert_eq!(expected, actual);
             actual

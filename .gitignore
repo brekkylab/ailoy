@@ -556,3 +556,6 @@ test_*
 
 # pyenv
 .python-version
+
+# omc
+.omc

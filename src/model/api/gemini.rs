@@ -1,7 +1,7 @@
 use anyhow::{Context, bail};
 use indexmap::IndexMap;
 
-use super::{super::language_model::ThinkEffort, RequestConfig, stream::ServerEvent};
+use super::{super::language_model::ThinkEffort, RequestConfig, ServerEvent};
 use crate::{
     to_value,
     value::{
@@ -304,7 +304,7 @@ impl Unmarshal<MessageDelta> for GeminiUnmarshal {
     }
 }
 
-pub(super) fn make_request(
+pub(crate) fn make_request(
     url: &str,
     api_key: &str,
     msgs: Vec<Message>,
@@ -334,15 +334,58 @@ pub(super) fn make_request(
     };
     let url = format!("{}/{}:{}", url, model, generate_method);
 
+    let accept = if config.stream {
+        "text/event-stream"
+    } else {
+        "application/json"
+    };
     reqwest::Client::new()
         .request(reqwest::Method::POST, url)
         .header("x-goog-api-key", api_key)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .header(reqwest::header::ACCEPT, accept)
         .body(body.to_string())
 }
 
-pub(super) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
+pub(crate) fn handle_response(
+    json: serde_json::Value,
+) -> anyhow::Result<crate::value::MessageOutput> {
+    use crate::value::{Delta, MessageOutput};
+
+    let candidate = json
+        .pointer("/candidates/0")
+        .ok_or_else(|| anyhow::anyhow!("Missing candidates[0] in response"))?;
+
+    let finish_reason_str = candidate
+        .pointer("/finishReason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("STOP");
+
+    let val: Value = serde_json::from_value(candidate.clone())?;
+    let mut u = GeminiUnmarshal;
+    let delta = u.unmarshal(val)?;
+
+    // Determine finish reason (Gemini always returns STOP even for tool calls)
+    let finish_reason = if !delta.tool_calls.is_empty() {
+        FinishReason::ToolCall {}
+    } else {
+        match finish_reason_str {
+            "STOP" => FinishReason::Stop {},
+            "MAX_TOKENS" => FinishReason::Length {},
+            reason => FinishReason::Refusal {
+                reason: reason.to_owned(),
+            },
+        }
+    };
+
+    let message = delta.finish()?;
+    Ok(MessageOutput {
+        message,
+        finish_reason,
+    })
+}
+
+pub(crate) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
     let Ok(j) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
         return MessageDeltaOutput::default();
     };
@@ -660,125 +703,24 @@ mod dialect_tests {
 
 #[cfg(test)]
 mod api_tests {
-    use std::sync::LazyLock;
-
     use ailoy_macros::multi_platform_test;
-    use futures::StreamExt;
 
-    use super::{
-        super::{
-            super::language_model::{LangModelInferConfig, LangModelInference},
-            APISpecification,
-            stream::StreamAPILangModel,
+    use super::super::{
+        super::language_model::LangModelInference,
+        test_helpers::{
+            assert_simple_chat, assert_simple_chat_streaming, assert_tool_call,
+            assert_tool_call_streaming, assert_tool_response, assert_tool_response_streaming,
+            simple_chat_msgs_with_system, tool_call_msgs_with_system,
         },
-        *,
     };
-    use crate::{Delta, ToolDescBuilder, debug};
+    use crate::{
+        model::LangModel,
+        to_value,
+        value::{Message, Part, Role},
+    };
 
-    static GEMINI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
-        option_env!("GEMINI_API_KEY")
-            .expect("Environment variable 'GEMINI_API_KEY' is required for the tests.")
-    });
-
-    #[multi_platform_test]
-    async fn infer_simple_chat() {
-        let mut model = StreamAPILangModel::new(
-            APISpecification::Gemini,
-            "gemini-2.5-flash-lite",
-            *GEMINI_API_KEY,
-        );
-
-        let msgs = vec![
-            Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
-            Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
-        ];
-        let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer_delta(
-            msgs,
-            Vec::new(),
-            Vec::new(),
-            LangModelInferConfig::default(),
-        );
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
-            message.contents.len() > 0
-        }));
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
-    }
-
-    #[multi_platform_test]
-    async fn infer_tool_call() {
-        let mut model = StreamAPILangModel::new(
-            APISpecification::Gemini,
-            "gemini-2.5-flash",
-            *GEMINI_API_KEY,
-        );
-        let tools = vec![
-            ToolDescBuilder::new("temperature")
-                .description("Get current temperature")
-                .parameters(to_value!({
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "The city name"},
-                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
-                    }
-                })).build(),
-        ];
-        let msgs = vec![
-            Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
-            Message::new(Role::User).with_contents([Part::text(
-                "How much hot currently in Dubai? Anwer in Celsius",
-            )]),
-        ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
-        let mut assistant_msg = MessageDelta::default();
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            if let Some(tool_calls) = message.tool_calls {
-                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
-                tool_calls
-                    .first()
-                    .and_then(|f| f.as_function())
-                    .map(|f| f.1 == "temperature")
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        }));
-    }
-
-    #[multi_platform_test]
-    async fn infer_tool_response() {
-        let mut model = StreamAPILangModel::new(
-            APISpecification::Gemini,
-            "gemini-2.5-flash",
-            *GEMINI_API_KEY,
-        );
-        let tools = vec![
-            ToolDescBuilder::new("temperature")
-                .description("Get current temperature")
-                .parameters(to_value!({
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "The city name"},
-                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
-                    }
-                })).build(),
-        ];
-        let msgs = vec![
+    fn tool_response_msgs() -> Vec<Message> {
+        vec![
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
             Message::new(Role::Assistant).with_tool_calls([Part::function(
@@ -799,19 +741,40 @@ mod api_tests {
                 .with_contents([Part::Value {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
-        ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
-        let mut assistant_msg = MessageDelta::default();
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
-            message.contents.len() > 0
-        }));
+        ]
+    }
+
+    fn make_model() -> impl LangModelInference {
+        LangModel::gemini("gemini-2.5-flash-lite").build().unwrap()
+    }
+
+    #[multi_platform_test]
+    async fn infer_simple_chat() {
+        assert_simple_chat(&mut make_model(), simple_chat_msgs_with_system()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_simple_chat_streaming() {
+        assert_simple_chat_streaming(&mut make_model(), simple_chat_msgs_with_system()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_call() {
+        assert_tool_call(&mut make_model(), tool_call_msgs_with_system()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_call_streaming() {
+        assert_tool_call_streaming(&mut make_model(), tool_call_msgs_with_system()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_response() {
+        assert_tool_response(&mut make_model(), tool_response_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_response_streaming() {
+        assert_tool_response_streaming(&mut make_model(), tool_response_msgs()).await;
     }
 }

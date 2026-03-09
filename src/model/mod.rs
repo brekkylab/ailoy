@@ -1,13 +1,7 @@
 pub(crate) mod api;
-pub(crate) mod custom;
-pub(crate) mod embedding_model;
 pub(crate) mod language_model;
-pub(crate) mod local;
-pub(crate) mod polyfill;
 
-pub use embedding_model::{EmbeddingModel, EmbeddingModelInference, LocalEmbeddingModelConfig};
+pub use api::APISpecification;
 pub use language_model::{
-    Grammar, KVCacheConfig, LangModel, LangModelInferConfig, LangModelInference,
-    LocalLangModelConfig, ThinkEffort,
+    LangModel, LangModelBuilder, LangModelInferConfig, LangModelInference, ThinkEffort,
 };
-pub use polyfill::{DocumentPolyfill, DocumentPolyfillKind};

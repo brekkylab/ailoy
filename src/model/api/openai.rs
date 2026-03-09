@@ -1,6 +1,6 @@
 use anyhow::{Context, bail};
 
-use super::{super::language_model::ThinkEffort, RequestConfig, stream::ServerEvent};
+use super::{super::language_model::ThinkEffort, RequestConfig, ServerEvent};
 use crate::{
     to_value,
     value::{
@@ -45,7 +45,7 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
                     }
                     PartImage::Url { url } => url.clone(),
                 };
-                to_value!({"type": "input_image", "image_url": url})
+                to_value!({"type": "input_image", "image_url": {"url": url}})
             }
         }
     };
@@ -476,7 +476,7 @@ impl Unmarshal<MessageDelta> for OpenAIUnmarshal {
     }
 }
 
-pub(super) fn make_request(
+pub(crate) fn make_request(
     url: &str,
     api_key: &str,
     msgs: Vec<Message>,
@@ -496,12 +496,114 @@ pub(super) fn make_request(
         );
     }
 
+    let accept = if config.stream {
+        "text/event-stream"
+    } else {
+        "application/json"
+    };
     reqwest::Client::new()
         .request(reqwest::Method::POST, url)
         .bearer_auth(api_key)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .header(reqwest::header::ACCEPT, accept)
         .body(body.to_string())
+}
+
+pub(crate) fn handle_response(
+    json: serde_json::Value,
+) -> anyhow::Result<crate::value::MessageOutput> {
+    use crate::value::{Delta, MessageOutput};
+
+    // OpenAI Responses API non-streaming response:
+    // { "status": "completed"|"incomplete", "output": [...] }
+    let status = json
+        .pointer("/status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("completed");
+
+    let finish_reason = match status {
+        "completed" => {
+            // Check if any output item is a function_call to determine ToolCall vs Stop
+            let has_tool_call = json
+                .pointer("/output")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter().any(|item| {
+                        item.pointer("/type").and_then(|t| t.as_str()) == Some("function_call")
+                    })
+                })
+                .unwrap_or(false);
+            if has_tool_call {
+                FinishReason::ToolCall {}
+            } else {
+                FinishReason::Stop {}
+            }
+        }
+        "incomplete" => {
+            let reason = json
+                .pointer("/incomplete_details/reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            match reason {
+                "max_output_tokens" => FinishReason::Length {},
+                "content_filter" => FinishReason::Refusal {
+                    reason: "Model output violated OpenAI's safety policy.".to_owned(),
+                },
+                reason => FinishReason::Refusal {
+                    reason: format!("reason: {}", reason),
+                },
+            }
+        }
+        other => FinishReason::Refusal {
+            reason: format!("unexpected status: {}", other),
+        },
+    };
+
+    // Accumulate all output items into a single MessageDelta
+    let mut acc = crate::value::MessageDelta::default();
+    let mut u = OpenAIUnmarshal;
+    if let Some(output) = json.pointer("/output").and_then(|v| v.as_array()) {
+        for item in output {
+            let val: Value = serde_json::from_value(item.clone())?;
+            // For message items, parse the message content
+            if item.pointer("/type").and_then(|t| t.as_str()) == Some("message") {
+                // Parse role
+                if let Some(role_str) = item.pointer("/role").and_then(|v| v.as_str()) {
+                    let role = match role_str {
+                        "assistant" => Role::Assistant,
+                        "user" => Role::User,
+                        other => anyhow::bail!("Unknown role: {}", other),
+                    };
+                    acc.role = Some(role);
+                }
+                // Parse content parts
+                if let Some(content_arr) = item.pointer("/content").and_then(|v| v.as_array()) {
+                    for part in content_arr {
+                        if part.pointer("/type").and_then(|t| t.as_str()) == Some("output_text") {
+                            if let Some(text) = part.pointer("/text").and_then(|t| t.as_str()) {
+                                acc.contents.push(crate::value::PartDelta::Text {
+                                    text: text.to_owned(),
+                                });
+                            }
+                        }
+                    }
+                }
+            } else {
+                // function_call and other items
+                let delta = u.unmarshal(val)?;
+                acc = acc.accumulate(delta)?;
+            }
+        }
+    }
+
+    if acc.role.is_none() {
+        acc.role = Some(Role::Assistant);
+    }
+    let message = acc.finish()?;
+    Ok(MessageOutput {
+        message,
+        finish_reason,
+    })
 }
 
 pub(crate) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
@@ -664,7 +766,7 @@ mod dialect_tests {
         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"[{"role":"user","content":[{"type":"input_text","text":"What you can see in this image?"},{"type":"input_image","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}]"#
+            r#"[{"role":"user","content":[{"type":"input_text","text":"What you can see in this image?"},{"type":"input_image","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAFElEQVR4nGPgEpFj0DCyYXALiAIAB4wBw8/GERsAAAAASUVORK5CYII="}}]}]"#
         );
     }
 
@@ -938,111 +1040,23 @@ mod dialect_tests {
 
 #[cfg(test)]
 mod api_tests {
-    use std::sync::LazyLock;
-
     use ailoy_macros::multi_platform_test;
-    use futures::StreamExt as _;
 
-    use super::{
-        super::{
-            super::language_model::{LangModelInferConfig, LangModelInference},
-            APISpecification,
-            stream::StreamAPILangModel,
+    use super::super::{
+        super::language_model::LangModelInference,
+        test_helpers::{
+            assert_simple_chat, assert_simple_chat_streaming, assert_tool_call,
+            assert_tool_call_streaming, assert_tool_response, assert_tool_response_streaming,
+            simple_chat_msgs, tool_call_msgs,
         },
-        *,
     };
-    use crate::{Delta, ToolDescBuilder, debug};
+    use crate::{
+        LangModel, to_value,
+        value::{Message, Part, Role},
+    };
 
-    static OPENAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
-        option_env!("OPENAI_API_KEY")
-            .expect("Environment variable 'OPENAI_API_KEY' is required for the tests.")
-    });
-
-    #[multi_platform_test]
-    async fn infer_simple_chat() {
-        let mut model =
-            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-5.2", *OPENAI_API_KEY);
-
-        let msgs =
-            vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
-        let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer_delta(
-            msgs,
-            Vec::new(),
-            Vec::new(),
-            LangModelInferConfig::default(),
-        );
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
-            message.contents.len() > 0
-        }));
-    }
-
-    #[multi_platform_test]
-    async fn infer_tool_call() {
-        let mut model =
-            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-5.2", *OPENAI_API_KEY);
-        let tools = vec![
-            ToolDescBuilder::new("temperature")
-                .description("Get current temperature")
-                .parameters(to_value!({
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "The city name"},
-                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
-                    }
-                })).build(),
-        ];
-        let msgs = vec![
-            Message::new(Role::User)
-                .with_contents([Part::text("How much hot currently in Dubai?")]),
-        ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
-        let mut assistant_msg = MessageDelta::default();
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            if let Some(tool_calls) = message.tool_calls {
-                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
-                tool_calls
-                    .first()
-                    .and_then(|f| f.as_function())
-                    .map(|f| f.1 == "temperature")
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        }));
-    }
-
-    #[multi_platform_test]
-    async fn infer_tool_response() {
-        let mut model =
-            StreamAPILangModel::new(APISpecification::OpenAI, "gpt-5.2", *OPENAI_API_KEY);
-        let tools = vec![
-            ToolDescBuilder::new("temperature")
-                .description("Get current temperature")
-                .parameters(to_value!({
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "The city name"},
-                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
-                    }
-                })).build(),
-        ];
-        let msgs = vec![
+    fn tool_response_msgs() -> Vec<Message> {
+        vec![
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
             Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
@@ -1065,19 +1079,40 @@ mod api_tests {
                 .with_contents([Part::Value {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
-        ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
-        let mut assistant_msg = MessageDelta::default();
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
-            message.contents.len() > 0
-        }));
+        ]
+    }
+
+    fn make_model() -> impl LangModelInference {
+        LangModel::openai("gpt-5-nano").build().unwrap()
+    }
+
+    #[multi_platform_test]
+    async fn infer_simple_chat() {
+        assert_simple_chat(&mut make_model(), simple_chat_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_simple_chat_streaming() {
+        assert_simple_chat_streaming(&mut make_model(), simple_chat_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_call() {
+        assert_tool_call(&mut make_model(), tool_call_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_call_streaming() {
+        assert_tool_call_streaming(&mut make_model(), tool_call_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_response() {
+        assert_tool_response(&mut make_model(), tool_response_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_response_streaming() {
+        assert_tool_response_streaming(&mut make_model(), tool_response_msgs()).await;
     }
 }

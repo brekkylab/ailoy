@@ -9,14 +9,6 @@ use crate::value::{Value, bytes::Bytes, delta::Delta};
 
 /// Represents a function call contained within a message part.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(
-    feature = "wasm",
-    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
-)]
 pub struct PartFunction {
     /// The name of the function
     pub name: String,
@@ -40,15 +32,11 @@ pub struct PartFunction {
 )]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
-#[cfg_attr(feature = "python", derive(ailoy_macros::PyStringEnum))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(string_enum = "lowercase"))]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartImageColorspace {
     /// Single-channel grayscale image
     Grayscale,
 
-    /// Three-channel color image without alpha    
+    /// Three-channel color image without alpha
     RGB,
 
     /// Four-channel color image with alpha
@@ -107,14 +95,6 @@ impl TryFrom<String> for PartImageColorspace {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-#[cfg_attr(
-    feature = "python",
-    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
-)]
-#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(discriminant_case = "lowercase"))]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PartImage {
     Binary {
         height: u32,
@@ -151,14 +131,16 @@ impl PartImage {
                 width,
                 height,
                 colorspace,
-                ..
+                data: Bytes(buf),
             } => {
-                let img: image::DynamicImage = self.try_into()?;
-                let pixels = match colorspace {
-                    PartImageColorspace::Grayscale => img.to_luma8().into_raw(),
-                    PartImageColorspace::RGB => img.to_rgb8().into_raw(),
-                    PartImageColorspace::RGBA => img.to_rgba8().into_raw(),
-                };
+                // If already a formatted image (e.g. PNG), return it directly
+                if buf.starts_with(b"\x89PNG\r\n\x1a\n")
+                    || buf.starts_with(b"\xff\xd8\xff")
+                    || buf.starts_with(b"RIFF")
+                {
+                    return Ok(base64::engine::general_purpose::STANDARD.encode(buf.as_ref()));
+                }
+                let pixels: Vec<u8> = buf.to_vec();
 
                 // dump as PNG
                 let mut cursor = std::io::Cursor::new(Vec::new());
@@ -170,8 +152,8 @@ impl PartImage {
                     PartImageColorspace::RGBA => png::ColorType::Rgba,
                 });
                 encoder.set_depth(png::BitDepth::Eight);
-                encoder.set_compression(png::Compression::Balanced); // zlib level 6
-                encoder.set_filter(png::Filter::Adaptive);
+                encoder.set_compression(png::Compression::Balanced);
+                encoder.set_filter(png::Filter::NoFilter);
 
                 {
                     let mut writer = encoder.write_header()?;
@@ -193,9 +175,9 @@ impl PartImage {
 /// Represents a semantically meaningful content unit exchanged between the model and the user.
 ///
 /// Conceptually, each `Part` encapsulates a piece of **data** that contributes
-/// to a chat message — such as text, a function invocation, or an image.  
+/// to a chat message — such as text, a function invocation, or an image.
 ///
-/// For example, a single message consisting of a sequence like  
+/// For example, a single message consisting of a sequence like
 /// `(text..., image, text...)` is represented as a `Message` containing
 /// an array of three `Part` elements.
 ///
@@ -212,17 +194,6 @@ impl PartImage {
 ///
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-#[cfg_attr(
-    feature = "python",
-    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
-)]
-#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(discriminant_case = "lowercase"))]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(
-    feature = "wasm",
-    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
-)]
 pub enum Part {
     /// Plain utf-8 encoded text.
     Text { text: String },
@@ -285,10 +256,6 @@ impl Part {
             .ok()
             .context("Colorspace parsing failed")?;
         let data = data.into_iter().collect::<Vec<_>>();
-        let nbytes = data.len() as u32;
-        if nbytes != (height * width * 8 * colorspace.channel()) {
-            bail!("Invalid data length");
-        }
         Ok(Self::Image {
             image: PartImage::Binary {
                 height: height as u32,
@@ -462,20 +429,6 @@ impl fmt::Display for Part {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "python",
-    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
-)]
-#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
-#[cfg_attr(
-    feature = "nodejs",
-    napi_derive::napi(discriminant_case = "snake_case")
-)]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(
-    feature = "wasm",
-    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
-)]
 pub enum PartDeltaFunction {
     Verbatim { text: String },
     WithStringArgs { name: String, arguments: String },
@@ -503,20 +456,6 @@ pub enum PartDeltaFunction {
 /// (e.g. mismatched function IDs) are combined or invalid JSON arguments are given.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "python",
-    pyo3_stub_gen_derive::gen_stub_pyclass_complex_enum
-)]
-#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", eq))]
-#[cfg_attr(
-    feature = "nodejs",
-    napi_derive::napi(discriminant_case = "snake_case")
-)]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(
-    feature = "wasm",
-    tsify(into_wasm_abi, from_wasm_abi, hashmap_as_object)
-)]
 pub enum PartDelta {
     /// Incremental text fragment.
     Text { text: String },
@@ -761,191 +700,5 @@ impl fmt::Display for PartDelta {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
         write!(f, "PartDelta {}", s)
-    }
-}
-
-#[cfg(feature = "python")]
-mod py {
-    use pyo3::{
-        Bound, IntoPyObject, PyAny, PyResult, Python, exceptions::PyValueError, pymethods,
-        types::PyType,
-    };
-    use pyo3_stub_gen::derive::*;
-
-    use super::*;
-    use crate::{ffi::py::base::PyRepr, utils::Ellipsis};
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl PartFunction {
-        #[new]
-        pub fn __new__(name: String, arguments: crate::value::Value) -> Self {
-            Self { name, arguments }
-        }
-
-        pub fn __repr__(&self) -> String {
-            format!(
-                "PartFunction(name={}, arguments={})",
-                self.name.__repr__(),
-                serde_json::to_string(&self.arguments).unwrap_or("{...}".to_owned())
-            )
-        }
-
-        #[getter]
-        fn name(&self) -> String {
-            self.name.clone()
-        }
-
-        #[gen_stub(override_return_type(type_repr = "dict[str, typing.Any]"))]
-        #[getter]
-        fn arguments<'a>(&'a self, py: Python<'a>) -> Bound<'a, PyAny> {
-            self.arguments.clone().into_pyobject(py).unwrap()
-        }
-    }
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl Part {
-        pub fn __repr__(&self) -> String {
-            let s = match &self {
-                Part::Text { text } => format!("Text(text=\"{}\")", text.replace('\n', "\\n")),
-                Part::Function { id, function } => {
-                    format!(
-                        "Function(id={}, function={})",
-                        id.__repr__(),
-                        function.__repr__()
-                    )
-                }
-                Part::Value { value } => format!(
-                    "Value(value={})",
-                    serde_json::to_string(value).unwrap_or("...".to_owned())
-                ),
-                Part::Image { image } => {
-                    format!(
-                        "Image(image=PartImage({}))",
-                        serde_json::to_string(image)
-                            .unwrap_or("...".to_owned())
-                            .truncate_ellipsis_with(100, "...]}")
-                    )
-                }
-            };
-            format!("Part.{}", s)
-        }
-
-        #[getter]
-        fn part_type(&self) -> &'static str {
-            match &self {
-                Part::Text { .. } => "text",
-                Part::Function { .. } => "function",
-                Part::Value { .. } => "value",
-                Part::Image { .. } => "image",
-            }
-        }
-
-        #[classmethod]
-        #[pyo3(name = "image_from_bytes")]
-        pub fn image_from_bytes_py<'a>(
-            _cls: &Bound<'a, PyType>,
-            #[gen_stub(override_type(type_repr = "bytes"))] data: &[u8],
-        ) -> PyResult<Part> {
-            Part::image_binary_from_bytes(data).map_err(|e| PyValueError::new_err(e.to_string()))
-        }
-
-        #[classmethod]
-        #[pyo3(name = "image_from_base64")]
-        pub fn image_from_base64_py<'a>(_cls: &Bound<'a, PyType>, data: String) -> PyResult<Part> {
-            Part::image_binary_from_base64(data).map_err(|e| PyValueError::new_err(e.to_string()))
-        }
-
-        #[classmethod]
-        #[pyo3(name = "image_from_url")]
-        pub fn image_from_url_py<'a>(_cls: &Bound<'a, PyType>, url: String) -> PyResult<Part> {
-            Part::image_url(url).map_err(|e| PyValueError::new_err(e.to_string()))
-        }
-    }
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl PartDelta {
-        pub fn __repr__(&self) -> String {
-            let s = match &self {
-                PartDelta::Text { text } => format!("Text(\"{}\")", text.replace('\n', "\\n")),
-                PartDelta::Function { id, function } => {
-                    format!(
-                        "Function(id={}, function=PartDeltaFunction({}))",
-                        id.__repr__(),
-                        serde_json::to_string(function).unwrap_or("...".to_owned())
-                    )
-                }
-                PartDelta::Value { value } => format!(
-                    "Value(value={})",
-                    serde_json::to_string(value).unwrap_or("...".to_owned())
-                ),
-                PartDelta::Null {} => "Null()".to_owned(),
-            };
-            format!("PartDelta.{}", s)
-        }
-
-        #[getter]
-        fn part_type(&self) -> &'static str {
-            match &self {
-                PartDelta::Text { .. } => "text",
-                PartDelta::Function { .. } => "function",
-                PartDelta::Value { .. } => "value",
-                PartDelta::Null {} => "null",
-            }
-        }
-    }
-}
-
-#[cfg(feature = "nodejs")]
-mod node {
-    use napi::bindgen_prelude::*;
-    use napi_derive::napi;
-
-    use super::*;
-
-    #[allow(unused)]
-    #[napi]
-    pub fn image_from_bytes(data: Uint8Array) -> napi::Result<Part> {
-        Part::image_binary_from_bytes(data.to_vec().as_slice())
-            .map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
-    }
-
-    #[allow(unused)]
-    #[napi]
-    pub fn image_from_base64(data: String) -> napi::Result<Part> {
-        Part::image_binary_from_base64(data)
-            .map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
-    }
-
-    #[allow(unused)]
-    #[napi]
-    pub fn image_from_url(url: String) -> napi::Result<Part> {
-        Part::image_url(url).map_err(|e| napi::Error::new(Status::InvalidArg, e.to_string()))
-    }
-}
-
-#[cfg(feature = "wasm")]
-mod wasm {
-    use js_sys::Uint8Array;
-    use wasm_bindgen::prelude::*;
-
-    use super::*;
-
-    #[wasm_bindgen(js_name = "imageFromBytes")]
-    pub fn image_from_bytes(data: Uint8Array) -> Result<Part, js_sys::Error> {
-        Part::image_binary_from_bytes(data.to_vec().as_slice())
-            .map_err(|e| js_sys::Error::new(&e.to_string()))
-    }
-
-    #[wasm_bindgen(js_name = "imageFromBase64")]
-    pub fn image_from_base64(data: String) -> Result<Part, js_sys::Error> {
-        Part::image_binary_from_base64(data).map_err(|e| js_sys::Error::new(&e.to_string()))
-    }
-
-    #[wasm_bindgen(js_name = "imageFromUrl")]
-    pub fn image_from_url(url: String) -> Result<Part, js_sys::Error> {
-        Part::image_url(url).map_err(|e| js_sys::Error::new(&e.to_string()))
     }
 }

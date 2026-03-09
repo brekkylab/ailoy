@@ -1,6 +1,6 @@
 use anyhow::{Context, bail};
 
-use super::{super::language_model::ThinkEffort, RequestConfig, stream::ServerEvent};
+use super::{super::language_model::ThinkEffort, RequestConfig, ServerEvent};
 use crate::{
     to_value,
     value::{
@@ -158,7 +158,8 @@ impl Marshal<RequestConfig> for AnthropicMarshal {
         } else if model.contains("haiku") {
             AnthropicModelType::Haiku
         } else {
-            panic!("Unsupported model.");
+            // Unknown model: use conservative defaults (treat as Haiku)
+            AnthropicModelType::Haiku
         };
 
         let is_reasoning_model = match model_type {
@@ -424,7 +425,7 @@ impl Unmarshal<MessageDelta> for AnthropicUnmarshal {
     }
 }
 
-pub(super) fn make_request(
+pub(crate) fn make_request(
     url: &str,
     api_key: &str,
     msgs: Vec<Message>,
@@ -444,18 +445,56 @@ pub(super) fn make_request(
         );
     }
 
+    let accept = if config.stream {
+        "text/event-stream"
+    } else {
+        "application/json"
+    };
     let builder = reqwest::Client::new()
         .request(reqwest::Method::POST, url)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .header(reqwest::header::ACCEPT, accept)
         .body(body.to_string());
 
     #[cfg(target_arch = "wasm32")]
     let builder = builder.header("anthropic-dangerous-direct-browser-access", "true");
 
     builder
+}
+
+pub(crate) fn handle_response(
+    json: serde_json::Value,
+) -> anyhow::Result<crate::value::MessageOutput> {
+    use crate::value::{Delta, MessageOutput};
+
+    let finish_reason = json
+        .pointer("/stop_reason")
+        .and_then(|v| v.as_str())
+        .map(|reason| match reason {
+            "end_turn" => FinishReason::Stop {},
+            "pause_turn" => FinishReason::Stop {},
+            "max_tokens" => FinishReason::Length {},
+            "tool_use" => FinishReason::ToolCall {},
+            "refusal" => FinishReason::Refusal {
+                reason: "Model output violated Anthropic's safety policy.".to_owned(),
+            },
+            reason => FinishReason::Refusal {
+                reason: format!("reason: {}", reason),
+            },
+        })
+        .ok_or_else(|| anyhow::anyhow!("Missing stop_reason in response"))?;
+
+    let val: Value = serde_json::from_value(json.clone())?;
+    let mut u = AnthropicUnmarshal;
+    let delta = u.unmarshal(val)?;
+    let message = delta.finish()?;
+
+    Ok(MessageOutput {
+        message,
+        finish_reason,
+    })
 }
 
 pub(crate) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
@@ -590,7 +629,7 @@ mod dialect_tests {
         let marshaled = Marshaled::<_, AnthropicMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
+            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAFElEQVR4nGPgEpFj0DCyYXALiAIAB4wBw8/GERsAAAAASUVORK5CYII="}}]}"#
         );
 
         let msg = Message::new(Role::User).with_contents([
@@ -802,122 +841,24 @@ mod dialect_tests {
 
 #[cfg(test)]
 mod api_tests {
-    use std::sync::LazyLock;
-
     use ailoy_macros::multi_platform_test;
-    use futures::StreamExt;
 
-    use super::{
-        super::{
-            super::language_model::{LangModelInferConfig, LangModelInference},
-            APISpecification,
-            stream::StreamAPILangModel,
+    use super::super::{
+        super::language_model::LangModelInference,
+        test_helpers::{
+            assert_simple_chat, assert_simple_chat_streaming, assert_tool_call,
+            assert_tool_call_streaming, assert_tool_response, assert_tool_response_streaming,
+            simple_chat_msgs, tool_call_msgs,
         },
-        *,
     };
-    use crate::{Delta, ToolDescBuilder, debug};
+    use crate::{
+        model::LangModel,
+        to_value,
+        value::{Message, Part, Role},
+    };
 
-    static ANTHROPIC_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
-        option_env!("ANTHROPIC_API_KEY")
-            .expect("Environment variable 'ANTHROPIC_API_KEY' is required for the tests.")
-    });
-
-    #[multi_platform_test]
-    async fn infer_simple_chat() {
-        let mut model = StreamAPILangModel::new(
-            APISpecification::Claude,
-            "claude-3-haiku-20240307",
-            *ANTHROPIC_API_KEY,
-        );
-
-        let msgs =
-            vec![Message::new(Role::User).with_contents([Part::text("Hi what's your name?")])];
-        let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer_delta(
-            msgs,
-            Vec::new(),
-            Vec::new(),
-            LangModelInferConfig::default(),
-        );
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
-            message.contents.len() > 0
-        }));
-    }
-
-    #[multi_platform_test]
-    async fn infer_tool_call() {
-        let mut model = StreamAPILangModel::new(
-            APISpecification::Claude,
-            "claude-3-haiku-20240307",
-            *ANTHROPIC_API_KEY,
-        );
-        let tools = vec![
-            ToolDescBuilder::new("temperature")
-                .description("Get current temperature")
-                .parameters(to_value!({
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "The city name"},
-                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
-                    }
-                })).build(),
-        ];
-
-        let msgs = vec![
-            Message::new(Role::User)
-                .with_contents([Part::text("How much hot currently in Dubai?")]),
-        ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
-        let mut assistant_msg = MessageDelta::default();
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            if let Some(tool_calls) = message.tool_calls {
-                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
-                tool_calls
-                    .first()
-                    .and_then(|f| f.as_function())
-                    .map(|f| f.1 == "temperature")
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        }));
-    }
-
-    #[multi_platform_test]
-    async fn infer_tool_response() {
-        let mut model = StreamAPILangModel::new(
-            APISpecification::Claude,
-            "claude-3-haiku-20240307",
-            *ANTHROPIC_API_KEY,
-        );
-        let tools = vec![
-            ToolDescBuilder::new("temperature")
-                .description("Get current temperature")
-                .parameters(to_value!({
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "The city name"},
-                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
-                    }
-                })).build(),
-        ];
-
-        let msgs = vec![
+    fn tool_response_msgs() -> Vec<Message> {
+        vec![
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
             Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
@@ -940,19 +881,40 @@ mod api_tests {
                 .with_contents([Part::Value {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
-        ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
-        let mut assistant_msg = MessageDelta::default();
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
-            message.contents.len() > 0
-        }));
+        ]
+    }
+
+    fn make_model() -> impl LangModelInference {
+        LangModel::anthropic("claude-3-haiku-20240307").build().unwrap()
+    }
+
+    #[multi_platform_test]
+    async fn infer_simple_chat() {
+        assert_simple_chat(&mut make_model(), simple_chat_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_simple_chat_streaming() {
+        assert_simple_chat_streaming(&mut make_model(), simple_chat_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_call() {
+        assert_tool_call(&mut make_model(), tool_call_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_call_streaming() {
+        assert_tool_call_streaming(&mut make_model(), tool_call_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_response() {
+        assert_tool_response(&mut make_model(), tool_response_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_response_streaming() {
+        assert_tool_response_streaming(&mut make_model(), tool_response_msgs()).await;
     }
 }

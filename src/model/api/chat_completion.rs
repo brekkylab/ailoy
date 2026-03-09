@@ -1,6 +1,6 @@
 use anyhow::{Context, bail};
 
-use super::{super::language_model::ThinkEffort, RequestConfig, stream::ServerEvent};
+use super::{super::language_model::ThinkEffort, RequestConfig, ServerEvent};
 use crate::{
     debug, to_value,
     value::{
@@ -271,7 +271,7 @@ impl Unmarshal<MessageDelta> for ChatCompletionUnmarshal {
     }
 }
 
-pub(super) fn make_request(
+pub(crate) fn make_request(
     url: &str,
     api_key: &str,
     msgs: Vec<Message>,
@@ -299,15 +299,61 @@ pub(super) fn make_request(
         );
     }
 
+    let accept = if config.stream {
+        "text/event-stream"
+    } else {
+        "application/json"
+    };
     reqwest::Client::new()
         .request(reqwest::Method::POST, url)
         .bearer_auth(api_key)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .header(reqwest::header::ACCEPT, accept)
         .body(body.to_string())
 }
 
-pub(super) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
+pub(crate) fn handle_response(
+    json: serde_json::Value,
+) -> anyhow::Result<crate::value::MessageOutput> {
+    use crate::value::{Delta, MessageOutput};
+
+    let choice = json
+        .pointer("/choices/0")
+        .ok_or_else(|| anyhow::anyhow!("Missing choices[0] in response"))?;
+
+    let finish_reason = choice
+        .pointer("/finish_reason")
+        .and_then(|v| v.as_str())
+        .map(|reason| match reason {
+            "stop" => FinishReason::Stop {},
+            "end_turn" => FinishReason::Stop {},
+            "length" => FinishReason::Length {},
+            "tool_calls" => FinishReason::ToolCall {},
+            "content_filter" => FinishReason::Refusal {
+                reason: "Model output violated Provider's safety policy.".to_owned(),
+            },
+            reason => FinishReason::Refusal {
+                reason: format!("reason: {}", reason),
+            },
+        })
+        .ok_or_else(|| anyhow::anyhow!("Missing finish_reason in response"))?;
+
+    let message_val = choice
+        .pointer("/message")
+        .ok_or_else(|| anyhow::anyhow!("Missing choices[0].message in response"))?;
+
+    let val: Value = serde_json::from_value(message_val.clone())?;
+    let mut u = ChatCompletionUnmarshal;
+    let delta = u.unmarshal(val)?;
+    let message = delta.finish()?;
+
+    Ok(MessageOutput {
+        message,
+        finish_reason,
+    })
+}
+
+pub(crate) fn handle_event(evt: ServerEvent) -> MessageDeltaOutput {
     let Ok(j) = serde_json::from_str::<serde_json::Value>(&evt.data) else {
         return MessageDeltaOutput::default();
     };
@@ -440,7 +486,7 @@ mod dialect_tests {
         let marshaled = Marshaled::<_, ChatCompletionMarshal>::new(&msg);
         assert_eq!(
             serde_json::to_string(&marshaled).unwrap(),
-            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII="}}]}"#
+            r#"{"role":"user","content":[{"type":"text","text":"What you can see in this image?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAFElEQVR4nGPgEpFj0DCyYXALiAIAB4wBw8/GERsAAAAASUVORK5CYII="}}]}"#
         );
     }
 
@@ -572,114 +618,25 @@ mod dialect_tests {
 }
 
 #[cfg(test)]
-mod openai_chatcompletion_api_tests {
-    use std::sync::LazyLock;
-
+mod api_tests {
     use ailoy_macros::multi_platform_test;
-    use futures::StreamExt;
 
-    use super::{
-        super::{
-            super::language_model::{LangModelInferConfig, LangModelInference},
-            APISpecification,
-            stream::StreamAPILangModel,
+    use super::super::{
+        super::language_model::LangModelInference,
+        test_helpers::{
+            assert_simple_chat, assert_simple_chat_streaming, assert_tool_call,
+            assert_tool_call_streaming, assert_tool_response, assert_tool_response_streaming,
+            simple_chat_msgs_with_system, tool_call_msgs,
         },
-        *,
     };
-    use crate::{Delta, ToolDescBuilder, debug};
+    use crate::{
+        model::LangModel,
+        to_value,
+        value::{Message, Part, Role},
+    };
 
-    static OPENAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
-        option_env!("OPENAI_API_KEY")
-            .expect("Environment variable 'OPENAI_API_KEY' is required for the tests.")
-    });
-
-    #[multi_platform_test]
-    async fn infer_simple_chat() {
-        let mut model =
-            StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
-
-        let msgs = vec![
-            Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
-            Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
-        ];
-        let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer_delta(
-            msgs,
-            Vec::new(),
-            Vec::new(),
-            LangModelInferConfig::default(),
-        );
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
-            message.contents.len() > 0
-        }));
-    }
-
-    #[multi_platform_test]
-    async fn infer_tool_call() {
-        let mut model =
-            StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
-        let tools = vec![
-            ToolDescBuilder::new("temperature")
-                .description("Get current temperature")
-                .parameters(to_value!({
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "The city name"},
-                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
-                    }
-                })).build(),
-        ];
-        let msgs = vec![
-            Message::new(Role::User)
-                .with_contents([Part::text("How much hot currently in Dubai?")]),
-        ];
-        let mut assistant_msg = MessageDelta::default();
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            if let Some(tool_calls) = message.tool_calls {
-                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
-                tool_calls
-                    .first()
-                    .and_then(|f| f.as_function())
-                    .map(|f| f.1 == "temperature")
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        }));
-    }
-
-    #[multi_platform_test]
-    async fn infer_tool_response() {
-        let mut model =
-            StreamAPILangModel::new(APISpecification::ChatCompletion, "gpt-4o", *OPENAI_API_KEY);
-        let tools = vec![
-            ToolDescBuilder::new("temperature")
-                .description("Get current temperature")
-                .parameters(to_value!({
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "The city name"},
-                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
-                    }
-                })).build(),
-        ];
-        let msgs = vec![
+    fn tool_response_msgs() -> Vec<Message> {
+        vec![
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
             Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
@@ -702,132 +659,64 @@ mod openai_chatcompletion_api_tests {
                 .with_contents([Part::Value {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
-        ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
-        let mut assistant_msg = MessageDelta::default();
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
-            message.contents.len() > 0
-        }));
+        ]
+    }
+
+    fn make_model() -> impl LangModelInference {
+        LangModel::chat_completion("gpt-5-nano").build().unwrap()
+    }
+
+    #[multi_platform_test]
+    async fn infer_simple_chat_streaming() {
+        assert_simple_chat_streaming(&mut make_model(), simple_chat_msgs_with_system()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_simple_chat() {
+        assert_simple_chat(&mut make_model(), simple_chat_msgs_with_system()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_call_streaming() {
+        assert_tool_call_streaming(&mut make_model(), tool_call_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_call() {
+        assert_tool_call(&mut make_model(), tool_call_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_response_streaming() {
+        assert_tool_response_streaming(&mut make_model(), tool_response_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_response() {
+        assert_tool_response(&mut make_model(), tool_response_msgs()).await;
     }
 }
 
 #[cfg(test)]
 mod grok_api_tests {
-    use std::sync::LazyLock;
-
     use ailoy_macros::multi_platform_test;
-    use futures::StreamExt;
 
-    use super::{
-        super::{
-            super::language_model::{LangModelInferConfig, LangModelInference},
-            APISpecification,
-            stream::StreamAPILangModel,
+    use super::super::{
+        super::language_model::LangModelInference,
+        test_helpers::{
+            assert_simple_chat, assert_simple_chat_streaming, assert_tool_call,
+            assert_tool_call_streaming, assert_tool_response, assert_tool_response_streaming,
+            simple_chat_msgs_with_system, tool_call_msgs,
         },
-        *,
     };
-    use crate::{Delta, ToolDescBuilder, debug};
+    use crate::{
+        model::LangModel,
+        to_value,
+        value::{Message, Part, Role},
+    };
 
-    static XAI_API_KEY: LazyLock<&'static str> = LazyLock::new(|| {
-        option_env!("XAI_API_KEY")
-            .expect("Environment variable 'XAI_API_KEY' is required for the tests.")
-    });
-
-    #[multi_platform_test]
-    async fn infer_simple_chat() {
-        let mut model =
-            StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
-
-        let msgs = vec![
-            Message::new(Role::System).with_contents([Part::text("You are a helpful assistant.")]),
-            Message::new(Role::User).with_contents([Part::text("Hi what's your name?")]),
-        ];
-        let mut assistant_msg = MessageDelta::new();
-        let mut strm = model.infer_delta(
-            msgs,
-            Vec::new(),
-            Vec::new(),
-            LangModelInferConfig::default(),
-        );
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
-            message.contents.len() > 0
-        }));
-    }
-
-    #[multi_platform_test]
-    async fn infer_tool_call() {
-        let mut model =
-            StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
-        let tools = vec![
-            ToolDescBuilder::new("temperature")
-                .description("Get current temperature")
-                .parameters(to_value!({
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "The city name"},
-                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
-                    }
-                })).build(),
-        ];
-        let msgs = vec![
-            Message::new(Role::User)
-                .with_contents([Part::text("How much hot currently in Dubai?")]),
-        ];
-        let mut assistant_msg = MessageDelta::default();
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::ToolCall {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            if let Some(tool_calls) = message.tool_calls {
-                debug!("{:?}", tool_calls.first().and_then(|f| f.as_function()));
-                tool_calls
-                    .first()
-                    .and_then(|f| f.as_function())
-                    .map(|f| f.1 == "temperature")
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        }));
-    }
-
-    #[multi_platform_test]
-    async fn infer_tool_response() {
-        let mut model =
-            StreamAPILangModel::new(APISpecification::Grok, "grok-4-0709", *XAI_API_KEY);
-        let tools = vec![
-            ToolDescBuilder::new("temperature")
-                .description("Get current temperature")
-                .parameters(to_value!({
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "The city name"},
-                        "unit": {"type": "string", "description": "The unit of temperature", "enum": ["celsius", "fahrenheit"]}
-                    }
-                })).build(),
-        ];
-        let msgs = vec![
+    fn tool_response_msgs() -> Vec<Message> {
+        vec![
             Message::new(Role::User)
                 .with_contents([Part::text("How much hot currently in Dubai?")]),
             Message::new(Role::Assistant).with_tool_calls([Part::function_with_id(
@@ -850,19 +739,40 @@ mod grok_api_tests {
                 .with_contents([Part::Value {
                     value: to_value!({"temperature": 30, "unit": "celsius"}),
                 }]),
-        ];
-        let mut strm = model.infer_delta(msgs, tools, Vec::new(), LangModelInferConfig::default());
-        let mut assistant_msg = MessageDelta::default();
-        let mut finish_reason = None;
-        while let Some(output_opt) = strm.next().await {
-            let output = output_opt.unwrap();
-            assistant_msg = assistant_msg.accumulate(output.delta).unwrap();
-            finish_reason = output.finish_reason;
-        }
-        assert_eq!(finish_reason, Some(FinishReason::Stop {}));
-        assert!(assistant_msg.finish().is_ok_and(|message| {
-            debug!("{:?}", message.contents.first().and_then(|c| c.as_text()));
-            message.contents.len() > 0
-        }));
+        ]
+    }
+
+    fn make_model() -> impl LangModelInference {
+        LangModel::grok("grok-4-fast").build().unwrap()
+    }
+
+    #[multi_platform_test]
+    async fn infer_simple_chat() {
+        assert_simple_chat(&mut make_model(), simple_chat_msgs_with_system()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_simple_chat_streaming() {
+        assert_simple_chat_streaming(&mut make_model(), simple_chat_msgs_with_system()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_call() {
+        assert_tool_call(&mut make_model(), tool_call_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_call_streaming() {
+        assert_tool_call_streaming(&mut make_model(), tool_call_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_response() {
+        assert_tool_response(&mut make_model(), tool_response_msgs()).await;
+    }
+
+    #[multi_platform_test]
+    async fn infer_tool_response_streaming() {
+        assert_tool_response_streaming(&mut make_model(), tool_response_msgs()).await;
     }
 }

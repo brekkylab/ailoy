@@ -3,7 +3,7 @@ mod python;
 use proc_macro::TokenStream;
 use python::*;
 use quote::quote;
-use syn::{Item, ItemFn, Type, parse_macro_input, parse_quote};
+use syn::{FnArg, Item, ItemFn, Pat, Type, parse_macro_input, parse_quote};
 
 #[proc_macro_attribute]
 pub fn maybe_send_sync(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -149,4 +149,126 @@ pub fn multi_platform_async_trait(_attr: TokenStream, item: TokenStream) -> Toke
 #[proc_macro_derive(PyStringEnum)]
 pub fn derive_py_string_enum(input: TokenStream) -> TokenStream {
     py_string_enum(input)
+}
+
+/// Attribute macro for generating a tool factory function from an async function.
+///
+/// Usage:
+/// ```ignore
+/// #[tool(description = "Get current temperature for a city")]
+/// async fn get_temperature(location: String, unit: String) -> anyhow::Result<ailoy::value::Value> {
+///     Ok(ailoy::to_value!("40"))
+/// }
+/// ```
+///
+/// This keeps the original function and generates a `get_temperature_tool() -> Tool` factory.
+#[proc_macro_attribute]
+pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input_fn = parse_macro_input!(item as ItemFn);
+
+    // Parse description from attr: description = "..."
+    let attr_str = attr.to_string();
+    let description = parse_tool_description(&attr_str);
+
+    let fn_name = &input_fn.sig.ident;
+    let tool_fn_name = quote::format_ident!("{}_tool", fn_name);
+    let fn_name_str = fn_name.to_string();
+
+    // Collect parameter names and types from the function signature
+    let mut param_names: Vec<syn::Ident> = Vec::new();
+    let mut param_types: Vec<Box<Type>> = Vec::new();
+
+    for arg in &input_fn.sig.inputs {
+        if let FnArg::Typed(pat_type) = arg {
+            if let Pat::Ident(pat_ident) = &*pat_type.pat {
+                param_names.push(pat_ident.ident.clone());
+                param_types.push(pat_type.ty.clone());
+            }
+        }
+    }
+
+    let param_name_strs: Vec<String> = param_names.iter().map(|n| n.to_string()).collect();
+
+    // Build the schema property entries for each parameter
+    let schema_entries = param_name_strs.iter().zip(param_types.iter()).map(|(name, ty)| {
+        quote! {
+            #name: serde_json::to_value(schema_gen.subschema_for::<#ty>()).unwrap()
+        }
+    });
+
+    // Build required array
+    let required_entries = param_name_strs.iter().map(|name| {
+        quote! { #name }
+    });
+
+    // Build handler argument extraction
+    let handler_extractions = param_names.iter().zip(param_name_strs.iter()).zip(param_types.iter()).map(|((ident, name), ty)| {
+        quote! {
+            let #ident: #ty = serde_json::from_value(
+                serde_json::to_value(
+                    args.as_object()
+                        .ok_or_else(|| anyhow::anyhow!("Tool args must be a JSON object"))?
+                        .get(#name)
+                        .ok_or_else(|| anyhow::anyhow!("Missing required parameter: {}", #name))?
+                ).map_err(anyhow::Error::from)?
+            )?;
+        }
+    });
+
+    let call_args = param_names.iter().map(|n| quote! { #n });
+
+    let desc_token = match &description {
+        Some(d) => quote! { .description(#d) },
+        None => quote! {},
+    };
+
+    let output = quote! {
+        #input_fn
+
+        pub fn #tool_fn_name() -> ailoy::tool::Tool {
+            ailoy::tool::Tool::builder()
+                .name(#fn_name_str)
+                #desc_token
+                .parameters({
+                    let mut schema_gen = schemars::r#gen::SchemaGenerator::default();
+                    let properties = serde_json::json!({
+                        #(#schema_entries),*
+                    });
+                    serde_json::from_value::<ailoy::value::Value>(serde_json::json!({
+                        "type": "object",
+                        "properties": properties,
+                        "required": [#(#required_entries),*]
+                    })).unwrap()
+                })
+                .handler(|args: ailoy::value::Value| async move {
+                    #(#handler_extractions)*
+                    #fn_name(#(#call_args),*).await
+                })
+                .build()
+                .unwrap()
+        }
+    };
+
+    output.into()
+}
+
+/// Parse the description value from the tool attribute string.
+/// Expected format: `description = "some text"`
+fn parse_tool_description(attr_str: &str) -> Option<String> {
+    let trimmed = attr_str.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Find the pattern: description = "..."
+    if let Some(idx) = trimmed.find("description") {
+        let rest = &trimmed[idx + "description".len()..].trim_start();
+        if let Some(rest) = rest.strip_prefix('=') {
+            let rest = rest.trim_start();
+            // Strip surrounding quotes
+            if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
+                return Some(rest[1..rest.len() - 1].to_string());
+            }
+        }
+    }
+    None
 }

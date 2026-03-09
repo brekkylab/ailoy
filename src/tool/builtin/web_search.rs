@@ -312,22 +312,6 @@ pub fn create_web_search_duckduckgo_tool(config: Value) -> anyhow::Result<Functi
     let config =
         serde_json::from_value::<WebSearchDuckduckgoToolConfig>(config.into()).unwrap_or_default();
 
-    if cfg!(feature = "wasm") {
-        if config.base_url.is_none()
-            || config
-                .base_url
-                .clone()
-                .is_some_and(|val| val == DUCKDUCKGO_BASE_URL)
-        {
-            return Err(anyhow::anyhow!(dedent::dedent!(
-                r#"
-                Builtin tool \"web_search_duckduckgo\" is not available on web browser environment due to the CORS policy.
-                Try to setup proxy server and configure `base_url` to point there.
-            "#
-            )));
-        }
-    }
-
     let desc = ToolDescBuilder::new("web_search_duckduckgo").description("Search webpages using DuckDuckGo and return formatted results.").parameters(to_value!({
         "type": "object",
         "properties": {

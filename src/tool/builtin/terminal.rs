@@ -2,14 +2,6 @@ use super::super::function::FunctionTool;
 use crate::value::Value;
 
 pub fn create_terminal_tool(_config: Value) -> anyhow::Result<FunctionTool> {
-    #[cfg(feature = "wasm")]
-    {
-        return Err(anyhow::anyhow!(
-            "Builtin tool \"terminal\" is not supported on web browser environment."
-        ));
-    }
-
-    #[cfg(not(feature = "wasm"))]
     {
         use std::{
             collections::HashMap,

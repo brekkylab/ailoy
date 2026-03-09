@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{fmt::Debug, future::Future, pin::Pin, sync::Arc};
 
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 
@@ -10,10 +10,7 @@ use super::{
     function::{FunctionTool, ToolFunc},
     mcp::MCPTool,
 };
-use crate::{
-    knowledge::KnowledgeTool,
-    value::{ToolDesc, Value},
-};
+use crate::value::{ToolDesc, Value};
 
 #[maybe_send_sync]
 #[multi_platform_async_trait]
@@ -26,19 +23,149 @@ pub trait ToolBehavior: Debug + Clone {
 pub enum ToolInner {
     Function(FunctionTool),
     MCP(MCPTool),
-    Knowledge(KnowledgeTool),
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core", subclass))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi)]
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Tool {
     inner: ToolInner,
 }
 
+/// Fluent builder for [`Tool`]. Obtain via [`Tool::builder()`].
+pub struct ToolBuilder {
+    name: Option<String>,
+    description: Option<String>,
+    parameters: Option<Value>,
+    returns: Option<Value>,
+    handler: Option<Arc<ToolFunc>>,
+    typed_params: Vec<(String, serde_json::Value)>,
+    optional_params: Vec<(String, serde_json::Value)>,
+}
+
+impl ToolBuilder {
+    fn new() -> Self {
+        Self {
+            name: None,
+            description: None,
+            parameters: None,
+            returns: None,
+            handler: None,
+            typed_params: Vec::new(),
+            optional_params: Vec::new(),
+        }
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn description(mut self, desc: impl Into<String>) -> Self {
+        self.description = Some(desc.into());
+        self
+    }
+
+    pub fn parameters(mut self, params: impl Into<Value>) -> Self {
+        self.parameters = Some(params.into());
+        self
+    }
+
+    pub fn returns(mut self, ret: impl Into<Value>) -> Self {
+        self.returns = Some(ret.into());
+        self
+    }
+
+    /// Add a typed parameter whose JSON Schema is derived automatically via [`schemars::JsonSchema`].
+    pub fn parameter<T: schemars::JsonSchema>(mut self, name: impl Into<String>) -> Self {
+        let mut schema_gen = schemars::r#gen::SchemaGenerator::default();
+        let schema = schema_gen.subschema_for::<T>();
+        let schema_json = serde_json::to_value(schema).unwrap();
+        self.typed_params.push((name.into(), schema_json));
+        self
+    }
+
+    /// Add a typed optional parameter (not included in "required" array).
+    pub fn optional_parameter<T: schemars::JsonSchema>(mut self, name: impl Into<String>) -> Self {
+        let mut schema_gen = schemars::r#gen::SchemaGenerator::default();
+        let schema = schema_gen.subschema_for::<T>();
+        let schema_json = serde_json::to_value(schema).unwrap();
+        self.optional_params.push((name.into(), schema_json));
+        self
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn handler<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(Value) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = anyhow::Result<Value>> + Send + 'static,
+    {
+        self.handler = Some(Arc::new(move |args| {
+            Box::pin(f(args)) as Pin<Box<super::function::ToolFuncResult>>
+        }));
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn handler<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(Value) -> Fut + 'static,
+        Fut: Future<Output = anyhow::Result<Value>> + 'static,
+    {
+        self.handler = Some(Arc::new(move |args| {
+            Box::pin(f(args)) as Pin<Box<super::function::ToolFuncResult>>
+        }));
+        self
+    }
+
+    pub fn build(self) -> anyhow::Result<Tool> {
+        let name = self
+            .name
+            .ok_or_else(|| anyhow::anyhow!("Tool name is required"))?;
+        let handler = self
+            .handler
+            .ok_or_else(|| anyhow::anyhow!("Tool handler is required"))?;
+        let parameters = if let Some(p) = self.parameters {
+            p
+        } else if !self.typed_params.is_empty() || !self.optional_params.is_empty() {
+            let mut properties: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+            for (name, schema) in &self.typed_params {
+                properties.insert(name.clone(), schema.clone());
+            }
+            for (name, schema) in &self.optional_params {
+                properties.insert(name.clone(), schema.clone());
+            }
+            let required: Vec<serde_json::Value> = self
+                .typed_params
+                .iter()
+                .map(|(name, _)| serde_json::Value::String(name.clone()))
+                .collect();
+            let mut json = serde_json::json!({
+                "type": "object",
+                "properties": properties,
+            });
+            if !required.is_empty() {
+                json["required"] = serde_json::Value::Array(required);
+            }
+            serde_json::from_value(json).unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
+        let desc = ToolDesc {
+            name,
+            description: self.description,
+            parameters,
+            returns: self.returns,
+        };
+        Ok(Tool {
+            inner: ToolInner::Function(FunctionTool::new(desc, handler)),
+        })
+    }
+}
+
 impl Tool {
+    pub fn builder() -> ToolBuilder {
+        ToolBuilder::new()
+    }
+
     pub fn new_builtin(kind: BuiltinToolKind, config: Value) -> anyhow::Result<Self> {
         let tool = match kind {
             BuiltinToolKind::Terminal => create_terminal_tool(config),
@@ -61,12 +188,6 @@ impl Tool {
             inner: ToolInner::MCP(tool),
         }
     }
-
-    pub fn new_knowledge(tool: KnowledgeTool) -> Self {
-        Self {
-            inner: ToolInner::Knowledge(tool),
-        }
-    }
 }
 
 #[multi_platform_async_trait]
@@ -75,7 +196,6 @@ impl ToolBehavior for Tool {
         match &self.inner {
             ToolInner::Function(tool) => tool.get_description(),
             ToolInner::MCP(tool) => tool.get_description(),
-            ToolInner::Knowledge(tool) => tool.get_description(),
         }
     }
 
@@ -83,307 +203,98 @@ impl ToolBehavior for Tool {
         match &self.inner {
             ToolInner::Function(tool) => tool.run(args).await,
             ToolInner::MCP(tool) => tool.run(args).await,
-            ToolInner::Knowledge(tool) => tool.run(args).await,
         }
     }
 }
 
-#[cfg(feature = "python")]
-mod py {
-    use std::sync::Arc;
+#[cfg(test)]
+mod tests {
+    use ailoy_macros::{multi_platform_test, tool};
 
-    use pyo3::{
-        Bound, Py, PyAny, PyResult, Python,
-        exceptions::PyRuntimeError,
-        prelude::*,
-        pymethods,
-        types::{PyAnyMethods, PyDict, PyType},
-    };
-    use pyo3_stub_gen_derive::gen_stub_pymethods;
+    use super::{ToolBehavior, *};
+    use crate::{to_value, value::Value};
 
-    use super::*;
-    use crate::{
-        ffi::py::base::{python_to_value, value_to_python},
-        value::Value,
-    };
-
-    pub fn wrap_python_function(py_func: Py<PyAny>) -> Arc<ToolFunc> {
-        let f: Box<ToolFunc> = Box::new(move |args: Value| {
-            let py_func = Python::attach(|py| py_func.clone_ref(py));
-            Box::pin(async move {
-                let (py_result, is_awaitable) = Python::attach(|py| {
-                    // Rust Value -> Python dict
-                    let py_args = value_to_python(py, &args).unwrap();
-                    let kwargs = py_args.cast::<PyDict>().unwrap();
-
-                    // call python function
-                    let result = py_func.bind(py).call((), Some(kwargs)).unwrap();
-
-                    // check whether result is coroutine
-                    let is_awaitable = result.hasattr("__await__").unwrap_or(false);
-                    (result.unbind(), is_awaitable)
-                });
-
-                // await function result if awaitable
-                let final_result = if is_awaitable {
-                    let fut = Python::attach(|py| {
-                        pyo3_async_runtimes::tokio::into_future(py_result.bind(py).to_owned())
-                    })?;
-                    fut.await?
-                } else {
-                    py_result
-                };
-
-                // Python object -> Rust Value
-                Python::attach(|py| python_to_value(&final_result.bind(py)).map_err(Into::into))
-            })
-        });
-        Arc::new(f)
+    #[test]
+    fn tool_builder_with_typed_params() {
+        let tool = Tool::builder()
+            .name("search")
+            .description("Search the web")
+            .parameter::<String>("query")
+            .parameter::<i32>("limit")
+            .handler(|_args| async move { Ok(Value::Null) })
+            .build()
+            .unwrap();
+        let desc = tool.get_description();
+        assert_eq!(desc.name, "search");
+        assert_eq!(desc.description.as_deref(), Some("Search the web"));
+        // Verify the parameters schema has the expected structure
+        let params_json = serde_json::to_value(&desc.parameters).unwrap();
+        assert_eq!(params_json["type"], "object");
+        assert!(params_json["properties"]["query"].is_object());
+        assert!(params_json["properties"]["limit"].is_object());
+        let required = params_json["required"].as_array().unwrap();
+        assert!(required.contains(&serde_json::Value::String("query".into())));
+        assert!(required.contains(&serde_json::Value::String("limit".into())));
     }
 
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl Tool {
-        #[classmethod]
-        #[pyo3(name = "new_builtin", signature = (kind, **kwargs))]
-        pub fn new_builtin_py(
-            _cls: &Bound<'_, PyType>,
-            kind: BuiltinToolKind,
-            kwargs: Option<&Bound<'_, PyDict>>,
-        ) -> PyResult<Self> {
-            let tool_config = if let Some(kwargs) = kwargs {
-                python_to_value(kwargs).unwrap()
-            } else {
-                Value::object_empty()
-            };
-            Self::new_builtin(kind, tool_config).map_err(|e| PyRuntimeError::new_err(e.to_string()))
-        }
-
-        #[gen_stub(skip)]
-        #[classmethod]
-        #[pyo3(name = "__new_py_function__", signature = (desc, func))]
-        pub fn __new_py_function__(
-            _cls: &Bound<'_, PyType>,
-            desc: ToolDesc,
-            func: Py<PyAny>,
-        ) -> Self {
-            Self {
-                inner: ToolInner::Function(FunctionTool::new(desc, wrap_python_function(func))),
-            }
-        }
-
-        #[allow(unused_variables)]
-        #[classmethod]
-        #[pyo3(name = "new_py_function", signature = (func, desc = None))]
-        pub fn new_py_function(
-            _cls: &Bound<'_, PyType>,
-            func: Py<PyAny>,
-            desc: Option<ToolDesc>,
-        ) -> Self {
-            unimplemented!("This classmethod will be monkeypatched in Python")
-        }
-
-        fn __repr__(&self) -> String {
-            match &self.inner {
-                ToolInner::Function(tool) => {
-                    format!("Tool(FunctionTool(name={}))", tool.get_description().name)
-                }
-                ToolInner::MCP(tool) => {
-                    format!("Tool(MCPTool(name={}))", tool.get_description().name)
-                }
-                ToolInner::Knowledge(tool) => {
-                    format!("Tool(KnowledgeTool(name={}))", tool.get_description().name)
-                }
-            }
-        }
-
-        #[pyo3(name = "get_description", signature=())]
-        fn get_description_py(&self) -> ToolDesc {
-            self.get_description()
-        }
-
-        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[typing.Any]"))]
-        #[pyo3(signature = (**kwargs))]
-        fn __call__<'py>(
-            &self,
-            py: Python<'py>,
-            kwargs: Option<&Bound<'_, PyDict>>,
-        ) -> PyResult<Bound<'py, PyAny>> {
-            self.call(py, kwargs)
-        }
-
-        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[typing.Any]"))]
-        #[pyo3(signature = (**kwargs))]
-        fn call<'py>(
-            &self,
-            py: Python<'py>,
-            kwargs: Option<&Bound<'_, PyDict>>,
-        ) -> PyResult<Bound<'py, PyAny>> {
-            // Python object -> Rust Value
-            let py_input = kwargs
-                .map(|py_dict| py_dict.clone().into_any())
-                .unwrap_or(PyDict::new(py).into_any());
-            let input = python_to_value(&py_input).unwrap_or_else(|e| {
-                Value::object([(
-                    "error",
-                    format!("Failed to convert Python result to Value: {}", e),
-                )])
-            });
-
-            // create Rust Future to run tool
-            let tool = self.clone();
-            let future = async move {
-                let result = tool.run(input).await?;
-                // Rust Value -> Python object
-                Python::attach(|py| value_to_python(py, &result).map(|bound| bound.unbind()))
-            };
-
-            // Rust Future -> Python Coroutine
-            pyo3_async_runtimes::tokio::future_into_py(py, future)
-        }
-
-        #[pyo3(signature = (**kwargs))]
-        fn call_sync(
-            &self,
-            py: Python<'_>,
-            kwargs: Option<&Bound<'_, PyDict>>,
-        ) -> PyResult<Py<PyAny>> {
-            // Python object -> Rust Value
-            let py_input = kwargs
-                .map(|py_dict| py_dict.clone().into_any())
-                .unwrap_or(PyDict::new(py).into_any());
-            let input = python_to_value(&py_input).unwrap_or_else(|e| {
-                Value::object([(
-                    "error",
-                    format!("Failed to convert Python result to Value: {}", e),
-                )])
-            });
-
-            // run tool synced
-            let result = match tokio::runtime::Handle::try_current() {
-                Ok(handle) => tokio::task::block_in_place(|| handle.block_on(self.run(input))),
-                Err(_) => tokio::runtime::Runtime::new()
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
-                    .block_on(self.run(input)),
-            }
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            // Rust Value -> Python object
-            value_to_python(py, &result).map(|bound| bound.unbind())
-        }
+    #[test]
+    fn tool_builder_explicit_parameters_takes_precedence() {
+        let explicit_params = serde_json::json!({"type": "object", "properties": {}});
+        let explicit_value: Value = serde_json::from_value(explicit_params).unwrap();
+        let tool = Tool::builder()
+            .name("test")
+            .parameters(explicit_value.clone())
+            .parameter::<String>("ignored")
+            .handler(|_args| async move { Ok(Value::Null) })
+            .build()
+            .unwrap();
+        let desc = tool.get_description();
+        // explicit parameters should win over typed_params
+        assert_eq!(desc.parameters, explicit_value);
     }
-}
 
-#[cfg(feature = "nodejs")]
-mod node {
-    use napi::{Status, bindgen_prelude::*, threadsafe_function::ThreadsafeFunction};
-    use napi_derive::napi;
-
-    use super::*;
-
-    #[napi]
-    impl Tool {
-        #[napi(js_name = "newBuiltin")]
-        pub fn new_builtin_js(kind: BuiltinToolKind, config: Option<Value>) -> napi::Result<Self> {
-            Self::new_builtin(kind, config.unwrap_or(Value::object_empty()))
-                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
-        }
-
-        #[napi(js_name = "newFunction")]
-        pub fn new_function_js(
-            desc: ToolDesc,
-            func: ThreadsafeFunction<Value, Promise<Value>, Value, Status, false, false>,
-        ) -> Self {
-            let func = Arc::new(func);
-            let tool_func: Box<ToolFunc> = Box::new(move |value: Value| {
-                let func = func.clone();
-                Box::pin(async move {
-                    let promise = func.call_async(value).await?;
-                    match promise.await {
-                        Ok(result) => Ok(result),
-                        Err(e) => Err(anyhow::anyhow!(e.to_string())),
-                    }
-                })
-            });
-            Self::new_function(desc, Arc::new(tool_func))
-        }
-
-        #[napi(getter, js_name = "description")]
-        pub fn description_js(&self) -> ToolDesc {
-            self.get_description().clone()
-        }
-
-        #[napi(js_name = "run")]
-        pub async fn run_js(&self, args: Value) -> napi::Result<Value> {
-            self.run(args)
-                .await
-                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
-        }
+    #[tool(description = "Add two integers and return the sum")]
+    async fn add(a: i64, b: i64) -> anyhow::Result<Value> {
+        Ok(to_value!(a + b))
     }
-}
 
-#[cfg(feature = "wasm")]
-mod wasm {
-    use std::sync::Arc;
+    #[test]
+    fn tool_macro_name_and_description() {
+        let tool = add_tool();
+        let desc = tool.get_description();
+        assert_eq!(desc.name, "add");
+        assert_eq!(
+            desc.description.as_deref(),
+            Some("Add two integers and return the sum")
+        );
+    }
 
-    use anyhow::anyhow;
-    use js_sys::Promise;
-    use wasm_bindgen::prelude::*;
-    use wasm_bindgen_futures::JsFuture;
+    #[test]
+    fn tool_macro_parameter_schema() {
+        let desc = add_tool().get_description();
+        let params = serde_json::to_value(&desc.parameters).unwrap();
+        assert_eq!(params["type"], "object");
+        assert!(params["properties"]["a"].is_object());
+        assert!(params["properties"]["b"].is_object());
+        let req = params["required"].as_array().unwrap();
+        assert!(req.contains(&serde_json::Value::String("a".into())));
+        assert!(req.contains(&serde_json::Value::String("b".into())));
+    }
 
-    use super::*;
+    #[multi_platform_test]
+    async fn tool_macro_handler_runs() {
+        let tool = add_tool();
+        let result = tool.run(to_value!({"a": 3, "b": 4})).await.unwrap();
+        assert_eq!(result, to_value!(7));
+    }
 
-    #[wasm_bindgen]
-    impl Tool {
-        #[wasm_bindgen(js_name = "newBuiltin")]
-        pub fn new_builtin_js(
-            kind: BuiltinToolKind,
-            config: Option<Value>,
-        ) -> Result<Self, js_sys::Error> {
-            Self::new_builtin(kind, config.unwrap_or(Value::object_empty()))
-                .map_err(|e| js_sys::Error::new(&e.to_string()))
-        }
-
-        #[wasm_bindgen(js_name = "newFunction")]
-        pub fn new_function_js(
-            desc: ToolDesc,
-            #[wasm_bindgen(unchecked_param_type = "(args: any) => Promise<any>")]
-            func: js_sys::Function,
-        ) -> Self {
-            let tool_func: Box<ToolFunc> = Box::new(move |value: Value| {
-                let func = func.clone();
-                Box::pin(async move {
-                    let js_val: JsValue = value.into();
-                    let js_promise = func.call1(&JsValue::NULL, &js_val).map_err(|e| {
-                        anyhow!(
-                            e.as_string()
-                                .unwrap_or("Failed to call tool function".to_owned())
-                        )
-                    })?;
-                    let js_future = JsFuture::from(Promise::from(js_promise));
-                    let js_ret: JsValue = js_future.await.map_err(|e| {
-                        anyhow!(e.as_string().unwrap_or("Failed to await future".to_owned()))
-                    })?;
-                    js_ret.try_into().map_err(|e: js_sys::Error| {
-                        anyhow!(e.as_string().unwrap_or(
-                            "Failed to convert tool function result to js value".to_owned()
-                        ))
-                    })
-                })
-            });
-            Self::new_function(desc, Arc::new(tool_func))
-        }
-
-        #[wasm_bindgen(getter)]
-        pub fn description(&self) -> ToolDesc {
-            self.get_description()
-        }
-
-        #[wasm_bindgen(js_name = "run")]
-        pub async fn run_js(&self, args: Value) -> Result<Value, js_sys::Error> {
-            self.run(args)
-                .await
-                .map_err(|e| js_sys::Error::new(&e.to_string()))
-        }
+    #[multi_platform_test]
+    async fn tool_macro_handler_missing_param_error() {
+        let tool = add_tool();
+        let err = tool.run(to_value!({"a": 1})).await.unwrap_err();
+        assert!(
+            err.to_string().contains("Missing required parameter"),
+            "unexpected error: {err}"
+        );
     }
 }

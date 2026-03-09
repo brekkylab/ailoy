@@ -13,9 +13,6 @@ use super::{super::ToolBehavior, common::handle_result};
 use crate::value::{ToolDesc, Value};
 
 #[derive(Debug)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(js_name = "MCPClient"))]
 pub struct MCPClient {
     #[allow(unused)]
     service: Arc<RunningService<RoleClient, ()>>,
@@ -37,6 +34,7 @@ impl MCPClient {
             .collect();
         Ok(Self { service, tools })
     }
+
     pub async fn from_stdio(command: tokio::process::Command) -> anyhow::Result<Self> {
         Self::new(().serve(TokioChildProcess::new(command)?).await?).await
     }
@@ -94,31 +92,27 @@ impl ToolBehavior for MCPTool {
         let tool_name = self.inner.name.clone();
         let peer = self.service.clone();
 
-        // Convert your ToolCall arguments → serde_json::Map (MCP expects JSON object)
         let arguments: Option<serde_json::Map<String, serde_json::Value>> =
             serde_json::to_value(args)
-                .context("serialize ToolCall arguments failed: {e}")?
+                .context("serialize ToolCall arguments failed")?
                 .as_object()
                 .cloned();
 
-        // Invoke the MCP tool
         let result = peer
             .call_tool(CallToolRequestParam {
                 name: tool_name.into(),
                 arguments,
             })
             .await
-            .context("mcp call_tool failed: {e}")?;
+            .context("mcp call_tool failed")?;
 
-        let parts = handle_result(result).context("call_tool_result_to_parts failed: {e}")?;
+        let parts = handle_result(result).context("call_tool_result_to_parts failed")?;
         Ok(parts)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ailoy_macros::multi_platform_test;
-
     use super::*;
     use crate::value::Value;
 
@@ -147,7 +141,8 @@ mod tests {
         let part = tool.run(tool_call_args).await.unwrap();
         assert_eq!(part.is_string(), true);
 
-        let parsed_part: serde_json::Value = serde_json::from_str(&part.as_str().unwrap()).unwrap();
+        let parsed_part: serde_json::Value =
+            serde_json::from_str(&part.as_str().unwrap()).unwrap();
         assert_eq!(parsed_part["timezone"].as_str(), Some("Asia/Seoul"));
         assert_eq!(parsed_part["is_dst"].as_bool(), Some(false));
         assert_eq!(
@@ -160,133 +155,18 @@ mod tests {
         Ok(())
     }
 
-    #[multi_platform_test]
+    #[tokio::test]
     async fn test_streamable_http_client() -> anyhow::Result<()> {
         let client = MCPClient::from_streamable_http("http://localhost:8123/mcp").await?;
-
         let tools = client.tools;
         crate::debug!("list of tools: {:?}", tools);
 
         let tool = tools[1].clone();
-
         let tool_call_args: Value =
             serde_json::json!({"latitude": 32.7767, "longitude": -96.797}).into();
         let call_tool = tool.run(tool_call_args).await.unwrap();
         crate::debug!("call tool result: {:?}", call_tool);
 
         Ok(())
-    }
-}
-
-#[cfg(feature = "python")]
-mod py {
-    use pyo3::{prelude::*, pymethods, types::PyType};
-    use pyo3_stub_gen_derive::gen_stub_pymethods;
-    use rmcp::transport::ConfigureCommandExt;
-
-    use super::{super::super::base::Tool, *};
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl MCPClient {
-        pub fn __repr__(&self) -> String {
-            format!(
-                "MCPClient(tools=[{}])",
-                self.tools
-                    .iter()
-                    .map(|tool| format!("Tool(MCPTool(name={}))", tool.inner.name.as_ref()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        }
-
-        #[classmethod]
-        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MCPClient]"))]
-        #[pyo3(name="from_stdio", signature = (command, args))]
-        fn from_stdio_py<'py>(
-            _cls: Bound<'py, PyType>,
-            py: Python<'py>,
-            command: String,
-            args: Vec<String>,
-        ) -> PyResult<Py<PyAny>> {
-            let fut = async move {
-                let command = tokio::process::Command::new(command).configure(|cmd| {
-                    cmd.args(args);
-                });
-                MCPClient::from_stdio(command).await.map_err(Into::into)
-            };
-            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
-            Ok(py_fut.into())
-        }
-
-        #[classmethod]
-        #[gen_stub(override_return_type(type_repr = "typing.Awaitable[MCPClient]"))]
-        #[pyo3(name="from_streamable_http", signature = (url))]
-        fn from_streamable_http_py<'py>(
-            _cls: Bound<'py, PyType>,
-            py: Python<'py>,
-            url: String,
-        ) -> PyResult<Py<PyAny>> {
-            let fut = async move {
-                MCPClient::from_streamable_http(url)
-                    .await
-                    .map_err(Into::into)
-            };
-            let py_fut = pyo3_async_runtimes::tokio::future_into_py(py, fut)?.unbind();
-            Ok(py_fut.into())
-        }
-
-        #[getter]
-        fn tools(&self) -> Vec<Tool> {
-            self.tools
-                .iter()
-                .map(|t| Tool::new_mcp(t.clone()))
-                .collect()
-        }
-
-        #[pyo3(signature = (name))]
-        fn get_tool(&self, name: String) -> Option<Tool> {
-            self.tools()
-                .iter()
-                .find(|tool| tool.get_description().name == name)
-                .cloned()
-        }
-    }
-}
-
-#[cfg(feature = "nodejs")]
-mod node {
-    use napi::Status;
-    use napi_derive::*;
-    use rmcp::transport::ConfigureCommandExt;
-
-    use super::{super::super::base::Tool, *};
-
-    #[napi]
-    impl MCPClient {
-        #[napi(js_name = "newStdio")]
-        pub async fn new_stdio_js(command: String, args: Vec<String>) -> napi::Result<Self> {
-            let command = tokio::process::Command::new(command).configure(|cmd| {
-                cmd.args(args);
-            });
-            MCPClient::from_stdio(command)
-                .await
-                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
-        }
-
-        #[napi(js_name = "newStreamableHttp")]
-        pub async fn new_streamable_http_js(url: String) -> napi::Result<Self> {
-            Self::from_streamable_http(url)
-                .await
-                .map_err(|e| napi::Error::new(Status::GenericFailure, e.to_string()))
-        }
-
-        #[napi(getter, js_name = "tools")]
-        pub fn tools_js(&self) -> Vec<Tool> {
-            self.get_tools()
-                .into_iter()
-                .map(|t| Tool::new_mcp(t.clone()))
-                .collect()
-        }
     }
 }

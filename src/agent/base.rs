@@ -1,82 +1,93 @@
-use anyhow::Context;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    knowledge::{Knowledge, KnowledgeBehavior as _, KnowledgeConfig},
     model::{LangModel, LangModelInferConfig, LangModelInference as _},
     tool::{Tool, ToolBehavior as _},
-    utils::{BoxFuture, BoxStream, log},
+    utils::{BoxStream, log},
     value::{
-        Delta, Document, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput,
-        Part, PartDelta, Role, ToolDesc,
+        Delta, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part,
+        PartDelta, Role, ToolDesc,
     },
 };
 
 /// Configuration for running the agent.
-///
-/// See `LangModelInferConfig` and `KnowledgeConfig` for more details.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(get_all, set_all))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi(object))]
-#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
-#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct AgentConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inference: Option<LangModelInferConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub knowledge: Option<KnowledgeConfig>,
 }
 
-/// The Agent is the central orchestrator that connects the **language model**, **tools**, and **knowledge** components.
-/// It manages the entire reasoning and action loop, coordinating how each subsystem contributes to the final response.
-///
-/// In essence, the Agent:
-///
-/// - Understands user input
-/// - Interprets structured responses from the language model (such as tool calls)
-/// - Executes tools as needed
-/// - Retrieves and integrates contextual knowledge before or during inference
-///
-/// # Public APIs
-/// - `run_delta`: Runs a user query and streams incremental deltas (partial outputs)
-/// - `run`: Runs a user query and returns a complete message once all deltas are accumulated
-///
-/// ## Delta vs. Complete Message
-/// A *delta* represents a partial piece of model output, such as a text fragment or intermediate reasoning step.
-/// Deltas can be accumulated into a full message using the provided accumulation utilities.
-/// This allows real-time streaming while preserving the ability to reconstruct the final structured result.
-///
-/// See `MessageDelta`.
-///
-/// # Components
-/// - **Language Model**: Generates natural language and structured outputs. It interprets the conversation context and predicts the assistant’s next action.
-/// - **Tool**: Represents external functions or APIs that the model can dynamically invoke. The `Agent` detects tool calls and automatically executes them during the reasoning loop.
-/// - **Knowledge**: Provides retrieval-augmented reasoning by fetching relevant information from stored documents or databases. When available, the `Agent` enriches model input with these results before generating an answer.
+/// Builder for constructing an `Agent`.
+pub struct AgentBuilder {
+    model: Option<LangModel>,
+    tools: Vec<Tool>,
+    system: Option<String>,
+}
+
+impl AgentBuilder {
+    fn new() -> Self {
+        Self {
+            model: None,
+            tools: Vec::new(),
+            system: None,
+        }
+    }
+
+    pub fn model(mut self, m: LangModel) -> Self {
+        self.model = Some(m);
+        self
+    }
+
+    pub fn tool(mut self, t: Tool) -> Self {
+        self.tools.push(t);
+        self
+    }
+
+    pub fn tools(mut self, ts: impl IntoIterator<Item = Tool>) -> Self {
+        self.tools.extend(ts);
+        self
+    }
+
+    pub fn system(mut self, s: impl Into<String>) -> Self {
+        self.system = Some(s.into());
+        self
+    }
+
+    pub fn build(self) -> anyhow::Result<Agent> {
+        Ok(Agent {
+            lm: self
+                .model
+                .ok_or_else(|| anyhow::anyhow!("model is required"))?,
+            tools: self.tools,
+            system: self.system,
+            history: Vec::new(),
+        })
+    }
+}
+
+/// The Agent orchestrates language model, tools, and the reasoning loop.
 #[derive(Clone)]
-#[cfg_attr(feature = "python", pyo3_stub_gen_derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyo3::pyclass(module = "ailoy._core"))]
-#[cfg_attr(feature = "nodejs", napi_derive::napi)]
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub struct Agent {
     lm: LangModel,
     tools: Vec<Tool>,
-    knowledge: Option<Knowledge>,
+    system: Option<String>,
+    history: Vec<Message>,
 }
 
 impl Agent {
-    pub fn new(
-        lm: LangModel,
-        tools: impl IntoIterator<Item = Tool>,
-        knowledge: Option<Knowledge>,
-    ) -> Self {
+    pub fn new(lm: LangModel, tools: impl IntoIterator<Item = Tool>) -> Self {
         Self {
             lm,
             tools: tools.into_iter().collect(),
-            knowledge,
+            system: None,
+            history: Vec::new(),
         }
+    }
+
+    pub fn builder() -> AgentBuilder {
+        AgentBuilder::new()
     }
 
     pub fn get_lm(&self) -> LangModel {
@@ -87,28 +98,20 @@ impl Agent {
         self.tools.clone()
     }
 
-    pub fn knowledge(&self) -> Option<Knowledge> {
-        self.knowledge.clone()
-    }
-
     pub fn add_tools(&mut self, tools: Vec<Tool>) {
         for tool in tools.iter() {
-            let tool_name = tool.get_description().name;
-
-            // If the tool with same name already exists, skip adding the tool.
+            let tool_name = tool.get_description().name.clone();
             if self
                 .tools
                 .iter()
-                .find(|t| t.get_description().name == tool_name)
-                .is_some()
+                .any(|t| t.get_description().name == tool_name)
             {
                 log::warn(format!(
-                    "Tool \"{}\" is already registered. Skip adding the tool.",
+                    "Tool \"{}\" is already registered. Skip adding.",
                     tool_name
                 ));
                 continue;
             }
-
             self.tools.push(tool.clone());
         }
     }
@@ -118,11 +121,8 @@ impl Agent {
     }
 
     pub fn remove_tools(&mut self, tool_names: Vec<String>) {
-        self.tools.retain(|t| {
-            let tool_name = t.get_description().name;
-            // Remove the tool if its name belongs to `tool_names`
-            !tool_names.contains(&tool_name)
-        });
+        self.tools
+            .retain(|t| !tool_names.contains(&t.get_description().name));
     }
 
     pub fn remove_tool(&mut self, tool_name: String) {
@@ -133,49 +133,12 @@ impl Agent {
         self.tools.clear();
     }
 
-    pub fn set_knowledge(&mut self, knowledge: Knowledge) {
-        self.knowledge = Some(knowledge);
-    }
-
-    pub fn remove_knowledge(&mut self) {
-        self.knowledge = None;
-    }
-
-    fn get_docs<'a>(
-        msgs: &Vec<Message>,
-        knowledge: &Option<Knowledge>,
-        knowledge_config: KnowledgeConfig,
-    ) -> BoxFuture<'a, anyhow::Result<Vec<Document>>> {
-        let last_msg = msgs.last().cloned();
-        let knowledge = knowledge.clone();
-        Box::pin(async move {
-            if let Some(message) = last_msg
-                && message.role == Role::User
-                && let Some(knowledge) = knowledge.clone()
-            {
-                let query_str = message
-                    .contents
-                    .iter()
-                    .filter(|p| p.is_text())
-                    .map(|p| p.as_text().unwrap().to_owned())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                Ok(knowledge.retrieve(query_str, knowledge_config).await?)
-            } else {
-                Ok(vec![])
-            }
-        })
-    }
-
-    fn get_tool_descs(tools: &Vec<Tool>) -> Vec<ToolDesc> {
-        tools
-            .iter()
-            .map(|v| v.get_description())
-            .collect::<Vec<_>>()
+    fn get_tool_descs(tools: &[Tool]) -> Vec<ToolDesc> {
+        tools.iter().map(|v| v.get_description()).collect()
     }
 
     async fn handle_tool_calls(
-        tools: &Vec<Tool>,
+        tools: &[Tool],
         tool_calls: Vec<Part>,
     ) -> anyhow::Result<Vec<MessageDelta>> {
         let mut tool_resps = Vec::new();
@@ -186,70 +149,63 @@ impl Agent {
             let tool = tools
                 .iter()
                 .find(|v| v.get_description().name == name)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found", name))?
                 .clone();
             let resp = tool.run(args.clone()).await?;
-            let mut delta =
-                MessageDelta::new()
-                    .with_role(Role::Tool)
-                    .with_contents([PartDelta::Value {
-                        value: resp.clone(),
-                    }]);
+            let mut delta = MessageDelta::new()
+                .with_role(Role::Tool)
+                .with_contents([PartDelta::Value { value: resp }]);
             if let Some(id) = id {
                 delta = delta.with_id(id);
-            };
+            }
             tool_resps.push(delta);
         }
         Ok(tool_resps)
     }
 
-    pub fn run_delta<'a>(
+    pub fn stream_turns<'a>(
         &'a mut self,
-        mut messages: Vec<Message>,
+        messages: Vec<Message>,
         config: Option<AgentConfig>,
     ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
-        let knowledge = self.knowledge.clone();
         let tools = self.tools.clone();
-        let AgentConfig {
-            inference: inference_config,
-            knowledge: knowledge_config,
-        } = config.unwrap_or_default();
+        let inference_config = config.unwrap_or_default().inference.unwrap_or_default();
         let strm = async_stream::try_stream! {
-            let docs = Self::get_docs(
-                &messages,
-                &knowledge,
-                knowledge_config.unwrap_or_default()
-            ).await?;
             let tool_descs = Self::get_tool_descs(&tools);
+            let mut messages = messages;
             loop {
                 let mut assistant_msg_delta = MessageDelta::new().with_role(Role::Assistant);
                 {
-                    let mut model = self.lm.clone();
+                    let model = self.lm.clone();
                     let mut strm = model.infer_delta(
                         messages.clone(),
                         tool_descs.clone(),
-                        docs.clone(),
-                        inference_config.clone().unwrap_or_default()
+                        inference_config.clone(),
                     );
                     while let Some(out) = strm.next().await {
                         let out = out?;
-                        assistant_msg_delta = assistant_msg_delta.accumulate(out.clone().delta).context("Aggregation failed")?;
-                        if out.finish_reason.is_some() {
-                            yield out;
-                            break;
-                        } else {
-                            yield out;
-                        }
+                        assistant_msg_delta = assistant_msg_delta
+                            .accumulate(out.clone().delta)
+                            .map_err(|e| anyhow::anyhow!(e))?;
+                        yield out;
                     }
                 }
-                let assistant_msg = assistant_msg_delta.clone().finish()?;
+                let assistant_msg = assistant_msg_delta.finish()?;
                 messages.push(assistant_msg.clone());
+                self.history.push(assistant_msg.clone());
 
-                if let Some(tool_calls) = assistant_msg.tool_calls && !tool_calls.is_empty() {
+                if let Some(tool_calls) = assistant_msg.tool_calls
+                    && !tool_calls.is_empty()
+                {
                     for delta in Self::handle_tool_calls(&tools, tool_calls).await? {
-                        let message_delta_output = MessageDeltaOutput { delta, finish_reason: Some(FinishReason::Stop{}) };
-                        yield message_delta_output.clone();
-                        messages.push(message_delta_output.delta.finish().unwrap());
+                        let output = MessageDeltaOutput {
+                            delta: delta.clone(),
+                            finish_reason: Some(FinishReason::Stop {}),
+                        };
+                        yield output;
+                        let tool_msg = delta.finish()?;
+                        messages.push(tool_msg.clone());
+                        self.history.push(tool_msg);
                     }
                 } else {
                     break;
@@ -259,41 +215,37 @@ impl Agent {
         Box::pin(strm)
     }
 
-    pub fn run<'a>(
+    pub fn run_turns<'a>(
         &'a mut self,
-        mut messages: Vec<Message>,
+        messages: Vec<Message>,
         config: Option<AgentConfig>,
     ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
-        let knowledge = self.knowledge.clone();
         let tools = self.tools.clone();
-        let AgentConfig {
-            inference: inference_config,
-            knowledge: knowledge_config,
-        } = config.unwrap_or_default();
+        let inference_config = config.unwrap_or_default().inference.unwrap_or_default();
         let strm = async_stream::try_stream! {
-            let docs = Self::get_docs(
-                &messages,
-                &knowledge,
-                knowledge_config.unwrap_or_default()
-            ).await?;
             let tool_descs = Self::get_tool_descs(&tools);
+            let mut messages = messages;
             loop {
-                let mut model = self.lm.clone();
-                let assistant_out = model.infer(
-                    messages.clone(),
-                    tool_descs.clone(),
-                    docs.clone(),
-                    inference_config.clone().unwrap_or_default()
-                ).await?;
+                let model = self.lm.clone();
+                let assistant_out = model
+                    .infer(messages.clone(), tool_descs.clone(), inference_config.clone())
+                    .await?;
                 let assistant_msg = assistant_out.message.clone();
                 messages.push(assistant_msg.clone());
                 yield assistant_out;
+                self.history.push(assistant_msg.clone());
 
-                if let Some(tool_calls) = assistant_msg.tool_calls && !tool_calls.is_empty() {
+                if let Some(tool_calls) = assistant_msg.tool_calls
+                    && !tool_calls.is_empty()
+                {
                     for delta in Self::handle_tool_calls(&tools, tool_calls).await? {
-                        let message_output = MessageOutput { message: delta.finish()?, finish_reason: FinishReason::Stop{} };
-                        yield message_output.clone();
-                        messages.push(message_output.message);
+                        let message = delta.finish()?;
+                        yield MessageOutput {
+                            message: message.clone(),
+                            finish_reason: FinishReason::Stop {},
+                        };
+                        self.history.push(message.clone());
+                        messages.push(message);
                     }
                 } else {
                     break;
@@ -302,518 +254,98 @@ impl Agent {
         };
         Box::pin(strm)
     }
-}
 
-#[cfg(feature = "python")]
-mod py {
-    use std::sync::Arc;
+    /// Single-shot run: string prompt -> final assistant Message.
+    /// Runs the full agentic loop (tool calls resolved), accumulates history, and returns the last assistant message.
+    pub async fn run(&mut self, prompt: impl Into<String>) -> anyhow::Result<Message> {
+        let user_message = Message::new(Role::User).with_contents([Part::text(prompt.into())]);
+        let mut messages = Vec::new();
+        if let Some(system) = &self.system {
+            messages.push(Message::new(Role::System).with_contents([Part::text(system.clone())]));
+        }
+        messages.extend(self.history.clone());
+        messages.push(user_message.clone());
+        self.history.push(user_message);
 
-    use futures::lock::Mutex;
-    use pyo3::{
-        Bound, PyResult, Python, pymethods,
-        types::{PyDict, PyDictMethods, PyType},
-    };
-    use pyo3_stub_gen_derive::gen_stub_pymethods;
-    use tokio::sync::mpsc;
-
-    use super::*;
-    use crate::{
-        boxed,
-        model::LangModelInferConfig,
-        value::message::py::{
-            MessageDeltaOutputIterator, MessageDeltaOutputSyncIterator, MessageOutputIterator,
-            MessageOutputSyncIterator, Messages,
-        },
-    };
-
-    fn spawn_delta<'a>(
-        mut agent: Agent,
-        py: Python<'_>,
-        messages: Vec<Message>,
-        config: Option<AgentConfig>,
-    ) -> anyhow::Result<(
-        tokio::runtime::Runtime,
-        mpsc::UnboundedReceiver<anyhow::Result<MessageDeltaOutput>>,
-    )> {
-        let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let future = async move {
-            let mut stream = boxed!(agent.run_delta(messages, config));
-            while let Some(item) = stream.next().await {
-                if tx.send(item).is_err() {
-                    break; // Exit if consumer vanished
-                }
-            }
-        };
-        match pyo3_async_runtimes::tokio::get_current_locals(py) {
-            Ok(locals) => rt.spawn(pyo3_async_runtimes::tokio::scope(locals, future)),
-            Err(_) => rt.spawn(future),
-        };
-        Ok((rt, rx))
-    }
-
-    fn spawn<'a>(
-        mut agent: Agent,
-        py: Python<'_>,
-        messages: Vec<Message>,
-        config: Option<AgentConfig>,
-    ) -> anyhow::Result<(
-        tokio::runtime::Runtime,
-        mpsc::UnboundedReceiver<anyhow::Result<MessageOutput>>,
-    )> {
-        let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let future = async move {
-            let mut stream = boxed!(agent.run(messages, config));
-            while let Some(item) = stream.next().await {
-                if tx.send(item).is_err() {
-                    break; // Exit if consumer vanished
-                }
-            }
-        };
-        match pyo3_async_runtimes::tokio::get_current_locals(py) {
-            Ok(locals) => rt.spawn(pyo3_async_runtimes::tokio::scope(locals, future)),
-            Err(_) => rt.spawn(future),
-        };
-        Ok((rt, rx))
-    }
-
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl AgentConfig {
-        #[new]
-        #[pyo3(signature = (inference=None, knowledge=None))]
-        fn __new__(
-            inference: Option<LangModelInferConfig>,
-            knowledge: Option<KnowledgeConfig>,
-        ) -> Self {
-            Self {
-                inference,
-                knowledge,
+        // Collect outputs (stream borrows &mut self, so collect first then push to history)
+        let mut outputs: Vec<MessageOutput> = Vec::new();
+        {
+            let mut strm = self.run_turns(messages, None);
+            while let Some(out) = strm.next().await {
+                outputs.push(out?);
             }
         }
-
-        #[classmethod]
-        #[pyo3(signature = (config))]
-        pub fn from_dict(
-            _cls: &Bound<'_, PyType>,
-            py: Python<'_>,
-            config: &Bound<'_, PyDict>,
-        ) -> PyResult<AgentConfig> {
-            let inference_config_cls = py.get_type::<LangModelInferConfig>();
-            let knowledge_config_cls = py.get_type::<KnowledgeConfig>();
-
-            // get LangModelInferConfig if valid, else None
-            let inference = config.get_item("inference")?.and_then(|item| {
-                item.cast::<PyDict>().ok().and_then(|dict| {
-                    LangModelInferConfig::from_dict(&inference_config_cls, &dict).ok()
-                })
-            });
-            // get KnowledgeConfig if valid, else None
-            let knowledge = config.get_item("knowledge")?.and_then(|item| {
-                item.cast::<PyDict>()
-                    .ok()
-                    .and_then(|dict| KnowledgeConfig::from_dict(&knowledge_config_cls, &dict).ok())
-            });
-
-            Ok(Self {
-                inference,
-                knowledge,
-            })
-        }
+        // run_turns already pushed output messages to history; find last assistant message
+        let last_assistant = outputs
+            .into_iter()
+            .filter(|o| o.message.role == Role::Assistant)
+            .last()
+            .map(|o| o.message);
+        last_assistant.ok_or_else(|| anyhow::anyhow!("No response from agent"))
     }
 
-    #[gen_stub_pymethods]
-    #[pymethods]
-    impl Agent {
-        #[new]
-        #[pyo3(signature = (lm, tools = None, knowledge = None))]
-        fn __new__(lm: LangModel, tools: Option<Vec<Tool>>, knowledge: Option<Knowledge>) -> Self {
-            Agent::new(lm, tools.unwrap_or_default(), knowledge)
+    /// Streaming run: string prompt -> per-token delta stream. History is updated as the stream is consumed.
+    pub fn stream(
+        &mut self,
+        prompt: impl Into<String>,
+    ) -> BoxStream<'_, anyhow::Result<MessageDeltaOutput>> {
+        let user_message = Message::new(Role::User).with_contents([Part::text(prompt.into())]);
+        let mut messages = Vec::new();
+        if let Some(system) = &self.system {
+            messages.push(Message::new(Role::System).with_contents([Part::text(system.clone())]));
         }
+        messages.extend(self.history.clone());
+        messages.push(user_message.clone());
+        self.history.push(user_message);
 
-        pub fn __repr__(&self) -> String {
-            format!(
-                "Agent(lm={}, tools=[{} items])",
-                self.get_lm().__repr__(),
-                self.tools.len()
-            )
-        }
-
-        #[getter]
-        fn lm(&self) -> LangModel {
-            self.get_lm()
-        }
-
-        #[getter]
-        fn tools(&self) -> Vec<Tool> {
-            self.get_tools()
-        }
-
-        #[pyo3(name = "add_tools", signature = (tools))]
-        fn add_tools_py(&mut self, tools: Vec<Tool>) {
-            self.add_tools(tools);
-        }
-
-        #[pyo3(name = "add_tool", signature = (tool))]
-        fn add_tool_py(&mut self, tool: Tool) {
-            self.add_tool(tool);
-        }
-
-        #[pyo3(name = "remove_tools", signature = (tool_names))]
-        fn remove_tools_py(&mut self, tool_names: Vec<String>) {
-            self.remove_tools(tool_names);
-        }
-
-        #[pyo3(name = "remove_tool", signature = (tool_name))]
-        fn remove_tool_py(&mut self, tool_name: String) {
-            self.remove_tool(tool_name);
-        }
-
-        #[pyo3(name = "clear_tools")]
-        fn clear_tools_py(&mut self) {
-            self.clear_tools()
-        }
-
-        #[pyo3(name = "set_knowledge", signature = (knowledge))]
-        fn set_knowledge_py(&mut self, knowledge: &Knowledge) {
-            self.set_knowledge(knowledge.clone());
-        }
-
-        #[pyo3(name = "remove_knowledge")]
-        fn remove_knowledge_py(&mut self) {
-            self.remove_knowledge();
-        }
-
-        #[pyo3(name = "run_delta", signature = (messages, config=None))]
-        fn run_delta_py(
-            &mut self,
-            py: Python<'_>,
-            messages: Messages,
-            config: Option<AgentConfig>,
-        ) -> anyhow::Result<MessageDeltaOutputIterator> {
-            let (_rt, rx) = spawn_delta(self.clone(), py, messages.into(), config)?;
-            Ok(MessageDeltaOutputIterator {
-                _rt,
-                rx: Arc::new(Mutex::new(rx)),
-            })
-        }
-
-        #[pyo3(name = "run_delta_sync", signature = (messages, config=None))]
-        fn run_delta_sync_py(
-            &mut self,
-            py: Python<'_>,
-            messages: Messages,
-            config: Option<AgentConfig>,
-        ) -> anyhow::Result<MessageDeltaOutputSyncIterator> {
-            let (_rt, rx) = spawn_delta(self.clone(), py, messages.into(), config)?;
-            Ok(MessageDeltaOutputSyncIterator { _rt, rx })
-        }
-
-        #[pyo3(name = "run", signature = (messages, config=None))]
-        fn run_py(
-            &mut self,
-            py: Python<'_>,
-            messages: Messages,
-            config: Option<AgentConfig>,
-        ) -> anyhow::Result<MessageOutputIterator> {
-            let (_rt, rx) = spawn(self.clone(), py, messages.into(), config)?;
-            Ok(MessageOutputIterator {
-                _rt,
-                rx: Arc::new(Mutex::new(rx)),
-            })
-        }
-
-        #[pyo3(name = "run_sync", signature = (messages, config=None))]
-        fn run_sync_py(
-            &mut self,
-            py: Python<'_>,
-            messages: Messages,
-            config: Option<AgentConfig>,
-        ) -> anyhow::Result<MessageOutputSyncIterator> {
-            let (_rt, rx) = spawn(self.clone(), py, messages.into(), config)?;
-            Ok(MessageOutputSyncIterator { _rt, rx })
-        }
+        self.stream_turns(messages, None)
     }
-}
 
-#[cfg(feature = "nodejs")]
-mod node {
-    use std::sync::Arc;
-
-    use futures::lock::Mutex;
-    use napi::bindgen_prelude::*;
-    use napi_derive::napi;
-    use tokio::sync::mpsc;
-
-    use super::*;
-    use crate::{
-        boxed,
-        ffi::node::common::get_or_create_runtime,
-        value::message::node::{MessageDeltaOutputIterator, MessageOutputIterator, Messages},
-    };
-
-    #[napi]
-    impl Agent {
-        #[napi(constructor)]
-        pub fn new_js(
-            lm: &LangModel,
-            tools: Option<Vec<&Tool>>,
-            knowledge: Option<&Knowledge>,
-        ) -> Self {
-            Self::new(
-                lm.clone(),
-                tools.unwrap_or(vec![]).iter().map(|&t| t.clone()),
-                knowledge.cloned(),
-            )
-        }
-
-        #[napi(js_name = "addTool")]
-        pub unsafe fn add_tool_js(&mut self, tool: &Tool) {
-            self.add_tool(tool.clone())
-        }
-
-        #[napi(js_name = "addTools")]
-        pub unsafe fn add_tools_js(&mut self, tools: Vec<&Tool>) {
-            self.add_tools(tools.iter().map(|&t| t.clone()).collect())
-        }
-
-        #[napi(js_name = "removeTool")]
-        pub unsafe fn remove_tool_js(&mut self, tool_name: String) {
-            self.remove_tool(tool_name)
-        }
-
-        #[napi(js_name = "removeTools")]
-        pub unsafe fn remove_tools_js(&mut self, tool_names: Vec<String>) {
-            self.remove_tools(tool_names)
-        }
-
-        #[napi(js_name = "clearTools")]
-        pub unsafe fn clear_tools_js(&mut self) {
-            self.clear_tools()
-        }
-
-        #[napi(js_name = "setKnowledge")]
-        pub unsafe fn set_knowledge_js(&mut self, knowledge: &Knowledge) {
-            self.set_knowledge(knowledge.clone())
-        }
-
-        #[napi(js_name = "removeKnowledge")]
-        pub unsafe fn remove_knowledge_js(&mut self) {
-            self.remove_knowledge()
-        }
-
-        #[napi(js_name = "runDelta", ts_return_type = "MessageDeltaOutputIterator")]
-        pub fn run_delta_js<'a>(
-            &'a mut self,
-            env: Env,
-            messages: Messages,
-            config: Option<AgentConfig>,
-        ) -> napi::Result<Object<'a>> {
-            let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageDeltaOutput>>();
-            let rt = get_or_create_runtime();
-            let mut agent = self.clone();
-
-            rt.spawn(async move {
-                let mut stream = boxed!(agent.run_delta(messages.into(), config));
-
-                while let Some(item) = stream.next().await {
-                    if tx
-                        .send(item.map_err(|e| anyhow::anyhow!(e.to_string())))
-                        .is_err()
-                    {
-                        break;
-                    }
-                    tokio::task::yield_now().await;
-                }
-            });
-
-            let it = MessageDeltaOutputIterator {
-                rx: Arc::new(Mutex::new(rx)),
-            };
-            it.to_async_iterator(env)
-        }
-
-        #[napi(js_name = "run", ts_return_type = "MessageOutputIterator")]
-        pub fn run_js<'a>(
-            &'a mut self,
-            env: Env,
-            messages: Messages,
-            config: Option<AgentConfig>,
-        ) -> napi::Result<Object<'a>> {
-            let (tx, rx) = mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
-            let rt = get_or_create_runtime();
-            let mut agent = self.clone();
-
-            rt.spawn(async move {
-                let mut stream = boxed!(agent.run(messages.into(), config));
-
-                while let Some(item) = stream.next().await {
-                    if tx
-                        .send(item.map_err(|e| anyhow::anyhow!(e.to_string())))
-                        .is_err()
-                    {
-                        break;
-                    }
-                    tokio::task::yield_now().await;
-                }
-            });
-
-            let it = MessageOutputIterator {
-                rx: Arc::new(Mutex::new(rx)),
-            };
-            it.to_async_iterator(env)
-        }
+    /// Returns the conversation history.
+    pub fn history(&self) -> &[Message] {
+        &self.history
     }
-}
 
-#[cfg(feature = "wasm")]
-mod wasm {
-    use wasm_bindgen::prelude::*;
-
-    use super::*;
-    use crate::{ffi::web::common::stream_to_async_iterable, value::message::wasm::Messages};
-
-    #[wasm_bindgen]
-    impl Agent {
-        /// Construct a new Agent instance with provided `LangModel` and `Tool`s.
-        ///
-        /// Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after the agent is initialized.
-        /// If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
-        #[wasm_bindgen(constructor)]
-        pub fn new_js(
-            lm: &LangModel,
-            tools: Option<Vec<Tool>>,
-            knowledge: Option<Knowledge>,
-        ) -> Self {
-            Self::new(lm.clone(), tools.unwrap_or(vec![]), knowledge)
-        }
-
-        #[wasm_bindgen(js_name = "addTool")]
-        pub fn add_tool_js(&mut self, tool: &Tool) {
-            self.add_tool(tool.clone())
-        }
-
-        /// Note that the ownership of `tools` is moved to the agent, which means you can't directly accessible to `tools` after this function is called.
-        /// If you still want to reuse the `tools`, try to use `addTool()` multiple times instead.
-        #[wasm_bindgen(js_name = "addTools")]
-        pub fn add_tools_js(&mut self, tools: Vec<Tool>) {
-            self.add_tools(tools.clone())
-        }
-
-        #[wasm_bindgen(js_name = "removeTool")]
-        pub fn remove_tool_js(&mut self, #[wasm_bindgen(js_name = "toolName")] tool_name: String) {
-            self.remove_tool(tool_name)
-        }
-
-        #[wasm_bindgen(js_name = "removeTools")]
-        pub fn remove_tools_js(
-            &mut self,
-            #[wasm_bindgen(js_name = "toolNames")] tool_names: Vec<String>,
-        ) {
-            self.remove_tools(tool_names)
-        }
-
-        #[wasm_bindgen(js_name = "clearTools")]
-        pub fn clear_tools_js(&mut self) {
-            self.clear_tools()
-        }
-
-        #[wasm_bindgen(js_name = "setKnowledge")]
-        pub fn set_knowledge_js(&mut self, knowledge: &Knowledge) {
-            self.set_knowledge(knowledge.clone())
-        }
-
-        #[wasm_bindgen(js_name = "removeKnowledge")]
-        pub fn remove_knowledge_js(&mut self) {
-            self.remove_knowledge()
-        }
-
-        #[wasm_bindgen(
-            js_name = "runDelta",
-            unchecked_return_type = "AsyncIterable<MessageDeltaOutput>"
-        )]
-        pub fn run_delta_js(
-            &self,
-            messages: Messages,
-            config: Option<AgentConfig>,
-        ) -> Result<JsValue, js_sys::Error> {
-            let mut agent = self.clone();
-            let messages = messages.try_into()?;
-            let stream = async_stream::stream! {
-                let mut inner_stream = agent.run_delta(messages, config);
-                while let Some(item) = inner_stream.next().await {
-                    yield item;
-                }
-            };
-            let js_stream = Box::pin(stream.map(|response| {
-                response
-                    .map(|resp| resp.into())
-                    .map_err(|e| JsValue::from_str(&e.to_string()))
-            }));
-
-            Ok(stream_to_async_iterable(js_stream).into())
-        }
-
-        #[wasm_bindgen(
-            js_name = "run",
-            unchecked_return_type = "AsyncIterable<MessageOutput>"
-        )]
-        pub fn run_js(
-            &self,
-            messages: Messages,
-            config: Option<AgentConfig>,
-        ) -> Result<JsValue, js_sys::Error> {
-            let mut agent = self.clone();
-            let messages = messages.try_into()?;
-            let stream = async_stream::stream! {
-                let mut inner_stream = agent.run(messages, config);
-                while let Some(item) = inner_stream.next().await {
-                    yield item;
-                }
-            };
-            let js_stream = Box::pin(stream.map(|response| {
-                response
-                    .map(|resp| resp.into())
-                    .map_err(|e| JsValue::from_str(&e.to_string()))
-            }));
-
-            Ok(stream_to_async_iterable(js_stream).into())
-        }
+    /// Clears the conversation history.
+    pub fn clear_history(&mut self) {
+        self.history.clear();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ailoy_macros::multi_platform_test;
+    use ailoy_macros::{multi_platform_test, tool};
     use futures::StreamExt;
 
     use super::*;
-    use crate::{
-        model::LangModel,
-        to_value,
-        tool::ToolFunc,
-        value::{ToolDesc, Value},
-    };
+    use crate::{model::LangModel, to_value, value::Value};
+
+    #[tool(description = "Get current temperature for a city")]
+    async fn temperature(_location: String, unit: String) -> anyhow::Result<Value> {
+        match unit.as_str() {
+            "Celsius" => Ok(to_value!("40")),
+            "Fahrenheit" => Ok(to_value!("104")),
+            _ => anyhow::bail!("unknown unit: {}", unit),
+        }
+    }
 
     #[multi_platform_test]
     async fn run_simple_chat() {
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
-            .await
+        let model = LangModel::anthropic("claude-haiku-4-5-20251001")
+            .build()
             .unwrap();
-        let mut agent = Agent::new(model, Vec::new(), None);
+        let mut agent = Agent::new(model, Vec::new());
 
-        let mut strm = Box::pin(agent.run_delta(
+        let mut strm = Box::pin(agent.stream_turns(
             vec![Message::new(Role::User).with_contents(vec![Part::text("Hi, what's your name?")])],
             None,
         ));
         let mut accumulated = MessageDelta::new();
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
-            println!("delta: {:?}", output.delta);
-            if let Some(finish_reason) = output.finish_reason {
+            if let Some(_finish_reason) = output.finish_reason {
                 let msg = accumulated.clone().finish().unwrap();
-                println!("message: {:?}, finish_reason: {:?}", msg, finish_reason);
+                assert!(!msg.contents.is_empty());
             } else {
                 accumulated = accumulated.accumulate(output.delta).unwrap();
             }
@@ -822,121 +354,64 @@ mod tests {
 
     #[multi_platform_test]
     async fn run_tool_call() {
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
-            .await
+        let model = LangModel::anthropic("claude-haiku-4-5-20251001")
+            .build()
             .unwrap();
 
-        let tool_desc = ToolDesc::new(
-            "temperature".to_owned(),
-            Some("Get current temperature".to_owned()),
-            to_value!({
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "The city name"
-                    },
-                    "unit": {
-                        "type": "string",
-                        "enum": ["Celsius", "Fahrenheit"]
-                    }
-                },
-                "required": ["location", "unit"]
-            }),
-            Some(to_value!({
-                "type": "number",
-                "description": "Null if the given city name is unavailable.",
-                "nullable": true,
-            })),
-        );
-        let tools = vec![Tool::new_function(
-            tool_desc,
-            std::sync::Arc::<Box<ToolFunc>>::new(Box::new(move |args: Value| {
-                Box::pin(async move {
-                    use anyhow::bail;
+        let tools = vec![temperature_tool()];
 
-                    let unit = args
-                        .as_object()
-                        .unwrap()
-                        .get("unit")
-                        .unwrap()
-                        .as_str()
-                        .unwrap();
-                    match unit {
-                        "Celsius" => Ok(to_value!("40")),
-                        "Fahrenheit" => Ok(to_value!("104")),
-                        _ => bail!(""),
-                    }
-                })
-            })),
-        )];
-
-        let mut agent = Agent::new(model, tools, None);
-
-        let mut strm = Box::pin(agent.run_delta(
-            vec![
-                    Message::new(Role::User)
-                        .with_contents(vec![Part::text("How much hot currently in Dubai?")]),
-                ],
-            None,
-        ));
-        let mut accumulated = MessageDelta::new();
-        while let Some(output) = strm.next().await {
-            let output = output.unwrap();
-            println!("delta: {:?}", output.delta);
-            if let Some(finish_reason) = output.finish_reason {
-                let msg = accumulated.clone().finish().unwrap();
-                println!("message: {:?}, finish_reason: {:?}", msg, finish_reason);
-            } else {
-                accumulated = accumulated.accumulate(output.delta).unwrap();
-            }
-        }
-    }
-
-    #[cfg(any(target_family = "unix", target_family = "windows"))]
-    #[tokio::test]
-    async fn run_mcp_stdio_tool_call() {
-        use rmcp::transport::ConfigureCommandExt;
-
-        use crate::tool::MCPClient;
-
-        let model = LangModel::try_new_local("Qwen/Qwen3-0.6B", None)
-            .await
-            .unwrap();
-        let mut agent = Agent::new(model, Vec::new(), None);
-
-        let command = tokio::process::Command::new("uvx").configure(|cmd| {
-            cmd.arg("mcp-server-time");
-        });
-        let mcp_client = MCPClient::from_stdio(command).await.unwrap();
-        let mcp_tools = mcp_client
-            .get_tools()
-            .iter()
-            .map(|tool| Tool::new_mcp(tool.clone()))
-            .collect();
-        agent.add_tools(mcp_tools);
-
-        let agent_tools = agent.get_tools();
-        assert_eq!(agent_tools.len(), 2);
-        assert_eq!(agent_tools[0].get_description().name, "get_current_time");
-        assert_eq!(agent_tools[1].get_description().name, "convert_time");
-
-        let mut strm = Box::pin(agent.run_delta(
+        let mut agent = Agent::new(model, tools);
+        let mut strm = Box::pin(agent.run_turns(
             vec![Message::new(Role::User).with_contents(vec![Part::text(
-                "What time is it now in America/New_York timezone?",
+                "How hot is it currently in Dubai in Celsius?",
             )])],
             None,
         ));
-        let mut accumulated = MessageDelta::new();
+        let mut count = 0;
         while let Some(output) = strm.next().await {
-            let output = output.unwrap();
-            println!("delta: {:?}", output.delta);
-            if let Some(finish_reason) = output.finish_reason {
-                let msg = accumulated.clone().finish().unwrap();
-                println!("message: {:?}, finish_reason: {:?}", msg, finish_reason);
-            } else {
-                accumulated = accumulated.accumulate(output.delta).unwrap();
-            }
+            output.unwrap();
+            count += 1;
         }
+        assert!(count > 0);
+    }
+
+    #[multi_platform_test]
+    async fn run_with_builder() {
+        let model = LangModel::anthropic("claude-haiku-4-5-20251001")
+            .build()
+            .unwrap();
+        let mut agent = Agent::builder()
+            .model(model)
+            .system("You are a helpful assistant.")
+            .build()
+            .unwrap();
+
+        let response = agent.run("Hi, what's your name?").await.unwrap();
+        assert_eq!(response.role, Role::Assistant);
+        assert!(!response.contents.is_empty());
+    }
+
+    #[multi_platform_test]
+    async fn run_multi_turn() {
+        let model = LangModel::anthropic("claude-haiku-4-5-20251001")
+            .build()
+            .unwrap();
+        let mut agent = Agent::new(model, Vec::new());
+
+        assert_eq!(agent.history().len(), 0);
+
+        let response = agent.run("Hi, what's your name?").await.unwrap();
+        assert_eq!(response.role, Role::Assistant);
+        assert!(!response.contents.is_empty());
+        // history should have user + assistant messages
+        assert!(agent.history().len() >= 2);
+
+        let response2 = agent.run("What did I just ask you?").await.unwrap();
+        assert_eq!(response2.role, Role::Assistant);
+        // history should have grown
+        assert!(agent.history().len() >= 4);
+
+        agent.clear_history();
+        assert_eq!(agent.history().len(), 0);
     }
 }

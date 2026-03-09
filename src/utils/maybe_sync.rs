@@ -8,9 +8,9 @@ mod sync {
 
     use futures::stream::Stream;
 
-    pub type BoxFuture<'a, T> = Pin<alloc::boxed::Box<dyn Future<Output = T> + Send + 'a>>;
+    pub type BoxFuture<'a, T> = Pin<std::boxed::Box<dyn Future<Output = T> + Send + 'a>>;
 
-    pub type BoxStream<'a, T> = Pin<alloc::boxed::Box<dyn Stream<Item = T> + Send + 'a>>;
+    pub type BoxStream<'a, T> = Pin<std::boxed::Box<dyn Stream<Item = T> + Send + 'a>>;
 
     /// A pointer type which can be safely shared between threads
     /// when "sync" feature is enabled.\
@@ -33,7 +33,7 @@ mod sync {
     /// // Unlike `std::rc::Rc` this `maybe_sync::Rc` always satisfies `MaybeSend` bound.
     /// maybe_sends(Rc::new(42));
     /// ```
-    pub type Rc<T> = alloc::sync::Arc<T>;
+    pub type Rc<T> = std::sync::Arc<T>;
 
     /// Mutex implementation to use in conjunction with `MaybeSync` bound.
     ///
@@ -218,9 +218,9 @@ mod unsync {
     /// All values are maybe sync.
     impl<T> MaybeSync for T where T: ?Sized {}
 
-    pub type BoxFuture<'a, T> = Pin<alloc::boxed::Box<dyn Future<Output = T> + 'a>>;
+    pub type BoxFuture<'a, T> = Pin<std::boxed::Box<dyn Future<Output = T> + 'a>>;
 
-    pub type BoxStream<'a, T> = Pin<alloc::boxed::Box<dyn Stream<Item = T> + 'a>>;
+    pub type BoxStream<'a, T> = Pin<std::boxed::Box<dyn Stream<Item = T> + 'a>>;
 
     /// A pointer type which can be safely shared between threads
     /// when "sync" feature is enabled.\
@@ -245,7 +245,7 @@ mod unsync {
     /// // even if feature "sync" is enabeld.
     /// maybe_sends(Rc::new(42));
     /// ```
-    pub type Rc<T> = alloc::rc::Rc<T>;
+    pub type Rc<T> = std::rc::Rc<T>;
 
     /// Mutex implementation to use in conjunction with `MaybeSync` bound.
     ///
