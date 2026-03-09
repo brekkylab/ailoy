@@ -55,15 +55,13 @@ impl AgentBuilder {
         self
     }
 
-    pub fn build(self) -> anyhow::Result<Agent> {
-        Ok(Agent {
-            lm: self
-                .model
-                .ok_or_else(|| anyhow::anyhow!("model is required"))?,
+    pub fn build(self) -> Agent {
+        Agent {
+            lm: self.model.expect("AgentBuilder: model is required"),
             tools: self.tools,
             system: self.system,
             history: Vec::new(),
-        })
+        }
     }
 }
 
@@ -330,11 +328,10 @@ mod tests {
     }
 
     #[multi_platform_test]
-    async fn run_simple_chat() {
-        let model = LangModel::anthropic("claude-haiku-4-5-20251001")
-            .build()
-            .unwrap();
-        let mut agent = Agent::new(model, Vec::new());
+    async fn run_simple_chat() -> anyhow::Result<()> {
+        let mut agent = Agent::builder()
+            .model(LangModel::anthropic("claude-haiku-4-5-20251001").build()?)
+            .build();
 
         let mut strm = Box::pin(agent.stream_turns(
             vec![Message::new(Role::User).with_contents(vec![Part::text("Hi, what's your name?")])],
@@ -342,25 +339,24 @@ mod tests {
         ));
         let mut accumulated = MessageDelta::new();
         while let Some(output) = strm.next().await {
-            let output = output.unwrap();
+            let output = output?;
             if let Some(_finish_reason) = output.finish_reason {
-                let msg = accumulated.clone().finish().unwrap();
+                let msg = accumulated.clone().finish()?;
                 assert!(!msg.contents.is_empty());
             } else {
-                accumulated = accumulated.accumulate(output.delta).unwrap();
+                accumulated = accumulated.accumulate(output.delta)?;
             }
         }
+        Ok(())
     }
 
     #[multi_platform_test]
-    async fn run_tool_call() {
-        let model = LangModel::anthropic("claude-haiku-4-5-20251001")
-            .build()
-            .unwrap();
+    async fn run_tool_call() -> anyhow::Result<()> {
+        let mut agent = Agent::builder()
+            .model(LangModel::anthropic("claude-haiku-4-5-20251001").build()?)
+            .tool(temperature_tool())
+            .build();
 
-        let tools = vec![temperature_tool()];
-
-        let mut agent = Agent::new(model, tools);
         let mut strm = Box::pin(agent.run_turns(
             vec![Message::new(Role::User).with_contents(vec![Part::text(
                 "How hot is it currently in Dubai in Celsius?",
@@ -369,49 +365,47 @@ mod tests {
         ));
         let mut count = 0;
         while let Some(output) = strm.next().await {
-            output.unwrap();
+            output?;
             count += 1;
         }
         assert!(count > 0);
+        Ok(())
     }
 
     #[multi_platform_test]
-    async fn run_with_builder() {
-        let model = LangModel::anthropic("claude-haiku-4-5-20251001")
-            .build()
-            .unwrap();
+    async fn run_with_builder() -> anyhow::Result<()> {
         let mut agent = Agent::builder()
-            .model(model)
+            .model(LangModel::anthropic("claude-haiku-4-5-20251001").build()?)
             .system("You are a helpful assistant.")
-            .build()
-            .unwrap();
+            .build();
 
-        let response = agent.run("Hi, what's your name?").await.unwrap();
+        let response = agent.run("Hi, what's your name?").await?;
         assert_eq!(response.role, Role::Assistant);
         assert!(!response.contents.is_empty());
+        Ok(())
     }
 
     #[multi_platform_test]
-    async fn run_multi_turn() {
-        let model = LangModel::anthropic("claude-haiku-4-5-20251001")
-            .build()
-            .unwrap();
-        let mut agent = Agent::new(model, Vec::new());
+    async fn run_multi_turn() -> anyhow::Result<()> {
+        let mut agent = Agent::builder()
+            .model(LangModel::anthropic("claude-haiku-4-5-20251001").build()?)
+            .build();
 
         assert_eq!(agent.history().len(), 0);
 
-        let response = agent.run("Hi, what's your name?").await.unwrap();
+        let response = agent.run("Hi, what's your name?").await?;
         assert_eq!(response.role, Role::Assistant);
         assert!(!response.contents.is_empty());
         // history should have user + assistant messages
         assert!(agent.history().len() >= 2);
 
-        let response2 = agent.run("What did I just ask you?").await.unwrap();
+        let response2 = agent.run("What did I just ask you?").await?;
         assert_eq!(response2.role, Role::Assistant);
         // history should have grown
         assert!(agent.history().len() >= 4);
 
         agent.clear_history();
         assert_eq!(agent.history().len(), 0);
+        Ok(())
     }
 }
