@@ -8,7 +8,7 @@ use std::{
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 
 use super::base::ToolBehavior;
-use crate::value::{ToolDesc, Value};
+use crate::message::{ToolDesc, Value};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub type ToolFuncResult = dyn Future<Output = Result<Value, anyhow::Error>> + Send;

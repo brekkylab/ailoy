@@ -10,7 +10,7 @@ use rmcp::{
 };
 
 use super::{super::ToolBehavior, common::handle_result};
-use crate::value::{ToolDesc, Value};
+use crate::message::{ToolDesc, Value};
 
 #[derive(Debug)]
 pub struct MCPClient {
@@ -114,7 +114,7 @@ impl ToolBehavior for MCPTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::Value;
+    use crate::message::Value;
 
     #[tokio::test]
     async fn run_stdio() -> anyhow::Result<()> {
@@ -141,8 +141,7 @@ mod tests {
         let part = tool.run(tool_call_args).await.unwrap();
         assert_eq!(part.is_string(), true);
 
-        let parsed_part: serde_json::Value =
-            serde_json::from_str(&part.as_str().unwrap()).unwrap();
+        let parsed_part: serde_json::Value = serde_json::from_str(&part.as_str().unwrap()).unwrap();
         assert_eq!(parsed_part["timezone"].as_str(), Some("Asia/Seoul"));
         assert_eq!(parsed_part["is_dst"].as_bool(), Some(false));
         assert_eq!(

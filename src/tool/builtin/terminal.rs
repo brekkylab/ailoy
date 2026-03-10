@@ -1,5 +1,5 @@
 use super::super::function::FunctionTool;
-use crate::value::Value;
+use crate::message::Value;
 
 pub fn create_terminal_tool(_config: Value) -> anyhow::Result<FunctionTool> {
     {
@@ -9,9 +9,9 @@ pub fn create_terminal_tool(_config: Value) -> anyhow::Result<FunctionTool> {
         };
 
         use crate::{
+            message::{ToolDescBuilder, Value},
             to_value,
             tool::ToolFunc,
-            value::{ToolDescBuilder, Value},
         };
 
         let current_shell = {

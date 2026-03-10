@@ -5,13 +5,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     knowledge::{Knowledge, KnowledgeDyn},
-    model::{LangModel, LangModelInferConfig, LangModelInference as _},
-    tool::{Tool, ToolBehavior as _},
-    utils::{BoxStream, log},
-    value::{
+    message::{
         Delta, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part,
         PartDelta, Role, ToolDesc,
     },
+    model::{LangModel, LangModelInferConfig, LangModelInference as _},
+    tool::{Tool, ToolBehavior as _},
+    utils::{BoxStream, log},
 };
 
 /// Configuration for running the agent.
@@ -380,9 +380,9 @@ mod tests {
     use super::*;
     use crate::{
         knowledge::{Document, Knowledge},
+        message::Value,
         model::LangModel,
         to_value,
-        value::Value,
     };
 
     struct MockKnowledge {

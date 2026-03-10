@@ -1,9 +1,3 @@
-[workspace]
-members = [
-    ".",
-    "./crates/macros",
-]
-
 [package]
 name = "ailoy"
 version = "0.3.0"
@@ -14,10 +8,10 @@ crate-type = ["rlib"]
 path = "src/lib.rs"
 
 [features]
-default = []
+rt = []
+default = ["rt"]
 
 [dependencies]
-ailoy-macros = { path = "./crates/macros" }
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
@@ -49,12 +43,3 @@ unicode-segmentation = "1.12.0"
 url = "2.5.4"
 urlencoding = "2.1"
 uuid = { version = "1.18.0", features = ["v4"] }
-
-[build-dependencies]
-dotenvy = "0.15.7"
-
-[dev-dependencies]
-env_logger = "0.11"
-
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-env_logger = "0.11"

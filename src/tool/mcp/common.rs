@@ -1,4 +1,4 @@
-use crate::{to_value, value::Value};
+use crate::{message::Value, to_value};
 
 pub fn handle_result(value: rmcp::model::CallToolResult) -> anyhow::Result<Value> {
     if let Some(result) = value.structured_content {

@@ -10,7 +10,7 @@ use super::{
     function::{FunctionTool, ToolFunc},
     mcp::MCPTool,
 };
-use crate::value::{ToolDesc, Value};
+use crate::message::{ToolDesc, Value};
 
 #[maybe_send_sync]
 #[multi_platform_async_trait]
@@ -212,7 +212,7 @@ mod tests {
     use ailoy_macros::{multi_platform_test, tool};
 
     use super::{ToolBehavior, *};
-    use crate::{to_value, value::Value};
+    use crate::{message::Value, to_value};
 
     #[test]
     fn tool_builder_with_typed_params() {

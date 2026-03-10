@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ailoy_macros::{maybe_send_sync, multi_platform_async_trait};
 use serde_json::Value as JsonValue;
 
-use crate::{tool::Tool, value::Value};
+use crate::{message::Value, tool::Tool};
 
 /// A document returned by a knowledge source.
 #[derive(Debug, Clone)]

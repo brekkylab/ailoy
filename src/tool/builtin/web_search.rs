@@ -13,9 +13,9 @@ use web_time::{Duration, Instant};
 
 use super::super::function::{FunctionTool, ToolFunc};
 use crate::{
+    message::{ToolDescBuilder, Value},
     to_value,
     utils::sleep,
-    value::{ToolDescBuilder, Value},
 };
 
 #[derive(Clone, Debug)]
