@@ -6,11 +6,11 @@ pub(crate) mod datatype;
 // pub(crate) mod knowledge;
 pub(crate) mod lang_model;
 pub(crate) mod message;
-// pub(crate) mod tool;
+pub(crate) mod tool;
 // pub(crate) mod utils;
 
 // pub use agent::*;
 // pub use knowledge::{Document, Knowledge, KnowledgeExt};
 pub use lang_model::*;
 pub use message::*;
-// pub use tool::*;
+pub use tool::*;

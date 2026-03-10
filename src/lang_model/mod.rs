@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 #[cfg(feature = "rt")]
-pub use rt::*;
+pub use rt::LangModelRuntime;
 
 /// Describes a language model
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LangModelDesc {
+pub struct LangModel {
     pub model: String,
 }
 
@@ -43,8 +43,8 @@ mod rt {
     pub use super::*;
 
     /// Runtime
-    pub struct LangModel {
-        lm: LangModelDesc,
+    pub struct LangModelRuntime {
+        lm: LangModel,
         provider: LangModelProvider,
     }
 
@@ -56,8 +56,8 @@ mod rt {
         pub api_key: &'a Option<String>,
     }
 
-    impl LangModel {
-        pub fn new(lm: LangModelDesc, provider: LangModelProvider) -> Self {
+    impl LangModelRuntime {
+        pub fn new(lm: LangModel, provider: LangModelProvider) -> Self {
             Self { lm, provider }
         }
 
@@ -160,8 +160,8 @@ mod rt {
                 std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
             let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
-            let lm = LangModel::new(
-                LangModelDesc {
+            let lm = LangModelRuntime::new(
+                LangModel {
                     model: "gpt-4".to_string(),
                 },
                 LangModelProvider {
@@ -185,8 +185,8 @@ mod rt {
                 std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
             let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
-            let lm = LangModel::new(
-                LangModelDesc {
+            let lm = LangModelRuntime::new(
+                LangModel {
                     model: "gpt-4".to_string(),
                 },
                 LangModelProvider {
