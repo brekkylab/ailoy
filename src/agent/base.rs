@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    knowledge::{Knowledge, KnowledgeDyn},
     model::{LangModel, LangModelInferConfig, LangModelInference as _},
     tool::{Tool, ToolBehavior as _},
     utils::{BoxStream, log},
@@ -24,6 +27,7 @@ pub struct AgentBuilder {
     model: Option<LangModel>,
     tools: Vec<Tool>,
     system: Option<String>,
+    knowledge: Option<Arc<KnowledgeDyn>>,
 }
 
 impl AgentBuilder {
@@ -32,6 +36,7 @@ impl AgentBuilder {
             model: None,
             tools: Vec::new(),
             system: None,
+            knowledge: None,
         }
     }
 
@@ -55,12 +60,20 @@ impl AgentBuilder {
         self
     }
 
+    /// Attach a knowledge source for automatic per-turn retrieval (Pattern B).
+    /// At most one knowledge source is supported; call this once.
+    pub fn knowledge(mut self, k: impl Knowledge + 'static) -> Self {
+        self.knowledge = Some(Arc::new(k));
+        self
+    }
+
     pub fn build(self) -> Agent {
         Agent {
             lm: self.model.expect("AgentBuilder: model is required"),
             tools: self.tools,
             system: self.system,
             history: Vec::new(),
+            knowledge: self.knowledge,
         }
     }
 }
@@ -72,6 +85,8 @@ pub struct Agent {
     tools: Vec<Tool>,
     system: Option<String>,
     history: Vec<Message>,
+    /// Optional knowledge source for automatic per-turn retrieval (Pattern B).
+    knowledge: Option<Arc<KnowledgeDyn>>,
 }
 
 impl Agent {
@@ -81,6 +96,7 @@ impl Agent {
             tools: tools.into_iter().collect(),
             system: None,
             history: Vec::new(),
+            knowledge: None,
         }
     }
 
@@ -131,6 +147,62 @@ impl Agent {
         self.tools.clear();
     }
 
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// Sync setup shared by every public turn method:
+    /// - builds system + history base messages
+    /// - pushes the clean user message into history
+    /// - returns owned copies of the data needed inside the async stream body
+    fn prepare_turn(
+        &mut self,
+        prompt: String,
+        config: Option<AgentConfig>,
+    ) -> (Message, Vec<Message>, Vec<Tool>, LangModelInferConfig) {
+        let clean_user_msg = Message::new(Role::User).with_contents([Part::text(prompt.clone())]);
+        let mut base_messages = Vec::new();
+        if let Some(system) = &self.system {
+            base_messages
+                .push(Message::new(Role::System).with_contents([Part::text(system.clone())]));
+        }
+        base_messages.extend(self.history.clone());
+        self.history.push(clean_user_msg.clone());
+        let tools = self.tools.clone();
+        let inference_config = config.unwrap_or_default().inference.unwrap_or_default();
+        (clean_user_msg, base_messages, tools, inference_config)
+    }
+
+    /// Retrieve context from the attached knowledge source for the given query.
+    /// Returns `None` if no knowledge source is configured or no documents were found.
+    async fn retrieve_context(&self, query: &str) -> anyhow::Result<Option<String>> {
+        let Some(k) = &self.knowledge else {
+            return Ok(None);
+        };
+        let docs = k.retrieve(query).await?;
+        if docs.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(k.format_context(query, &docs)))
+        }
+    }
+
+    /// Perform retrieval and assemble the full message list for the LLM.
+    /// The returned list ends with the (possibly context-augmented) user message.
+    async fn build_llm_messages(
+        &self,
+        prompt: &str,
+        clean_user_msg: Message,
+        mut base_messages: Vec<Message>,
+    ) -> anyhow::Result<Vec<Message>> {
+        let llm_user_msg = match self.retrieve_context(prompt).await? {
+            Some(ctx) => {
+                Message::new(Role::User).with_contents([Part::text(format!("{ctx}\n\n{prompt}"))])
+            }
+            None => clean_user_msg,
+        };
+        base_messages.push(llm_user_msg);
+        Ok(base_messages)
+    }
+
     fn get_tool_descs(tools: &[Tool]) -> Vec<ToolDesc> {
         tools.iter().map(|v| v.get_description()).collect()
     }
@@ -161,16 +233,72 @@ impl Agent {
         Ok(tool_resps)
     }
 
+    // ── Public APIs ───────────────────────────────────────────────────────────
+
+    /// Stream complete turn outputs (one [`MessageOutput`] per model response or tool result).
+    ///
+    /// Handles the full agentic cycle: retrieval → inference → tool calls → repeat.
+    /// The clean user message is stored in history; retrieved context is injected
+    /// ephemerally into the LLM message only.
     pub fn stream_turns<'a>(
         &'a mut self,
-        messages: Vec<Message>,
+        prompt: impl Into<String>,
         config: Option<AgentConfig>,
-    ) -> BoxStream<'a, anyhow::Result<MessageDeltaOutput>> {
-        let tools = self.tools.clone();
-        let inference_config = config.unwrap_or_default().inference.unwrap_or_default();
-        let strm = async_stream::try_stream! {
+    ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
+        let prompt = prompt.into();
+        let (clean_user_msg, base_messages, tools, inference_config) =
+            self.prepare_turn(prompt.clone(), config);
+
+        Box::pin(async_stream::try_stream! {
+            let mut messages = self.build_llm_messages(&prompt, clean_user_msg, base_messages).await?;
+
             let tool_descs = Self::get_tool_descs(&tools);
-            let mut messages = messages;
+            loop {
+                let model = self.lm.clone();
+                let assistant_out = model
+                    .infer(messages.clone(), tool_descs.clone(), inference_config.clone())
+                    .await?;
+                let assistant_msg = assistant_out.message.clone();
+                messages.push(assistant_msg.clone());
+                yield assistant_out;
+                self.history.push(assistant_msg.clone());
+
+                if let Some(tool_calls) = assistant_msg.tool_calls
+                    && !tool_calls.is_empty()
+                {
+                    for delta in Self::handle_tool_calls(&tools, tool_calls).await? {
+                        let message = delta.finish()?;
+                        yield MessageOutput {
+                            message: message.clone(),
+                            finish_reason: FinishReason::Stop {},
+                        };
+                        self.history.push(message.clone());
+                        messages.push(message);
+                    }
+                } else {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Stream per-token delta outputs ([`MessageDeltaOutput`]) for the given prompt.
+    ///
+    /// Same agentic cycle as [`stream_turns`] but yields incremental token deltas instead
+    /// of complete messages — suitable for real-time display.
+    pub fn stream_delta(
+        &mut self,
+        prompt: impl Into<String>,
+        config: Option<AgentConfig>,
+    ) -> BoxStream<'_, anyhow::Result<MessageDeltaOutput>> {
+        let prompt = prompt.into();
+        let (clean_user_msg, base_messages, tools, inference_config) =
+            self.prepare_turn(prompt.clone(), config);
+
+        Box::pin(async_stream::try_stream! {
+            let mut messages = self.build_llm_messages(&prompt, clean_user_msg, base_messages).await?;
+
+            let tool_descs = Self::get_tool_descs(&tools);
             loop {
                 let mut assistant_msg_delta = MessageDelta::new().with_role(Role::Assistant);
                 {
@@ -209,94 +337,28 @@ impl Agent {
                     break;
                 }
             }
-        };
-        Box::pin(strm)
+        })
     }
 
-    pub fn run_turns<'a>(
-        &'a mut self,
-        messages: Vec<Message>,
+    /// Single-shot run: prompt → last assistant [`Message`].
+    pub async fn run(
+        &mut self,
+        prompt: impl Into<String>,
         config: Option<AgentConfig>,
-    ) -> BoxStream<'a, anyhow::Result<MessageOutput>> {
-        let tools = self.tools.clone();
-        let inference_config = config.unwrap_or_default().inference.unwrap_or_default();
-        let strm = async_stream::try_stream! {
-            let tool_descs = Self::get_tool_descs(&tools);
-            let mut messages = messages;
-            loop {
-                let model = self.lm.clone();
-                let assistant_out = model
-                    .infer(messages.clone(), tool_descs.clone(), inference_config.clone())
-                    .await?;
-                let assistant_msg = assistant_out.message.clone();
-                messages.push(assistant_msg.clone());
-                yield assistant_out;
-                self.history.push(assistant_msg.clone());
-
-                if let Some(tool_calls) = assistant_msg.tool_calls
-                    && !tool_calls.is_empty()
-                {
-                    for delta in Self::handle_tool_calls(&tools, tool_calls).await? {
-                        let message = delta.finish()?;
-                        yield MessageOutput {
-                            message: message.clone(),
-                            finish_reason: FinishReason::Stop {},
-                        };
-                        self.history.push(message.clone());
-                        messages.push(message);
-                    }
-                } else {
-                    break;
-                }
-            }
-        };
-        Box::pin(strm)
-    }
-
-    /// Single-shot run: string prompt -> final assistant Message.
-    /// Runs the full agentic loop (tool calls resolved), accumulates history, and returns the last assistant message.
-    pub async fn run(&mut self, prompt: impl Into<String>) -> anyhow::Result<Message> {
-        let user_message = Message::new(Role::User).with_contents([Part::text(prompt.into())]);
-        let mut messages = Vec::new();
-        if let Some(system) = &self.system {
-            messages.push(Message::new(Role::System).with_contents([Part::text(system.clone())]));
-        }
-        messages.extend(self.history.clone());
-        messages.push(user_message.clone());
-        self.history.push(user_message);
-
-        // Collect outputs (stream borrows &mut self, so collect first then push to history)
+    ) -> anyhow::Result<Message> {
         let mut outputs: Vec<MessageOutput> = Vec::new();
         {
-            let mut strm = self.run_turns(messages, None);
+            let mut strm = self.stream_turns(prompt, config);
             while let Some(out) = strm.next().await {
                 outputs.push(out?);
             }
         }
-        // run_turns already pushed output messages to history; find last assistant message
-        let last_assistant = outputs
+        outputs
             .into_iter()
             .filter(|o| o.message.role == Role::Assistant)
             .last()
-            .map(|o| o.message);
-        last_assistant.ok_or_else(|| anyhow::anyhow!("No response from agent"))
-    }
-
-    /// Streaming run: string prompt -> per-token delta stream. History is updated as the stream is consumed.
-    pub fn stream(
-        &mut self,
-        prompt: impl Into<String>,
-    ) -> BoxStream<'_, anyhow::Result<MessageDeltaOutput>> {
-        let user_message = Message::new(Role::User).with_contents([Part::text(prompt.into())]);
-        let mut messages = Vec::new();
-        if let Some(system) = &self.system {
-            messages.push(Message::new(Role::System).with_contents([Part::text(system.clone())]));
-        }
-        messages.extend(self.history.clone());
-        messages.push(user_message.clone());
-        self.history.push(user_message);
-
-        self.stream_turns(messages, None)
+            .map(|o| o.message)
+            .ok_or_else(|| anyhow::anyhow!("No response from agent"))
     }
 
     /// Returns the conversation history.
@@ -312,11 +374,27 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
-    use ailoy_macros::{multi_platform_test, tool};
+    use ailoy_macros::{multi_platform_async_trait, multi_platform_test, tool};
     use futures::StreamExt;
 
     use super::*;
-    use crate::{model::LangModel, to_value, value::Value};
+    use crate::{
+        knowledge::{Document, Knowledge},
+        model::LangModel,
+        to_value,
+        value::Value,
+    };
+
+    struct MockKnowledge {
+        docs: Vec<Document>,
+    }
+
+    #[multi_platform_async_trait]
+    impl Knowledge for MockKnowledge {
+        async fn retrieve(&self, _query: &str) -> anyhow::Result<Vec<Document>> {
+            Ok(self.docs.clone())
+        }
+    }
 
     #[tool(description = "Get current temperature for a city")]
     async fn temperature(_location: String, unit: String) -> anyhow::Result<Value> {
@@ -333,10 +411,7 @@ mod tests {
             .model(LangModel::anthropic("claude-haiku-4-5-20251001").build()?)
             .build();
 
-        let mut strm = Box::pin(agent.stream_turns(
-            vec![Message::new(Role::User).with_contents(vec![Part::text("Hi, what's your name?")])],
-            None,
-        ));
+        let mut strm = Box::pin(agent.stream_delta("Hi, what's your name?", None));
         let mut accumulated = MessageDelta::new();
         while let Some(output) = strm.next().await {
             let output = output?;
@@ -357,12 +432,8 @@ mod tests {
             .tool(temperature_tool())
             .build();
 
-        let mut strm = Box::pin(agent.run_turns(
-            vec![Message::new(Role::User).with_contents(vec![Part::text(
-                "How hot is it currently in Dubai in Celsius?",
-            )])],
-            None,
-        ));
+        let mut strm =
+            Box::pin(agent.stream_turns("How hot is it currently in Dubai in Celsius?", None));
         let mut count = 0;
         while let Some(output) = strm.next().await {
             output?;
@@ -379,7 +450,7 @@ mod tests {
             .system("You are a helpful assistant.")
             .build();
 
-        let response = agent.run("Hi, what's your name?").await?;
+        let response = agent.run("Hi, what's your name?", None).await?;
         assert_eq!(response.role, Role::Assistant);
         assert!(!response.contents.is_empty());
         Ok(())
@@ -393,19 +464,67 @@ mod tests {
 
         assert_eq!(agent.history().len(), 0);
 
-        let response = agent.run("Hi, what's your name?").await?;
+        let response = agent.run("Hi, what's your name?", None).await?;
         assert_eq!(response.role, Role::Assistant);
         assert!(!response.contents.is_empty());
-        // history should have user + assistant messages
         assert!(agent.history().len() >= 2);
 
-        let response2 = agent.run("What did I just ask you?").await?;
+        let response2 = agent.run("What did I just ask you?", None).await?;
         assert_eq!(response2.role, Role::Assistant);
-        // history should have grown
         assert!(agent.history().len() >= 4);
 
         agent.clear_history();
         assert_eq!(agent.history().len(), 0);
+        Ok(())
+    }
+
+    #[multi_platform_test]
+    async fn run_with_knowledge_source() -> anyhow::Result<()> {
+        let knowledge = MockKnowledge {
+            docs: vec![
+                Document::new(
+                    "Marie Curie was born on November 7, 1867, in Warsaw, in the Kingdom of Poland.",
+                ),
+                Document::new("Warsaw is the capital and largest city of Poland."),
+                Document::new(
+                    "Marie Curie was a physicist and chemist who conducted pioneering research on radioactivity.",
+                ),
+                Document::new("Poland is a country in Central Europe with Warsaw as its capital."),
+                Document::new(
+                    "Paris is the capital of France. Marie Curie spent much of her adult life in Paris.",
+                ),
+            ],
+        };
+        let mut agent = Agent::builder()
+            .model(LangModel::anthropic("claude-haiku-4-5-20251001").build()?)
+            .knowledge(knowledge)
+            .build();
+
+        let response = agent
+            .run(
+                "What is the capital of the country where Marie Curie was born?",
+                None,
+            )
+            .await?;
+        assert_eq!(response.role, Role::Assistant);
+        assert!(!response.contents.is_empty());
+        println!("{:?}", response.contents);
+
+        // History must store the clean user message — no "[Retrieved Context]" block.
+        let user_history = agent
+            .history()
+            .iter()
+            .find(|m| m.role == Role::User)
+            .expect("user message in history");
+        let user_text = user_history
+            .contents
+            .iter()
+            .find_map(|p| p.as_text())
+            .unwrap_or_default();
+        assert!(
+            !user_text.contains("[Retrieved Context]"),
+            "history should store clean user message, got: {user_text}"
+        );
         Ok(())
     }
 }
