@@ -10,15 +10,16 @@ pub struct AgentRuntime<'a> {
 }
 
 impl<'a> AgentRuntime<'a> {
-    pub fn new(spec: AgentSpec, provider: AgentProvider) -> Self {
+    pub fn new(spec: AgentSpec, provider: AgentProvider, tool_set: ToolSet<'a>) -> Self {
         // Prepare toolsets
-        let tool_set = provider
-            .tools
-            .iter()
-            .fold(ToolSet::new(), |ts, tool_provider| match tool_provider {
-                ToolProvider::Builtin { name } => ts.with_builtin(name),
-                ToolProvider::MCP(mcp) => ts.with_mcp(mcp),
-            });
+        let tool_set =
+            provider
+                .tools
+                .iter()
+                .fold(tool_set, |ts, tool_provider| match tool_provider {
+                    ToolProvider::Builtin { name } => ts.with_builtin(name),
+                    ToolProvider::MCP(mcp) => ts.with_mcp(mcp),
+                });
 
         // Collect tools from toolsets
         let tools = spec
@@ -72,5 +73,80 @@ impl<'a> AgentRuntime<'a> {
             .rfind(|m| m.role == Role::Assistant)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("No assistant response"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use url::Url;
+
+    use crate::{
+        agent::{LangModelAPISchema, LangModelProvider, ToolFunc},
+        message::{Part, Role, ToolDescBuilder},
+        to_value,
+    };
+
+    use super::*;
+
+    /// Verifies that the agent calls the temperature tool and returns a final answer.
+    #[tokio::test]
+    async fn test_run_agent() {
+        dotenvy::dotenv().ok();
+
+        let temperature_desc = ToolDescBuilder::new("temperature")
+            .description("Get the current temperature for a given city")
+            .parameters(to_value!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The city name"
+                    }
+                },
+                "required": ["location"]
+            }))
+            .build();
+
+        let temperature_fn: Arc<ToolFunc> = Arc::new(|_args| {
+            Box::pin(async move { to_value!(25) }) as futures::future::BoxFuture<'static, _>
+        });
+
+        let mut tool_set = ToolSet::new();
+        tool_set.insert(
+            "temperature".to_string(),
+            ToolRuntime::new(temperature_desc, temperature_fn),
+        );
+
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
+        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
+
+        let mut agent = AgentRuntime::new(
+            AgentSpec::new("gpt-4").with_tools(["temperature"]),
+            AgentProvider {
+                lm: LangModelProvider::API {
+                    schema: LangModelAPISchema::ChatCompletion,
+                    url,
+                    api_key: Some(api_key),
+                },
+                tools: vec![],
+            },
+            tool_set,
+        );
+
+        let query = Message::new(Role::User)
+            .with_contents([Part::text("What is the current temperature in Seoul?")]);
+
+        let resp = agent.run(query).await.unwrap();
+
+        println!("{}", resp);
+
+        // The agent should have invoked the tool and returned a final text answer
+        assert_eq!(resp.role, Role::Assistant);
+        assert!(
+            resp.contents.iter().any(|p| p.is_text()),
+            "Expected final assistant message to contain text"
+        );
     }
 }

@@ -6,12 +6,13 @@ pub struct AgentSpec {
     pub lm: String,
     pub instruction: Option<String>,
     pub tools: Vec<String>,
+    // pub skill: Option<String>,
 }
 
 impl AgentSpec {
-    pub fn new(lm: String) -> Self {
+    pub fn new(lm: impl Into<String>) -> Self {
         Self {
-            lm,
+            lm: lm.into(),
             instruction: None,
             tools: vec![],
         }

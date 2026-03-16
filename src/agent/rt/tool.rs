@@ -33,11 +33,15 @@ impl<'a> ToolRuntime<'a> {
     }
 
     pub async fn run(&self, tool_call: Part) -> anyhow::Result<Message> {
-        let (_, _, args) = tool_call
+        let (id, _, args) = tool_call
             .as_function()
             .ok_or(anyhow::anyhow!("Part is not function"))?;
         let result = (self.f)(args.clone()).await;
-        Ok(Message::new(Role::Tool).with_contents([Part::Value { value: result }]))
+        let mut msg = Message::new(Role::Tool).with_contents([Part::Value { value: result }]);
+        if let Some(id) = id {
+            msg = msg.with_id(id);
+        }
+        Ok(msg)
     }
 }
 
@@ -50,6 +54,14 @@ impl<'a> ToolSet<'a> {
         Self {
             tools: HashMap::new(),
         }
+    }
+
+    pub fn insert(&mut self, key: String, value: ToolRuntime<'a>) -> Option<ToolRuntime<'a>> {
+        self.tools.insert(key, value)
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<ToolRuntime<'a>> {
+        self.tools.remove(key)
     }
 
     pub fn with_builtin(self, name: &str) -> Self {
