@@ -13,9 +13,15 @@ pub struct LangModel {
     pub model: String,
 }
 
+impl LangModel {
+    pub fn new(model: String) -> Self {
+        Self { model }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum LangModelAPISpec {
+pub enum LangModelAPISchema {
     ChatCompletion,
     Anthropic,
 }
@@ -25,7 +31,7 @@ pub enum LangModelAPISpec {
 /// This describes the runtime provider required to actually run the model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LangModelProvider {
-    spec: LangModelAPISpec,
+    schema: LangModelAPISchema,
 
     url: Url,
 
@@ -74,12 +80,15 @@ mod rt {
                 api_key: &self.provider.api_key,
             };
 
-            let req = match self.provider.spec {
-                LangModelAPISpec::ChatCompletion => Value::from(Marshaled::<
+            let req = match self.provider.schema {
+                LangModelAPISchema::Anthropic => Value::from(Marshaled::<
+                    LangModelRequest,
+                    api::AnthropicMarshal,
+                >::new(&req)),
+                LangModelAPISchema::ChatCompletion => Value::from(Marshaled::<
                     LangModelRequest,
                     api::ChatCompletionMarshal,
                 >::new(&req)),
-                LangModelAPISpec::Anthropic => todo!(),
             };
 
             let req = req.as_object().ok_or(anyhow::anyhow!("Invalid Marshal"))?;
@@ -133,9 +142,11 @@ mod rt {
                 serde_json::from_str::<serde_json::Value>(&response_text)?.into();
 
             // Unmarshal
-            let delta_output = match self.provider.spec {
-                LangModelAPISpec::Anthropic => todo!(),
-                LangModelAPISpec::ChatCompletion => {
+            let delta_output = match self.provider.schema {
+                LangModelAPISchema::Anthropic => {
+                    api::AnthropicUnmarshal::default().unmarshal(response_value)?
+                }
+                LangModelAPISchema::ChatCompletion => {
                     api::ChatCompletionUnmarshal::default().unmarshal(response_value)?
                 }
             };
@@ -165,7 +176,7 @@ mod rt {
                     model: "gpt-4".to_string(),
                 },
                 LangModelProvider {
-                    spec: LangModelAPISpec::ChatCompletion,
+                    schema: LangModelAPISchema::ChatCompletion,
                     url,
                     api_key: Some(api_key),
                 },
@@ -190,7 +201,7 @@ mod rt {
                     model: "gpt-4".to_string(),
                 },
                 LangModelProvider {
-                    spec: LangModelAPISpec::ChatCompletion,
+                    schema: LangModelAPISchema::ChatCompletion,
                     url,
                     api_key: Some(api_key),
                 },
