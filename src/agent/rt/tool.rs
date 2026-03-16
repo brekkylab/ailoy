@@ -75,7 +75,7 @@ impl<'a> ToolSet<'a> {
 
     pub fn with_mcp(self, provider: &MCPToolProvider) -> Self {
         match provider {
-            MCPToolProvider::Stdin { command: _ } => todo!(),
+            MCPToolProvider::Stdio { command: _ } => todo!(),
             MCPToolProvider::StreamableHTTP { url: _ } => todo!(),
         }
     }
