@@ -1,6 +1,6 @@
 use crate::{
+    agent::rt::lang_model::LangModelRequest,
     datatype::Value,
-    lang_model::rt::LangModelRequest,
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,

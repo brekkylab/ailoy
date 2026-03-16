@@ -3,10 +3,7 @@ use std::fmt;
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    FinishReason, MessageOutput,
-    message::{Delta, Message, PartDelta, Role},
-};
+use crate::message::{Delta, FinishReason, Message, MessageOutput, PartDelta, Role};
 
 /// A streaming, incremental update to a [`Message`].
 ///
