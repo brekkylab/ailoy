@@ -42,7 +42,7 @@ impl Agent {
 #[cfg(feature = "rt")]
 mod rt {
 
-    use crate::{LangModelProvider, LangModelRuntime, Message, ToolRuntime};
+    use crate::{LangModelProvider, LangModelRuntime, Message, Role, ToolRuntime};
 
     use super::*;
 
@@ -70,7 +70,36 @@ mod rt {
         }
 
         pub async fn run(&mut self, query: Message) -> anyhow::Result<Message> {
-            todo!()
+            self.history.push(query);
+
+            let tool_descs: Vec<_> = self.tools.iter().map(|t| t.desc().clone()).collect();
+
+            loop {
+                let output = self.lm.run(&self.history, &tool_descs).await?;
+                let assistant_msg = output.message;
+                self.history.push(assistant_msg.clone());
+
+                let tool_calls = assistant_msg.tool_calls.unwrap_or_default();
+                if tool_calls.is_empty() {
+                    break;
+                }
+
+                for tool_call in tool_calls {
+                    let tool = self
+                        .tools
+                        .iter()
+                        .find(|t| t.can_run(&tool_call).unwrap_or(false))
+                        .ok_or_else(|| anyhow::anyhow!("No tool found for call"))?;
+                    let tool_msg = tool.run(tool_call).await?;
+                    self.history.push(tool_msg);
+                }
+            }
+
+            self.history
+                .iter()
+                .rfind(|m| m.role == Role::Assistant)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("No assistant response"))
         }
     }
 }

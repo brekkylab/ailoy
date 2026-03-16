@@ -45,6 +45,10 @@ mod rt {
             }
         }
 
+        pub fn desc(&self) -> &ToolDesc {
+            &self.desc
+        }
+
         pub fn can_run(&self, tool_call: &Part) -> anyhow::Result<bool> {
             let (_, name, _) = tool_call
                 .as_function()
