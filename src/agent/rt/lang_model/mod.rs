@@ -58,6 +58,12 @@ impl LangModelRuntime {
                             Marshaled::<LangModelRequest, api::ChatCompletionMarshal>::new(&req),
                         )
                     }
+                    LangModelAPISchema::Gemini => {
+                        Value::from(Marshaled::<LangModelRequest, api::GeminiMarshal>::new(&req))
+                    }
+                    LangModelAPISchema::OpenAI | LangModelAPISchema::Responses => {
+                        Value::from(Marshaled::<LangModelRequest, api::OpenAIMarshal>::new(&req))
+                    }
                 };
 
                 let req = req.as_object().ok_or(anyhow::anyhow!("Invalid Marshal"))?;
@@ -117,6 +123,12 @@ impl LangModelRuntime {
                     }
                     LangModelAPISchema::ChatCompletion => {
                         api::ChatCompletionUnmarshal::default().unmarshal(response_value)?
+                    }
+                    LangModelAPISchema::Gemini => {
+                        api::GeminiUnmarshal::default().unmarshal(response_value)?
+                    }
+                    LangModelAPISchema::OpenAI | LangModelAPISchema::Responses => {
+                        api::OpenAIUnmarshal::default().unmarshal(response_value)?
                     }
                 };
 

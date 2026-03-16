@@ -34,6 +34,9 @@ impl AgentSpec {
 pub enum LangModelAPISchema {
     ChatCompletion,
     Anthropic,
+    Gemini,
+    OpenAI,
+    Responses,
 }
 
 /// Specifies how a language model is executed
