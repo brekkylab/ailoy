@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{LangModel, Tool};
 
 #[cfg(feature = "rt")]
-pub use rt::AgentRuntime;
+pub use rt::{AgentProvider, AgentRuntime};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentDesc {
