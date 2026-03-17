@@ -553,6 +553,10 @@ Temporary Items
 test_*
 !test_*.py
 !test_*.cpp
+!test_*.rs
 
 # pyenv
 .python-version
+
+# omc
+.omc
