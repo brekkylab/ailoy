@@ -1,6 +1,8 @@
+use futures::{Stream, StreamExt as _};
+
 use crate::{
     agent::{AgentProvider, AgentSpec, LangModelRuntime, ToolProvider, ToolRuntime, ToolSet},
-    message::{Message, Part, Role},
+    message::{FinishReason, Message, MessageOutput, Part, Role},
 };
 
 pub struct AgentRuntime<'a> {
@@ -43,36 +45,71 @@ impl<'a> AgentRuntime<'a> {
     }
 
     pub async fn run(&mut self, query: Message) -> anyhow::Result<Message> {
-        self.history.push(query);
+        let mut last = None;
+        let strm = self.run_strm(query);
+        futures::pin_mut!(strm);
+        while let Some(output) = strm.next().await {
+            last = Some(output?);
+        }
+        last.map(|o: MessageOutput| o.message)
+            .ok_or_else(|| anyhow::anyhow!("No assistant response"))
+    }
 
-        let tool_descs: Vec<_> = self.tools.iter().map(|t| t.desc().clone()).collect();
+    pub fn run_strm(
+        &mut self,
+        query: Message,
+    ) -> impl Stream<Item = anyhow::Result<MessageOutput>> + '_ {
+        async_stream::stream! {
+            self.history.push(query);
+            let tool_descs: Vec<_> = self.tools.iter().map(|t| t.desc().clone()).collect();
 
-        loop {
-            let output = self.lm.run(&self.history, &tool_descs).await?;
-            let assistant_msg = output.message;
-            self.history.push(assistant_msg.clone());
+            loop {
+                let output = match self.lm.run(&self.history, &tool_descs).await {
+                    Ok(o) => o,
+                    Err(e) => {
+                        yield Err(e);
+                        return;
+                    }
+                };
 
-            let tool_calls = assistant_msg.tool_calls.unwrap_or_default();
-            if tool_calls.is_empty() {
-                break;
-            }
+                let assistant_msg = output.message.clone();
+                self.history.push(assistant_msg.clone());
 
-            for tool_call in tool_calls {
-                let tool = self
-                    .tools
-                    .iter()
-                    .find(|t| t.can_run(&tool_call).unwrap_or(false))
-                    .ok_or_else(|| anyhow::anyhow!("No tool found for call"))?;
-                let tool_msg = tool.run(tool_call).await?;
-                self.history.push(tool_msg);
+                let tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
+
+                yield Ok(output);
+
+                if tool_calls.is_empty() {
+                    break;
+                }
+
+                for tool_call in tool_calls {
+                    let tool = match self
+                        .tools
+                        .iter()
+                        .find(|t| t.can_run(&tool_call).unwrap_or(false))
+                    {
+                        Some(t) => t.clone(),
+                        None => {
+                            yield Err(anyhow::anyhow!("No tool found for call"));
+                            return;
+                        }
+                    };
+                    let tool_msg = match tool.run(tool_call).await {
+                        Ok(m) => m,
+                        Err(e) => {
+                            yield Err(e);
+                            return;
+                        }
+                    };
+                    self.history.push(tool_msg.clone());
+                    yield Ok(MessageOutput {
+                        message: tool_msg,
+                        finish_reason: FinishReason::Stop {},
+                    });
+                }
             }
         }
-
-        self.history
-            .iter()
-            .rfind(|m| m.role == Role::Assistant)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No assistant response"))
     }
 }
 
@@ -80,6 +117,7 @@ impl<'a> AgentRuntime<'a> {
 mod tests {
     use std::sync::Arc;
 
+    use futures::StreamExt as _;
     use url::Url;
 
     use crate::{
@@ -138,14 +176,21 @@ mod tests {
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the current temperature in Seoul?")]);
 
-        let resp = agent.run(query).await.unwrap();
+        let strm = agent.run_strm(query);
+        futures::pin_mut!(strm);
+        let mut outputs = vec![];
+        while let Some(output) = strm.next().await {
+            let output = output.unwrap();
+            println!("{}", output);
+            outputs.push(output);
+        }
 
-        println!("{}", resp);
+        let resp = outputs.last().expect("Expected at least one output");
 
         // The agent should have invoked the tool and returned a final text answer
-        assert_eq!(resp.role, Role::Assistant);
+        assert_eq!(resp.message.role, Role::Assistant);
         assert!(
-            resp.contents.iter().any(|p| p.is_text()),
+            resp.message.contents.iter().any(|p| p.is_text()),
             "Expected final assistant message to contain text"
         );
     }
