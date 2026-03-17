@@ -1,3 +1,5 @@
+use std::pin::Pin;
+
 use futures::{Stream, StreamExt as _};
 
 use crate::{
@@ -44,22 +46,26 @@ impl<'a> AgentRuntime<'a> {
         }
     }
 
-    pub async fn run(&mut self, query: Message) -> anyhow::Result<Message> {
-        let mut last = None;
-        let strm = self.stream_turn(query);
-        futures::pin_mut!(strm);
-        while let Some(output) = strm.next().await {
-            last = Some(output?);
-        }
-        last.map(|o: MessageOutput| o.message)
-            .ok_or_else(|| anyhow::anyhow!("No assistant response"))
+    pub fn run(
+        &mut self,
+        query: Message,
+    ) -> Pin<Box<impl Future<Output = anyhow::Result<Message>> + '_>> {
+        Box::pin(async move {
+            let mut last = None;
+            let mut strm = self.stream_turn(query);
+            while let Some(output) = strm.next().await {
+                last = Some(output?);
+            }
+            last.map(|o: MessageOutput| o.message)
+                .ok_or_else(|| anyhow::anyhow!("No assistant response"))
+        })
     }
 
     pub fn stream_turn(
         &mut self,
         query: Message,
-    ) -> impl Stream<Item = anyhow::Result<MessageOutput>> + '_ {
-        async_stream::stream! {
+    ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageOutput>> + '_>> {
+        Box::pin(async_stream::stream! {
             self.history.push(query);
             let tool_descs: Vec<_> = self.tools.iter().map(|t| t.desc().clone()).collect();
 
@@ -105,7 +111,7 @@ impl<'a> AgentRuntime<'a> {
                     });
                 }
             }
-        }
+        })
     }
 }
 
@@ -172,8 +178,7 @@ mod tests {
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the current temperature in Seoul?")]);
 
-        let strm = agent.stream_turn(query);
-        futures::pin_mut!(strm);
+        let mut strm = agent.stream_turn(query);
         let mut outputs = vec![];
         while let Some(output) = strm.next().await {
             let output = output.unwrap();
