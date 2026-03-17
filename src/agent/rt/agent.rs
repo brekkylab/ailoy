@@ -71,18 +71,14 @@ impl<'a> AgentRuntime<'a> {
                         return;
                     }
                 };
-
                 let assistant_msg = output.message.clone();
                 self.history.push(assistant_msg.clone());
-
                 yield Ok(output);
 
                 let tool_calls = assistant_msg.tool_calls.unwrap_or_default();
-
                 if tool_calls.is_empty() {
                     break;
                 }
-
                 for tool_call in tool_calls {
                     let tool = match self
                         .tools
