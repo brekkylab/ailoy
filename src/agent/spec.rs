@@ -39,13 +39,6 @@ impl AgentSpec {
 }
 
 /// Wire protocol used when calling a language model API.
-///
-/// Each variant corresponds to a distinct request/response schema:
-/// - `ChatCompletion`: OpenAI-compatible `/v1/chat/completions` format.
-/// - `Anthropic`: Anthropic Messages API format.
-/// - `Gemini`: Google Gemini API format.
-/// - `OpenAI`: Alias for the canonical OpenAI schema (same as `ChatCompletion`).
-/// - `Responses`: OpenAI Responses API format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LangModelAPISchema {
@@ -63,13 +56,10 @@ pub enum LangModelAPISchema {
 }
 
 /// Describes the runtime endpoint used to invoke a language model.
-///
-/// # Variants
-/// - `API`: Calls a remote HTTP API. Requires the wire `schema`, the `url` of the endpoint,
-///   and an optional `api_key` for authentication.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum LangModelProvider {
+    /// Calls a remote HTTP API. Requires the wire `schema`, the `url` of the endpoint, and an optional `api_key` for authentication.
     API {
         schema: LangModelAPISchema,
 
