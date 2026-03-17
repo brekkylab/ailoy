@@ -46,7 +46,7 @@ impl<'a> AgentRuntime<'a> {
 
     pub async fn run(&mut self, query: Message) -> anyhow::Result<Message> {
         let mut last = None;
-        let strm = self.run_strm(query);
+        let strm = self.stream_turn(query);
         futures::pin_mut!(strm);
         while let Some(output) = strm.next().await {
             last = Some(output?);
@@ -55,7 +55,7 @@ impl<'a> AgentRuntime<'a> {
             .ok_or_else(|| anyhow::anyhow!("No assistant response"))
     }
 
-    pub fn run_strm(
+    pub fn stream_turn(
         &mut self,
         query: Message,
     ) -> impl Stream<Item = anyhow::Result<MessageOutput>> + '_ {
@@ -176,7 +176,7 @@ mod tests {
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the current temperature in Seoul?")]);
 
-        let strm = agent.run_strm(query);
+        let strm = agent.stream_turn(query);
         futures::pin_mut!(strm);
         let mut outputs = vec![];
         while let Some(output) = strm.next().await {
