@@ -75,9 +75,9 @@ impl<'a> AgentRuntime<'a> {
                 let assistant_msg = output.message.clone();
                 self.history.push(assistant_msg.clone());
 
-                let tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
-
                 yield Ok(output);
+
+                let tool_calls = assistant_msg.tool_calls.unwrap_or_default();
 
                 if tool_calls.is_empty() {
                     break;
