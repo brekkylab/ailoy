@@ -49,11 +49,17 @@ impl AgentSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LangModelAPISchema {
+    /// OpenAI-compatible `/v1/chat/completions` format
     ChatCompletion,
+
+    /// Anthropic Messages API format
     Anthropic,
+
+    /// Google Gemini API format
     Gemini,
+
+    /// OpenAI Responses API format
     OpenAI,
-    Responses,
 }
 
 /// Describes the runtime endpoint used to invoke a language model.
