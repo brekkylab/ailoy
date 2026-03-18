@@ -61,7 +61,7 @@ impl LangModelRuntime {
                     LangModelAPISchema::Gemini => {
                         Value::from(Marshaled::<LangModelRequest, api::GeminiMarshal>::new(&req))
                     }
-                    LangModelAPISchema::OpenAI | LangModelAPISchema::Responses => {
+                    LangModelAPISchema::OpenAI => {
                         Value::from(Marshaled::<LangModelRequest, api::OpenAIMarshal>::new(&req))
                     }
                 };
@@ -127,7 +127,7 @@ impl LangModelRuntime {
                     LangModelAPISchema::Gemini => {
                         api::GeminiUnmarshal::default().unmarshal(response_value)?
                     }
-                    LangModelAPISchema::OpenAI | LangModelAPISchema::Responses => {
+                    LangModelAPISchema::OpenAI => {
                         api::OpenAIUnmarshal::default().unmarshal(response_value)?
                     }
                 };
