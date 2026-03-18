@@ -8,16 +8,16 @@ use crate::{
     message::{Message, Part, Role, ToolDesc},
 };
 
-pub type ToolFunc<'a> = dyn Fn(Value) -> BoxFuture<'a, Value>;
+pub type ToolFunc = dyn Fn(Value) -> BoxFuture<'static, Value> + Send + Sync;
 
 #[derive(Clone)]
-pub struct ToolRuntime<'a> {
+pub struct ToolRuntime {
     desc: ToolDesc,
-    f: Arc<ToolFunc<'a>>,
+    f: Arc<ToolFunc>,
 }
 
-impl<'a> ToolRuntime<'a> {
-    pub fn new(desc: ToolDesc, f: Arc<ToolFunc<'a>>) -> Self {
+impl ToolRuntime {
+    pub fn new(desc: ToolDesc, f: Arc<ToolFunc>) -> Self {
         Self { desc, f }
     }
 
@@ -45,22 +45,22 @@ impl<'a> ToolRuntime<'a> {
     }
 }
 
-pub struct ToolSet<'a> {
-    tools: HashMap<String, ToolRuntime<'a>>,
+pub struct ToolSet {
+    tools: HashMap<String, ToolRuntime>,
 }
 
-impl<'a> ToolSet<'a> {
+impl ToolSet {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
         }
     }
 
-    pub fn insert(&mut self, key: String, value: ToolRuntime<'a>) -> Option<ToolRuntime<'a>> {
+    pub fn insert(&mut self, key: String, value: ToolRuntime) -> Option<ToolRuntime> {
         self.tools.insert(key, value)
     }
 
-    pub fn remove(&mut self, key: &str) -> Option<ToolRuntime<'a>> {
+    pub fn remove(&mut self, key: &str) -> Option<ToolRuntime> {
         self.tools.remove(key)
     }
 
@@ -80,7 +80,7 @@ impl<'a> ToolSet<'a> {
         }
     }
 
-    pub fn get(&self, key: &str) -> Option<&ToolRuntime<'a>> {
+    pub fn get(&self, key: &str) -> Option<&ToolRuntime> {
         self.tools.values().find(|t| t.desc.name == key)
     }
 }

@@ -7,14 +7,14 @@ use crate::{
     message::{FinishReason, Message, MessageOutput, Part, Role},
 };
 
-pub struct AgentRuntime<'a> {
+pub struct AgentRuntime {
     lm: LangModelRuntime,
-    tools: Vec<ToolRuntime<'a>>,
+    tools: Vec<ToolRuntime>,
     history: Vec<Message>,
 }
 
-impl<'a> AgentRuntime<'a> {
-    pub fn new(spec: AgentSpec, provider: AgentProvider, tool_set: ToolSet<'a>) -> Self {
+impl AgentRuntime {
+    pub fn new(spec: AgentSpec, provider: AgentProvider, tool_set: ToolSet) -> Self {
         // Prepare toolsets
         let tool_set =
             provider
@@ -59,6 +59,10 @@ impl<'a> AgentRuntime<'a> {
             last.map(|o: MessageOutput| o.message)
                 .ok_or_else(|| anyhow::anyhow!("No assistant response"))
         })
+    }
+
+    pub fn get_history(&self) -> Vec<Message> {
+        self.history.clone()
     }
 
     pub fn stream_turn(
@@ -122,13 +126,12 @@ mod tests {
     use futures::StreamExt as _;
     use url::Url;
 
+    use super::*;
     use crate::{
         agent::{LangModelAPISchema, LangModelProvider, ToolFunc},
         message::{Part, Role, ToolDescBuilder},
         to_value,
     };
-
-    use super::*;
 
     /// Verifies that the agent calls the temperature tool and returns a final answer.
     #[tokio::test]
