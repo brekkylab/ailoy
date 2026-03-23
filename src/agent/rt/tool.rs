@@ -83,4 +83,8 @@ impl ToolSet {
     pub fn get(&self, key: &str) -> Option<&ToolRuntime> {
         self.tools.values().find(|t| t.desc.name == key)
     }
+
+    pub fn names(&self) -> Vec<String> {
+        self.tools.keys().cloned().into_iter().collect::<Vec<_>>()
+    }
 }
