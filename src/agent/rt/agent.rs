@@ -65,6 +65,10 @@ impl AgentRuntime {
         self.history.clone()
     }
 
+    pub fn set_history(&mut self, history: Vec<Message>) {
+        self.history = history;
+    }
+
     pub fn stream_turn(
         &mut self,
         query: Message,
