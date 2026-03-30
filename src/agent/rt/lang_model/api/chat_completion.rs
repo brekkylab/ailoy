@@ -136,9 +136,10 @@ impl<'a> Marshal<LangModelRequest<'a>> for ChatCompletionMarshal {
                 .insert("tools".to_owned(), tools);
         }
         if let Some(max_tokens) = req.infer_config.max_tokens {
-            body.as_object_mut()
-                .unwrap()
-                .insert("max_tokens".to_owned(), (max_tokens as i64).into());
+            body.as_object_mut().unwrap().insert(
+                "max_completion_tokens".to_owned(),
+                (max_tokens as i64).into(),
+            );
         }
         body.as_object_mut()
             .unwrap()
@@ -281,7 +282,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{LangModelInferConfig, LangModelProvider, LangModelAPISchema, LangModelRuntime},
+        agent::{LangModelAPISchema, LangModelInferConfig, LangModelProvider, LangModelRuntime},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
@@ -305,7 +306,9 @@ mod tests {
     fn test_marshal_max_tokens_set() {
         let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
         let api_key = None;
-        let config = LangModelInferConfig { max_tokens: Some(256) };
+        let config = LangModelInferConfig {
+            max_tokens: Some(256),
+        };
         let req = make_req("gpt-4o", &url, &api_key, &config);
 
         let val = ChatCompletionMarshal::default().marshal(&req);
@@ -341,10 +344,14 @@ mod tests {
                 api_key: Some(api_key),
             },
         );
-        let messages = vec![Message::new(Role::User)
-            .with_contents([Part::text("Tell me a long story about a dragon.")])];
+        let messages = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("Tell me a long story about a dragon.")]),
+        ];
         let tools: Vec<ToolDesc> = vec![];
-        let config = LangModelInferConfig { max_tokens: Some(5) };
+        let config = LangModelInferConfig {
+            max_tokens: Some(5),
+        };
 
         let resp = lm.run(&messages, &tools, &config).await.unwrap();
         println!("{}", resp);
