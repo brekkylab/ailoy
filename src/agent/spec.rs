@@ -1,6 +1,16 @@
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+/// Inference-time parameters forwarded to the language model on each call.
+///
+/// All fields are optional. When a field is `None`, provider-specific defaults apply
+/// (e.g. Anthropic defaults `max_tokens` to 8192 because it is a required API field).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct LangModelInferConfig {
+    /// Maximum number of tokens the model may generate in a single response.
+    pub max_tokens: Option<u64>,
+}
+
 /// Defines the logical identity of an agent as configured by the user.
 ///
 /// `AgentSpec` captures what makes an agent distinct — the language model it uses,

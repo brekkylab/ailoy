@@ -181,17 +181,16 @@ impl<'a> Marshal<LangModelRequest<'a>> for AnthropicMarshal {
         }
 
         #[cfg(target_arch = "wasm32")]
-        header
-            .as_object_mut()
-            .unwrap()
-            .insert(
-                "anthropic-dangerous-direct-browser-access".into(),
-                "true".into(),
-            );
+        header.as_object_mut().unwrap().insert(
+            "anthropic-dangerous-direct-browser-access".into(),
+            "true".into(),
+        );
 
+        // Anthropic requires an explicit max_tokens value, so we set it as 8192
+        let max_tokens = req.infer_config.max_tokens.unwrap_or(8192) as i64;
         let mut body = to_value!({
             "model": model,
-            "max_tokens": 8192_i64,
+            "max_tokens": max_tokens,
             "messages": messages,
         });
         if let Some(system) = system {
@@ -276,21 +275,15 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
                         .unwrap_or("");
                     match ty {
                         "text" => {
-                            if let Some(text) =
-                                content_obj.get("text").and_then(|v| v.as_str())
-                            {
+                            if let Some(text) = content_obj.get("text").and_then(|v| v.as_str()) {
                                 text_parts.push(PartDelta::Text { text: text.into() });
                             }
                         }
                         "thinking" => {
-                            if let Some(t) =
-                                content_obj.get("thinking").and_then(|v| v.as_str())
-                            {
+                            if let Some(t) = content_obj.get("thinking").and_then(|v| v.as_str()) {
                                 thinking = Some(t.to_owned());
                             }
-                            if let Some(s) =
-                                content_obj.get("signature").and_then(|v| v.as_str())
-                            {
+                            if let Some(s) = content_obj.get("signature").and_then(|v| v.as_str()) {
                                 signature = Some(s.to_owned());
                             }
                         }
@@ -338,5 +331,91 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             delta,
             finish_reason,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use url::Url;
+
+    use super::*;
+    use crate::{
+        agent::{LangModelAPISchema, LangModelInferConfig, LangModelProvider, LangModelRuntime},
+        message::{FinishReason, Message, Part, Role, ToolDesc},
+    };
+
+    fn make_req<'a>(
+        model: &'a str,
+        url: &'a Url,
+        api_key: &'a Option<String>,
+        infer_config: &'a LangModelInferConfig,
+    ) -> LangModelRequest<'a> {
+        LangModelRequest {
+            model,
+            messages: &[],
+            tools: &[],
+            url,
+            api_key,
+            infer_config,
+        }
+    }
+
+    #[test]
+    fn test_marshal_max_tokens_set() {
+        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
+        let api_key = None;
+        let config = LangModelInferConfig {
+            max_tokens: Some(512),
+        };
+        let req = make_req("claude-sonnet-4-6", &url, &api_key, &config);
+
+        let val = AnthropicMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
+        assert_eq!(max_tokens.as_integer().unwrap(), 512);
+    }
+
+    #[test]
+    fn test_marshal_max_tokens_default() {
+        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
+        let api_key = None;
+        let config = LangModelInferConfig::default();
+        let req = make_req("claude-sonnet-4-6", &url, &api_key, &config);
+
+        let val = AnthropicMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
+        // Falls back to 8192 when not configured
+        assert_eq!(max_tokens.as_integer().unwrap(), 8192);
+    }
+
+    /// Verifies that max_tokens is respected by the Anthropic API (stop_reason: max_tokens).
+    #[tokio::test]
+    async fn test_run_max_tokens() {
+        dotenvy::dotenv().ok();
+        let api_key =
+            std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
+
+        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
+        let lm = LangModelRuntime::new(
+            "claude-haiku-4-5-20251001".to_string(),
+            LangModelProvider::API {
+                schema: LangModelAPISchema::Anthropic,
+                url,
+                api_key: Some(api_key),
+            },
+        );
+        let messages = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("Tell me a long story about a dragon.")]),
+        ];
+        let tools: Vec<ToolDesc> = vec![];
+        let config = LangModelInferConfig {
+            max_tokens: Some(5),
+        };
+
+        let resp = lm.run(&messages, &tools, &config).await.unwrap();
+        println!("{}", resp);
+        assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }

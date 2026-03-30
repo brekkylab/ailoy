@@ -78,7 +78,7 @@ impl AgentRuntime {
             let tool_descs: Vec<_> = self.tools.iter().map(|t| t.desc().clone()).collect();
 
             loop {
-                let output = match self.lm.run(&self.history, &tool_descs).await {
+                let output = match self.lm.run(&self.history, &tool_descs, &Default::default()).await {
                     Ok(o) => o,
                     Err(e) => {
                         yield Err(e);
