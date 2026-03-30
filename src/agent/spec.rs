@@ -62,6 +62,7 @@ pub enum LangModelAPISchema {
     Gemini,
 
     /// OpenAI Responses API format
+    #[serde(rename = "openai")]
     OpenAI,
 }
 
