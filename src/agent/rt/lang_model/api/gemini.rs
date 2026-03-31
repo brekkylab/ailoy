@@ -192,6 +192,12 @@ impl<'a> Marshal<LangModelRequest<'a>> for GeminiMarshal {
         if !tools.is_null() {
             body.as_object_mut().unwrap().insert("tools".into(), tools);
         }
+        if let Some(max_tokens) = req.infer_config.max_tokens {
+            body.as_object_mut().unwrap().insert(
+                "generationConfig".into(),
+                to_value!({"maxOutputTokens": max_tokens as i64}),
+            );
+        }
 
         to_value!({
             "url": url,
@@ -322,6 +328,91 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
     }
 
     Ok(rv)
+}
+
+#[cfg(test)]
+mod tests {
+    use url::Url;
+
+    use super::*;
+    use crate::{
+        agent::{LangModelInferConfig, LangModelProvider, LangModelAPISchema, LangModelRuntime},
+        message::{FinishReason, Message, Part, Role, ToolDesc},
+    };
+
+    fn make_req<'a>(
+        model: &'a str,
+        url: &'a Url,
+        api_key: &'a Option<String>,
+        infer_config: &'a LangModelInferConfig,
+    ) -> LangModelRequest<'a> {
+        LangModelRequest {
+            model,
+            messages: &[],
+            tools: &[],
+            url,
+            api_key,
+            infer_config,
+        }
+    }
+
+    #[test]
+    fn test_marshal_max_output_tokens_set() {
+        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
+        let api_key = None;
+        let config = LangModelInferConfig {
+            max_tokens: Some(2048),
+        };
+        let req = make_req("gemini-2.0-flash", &url, &api_key, &config);
+
+        let val = GeminiMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        let gen_config = body.as_object().unwrap().get("generationConfig").unwrap();
+        let max_tokens = gen_config
+            .as_object()
+            .unwrap()
+            .get("maxOutputTokens")
+            .unwrap();
+        assert_eq!(max_tokens.as_integer().unwrap(), 2048);
+    }
+
+    #[test]
+    fn test_marshal_max_output_tokens_absent_when_none() {
+        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
+        let api_key = None;
+        let config = LangModelInferConfig::default();
+        let req = make_req("gemini-2.0-flash", &url, &api_key, &config);
+
+        let val = GeminiMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        assert!(body.as_object().unwrap().get("generationConfig").is_none());
+    }
+
+    /// Verifies that max_tokens is respected by the Gemini API (finishReason: MAX_TOKENS).
+    #[tokio::test]
+    async fn test_run_max_tokens() {
+        dotenvy::dotenv().ok();
+        let api_key =
+            std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set in .env");
+
+        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
+        let lm = LangModelRuntime::new(
+            "gemini-2.5-flash-lite".to_string(),
+            LangModelProvider::API {
+                schema: LangModelAPISchema::Gemini,
+                url,
+                api_key: Some(api_key),
+            },
+        );
+        let messages = vec![Message::new(Role::User)
+            .with_contents([Part::text("Tell me a long story about a dragon.")])];
+        let tools: Vec<ToolDesc> = vec![];
+        let config = LangModelInferConfig { max_tokens: Some(5) };
+
+        let resp = lm.run(&messages, &tools, &config).await.unwrap();
+        println!("{}", resp);
+        assert_eq!(resp.finish_reason, FinishReason::Length {});
+    }
 }
 
 // #[cfg(test)]

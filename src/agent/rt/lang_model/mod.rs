@@ -4,7 +4,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
 use crate::{
-    agent::{LangModelAPISchema, LangModelProvider},
+    agent::{LangModelAPISchema, LangModelInferConfig, LangModelProvider},
     datatype::Value,
     message::{Delta as _, Marshaled, Message, MessageOutput, ToolDesc, Unmarshal as _},
 };
@@ -21,6 +21,7 @@ struct LangModelRequest<'a> {
     pub tools: &'a [ToolDesc],
     pub url: &'a Url,
     pub api_key: &'a Option<String>,
+    pub infer_config: &'a LangModelInferConfig,
 }
 
 impl LangModelRuntime {
@@ -32,6 +33,7 @@ impl LangModelRuntime {
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
+        infer_config: &LangModelInferConfig,
     ) -> anyhow::Result<MessageOutput> {
         match &self.provider {
             LangModelProvider::API {
@@ -46,6 +48,7 @@ impl LangModelRuntime {
                     tools,
                     url: &url,
                     api_key: &api_key,
+                    infer_config,
                 };
 
                 let req = match schema {
@@ -142,12 +145,23 @@ impl LangModelRuntime {
 mod tests {
     use url::Url;
 
+    use super::*;
     use crate::{
         message::{FinishReason, Part, Role, ToolDescBuilder},
         to_value,
     };
 
-    use super::*;
+    fn openai_chat_completion(model: &str, api_key: String) -> LangModelRuntime {
+        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
+        LangModelRuntime::new(
+            model.to_string(),
+            LangModelProvider::API {
+                schema: LangModelAPISchema::ChatCompletion,
+                url,
+                api_key: Some(api_key),
+            },
+        )
+    }
 
     /// Verifies that the POST request is sent and response is parsed.
     #[tokio::test]
@@ -155,19 +169,14 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
-        let lm = LangModelRuntime::new(
-            "gpt-4".to_string(),
-            LangModelProvider::API {
-                schema: LangModelAPISchema::ChatCompletion,
-                url,
-                api_key: Some(api_key),
-            },
-        );
+        let lm = openai_chat_completion("gpt-4", api_key);
         let messages = vec![Message::new(Role::User).with_contents([Part::text("Hi")])];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = lm.run(&messages, &tools).await.unwrap();
+        let resp = lm
+            .run(&messages, &tools, &Default::default())
+            .await
+            .unwrap();
         println!("{}", resp);
     }
 
@@ -177,15 +186,7 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
-        let lm = LangModelRuntime::new(
-            "gpt-4".to_string(),
-            LangModelProvider::API {
-                schema: LangModelAPISchema::ChatCompletion,
-                url,
-                api_key: Some(api_key),
-            },
-        );
+        let lm = openai_chat_completion("gpt-4", api_key);
         let messages = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("What is the current temperature in Seoul?")]),
@@ -211,7 +212,10 @@ mod tests {
                 .build(),
         ];
 
-        let resp = lm.run(&messages, &tools).await.unwrap();
+        let resp = lm
+            .run(&messages, &tools, &Default::default())
+            .await
+            .unwrap();
 
         println!("{}", resp);
 

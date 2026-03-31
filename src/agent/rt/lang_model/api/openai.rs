@@ -170,6 +170,11 @@ impl<'a> Marshal<LangModelRequest<'a>> for OpenAIMarshal {
                 .insert("tool_choice".into(), to_value!("auto"));
             body.as_object_mut().unwrap().insert("tools".into(), tools);
         }
+        if let Some(max_tokens) = req.infer_config.max_tokens {
+            body.as_object_mut()
+                .unwrap()
+                .insert("max_output_tokens".into(), (max_tokens as i64).into());
+        }
 
         to_value!({
             "url": url,
@@ -314,6 +319,84 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             delta,
             finish_reason,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use url::Url;
+
+    use super::*;
+    use crate::{
+        agent::{LangModelInferConfig, LangModelProvider, LangModelAPISchema, LangModelRuntime},
+        message::{FinishReason, Message, Part, Role, ToolDesc},
+    };
+
+    fn make_req<'a>(
+        model: &'a str,
+        url: &'a Url,
+        api_key: &'a Option<String>,
+        infer_config: &'a LangModelInferConfig,
+    ) -> LangModelRequest<'a> {
+        LangModelRequest {
+            model,
+            messages: &[],
+            tools: &[],
+            url,
+            api_key,
+            infer_config,
+        }
+    }
+
+    #[test]
+    fn test_marshal_max_output_tokens_set() {
+        let url = Url::parse("https://api.openai.com/v1/responses").unwrap();
+        let api_key = None;
+        let config = LangModelInferConfig { max_tokens: Some(1024) };
+        let req = make_req("gpt-4o", &url, &api_key, &config);
+
+        let val = OpenAIMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        let max_tokens = body.as_object().unwrap().get("max_output_tokens").unwrap();
+        assert_eq!(max_tokens.as_integer().unwrap(), 1024);
+    }
+
+    #[test]
+    fn test_marshal_max_output_tokens_absent_when_none() {
+        let url = Url::parse("https://api.openai.com/v1/responses").unwrap();
+        let api_key = None;
+        let config = LangModelInferConfig::default();
+        let req = make_req("gpt-4o", &url, &api_key, &config);
+
+        let val = OpenAIMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        assert!(body.as_object().unwrap().get("max_output_tokens").is_none());
+    }
+
+    /// Verifies that max_tokens is respected by the OpenAI Responses API (incomplete: max_output_tokens).
+    /// Note: OpenAI Responses API enforces a minimum of 16 for max_output_tokens.
+    #[tokio::test]
+    async fn test_run_max_tokens() {
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
+
+        let url = Url::parse("https://api.openai.com/v1/responses").unwrap();
+        let lm = LangModelRuntime::new(
+            "gpt-4o-mini".to_string(),
+            LangModelProvider::API {
+                schema: LangModelAPISchema::OpenAI,
+                url,
+                api_key: Some(api_key),
+            },
+        );
+        let messages = vec![Message::new(Role::User)
+            .with_contents([Part::text("Tell me a long story about a dragon.")])];
+        let tools: Vec<ToolDesc> = vec![];
+        let config = LangModelInferConfig { max_tokens: Some(16) };
+
+        let resp = lm.run(&messages, &tools, &config).await.unwrap();
+        println!("{}", resp);
+        assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }
 
