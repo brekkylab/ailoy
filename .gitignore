@@ -560,3 +560,6 @@ test_*
 
 # omc
 .omc
+
+# git worktrees
+.worktrees/
