@@ -1,5 +1,5 @@
 /// Reference: https://github.com/vercel-labs/just-bash
-
+mod command;
 mod fs;
 mod shell;
 
