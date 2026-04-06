@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::collections::HashMap;
 
 use crate::state::fs::{DirEntry, Directory, File, FileHandle, Node, NodeKind, Stat};
@@ -21,19 +20,16 @@ impl InMemoryFile {
 
 pub struct InMemoryFileHandle<'a> {
     source: &'a mut Vec<u8>,
-    cursor: Cell<u64>,
+    cursor: u64,
 }
 
 impl File for InMemoryFile {
-    type Handle<'a>
-        = InMemoryFileHandle<'a>
-    where
-        Self: 'a;
+    type Handle<'a> = InMemoryFileHandle<'a>;
 
     fn open<'a>(&'a mut self) -> InMemoryFileHandle<'a> {
         InMemoryFileHandle {
             source: &mut self.content,
-            cursor: Cell::new(0),
+            cursor: 0,
         }
     }
 
@@ -46,33 +42,33 @@ impl File for InMemoryFile {
 }
 
 impl FileHandle for InMemoryFileHandle<'_> {
-    fn read(&self, count: u64) -> &[u8] {
-        let cursor = self.cursor.get();
-        let start = cursor as usize;
-        let end = (cursor + count).min(self.source.len() as u64) as usize;
-        self.cursor.set(end as u64);
+    fn read(&mut self, count: u64) -> &[u8] {
+        let start = self.cursor as usize;
+        let end = (self.cursor + count).min(self.source.len() as u64) as usize;
+        self.cursor = end as u64;
+        // self.cursor.set(end as u64);
         &self.source[start..end]
     }
 
     fn write(&mut self, data: &[u8]) {
-        let start = self.cursor.get() as usize;
+        let start = self.cursor as usize;
         let end = start + data.len();
         if end > self.source.len() {
             self.source.resize(end, 0);
         }
         self.source[start..end].copy_from_slice(data);
-        self.cursor.set(end as u64);
+        self.cursor = end as u64;
     }
 
-    fn seek(&self, offset: i64) -> u64 {
+    fn seek(&mut self, offset: i64) -> u64 {
         let size = self.source.len() as i64;
-        let new_cursor = (self.cursor.get() as i64 + offset).clamp(0, size);
-        self.cursor.set(new_cursor as u64);
+        let new_cursor = (self.cursor as i64 + offset).clamp(0, size);
+        self.cursor = new_cursor as u64;
         new_cursor as u64
     }
 
     fn tell(&self) -> u64 {
-        self.cursor.get()
+        self.cursor
     }
 }
 

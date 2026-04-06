@@ -84,7 +84,7 @@ pub trait FileHandle {
     ///
     /// The returned slice borrows from the handle itself (`&self`), so it must
     /// be dropped before the next mutable operation on this handle.
-    fn read(&self, count: u64) -> &[u8];
+    fn read(&mut self, count: u64) -> &[u8];
 
     /// Write `data` at the current cursor position, extending the file if
     /// necessary, then advance the cursor by `data.len()`.
@@ -94,7 +94,7 @@ pub trait FileHandle {
     /// clamped to `[0, file_size]`.
     ///
     /// Returns the new absolute cursor position.
-    fn seek(&self, offset: i64) -> u64;
+    fn seek(&mut self, offset: i64) -> u64;
 
     /// Return the current cursor position in bytes from the start of the file.
     fn tell(&self) -> u64;
