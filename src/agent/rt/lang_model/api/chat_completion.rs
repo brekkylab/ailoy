@@ -1,3 +1,6 @@
+use url::Url;
+
+use super::super::{LangModelAPISchema, LangModelProvider};
 use crate::{
     agent::rt::lang_model::LangModelRequest,
     datatype::Value,
@@ -7,6 +10,24 @@ use crate::{
     },
     to_value,
 };
+
+impl LangModelProvider {
+    pub fn grok(api_key: String) -> Self {
+        Self::API {
+            schema: LangModelAPISchema::ChatCompletion,
+            url: Url::parse("https://api.x.ai/v1/chat/completions").unwrap(),
+            api_key: Some(api_key),
+        }
+    }
+
+    pub fn chat_completion(url: &str, api_key: Option<String>) -> anyhow::Result<Self> {
+        Ok(Self::API {
+            schema: LangModelAPISchema::ChatCompletion,
+            url: Url::parse(url)?,
+            api_key,
+        })
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct ChatCompletionMarshal;
@@ -101,12 +122,12 @@ impl Marshal<ToolDesc> for ChatCompletionMarshal {
     }
 }
 
-impl<'a> Marshal<LangModelRequest<'a>> for ChatCompletionMarshal {
+impl Marshal<LangModelRequest> for ChatCompletionMarshal {
     fn marshal(&mut self, req: &LangModelRequest) -> Value {
-        let model = Value::from(req.model);
-        let messages = self.marshal(req.messages);
+        let model = Value::from(&req.model);
+        let messages = self.marshal(&req.messages);
         let tools = if !req.tools.is_empty() {
-            self.marshal(req.tools)
+            self.marshal(&req.tools)
         } else {
             Value::Null
         };
@@ -282,51 +303,51 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{LangModelAPISchema, LangModelInferConfig, LangModelProvider, LangModelRuntime},
+        agent::{LangModelInferConfig, LangModelProvider, LangModelRuntime},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
-    fn make_req<'a>(
-        model: &'a str,
-        url: &'a Url,
-        api_key: &'a Option<String>,
-        infer_config: &'a LangModelInferConfig,
-    ) -> LangModelRequest<'a> {
+    fn make_req(model: &str, infer_config: &LangModelInferConfig) -> LangModelRequest {
         LangModelRequest {
-            model,
-            messages: &[],
-            tools: &[],
-            url,
-            api_key,
-            infer_config,
+            model: model.into(),
+            messages: vec![],
+            tools: vec![],
+            url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
+            api_key: None,
+            infer_config: infer_config.clone(),
         }
     }
 
     #[test]
     fn test_marshal_max_tokens_set() {
-        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
-        let api_key = None;
-        let config = LangModelInferConfig {
-            max_tokens: Some(256),
-        };
-        let req = make_req("gpt-4o", &url, &api_key, &config);
-
+        let req = make_req(
+            "gpt-4.1-mini",
+            &LangModelInferConfig {
+                max_tokens: Some(256),
+                ..Default::default()
+            },
+        );
         let val = ChatCompletionMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();
-        let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
+        let max_tokens = body
+            .as_object()
+            .unwrap()
+            .get("max_completion_tokens")
+            .unwrap();
         assert_eq!(max_tokens.as_integer().unwrap(), 256);
     }
 
     #[test]
     fn test_marshal_max_tokens_absent_when_none() {
-        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
-        let api_key = None;
-        let config = LangModelInferConfig::default();
-        let req = make_req("gpt-4o", &url, &api_key, &config);
-
+        let req = make_req("gpt-4.1-mini", &LangModelInferConfig::default());
         let val = ChatCompletionMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();
-        assert!(body.as_object().unwrap().get("max_tokens").is_none());
+        assert!(
+            body.as_object()
+                .unwrap()
+                .get("max_completion_tokens")
+                .is_none()
+        );
     }
 
     /// Verifies that max_tokens is respected by the ChatCompletion API (finish_reason: length).
@@ -335,14 +356,13 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
         let lm = LangModelRuntime::new(
-            "gpt-4o-mini".to_string(),
-            LangModelProvider::API {
-                schema: LangModelAPISchema::ChatCompletion,
-                url,
-                api_key: Some(api_key),
-            },
+            "gpt-4.1-mini".to_string(),
+            LangModelProvider::chat_completion(
+                "https://api.openai.com/v1/chat/completions",
+                Some(api_key),
+            )
+            .unwrap(),
         );
         let messages = vec![
             Message::new(Role::User)
@@ -350,11 +370,11 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
         let config = LangModelInferConfig {
-            max_tokens: Some(5),
+            max_tokens: Some(32),
+            ..Default::default()
         };
 
         let resp = lm.run(&messages, &tools, &config).await.unwrap();
-        println!("{}", resp);
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }
