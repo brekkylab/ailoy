@@ -1,6 +1,4 @@
-use crate::state::command::ls::run_ls;
-use crate::state::command::mkdir::run_mkdir;
-use crate::state::command::rmdir::run_rmdir;
+use crate::state::command::{run_ls, run_mkdir, run_rmdir};
 
 use super::fs::{Directory, InMemoryDir, Node};
 
@@ -28,8 +26,8 @@ impl Shell {
             ["mkdir", args @ ..] => run_mkdir(self, args),
             ["rmdir", args @ ..] => run_rmdir(self, args),
             ["ls", args @ ..] => run_ls(self, args),
-            [] => anyhow::bail!("empty command"),
-            _ => anyhow::bail!("unknown command: {}", cmd),
+            [cmd, _args @ ..] => anyhow::bail!("unknown command: {}", cmd),
+            [] => Ok(String::new()),
         }
     }
 
