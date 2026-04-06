@@ -15,13 +15,13 @@ pub struct LangModelRuntime {
     provider: LangModelProvider,
 }
 
-struct LangModelRequest {
-    pub model: String,
-    pub messages: Vec<Message>,
-    pub tools: Vec<ToolDesc>,
-    pub url: Url,
-    pub api_key: Option<String>,
-    pub infer_config: LangModelInferConfig,
+struct LangModelRequest<'a> {
+    pub model: &'a str,
+    pub messages: &'a [Message],
+    pub tools: &'a [ToolDesc],
+    pub url: &'a Url,
+    pub api_key: &'a Option<String>,
+    pub infer_config: &'a LangModelInferConfig,
 }
 
 impl LangModelRuntime {
@@ -43,12 +43,12 @@ impl LangModelRuntime {
             } => {
                 // Create request
                 let req = LangModelRequest {
-                    model: self.model.clone(),
-                    messages: messages.into(),
-                    tools: tools.into(),
-                    url: url.clone(),
-                    api_key: api_key.clone(),
-                    infer_config: infer_config.clone(),
+                    model: &self.model,
+                    messages,
+                    tools,
+                    url,
+                    api_key,
+                    infer_config,
                 };
 
                 let req = match schema {

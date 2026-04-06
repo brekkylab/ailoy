@@ -153,9 +153,9 @@ impl Marshal<ToolDesc> for AnthropicMarshal {
     }
 }
 
-impl Marshal<LangModelRequest> for AnthropicMarshal {
-    fn marshal(&mut self, req: &LangModelRequest) -> Value {
-        let model = Value::from(&req.model);
+impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
+    fn marshal(&mut self, req: &LangModelRequest<'_>) -> Value {
+        let model = Value::from(req.model);
 
         // Extract system message text if present
         let system = req
@@ -174,7 +174,7 @@ impl Marshal<LangModelRequest> for AnthropicMarshal {
         let messages = marshal_messages(&req.messages);
 
         let tools = if !req.tools.is_empty() {
-            self.marshal(&req.tools)
+            self.marshal(req.tools)
         } else {
             Value::Null
         };
@@ -356,40 +356,48 @@ mod tests {
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
-    fn make_req(model: &str, infer_config: &LangModelInferConfig) -> LangModelRequest {
-        LangModelRequest {
-            model: model.into(),
-            messages: vec![],
-            tools: vec![],
-            url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
-            api_key: None,
-            infer_config: infer_config.clone(),
-        }
+    fn with_req<F, R>(model: &str, infer_config: LangModelInferConfig, f: F) -> R
+    where
+        F: FnOnce(&LangModelRequest<'_>) -> R,
+    {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model,
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            infer_config: &infer_config,
+        };
+        f(&req)
     }
 
     #[test]
     fn test_marshal_max_tokens_set() {
-        let req = make_req(
+        with_req(
             "claude-haiku-4-5",
-            &LangModelInferConfig {
-                max_tokens: Some(512),
-                ..Default::default()
+            LangModelInferConfig { max_tokens: Some(512), ..Default::default() },
+            |req| {
+                let val = AnthropicMarshal::default().marshal(req);
+                let body = val.as_object().unwrap().get("body").unwrap();
+                let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
+                assert_eq!(max_tokens.as_integer().unwrap(), 512);
             },
         );
-        let val = AnthropicMarshal::default().marshal(&req);
-        let body = val.as_object().unwrap().get("body").unwrap();
-        let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
-        assert_eq!(max_tokens.as_integer().unwrap(), 512);
     }
 
     #[test]
     fn test_marshal_max_tokens_default() {
-        let req = make_req("claude-haiku-4-5", &LangModelInferConfig::default());
-        let val = AnthropicMarshal::default().marshal(&req);
-        let body = val.as_object().unwrap().get("body").unwrap();
-        let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
-        // Falls back to 8192 when not configured
-        assert_eq!(max_tokens.as_integer().unwrap(), 8192);
+        with_req("claude-haiku-4-5", LangModelInferConfig::default(), |req| {
+            let val = AnthropicMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
+            // Falls back to 8192 when not configured
+            assert_eq!(max_tokens.as_integer().unwrap(), 8192);
+        });
     }
 
     /// Verifies that max_tokens is respected by the Anthropic API (stop_reason: max_tokens).

@@ -152,8 +152,8 @@ impl Marshal<ToolDesc> for GeminiMarshal {
     }
 }
 
-impl Marshal<LangModelRequest> for GeminiMarshal {
-    fn marshal(&mut self, req: &LangModelRequest) -> Value {
+impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
+    fn marshal(&mut self, req: &LangModelRequest<'_>) -> Value {
         // Extract system instruction from system message if present
         let system_instruction = req
             .messages
@@ -352,43 +352,56 @@ mod tests {
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
-    fn make_req(model: &str, infer_config: &LangModelInferConfig) -> LangModelRequest {
-        LangModelRequest {
-            model: model.into(),
-            messages: vec![],
-            tools: vec![],
-            url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap(),
-            api_key: None,
-            infer_config: infer_config.clone(),
-        }
+    fn with_req<F, R>(model: &str, infer_config: LangModelInferConfig, f: F) -> R
+    where
+        F: FnOnce(&LangModelRequest<'_>) -> R,
+    {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url =
+            Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model,
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            infer_config: &infer_config,
+        };
+        f(&req)
     }
 
     #[test]
     fn test_marshal_max_output_tokens_set() {
-        let req = make_req(
+        with_req(
             "gemini-2.5-flash-lite",
-            &LangModelInferConfig {
-                max_tokens: Some(2048),
-                ..Default::default()
+            LangModelInferConfig { max_tokens: Some(2048), ..Default::default() },
+            |req| {
+                let val = GeminiMarshal::default().marshal(req);
+                let body = val.as_object().unwrap().get("body").unwrap();
+                let gen_config = body.as_object().unwrap().get("generationConfig").unwrap();
+                let max_tokens = gen_config
+                    .as_object()
+                    .unwrap()
+                    .get("maxOutputTokens")
+                    .unwrap();
+                assert_eq!(max_tokens.as_integer().unwrap(), 2048);
             },
         );
-        let val = GeminiMarshal::default().marshal(&req);
-        let body = val.as_object().unwrap().get("body").unwrap();
-        let gen_config = body.as_object().unwrap().get("generationConfig").unwrap();
-        let max_tokens = gen_config
-            .as_object()
-            .unwrap()
-            .get("maxOutputTokens")
-            .unwrap();
-        assert_eq!(max_tokens.as_integer().unwrap(), 2048);
     }
 
     #[test]
     fn test_marshal_max_output_tokens_absent_when_none() {
-        let req = make_req("gemini-2.5-flash-lite", &LangModelInferConfig::default());
-        let val = GeminiMarshal::default().marshal(&req);
-        let body = val.as_object().unwrap().get("body").unwrap();
-        assert!(body.as_object().unwrap().get("generationConfig").is_none());
+        with_req(
+            "gemini-2.5-flash-lite",
+            LangModelInferConfig::default(),
+            |req| {
+                let val = GeminiMarshal::default().marshal(req);
+                let body = val.as_object().unwrap().get("body").unwrap();
+                assert!(body.as_object().unwrap().get("generationConfig").is_none());
+            },
+        );
     }
 
     /// Verifies that max_tokens is respected by the Gemini API (finishReason: MAX_TOKENS).
