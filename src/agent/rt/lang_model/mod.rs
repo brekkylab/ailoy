@@ -46,8 +46,8 @@ impl LangModelRuntime {
                     model: &self.model,
                     messages,
                     tools,
-                    url: &url,
-                    api_key: &api_key,
+                    url,
+                    api_key,
                     infer_config,
                 };
 
@@ -143,8 +143,6 @@ impl LangModelRuntime {
 
 #[cfg(test)]
 mod tests {
-    use url::Url;
-
     use super::*;
     use crate::{
         message::{FinishReason, Part, Role, ToolDescBuilder},
@@ -152,14 +150,13 @@ mod tests {
     };
 
     fn openai_chat_completion(model: &str, api_key: String) -> LangModelRuntime {
-        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
         LangModelRuntime::new(
             model.to_string(),
-            LangModelProvider::API {
-                schema: LangModelAPISchema::ChatCompletion,
-                url,
-                api_key: Some(api_key),
-            },
+            LangModelProvider::chat_completion(
+                "https://api.openai.com/v1/chat/completions",
+                Some(api_key),
+            )
+            .unwrap(),
         )
     }
 
@@ -169,7 +166,7 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let lm = openai_chat_completion("gpt-4", api_key);
+        let lm = openai_chat_completion("gpt-5.4-mini", api_key);
         let messages = vec![Message::new(Role::User).with_contents([Part::text("Hi")])];
         let tools: Vec<ToolDesc> = vec![];
 
@@ -177,7 +174,14 @@ mod tests {
             .run(&messages, &tools, &Default::default())
             .await
             .unwrap();
-        println!("{}", resp);
+        assert!(
+            !resp.message.contents.is_empty(),
+            "Expected at least one message content"
+        );
+        assert!(
+            resp.message.contents.first().unwrap().is_text(),
+            "Expected a text type content"
+        );
     }
 
     /// Verifies that the API returns tool calls when tools are provided.
@@ -186,7 +190,7 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let lm = openai_chat_completion("gpt-4", api_key);
+        let lm = openai_chat_completion("gpt-5.4-mini", api_key);
         let messages = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("What is the current temperature in Seoul?")]),
@@ -216,8 +220,6 @@ mod tests {
             .run(&messages, &tools, &Default::default())
             .await
             .unwrap();
-
-        println!("{}", resp);
 
         // The model should respond with a tool call
         assert_eq!(resp.finish_reason, FinishReason::ToolCall {});

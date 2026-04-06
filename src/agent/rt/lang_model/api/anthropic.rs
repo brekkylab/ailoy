@@ -1,5 +1,7 @@
 use anyhow::bail;
+use url::Url;
 
+use super::super::{LangModelAPISchema, LangModelProvider};
 use crate::{
     agent::rt::lang_model::LangModelRequest,
     datatype::Value,
@@ -9,6 +11,16 @@ use crate::{
     },
     to_value,
 };
+
+impl LangModelProvider {
+    pub fn anthropic(api_key: String) -> Self {
+        Self::API {
+            schema: LangModelAPISchema::Anthropic,
+            url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
+            api_key: Some(api_key),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct AnthropicMarshal;
@@ -141,8 +153,8 @@ impl Marshal<ToolDesc> for AnthropicMarshal {
     }
 }
 
-impl<'a> Marshal<LangModelRequest<'a>> for AnthropicMarshal {
-    fn marshal(&mut self, req: &LangModelRequest) -> Value {
+impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
+    fn marshal(&mut self, req: &LangModelRequest<'_>) -> Value {
         let model = Value::from(req.model);
 
         // Extract system message text if present
@@ -159,7 +171,7 @@ impl<'a> Marshal<LangModelRequest<'a>> for AnthropicMarshal {
                 }
             });
 
-        let messages = marshal_messages(req.messages);
+        let messages = marshal_messages(&req.messages);
 
         let tools = if !req.tools.is_empty() {
             self.marshal(req.tools)
@@ -340,53 +352,52 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{LangModelAPISchema, LangModelInferConfig, LangModelProvider, LangModelRuntime},
+        agent::{LangModelInferConfig, LangModelProvider, LangModelRuntime},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
-    fn make_req<'a>(
-        model: &'a str,
-        url: &'a Url,
-        api_key: &'a Option<String>,
-        infer_config: &'a LangModelInferConfig,
-    ) -> LangModelRequest<'a> {
-        LangModelRequest {
+    fn with_req<F, R>(model: &str, infer_config: LangModelInferConfig, f: F) -> R
+    where
+        F: FnOnce(&LangModelRequest<'_>) -> R,
+    {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
             model,
-            messages: &[],
-            tools: &[],
-            url,
-            api_key,
-            infer_config,
-        }
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            infer_config: &infer_config,
+        };
+        f(&req)
     }
 
     #[test]
     fn test_marshal_max_tokens_set() {
-        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
-        let api_key = None;
-        let config = LangModelInferConfig {
-            max_tokens: Some(512),
-        };
-        let req = make_req("claude-sonnet-4-6", &url, &api_key, &config);
-
-        let val = AnthropicMarshal::default().marshal(&req);
-        let body = val.as_object().unwrap().get("body").unwrap();
-        let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
-        assert_eq!(max_tokens.as_integer().unwrap(), 512);
+        with_req(
+            "claude-haiku-4-5",
+            LangModelInferConfig { max_tokens: Some(512), ..Default::default() },
+            |req| {
+                let val = AnthropicMarshal::default().marshal(req);
+                let body = val.as_object().unwrap().get("body").unwrap();
+                let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
+                assert_eq!(max_tokens.as_integer().unwrap(), 512);
+            },
+        );
     }
 
     #[test]
     fn test_marshal_max_tokens_default() {
-        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
-        let api_key = None;
-        let config = LangModelInferConfig::default();
-        let req = make_req("claude-sonnet-4-6", &url, &api_key, &config);
-
-        let val = AnthropicMarshal::default().marshal(&req);
-        let body = val.as_object().unwrap().get("body").unwrap();
-        let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
-        // Falls back to 8192 when not configured
-        assert_eq!(max_tokens.as_integer().unwrap(), 8192);
+        with_req("claude-haiku-4-5", LangModelInferConfig::default(), |req| {
+            let val = AnthropicMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
+            // Falls back to 8192 when not configured
+            assert_eq!(max_tokens.as_integer().unwrap(), 8192);
+        });
     }
 
     /// Verifies that max_tokens is respected by the Anthropic API (stop_reason: max_tokens).
@@ -396,14 +407,9 @@ mod tests {
         let api_key =
             std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
 
-        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
         let lm = LangModelRuntime::new(
-            "claude-haiku-4-5-20251001".to_string(),
-            LangModelProvider::API {
-                schema: LangModelAPISchema::Anthropic,
-                url,
-                api_key: Some(api_key),
-            },
+            "claude-haiku-4-5".to_string(),
+            LangModelProvider::anthropic(api_key),
         );
         let messages = vec![
             Message::new(Role::User)
@@ -412,10 +418,10 @@ mod tests {
         let tools: Vec<ToolDesc> = vec![];
         let config = LangModelInferConfig {
             max_tokens: Some(5),
+            ..Default::default()
         };
 
         let resp = lm.run(&messages, &tools, &config).await.unwrap();
-        println!("{}", resp);
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }
