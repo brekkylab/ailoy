@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use reqwest::Client;
 use scraper::{ElementRef, Html, Selector};
-use wreq::header as rh;
-use wreq_util::Emulation;
 
 use crate::agent::rt::tool::web_search::engine::{SearchEngine, SearchError, SearchResult};
 
@@ -95,20 +93,13 @@ impl SearchEngine for Google {
 
     async fn search(
         &self,
-        _client: &Client,
+        client: &Client,
         query: &str,
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        // Google serves SSR search results (with data-ved attributes) only when it
-        // recognises the client as a mobile browser.  An Android Chrome Mobile UA
-        // (with the optional "GoogleApp/N" token from Google's own search app) reliably
-        // triggers the mobile-SSR code path.  Desktop or unknown UAs receive a
-        // JavaScript-only shell instead.
-        let rq_client = wreq::Client::builder()
-            .emulation(Emulation::Firefox135)
-            .timeout(std::time::Duration::from_secs(15))
-            .build()
-            .map_err(|e| SearchError::Parse(e.to_string()))?;
+        // Google does not use TLS fingerprinting for bot detection; plain reqwest works.
+        // The mobile Android Chrome UA is what triggers Google's SSR code path —
+        // desktop or unknown UAs receive a JavaScript-only shell that cannot be parsed.
 
         // hl=en-US   : interface language
         // lr=lang_en : restrict results to English documents
@@ -119,18 +110,16 @@ impl SearchEngine for Google {
             urlencoding::encode(query)
         );
 
-        let response = rq_client
+        let response = client
             .get(&url)
-            .header(rh::USER_AGENT, random_ua())
-            .header(rh::ACCEPT, "*/*")
-            .header(rh::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
-            .header(rh::ACCEPT_ENCODING, "gzip, deflate")
-            .header(rh::CACHE_CONTROL, "no-cache")
+            .header("User-Agent", random_ua())
+            .header("Accept", "*/*")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Cache-Control", "no-cache")
             // CONSENT=YES+ bypasses Google's cookie-consent interstitial.
             .header("Cookie", "CONSENT=YES+")
             .send()
-            .await
-            .map_err(|e| SearchError::Parse(e.to_string()))?;
+            .await?;
 
         if response.status() == 429 {
             return Err(SearchError::Blocked);
@@ -140,10 +129,7 @@ impl SearchEngine for Google {
             return Err(SearchError::Blocked);
         }
 
-        let html_text = response
-            .text()
-            .await
-            .map_err(|e| SearchError::Parse(e.to_string()))?;
+        let html_text = response.error_for_status()?.text().await?;
 
         // Google redirects to sorry.google.com or /sorry/ when it detects automation.
         if html_text.contains("sorry.google.com")
