@@ -1,4 +1,4 @@
-use super::fs::{Directory, InMemoryDir, Node, NodeKind};
+use super::fs::{Directory, InMemoryDir, Node};
 
 pub struct Shell {
     pub(super) cwd: Vec<String>,
@@ -7,9 +7,13 @@ pub struct Shell {
 
 impl Shell {
     pub fn new() -> Self {
+        let mut root = InMemoryDir::new();
+        let mut home = InMemoryDir::new();
+        home.insert_child("user".into(), Node::Directory(Box::new(InMemoryDir::new())));
+        root.insert_child("home".into(), Node::Directory(Box::new(home)));
         Self {
             cwd: vec!["home".into(), "user".into()],
-            root: InMemoryDir::new(),
+            root,
         }
     }
 
@@ -40,7 +44,9 @@ impl Shell {
         for part in path.split('/') {
             match part {
                 "" | "." => {}
-                ".." => { components.pop(); }
+                ".." => {
+                    components.pop();
+                }
                 p => components.push(p.to_string()),
             }
         }
@@ -135,15 +141,69 @@ impl Shell {
         let mut entries = dir.readdir();
         entries.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let output = entries
-            .iter()
-            .map(|e| match e.kind {
-                NodeKind::Directory => format!("{}/", e.name),
-                NodeKind::File => e.name.clone(),
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        if entries.is_empty() {
+            return Ok(String::new());
+        }
 
-        Ok(output)
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        let max_len = names.iter().map(|n| n.len()).max().unwrap_or(0);
+        let col_width = max_len + 2;
+        let terminal_width: usize = 80;
+        let num_cols = (terminal_width / col_width).max(1);
+        let num_rows = (names.len() + num_cols - 1) / num_cols;
+
+        let mut rows: Vec<String> = Vec::with_capacity(num_rows);
+        for row in 0..num_rows {
+            let mut line = String::new();
+            for col in 0..num_cols {
+                let idx = col * num_rows + row;
+                if idx >= names.len() {
+                    break;
+                }
+                let last_in_row = (col + 1) * num_rows + row >= names.len();
+                if last_in_row {
+                    line.push_str(names[idx]);
+                } else {
+                    line.push_str(&format!("{:<col_width$}", names[idx]));
+                }
+            }
+            rows.push(line);
+        }
+
+        Ok(rows.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ls_mkdir_ls_rmdir_ls() {
+        let mut shell = Shell::new();
+
+        // ls — cwd is empty
+        assert_eq!(shell.exec("ls").unwrap(), "");
+
+        // mkdir testdir1
+        shell.exec("mkdir testdir1").unwrap();
+
+        // mkdir testdir2
+        shell.exec("mkdir testdir2").unwrap();
+
+        // ls
+        assert_eq!(shell.exec("ls").unwrap(), "testdir1  testdir2");
+
+        // rmdir testdir1
+        shell.exec("rmdir testdir1").unwrap();
+
+        // ls
+        assert_eq!(shell.exec("ls").unwrap(), "testdir2");
+
+        // rmdir testdir2
+        shell.exec("rmdir testdir2").unwrap();
+
+        // ls
+        assert_eq!(shell.exec("ls").unwrap(), "");
     }
 }
