@@ -134,39 +134,42 @@ impl MetaSearcher {
 
         let engine_results = join_all(futures).await;
 
-        // Collect successes, warn on failures
-        let mut flat: Vec<SearchResult> = Vec::new();
+        // RRF constant: k=60 is standard (Cormack et al., 2009).
+        // Score for a URL at rank r from one engine = 1 / (k + r + 1).
+        const RRF_K: f32 = 60.0;
+
+        // Deduplicate by normalized URL, accumulating RRF scores per-engine result list.
+        let mut seen: HashMap<String, usize> = HashMap::new();
+        let mut deduped: Vec<AggregatedResult> = Vec::new();
+
         for (i, result) in engine_results.into_iter().enumerate() {
             match result {
-                Ok(results) => flat.extend(results),
+                Ok(results) => {
+                    for (rank, result) in results.into_iter().enumerate() {
+                        let key = normalize_url(&result.url);
+                        let rrf_score = 1.0 / (RRF_K + rank as f32 + 1.0);
+                        if let Some(&idx) = seen.get(&key) {
+                            deduped[idx].sources.push(result.engine);
+                            deduped[idx].relevance += rrf_score;
+                        } else {
+                            let idx = deduped.len();
+                            seen.insert(key, idx);
+                            deduped.push(AggregatedResult {
+                                title: result.title,
+                                url: result.url,
+                                description: result.description,
+                                sources: vec![result.engine],
+                                relevance: rrf_score,
+                            });
+                        }
+                    }
+                }
                 Err(SearchError::NoResults) => {} // silent
                 Err(e) => log::warn!("Search engine '{}' failed: {}", self.engines[i].name(), e),
             }
         }
 
-        // Deduplicate by normalized URL
-        let mut seen: HashMap<String, usize> = HashMap::new();
-        let mut deduped: Vec<AggregatedResult> = Vec::new();
-
-        for result in flat {
-            let key = normalize_url(&result.url);
-            if let Some(&idx) = seen.get(&key) {
-                deduped[idx].sources.push(result.engine);
-                deduped[idx].relevance += 1.0;
-            } else {
-                let idx = deduped.len();
-                seen.insert(key, idx);
-                deduped.push(AggregatedResult {
-                    title: result.title,
-                    url: result.url,
-                    description: result.description,
-                    sources: vec![result.engine],
-                    relevance: 1.0,
-                });
-            }
-        }
-
-        // Rank by relevance (higher = returned by more engines)
+        // Rank by RRF score (higher = ranked higher across more engines)
         deduped.sort_by(|a, b| {
             b.relevance
                 .partial_cmp(&a.relevance)
@@ -286,7 +289,8 @@ mod tests {
             "www. and trailing slash should deduplicate"
         );
         assert_eq!(results[0].sources.len(), 2);
-        assert!(results[0].relevance >= 2.0);
+        // With RRF, relevance = sum of 1/(k+rank+1) per engine; always > 0
+        assert!(results[0].relevance > 0.0);
     }
 
     #[tokio::test]

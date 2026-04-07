@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use futures::future::BoxFuture;
 
 use crate::{
-    agent::MCPToolProvider,
+    agent::{BuiltinToolProvider, MCPToolProvider},
     datatype::Value,
     message::{Message, Part, Role, ToolDesc},
 };
@@ -66,15 +66,11 @@ impl ToolSet {
         self.tools.remove(key)
     }
 
-    pub fn with_builtin(mut self, name: &str) -> Self {
-        match name {
-            "web_search" => {
+    pub fn with_builtin(mut self, provider: &BuiltinToolProvider) -> Self {
+        match provider {
+            BuiltinToolProvider::WebSearch {} => {
                 let tool = web_search::build_web_search_tool();
                 self.tools.insert("web_search".to_string(), tool);
-                self
-            }
-            _ => {
-                log::warn!("Unknown builtin tool name: '{}' — skipping", name);
                 self
             }
         }

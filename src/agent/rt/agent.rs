@@ -21,7 +21,7 @@ impl AgentRuntime {
                 .tools
                 .iter()
                 .fold(tool_set, |ts, tool_provider| match tool_provider {
-                    ToolProvider::Builtin { name } => ts.with_builtin(name),
+                    ToolProvider::Builtin(builtin) => ts.with_builtin(builtin),
                     ToolProvider::MCP(mcp) => ts.with_mcp(mcp),
                 });
 
