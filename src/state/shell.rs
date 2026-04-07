@@ -1,4 +1,4 @@
-use crate::state::command::{run_ls, run_mkdir, run_rmdir};
+use crate::state::command::{ExecOutput, run_ls, run_mkdir, run_rmdir};
 
 use super::fs::{Directory, InMemoryDir, Node};
 
@@ -19,15 +19,15 @@ impl Shell {
         }
     }
 
-    /// Execute a shell command
-    pub fn exec(&mut self, cmd: &str) -> anyhow::Result<String> {
+    /// Execute a shell command, returning separate stdout and stderr streams.
+    pub fn exec(&mut self, cmd: &str) -> ExecOutput {
         let parts: Vec<&str> = cmd.split_whitespace().collect();
         match parts.as_slice() {
             ["mkdir", args @ ..] => run_mkdir(self, args),
             ["rmdir", args @ ..] => run_rmdir(self, args),
             ["ls", args @ ..] => run_ls(self, args),
-            [cmd, _args @ ..] => anyhow::bail!("unknown command: {}", cmd),
-            [] => Ok(String::new()),
+            [cmd, _args @ ..] => ExecOutput::err(127, format!("unknown command: {}", cmd)),
+            [] => ExecOutput::ok(""),
         }
     }
 
@@ -98,27 +98,27 @@ mod tests {
         let mut shell = Shell::new();
 
         // ls — cwd is empty
-        assert_eq!(shell.exec("ls").unwrap(), "");
+        assert_eq!(shell.exec("ls").stdout, "");
 
         // mkdir testdir1
-        shell.exec("mkdir testdir1").unwrap();
+        assert_eq!(shell.exec("mkdir testdir1").exit_code, 0);
 
         // mkdir testdir2
-        shell.exec("mkdir testdir2").unwrap();
+        assert_eq!(shell.exec("mkdir testdir2").exit_code, 0);
 
         // ls
-        assert_eq!(shell.exec("ls").unwrap(), "testdir1  testdir2");
+        assert_eq!(shell.exec("ls").stdout, "testdir1  testdir2");
 
         // rmdir testdir1
-        shell.exec("rmdir testdir1").unwrap();
+        assert_eq!(shell.exec("rmdir testdir1").exit_code, 0);
 
         // ls
-        assert_eq!(shell.exec("ls").unwrap(), "testdir2");
+        assert_eq!(shell.exec("ls").stdout, "testdir2");
 
         // rmdir testdir2
-        shell.exec("rmdir testdir2").unwrap();
+        assert_eq!(shell.exec("rmdir testdir2").exit_code, 0);
 
         // ls
-        assert_eq!(shell.exec("ls").unwrap(), "");
+        assert_eq!(shell.exec("ls").stdout, "");
     }
 }

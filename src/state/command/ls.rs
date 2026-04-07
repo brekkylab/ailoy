@@ -1,7 +1,9 @@
 use crate::state::fs::{DirEntry, Directory, Node, NodeKind};
 use crate::state::Shell;
 
-pub fn run_ls(shell: &Shell, args: &[&str]) -> anyhow::Result<String> {
+use super::ExecOutput;
+
+pub fn run_ls(shell: &Shell, args: &[&str]) -> ExecOutput {
     let mut show_all = false;
     let mut long_format = false;
     let mut path = "";
@@ -12,7 +14,7 @@ pub fn run_ls(shell: &Shell, args: &[&str]) -> anyhow::Result<String> {
                 match ch {
                     'a' => show_all = true,
                     'l' => long_format = true,
-                    _ => anyhow::bail!("ls: illegal option -- {ch}"),
+                    _ => return ExecOutput::err(1, format!("ls: illegal option -- {ch}")),
                 }
             }
         } else {
@@ -21,8 +23,15 @@ pub fn run_ls(shell: &Shell, args: &[&str]) -> anyhow::Result<String> {
     }
 
     let components = shell.resolve(path);
-    let dir_ptr = Shell::navigate(&shell.root as &dyn Directory, &components)
-        .map_err(|_| anyhow::anyhow!("ls: cannot access '{path}': No such file or directory"))?;
+    let dir_ptr = match Shell::navigate(&shell.root as &dyn Directory, &components) {
+        Ok(p) => p,
+        Err(_) => {
+            return ExecOutput::err(
+                1,
+                format!("ls: cannot access '{path}': No such file or directory"),
+            )
+        }
+    };
 
     // SAFETY: ptr is valid and we hold a shared borrow of shell.
     let dir = unsafe { &*dir_ptr };
@@ -40,7 +49,7 @@ pub fn run_ls(shell: &Shell, args: &[&str]) -> anyhow::Result<String> {
     }
 
     if entries.is_empty() {
-        return Ok(String::new());
+        return ExecOutput::ok("");
     }
 
     if long_format {
@@ -67,7 +76,7 @@ pub fn run_ls(shell: &Shell, args: &[&str]) -> anyhow::Result<String> {
                 format!("{type_char}{perm}  {:>6}  {}", size, e.name)
             })
             .collect();
-        Ok(lines.join("\n"))
+        ExecOutput::ok(lines.join("\n"))
     } else {
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         let max_len = names.iter().map(|n| n.len()).max().unwrap_or(0);
@@ -93,6 +102,6 @@ pub fn run_ls(shell: &Shell, args: &[&str]) -> anyhow::Result<String> {
             }
             rows.push(line);
         }
-        Ok(rows.join("\n"))
+        ExecOutput::ok(rows.join("\n"))
     }
 }

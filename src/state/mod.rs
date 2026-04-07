@@ -8,5 +8,6 @@ pub use fs::{
     DirEntry, Directory, File, FileHandle, InMemoryDir, InMemoryFile, InMemoryFileHandle, Node,
     NodeKind, Stat,
 };
+pub use command::ExecOutput;
 pub use shell::Shell;
 pub use state::AgentState;
