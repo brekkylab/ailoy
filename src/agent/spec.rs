@@ -80,6 +80,11 @@ pub enum LangModelProvider {
     },
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum BuiltinToolProvider {
+    WebSearch {},
+}
+
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -96,7 +101,7 @@ pub enum MCPToolProvider {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolProvider {
     /// A tool baked into the agent runtime, referenced by `name`
-    Builtin { name: String },
+    Builtin(BuiltinToolProvider),
 
     /// A tool served by an external MCP server described by [`MCPToolProvider`]
     MCP(MCPToolProvider),

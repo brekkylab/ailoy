@@ -3,10 +3,12 @@ use std::{collections::HashMap, sync::Arc};
 use futures::future::BoxFuture;
 
 use crate::{
-    agent::MCPToolProvider,
+    agent::{BuiltinToolProvider, MCPToolProvider},
     datatype::Value,
     message::{Message, Part, Role, ToolDesc},
 };
+
+mod web_search;
 
 pub type ToolFunc = dyn Fn(Value) -> BoxFuture<'static, Value> + Send + Sync;
 
@@ -64,12 +66,13 @@ impl ToolSet {
         self.tools.remove(key)
     }
 
-    pub fn with_builtin(self, name: &str) -> Self {
-        if name == "knowledge" {
-            todo!()
-        } else {
-            // @jhlee: Should we raise?
-            self
+    pub fn with_builtin(mut self, provider: &BuiltinToolProvider) -> Self {
+        match provider {
+            BuiltinToolProvider::WebSearch {} => {
+                let tool = web_search::build_web_search_tool();
+                self.tools.insert("web_search".to_string(), tool);
+                self
+            }
         }
     }
 
