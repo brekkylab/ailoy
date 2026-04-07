@@ -1,5 +1,5 @@
-use crate::state::fs::{Directory, InMemoryDir, InMemoryFile, Node};
-use crate::state::Shell;
+use crate::shell::Shell;
+use crate::shell::fs::{Directory, InMemoryDir, InMemoryFile, Node};
 
 use super::ExecOutput;
 
@@ -73,16 +73,15 @@ pub fn run_cp(shell: &mut Shell, args: &[&str]) -> ExecOutput {
         let src_parent_components = src_parent_components.to_vec();
 
         // Navigate to source parent and clone the node.
-        let src_parent_ptr =
-            match Shell::navigate_mut(&mut shell.root, &src_parent_components) {
-                Ok(p) => p,
-                Err(_) => {
-                    return ExecOutput::err(
-                        1,
-                        format!("cp: cannot stat '{src_str}': No such file or directory"),
-                    )
-                }
-            };
+        let src_parent_ptr = match Shell::navigate_mut(&mut shell.root, &src_parent_components) {
+            Ok(p) => p,
+            Err(_) => {
+                return ExecOutput::err(
+                    1,
+                    format!("cp: cannot stat '{src_str}': No such file or directory"),
+                );
+            }
+        };
         // SAFETY: ptr is valid and we hold a mutable borrow of shell for this block.
         let src_parent = unsafe { &mut *src_parent_ptr };
 
@@ -92,7 +91,7 @@ pub fn run_cp(shell: &mut Shell, args: &[&str]) -> ExecOutput {
                 return ExecOutput::err(
                     1,
                     format!("cp: cannot stat '{src_str}': No such file or directory"),
-                )
+                );
             }
         };
 
@@ -113,18 +112,17 @@ pub fn run_cp(shell: &mut Shell, args: &[&str]) -> ExecOutput {
             }
         };
 
-        let dst_parent_ptr =
-            match Shell::navigate_mut(&mut shell.root, &dst_parent_components) {
-                Ok(p) => p,
-                Err(_) => {
-                    return ExecOutput::err(
-                        1,
-                        format!(
-                            "cp: cannot create regular file '{dst_str}': No such file or directory"
-                        ),
-                    )
-                }
-            };
+        let dst_parent_ptr = match Shell::navigate_mut(&mut shell.root, &dst_parent_components) {
+            Ok(p) => p,
+            Err(_) => {
+                return ExecOutput::err(
+                    1,
+                    format!(
+                        "cp: cannot create regular file '{dst_str}': No such file or directory"
+                    ),
+                );
+            }
+        };
         // SAFETY: ptr is valid and no other live mutable reference aliases it.
         let dst_parent = unsafe { &mut *dst_parent_ptr };
         dst_parent.insert_child(dst_name, cloned);

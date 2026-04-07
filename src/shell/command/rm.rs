@@ -1,5 +1,5 @@
-use crate::state::fs::Node;
-use crate::state::Shell;
+use crate::shell::Shell;
+use crate::shell::fs::Node;
 
 use super::ExecOutput;
 
@@ -14,12 +14,7 @@ pub fn run_rm(shell: &mut Shell, args: &[&str]) -> ExecOutput {
                 match ch {
                     'r' | 'R' => recursive = true,
                     'f' => force = true,
-                    _ => {
-                        return ExecOutput::err(
-                            1,
-                            format!("rm: invalid option -- '{ch}'"),
-                        )
-                    }
+                    _ => return ExecOutput::err(1, format!("rm: invalid option -- '{ch}'")),
                 }
             }
         } else {
@@ -78,9 +73,7 @@ pub fn run_rm(shell: &mut Shell, args: &[&str]) -> ExecOutput {
                 }
             }
             Some(Node::Directory(_)) if !recursive => {
-                stderr_lines.push(format!(
-                    "rm: cannot remove '{path_str}': Is a directory"
-                ));
+                stderr_lines.push(format!("rm: cannot remove '{path_str}': Is a directory"));
                 exit_code = 1;
             }
             _ => {
@@ -92,6 +85,10 @@ pub fn run_rm(shell: &mut Shell, args: &[&str]) -> ExecOutput {
     if stderr_lines.is_empty() {
         ExecOutput::ok("")
     } else {
-        ExecOutput { stdout: String::new(), stderr: stderr_lines.join("\n"), exit_code }
+        ExecOutput {
+            stdout: String::new(),
+            stderr: stderr_lines.join("\n"),
+            exit_code,
+        }
     }
 }

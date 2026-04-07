@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::state::fs::{DirEntry, Directory, File, FileHandle, Node, NodeKind, Stat};
+use crate::shell::fs::{DirEntry, Directory, File, FileHandle, Node, NodeKind, Stat};
 
 pub struct InMemoryFile {
     content: Vec<u8>,
@@ -126,15 +126,15 @@ impl Directory for InMemoryDir {
         }
     }
 
-    fn get_child(&self, name: &str) -> Option<&crate::state::fs::Node> {
+    fn get_child(&self, name: &str) -> Option<&crate::shell::fs::Node> {
         self.children.get(name)
     }
 
-    fn get_child_mut(&mut self, name: &str) -> Option<&mut crate::state::fs::Node> {
+    fn get_child_mut(&mut self, name: &str) -> Option<&mut crate::shell::fs::Node> {
         self.children.get_mut(name)
     }
 
-    fn insert_child(&mut self, name: String, node: crate::state::fs::Node) {
+    fn insert_child(&mut self, name: String, node: crate::shell::fs::Node) {
         assert!(!self.readonly, "insert into read-only directory: {name}");
         self.children.insert(name, node);
     }

@@ -1,4 +1,4 @@
-use crate::{message::Message, state::Shell};
+use crate::{message::Message, shell::Shell};
 
 pub struct AgentState {
     pub history: Vec<Message>,

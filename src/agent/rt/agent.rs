@@ -5,12 +5,40 @@ use futures::{Stream, StreamExt as _};
 use crate::{
     agent::{AgentProvider, AgentSpec, LangModelRuntime, ToolProvider, ToolRuntime, ToolSet},
     message::{FinishReason, Message, MessageOutput, Part, Role},
+    shell::Shell,
 };
+
+pub struct AgentState {
+    pub history: Vec<Message>,
+
+    pub shell: Option<Shell>,
+}
+
+impl AgentState {
+    pub fn new() -> Self {
+        Self {
+            history: Vec::new(),
+            shell: None,
+        }
+    }
+
+    pub fn with_history(history: Vec<Message>) -> Self {
+        Self {
+            history,
+            shell: None,
+        }
+    }
+
+    pub fn shell(mut self) -> Self {
+        self.shell = Some(Shell::new());
+        self
+    }
+}
 
 pub struct AgentRuntime {
     lm: LangModelRuntime,
     tools: Vec<ToolRuntime>,
-    history: Vec<Message>,
+    state: AgentState,
 }
 
 impl AgentRuntime {
@@ -42,7 +70,7 @@ impl AgentRuntime {
         Self {
             lm: LangModelRuntime::new(spec.lm, provider.lm),
             tools,
-            history,
+            state: AgentState::with_history(history),
         }
     }
 
@@ -62,11 +90,11 @@ impl AgentRuntime {
     }
 
     pub fn get_history(&self) -> Vec<Message> {
-        self.history.clone()
+        self.state.history.clone()
     }
 
     pub fn set_history(&mut self, history: Vec<Message>) {
-        self.history = history;
+        self.state.history = history;
     }
 
     pub fn stream_turn(
@@ -74,11 +102,11 @@ impl AgentRuntime {
         query: Message,
     ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageOutput>> + '_>> {
         Box::pin(async_stream::stream! {
-            self.history.push(query);
+            self.state.history.push(query);
             let tool_descs: Vec<_> = self.tools.iter().map(|t| t.desc().clone()).collect();
 
             loop {
-                let output = match self.lm.run(&self.history, &tool_descs, &Default::default()).await {
+                let output = match self.lm.run(&self.state.history, &tool_descs, &Default::default()).await {
                     Ok(o) => o,
                     Err(e) => {
                         yield Err(e);
@@ -86,7 +114,7 @@ impl AgentRuntime {
                     }
                 };
                 let assistant_msg = output.message.clone();
-                self.history.push(assistant_msg.clone());
+                self.state.history.push(assistant_msg.clone());
                 yield Ok(output);
 
                 let tool_calls = assistant_msg.tool_calls.unwrap_or_default();
@@ -112,7 +140,7 @@ impl AgentRuntime {
                             return;
                         }
                     };
-                    self.history.push(tool_msg.clone());
+                    self.state.history.push(tool_msg.clone());
                     yield Ok(MessageOutput {
                         message: tool_msg,
                         finish_reason: FinishReason::Stop {},

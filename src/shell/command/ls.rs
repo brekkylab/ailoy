@@ -1,5 +1,5 @@
-use crate::state::fs::{DirEntry, Directory, Node, NodeKind};
-use crate::state::Shell;
+use crate::shell::Shell;
+use crate::shell::fs::{DirEntry, Directory, Node, NodeKind};
 
 use super::ExecOutput;
 
@@ -29,7 +29,7 @@ pub fn run_ls(shell: &Shell, args: &[&str]) -> ExecOutput {
             return ExecOutput::err(
                 1,
                 format!("ls: cannot access '{path}': No such file or directory"),
-            )
+            );
         }
     };
 
@@ -44,8 +44,20 @@ pub fn run_ls(shell: &Shell, args: &[&str]) -> ExecOutput {
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
     if show_all {
-        entries.insert(0, DirEntry { name: "..".to_string(), kind: NodeKind::Directory });
-        entries.insert(0, DirEntry { name: ".".to_string(), kind: NodeKind::Directory });
+        entries.insert(
+            0,
+            DirEntry {
+                name: "..".to_string(),
+                kind: NodeKind::Directory,
+            },
+        );
+        entries.insert(
+            0,
+            DirEntry {
+                name: ".".to_string(),
+                kind: NodeKind::Directory,
+            },
+        );
     }
 
     if entries.is_empty() {

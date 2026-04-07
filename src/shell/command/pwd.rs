@@ -1,4 +1,4 @@
-use crate::state::Shell;
+use crate::shell::Shell;
 
 use super::ExecOutput;
 

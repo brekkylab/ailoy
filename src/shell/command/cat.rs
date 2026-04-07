@@ -1,5 +1,5 @@
-use crate::state::fs::Node;
-use crate::state::Shell;
+use crate::shell::Shell;
+use crate::shell::fs::Node;
 
 use super::ExecOutput;
 
@@ -15,9 +15,7 @@ pub fn run_cat(shell: &mut Shell, args: &[&str]) -> ExecOutput {
 
     for &path_str in args {
         if path_str.starts_with('-') {
-            stderr_lines.push(format!(
-                "cat: {path_str}: No such file or directory"
-            ));
+            stderr_lines.push(format!("cat: {path_str}: No such file or directory"));
             exit_code = 1;
             continue;
         }
@@ -34,9 +32,7 @@ pub fn run_cat(shell: &mut Shell, args: &[&str]) -> ExecOutput {
         let parent_ptr = match Shell::navigate_mut(&mut shell.root, &parent_components) {
             Ok(p) => p,
             Err(_) => {
-                stderr_lines.push(format!(
-                    "cat: {path_str}: No such file or directory"
-                ));
+                stderr_lines.push(format!("cat: {path_str}: No such file or directory"));
                 exit_code = 1;
                 continue;
             }
@@ -71,5 +67,9 @@ pub fn run_cat(shell: &mut Shell, args: &[&str]) -> ExecOutput {
 
     let stdout = stdout_parts.join("");
     let stderr = stderr_lines.join("\n");
-    ExecOutput { stdout, stderr, exit_code }
+    ExecOutput {
+        stdout,
+        stderr,
+        exit_code,
+    }
 }

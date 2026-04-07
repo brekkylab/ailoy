@@ -1,4 +1,4 @@
-use crate::state::{InMemoryDir, Node, Shell};
+use crate::shell::{InMemoryDir, Node, Shell};
 
 use super::ExecOutput;
 
@@ -29,18 +29,17 @@ pub fn run_mkdir(shell: &mut Shell, args: &[&str]) -> ExecOutput {
             for i in 0..components.len() {
                 let prefix = &components[..=i];
                 let (name, parent_components) = prefix.split_last().unwrap();
-                let parent_ptr =
-                    match Shell::navigate_mut(&mut shell.root, parent_components) {
-                        Ok(p) => p,
-                        Err(_) => {
-                            return ExecOutput::err(
-                                1,
-                                format!(
-                                    "mkdir: cannot create directory '{path}': No such file or directory"
-                                ),
-                            )
-                        }
-                    };
+                let parent_ptr = match Shell::navigate_mut(&mut shell.root, parent_components) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return ExecOutput::err(
+                            1,
+                            format!(
+                                "mkdir: cannot create directory '{path}': No such file or directory"
+                            ),
+                        );
+                    }
+                };
                 // SAFETY: ptr points to a live Directory; no aliasing after navigate_mut returns.
                 let parent = unsafe { &mut *parent_ptr };
                 match parent.get_child(name.as_str()) {
@@ -63,18 +62,17 @@ pub fn run_mkdir(shell: &mut Shell, args: &[&str]) -> ExecOutput {
             let Some((name, parent_components)) = components.split_last() else {
                 return ExecOutput::err(1, "mkdir: cannot create directory '/'");
             };
-            let parent_ptr =
-                match Shell::navigate_mut(&mut shell.root, parent_components) {
-                    Ok(p) => p,
-                    Err(_) => {
-                        return ExecOutput::err(
-                            1,
-                            format!(
-                                "mkdir: cannot create directory '{path}': No such file or directory"
-                            ),
-                        )
-                    }
-                };
+            let parent_ptr = match Shell::navigate_mut(&mut shell.root, parent_components) {
+                Ok(p) => p,
+                Err(_) => {
+                    return ExecOutput::err(
+                        1,
+                        format!(
+                            "mkdir: cannot create directory '{path}': No such file or directory"
+                        ),
+                    );
+                }
+            };
             // SAFETY: ptr points to a live Directory; no aliasing after navigate_mut returns.
             let parent = unsafe { &mut *parent_ptr };
             if parent.get_child(name.as_str()).is_some() {

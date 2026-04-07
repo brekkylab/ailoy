@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write as IoWrite};
 use std::path::PathBuf;
 
-use crate::state::fs::{DirEntry, Directory, File, FileHandle, Node, NodeKind, Stat};
+use crate::shell::fs::{DirEntry, Directory, File, FileHandle, Node, NodeKind, Stat};
 
 // ---------------------------------------------------------------------------
 // File

@@ -1,4 +1,4 @@
-use crate::state::Shell;
+use crate::shell::Shell;
 
 use super::ExecOutput;
 
@@ -46,16 +46,15 @@ pub fn run_mv(shell: &mut Shell, args: &[&str]) -> ExecOutput {
         let src_parent_components = src_parent_components.to_vec();
 
         // Take the source node from its parent.
-        let src_parent_ptr =
-            match Shell::navigate_mut(&mut shell.root, &src_parent_components) {
-                Ok(p) => p,
-                Err(_) => {
-                    return ExecOutput::err(
-                        1,
-                        format!("mv: cannot stat '{src_str}': No such file or directory"),
-                    )
-                }
-            };
+        let src_parent_ptr = match Shell::navigate_mut(&mut shell.root, &src_parent_components) {
+            Ok(p) => p,
+            Err(_) => {
+                return ExecOutput::err(
+                    1,
+                    format!("mv: cannot stat '{src_str}': No such file or directory"),
+                );
+            }
+        };
         // SAFETY: ptr is valid and we hold a mutable borrow of shell for this block.
         let src_parent = unsafe { &mut *src_parent_ptr };
         let node = match src_parent.remove_child(&src_name) {
@@ -64,7 +63,7 @@ pub fn run_mv(shell: &mut Shell, args: &[&str]) -> ExecOutput {
                 return ExecOutput::err(
                     1,
                     format!("mv: cannot stat '{src_str}': No such file or directory"),
-                )
+                );
             }
         };
         // src_parent borrow ends here; raw pointer remains valid.
@@ -79,18 +78,17 @@ pub fn run_mv(shell: &mut Shell, args: &[&str]) -> ExecOutput {
             }
         };
 
-        let dst_parent_ptr =
-            match Shell::navigate_mut(&mut shell.root, &dst_parent_components) {
-                Ok(p) => p,
-                Err(_) => {
-                    return ExecOutput::err(
-                        1,
-                        format!(
-                            "mv: cannot move '{src_str}' to '{dst_str}': No such file or directory"
-                        ),
-                    )
-                }
-            };
+        let dst_parent_ptr = match Shell::navigate_mut(&mut shell.root, &dst_parent_components) {
+            Ok(p) => p,
+            Err(_) => {
+                return ExecOutput::err(
+                    1,
+                    format!(
+                        "mv: cannot move '{src_str}' to '{dst_str}': No such file or directory"
+                    ),
+                );
+            }
+        };
         // SAFETY: ptr is valid and no other live mutable reference aliases it.
         let dst_parent = unsafe { &mut *dst_parent_ptr };
         dst_parent.insert_child(dst_name, node);

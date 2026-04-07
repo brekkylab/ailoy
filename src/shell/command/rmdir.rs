@@ -1,4 +1,4 @@
-use crate::state::{Node, Shell};
+use crate::shell::{Node, Shell};
 
 use super::ExecOutput;
 
@@ -27,26 +27,20 @@ pub fn run_rmdir(shell: &mut Shell, args: &[&str]) -> ExecOutput {
         let mut components = shell.resolve(path);
         loop {
             let Some((name, parent_components)) = components.split_last() else {
-                return ExecOutput::err(
-                    1,
-                    "rmdir: failed to remove '/': Device or resource busy",
-                );
+                return ExecOutput::err(1, "rmdir: failed to remove '/': Device or resource busy");
             };
             let name = name.clone();
             let parent_components = parent_components.to_vec();
 
-            let parent_ptr =
-                match Shell::navigate_mut(&mut shell.root, &parent_components) {
-                    Ok(p) => p,
-                    Err(_) => {
-                        return ExecOutput::err(
-                            1,
-                            format!(
-                                "rmdir: failed to remove '{path}': No such file or directory"
-                            ),
-                        )
-                    }
-                };
+            let parent_ptr = match Shell::navigate_mut(&mut shell.root, &parent_components) {
+                Ok(p) => p,
+                Err(_) => {
+                    return ExecOutput::err(
+                        1,
+                        format!("rmdir: failed to remove '{path}': No such file or directory"),
+                    );
+                }
+            };
             // SAFETY: ptr points to a live Directory; no aliasing after navigate_mut returns.
             let parent = unsafe { &mut *parent_ptr };
             match parent.get_child(name.as_str()) {
@@ -54,19 +48,19 @@ pub fn run_rmdir(shell: &mut Shell, args: &[&str]) -> ExecOutput {
                     return ExecOutput::err(
                         1,
                         format!("rmdir: failed to remove '{path}': No such file or directory"),
-                    )
+                    );
                 }
                 Some(Node::File(_)) => {
                     return ExecOutput::err(
                         1,
                         format!("rmdir: failed to remove '{path}': Not a directory"),
-                    )
+                    );
                 }
                 Some(Node::Directory(d)) if !d.readdir().is_empty() => {
                     return ExecOutput::err(
                         1,
                         format!("rmdir: failed to remove '{path}': Directory not empty"),
-                    )
+                    );
                 }
                 Some(Node::Directory(_)) => {}
             }
