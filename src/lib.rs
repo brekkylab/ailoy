@@ -6,8 +6,8 @@ pub mod datatype;
 pub mod message;
 
 pub use agent::{
-    AgentProvider, AgentRuntime, AgentSpec, LangModelAPISchema, LangModelInferConfig,
-    LangModelProvider, ToolProvider, ToolRuntime, ToolSet,
+    AgentProvider, AgentRuntime, AgentSpec, BuiltinToolProvider, LangModelAPISchema,
+    LangModelInferConfig, LangModelProvider, MCPToolProvider, ToolProvider, ToolRuntime, ToolSet,
 };
 pub use datatype::Value;
 pub use message::{
