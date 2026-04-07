@@ -22,19 +22,12 @@ impl FileSystemFile {
 
 /// An open handle to a [`FileSystemFile`].
 ///
-/// All I/O goes directly through the OS file descriptor.  We keep `pos` only
-/// to implement [`FileHandle::tell`], which takes `&self` and therefore cannot
-/// call `Seek::seek(Current(0))` on the inner file.  `pos` is always kept in
-/// sync with the real descriptor position after every read, write, or seek.
-///
+/// All I/O goes directly through the OS file descriptor.
 /// A small `buf` is retained so that [`FileHandle::read`] can return `&[u8]`
 /// borrowing from `self`.
 pub struct FileSystemFileHandle {
     file: std::fs::File,
     buf: Vec<u8>,
-    /// Mirrors the real fd position so that `tell` can be `&self`.
-    pos: u64,
-    readonly: bool,
 }
 
 impl FileSystemFile {
@@ -52,18 +45,15 @@ impl File for FileSystemFile {
         Self: 'a;
 
     fn open<'a>(&'a mut self) -> FileSystemFileHandle {
-        let readonly = self.is_readonly();
         let file = std::fs::OpenOptions::new()
             .read(true)
-            .write(!readonly)
-            .create(!readonly)
+            .write(!self.is_readonly())
+            .create(!self.is_readonly())
             .open(&self.path)
             .unwrap_or_else(|e| panic!("FileSystemFile: cannot open {:?}: {e}", self.path));
         FileSystemFileHandle {
             file,
             buf: Vec::new(),
-            pos: 0,
-            readonly,
         }
     }
 
@@ -84,34 +74,35 @@ impl FileHandle for FileSystemFileHandle {
         self.buf.resize(count as usize, 0);
         let n = self.file.read(&mut self.buf).unwrap_or(0);
         self.buf.truncate(n);
-        self.pos += n as u64;
         &self.buf
     }
 
     fn write(&mut self, data: &[u8]) {
-        assert!(!self.readonly, "write to read-only file");
         self.file
             .write_all(data)
             .expect("FileSystemFileHandle: write failed");
-        self.pos += data.len() as u64;
     }
 
     fn seek(&mut self, offset: i64) -> u64 {
-        // Clamp within [0, file_size] as the trait requires.
+        let cur = self
+            .file
+            .seek(SeekFrom::Current(0))
+            .expect("FileSystemFileHandle: tell failed");
         let size = self
             .file
             .seek(SeekFrom::End(0))
             .expect("FileSystemFileHandle: seek(End) failed");
-        let new_pos = (self.pos as i64 + offset).clamp(0, size as i64) as u64;
+        let new_pos = (cur as i64 + offset).clamp(0, size as i64) as u64;
         self.file
             .seek(SeekFrom::Start(new_pos))
             .expect("FileSystemFileHandle: seek(Start) failed");
-        self.pos = new_pos;
         new_pos
     }
 
-    fn tell(&self) -> u64 {
-        self.pos
+    fn tell(&mut self) -> u64 {
+        self.file
+            .seek(SeekFrom::Current(0))
+            .expect("FileSystemFileHandle: tell failed")
     }
 }
 
@@ -223,8 +214,7 @@ impl Directory for FileSystemDir {
         // We use a raw pointer to escape the `Ref` guard's lifetime, which
         // would otherwise be too short (stack-local).
         let nodes = self.nodes.borrow();
-        let map: &HashMap<String, Node> =
-            unsafe { &*(&*nodes as *const HashMap<String, Node>) };
+        let map: &HashMap<String, Node> = unsafe { &*(&*nodes as *const HashMap<String, Node>) };
         map.get(name)
     }
 
@@ -248,12 +238,18 @@ impl Directory for FileSystemDir {
     }
 
     fn insert_child(&mut self, name: String, node: Node) {
-        assert!(!self.is_readonly(), "insert into read-only directory: {name}");
+        assert!(
+            !self.is_readonly(),
+            "insert into read-only directory: {name}"
+        );
         self.nodes.get_mut().insert(name, node);
     }
 
     fn remove_child(&mut self, name: &str) {
-        assert!(!self.is_readonly(), "remove from read-only directory: {name}");
+        assert!(
+            !self.is_readonly(),
+            "remove from read-only directory: {name}"
+        );
         self.nodes.get_mut().remove(name);
     }
 }

@@ -99,7 +99,7 @@ pub trait FileHandle {
     fn seek(&mut self, offset: i64) -> u64;
 
     /// Return the current cursor position in bytes from the start of the file.
-    fn tell(&self) -> u64;
+    fn tell(&mut self) -> u64;
 }
 
 /// A single entry inside a directory listing, returned by [`Directory::readdir`].

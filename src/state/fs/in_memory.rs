@@ -82,7 +82,7 @@ impl FileHandle for InMemoryFileHandle<'_> {
         new_cursor as u64
     }
 
-    fn tell(&self) -> u64 {
+    fn tell(&mut self) -> u64 {
         self.cursor
     }
 }
