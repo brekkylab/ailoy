@@ -34,6 +34,15 @@ pub struct FileSystemFileHandle {
     buf: Vec<u8>,
     /// Mirrors the real fd position so that `tell` can be `&self`.
     pos: u64,
+    readonly: bool,
+}
+
+impl FileSystemFile {
+    fn is_readonly(&self) -> bool {
+        std::fs::metadata(&self.path)
+            .map(|m| m.permissions().readonly())
+            .unwrap_or(false)
+    }
 }
 
 impl File for FileSystemFile {
@@ -43,26 +52,29 @@ impl File for FileSystemFile {
         Self: 'a;
 
     fn open<'a>(&'a mut self) -> FileSystemFileHandle {
+        let readonly = self.is_readonly();
         let file = std::fs::OpenOptions::new()
             .read(true)
-            .write(true)
-            .create(true)
+            .write(!readonly)
+            .create(!readonly)
             .open(&self.path)
             .unwrap_or_else(|e| panic!("FileSystemFile: cannot open {:?}: {e}", self.path));
         FileSystemFileHandle {
             file,
             buf: Vec::new(),
             pos: 0,
+            readonly,
         }
     }
 
     fn stat(&self) -> Stat {
-        let size = std::fs::metadata(&self.path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let meta = std::fs::metadata(&self.path);
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let readonly = meta.map(|m| m.permissions().readonly()).unwrap_or(false);
         Stat {
             size,
             kind: NodeKind::File,
+            readonly,
         }
     }
 }
@@ -77,6 +89,7 @@ impl FileHandle for FileSystemFileHandle {
     }
 
     fn write(&mut self, data: &[u8]) {
+        assert!(!self.readonly, "write to read-only file");
         self.file
             .write_all(data)
             .expect("FileSystemFileHandle: write failed");
@@ -142,6 +155,12 @@ impl FileSystemDir {
         }
     }
 
+    fn is_readonly(&self) -> bool {
+        std::fs::metadata(&self.path)
+            .map(|m| m.permissions().readonly())
+            .unwrap_or(false)
+    }
+
     /// Build a [`Node`] for the child named `name` if it exists on disk.
     fn make_node(&self, name: &str) -> Option<Node> {
         let child_path = self.path.join(name);
@@ -181,9 +200,11 @@ impl Directory for FileSystemDir {
         let child_count = std::fs::read_dir(&self.path)
             .map(|rd| rd.flatten().count())
             .unwrap_or(0);
+        let readonly = self.is_readonly();
         Stat {
             size: child_count as u64,
             kind: NodeKind::Directory,
+            readonly,
         }
     }
 
@@ -227,10 +248,12 @@ impl Directory for FileSystemDir {
     }
 
     fn insert_child(&mut self, name: String, node: Node) {
+        assert!(!self.is_readonly(), "insert into read-only directory: {name}");
         self.nodes.get_mut().insert(name, node);
     }
 
     fn remove_child(&mut self, name: &str) {
+        assert!(!self.is_readonly(), "remove from read-only directory: {name}");
         self.nodes.get_mut().remove(name);
     }
 }

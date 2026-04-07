@@ -14,6 +14,8 @@ pub struct Stat {
     pub size: u64,
 
     pub kind: NodeKind,
+
+    pub readonly: bool,
 }
 
 /// POSIX-like interface for a single file.

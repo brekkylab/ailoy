@@ -4,23 +4,35 @@ use crate::state::fs::{DirEntry, Directory, File, FileHandle, Node, NodeKind, St
 
 pub struct InMemoryFile {
     content: Vec<u8>,
+    readonly: bool,
 }
 
 impl InMemoryFile {
     pub fn new() -> Self {
         Self {
             content: Vec::new(),
+            readonly: false,
         }
     }
 
     pub fn with_content(content: Vec<u8>) -> Self {
-        Self { content }
+        Self {
+            content,
+            readonly: false,
+        }
+    }
+
+    /// Mark the file as read-only (builder-style).
+    pub fn readonly(mut self) -> Self {
+        self.readonly = true;
+        self
     }
 }
 
 pub struct InMemoryFileHandle<'a> {
     source: &'a mut Vec<u8>,
     cursor: u64,
+    readonly: bool,
 }
 
 impl File for InMemoryFile {
@@ -30,6 +42,7 @@ impl File for InMemoryFile {
         InMemoryFileHandle {
             source: &mut self.content,
             cursor: 0,
+            readonly: self.readonly,
         }
     }
 
@@ -37,6 +50,7 @@ impl File for InMemoryFile {
         Stat {
             size: self.content.len() as u64,
             kind: NodeKind::File,
+            readonly: self.readonly,
         }
     }
 }
@@ -51,6 +65,7 @@ impl FileHandle for InMemoryFileHandle<'_> {
     }
 
     fn write(&mut self, data: &[u8]) {
+        assert!(!self.readonly, "write to read-only file");
         let start = self.cursor as usize;
         let end = start + data.len();
         if end > self.source.len() {
@@ -74,13 +89,21 @@ impl FileHandle for InMemoryFileHandle<'_> {
 
 pub struct InMemoryDir {
     pub children: HashMap<String, Node>,
+    readonly: bool,
 }
 
 impl InMemoryDir {
     pub fn new() -> Self {
         Self {
             children: HashMap::new(),
+            readonly: false,
         }
+    }
+
+    /// Mark the directory as read-only (builder-style).
+    pub fn readonly(mut self) -> Self {
+        self.readonly = true;
+        self
     }
 }
 
@@ -99,6 +122,7 @@ impl Directory for InMemoryDir {
         Stat {
             size: self.children.len() as u64,
             kind: NodeKind::Directory,
+            readonly: self.readonly,
         }
     }
 
@@ -111,10 +135,12 @@ impl Directory for InMemoryDir {
     }
 
     fn insert_child(&mut self, name: String, node: crate::state::fs::Node) {
+        assert!(!self.readonly, "insert into read-only directory: {name}");
         self.children.insert(name, node);
     }
 
     fn remove_child(&mut self, name: &str) {
+        assert!(!self.readonly, "remove from read-only directory: {name}");
         self.children.remove(name);
     }
 }
