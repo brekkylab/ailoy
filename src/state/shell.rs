@@ -1,4 +1,4 @@
-use crate::state::command::{ExecOutput, run_ls, run_mkdir, run_rmdir};
+use crate::state::command::{ExecOutput, run_cat, run_cp, run_ls, run_mkdir, run_mv, run_pwd, run_rm, run_rmdir};
 
 use super::fs::{Directory, InMemoryDir, Node};
 
@@ -23,9 +23,14 @@ impl Shell {
     pub fn exec(&mut self, cmd: &str) -> ExecOutput {
         let parts: Vec<&str> = cmd.split_whitespace().collect();
         match parts.as_slice() {
-            ["mkdir", args @ ..] => run_mkdir(self, args),
-            ["rmdir", args @ ..] => run_rmdir(self, args),
+            ["cat", args @ ..] => run_cat(self, args),
+            ["cp", args @ ..] => run_cp(self, args),
             ["ls", args @ ..] => run_ls(self, args),
+            ["mkdir", args @ ..] => run_mkdir(self, args),
+            ["mv", args @ ..] => run_mv(self, args),
+            ["pwd", args @ ..] => run_pwd(self, args),
+            ["rm", args @ ..] => run_rm(self, args),
+            ["rmdir", args @ ..] => run_rmdir(self, args),
             [cmd, _args @ ..] => ExecOutput::err(127, format!("unknown command: {}", cmd)),
             [] => ExecOutput::ok(""),
         }

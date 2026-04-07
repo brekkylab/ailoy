@@ -139,8 +139,8 @@ impl Directory for InMemoryDir {
         self.children.insert(name, node);
     }
 
-    fn remove_child(&mut self, name: &str) {
+    fn remove_child(&mut self, name: &str) -> Option<Node> {
         assert!(!self.readonly, "remove from read-only directory: {name}");
-        self.children.remove(name);
+        self.children.remove(name)
     }
 }

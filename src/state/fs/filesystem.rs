@@ -245,11 +245,11 @@ impl Directory for FileSystemDir {
         self.nodes.get_mut().insert(name, node);
     }
 
-    fn remove_child(&mut self, name: &str) {
+    fn remove_child(&mut self, name: &str) -> Option<Node> {
         assert!(
             !self.is_readonly(),
             "remove from read-only directory: {name}"
         );
-        self.nodes.get_mut().remove(name);
+        self.nodes.get_mut().remove(name)
     }
 }

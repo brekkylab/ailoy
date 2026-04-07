@@ -1,9 +1,19 @@
+mod cat;
+mod cp;
 mod ls;
 mod mkdir;
+mod mv;
+mod pwd;
+mod rm;
 mod rmdir;
 
+pub use cat::run_cat;
+pub use cp::run_cp;
 pub use ls::run_ls;
 pub use mkdir::run_mkdir;
+pub use mv::run_mv;
+pub use pwd::run_pwd;
+pub use rm::run_rm;
 pub use rmdir::run_rmdir;
 
 pub struct ExecOutput {

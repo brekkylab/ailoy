@@ -126,9 +126,9 @@ pub trait Directory {
     /// child with the same name.
     fn insert_child(&mut self, name: String, node: Node);
 
-    /// Remove the direct child named `name`.  No-op if the child does not
-    /// exist.
-    fn remove_child(&mut self, name: &str);
+    /// Remove the direct child named `name` and return it.  Returns `None` if
+    /// the child does not exist.
+    fn remove_child(&mut self, name: &str) -> Option<Node>;
 }
 
 /// A single node in the virtual filesystem tree — either a file or a
