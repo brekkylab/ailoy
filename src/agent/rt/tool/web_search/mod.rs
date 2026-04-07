@@ -8,7 +8,7 @@ use aggregator::MetaSearcher;
 use futures::future::BoxFuture;
 
 use crate::{
-    agent::rt::tool::{ToolFunc, ToolRuntime},
+    agent::rt::tool::{ToolFunc, ToolKind, ToolRuntime},
     datatype::Value,
     message::ToolDescBuilder,
 };
@@ -81,7 +81,7 @@ pub fn build_web_search_tool() -> ToolRuntime {
         }) as BoxFuture<'static, Value>
     });
 
-    ToolRuntime::new(desc, f)
+    ToolRuntime::new_with_kind(desc, f, ToolKind::Builtin)
 }
 
 #[cfg(test)]

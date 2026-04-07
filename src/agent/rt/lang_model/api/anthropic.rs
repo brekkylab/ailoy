@@ -379,7 +379,10 @@ mod tests {
     fn test_marshal_max_tokens_set() {
         with_req(
             "claude-haiku-4-5",
-            LangModelInferConfig { max_tokens: Some(512), ..Default::default() },
+            LangModelInferConfig {
+                max_tokens: Some(512),
+                ..Default::default()
+            },
             |req| {
                 let val = AnthropicMarshal::default().marshal(req);
                 let body = val.as_object().unwrap().get("body").unwrap();

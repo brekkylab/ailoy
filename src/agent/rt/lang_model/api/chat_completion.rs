@@ -330,7 +330,10 @@ mod tests {
     fn test_marshal_max_tokens_set() {
         with_req(
             "gpt-4.1-mini",
-            LangModelInferConfig { max_tokens: Some(256), ..Default::default() },
+            LangModelInferConfig {
+                max_tokens: Some(256),
+                ..Default::default()
+            },
             |req| {
                 let val = ChatCompletionMarshal::default().marshal(req);
                 let body = val.as_object().unwrap().get("body").unwrap();
