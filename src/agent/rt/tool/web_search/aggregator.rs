@@ -4,7 +4,7 @@ use futures::future::join_all;
 use reqwest::Client;
 
 use crate::agent::rt::tool::web_search::{
-    engine::{SearchEngine, SearchError, SearchResult},
+    engine::{SearchEngine, SearchError},
     engines::{Bing, Brave, DuckDuckGo, Google, LibreX, Mojeek, Startpage, Yahoo, Yandex},
 };
 
