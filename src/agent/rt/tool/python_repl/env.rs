@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::{Context as _, Result, bail};
 use tokio::{process::Command, sync::Mutex};
@@ -83,18 +80,10 @@ impl PythonEnv {
         }
     }
 
-    /// Expose the venv directory path (useful in tests).
-    pub fn venv_path(&self) -> &Path {
-        &self.venv_path
-    }
-
     // ── private helpers ──────────────────────────────────────────────────────
 
     async fn ensure_python(&self) -> Result<()> {
-        let version_arg = self
-            .python_version
-            .as_deref()
-            .unwrap_or("3");
+        let version_arg = self.python_version.as_deref().unwrap_or("3");
         let status = Command::new(&self.uv)
             .args(["python", "install", version_arg])
             .status()
@@ -142,7 +131,12 @@ impl PythonEnv {
         }
 
         let output = Command::new(&self.uv)
-            .args(["pip", "install", "--python", self.python_path().to_str().unwrap()])
+            .args([
+                "pip",
+                "install",
+                "--python",
+                self.python_path().to_str().unwrap(),
+            ])
             .args(new.iter().copied())
             .output()
             .await
@@ -169,8 +163,7 @@ impl PythonEnv {
         // Write code to a temp file.
         let script = tempfile::NamedTempFile::with_suffix(".py")
             .context("failed to create temp script file")?;
-        std::fs::write(script.path(), code)
-            .context("failed to write script to temp file")?;
+        std::fs::write(script.path(), code).context("failed to write script to temp file")?;
 
         let child = Command::new(self.python_path())
             .arg(script.path())
@@ -208,7 +201,16 @@ impl Drop for PythonEnv {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
+
+    impl PythonEnv {
+        /// Expose the venv directory path (useful in tests).
+        pub fn venv_path(&self) -> &Path {
+            &self.venv_path
+        }
+    }
 
     /// Skip the test if `uv` is not available on PATH.
     fn uv_or_skip() -> PathBuf {
@@ -252,7 +254,9 @@ mod tests {
         let uv = uv_or_skip();
         let dir = tempfile::tempdir().unwrap();
         let venv_path = dir.path().join("venv");
-        let env = PythonEnv::new(uv, None, venv_path.clone(), false).await.unwrap();
+        let env = PythonEnv::new(uv, None, venv_path.clone(), false)
+            .await
+            .unwrap();
         drop(env);
         assert!(venv_path.exists(), "persistent venv should survive drop");
     }
@@ -264,7 +268,10 @@ mod tests {
     async fn test_install_package_success() {
         let uv = uv_or_skip();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
-        let result = env.install_packages(&["requests".to_string()]).await.unwrap();
+        let result = env
+            .install_packages(&["requests".to_string()])
+            .await
+            .unwrap();
         assert!(matches!(result, InstallResult::Success));
     }
 
@@ -273,9 +280,14 @@ mod tests {
     async fn test_install_same_package_twice_uses_cache() {
         let uv = uv_or_skip();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
-        env.install_packages(&["requests".to_string()]).await.unwrap();
+        env.install_packages(&["requests".to_string()])
+            .await
+            .unwrap();
         // Second call with identical specifier must not spawn subprocess.
-        let result = env.install_packages(&["requests".to_string()]).await.unwrap();
+        let result = env
+            .install_packages(&["requests".to_string()])
+            .await
+            .unwrap();
         assert!(matches!(result, InstallResult::AlreadyInstalled));
     }
 
@@ -284,9 +296,14 @@ mod tests {
     async fn test_install_version_specifier_change_reinstalls() {
         let uv = uv_or_skip();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
-        env.install_packages(&["requests==2.31.0".to_string()]).await.unwrap();
+        env.install_packages(&["requests==2.31.0".to_string()])
+            .await
+            .unwrap();
         // Different specifier string → subprocess must be called.
-        let result = env.install_packages(&["requests==2.32.0".to_string()]).await.unwrap();
+        let result = env
+            .install_packages(&["requests==2.32.0".to_string()])
+            .await
+            .unwrap();
         assert!(matches!(result, InstallResult::Success));
     }
 
@@ -324,7 +341,11 @@ mod tests {
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         let result = env.run_code("print('hello world')", 30).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("hello world"), "stdout: {:?}", result.stdout);
+        assert!(
+            result.stdout.contains("hello world"),
+            "stdout: {:?}",
+            result.stdout
+        );
     }
 
     #[tokio::test]
@@ -336,7 +357,11 @@ mod tests {
             .run_code("import sys; sys.stderr.write('err output\\n')", 30)
             .await
             .unwrap();
-        assert!(result.stderr.contains("err output"), "stderr: {:?}", result.stderr);
+        assert!(
+            result.stderr.contains("err output"),
+            "stderr: {:?}",
+            result.stderr
+        );
     }
 
     #[tokio::test]
@@ -346,7 +371,11 @@ mod tests {
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         let result = env.run_code("raise ValueError('oops')", 30).await.unwrap();
         assert_ne!(result.exit_code, 0, "expected non-zero exit for exception");
-        assert!(result.stderr.contains("ValueError"), "stderr: {:?}", result.stderr);
+        assert!(
+            result.stderr.contains("ValueError"),
+            "stderr: {:?}",
+            result.stderr
+        );
     }
 
     #[tokio::test]
