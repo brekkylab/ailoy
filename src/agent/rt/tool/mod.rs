@@ -113,10 +113,6 @@ impl ToolSet {
     ///
     /// The tool exposes a single `task` string parameter; when called it forwards the task to
     /// the agent and returns its first text response.
-    /// Wrap an existing in-process [`AgentRuntime`] as a tool named `name`.
-    ///
-    /// The tool exposes a single `task` string parameter; when called it forwards the task to
-    /// the agent and returns its first text response.
     pub fn with_subagent_in_memory(
         mut self,
         name: impl Into<String>,
