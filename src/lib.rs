@@ -4,6 +4,7 @@ extern crate self as ailoy;
 pub mod agent;
 pub mod datatype;
 pub mod message;
+pub mod shell;
 
 pub use agent::{
     AgentProvider, AgentRuntime, AgentSpec, LangModelAPISchema, LangModelInferConfig,
@@ -13,3 +14,4 @@ pub use datatype::Value;
 pub use message::{
     Message, MessageDeltaOutput, MessageOutput, Part, Role, ToolDesc, ToolDescBuilder,
 };
+pub use shell::Shell;
