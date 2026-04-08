@@ -215,8 +215,8 @@ mod tests {
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
         // Temp dir for the chart output — kept alive for the duration of the test.
-        // let chart_dir = tempfile::tempdir().expect("failed to create temp dir");
-        let chart_path = Path::new("./").join("sine_chart.png");
+        let chart_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let chart_path = chart_dir.path().join("sine_chart.png");
 
         let prompt = format!(
             "Install numpy and matplotlib, then write Python code that:\n\
