@@ -144,12 +144,14 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
                 Ok(result) => crate::to_value!({
                     "stdout": result.stdout.as_str(),
                     "stderr": result.stderr.as_str(),
-                    "exit_code": result.exit_code as i64
+                    "exit_code": result.exit_code as i64,
+                    "timed_out": result.timed_out
                 }),
                 Err(e) => crate::to_value!({
                     "stdout": "",
                     "stderr": format!("execution error: {e}").as_str(),
                     "exit_code": -1,
+                    "timed_out": false,
                     "phase": "execution"
                 }),
             }

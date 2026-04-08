@@ -128,7 +128,7 @@ impl AgentRuntime {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc};
+    use std::sync::Arc;
 
     use futures::StreamExt as _;
 

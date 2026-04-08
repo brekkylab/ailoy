@@ -15,12 +15,37 @@ pub enum InstallResult {
     Failed { stderr: String },
 }
 
+/// Maximum number of UTF-8 characters retained from stdout / stderr.
+/// Output beyond this limit is replaced with a truncation notice so that
+/// huge prints (e.g. a raw numpy array) don't flood the LLM context window.
+pub const MAX_OUTPUT_CHARS: usize = 8_000;
+
+/// Truncate `s` to at most [`MAX_OUTPUT_CHARS`] characters, preserving valid
+/// UTF-8 boundaries, and append a notice when truncation occurs.
+pub fn truncate_output(s: String) -> String {
+    if s.len() <= MAX_OUTPUT_CHARS {
+        return s;
+    }
+    // Walk backward from MAX_OUTPUT_CHARS to find a valid char boundary.
+    let mut end = MAX_OUTPUT_CHARS;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\n[output truncated at {} chars]",
+        &s[..end],
+        MAX_OUTPUT_CHARS
+    )
+}
+
 /// Result of executing a Python script.
 #[derive(Debug)]
 pub struct ExecResult {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+    /// `true` when the script was killed because it exceeded the timeout.
+    pub timed_out: bool,
 }
 
 /// A managed Python virtual environment backed by `uv`.
@@ -158,31 +183,83 @@ impl PythonEnv {
     /// the exit code.
     ///
     /// The code is written to a temporary file and passed to the venv's Python
-    /// interpreter.  The temp file is deleted after the child exits.
+    /// interpreter.  stdout and stderr are read concurrently on separate tasks
+    /// to avoid pipe-buffer deadlocks.  Output is truncated at
+    /// [`MAX_OUTPUT_CHARS`] chars to protect the LLM context window.
+    ///
+    /// On timeout the child process is killed and [`ExecResult::timed_out`] is
+    /// set to `true`; the function still returns `Ok`.
     pub async fn run_code(&self, code: &str, timeout_secs: u64) -> Result<ExecResult> {
         // Write code to a temp file.
         let script = tempfile::NamedTempFile::with_suffix(".py")
             .context("failed to create temp script file")?;
         std::fs::write(script.path(), code).context("failed to write script to temp file")?;
 
-        let child = Command::new(self.python_path())
+        let mut child = Command::new(self.python_path())
             .arg(script.path())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .context("failed to spawn Python interpreter")?;
 
-        let deadline = tokio::time::Duration::from_secs(timeout_secs);
-        let output = tokio::time::timeout(deadline, child.wait_with_output())
-            .await
-            .context("Python script timed out")?
-            .context("failed to wait for Python process")?;
+        // Drain stdout and stderr on separate tasks to prevent pipe-buffer
+        // deadlock when a process produces large output on both streams.
+        let stdout_pipe = child.stdout.take().expect("stdout was piped");
+        let stderr_pipe = child.stderr.take().expect("stderr was piped");
 
-        Ok(ExecResult {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            exit_code: output.status.code().unwrap_or(-1),
-        })
+        let out_task = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt as _;
+            let mut buf = Vec::new();
+            tokio::io::BufReader::new(stdout_pipe)
+                .read_to_end(&mut buf)
+                .await?;
+            Ok::<_, std::io::Error>(buf)
+        });
+        let err_task = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt as _;
+            let mut buf = Vec::new();
+            tokio::io::BufReader::new(stderr_pipe)
+                .read_to_end(&mut buf)
+                .await?;
+            Ok::<_, std::io::Error>(buf)
+        });
+
+        let deadline = tokio::time::Duration::from_secs(timeout_secs);
+        match tokio::time::timeout(deadline, child.wait()).await {
+            Ok(Ok(status)) => {
+                let stdout_bytes =
+                    out_task.await.unwrap_or(Ok(vec![])).unwrap_or_default();
+                let stderr_bytes =
+                    err_task.await.unwrap_or(Ok(vec![])).unwrap_or_default();
+                Ok(ExecResult {
+                    stdout: truncate_output(
+                        String::from_utf8_lossy(&stdout_bytes).into_owned(),
+                    ),
+                    stderr: truncate_output(
+                        String::from_utf8_lossy(&stderr_bytes).into_owned(),
+                    ),
+                    exit_code: status.code().unwrap_or(-1),
+                    timed_out: false,
+                })
+            }
+            Ok(Err(e)) => {
+                out_task.abort();
+                err_task.abort();
+                Err(anyhow::anyhow!("failed to wait for Python process: {}", e))
+            }
+            Err(_) => {
+                // Timeout — kill the child and abort I/O tasks.
+                let _ = child.kill().await;
+                out_task.abort();
+                err_task.abort();
+                Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: format!("script timed out after {}s", timeout_secs),
+                    exit_code: -1,
+                    timed_out: true,
+                })
+            }
+        }
     }
 }
 
@@ -393,13 +470,106 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires uv"]
-    async fn test_run_code_timeout() {
+    async fn test_run_code_timeout_returns_timed_out_flag() {
         let uv = uv_or_skip();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         // 1-second timeout against an infinite loop.
-        let result = env.run_code("while True: pass", 1).await;
-        assert!(result.is_err(), "expected timeout error");
-        let msg = format!("{:#}", result.unwrap_err());
-        assert!(msg.contains("timed out"), "error: {}", msg);
+        let result = env.run_code("while True: pass", 1).await.unwrap();
+        assert!(result.timed_out, "expected timed_out to be true");
+        assert_eq!(result.exit_code, -1);
+        assert!(
+            result.stderr.contains("timed out"),
+            "stderr should mention timeout: {:?}",
+            result.stderr
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires uv"]
+    async fn test_run_code_success_has_timed_out_false() {
+        let uv = uv_or_skip();
+        let env = PythonEnv::new_temp(uv, None).await.unwrap();
+        let result = env.run_code("print('ok')", 30).await.unwrap();
+        assert!(!result.timed_out, "successful run must not be timed_out");
+    }
+
+    // ── output truncation ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_truncate_output_short_string_unchanged() {
+        let s = "hello world".to_string();
+        let out = truncate_output(s.clone());
+        assert_eq!(out, s);
+    }
+
+    #[test]
+    fn test_truncate_output_exact_limit_unchanged() {
+        let s = "a".repeat(MAX_OUTPUT_CHARS);
+        let out = truncate_output(s.clone());
+        assert_eq!(out, s, "string at exact limit should not be truncated");
+    }
+
+    #[test]
+    fn test_truncate_output_over_limit_is_shortened() {
+        let s = "b".repeat(MAX_OUTPUT_CHARS + 100);
+        let out = truncate_output(s);
+        assert!(
+            out.len() < MAX_OUTPUT_CHARS + 100,
+            "output should be shorter than input"
+        );
+        assert!(
+            out.contains("[output truncated"),
+            "should contain truncation marker"
+        );
+    }
+
+    #[test]
+    fn test_truncate_output_respects_utf8_boundary() {
+        // Each 'あ' is 3 bytes; MAX_OUTPUT_CHARS bytes puts the cut-point
+        // inside a multi-byte char sequence — must not panic and must produce
+        // valid UTF-8.
+        let s = "あ".repeat(MAX_OUTPUT_CHARS); // well over the char limit
+        let out = truncate_output(s);
+        // Result must be valid UTF-8 (from_utf8 / std::str invariant).
+        assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+        // Must be shorter than the original.
+        assert!(out.len() < MAX_OUTPUT_CHARS * 3);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires uv"]
+    async fn test_run_code_large_output_is_truncated() {
+        let uv = uv_or_skip();
+        let env = PythonEnv::new_temp(uv, None).await.unwrap();
+        // Print well over MAX_OUTPUT_CHARS bytes.
+        let code = format!("print('x' * {})", MAX_OUTPUT_CHARS * 2);
+        let result = env.run_code(&code, 30).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.len() <= MAX_OUTPUT_CHARS + 100,
+            "stdout should be truncated, got {} chars",
+            result.stdout.len()
+        );
+        assert!(
+            result.stdout.contains("[output truncated"),
+            "should contain truncation marker"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires uv"]
+    async fn test_run_code_large_stderr_is_truncated() {
+        let uv = uv_or_skip();
+        let env = PythonEnv::new_temp(uv, None).await.unwrap();
+        let code = format!(
+            "import sys; sys.stderr.write('e' * {})",
+            MAX_OUTPUT_CHARS * 2
+        );
+        let result = env.run_code(&code, 30).await.unwrap();
+        assert!(
+            result.stderr.len() <= MAX_OUTPUT_CHARS + 100,
+            "stderr should be truncated, got {} chars",
+            result.stderr.len()
+        );
     }
 }
