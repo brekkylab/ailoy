@@ -56,7 +56,7 @@ pub trait File {
 /// blanket implementation of `FileDyn` for free.
 ///
 /// This trait is what [`Node::File`] stores.
-pub trait FileDyn {
+pub trait FileDyn: Send {
     /// Open the file and return a type-erased handle.
     ///
     /// The `'_` lifetime on the return type is tied to `&mut self`, so the
@@ -66,7 +66,7 @@ pub trait FileDyn {
     fn stat_dyn(&self) -> Stat;
 }
 
-impl<T: File> FileDyn for T {
+impl<T: File + Send> FileDyn for T {
     fn open_dyn(&mut self) -> Box<dyn FileHandle + '_> {
         Box::new(self.open())
     }
@@ -110,7 +110,7 @@ pub struct DirEntry {
 }
 
 /// POSIX-like interface for a directory node.
-pub trait Directory {
+pub trait Directory: Send {
     /// Return metadata for every direct child, analogous to `readdir(3)`.
     fn readdir(&self) -> Vec<DirEntry>;
 
@@ -139,8 +139,8 @@ pub trait Directory {
 /// same open/stat interface with the handle type erased to
 /// `Box<dyn FileHandle + '_>`.
 pub enum Node {
-    File(Box<dyn FileDyn>),
-    Directory(Box<dyn Directory>),
+    File(Box<dyn FileDyn + Send>),
+    Directory(Box<dyn Directory + Send>),
 }
 
 impl Node {
