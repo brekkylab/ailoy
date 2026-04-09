@@ -8,10 +8,12 @@ pub mod shell;
 
 pub use agent::{
     AgentProvider, AgentRuntime, AgentSpec, BuiltinToolProvider, LangModelAPISchema,
-    LangModelInferConfig, LangModelProvider, MCPToolProvider, ToolProvider, ToolRuntime, ToolSet,
+    LangModelInferConfig, LangModelProvider, MCPToolProvider, ToolAsyncFunc, ToolProvider,
+    ToolRuntime, ToolSet, ToolStreamingFunc, ToolSyncFunc, TurnEvent,
 };
 pub use datatype::Value;
 pub use message::{
-    Message, MessageDeltaOutput, MessageOutput, Part, Role, ToolDesc, ToolDescBuilder,
+    Message, MessageDeltaOutput, MessageOutput, Part, Role, StreamingToolOutput, ToolDesc,
+    ToolDescBuilder, ToolResultDelta,
 };
 pub use shell::Shell;
