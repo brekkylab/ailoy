@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use env::{InstallResult, PythonEnv};
 use futures::future::BoxFuture;
-use uv::resolve_uv_path;
+use uv::ensure_uv;
 
 use crate::{
     agent::rt::tool::{ToolFunc, ToolRuntime},
@@ -33,7 +33,7 @@ pub struct PythonReplConfig {
 /// - the virtual environment cannot be created
 /// - any package listed in `config.packages` fails to install
 pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<ToolRuntime> {
-    let uv = resolve_uv_path()?;
+    let uv = ensure_uv().await?;
 
     let env = match config.venv_path {
         Some(ref path) => {

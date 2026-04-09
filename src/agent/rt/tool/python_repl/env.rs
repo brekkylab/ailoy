@@ -289,12 +289,12 @@ mod tests {
         }
     }
 
-    /// Skip the test if `uv` is not available on PATH.
+    /// Skip the test if `uv` is not available (PATH or managed install).
     fn uv_or_skip() -> PathBuf {
-        match which::which("uv") {
-            Ok(p) => p,
-            Err(_) => {
-                eprintln!("SKIP: `uv` not found on PATH");
+        match crate::agent::rt::tool::python_repl::uv::resolve_uv_path() {
+            Ok(p) if p.exists() => p,
+            _ => {
+                eprintln!("SKIP: `uv` not found");
                 // Returning an obviously wrong path causes the test to be
                 // skipped via the ignore mechanism — we use `#[ignore]` below.
                 PathBuf::from("/uv-not-found")
