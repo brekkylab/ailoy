@@ -1,7 +1,9 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom, Write as IoWrite};
-use std::path::PathBuf;
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    io::{Read, Seek, SeekFrom, Write as IoWrite},
+    path::PathBuf,
+};
 
 use crate::shell::fs::{DirEntry, Directory, File, FileHandle, Node, NodeKind, Stat};
 
@@ -10,11 +12,13 @@ use crate::shell::fs::{DirEntry, Directory, File, FileHandle, Node, NodeKind, St
 // ---------------------------------------------------------------------------
 
 /// A [`File`] node backed by a real file on disk.
+#[allow(unused)]
 pub struct FileSystemFile {
     path: PathBuf,
 }
 
 impl FileSystemFile {
+    #[allow(unused)]
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
@@ -130,6 +134,7 @@ impl FileHandle for FileSystemFileHandle {
 ///     Node::Directory(Box::new(FileSystemDir::new(PathBuf::from("/tmp/data")))),
 /// );
 /// ```
+#[allow(unused)]
 pub struct FileSystemDir {
     path: PathBuf,
     /// Nodes created on demand so that `get_child` can return `&Node`.
@@ -139,6 +144,7 @@ pub struct FileSystemDir {
 }
 
 impl FileSystemDir {
+    #[allow(unused)]
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
@@ -146,6 +152,7 @@ impl FileSystemDir {
         }
     }
 
+    #[allow(unused)]
     fn is_readonly(&self) -> bool {
         std::fs::metadata(&self.path)
             .map(|m| m.permissions().readonly())
@@ -153,6 +160,7 @@ impl FileSystemDir {
     }
 
     /// Build a [`Node`] for the child named `name` if it exists on disk.
+    #[allow(unused)]
     fn make_node(&self, name: &str) -> Option<Node> {
         let child_path = self.path.join(name);
         if child_path.is_dir() {
