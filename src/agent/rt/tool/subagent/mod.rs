@@ -44,6 +44,14 @@ pub(crate) fn build_in_memory_subagent_tool(
 
             let msg = Message::new(Role::User).with_contents(vec![Part::text(task)]);
             let mut guard = agent.lock().await;
+            // Reset history to system message only before each invocation so that subagent
+            // calls remain stateless and history does not accumulate across tool calls.
+            let initial_history: Vec<Message> = guard
+                .get_history()
+                .into_iter()
+                .filter(|m| m.role == Role::System)
+                .collect();
+            guard.set_history(initial_history);
             match guard.run(msg).await {
                 Ok(result) => {
                     let text = result
