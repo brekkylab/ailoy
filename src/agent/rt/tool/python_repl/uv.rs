@@ -18,7 +18,9 @@ const UV_RELEASE_BASE: &str = "https://github.com/astral-sh/uv/releases/latest/d
 /// - Windows: `%LOCALAPPDATA%\ailoy\bin\uv.exe`
 ///
 /// Steps 1 and 2 only check that the path exists; they do not verify the
-/// binary is executable or the correct version.
+/// binary is executable or the correct version.  Step 3 returns the
+/// *expected* path regardless of whether the file is there yet — use
+/// [`ensure_uv`] to automatically download when absent.
 pub fn resolve_uv_path() -> Result<PathBuf> {
     // 1. Explicit override (useful in tests and CI).
     if let Ok(path) = std::env::var("UV") {
