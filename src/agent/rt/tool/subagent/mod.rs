@@ -7,6 +7,7 @@ use tokio::sync::Mutex as TokioMutex;
 
 use super::{ToolAsyncFunc, ToolKind, ToolRuntime, ToolStreamingFunc};
 use crate::{
+    Message,
     agent::{AgentRuntime, TurnEvent},
     message::{Part, Role, StreamingToolOutput, ToolDescBuilder, ToolResultDelta},
 };
@@ -56,6 +57,12 @@ pub(crate) fn build_in_memory_subagent_tool(
             let strm: futures::stream::BoxStream<'static, StreamingToolOutput> =
                 Box::pin(async_stream::stream! {
                     let mut guard = agent.lock().await;
+                    let initial_history: Vec<Message> = guard
+                        .get_history()
+                        .into_iter()
+                        .filter(|m| m.role == Role::System)
+                        .collect();
+                    guard.set_history(initial_history);
                     let mut inner_strm = guard.stream_turn(msg);
                     let mut final_text: Option<String> = None;
 
