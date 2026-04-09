@@ -143,8 +143,7 @@ fn extract_uv_binary(data: &[u8], dest: &Path) -> Result<()> {
         use std::io::Read as _;
 
         let cursor = std::io::Cursor::new(data);
-        let mut archive =
-            zip::ZipArchive::new(cursor).context("failed to open zip archive")?;
+        let mut archive = zip::ZipArchive::new(cursor).context("failed to open zip archive")?;
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i).context("failed to read zip entry")?;
@@ -156,10 +155,9 @@ fn extract_uv_binary(data: &[u8], dest: &Path) -> Result<()> {
             // Match any entry whose file-name component is exactly `uv.exe`.
             // The archive layout is typically `uv-{target}/uv.exe`.
             if path.file_name().and_then(|n| n.to_str()) == Some(want) {
-                let mut out = std::fs::File::create(dest)
-                    .context("failed to create uv binary file")?;
-                std::io::copy(&mut file, &mut out)
-                    .context("failed to write uv binary from zip")?;
+                let mut out =
+                    std::fs::File::create(dest).context("failed to create uv binary file")?;
+                std::io::copy(&mut file, &mut out).context("failed to write uv binary from zip")?;
                 return Ok(());
             }
         }

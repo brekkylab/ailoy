@@ -227,17 +227,11 @@ impl PythonEnv {
         let deadline = tokio::time::Duration::from_secs(timeout_secs);
         match tokio::time::timeout(deadline, child.wait()).await {
             Ok(Ok(status)) => {
-                let stdout_bytes =
-                    out_task.await.unwrap_or(Ok(vec![])).unwrap_or_default();
-                let stderr_bytes =
-                    err_task.await.unwrap_or(Ok(vec![])).unwrap_or_default();
+                let stdout_bytes = out_task.await.unwrap_or(Ok(vec![])).unwrap_or_default();
+                let stderr_bytes = err_task.await.unwrap_or(Ok(vec![])).unwrap_or_default();
                 Ok(ExecResult {
-                    stdout: truncate_output(
-                        String::from_utf8_lossy(&stdout_bytes).into_owned(),
-                    ),
-                    stderr: truncate_output(
-                        String::from_utf8_lossy(&stderr_bytes).into_owned(),
-                    ),
+                    stdout: truncate_output(String::from_utf8_lossy(&stdout_bytes).into_owned()),
+                    stderr: truncate_output(String::from_utf8_lossy(&stderr_bytes).into_owned()),
                     exit_code: status.code().unwrap_or(-1),
                     timed_out: false,
                 })
