@@ -368,7 +368,10 @@ mod tests {
     fn test_marshal_max_output_tokens_set() {
         with_req(
             "gpt-5.4-mini",
-            LangModelInferConfig { max_tokens: Some(1024), ..Default::default() },
+            LangModelInferConfig {
+                max_tokens: Some(1024),
+                ..Default::default()
+            },
             |req| {
                 let val = OpenAIMarshal::default().marshal(req);
                 let body = val.as_object().unwrap().get("body").unwrap();

@@ -62,4 +62,6 @@ wreq = "5.3.0"
 wreq-util = "2.2.6"
 
 [dev-dependencies]
+axum = "0.8"
 dotenvy = "0.15"
+tokio = { version = "1.0", features = ["net"] }

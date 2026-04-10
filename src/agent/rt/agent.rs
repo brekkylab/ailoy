@@ -3,7 +3,9 @@ use std::pin::Pin;
 use futures::{Stream, StreamExt as _};
 
 use crate::{
-    agent::{AgentProvider, AgentSpec, LangModelRuntime, ToolProvider, ToolRuntime, ToolSet},
+    agent::{
+        AgentProvider, AgentSpec, LangModelRuntime, ToolKind, ToolProvider, ToolRuntime, ToolSet,
+    },
     message::{FinishReason, Message, MessageOutput, Part, Role},
     shell::Shell,
 };
@@ -54,15 +56,30 @@ impl AgentRuntime {
                 });
 
         // Collect tools from toolsets
-        let tools = spec
+        let tools: Vec<ToolRuntime> = spec
             .tools
             .iter()
             .filter_map(|name| tool_set.get(name).cloned())
             .collect();
 
-        // Initialize histroy
-        let history = spec
-            .instruction
+        let mut instruction = spec.instruction.clone();
+
+        // Append subagent suffix on instruction if exist
+        let subagent_tools = tools
+            .iter()
+            .filter(|t| t.kind == ToolKind::Subagent)
+            .map(|t| t.desc())
+            .collect::<Vec<_>>();
+        if !subagent_tools.is_empty() {
+            let suffix = build_subagent_system_suffix(&subagent_tools);
+            instruction = match instruction {
+                Some(existing) => Some(format!("{}\n\n{}", existing, suffix)),
+                None => Some(suffix),
+            };
+        }
+
+        // Initialize history
+        let history = instruction
             .map(|inst| vec![Message::new(Role::System).with_contents([Part::text(inst)])])
             .unwrap_or_default();
 
@@ -151,6 +168,34 @@ impl AgentRuntime {
     }
 }
 
+fn build_subagent_system_suffix(descs: &[&crate::message::ToolDesc]) -> String {
+    let mut lines = vec![
+        "## Subagent Delegation".to_string(),
+        String::new(),
+        "You can delegate tasks to specialized subagents by calling their tools directly."
+            .to_string(),
+        String::new(),
+        "### Available Subagents".to_string(),
+        String::new(),
+    ];
+
+    for desc in descs {
+        lines.push(format!("#### {}", desc.name));
+        if let Some(d) = &desc.description {
+            lines.push(d.clone());
+        }
+        lines.push(String::new());
+    }
+
+    lines.push(
+        "When a request clearly matches a subagent's capabilities, call their tool directly. \
+         If no subagent is a good fit, handle it yourself."
+            .to_string(),
+    );
+
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -228,6 +273,118 @@ mod tests {
         assert!(
             resp.message.contents.iter().any(|p| p.is_text()),
             "Expected final assistant message to contain text"
+        );
+    }
+
+    /// Verifies that the main agent actually delegates to the in-memory subagent.
+    ///
+    /// Sets up a math subagent and registers it as a subagent tool on a coordinator agent.
+    /// Asks a math question and confirms the main agent's history contains a [`Role::Tool`]
+    /// message (proof that the subagent tool was called), and that the final reply is text.
+    #[tokio::test]
+    async fn test_delegate_to_in_memory_subagent() {
+        dotenvy::dotenv().ok();
+
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
+        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
+
+        // Sub-agent: a minimal calculator that replies with just the numeric result.
+        let sub_agent = AgentRuntime::new(
+            AgentSpec::new("gpt-4o-mini").with_instruction(
+                "You are a calculator. Answer math questions with the numeric result only."
+                    .to_string(),
+            ),
+            AgentProvider {
+                lm: LangModelProvider::API {
+                    schema: LangModelAPISchema::ChatCompletion,
+                    url: url.clone(),
+                    api_key: Some(api_key.clone()),
+                },
+                tools: vec![],
+            },
+            ToolSet::new(),
+        );
+        let sub_agent = Arc::new(tokio::sync::Mutex::new(sub_agent));
+
+        // Main agent: coordinator that should always delegate math to math-agent.
+        let tool_set = ToolSet::new().with_subagent_in_memory(
+            "math-agent",
+            "Handles arithmetic and math computations. Use this for any math question.",
+            sub_agent,
+        );
+
+        let mut main_agent = AgentRuntime::new(
+            AgentSpec::new("gpt-4o-mini").with_tools(["math-agent"]),
+            AgentProvider {
+                lm: LangModelProvider::API {
+                    schema: LangModelAPISchema::ChatCompletion,
+                    url,
+                    api_key: Some(api_key),
+                },
+                tools: vec![],
+            },
+            tool_set,
+        );
+
+        let query =
+            Message::new(Role::User).with_contents([Part::text("What is 123 multiplied by 7?")]);
+
+        let outputs = {
+            let mut strm = main_agent.stream_turn(query);
+            let mut outputs = vec![];
+            while let Some(output) = strm.next().await {
+                outputs.push(output.unwrap());
+            }
+            outputs
+        };
+
+        // The history must contain a Tool message, confirming the subagent was called.
+        let history = main_agent.get_history();
+        assert!(
+            history.iter().any(|m| m.role == Role::Tool),
+            "Expected main agent history to contain a Tool message (subagent was called)"
+        );
+
+        // Final output must be an assistant text response.
+        let final_output = outputs.last().expect("Expected at least one output");
+        assert_eq!(final_output.message.role, Role::Assistant);
+        assert!(
+            final_output.message.contents.iter().any(|p| p.is_text()),
+            "Expected final assistant message to contain text"
+        );
+    }
+
+    #[test]
+    fn test_subagent_suffix_appended_to_system_message() {
+        let desc1 = ToolDescBuilder::new("math-agent")
+            .description("Handles arithmetic and math computations")
+            .parameters(serde_json::json!({"type":"object","properties":{"task":{"type":"string"}},"required":["task"]}))
+            .build();
+        let desc2 = ToolDescBuilder::new("search-agent")
+            .description("Searches the web for information")
+            .parameters(serde_json::json!({"type":"object","properties":{"task":{"type":"string"}},"required":["task"]}))
+            .build();
+
+        let refs: Vec<&crate::message::ToolDesc> = vec![&desc1, &desc2];
+        let suffix = build_subagent_system_suffix(&refs);
+
+        assert!(suffix.contains("math-agent"), "should contain agent name");
+        assert!(suffix.contains("search-agent"), "should contain agent name");
+        assert!(
+            suffix.contains("Handles arithmetic"),
+            "should contain description"
+        );
+        assert!(
+            suffix.contains("Searches the web"),
+            "should contain description"
+        );
+        assert!(
+            suffix.contains("Subagent Delegation"),
+            "should contain section header"
+        );
+        assert!(
+            suffix.contains("call their tool directly"),
+            "should contain delegation instruction"
         );
     }
 }
