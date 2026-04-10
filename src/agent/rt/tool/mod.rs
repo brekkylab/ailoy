@@ -9,6 +9,7 @@ use crate::{
     message::{Message, Part, Role, ToolDesc},
 };
 
+mod python_repl;
 mod subagent;
 mod web_search;
 
@@ -92,12 +93,26 @@ impl ToolSet {
         self.tools.remove(key)
     }
 
-    pub fn with_builtin(mut self, provider: &BuiltinToolProvider) -> Self {
+    pub async fn with_builtin(mut self, provider: &BuiltinToolProvider) -> anyhow::Result<Self> {
         match provider {
             BuiltinToolProvider::WebSearch {} => {
                 let tool = web_search::build_web_search_tool();
                 self.tools.insert("web_search".to_string(), tool);
-                self
+                Ok(self)
+            }
+            BuiltinToolProvider::PythonRepl {
+                python_version,
+                venv_path,
+                packages,
+            } => {
+                let config = python_repl::PythonReplConfig {
+                    python_version: python_version.clone(),
+                    venv_path: venv_path.clone(),
+                    packages: packages.clone(),
+                };
+                let tool = python_repl::build_python_repl_tool(config).await?;
+                self.tools.insert("python_repl".to_string(), tool);
+                Ok(self)
             }
         }
     }

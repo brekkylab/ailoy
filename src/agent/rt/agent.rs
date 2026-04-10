@@ -44,16 +44,19 @@ pub struct AgentRuntime {
 }
 
 impl AgentRuntime {
-    pub fn new(spec: AgentSpec, provider: AgentProvider, tool_set: ToolSet) -> Self {
+    pub async fn new(
+        spec: AgentSpec,
+        provider: AgentProvider,
+        tool_set: ToolSet,
+    ) -> anyhow::Result<Self> {
         // Prepare toolsets
-        let tool_set =
-            provider
-                .tools
-                .iter()
-                .fold(tool_set, |ts, tool_provider| match tool_provider {
-                    ToolProvider::Builtin(builtin) => ts.with_builtin(builtin),
-                    ToolProvider::MCP(mcp) => ts.with_mcp(mcp),
-                });
+        let mut tool_set = tool_set;
+        for tool_provider in &provider.tools {
+            tool_set = match tool_provider {
+                ToolProvider::Builtin(builtin) => tool_set.with_builtin(builtin).await?,
+                ToolProvider::MCP(mcp) => tool_set.with_mcp(mcp),
+            };
+        }
 
         // Collect tools from toolsets
         let tools: Vec<ToolRuntime> = spec
@@ -84,11 +87,11 @@ impl AgentRuntime {
             .unwrap_or_default();
 
         // Create `AgentRuntime`
-        Self {
+        Ok(Self {
             lm: LangModelRuntime::new(spec.lm, provider.lm),
             tools,
             state: AgentState::with_history(history),
-        }
+        })
     }
 
     pub fn run(
@@ -201,16 +204,16 @@ mod tests {
     use std::sync::Arc;
 
     use futures::StreamExt as _;
-    use url::Url;
 
     use super::*;
     use crate::{
-        agent::{LangModelAPISchema, LangModelProvider, ToolFunc},
+        agent::{LangModelProvider, ToolFunc},
         message::{Part, Role, ToolDescBuilder},
         to_value,
     };
 
     /// Verifies that the agent calls the temperature tool and returns a final answer.
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_run_agent() {
         dotenvy::dotenv().ok();
@@ -240,20 +243,17 @@ mod tests {
         );
 
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
-        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
 
         let mut agent = AgentRuntime::new(
             AgentSpec::new("gpt-4").with_tools(["temperature"]),
             AgentProvider {
-                lm: LangModelProvider::API {
-                    schema: LangModelAPISchema::ChatCompletion,
-                    url,
-                    api_key: Some(api_key),
-                },
+                lm: LangModelProvider::openai(api_key),
                 tools: vec![],
             },
             tool_set,
-        );
+        )
+        .await
+        .unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the current temperature in Seoul?")]);
@@ -281,12 +281,12 @@ mod tests {
     /// Sets up a math subagent and registers it as a subagent tool on a coordinator agent.
     /// Asks a math question and confirms the main agent's history contains a [`Role::Tool`]
     /// message (proof that the subagent tool was called), and that the final reply is text.
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_delegate_to_in_memory_subagent() {
         dotenvy::dotenv().ok();
 
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
-        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
 
         // Sub-agent: a minimal calculator that replies with just the numeric result.
         let sub_agent = AgentRuntime::new(
@@ -295,15 +295,13 @@ mod tests {
                     .to_string(),
             ),
             AgentProvider {
-                lm: LangModelProvider::API {
-                    schema: LangModelAPISchema::ChatCompletion,
-                    url: url.clone(),
-                    api_key: Some(api_key.clone()),
-                },
+                lm: LangModelProvider::openai(api_key.clone()),
                 tools: vec![],
             },
             ToolSet::new(),
-        );
+        )
+        .await
+        .unwrap();
         let sub_agent = Arc::new(tokio::sync::Mutex::new(sub_agent));
 
         // Main agent: coordinator that should always delegate math to math-agent.
@@ -316,15 +314,13 @@ mod tests {
         let mut main_agent = AgentRuntime::new(
             AgentSpec::new("gpt-4o-mini").with_tools(["math-agent"]),
             AgentProvider {
-                lm: LangModelProvider::API {
-                    schema: LangModelAPISchema::ChatCompletion,
-                    url,
-                    api_key: Some(api_key),
-                },
+                lm: LangModelProvider::openai(api_key),
                 tools: vec![],
             },
             tool_set,
-        );
+        )
+        .await
+        .unwrap();
 
         let query =
             Message::new(Role::User).with_contents([Part::text("What is 123 multiplied by 7?")]);
