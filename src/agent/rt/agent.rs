@@ -207,7 +207,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{BuiltinToolProvider, LangModelProvider, ToolFunc},
+        agent::{LangModelProvider, ToolFunc},
         message::{Part, Role, ToolDescBuilder},
         to_value,
     };
@@ -273,111 +273,6 @@ mod tests {
         assert!(
             resp.message.contents.iter().any(|p| p.is_text()),
             "Expected final assistant message to contain text"
-        );
-    }
-
-    /// End-to-end test: agent uses python_repl to generate a numpy sine-wave
-    /// chart with matplotlib, saves it as a PNG, and we validate the file.
-    ///
-    /// Requires: OPENAI_API_KEY env var, network access.
-    #[test_with::env(OPENAI_API_KEY)]
-    #[tokio::test]
-    async fn test_python_repl_numpy_matplotlib_chart() {
-        dotenvy::dotenv().ok();
-
-        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
-
-        // Temp dir for the chart output — kept alive for the duration of the test.
-        let chart_dir = tempfile::tempdir().expect("failed to create temp dir");
-        let chart_path = chart_dir.path().join("sine_chart.png");
-
-        let prompt = format!(
-            "Install numpy and matplotlib, then write Python code that:\n\
-             1. Generates 200 points of a sine wave using numpy (x: 0 to 4π)\n\
-             2. Plots the sine wave with matplotlib\n\
-             3. Saves the figure to '{}'\n\
-             \n\
-             Use pip_install for the packages. Do not call plt.show().",
-            chart_path.display()
-        );
-
-        let mut agent = AgentRuntime::new(
-            AgentSpec::new("gpt-4o-mini").with_tools(["python_repl"]),
-            AgentProvider {
-                lm: LangModelProvider::openai(api_key),
-                tools: vec![ToolProvider::Builtin(BuiltinToolProvider::PythonRepl {
-                    python_version: None,
-                    venv_path: None,
-                    packages: vec![],
-                })],
-            },
-            ToolSet::new(),
-        )
-        .await
-        .unwrap();
-
-        let query = Message::new(Role::User).with_contents([Part::text(prompt)]);
-        let mut outputs = vec![];
-        let mut strm = agent.stream_turn(query);
-        while let Some(out) = strm.next().await {
-            let out = out.unwrap();
-            println!("{}", out);
-            outputs.push(out);
-        }
-
-        // ── assertions ────────────────────────────────────────────────────────
-
-        // 1. The agent must have made at least one python_repl tool call.
-        let tool_outputs: Vec<_> = outputs
-            .iter()
-            .filter(|o| o.message.role == Role::Tool)
-            .collect();
-        assert!(
-            !tool_outputs.is_empty(),
-            "expected at least one python_repl tool call, got none"
-        );
-
-        // 2. Every tool call that returned must have exit_code 0 (success).
-        for tool_out in &tool_outputs {
-            for part in &tool_out.message.contents {
-                if let Some(v) = part.as_value() {
-                    let exit_code = v
-                        .pointer("/exit_code")
-                        .and_then(|c| c.as_integer())
-                        .unwrap_or(-1);
-                    let stdout = v.pointer("/stdout").and_then(|s| s.as_str()).unwrap_or("");
-                    let stderr = v.pointer("/stderr").and_then(|s| s.as_str()).unwrap_or("");
-                    assert_eq!(
-                        exit_code, 0,
-                        "python_repl returned non-zero exit code.\nstdout: {stdout}\nstderr: {stderr}"
-                    );
-                }
-            }
-        }
-
-        // 3. Chart file must exist.
-        assert!(
-            chart_path.exists(),
-            "chart file was not created at {:?}",
-            chart_path
-        );
-
-        // 4. File must be a valid PNG (check 8-byte magic signature).
-        const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
-        let header = std::fs::read(&chart_path).unwrap();
-        assert!(
-            header.starts_with(PNG_MAGIC),
-            "file at {:?} is not a valid PNG (got {:?})",
-            chart_path,
-            &header[..header.len().min(8)]
-        );
-
-        // 5. The final message must be an assistant text reply.
-        let final_msg = outputs.last().expect("expected at least one output");
-        assert_eq!(final_msg.message.role, Role::Assistant);
-        assert!(
-            final_msg.message.contents.iter().any(|p| p.is_text()),
-            "expected assistant to summarise its work in text"
         );
     }
 

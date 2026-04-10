@@ -282,4 +282,66 @@ mod tests {
             .unwrap();
         assert_eq!(phase, "pip_install");
     }
+
+    /// Installs numpy + matplotlib, generates a sine-wave chart, and validates
+    /// the saved PNG — all by calling the tool directly (no LLM involved).
+    #[test_with::executable(uv)]
+    #[tokio::test]
+    async fn test_numpy_matplotlib_chart() {
+        use crate::message::Part;
+
+        let tool = build_python_repl_tool(default_config()).await.unwrap();
+        let chart_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let chart_path = chart_dir.path().join("sine_chart.png");
+
+        // Install numpy and matplotlib, then generate and save the chart.
+        let code = format!(
+            "import numpy as np\n\
+             import matplotlib\n\
+             matplotlib.use('Agg')\n\
+             import matplotlib.pyplot as plt\n\
+             x = np.linspace(0, 4 * np.pi, 200)\n\
+             plt.plot(x, np.sin(x))\n\
+             plt.savefig('{}')\n\
+             print('done')",
+            chart_path.display()
+        );
+
+        let call = Part::function_with_id(
+            "call-1",
+            "python_repl",
+            crate::to_value!({
+                "code": code,
+                "pip_install": ["numpy", "matplotlib"]
+            }),
+        );
+        let msg = tool.run(call).await.unwrap();
+        let result = msg.contents[0].as_value().unwrap();
+
+        let exit_code = result
+            .pointer("/exit_code")
+            .and_then(|v| v.as_integer())
+            .unwrap_or(-1);
+        let stdout = result.pointer("/stdout").and_then(|v| v.as_str()).unwrap_or("");
+        let stderr = result.pointer("/stderr").and_then(|v| v.as_str()).unwrap_or("");
+        assert_eq!(
+            exit_code, 0,
+            "expected exit_code 0.\nstdout: {stdout}\nstderr: {stderr}"
+        );
+
+        assert!(
+            chart_path.exists(),
+            "chart file was not created at {:?}",
+            chart_path
+        );
+
+        const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
+        let header = std::fs::read(&chart_path).unwrap();
+        assert!(
+            header.starts_with(PNG_MAGIC),
+            "file at {:?} is not a valid PNG (got {:?})",
+            chart_path,
+            &header[..header.len().min(8)]
+        );
+    }
 }
