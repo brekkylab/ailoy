@@ -52,7 +52,7 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
     // Pre-install user-specified packages.  Failure here is fatal so the
     // user learns about misconfigured environments early.
     if !config.packages.is_empty() {
-        match env.install_packages(&config.packages).await? {
+        match env.install_packages(&config.packages).await {
             InstallResult::Failed { stderr } => {
                 anyhow::bail!(
                     "Failed to pre-install packages {:?}: {}",
@@ -119,19 +119,11 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
             // Install packages if requested.
             if !pip_packages.is_empty() {
                 match env.install_packages(&pip_packages).await {
-                    Ok(InstallResult::Failed { stderr }) => {
+                    InstallResult::Failed { stderr } => {
                         return crate::to_value!({
                             "stdout": "",
-                            "stderr": stderr.as_str(),
+                            "stderr": format!("pip install error: {stderr}").as_str(),
                             "exit_code": 1,
-                            "phase": "pip_install"
-                        });
-                    }
-                    Err(e) => {
-                        return crate::to_value!({
-                            "stdout": "",
-                            "stderr": format!("pip install error: {e}").as_str(),
-                            "exit_code": -1,
                             "phase": "pip_install"
                         });
                     }

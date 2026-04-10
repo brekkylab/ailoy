@@ -140,9 +140,9 @@ impl PythonEnv {
     ///
     /// Specifiers that are already present in the in-memory cache are skipped;
     /// for everything else `uv pip install` is called.
-    pub async fn install_packages(&self, packages: &[String]) -> Result<InstallResult> {
+    pub async fn install_packages(&self, packages: &[String]) -> InstallResult {
         if packages.is_empty() {
-            return Ok(InstallResult::AlreadyInstalled);
+            return InstallResult::AlreadyInstalled;
         }
 
         let mut cache = self.installed.lock().await;
@@ -152,10 +152,10 @@ impl PythonEnv {
             .collect();
 
         if new.is_empty() {
-            return Ok(InstallResult::AlreadyInstalled);
+            return InstallResult::AlreadyInstalled;
         }
 
-        let output = Command::new(&self.uv)
+        let output = match Command::new(&self.uv)
             .args([
                 "pip",
                 "install",
@@ -165,17 +165,24 @@ impl PythonEnv {
             .args(new.iter().copied())
             .output()
             .await
-            .context("failed to spawn `uv pip install`")?;
+        {
+            Ok(result) => result,
+            Err(err) => {
+                return InstallResult::Failed {
+                    stderr: format!("failed to spawn `uv pip install`: {}", err),
+                };
+            }
+        };
 
         if output.status.success() {
             for spec in &new {
                 cache.insert(spec.to_string());
             }
-            Ok(InstallResult::Success)
+            InstallResult::Success
         } else {
-            Ok(InstallResult::Failed {
+            InstallResult::Failed {
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            })
+            }
         }
     }
 
@@ -327,10 +334,7 @@ mod tests {
     async fn test_install_package_success() {
         let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
-        let result = env
-            .install_packages(&["requests".to_string()])
-            .await
-            .unwrap();
+        let result = env.install_packages(&["requests".to_string()]).await;
         assert!(matches!(result, InstallResult::Success));
     }
 
@@ -339,14 +343,9 @@ mod tests {
     async fn test_install_same_package_twice_uses_cache() {
         let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
-        env.install_packages(&["requests".to_string()])
-            .await
-            .unwrap();
+        env.install_packages(&["requests".to_string()]).await;
         // Second call with identical specifier must not spawn subprocess.
-        let result = env
-            .install_packages(&["requests".to_string()])
-            .await
-            .unwrap();
+        let result = env.install_packages(&["requests".to_string()]).await;
         assert!(matches!(result, InstallResult::AlreadyInstalled));
     }
 
@@ -356,13 +355,11 @@ mod tests {
         let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         env.install_packages(&["requests==2.31.0".to_string()])
-            .await
-            .unwrap();
+            .await;
         // Different specifier string → subprocess must be called.
         let result = env
             .install_packages(&["requests==2.32.0".to_string()])
-            .await
-            .unwrap();
+            .await;
         assert!(matches!(result, InstallResult::Success));
     }
 
@@ -373,8 +370,7 @@ mod tests {
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         let result = env
             .install_packages(&["this-package-definitely-does-not-exist-xyzzy".to_string()])
-            .await
-            .unwrap();
+            .await;
         assert!(
             matches!(result, InstallResult::Failed { .. }),
             "expected Failed, got {:?}",
@@ -387,7 +383,7 @@ mod tests {
     async fn test_install_empty_list_returns_already_installed() {
         let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
-        let result = env.install_packages(&[]).await.unwrap();
+        let result = env.install_packages(&[]).await;
         assert!(matches!(result, InstallResult::AlreadyInstalled));
     }
 

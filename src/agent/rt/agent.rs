@@ -213,8 +213,8 @@ mod tests {
     };
 
     /// Verifies that the agent calls the temperature tool and returns a final answer.
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
-    #[ignore = "requires network + OPENAI_API_KEY"]
     async fn test_run_agent() {
         dotenvy::dotenv().ok();
 
@@ -280,8 +280,8 @@ mod tests {
     /// chart with matplotlib, saves it as a PNG, and we validate the file.
     ///
     /// Requires: OPENAI_API_KEY env var, network access.
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
-    #[ignore = "requires network + OPENAI_API_KEY"]
     async fn test_python_repl_numpy_matplotlib_chart() {
         dotenvy::dotenv().ok();
 
@@ -386,6 +386,7 @@ mod tests {
     /// Sets up a math subagent and registers it as a subagent tool on a coordinator agent.
     /// Asks a math question and confirms the main agent's history contains a [`Role::Tool`]
     /// message (proof that the subagent tool was called), and that the final reply is text.
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_delegate_to_in_memory_subagent() {
         dotenvy::dotenv().ok();
