@@ -45,16 +45,19 @@ pub struct AgentRuntime {
 }
 
 impl AgentRuntime {
-    pub fn new(spec: AgentSpec, provider: AgentProvider, tool_set: ToolSet) -> Self {
+    pub async fn new(
+        spec: AgentSpec,
+        provider: AgentProvider,
+        tool_set: ToolSet,
+    ) -> anyhow::Result<Self> {
         // Prepare toolsets
-        let tool_set =
-            provider
-                .tools
-                .iter()
-                .fold(tool_set, |ts, tool_provider| match tool_provider {
-                    ToolProvider::Builtin(builtin) => ts.with_builtin(builtin),
-                    ToolProvider::MCP(mcp) => ts.with_mcp(mcp),
-                });
+        let mut tool_set = tool_set;
+        for tool_provider in &provider.tools {
+            tool_set = match tool_provider {
+                ToolProvider::Builtin(builtin) => tool_set.with_builtin(builtin).await?,
+                ToolProvider::MCP(mcp) => tool_set.with_mcp(mcp),
+            };
+        }
 
         // Collect tools from toolsets
         let tools: Vec<ToolRuntime> = spec
@@ -85,11 +88,11 @@ impl AgentRuntime {
             .unwrap_or_default();
 
         // Create `AgentRuntime`
-        Self {
+        Ok(Self {
             lm: LangModelRuntime::new(spec.lm, provider.lm),
             tools,
             state: AgentState::with_history(history),
-        }
+        })
     }
 
     /// Run a full turn and return the final assistant message.
@@ -325,6 +328,7 @@ mod tests {
     };
 
     /// Verifies that the agent calls the temperature tool and returns a final answer.
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_run_agent() {
         dotenvy::dotenv().ok();
@@ -360,7 +364,9 @@ mod tests {
                 tools: vec![],
             },
             tool_set,
-        );
+        )
+        .await
+        .unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the current temperature in Seoul?")]);
@@ -391,6 +397,7 @@ mod tests {
     /// Sets up a math subagent and registers it as a subagent tool on a coordinator agent.
     /// Asks a math question and confirms the main agent's history contains a [`Role::Tool`]
     /// message (proof that the subagent tool was called), and that the final reply is text.
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_delegate_to_in_memory_subagent() {
         dotenvy::dotenv().ok();
@@ -408,7 +415,9 @@ mod tests {
                 tools: vec![],
             },
             ToolSet::new(),
-        );
+        )
+        .await
+        .unwrap();
         let sub_agent = Arc::new(tokio::sync::Mutex::new(sub_agent));
 
         // Main agent: coordinator that should always delegate math to math-agent.
@@ -425,7 +434,9 @@ mod tests {
                 tools: vec![],
             },
             tool_set,
-        );
+        )
+        .await
+        .unwrap();
 
         let query =
             Message::new(Role::User).with_contents([Part::text("What is 123 multiplied by 7?")]);
@@ -461,6 +472,7 @@ mod tests {
 
     /// Verifies that stream_turn() emits TurnEvent::ToolDelta items when using a
     /// streaming subagent tool.
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_streaming_subagent_emits_tool_deltas() {
         dotenvy::dotenv().ok();
@@ -478,7 +490,9 @@ mod tests {
                 tools: vec![],
             },
             ToolSet::new(),
-        );
+        )
+        .await
+        .unwrap();
         let sub_agent = Arc::new(tokio::sync::Mutex::new(sub_agent));
 
         let tool_set = ToolSet::new().with_subagent_in_memory(
@@ -494,7 +508,9 @@ mod tests {
                 tools: vec![],
             },
             tool_set,
-        );
+        )
+        .await
+        .unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text("What is 99 plus 1?")]);
 
@@ -520,6 +536,7 @@ mod tests {
 
     /// Verifies event sequence for a simple tool call:
     /// AssistantMessage(is_final=false) -> ToolCall -> ToolResult -> AssistantMessage(is_final=true)
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_turn_event_sequence() {
         dotenvy::dotenv().ok();
@@ -552,7 +569,9 @@ mod tests {
                 tools: vec![],
             },
             tool_set,
-        );
+        )
+        .await
+        .unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the temperature in Seoul?")]);
@@ -616,7 +635,6 @@ mod tests {
 
     /// Verifies that multiple tool calls in a single LLM response are executed concurrently.
     ///
-    /// Uses claude-haiku-4-5 which reliably issues parallel tool calls.
     /// Two async tools are registered:
     /// - `temperature_fast`: 50 ms delay, returns 15
     /// - `temperature_slow`: 300 ms delay, returns 25
@@ -624,12 +642,12 @@ mod tests {
     /// Assertions:
     /// 1. Total tool-execution time ≈ max(50, 300) ms, not 50+300 ms (sequential).
     /// 2. The faster tool's result appears first in history (completion order, not call order).
+    #[test_with::env(ANTHROPIC_API_KEY)]
     #[tokio::test]
     async fn test_parallel_tool_calls() {
         dotenvy::dotenv().ok();
 
         use std::sync::{Arc as StdArc, Mutex as StdMutex};
-        use std::time::Instant;
 
         let api_key =
             std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
@@ -699,21 +717,21 @@ mod tests {
                 tools: vec![],
             },
             tool_set,
-        );
+        )
+        .await
+        .unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text(
             "Get the temperature in Tokyo using temperature_fast \
              and in Seoul using temperature_slow.",
         )]);
 
-        let start = Instant::now();
         {
             let mut strm = agent.stream_turn(query);
             while let Some(event) = strm.next().await {
                 event.unwrap();
             }
         }
-        let elapsed = start.elapsed();
 
         // Verify both tools were actually called
         let order = completion_order.lock().unwrap();
@@ -723,14 +741,7 @@ mod tests {
             *order
         );
 
-        // 1. Concurrency: both tools run in parallel, so total tool time ≈ max(50, 300) ms.
-        //    Sequential would be 50+300 = 350 ms extra on top of LLM latency.
-        //    We compare against a baseline by subtracting a generous LLM round-trip budget.
-        //    More directly: fast must finish before slow, and if they ran sequentially the
-        //    total would be 350+ ms longer — verified via completion_order below.
-        let _ = elapsed; // timing-only check would be flaky; rely on order instead
-
-        // 2. Completion order: fast (50 ms) finishes before slow (300 ms)
+        // 1. Completion order: fast (50 ms) finishes before slow (300 ms)
         assert_eq!(
             order.as_slice(),
             &["fast", "slow"],
@@ -739,10 +750,14 @@ mod tests {
             order.as_slice()
         );
 
-        // 3. History push order matches completion order (fast result first, slow result second)
+        // 2. History push order matches completion order (fast result first, slow result second)
         let history = agent.get_history();
         let tool_msgs: Vec<_> = history.iter().filter(|m| m.role == Role::Tool).collect();
-        assert_eq!(tool_msgs.len(), 2, "Expected exactly two Tool messages in history");
+        assert_eq!(
+            tool_msgs.len(),
+            2,
+            "Expected exactly two Tool messages in history"
+        );
 
         use crate::datatype::Value;
 

@@ -85,6 +85,16 @@ pub enum LangModelProvider {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BuiltinToolProvider {
     WebSearch {},
+    PythonRepl {
+        /// Python version to provision (e.g. `"3.12"`). `None` → latest stable.
+        python_version: Option<String>,
+        /// Persistent venv path. `None` → temp dir cleaned up when the tool is dropped.
+        /// Supports `~` expansion.
+        venv_path: Option<String>,
+        /// Packages to pre-install before the first tool call.
+        #[serde(default)]
+        packages: Vec<String>,
+    },
 }
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
