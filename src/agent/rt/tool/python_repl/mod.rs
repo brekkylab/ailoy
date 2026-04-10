@@ -13,6 +13,27 @@ use crate::{
     message::ToolDescBuilder,
 };
 
+/// ```text
+/// +----------------------+                   call with (`pip_install`, `code`)
+/// | PythonReplConfig     |                                 |
+/// | - python_version     |                                 v
+/// | - venv_path          |   +-----------------------------+--------------------+
+/// | - packages           |-->| "python_repl" ToolRuntime                        |
+/// +----------------------+   |                                                  |
+///                            | +-----------+     +----------------------------+ |
+///                            | | Acquire   | --> | Create PythonEnv           | |
+///                            | | `uv`      |     | - prepare venv             | |
+///                            | +-----------+     | - install initial packages | |
+///                            |                   +----------------------------+ |
+///                            +-----------------------------+--------------------+
+///                                                          |
+///                                                          v
+///                                       Install additional packages `pip_install`
+///                                                          |
+///                                                          v
+///                                                   Run python `code`
+/// ```
+
 /// Config supplied by the user when declaring a `PythonRepl` tool provider.
 pub struct PythonReplConfig {
     /// Python version to provision (e.g. `"3.12"`). `None` → latest stable.
