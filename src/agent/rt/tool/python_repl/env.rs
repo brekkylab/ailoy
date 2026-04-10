@@ -275,6 +275,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+    use crate::agent::rt::tool::python_repl::uv::resolve_uv_path;
 
     impl PythonEnv {
         /// Expose the venv directory path (useful in tests).
@@ -283,34 +284,21 @@ mod tests {
         }
     }
 
-    /// Skip the test if `uv` is not available (PATH or managed install).
-    fn uv_or_skip() -> PathBuf {
-        match crate::agent::rt::tool::python_repl::uv::resolve_uv_path() {
-            Ok(p) if p.exists() => p,
-            _ => {
-                eprintln!("SKIP: `uv` not found");
-                // Returning an obviously wrong path causes the test to be
-                // skipped via the ignore mechanism — we use `#[ignore]` below.
-                PathBuf::from("/uv-not-found")
-            }
-        }
-    }
-
     // ── venv creation ────────────────────────────────────────────────────────
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_create_temp_env_venv_dir_exists() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         assert!(env.venv_path().exists(), "venv dir should exist");
         assert!(env.python_path().exists(), "python binary should exist");
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_temp_env_is_cleaned_up_on_drop() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         // Capture venv parent (the temp dir) before dropping.
         let parent = env.venv_path().parent().unwrap().to_path_buf();
@@ -319,10 +307,10 @@ mod tests {
         assert!(!parent.exists(), "temp dir should be deleted on drop");
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_persistent_env_not_cleaned_up_on_drop() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let venv_path = dir.path().join("venv");
         let env = PythonEnv::new(uv, None, venv_path.clone(), false)
@@ -334,10 +322,10 @@ mod tests {
 
     // ── package installation ─────────────────────────────────────────────────
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv + network"]
     async fn test_install_package_success() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         let result = env
             .install_packages(&["requests".to_string()])
@@ -346,10 +334,10 @@ mod tests {
         assert!(matches!(result, InstallResult::Success));
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv + network"]
     async fn test_install_same_package_twice_uses_cache() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         env.install_packages(&["requests".to_string()])
             .await
@@ -362,10 +350,10 @@ mod tests {
         assert!(matches!(result, InstallResult::AlreadyInstalled));
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv + network"]
     async fn test_install_version_specifier_change_reinstalls() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         env.install_packages(&["requests==2.31.0".to_string()])
             .await
@@ -378,10 +366,10 @@ mod tests {
         assert!(matches!(result, InstallResult::Success));
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv + network"]
     async fn test_install_nonexistent_package_returns_failed() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         let result = env
             .install_packages(&["this-package-definitely-does-not-exist-xyzzy".to_string()])
@@ -394,10 +382,10 @@ mod tests {
         );
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv + network"]
     async fn test_install_empty_list_returns_already_installed() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         let result = env.install_packages(&[]).await.unwrap();
         assert!(matches!(result, InstallResult::AlreadyInstalled));
@@ -405,10 +393,10 @@ mod tests {
 
     // ── code execution ───────────────────────────────────────────────────────
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_run_hello_world() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         let result = env.run_code("print('hello world')", 30).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -419,10 +407,10 @@ mod tests {
         );
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_run_code_captures_stderr() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         let result = env
             .run_code("import sys; sys.stderr.write('err output\\n')", 30)
@@ -435,10 +423,10 @@ mod tests {
         );
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_run_code_runtime_error_nonzero_exit() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         let result = env.run_code("raise ValueError('oops')", 30).await.unwrap();
         assert_ne!(result.exit_code, 0, "expected non-zero exit for exception");
@@ -449,10 +437,10 @@ mod tests {
         );
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_run_code_each_execution_is_stateless() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         // First run: define a variable.
         let first = env.run_code("x = 42", 30).await.unwrap();
@@ -462,10 +450,10 @@ mod tests {
         assert_ne!(second.exit_code, 0, "x should not exist in a fresh run");
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_run_code_timeout_returns_timed_out_flag() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         // 1-second timeout against an infinite loop.
         let result = env.run_code("while True: pass", 1).await.unwrap();
@@ -478,10 +466,10 @@ mod tests {
         );
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_run_code_success_has_timed_out_false() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         let result = env.run_code("print('ok')", 30).await.unwrap();
         assert!(!result.timed_out, "successful run must not be timed_out");
@@ -530,10 +518,10 @@ mod tests {
         assert!(out.len() < MAX_OUTPUT_CHARS * 3);
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_run_code_large_output_is_truncated() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         // Print well over MAX_OUTPUT_CHARS bytes.
         let code = format!("print('x' * {})", MAX_OUTPUT_CHARS * 2);
@@ -550,10 +538,10 @@ mod tests {
         );
     }
 
+    #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_run_code_large_stderr_is_truncated() {
-        let uv = uv_or_skip();
+        let uv = resolve_uv_path().unwrap();
         let env = PythonEnv::new_temp(uv, None).await.unwrap();
         let code = format!(
             "import sys; sys.stderr.write('e' * {})",

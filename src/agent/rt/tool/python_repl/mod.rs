@@ -176,21 +176,18 @@ mod tests {
     // ── descriptor tests (no uv required) ────────────────────────────────────
 
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_tool_name_is_python_repl() {
         let tool = build_python_repl_tool(default_config()).await.unwrap();
         assert_eq!(tool.desc().name, "python_repl");
     }
 
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_tool_has_description() {
         let tool = build_python_repl_tool(default_config()).await.unwrap();
         assert!(tool.desc().description.is_some());
     }
 
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_tool_schema_requires_code() {
         let tool = build_python_repl_tool(default_config()).await.unwrap();
         let required = tool
@@ -204,7 +201,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_tool_schema_pip_install_is_array_of_strings() {
         let tool = build_python_repl_tool(default_config()).await.unwrap();
         let item_type = tool
@@ -219,7 +215,6 @@ mod tests {
     // ── execution tests ───────────────────────────────────────────────────────
 
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_missing_code_param_returns_validation_error() {
         let tool = build_python_repl_tool(default_config()).await.unwrap();
         use crate::message::Part;
@@ -235,7 +230,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires uv"]
     async fn test_run_print_returns_stdout() {
         let tool = build_python_repl_tool(default_config()).await.unwrap();
         use crate::message::Part;
@@ -255,7 +249,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires uv + network"]
     async fn test_pip_install_failure_returns_phase_pip_install() {
         let tool = build_python_repl_tool(default_config()).await.unwrap();
         use crate::message::Part;
