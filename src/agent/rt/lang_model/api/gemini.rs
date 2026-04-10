@@ -358,8 +358,7 @@ mod tests {
     {
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
-        let url =
-            Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
+        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
         let api_key: Option<String> = None;
         let req = LangModelRequest {
             model,
@@ -376,7 +375,10 @@ mod tests {
     fn test_marshal_max_output_tokens_set() {
         with_req(
             "gemini-2.5-flash-lite",
-            LangModelInferConfig { max_tokens: Some(2048), ..Default::default() },
+            LangModelInferConfig {
+                max_tokens: Some(2048),
+                ..Default::default()
+            },
             |req| {
                 let val = GeminiMarshal::default().marshal(req);
                 let body = val.as_object().unwrap().get("body").unwrap();

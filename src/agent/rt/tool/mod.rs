@@ -1,27 +1,53 @@
 use std::{collections::HashMap, sync::Arc};
 
 use futures::future::BoxFuture;
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::{
-    agent::{BuiltinToolProvider, MCPToolProvider},
+    agent::{AgentRuntime, BuiltinToolProvider, MCPToolProvider},
     datatype::Value,
     message::{Message, Part, Role, ToolDesc},
 };
 
 mod python_repl;
+mod subagent;
 mod web_search;
 
 pub type ToolFunc = dyn Fn(Value) -> BoxFuture<'static, Value> + Send + Sync;
+
+/// Identifies the origin of a [`ToolRuntime`].
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum ToolKind {
+    /// Built into the agent runtime (e.g. web search).
+    Builtin,
+    /// Served by an external MCP server.
+    #[allow(dead_code)]
+    MCP,
+    /// Wraps another agent as a callable subagent.
+    Subagent,
+    /// Registered directly by the user.
+    Custom,
+}
 
 #[derive(Clone)]
 pub struct ToolRuntime {
     desc: ToolDesc,
     f: Arc<ToolFunc>,
+    pub(crate) kind: ToolKind,
 }
 
 impl ToolRuntime {
+    /// Create a user-defined tool. `kind` is set to [`ToolKind::Custom`].
     pub fn new(desc: ToolDesc, f: Arc<ToolFunc>) -> Self {
-        Self { desc, f }
+        Self {
+            desc,
+            f,
+            kind: ToolKind::Custom,
+        }
+    }
+
+    pub(crate) fn new_with_kind(desc: ToolDesc, f: Arc<ToolFunc>, kind: ToolKind) -> Self {
+        Self { desc, f, kind }
     }
 
     pub fn desc(&self) -> &ToolDesc {
@@ -96,6 +122,36 @@ impl ToolSet {
             MCPToolProvider::Stdio { command: _ } => todo!(),
             MCPToolProvider::StreamableHTTP { url: _ } => todo!(),
         }
+    }
+
+    /// Wrap an existing in-process [`AgentRuntime`] as a tool named `name`.
+    ///
+    /// The tool exposes a single `task` string parameter; when called it forwards the task to
+    /// the agent and returns its first text response.
+    pub fn with_subagent_in_memory(
+        mut self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        agent: Arc<TokioMutex<AgentRuntime>>,
+    ) -> Self {
+        let name = name.into();
+        let tool = subagent::build_in_memory_subagent_tool(&name, &description.into(), agent);
+        self.tools.insert(name, tool);
+        self
+    }
+
+    /// Discover a remote A2A agent at `url` and register it as a tool.
+    ///
+    /// Fetches the agent card from `{url}/.well-known/agent-card.json` to obtain the tool
+    /// name and description, then builds a tool that forwards calls via JSON-RPC
+    /// `message/send`.
+    pub async fn with_subagent_a2a(mut self, url: impl Into<String>) -> anyhow::Result<Self> {
+        let url = url.into();
+        let card = subagent::a2a::discover(&url).await?;
+        let name = card.name.clone();
+        let tool = subagent::build_a2a_subagent_tool(&card, url);
+        self.tools.insert(name, tool);
+        Ok(self)
     }
 
     pub fn get(&self, key: &str) -> Option<&ToolRuntime> {
