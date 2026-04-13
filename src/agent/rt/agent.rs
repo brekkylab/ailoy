@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use futures::{Stream, StreamExt as _};
+use futures::{FutureExt as _, Stream, StreamExt as _};
 
 use super::turn_event::TurnEvent;
 use crate::{
@@ -201,57 +201,85 @@ impl AgentRuntime {
                         .and_then(|(id, _, _)| id)
                         .map(|s| s.to_string());
 
+                    // Clone tool_call_id used on synthetic error message
+                    let tool_call_id_err = tool_call_id.clone();
+
                     tokio::spawn(async move {
-                        if tool.is_streaming() {
-                            let args = match tool_call.as_function() {
-                                Some((_, _, args)) => args.clone(),
-                                None => {
-                                    let _ = tx.send(Err(anyhow::anyhow!("Part is not function")));
-                                    return;
-                                }
-                            };
-                            let mut output_stream = tool.run_stream(args);
-                            let mut got_result = false;
-                            while let Some(item) = output_stream.next().await {
-                                let event = match item {
-                                    StreamingToolOutput::Delta(mut delta) => {
-                                        delta.tool_call_id = tool_call_id.clone();
-                                        TurnEvent::ToolDelta(delta)
-                                    }
-                                    StreamingToolOutput::Result(value) => {
-                                        got_result = true;
-                                        let mut msg = Message::new(Role::Tool)
-                                            .with_contents([Part::Value { value }]);
-                                        if let Some(id) = &tool_call_id {
-                                            msg = msg.with_id(id.clone());
+
+                        // tx_task is moved into the catch_unwind block.
+                        // tx is kept for the panic-recovery send below.
+                        let tx_task = tx.clone();
+
+
+                        // Returns Ok(true)  — a ToolResult was sent
+                        //         Ok(false) — stream ended without emitting a Result
+                        //         Err(_)    — the tool function panicked
+                        let outcome: Result<bool, _> =
+                            std::panic::AssertUnwindSafe(async move {
+                                if tool.is_streaming() {
+                                    let args = match tool_call.as_function() {
+                                        Some((_, _, args)) => args.clone(),
+                                        None => {
+                                            let _ = tx_task.send(Err(anyhow::anyhow!(
+                                                "Part is not function"
+                                            )));
+                                            return true;
                                         }
-                                        TurnEvent::ToolResult(msg)
+                                    };
+                                    let mut output_stream = tool.run_stream(args);
+                                    let mut got_result = false;
+                                    while let Some(item) = output_stream.next().await {
+                                        let event = match item {
+                                            StreamingToolOutput::Delta(mut delta) => {
+                                                delta.tool_call_id = tool_call_id.clone();
+                                                TurnEvent::ToolDelta(delta)
+                                            }
+                                            StreamingToolOutput::Result(value) => {
+                                                got_result = true;
+                                                let mut msg = Message::new(Role::Tool)
+                                                    .with_contents([Part::Value { value }]);
+                                                if let Some(id) = &tool_call_id {
+                                                    msg = msg.with_id(id.clone());
+                                                }
+                                                TurnEvent::ToolResult(msg)
+                                            }
+                                        };
+                                        if tx_task.send(Ok(event)).is_err() {
+                                            return got_result;
+                                        }
                                     }
-                                };
-                                if tx.send(Ok(event)).is_err() {
-                                    return;
+                                    got_result
+                                } else {
+                                    let event = match tool.run(tool_call).await {
+                                        Ok(msg) => Ok(TurnEvent::ToolResult(msg)),
+                                        Err(e) => Err(e),
+                                    };
+                                    let _ = tx_task.send(event);
+                                    true
                                 }
-                            }
-                            if !got_result {
-                                let mut msg = Message::new(Role::Tool)
-                                    .with_contents([Part::Value {
-                                        value: format!(
-                                            "Error: tool '{}' did not yield a result",
-                                            tool_name
-                                        )
-                                        .into(),
-                                    }]);
-                                if let Some(id) = &tool_call_id {
-                                    msg = msg.with_id(id.clone());
-                                }
-                                let _ = tx.send(Ok(TurnEvent::ToolResult(msg)));
-                            }
-                        } else {
-                            let event = match tool.run(tool_call).await {
-                                Ok(msg) => Ok(TurnEvent::ToolResult(msg)),
-                                Err(e) => Err(e),
+                            })
+                            .catch_unwind()
+                            .await;
+
+                        // Guarantee that exactly one ToolResult reaches the channel per tool
+                        // call. If the tool panicked (Err) or the streaming tool never emitted
+                        // a Result (Ok(false)), insert a synthetic error result so the agent
+                        // history stays consistent and the LLM can see the failure.
+                        let needs_fallback = !outcome.as_ref().copied().unwrap_or(false);
+                        if needs_fallback {
+                            let reason = match outcome {
+                                Err(_) => "panicked during execution",
+                                Ok(false) => "did not yield a result",
+                                Ok(true) => unreachable!(),
                             };
-                            let _ = tx.send(event);
+                            let mut msg = Message::new(Role::Tool).with_contents([Part::Value {
+                                value: format!("Error: tool '{}' {}", tool_name, reason)
+                                    .into(),
+                            }]);
+                            if let Some(id) = &tool_call_id_err {
+                                msg = msg.with_id(id.clone());
+                            }
+                            let _ = tx.send(Ok(TurnEvent::ToolResult(msg)));
                         }
                     });
                 }
@@ -324,7 +352,7 @@ mod tests {
         ToolSyncFunc,
         agent::LangModelProvider,
         message::{Part, Role, ToolDescBuilder},
-        to_value,
+        suppress_panics, to_value,
     };
 
     /// Verifies that the agent calls the temperature tool and returns a final answer.
@@ -793,6 +821,111 @@ mod tests {
             second_value,
             Value::Unsigned(25),
             "Slow tool result (25) should be second in history"
+        );
+    }
+
+    #[test_with::env(OPENAI_API_KEY)]
+    #[tokio::test]
+    async fn test_tool_panic_causes_inconsistent_history() {
+        dotenvy::dotenv().ok();
+
+        // This test intentionally panics inside a tool function to verify
+        // that the agent catches it and keeps history consistent.
+        suppress_panics!();
+
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
+
+        let good_desc = ToolDescBuilder::new("get_weather")
+            .description("Get the current weather for a city")
+            .parameters(to_value!({
+                "type": "object",
+                "properties": { "city": { "type": "string" } },
+                "required": ["city"]
+            }))
+            .build();
+        let good_fn: Arc<crate::ToolAsyncFunc> = Arc::new(|_args| {
+            Box::pin(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                crate::to_value!("sunny, 25 degrees")
+            })
+        });
+
+        let bad_desc = ToolDescBuilder::new("get_traffic")
+            .description("Get the current traffic conditions for a city")
+            .parameters(to_value!({
+                "type": "object",
+                "properties": { "city": { "type": "string" } },
+                "required": ["city"]
+            }))
+            .build();
+        let bad_fn: Arc<crate::ToolAsyncFunc> = Arc::new(|_args| {
+            Box::pin(async move {
+                panic!("simulated tool crash");
+            })
+        });
+
+        let mut tool_set = ToolSet::new();
+        tool_set.insert(
+            "get_weather".to_string(),
+            ToolRuntime::new_async(good_desc, good_fn),
+        );
+        tool_set.insert(
+            "get_traffic".to_string(),
+            ToolRuntime::new_async(bad_desc, bad_fn),
+        );
+
+        let mut agent = AgentRuntime::new(
+            AgentSpec::new("gpt-4o-mini")
+                .with_tools(["get_weather", "get_traffic"])
+                .with_instruction(
+                    "When asked about a city, ALWAYS call both get_weather AND \
+                 get_traffic tools in a single response. Never call just one."
+                        .to_string(),
+                ),
+            AgentProvider {
+                lm: LangModelProvider::openai(api_key),
+                tools: vec![],
+            },
+            tool_set,
+        )
+        .await
+        .unwrap();
+
+        let query = Message::new(Role::User).with_contents([Part::text(
+            "Tell me about Seoul. Use get_weather for weather and get_traffic for traffic.",
+        )]);
+
+        {
+            let mut strm = agent.stream_turn(query);
+            while let Some(result) = strm.next().await {
+                let _ = result;
+            }
+        }
+
+        let history = agent.get_history();
+
+        let tool_use_count: usize = history
+            .iter()
+            .filter(|m| m.role == Role::Assistant)
+            .filter_map(|m| m.tool_calls.as_ref())
+            .map(|tc| tc.len())
+            .sum();
+
+        let tool_result_count = history.iter().filter(|m| m.role == Role::Tool).count();
+
+        if tool_use_count < 2 {
+            eprintln!(
+                "LLM only produced {} tool call(s); skipping consistency check",
+                tool_use_count
+            );
+            return;
+        }
+
+        assert_eq!(
+            tool_use_count, tool_result_count,
+            "History is inconsistent: {} tool_use call(s) but {} tool result(s). \
+         The panicked tool's result was silently lost.",
+            tool_use_count, tool_result_count,
         );
     }
 }

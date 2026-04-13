@@ -3,6 +3,7 @@ extern crate self as ailoy;
 
 pub mod agent;
 pub mod datatype;
+pub(crate) mod macros;
 pub mod message;
 pub mod shell;
 
