@@ -96,8 +96,13 @@ impl SearchEngine for Bing {
         // A homepage pre-fetch seeds cookies (e.g. _EDGE_S=F=1&SID=...) that
         // cause Bing to switch to JS-rendered results with no SSR b_algo nodes.
         // Without prior cookies, Bing serves server-side-rendered results directly.
+        //
+        // nfpr=1 disables Bing's automatic query reformulation (spell correction),
+        // which would otherwise silently rewrite short/uncommon terms like "ailoy"
+        // into a different word and return completely irrelevant results.
+        // Locale is left to Bing's geolocation so results match the user's region.
         let url = format!(
-            "https://www.bing.com/search?q={}&adlt=off",
+            "https://www.bing.com/search?q={}&adlt=off&nfpr=1",
             urlencoding::encode(query)
         );
 
