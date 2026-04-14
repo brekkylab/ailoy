@@ -8,7 +8,7 @@ use futures::future::BoxFuture;
 use uv::ensure_uv;
 
 use crate::{
-    agent::rt::tool::{ToolFunc, ToolRuntime},
+    agent::rt::tool::{ToolAsyncFunc, ToolRuntime},
     datatype::Value,
     message::ToolDescBuilder,
 };
@@ -112,7 +112,7 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
         }))
         .build();
 
-    let f: Arc<ToolFunc> = Arc::new(move |args: Value| {
+    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value| {
         let env = env.clone();
         Box::pin(async move {
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
@@ -171,7 +171,7 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
         }) as BoxFuture<'static, Value>
     });
 
-    Ok(ToolRuntime::new(desc, f))
+    Ok(ToolRuntime::new_async(desc, f))
 }
 
 #[cfg(test)]
@@ -322,8 +322,14 @@ mod tests {
             .pointer("/exit_code")
             .and_then(|v| v.as_integer())
             .unwrap_or(-1);
-        let stdout = result.pointer("/stdout").and_then(|v| v.as_str()).unwrap_or("");
-        let stderr = result.pointer("/stderr").and_then(|v| v.as_str()).unwrap_or("");
+        let stdout = result
+            .pointer("/stdout")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let stderr = result
+            .pointer("/stderr")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         assert_eq!(
             exit_code, 0,
             "expected exit_code 0.\nstdout: {stdout}\nstderr: {stderr}"

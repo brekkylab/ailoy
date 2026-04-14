@@ -8,7 +8,7 @@ use aggregator::MetaSearcher;
 use futures::future::BoxFuture;
 
 use crate::{
-    agent::rt::tool::{ToolFunc, ToolKind, ToolRuntime},
+    agent::rt::tool::{ToolAsyncFunc, ToolKind, ToolRuntime},
     datatype::Value,
     message::ToolDescBuilder,
 };
@@ -40,7 +40,7 @@ pub fn build_web_search_tool() -> ToolRuntime {
 
     let searcher = Arc::new(MetaSearcher::new());
 
-    let f: Arc<ToolFunc> = Arc::new(move |args: Value| {
+    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value| {
         let searcher = searcher.clone();
         Box::pin(async move {
             let query = args
@@ -81,7 +81,7 @@ pub fn build_web_search_tool() -> ToolRuntime {
         }) as BoxFuture<'static, Value>
     });
 
-    ToolRuntime::new_with_kind(desc, f, ToolKind::Builtin)
+    ToolRuntime::new_async_with_kind(desc, f, ToolKind::Builtin)
 }
 
 #[cfg(test)]

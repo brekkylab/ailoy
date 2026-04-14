@@ -5,6 +5,7 @@ mod message_delta;
 mod part;
 mod part_delta;
 mod tool_desc;
+mod tool_result;
 
 pub use delta::Delta;
 pub use marshal::{Marshal, Marshaled, Unmarshal, Unmarshaled};
@@ -13,3 +14,4 @@ pub use message_delta::{MessageDelta, MessageDeltaOutput};
 pub use part::{Part, PartFunction, PartImage};
 pub use part_delta::{PartDelta, PartDeltaFunction};
 pub use tool_desc::{ToolDesc, ToolDescBuilder};
+pub use tool_result::{StreamingToolOutput, ToolResultDelta};
