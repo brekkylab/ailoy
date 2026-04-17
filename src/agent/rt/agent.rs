@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use std::sync::Arc;
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
@@ -8,32 +9,32 @@ use crate::{
         AgentProvider, AgentSpec, LangModelRuntime, ToolKind, ToolProvider, ToolRuntime, ToolSet,
     },
     message::{Message, Part, Role, StreamingToolOutput},
-    shell::Shell,
+    sandbox::Sandbox,
 };
 
 pub struct AgentState {
     pub history: Vec<Message>,
 
-    pub shell: Option<Shell>,
+    pub sandbox: Option<Arc<dyn Sandbox>>,
 }
 
 impl AgentState {
     pub fn new() -> Self {
         Self {
             history: Vec::new(),
-            shell: None,
+            sandbox: None,
         }
     }
 
     pub fn with_history(history: Vec<Message>) -> Self {
         Self {
             history,
-            shell: None,
+            sandbox: None,
         }
     }
 
-    pub fn shell(mut self) -> Self {
-        self.shell = Some(Shell::new());
+    pub fn with_sandbox(mut self, sandbox: Arc<dyn Sandbox>) -> Self {
+        self.sandbox = Some(sandbox);
         self
     }
 }
@@ -193,8 +194,13 @@ impl AgentRuntime {
                 // Execute all tools concurrently via mpsc channel
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<anyhow::Result<TurnEvent>>();
 
+                let ctx = crate::sandbox::ToolContext {
+                    sandbox: self.state.sandbox.clone(),
+                };
+
                 for (tool, tool_call) in tool_tasks {
                     let tx = tx.clone();
+                    let ctx = ctx.clone();
                     let tool_name = tool.desc().name.clone();
                     let tool_call_id = tool_call
                         .as_function()
@@ -226,7 +232,7 @@ impl AgentRuntime {
                                             return true;
                                         }
                                     };
-                                    let mut output_stream = tool.run_stream(args, crate::sandbox::ToolContext::empty());
+                                    let mut output_stream = tool.run_stream(args, ctx);
                                     let mut got_result = false;
                                     while let Some(item) = output_stream.next().await {
                                         let event = match item {
@@ -250,7 +256,7 @@ impl AgentRuntime {
                                     }
                                     got_result
                                 } else {
-                                    let event = match tool.run(tool_call, crate::sandbox::ToolContext::empty()).await {
+                                    let event = match tool.run(tool_call, ctx).await {
                                         Ok(msg) => Ok(TurnEvent::ToolResult(msg)),
                                         Err(e) => Err(e),
                                     };
