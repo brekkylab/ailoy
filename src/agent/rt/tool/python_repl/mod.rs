@@ -245,4 +245,86 @@ mod tests {
             .unwrap();
         assert_eq!(stdout, "hello\n");
     }
+
+    #[cfg(feature = "sandbox-krun")]
+    mod krun_tests {
+        use std::sync::Arc;
+
+        use crate::{
+            message::Part,
+            sandbox::{
+                krun::{KrunSandbox, KrunSandboxConfig},
+                ToolContext,
+            },
+        };
+
+        use super::build_python_repl_tool;
+
+        async fn python_krun_ctx() -> ToolContext {
+            let mut env = std::collections::HashMap::new();
+            env.insert(
+                "PATH".to_string(),
+                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+            );
+            let sandbox = Arc::new(
+                KrunSandbox::new(KrunSandboxConfig {
+                    image: "python:3.12-alpine".to_string(),
+                    cwd: std::path::PathBuf::from("/root"),
+                    env,
+                    ..Default::default()
+                })
+                .await
+                .expect("KrunSandbox::new failed"),
+            );
+            ToolContext { sandbox: Some(sandbox) }
+        }
+
+        #[tokio::test]
+        async fn test_python_repl_krun_basic() {
+            let tool = build_python_repl_tool();
+            let ctx = python_krun_ctx().await;
+            let call = Part::function_with_id(
+                "call-1",
+                "python_repl",
+                crate::to_value!({ "code": "print('hello from vm')" }),
+            );
+            let msg = tool.run(call, ctx).await.unwrap();
+            let result = msg.contents[0].as_value().unwrap();
+            let stdout = result.pointer("/stdout").and_then(|v| v.as_str()).unwrap_or("");
+            let exit_code = result.pointer("/exit_code").and_then(|v| v.as_integer()).unwrap_or(-1);
+            assert_eq!(exit_code, 0, "stderr: {}", result.pointer("/stderr").and_then(|v| v.as_str()).unwrap_or(""));
+            assert!(stdout.contains("hello from vm"), "stdout: {:?}", stdout);
+        }
+
+        #[tokio::test]
+        async fn test_python_repl_krun_stdlib_usage() {
+            let tool = build_python_repl_tool();
+            let ctx = python_krun_ctx().await;
+
+            // Exercise stdlib (json + math) in a single call to verify the tool
+            // correctly executes Python code inside the KrunSandbox
+            let call = Part::function_with_id(
+                "call-1",
+                "python_repl",
+                crate::to_value!({
+                    "code": "import json, math; print(json.dumps({'pi': round(math.pi, 4)}))"
+                }),
+            );
+            let msg = tool.run(call, ctx).await.unwrap();
+            let result = msg.contents[0].as_value().unwrap();
+            let exit_code = result.pointer("/exit_code").and_then(|v| v.as_integer()).unwrap_or(-1);
+            assert_eq!(
+                exit_code,
+                0,
+                "stderr: {}",
+                result.pointer("/stderr").and_then(|v| v.as_str()).unwrap_or("")
+            );
+            let stdout = result.pointer("/stdout").and_then(|v| v.as_str()).unwrap_or("");
+            assert!(
+                stdout.contains("\"pi\""),
+                "expected JSON with pi key in stdout, got: {:?}",
+                stdout
+            );
+        }
+    }
 }

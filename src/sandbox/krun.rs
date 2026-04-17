@@ -38,8 +38,7 @@ pub struct KrunSandbox {
 impl KrunSandbox {
     pub async fn new(config: KrunSandboxConfig) -> anyhow::Result<Self> {
         let image_ref = config.image.clone();
-        let rootfs = tokio::task::spawn_blocking(move || onlybots::pull(&image_ref))
-            .await??;
+        let rootfs = tokio::task::spawn_blocking(move || onlybots::pull(&image_ref)).await??;
         let image = onlybots::list_images()?
             .into_iter()
             .find(|i| i.rootfs == rootfs)
@@ -159,6 +158,60 @@ mod tests {
             result.stdout.contains("persisted"),
             "stdout: {:?}",
             result.stdout
+        );
+    }
+
+    fn python_alpine_config() -> KrunSandboxConfig {
+        let mut env = std::collections::HashMap::new();
+        env.insert(
+            "PATH".to_string(),
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+        );
+        KrunSandboxConfig {
+            image: "python:3.12-alpine".to_string(),
+            cwd: std::path::PathBuf::from("/root"),
+            env,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_krun_sandbox_python_exec() {
+        let sandbox = KrunSandbox::new(python_alpine_config())
+            .await
+            .expect("KrunSandbox::new failed");
+
+        let result = sandbox
+            .exec(ExecRequest {
+                command: "python3 -c 'print(1 + 1)'".to_string(),
+                timeout_secs: 60,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout.trim(), "2");
+    }
+
+    #[tokio::test]
+    async fn test_krun_sandbox_python_stdlib_and_math() {
+        let sandbox = KrunSandbox::new(python_alpine_config())
+            .await
+            .expect("KrunSandbox::new failed");
+
+        // Exercise stdlib (json, math) in a single exec to avoid snapshot issues
+        let result = sandbox
+            .exec(ExecRequest {
+                command: "python3 -c 'import json, math; d={\"pi\": math.pi}; print(json.dumps(d))'".to_string(),
+                timeout_secs: 60,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        let stdout = result.stdout.trim();
+        assert!(
+            stdout.contains("\"pi\""),
+            "expected JSON with pi, got: {stdout:?}"
         );
     }
 }
