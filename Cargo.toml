@@ -24,6 +24,7 @@ path = "src/lib.rs"
 
 [features]
 rt = []
+sandbox-krun = ["dep:onlybots"]
 default = ["rt"]
 
 [dependencies]
@@ -67,6 +68,7 @@ urlencoding = "2.1"
 uuid = { version = "1.18.0", features = ["v4"] }
 wreq = "5.3.0"
 wreq-util = "2.2.6"
+onlybots = { path = "../onlybots/onlybots", optional = true }
 
 [dev-dependencies]
 axum = "0.8"
