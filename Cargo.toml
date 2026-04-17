@@ -43,7 +43,7 @@ log = "0.4"
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.13", features = ["form", "json", "stream"] }
 rmcp = { version = "0.11.0", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 scraper = "0.24"
 schemars = { version = "0.8", features = ["preserve_order", "url"] }
@@ -71,5 +71,5 @@ wreq-util = "2.2.6"
 [dev-dependencies]
 axum = "0.8"
 dotenvy = "0.15"
-test-with = { git = "https://github.com/brekkylab/test-with.git", branch = "main", default-features = false, features = ["executable"] }
+test-with = { version = "0.16.1", default-features = false, features = ["executable"] }
 tokio = { version = "1.0", features = ["net"] }
