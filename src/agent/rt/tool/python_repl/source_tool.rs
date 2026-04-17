@@ -4,7 +4,7 @@ use futures::future::BoxFuture;
 
 use super::{PythonReplConfig, install_python_packages, prepare_python_env};
 use crate::{
-    agent::rt::tool::{ToolFunc, ToolKind, ToolRuntime},
+    agent::rt::tool::{ToolAsyncFunc, ToolKind, ToolRuntime},
     datatype::Value,
     message::ToolDesc,
 };
@@ -47,7 +47,7 @@ pub(crate) async fn build_python_source_tool(
     let source = std::sync::Arc::new(config.source);
     let timeout_secs = config.timeout_secs;
 
-    let f: Arc<ToolFunc> = Arc::new(move |args: Value| {
+    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value| {
         let env = env.clone();
         let source = source.clone();
 
@@ -132,7 +132,7 @@ pub(crate) async fn build_python_source_tool(
         }) as BoxFuture<'static, Value>
     });
 
-    Ok(ToolRuntime::new_with_kind(desc, f, ToolKind::Builtin))
+    Ok(ToolRuntime::new_async_with_kind(desc, f, ToolKind::Builtin))
 }
 
 fn python_execution_error_message(result: &super::env::ExecResult, timeout_secs: u64) -> String {

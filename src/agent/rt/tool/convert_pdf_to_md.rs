@@ -8,7 +8,7 @@ use anyhow::Context as _;
 
 use crate::{
     agent::rt::tool::{
-        ToolFunc, ToolKind, ToolRuntime,
+        ToolAsyncFunc, ToolKind, ToolRuntime,
         python_repl::{PythonReplConfig, PythonSourceToolConfig, build_python_source_tool},
     },
     datatype::Value,
@@ -97,7 +97,7 @@ pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<ToolRuntime> {
     let python_tool = Arc::new(build_convert_pdf_to_md_python_tool().await?);
     let desc = convert_pdf_to_md_tool_desc();
 
-    let f: Arc<ToolFunc> = Arc::new(move |args: Value| {
+    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value| {
         let python_tool = python_tool.clone();
         Box::pin(async move {
             let pdf_path = match validate_pdf_path(&args) {
@@ -145,7 +145,7 @@ pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<ToolRuntime> {
         })
     });
 
-    Ok(ToolRuntime::new_with_kind(desc, f, ToolKind::Builtin))
+    Ok(ToolRuntime::new_async_with_kind(desc, f, ToolKind::Builtin))
 }
 
 async fn build_convert_pdf_to_md_python_tool() -> anyhow::Result<ToolRuntime> {
