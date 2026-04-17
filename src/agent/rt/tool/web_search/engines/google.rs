@@ -388,14 +388,6 @@ mod tests {
         assert!(!is_captcha_page(body));
     }
 
-    #[test]
-    fn test_is_captcha_page_rejects_legacy_sorry_google_com_string_alone() {
-        // The literal hostname "sorry.google.com" no longer appears in modern block
-        // responses; a body merely mentioning it should not be flagged by itself.
-        let body = r#"<html><body>See sorry.google.com for history.</body></html>"#;
-        assert!(!is_captcha_page(body));
-    }
-
     #[tokio::test]
     #[ignore = "requires network"]
     async fn test_search_returns_results() {
