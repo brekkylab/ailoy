@@ -5,7 +5,7 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 use tokio::sync::Mutex as TokioMutex;
 
-use super::{ToolAsyncFunc, ToolKind, ToolRuntime, ToolStreamingFunc};
+use super::{ToolAsyncFunc, ToolContext, ToolKind, ToolRuntime, ToolStreamingFunc};
 use crate::{
     Message,
     agent::{AgentRuntime, TurnEvent},
@@ -38,7 +38,7 @@ pub(crate) fn build_in_memory_subagent_tool(
         .build();
 
     let tool_name = name.to_string();
-    let f: Arc<ToolStreamingFunc> = Arc::new(move |args, _ctx: crate::sandbox::ToolContext| {
+    let f: Arc<ToolStreamingFunc> = Arc::new(move |args, _ctx: ToolContext| {
         let agent = agent.clone();
         let tool_name = tool_name.clone();
         Box::pin(async move {
@@ -129,7 +129,7 @@ pub(crate) fn build_a2a_subagent_tool(card: &a2a::AgentCard, url: String) -> Too
         }))
         .build();
 
-    let f: Arc<ToolAsyncFunc> = Arc::new(move |args, _ctx: crate::sandbox::ToolContext| {
+    let f: Arc<ToolAsyncFunc> = Arc::new(move |args, _ctx: crate::ToolContext| {
         let url = url.clone();
         Box::pin(async move {
             let task = args

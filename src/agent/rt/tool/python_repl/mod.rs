@@ -3,10 +3,9 @@ use std::sync::Arc;
 use futures::future::BoxFuture;
 
 use crate::{
-    agent::rt::tool::{ToolAsyncFunc, ToolRuntime},
+    agent::rt::tool::{ToolAsyncFunc, ToolContext, ToolRuntime},
     datatype::Value,
     message::ToolDescBuilder,
-    sandbox::ToolContext,
 };
 
 pub fn build_python_repl_tool() -> ToolRuntime {
@@ -137,8 +136,9 @@ mod tests {
 
     use super::*;
     use crate::{
+        agent::rt::tool::ToolContext,
         message::Part,
-        sandbox::{ExecRequest, ExecResult, Sandbox, ToolContext},
+        sandbox::{ExecRequest, ExecResult, Sandbox},
     };
 
     struct FakeSandbox {
@@ -224,7 +224,10 @@ mod tests {
             .pointer("/stderr")
             .and_then(|v| v.as_str())
             .unwrap();
-        assert!(stderr.contains("sandbox"), "expected sandbox error, got: {stderr}");
+        assert!(
+            stderr.contains("sandbox"),
+            "expected sandbox error, got: {stderr}"
+        );
     }
 
     #[tokio::test]
@@ -250,15 +253,12 @@ mod tests {
     mod krun_tests {
         use std::sync::Arc;
 
-        use crate::{
-            message::Part,
-            sandbox::{
-                krun::{KrunSandbox, KrunSandboxConfig},
-                ToolContext,
-            },
-        };
-
         use super::build_python_repl_tool;
+        use crate::{
+            agent::rt::tool::ToolContext,
+            message::Part,
+            sandbox::krun::{KrunSandbox, KrunSandboxConfig},
+        };
 
         async fn python_krun_ctx() -> ToolContext {
             let sandbox = Arc::new(
@@ -269,7 +269,9 @@ mod tests {
                 .await
                 .expect("KrunSandbox::new failed"),
             );
-            ToolContext { sandbox: Some(sandbox) }
+            ToolContext {
+                sandbox: Some(sandbox),
+            }
         }
 
         #[tokio::test]
@@ -283,9 +285,23 @@ mod tests {
             );
             let msg = tool.run(call, ctx).await.unwrap();
             let result = msg.contents[0].as_value().unwrap();
-            let stdout = result.pointer("/stdout").and_then(|v| v.as_str()).unwrap_or("");
-            let exit_code = result.pointer("/exit_code").and_then(|v| v.as_integer()).unwrap_or(-1);
-            assert_eq!(exit_code, 0, "stderr: {}", result.pointer("/stderr").and_then(|v| v.as_str()).unwrap_or(""));
+            let stdout = result
+                .pointer("/stdout")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let exit_code = result
+                .pointer("/exit_code")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(-1);
+            assert_eq!(
+                exit_code,
+                0,
+                "stderr: {}",
+                result
+                    .pointer("/stderr")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+            );
             assert!(stdout.contains("hello from vm"), "stdout: {:?}", stdout);
         }
 
@@ -305,14 +321,23 @@ mod tests {
             );
             let msg = tool.run(call, ctx).await.unwrap();
             let result = msg.contents[0].as_value().unwrap();
-            let exit_code = result.pointer("/exit_code").and_then(|v| v.as_integer()).unwrap_or(-1);
+            let exit_code = result
+                .pointer("/exit_code")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(-1);
             assert_eq!(
                 exit_code,
                 0,
                 "stderr: {}",
-                result.pointer("/stderr").and_then(|v| v.as_str()).unwrap_or("")
+                result
+                    .pointer("/stderr")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
             );
-            let stdout = result.pointer("/stdout").and_then(|v| v.as_str()).unwrap_or("");
+            let stdout = result
+                .pointer("/stdout")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             assert!(
                 stdout.contains("\"pi\""),
                 "expected JSON with pi key in stdout, got: {:?}",

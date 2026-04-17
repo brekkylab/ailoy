@@ -7,24 +7,40 @@ use crate::{
     agent::{AgentRuntime, BuiltinToolProvider, MCPToolProvider},
     datatype::Value,
     message::{Message, Part, Role, StreamingToolOutput, ToolDesc},
+    sandbox::Sandbox,
 };
+
+#[derive(Clone)]
+pub struct ToolContext {
+    pub sandbox: Option<Arc<dyn Sandbox>>,
+}
+
+impl ToolContext {
+    pub fn empty() -> Self {
+        Self { sandbox: None }
+    }
+}
 
 mod python_repl;
 mod subagent;
 mod web_search;
 
 /// A synchronous tool function that returns a [`Value`] directly.
-pub type ToolSyncFunc = dyn Fn(Value, crate::sandbox::ToolContext) -> Value + Send + Sync;
+pub type ToolSyncFunc = dyn Fn(Value, ToolContext) -> Value + Send + Sync;
 
 /// An asynchronous tool function that returns a [`Value`] via a future.
-pub type ToolAsyncFunc = dyn Fn(Value, crate::sandbox::ToolContext) -> BoxFuture<'static, Value> + Send + Sync;
+pub type ToolAsyncFunc =
+    dyn Fn(Value, ToolContext) -> BoxFuture<'static, Value> + Send + Sync;
 
 /// A streaming tool function that yields incremental [`ToolResultDelta`] items.
 ///
 /// The stream must yield zero or more [`StreamingToolOutput::Delta`] items
 /// (intermediate progress for UI display), followed by exactly one
 /// [`StreamingToolOutput::Result`] item (the definitive tool output).
-pub type ToolStreamingFunc = dyn Fn(Value, crate::sandbox::ToolContext) -> BoxFuture<'static, Pin<Box<dyn Stream<Item = StreamingToolOutput> + Send>>>
+pub type ToolStreamingFunc = dyn Fn(
+        Value,
+        ToolContext,
+    ) -> BoxFuture<'static, Pin<Box<dyn Stream<Item = StreamingToolOutput> + Send>>>
     + Send
     + Sync;
 
@@ -149,7 +165,11 @@ impl ToolRuntime {
     /// Execute this tool for a sync or async tool call, returning the complete result message.
     ///
     /// Panics if called on a streaming tool — use [`run_stream`](Self::run_stream) instead.
-    pub async fn run(&self, tool_call: Part, ctx: crate::sandbox::ToolContext) -> anyhow::Result<Message> {
+    pub async fn run(
+        &self,
+        tool_call: Part,
+        ctx: ToolContext,
+    ) -> anyhow::Result<Message> {
         let (id, _, args) = tool_call
             .as_function()
             .ok_or(anyhow::anyhow!("Part is not function"))?;
@@ -179,7 +199,7 @@ impl ToolRuntime {
     pub fn run_stream(
         &self,
         args: Value,
-        ctx: crate::sandbox::ToolContext,
+        ctx: ToolContext,
     ) -> Pin<Box<dyn Stream<Item = StreamingToolOutput> + Send>> {
         match &self.func {
             ToolFuncKind::Streaming(f) => {

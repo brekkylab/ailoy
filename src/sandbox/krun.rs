@@ -17,20 +17,12 @@ pub struct KrunSandboxConfig {
 
 impl Default for KrunSandboxConfig {
     fn default() -> Self {
-        // Provide a standard PATH so commands like python3, pip, sh builtins are
-        // found regardless of image. The VM starts as a non-login shell (chroot
-        // /bin/sh -c), which inherits only what the caller passes in.
-        let mut env = HashMap::new();
-        env.insert(
-            "PATH".to_string(),
-            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
-        );
         Self {
             image: "alpine:3.21".to_string(),
             ncpu: 2,
             mem: 512,
             cwd: PathBuf::from("/root"),
-            env,
+            env: HashMap::new(),
             default_timeout_secs: 60,
             max_output_chars: 8_000,
         }
@@ -46,11 +38,7 @@ pub struct KrunSandbox {
 impl KrunSandbox {
     pub async fn new(config: KrunSandboxConfig) -> anyhow::Result<Self> {
         let image_ref = config.image.clone();
-        let rootfs = tokio::task::spawn_blocking(move || onlybots::pull(&image_ref)).await??;
-        let image = onlybots::list_images()?
-            .into_iter()
-            .find(|i| i.rootfs == rootfs)
-            .ok_or_else(|| anyhow::anyhow!("pulled image not found in list"))?;
+        let image = tokio::task::spawn_blocking(move || onlybots::pull(&image_ref)).await??;
         Ok(Self {
             config,
             image,
