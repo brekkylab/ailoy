@@ -112,7 +112,7 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
         }))
         .build();
 
-    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value| {
+    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value, _ctx: crate::sandbox::ToolContext| {
         let env = env.clone();
         Box::pin(async move {
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
@@ -232,7 +232,7 @@ mod tests {
         let tool = build_python_repl_tool(default_config()).await.unwrap();
         use crate::message::Part;
         let call = Part::function_with_id("call-1", "python_repl", crate::to_value!({}));
-        let msg = tool.run(call).await.unwrap();
+        let msg = tool.run(call, crate::sandbox::ToolContext::empty()).await.unwrap();
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -251,7 +251,7 @@ mod tests {
             "python_repl",
             crate::to_value!({ "code": "print('ailoy')" }),
         );
-        let msg = tool.run(call).await.unwrap();
+        let msg = tool.run(call, crate::sandbox::ToolContext::empty()).await.unwrap();
         let stdout = msg.contents[0]
             .as_value()
             .unwrap()
@@ -273,7 +273,7 @@ mod tests {
                 "pip_install": ["xyzzy-nonexistent-pkg-12345"]
             }),
         );
-        let msg = tool.run(call).await.unwrap();
+        let msg = tool.run(call, crate::sandbox::ToolContext::empty()).await.unwrap();
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -315,7 +315,7 @@ mod tests {
                 "pip_install": ["numpy", "matplotlib"]
             }),
         );
-        let msg = tool.run(call).await.unwrap();
+        let msg = tool.run(call, crate::sandbox::ToolContext::empty()).await.unwrap();
         let result = msg.contents[0].as_value().unwrap();
 
         let exit_code = result

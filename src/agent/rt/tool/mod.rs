@@ -14,17 +14,17 @@ mod subagent;
 mod web_search;
 
 /// A synchronous tool function that returns a [`Value`] directly.
-pub type ToolSyncFunc = dyn Fn(Value) -> Value + Send + Sync;
+pub type ToolSyncFunc = dyn Fn(Value, crate::sandbox::ToolContext) -> Value + Send + Sync;
 
 /// An asynchronous tool function that returns a [`Value`] via a future.
-pub type ToolAsyncFunc = dyn Fn(Value) -> BoxFuture<'static, Value> + Send + Sync;
+pub type ToolAsyncFunc = dyn Fn(Value, crate::sandbox::ToolContext) -> BoxFuture<'static, Value> + Send + Sync;
 
 /// A streaming tool function that yields incremental [`ToolResultDelta`] items.
 ///
 /// The stream must yield zero or more [`StreamingToolOutput::Delta`] items
 /// (intermediate progress for UI display), followed by exactly one
 /// [`StreamingToolOutput::Result`] item (the definitive tool output).
-pub type ToolStreamingFunc = dyn Fn(Value) -> BoxFuture<'static, Pin<Box<dyn Stream<Item = StreamingToolOutput> + Send>>>
+pub type ToolStreamingFunc = dyn Fn(Value, crate::sandbox::ToolContext) -> BoxFuture<'static, Pin<Box<dyn Stream<Item = StreamingToolOutput> + Send>>>
     + Send
     + Sync;
 
@@ -149,13 +149,13 @@ impl ToolRuntime {
     /// Execute this tool for a sync or async tool call, returning the complete result message.
     ///
     /// Panics if called on a streaming tool — use [`run_stream`](Self::run_stream) instead.
-    pub async fn run(&self, tool_call: Part) -> anyhow::Result<Message> {
+    pub async fn run(&self, tool_call: Part, ctx: crate::sandbox::ToolContext) -> anyhow::Result<Message> {
         let (id, _, args) = tool_call
             .as_function()
             .ok_or(anyhow::anyhow!("Part is not function"))?;
         let result = match &self.func {
-            ToolFuncKind::Sync(f) => f(args.clone()),
-            ToolFuncKind::Async(f) => f(args.clone()).await,
+            ToolFuncKind::Sync(f) => f(args.clone(), ctx),
+            ToolFuncKind::Async(f) => f(args.clone(), ctx).await,
             ToolFuncKind::Streaming(_) => {
                 anyhow::bail!(
                     "run() called on a streaming tool '{}'; use run_stream() instead",
@@ -179,11 +179,12 @@ impl ToolRuntime {
     pub fn run_stream(
         &self,
         args: Value,
+        ctx: crate::sandbox::ToolContext,
     ) -> Pin<Box<dyn Stream<Item = StreamingToolOutput> + Send>> {
         match &self.func {
             ToolFuncKind::Streaming(f) => {
                 use futures::StreamExt as _;
-                let fut = f(args);
+                let fut = f(args, ctx);
                 Box::pin(futures::stream::once(fut).flatten())
             }
             _ => panic!(

@@ -226,7 +226,7 @@ impl AgentRuntime {
                                             return true;
                                         }
                                     };
-                                    let mut output_stream = tool.run_stream(args);
+                                    let mut output_stream = tool.run_stream(args, crate::sandbox::ToolContext::empty());
                                     let mut got_result = false;
                                     while let Some(item) = output_stream.next().await {
                                         let event = match item {
@@ -250,7 +250,7 @@ impl AgentRuntime {
                                     }
                                     got_result
                                 } else {
-                                    let event = match tool.run(tool_call).await {
+                                    let event = match tool.run(tool_call, crate::sandbox::ToolContext::empty()).await {
                                         Ok(msg) => Ok(TurnEvent::ToolResult(msg)),
                                         Err(e) => Err(e),
                                     };
@@ -375,7 +375,7 @@ mod tests {
             }))
             .build();
 
-        let temperature_fn: Arc<ToolSyncFunc> = Arc::new(|_args| to_value!(25));
+        let temperature_fn: Arc<ToolSyncFunc> = Arc::new(|_args, _ctx: crate::sandbox::ToolContext| to_value!(25));
 
         let mut tool_set = ToolSet::new();
         tool_set.insert(
@@ -580,7 +580,7 @@ mod tests {
             }))
             .build();
 
-        let temperature_fn: Arc<ToolSyncFunc> = Arc::new(|_args| to_value!(25));
+        let temperature_fn: Arc<ToolSyncFunc> = Arc::new(|_args, _ctx: crate::sandbox::ToolContext| to_value!(25));
 
         let mut tool_set = ToolSet::new();
         tool_set.insert(
@@ -694,7 +694,7 @@ mod tests {
             }))
             .build();
         let order_fast = completion_order.clone();
-        let fast_fn: Arc<crate::ToolAsyncFunc> = Arc::new(move |_args| {
+        let fast_fn: Arc<crate::ToolAsyncFunc> = Arc::new(move |_args, _ctx: crate::sandbox::ToolContext| {
             let order = order_fast.clone();
             Box::pin(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -713,7 +713,7 @@ mod tests {
             }))
             .build();
         let order_slow = completion_order.clone();
-        let slow_fn: Arc<crate::ToolAsyncFunc> = Arc::new(move |_args| {
+        let slow_fn: Arc<crate::ToolAsyncFunc> = Arc::new(move |_args, _ctx: crate::sandbox::ToolContext| {
             let order = order_slow.clone();
             Box::pin(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
@@ -843,7 +843,7 @@ mod tests {
                 "required": ["city"]
             }))
             .build();
-        let good_fn: Arc<crate::ToolAsyncFunc> = Arc::new(|_args| {
+        let good_fn: Arc<crate::ToolAsyncFunc> = Arc::new(|_args, _ctx: crate::sandbox::ToolContext| {
             Box::pin(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                 crate::to_value!("sunny, 25 degrees")
@@ -858,7 +858,7 @@ mod tests {
                 "required": ["city"]
             }))
             .build();
-        let bad_fn: Arc<crate::ToolAsyncFunc> = Arc::new(|_args| {
+        let bad_fn: Arc<crate::ToolAsyncFunc> = Arc::new(|_args, _ctx: crate::sandbox::ToolContext| {
             Box::pin(async move {
                 panic!("simulated tool crash");
             })

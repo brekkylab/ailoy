@@ -38,7 +38,7 @@ pub(crate) fn build_in_memory_subagent_tool(
         .build();
 
     let tool_name = name.to_string();
-    let f: Arc<ToolStreamingFunc> = Arc::new(move |args| {
+    let f: Arc<ToolStreamingFunc> = Arc::new(move |args, _ctx: crate::sandbox::ToolContext| {
         let agent = agent.clone();
         let tool_name = tool_name.clone();
         Box::pin(async move {
@@ -129,7 +129,7 @@ pub(crate) fn build_a2a_subagent_tool(card: &a2a::AgentCard, url: String) -> Too
         }))
         .build();
 
-    let f: Arc<ToolAsyncFunc> = Arc::new(move |args| {
+    let f: Arc<ToolAsyncFunc> = Arc::new(move |args, _ctx: crate::sandbox::ToolContext| {
         let url = url.clone();
         Box::pin(async move {
             let task = args

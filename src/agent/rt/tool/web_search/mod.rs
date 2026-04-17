@@ -40,7 +40,7 @@ pub fn build_web_search_tool() -> ToolRuntime {
 
     let searcher = Arc::new(MetaSearcher::new());
 
-    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value| {
+    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value, _ctx: crate::sandbox::ToolContext| {
         let searcher = searcher.clone();
         Box::pin(async move {
             let query = args
