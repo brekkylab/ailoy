@@ -25,6 +25,21 @@ static MOBILE_UAS: &[&str] = &[
     "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.9357.1059 Mobile Safari/537.36",
 ];
 
+/// Detects Google's CAPTCHA / "unusual traffic" challenge page by body markers.
+///
+/// Used for the soft-block case where the HTTP status is 200 but the body is the
+/// challenge page. Markers cover the visible English copy plus two DOM-level
+/// anchors that survive minor wording changes.
+fn is_captcha_page(html: &str) -> bool {
+    const BLOCK_MARKERS: &[&str] = &[
+        "Our systems have detected unusual traffic",
+        "/sorry/index",
+        "id=\"captcha\"",
+        "CaptchaRedirect",
+    ];
+    BLOCK_MARKERS.iter().any(|m| html.contains(m))
+}
+
 /// Pick a random base UA and append the `NSTNWV` suffix.
 ///
 /// `NSTNWV` is the token that identifies the "Google Go" native Android app
@@ -123,21 +138,29 @@ impl SearchEngine for Google {
             .send()
             .await?;
 
-        if response.status() == 429 {
+        // Explicit rate-limit signal.
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            log::warn!("Google blocked: HTTP 429");
             return Err(SearchError::Blocked);
         }
 
-        if !response.status().is_success() {
+        // Modern block flow redirects to https://www.google.com/sorry/index (CAPTCHA).
+        // Checking the final URL path is more precise than searching body text for
+        // "/sorry/" (which can false-positive on search snippets).
+        if response.url().path().starts_with("/sorry/") {
+            log::warn!("Google blocked: redirected to {}", response.url());
             return Err(SearchError::Blocked);
         }
 
-        let html_text = response.error_for_status()?.text().await?;
+        // Other non-success statuses are not necessarily a block (transient 5xx, etc.).
+        // Surface them as SearchError::Http so callers can distinguish from Blocked.
+        let response = response.error_for_status()?;
 
-        // Google redirects to sorry.google.com or /sorry/ when it detects automation.
-        if html_text.contains("sorry.google.com")
-            || html_text.contains("/sorry/")
-            || html_text.contains("detected unusual traffic")
-        {
+        let html_text = response.text().await?;
+
+        // Soft block: status 200 but body is a CAPTCHA challenge page.
+        if is_captcha_page(&html_text) {
+            log::warn!("Google blocked: body matched CAPTCHA markers");
             return Err(SearchError::Blocked);
         }
 
@@ -324,6 +347,53 @@ mod tests {
                     .map(|el| el.text().collect::<String>().trim().to_string())
             });
         assert_eq!(desc, Some("Description text here".to_string()));
+    }
+
+    #[test]
+    fn test_is_captcha_page_detects_visible_english_copy() {
+        let body = r#"<html><body>
+            Our systems have detected unusual traffic from your computer network.
+        </body></html>"#;
+        assert!(is_captcha_page(body));
+    }
+
+    #[test]
+    fn test_is_captcha_page_detects_sorry_index_path() {
+        let body = r#"<form action="/sorry/index">...</form>"#;
+        assert!(is_captcha_page(body));
+    }
+
+    #[test]
+    fn test_is_captcha_page_detects_captcha_id_attr() {
+        let body = r#"<input id="captcha" name="captcha" />"#;
+        assert!(is_captcha_page(body));
+    }
+
+    #[test]
+    fn test_is_captcha_page_detects_captcha_redirect_marker() {
+        let body = "window.CaptchaRedirect = function() {};";
+        assert!(is_captcha_page(body));
+    }
+
+    #[test]
+    fn test_is_captcha_page_rejects_normal_results() {
+        // Realistic-shaped HTML that happens to contain the word "sorry" but is
+        // NOT a block page — make sure we do not false-positive on result text.
+        let body = r#"<html><body>
+            <a data-ved="xxx" href="/url?q=https%3A%2F%2Fexample.com">
+              <div style="">Example — sorry, no results for legacy paths</div>
+            </a>
+            <div class="ilUpNd H66NU aSRlid">Product info</div>
+        </body></html>"#;
+        assert!(!is_captcha_page(body));
+    }
+
+    #[test]
+    fn test_is_captcha_page_rejects_legacy_sorry_google_com_string_alone() {
+        // The literal hostname "sorry.google.com" no longer appears in modern block
+        // responses; a body merely mentioning it should not be flagged by itself.
+        let body = r#"<html><body>See sorry.google.com for history.</body></html>"#;
+        assert!(!is_captcha_page(body));
     }
 
     #[tokio::test]
