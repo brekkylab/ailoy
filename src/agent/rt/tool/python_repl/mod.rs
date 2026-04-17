@@ -261,16 +261,9 @@ mod tests {
         use super::build_python_repl_tool;
 
         async fn python_krun_ctx() -> ToolContext {
-            let mut env = std::collections::HashMap::new();
-            env.insert(
-                "PATH".to_string(),
-                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
-            );
             let sandbox = Arc::new(
                 KrunSandbox::new(KrunSandboxConfig {
                     image: "python:3.12-alpine".to_string(),
-                    cwd: std::path::PathBuf::from("/root"),
-                    env,
                     ..Default::default()
                 })
                 .await

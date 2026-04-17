@@ -17,12 +17,20 @@ pub struct KrunSandboxConfig {
 
 impl Default for KrunSandboxConfig {
     fn default() -> Self {
+        // Provide a standard PATH so commands like python3, pip, sh builtins are
+        // found regardless of image. The VM starts as a non-login shell (chroot
+        // /bin/sh -c), which inherits only what the caller passes in.
+        let mut env = HashMap::new();
+        env.insert(
+            "PATH".to_string(),
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+        );
         Self {
             image: "alpine:3.21".to_string(),
             ncpu: 2,
             mem: 512,
-            cwd: PathBuf::from("/workspace"),
-            env: HashMap::new(),
+            cwd: PathBuf::from("/root"),
+            env,
             default_timeout_secs: 60,
             max_output_chars: 8_000,
         }
@@ -161,26 +169,18 @@ mod tests {
         );
     }
 
-    fn python_alpine_config() -> KrunSandboxConfig {
-        let mut env = std::collections::HashMap::new();
-        env.insert(
-            "PATH".to_string(),
-            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
-        );
-        KrunSandboxConfig {
+    async fn python_sandbox() -> KrunSandbox {
+        KrunSandbox::new(KrunSandboxConfig {
             image: "python:3.12-alpine".to_string(),
-            cwd: std::path::PathBuf::from("/root"),
-            env,
             ..Default::default()
-        }
+        })
+        .await
+        .expect("KrunSandbox::new failed")
     }
 
     #[tokio::test]
     async fn test_krun_sandbox_python_exec() {
-        let sandbox = KrunSandbox::new(python_alpine_config())
-            .await
-            .expect("KrunSandbox::new failed");
-
+        let sandbox = python_sandbox().await;
         let result = sandbox
             .exec(ExecRequest {
                 command: "python3 -c 'print(1 + 1)'".to_string(),
@@ -188,21 +188,20 @@ mod tests {
             })
             .await
             .unwrap();
-
         assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
         assert_eq!(result.stdout.trim(), "2");
     }
 
     #[tokio::test]
     async fn test_krun_sandbox_python_stdlib_and_math() {
-        let sandbox = KrunSandbox::new(python_alpine_config())
-            .await
-            .expect("KrunSandbox::new failed");
+        let sandbox = python_sandbox().await;
 
         // Exercise stdlib (json, math) in a single exec to avoid snapshot issues
         let result = sandbox
             .exec(ExecRequest {
-                command: "python3 -c 'import json, math; d={\"pi\": math.pi}; print(json.dumps(d))'".to_string(),
+                command:
+                    "python3 -c 'import json, math; d={\"pi\": math.pi}; print(json.dumps(d))'"
+                        .to_string(),
                 timeout_secs: 60,
             })
             .await
