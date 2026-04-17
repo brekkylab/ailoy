@@ -6,7 +6,6 @@ pub mod datatype;
 pub(crate) mod macros;
 pub mod message;
 pub mod sandbox;
-pub mod shell;
 
 pub use agent::{
     AgentProvider, AgentRuntime, AgentSpec, BuiltinToolProvider, LangModelAPISchema,
@@ -18,5 +17,4 @@ pub use message::{
     Message, MessageDeltaOutput, MessageOutput, Part, Role, StreamingToolOutput, ToolDesc,
     ToolDescBuilder, ToolResultDelta,
 };
-pub use sandbox::ToolContext;
-pub use shell::Shell;
+pub use sandbox::{ExecRequest, ExecResult, Sandbox, ToolContext};
