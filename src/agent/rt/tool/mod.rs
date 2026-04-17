@@ -221,17 +221,8 @@ impl ToolSet {
                 self.tools.insert("web_search".to_string(), tool);
                 Ok(self)
             }
-            BuiltinToolProvider::PythonRepl {
-                python_version,
-                venv_path,
-                packages,
-            } => {
-                let config = python_repl::PythonReplConfig {
-                    python_version: python_version.clone(),
-                    venv_path: venv_path.clone(),
-                    packages: packages.clone(),
-                };
-                let tool = python_repl::build_python_repl_tool(config).await?;
+            BuiltinToolProvider::PythonRepl {} => {
+                let tool = python_repl::build_python_repl_tool();
                 self.tools.insert("python_repl".to_string(), tool);
                 Ok(self)
             }

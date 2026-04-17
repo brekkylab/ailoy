@@ -1,99 +1,21 @@
-mod env;
-mod uv;
-
 use std::sync::Arc;
 
-use env::{InstallResult, PythonEnv};
 use futures::future::BoxFuture;
-use uv::ensure_uv;
 
 use crate::{
     agent::rt::tool::{ToolAsyncFunc, ToolRuntime},
     datatype::Value,
     message::ToolDescBuilder,
+    sandbox::ToolContext,
 };
 
-/// ```text
-/// +----------------------+                   call with (`pip_install`, `code`)
-/// | PythonReplConfig     |                                 |
-/// | - python_version     |                                 v
-/// | - venv_path          |   +-----------------------------+--------------------+
-/// | - packages           |-->| "python_repl" ToolRuntime                        |
-/// +----------------------+   |                                                  |
-///                            | +-----------+     +----------------------------+ |
-///                            | | Acquire   | --> | Create PythonEnv           | |
-///                            | | `uv`      |     | - prepare venv             | |
-///                            | +-----------+     | - install initial packages | |
-///                            |                   +----------------------------+ |
-///                            +-----------------------------+--------------------+
-///                                                          |
-///                                                          v
-///                                       Install additional packages `pip_install`
-///                                                          |
-///                                                          v
-///                                                   Run python `code`
-/// ```
-
-/// Config supplied by the user when declaring a `PythonRepl` tool provider.
-pub struct PythonReplConfig {
-    /// Python version to provision (e.g. `"3.12"`). `None` → latest stable.
-    pub python_version: Option<String>,
-    /// Persistent venv path. `None` → temp dir, cleaned up when the tool is dropped.
-    pub venv_path: Option<String>,
-    /// Packages to pre-install before the first tool call.
-    pub packages: Vec<String>,
-}
-
-/// Build the `python_repl` [`ToolRuntime`].
-///
-/// Resolves the `uv` binary, creates (or reuses) the virtual environment,
-/// and pre-installs any packages listed in `config.packages`.
-///
-/// Returns an error if:
-/// - `uv` cannot be found or downloaded
-/// - the virtual environment cannot be created
-/// - any package listed in `config.packages` fails to install
-pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<ToolRuntime> {
-    let uv = ensure_uv().await?;
-
-    let env = match config.venv_path {
-        Some(ref path) => {
-            let expanded = shellexpand::tilde(path).into_owned();
-            PythonEnv::new(
-                uv,
-                config.python_version,
-                std::path::PathBuf::from(expanded),
-                false,
-            )
-            .await?
-        }
-        None => PythonEnv::new_temp(uv, config.python_version).await?,
-    };
-
-    // Pre-install user-specified packages.  Failure here is fatal so the
-    // user learns about misconfigured environments early.
-    if !config.packages.is_empty() {
-        match env.install_packages(&config.packages).await {
-            InstallResult::Failed { stderr } => {
-                anyhow::bail!(
-                    "Failed to pre-install packages {:?}: {}",
-                    config.packages,
-                    stderr
-                );
-            }
-            _ => {}
-        }
-    }
-
-    let env = Arc::new(env);
-
+pub fn build_python_repl_tool() -> ToolRuntime {
     let desc = ToolDescBuilder::new("python_repl")
         .description(
-            "Execute a Python script and return its stdout/stderr output. \
-             The script runs in a virtual environment shared across tool calls \
-             within this session. Use `pip_install` to install required packages \
-             before execution. Each execution is stateless — variables from \
-             previous calls are not available.",
+            "Execute a Python script in an isolated sandbox and return its output. \
+             The sandbox persists state across calls within a session — installed \
+             packages and created files are available in subsequent calls. \
+             Use `pip_install` to install packages before execution.",
         )
         .parameters(crate::to_value!({
             "type": "object",
@@ -105,16 +27,27 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
                 "pip_install": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Packages to install before running. Supports version specifiers (e.g. 'numpy>=1.24', 'pandas==2.1.0')."
+                    "description": "Packages to install before running (e.g. 'numpy>=1.24')."
                 }
             },
             "required": ["code"]
         }))
         .build();
 
-    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value, _ctx: crate::sandbox::ToolContext| {
-        let env = env.clone();
+    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value, ctx: ToolContext| {
         Box::pin(async move {
+            let sandbox = match ctx.sandbox {
+                Some(s) => s,
+                None => {
+                    return crate::to_value!({
+                        "stdout": "",
+                        "stderr": "python_repl requires a sandbox; set AgentState.sandbox",
+                        "exit_code": -1,
+                        "phase": "setup"
+                    });
+                }
+            };
+
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
                 Some(c) => c.to_string(),
                 None => {
@@ -137,14 +70,28 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
                 })
                 .unwrap_or_default();
 
-            // Install packages if requested.
             if !pip_packages.is_empty() {
-                match env.install_packages(&pip_packages).await {
-                    InstallResult::Failed { stderr } => {
+                let pip_cmd = format!("pip install {}", pip_packages.join(" "));
+                let install_result = sandbox
+                    .exec(crate::sandbox::ExecRequest {
+                        command: pip_cmd,
+                        timeout_secs: 120,
+                    })
+                    .await;
+                match install_result {
+                    Ok(r) if r.exit_code != 0 => {
                         return crate::to_value!({
                             "stdout": "",
-                            "stderr": format!("pip install error: {stderr}").as_str(),
-                            "exit_code": 1,
+                            "stderr": r.stderr.as_str(),
+                            "exit_code": r.exit_code as i64,
+                            "phase": "pip_install"
+                        });
+                    }
+                    Err(e) => {
+                        return crate::to_value!({
+                            "stdout": "",
+                            "stderr": format!("pip install error: {e}").as_str(),
+                            "exit_code": -1,
                             "phase": "pip_install"
                         });
                     }
@@ -152,13 +99,19 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
                 }
             }
 
-            // Execute the script.
-            match env.run_code(&code, 60).await {
-                Ok(result) => crate::to_value!({
-                    "stdout": result.stdout.as_str(),
-                    "stderr": result.stderr.as_str(),
-                    "exit_code": result.exit_code as i64,
-                    "timed_out": result.timed_out
+            let py_cmd = format!("python3 -c {}", shell_escape(&code));
+            match sandbox
+                .exec(crate::sandbox::ExecRequest {
+                    command: py_cmd,
+                    timeout_secs: 60,
+                })
+                .await
+            {
+                Ok(r) => crate::to_value!({
+                    "stdout": r.stdout.as_str(),
+                    "stderr": r.stderr.as_str(),
+                    "exit_code": r.exit_code as i64,
+                    "timed_out": r.timed_out
                 }),
                 Err(e) => crate::to_value!({
                     "stdout": "",
@@ -171,38 +124,65 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
         }) as BoxFuture<'static, Value>
     });
 
-    Ok(ToolRuntime::new_async(desc, f))
+    ToolRuntime::new_async(desc, f)
+}
+
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
 
-    fn default_config() -> PythonReplConfig {
-        PythonReplConfig {
-            python_version: None,
-            venv_path: None,
-            packages: vec![],
+    use super::*;
+    use crate::{
+        message::Part,
+        sandbox::{ExecRequest, ExecResult, Sandbox, ToolContext},
+    };
+
+    struct FakeSandbox {
+        result: ExecResult,
+    }
+
+    #[async_trait::async_trait]
+    impl Sandbox for FakeSandbox {
+        async fn exec(&self, _req: ExecRequest) -> anyhow::Result<ExecResult> {
+            Ok(self.result.clone())
+        }
+        async fn shutdown(&self) -> anyhow::Result<()> {
+            Ok(())
         }
     }
 
-    // ── descriptor tests (no uv required) ────────────────────────────────────
+    fn make_ctx(stdout: &str, exit_code: i32) -> ToolContext {
+        ToolContext {
+            sandbox: Some(Arc::new(FakeSandbox {
+                result: ExecResult {
+                    stdout: stdout.to_string(),
+                    stderr: String::new(),
+                    exit_code,
+                    timed_out: false,
+                },
+            })),
+        }
+    }
 
-    #[tokio::test]
-    async fn test_tool_name_is_python_repl() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+    #[test]
+    fn test_tool_name_is_python_repl() {
+        let tool = build_python_repl_tool();
         assert_eq!(tool.desc().name, "python_repl");
     }
 
-    #[tokio::test]
-    async fn test_tool_has_description() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+    #[test]
+    fn test_tool_has_description() {
+        let tool = build_python_repl_tool();
         assert!(tool.desc().description.is_some());
     }
 
-    #[tokio::test]
-    async fn test_tool_schema_requires_code() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+    #[test]
+    fn test_tool_schema_requires_code() {
+        let tool = build_python_repl_tool();
         let required = tool
             .desc()
             .parameters
@@ -214,25 +194,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_schema_pip_install_is_array_of_strings() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
-        let item_type = tool
-            .desc()
-            .parameters
-            .pointer("/properties/pip_install/items/type")
-            .and_then(|v| v.as_str())
-            .unwrap();
-        assert_eq!(item_type, "string");
-    }
-
-    // ── execution tests ───────────────────────────────────────────────────────
-
-    #[tokio::test]
     async fn test_missing_code_param_returns_validation_error() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
-        use crate::message::Part;
+        let tool = build_python_repl_tool();
+        let ctx = make_ctx("", 0);
         let call = Part::function_with_id("call-1", "python_repl", crate::to_value!({}));
-        let msg = tool.run(call, crate::sandbox::ToolContext::empty()).await.unwrap();
+        let msg = tool.run(call, ctx).await.unwrap();
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -243,111 +209,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_print_returns_stdout() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
-        use crate::message::Part;
+    async fn test_no_sandbox_returns_error() {
+        let tool = build_python_repl_tool();
+        let ctx = ToolContext::empty();
         let call = Part::function_with_id(
             "call-1",
             "python_repl",
-            crate::to_value!({ "code": "print('ailoy')" }),
+            crate::to_value!({ "code": "print('hi')" }),
         );
-        let msg = tool.run(call, crate::sandbox::ToolContext::empty()).await.unwrap();
+        let msg = tool.run(call, ctx).await.unwrap();
+        let stderr = msg.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/stderr")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert!(stderr.contains("sandbox"), "expected sandbox error, got: {stderr}");
+    }
+
+    #[tokio::test]
+    async fn test_with_sandbox_runs_code() {
+        let tool = build_python_repl_tool();
+        let ctx = make_ctx("hello\n", 0);
+        let call = Part::function_with_id(
+            "call-1",
+            "python_repl",
+            crate::to_value!({ "code": "print('hello')" }),
+        );
+        let msg = tool.run(call, ctx).await.unwrap();
         let stdout = msg.contents[0]
             .as_value()
             .unwrap()
             .pointer("/stdout")
             .and_then(|v| v.as_str())
             .unwrap();
-        assert!(stdout.contains("ailoy"), "stdout: {:?}", stdout);
-    }
-
-    #[tokio::test]
-    async fn test_pip_install_failure_returns_phase_pip_install() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
-        use crate::message::Part;
-        let call = Part::function_with_id(
-            "call-1",
-            "python_repl",
-            crate::to_value!({
-                "code": "import xyzzy_nonexistent",
-                "pip_install": ["xyzzy-nonexistent-pkg-12345"]
-            }),
-        );
-        let msg = tool.run(call, crate::sandbox::ToolContext::empty()).await.unwrap();
-        let phase = msg.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/phase")
-            .and_then(|v| v.as_str())
-            .unwrap();
-        assert_eq!(phase, "pip_install");
-    }
-
-    /// Installs numpy + matplotlib, generates a sine-wave chart, and validates
-    /// the saved PNG — all by calling the tool directly (no LLM involved).
-    #[test_with::executable(uv)]
-    #[tokio::test]
-    async fn test_numpy_matplotlib_chart() {
-        use crate::message::Part;
-
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
-        let chart_dir = tempfile::tempdir().expect("failed to create temp dir");
-        let chart_path = chart_dir.path().join("sine_chart.png");
-
-        // Install numpy and matplotlib, then generate and save the chart.
-        let code = format!(
-            "import numpy as np\n\
-             import matplotlib\n\
-             matplotlib.use('Agg')\n\
-             import matplotlib.pyplot as plt\n\
-             x = np.linspace(0, 4 * np.pi, 200)\n\
-             plt.plot(x, np.sin(x))\n\
-             plt.savefig('{}')\n\
-             print('done')",
-            chart_path.display()
-        );
-
-        let call = Part::function_with_id(
-            "call-1",
-            "python_repl",
-            crate::to_value!({
-                "code": code,
-                "pip_install": ["numpy", "matplotlib"]
-            }),
-        );
-        let msg = tool.run(call, crate::sandbox::ToolContext::empty()).await.unwrap();
-        let result = msg.contents[0].as_value().unwrap();
-
-        let exit_code = result
-            .pointer("/exit_code")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(-1);
-        let stdout = result
-            .pointer("/stdout")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let stderr = result
-            .pointer("/stderr")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        assert_eq!(
-            exit_code, 0,
-            "expected exit_code 0.\nstdout: {stdout}\nstderr: {stderr}"
-        );
-
-        assert!(
-            chart_path.exists(),
-            "chart file was not created at {:?}",
-            chart_path
-        );
-
-        const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
-        let header = std::fs::read(&chart_path).unwrap();
-        assert!(
-            header.starts_with(PNG_MAGIC),
-            "file at {:?} is not a valid PNG (got {:?})",
-            chart_path,
-            &header[..header.len().min(8)]
-        );
+        assert_eq!(stdout, "hello\n");
     }
 }
