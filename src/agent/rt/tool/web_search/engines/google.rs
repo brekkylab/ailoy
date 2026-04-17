@@ -4,31 +4,33 @@ use scraper::{ElementRef, Html, Selector};
 
 use crate::agent::rt::tool::web_search::engine::{SearchEngine, SearchError, SearchResult};
 
-/// Android Chrome Mobile UAs from the Chrome/50-60 era.
+/// Android Chrome Mobile UAs.
 ///
-/// Google's mobile-lite SSR code path (which contains parseable `data-ved` anchors
-/// with `div[style]` title elements) is consistently triggered by old Android Chrome
-/// UAs.  Modern Chrome UAs (130+) cause Google to return a React-based SPA instead,
-/// whose HTML structure does not match these selectors.
-///
-/// These strings describe real Android browser capabilities and are identical to what
-/// any Chrome/50-60 device sends.  The `GoogleApp/N` suffix is appended per-request
-/// by `random_ua()` to vary the UA across calls.
+/// Google routes requests to a server-rendered HTML code path (rather than the
+/// JS-only SPA) when the UA identifies as the "Google Go" native Android app
+/// (`com.google.android.apps.searchlite`).  The `NSTNWV` suffix — appended by
+/// `random_ua()` — is the token that triggers this path on Google's backend.
 static MOBILE_UAS: &[&str] = &[
-    "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.1379.1923 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.1759.1577 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/52.0.1249.1438 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.1371.1215 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.1301.1032 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.1167.1790 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.1009.1234 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.1071.1894 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.1040.1510 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.1179.1282 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.1263.1435 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.8459.1387 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/43.0.4665.1706 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.8434.1860 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.6976.1608 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.5155.1496 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3280.1347 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.3126.1891 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.3462.1505 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.3958.1590 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2978.1556 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.5114.1832 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.9357.1059 Mobile Safari/537.36",
 ];
 
-/// Pick a random base UA and append a random `GoogleApp/N` token.
+/// Pick a random base UA and append the `NSTNWV` suffix.
+///
+/// `NSTNWV` is the token that identifies the "Google Go" native Android app
+/// (com.google.android.apps.searchlite) to Google's backend.  Without it,
+/// Google serves a JS-only SPA shell; with it, Google serves server-rendered
+/// HTML with parseable `data-ved` anchors and `div[style]` title elements.
 ///
 /// Uses subsecond nanosecond timestamp as a lightweight entropy source —
 /// sufficient for UA rotation; no cryptographic quality needed.
@@ -39,7 +41,7 @@ fn random_ua() -> String {
         .unwrap_or_default()
         .subsec_nanos() as usize;
     let base = MOBILE_UAS[nanos % MOBILE_UAS.len()];
-    format!("{base} GoogleApp/{}", nanos % 10)
+    format!("{base} NSTNWV")
 }
 
 pub struct Google {
