@@ -5,6 +5,7 @@ pub mod agent;
 pub mod datatype;
 pub(crate) mod macros;
 pub mod message;
+pub mod sandbox;
 pub mod shell;
 
 pub use agent::{
@@ -17,4 +18,5 @@ pub use message::{
     Message, MessageDeltaOutput, MessageOutput, Part, Role, StreamingToolOutput, ToolDesc,
     ToolDescBuilder, ToolResultDelta,
 };
+pub use sandbox::ToolContext;
 pub use shell::Shell;
