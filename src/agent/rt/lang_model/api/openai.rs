@@ -17,6 +17,7 @@ impl LangModelProvider {
             schema: LangModelAPISchema::OpenAI,
             url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
             api_key: Some(api_key),
+            max_tokens: None,
         }
     }
 }
@@ -183,7 +184,7 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 .insert("tool_choice".into(), to_value!("auto"));
             body.as_object_mut().unwrap().insert("tools".into(), tools);
         }
-        if let Some(max_tokens) = req.infer_config.max_tokens {
+        if let Some(max_tokens) = req.max_tokens {
             body.as_object_mut()
                 .unwrap()
                 .insert("max_output_tokens".into(), (max_tokens as i64).into());
@@ -341,11 +342,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{LangModelAPISchema, LangModelInferConfig, LangModelProvider, LangModelRuntime},
+        agent::{LangModelAPISchema, LangModelProvider, LangModelRuntime},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
-    fn with_req<F, R>(model: &str, infer_config: LangModelInferConfig, f: F) -> R
+    fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
     where
         F: FnOnce(&LangModelRequest<'_>) -> R,
     {
@@ -359,31 +360,24 @@ mod tests {
             tools: &tools,
             url: &url,
             api_key: &api_key,
-            infer_config: &infer_config,
+            max_tokens,
         };
         f(&req)
     }
 
     #[test]
     fn test_marshal_max_output_tokens_set() {
-        with_req(
-            "gpt-5.4-mini",
-            LangModelInferConfig {
-                max_tokens: Some(1024),
-                ..Default::default()
-            },
-            |req| {
-                let val = OpenAIMarshal::default().marshal(req);
-                let body = val.as_object().unwrap().get("body").unwrap();
-                let max_tokens = body.as_object().unwrap().get("max_output_tokens").unwrap();
-                assert_eq!(max_tokens.as_integer().unwrap(), 1024);
-            },
-        );
+        with_req("gpt-5.4-mini", Some(1024), |req| {
+            let val = OpenAIMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            let max_tokens = body.as_object().unwrap().get("max_output_tokens").unwrap();
+            assert_eq!(max_tokens.as_integer().unwrap(), 1024);
+        });
     }
 
     #[test]
     fn test_marshal_max_output_tokens_absent_when_none() {
-        with_req("gpt-5.4-mini", LangModelInferConfig::default(), |req| {
+        with_req("gpt-5.4-mini", None, |req| {
             let val = OpenAIMarshal::default().marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             assert!(body.as_object().unwrap().get("max_output_tokens").is_none());
@@ -397,13 +391,13 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let url = Url::parse("https://api.openai.com/v1/responses").unwrap();
         let lm = LangModelRuntime::new(
             "gpt-5.4-mini".to_string(),
             LangModelProvider::API {
                 schema: LangModelAPISchema::OpenAI,
-                url,
+                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
                 api_key: Some(api_key),
+                max_tokens: Some(16),
             },
         );
         let messages = vec![
@@ -411,12 +405,8 @@ mod tests {
                 .with_contents([Part::text("Tell me a long story about a dragon.")]),
         ];
         let tools: Vec<ToolDesc> = vec![];
-        let config = LangModelInferConfig {
-            max_tokens: Some(16),
-            ..Default::default()
-        };
 
-        let resp = lm.run(&messages, &tools, &config).await.unwrap();
+        let resp = lm.run(&messages, &tools).await.unwrap();
         println!("{}", resp);
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }

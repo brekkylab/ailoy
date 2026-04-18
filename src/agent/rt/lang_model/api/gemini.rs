@@ -18,6 +18,7 @@ impl LangModelProvider {
             schema: LangModelAPISchema::Gemini,
             url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap(),
             api_key: Some(api_key),
+            max_tokens: None,
         }
     }
 }
@@ -204,7 +205,7 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
         if !tools.is_null() {
             body.as_object_mut().unwrap().insert("tools".into(), tools);
         }
-        if let Some(max_tokens) = req.infer_config.max_tokens {
+        if let Some(max_tokens) = req.max_tokens {
             body.as_object_mut().unwrap().insert(
                 "generationConfig".into(),
                 to_value!({"maxOutputTokens": max_tokens as i64}),
@@ -348,11 +349,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{LangModelInferConfig, LangModelProvider, LangModelRuntime},
+        agent::{LangModelAPISchema, LangModelProvider, LangModelRuntime},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
-    fn with_req<F, R>(model: &str, infer_config: LangModelInferConfig, f: F) -> R
+    fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
     where
         F: FnOnce(&LangModelRequest<'_>) -> R,
     {
@@ -366,44 +367,33 @@ mod tests {
             tools: &tools,
             url: &url,
             api_key: &api_key,
-            infer_config: &infer_config,
+            max_tokens,
         };
         f(&req)
     }
 
     #[test]
     fn test_marshal_max_output_tokens_set() {
-        with_req(
-            "gemini-2.5-flash-lite",
-            LangModelInferConfig {
-                max_tokens: Some(2048),
-                ..Default::default()
-            },
-            |req| {
-                let val = GeminiMarshal::default().marshal(req);
-                let body = val.as_object().unwrap().get("body").unwrap();
-                let gen_config = body.as_object().unwrap().get("generationConfig").unwrap();
-                let max_tokens = gen_config
-                    .as_object()
-                    .unwrap()
-                    .get("maxOutputTokens")
-                    .unwrap();
-                assert_eq!(max_tokens.as_integer().unwrap(), 2048);
-            },
-        );
+        with_req("gemini-2.5-flash-lite", Some(2048), |req| {
+            let val = GeminiMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            let gen_config = body.as_object().unwrap().get("generationConfig").unwrap();
+            let max_tokens = gen_config
+                .as_object()
+                .unwrap()
+                .get("maxOutputTokens")
+                .unwrap();
+            assert_eq!(max_tokens.as_integer().unwrap(), 2048);
+        });
     }
 
     #[test]
     fn test_marshal_max_output_tokens_absent_when_none() {
-        with_req(
-            "gemini-2.5-flash-lite",
-            LangModelInferConfig::default(),
-            |req| {
-                let val = GeminiMarshal::default().marshal(req);
-                let body = val.as_object().unwrap().get("body").unwrap();
-                assert!(body.as_object().unwrap().get("generationConfig").is_none());
-            },
-        );
+        with_req("gemini-2.5-flash-lite", None, |req| {
+            let val = GeminiMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            assert!(body.as_object().unwrap().get("generationConfig").is_none());
+        });
     }
 
     /// Verifies that max_tokens is respected by the Gemini API (finishReason: MAX_TOKENS).
@@ -414,19 +404,21 @@ mod tests {
 
         let lm = LangModelRuntime::new(
             "gemini-2.5-flash-lite".to_string(),
-            LangModelProvider::gemini(api_key),
+            LangModelProvider::API {
+                schema: LangModelAPISchema::Gemini,
+                url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
+                    .unwrap(),
+                api_key: Some(api_key),
+                max_tokens: Some(5),
+            },
         );
         let messages = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("Tell me a long story about a dragon.")]),
         ];
         let tools: Vec<ToolDesc> = vec![];
-        let config = LangModelInferConfig {
-            max_tokens: Some(5),
-            ..Default::default()
-        };
 
-        let resp = lm.run(&messages, &tools, &config).await.unwrap();
+        let resp = lm.run(&messages, &tools).await.unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }
