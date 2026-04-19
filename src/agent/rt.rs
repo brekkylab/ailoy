@@ -129,7 +129,7 @@ impl AgentRuntime {
                         None => Err(anyhow::anyhow!("No tool found for '{}'", tool_name))?,
                     };
 
-                    let mut stream = func.stream(tool_call)?;
+                    let mut stream = func.call(tool_call)?;
 
                     // Buffer one item so we can push the last one to history.
                     // Intermediate outputs are tool-internal messages (depth + 1).

@@ -190,7 +190,7 @@ mod tests {
     // Helper: run a tool call and return the result message.
     async fn run(tool: &ToolRuntime, call: crate::message::Part) -> crate::message::Message {
         tool.get_func()
-            .stream(call)
+            .call(call)
             .unwrap()
             .next()
             .await

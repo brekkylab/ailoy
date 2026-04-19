@@ -71,7 +71,7 @@ impl ToolFunc {
         f.into_tool_func()
     }
 
-    pub fn stream(&self, tool_call: Part) -> anyhow::Result<BoxStream<'static, MessageOutput>> {
+    pub fn call(&self, tool_call: Part) -> anyhow::Result<BoxStream<'static, MessageOutput>> {
         let (id, _, args) = tool_call
             .as_function()
             .ok_or(anyhow::anyhow!("Part is not function"))?;
@@ -177,7 +177,7 @@ mod tests {
     async fn test_sync() {
         let f = ToolFunc::new(|_args: Value| Value::string("ok"));
         let out = f
-            .stream(tool_call(Value::object_empty()))
+            .call(tool_call(Value::object_empty()))
             .unwrap()
             .next()
             .await
@@ -194,7 +194,7 @@ mod tests {
         let f = ToolFunc::new(|args: Value| args);
         let input = Value::integer(99);
         let out = f
-            .stream(tool_call(input.clone()))
+            .call(tool_call(input.clone()))
             .unwrap()
             .next()
             .await
@@ -206,7 +206,7 @@ mod tests {
     async fn test_async() {
         let f = ToolFunc::new(|_args: Value| async move { Value::bool(true) });
         let out = f
-            .stream(tool_call(Value::object_empty()))
+            .call(tool_call(Value::object_empty()))
             .unwrap()
             .next()
             .await
