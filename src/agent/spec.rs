@@ -127,13 +127,13 @@ impl AgentProvider {
     /// Register all OpenAI models under the `openai/*` namespace via the Responses API.
     ///
     /// Use model names like `"openai/gpt-4o"` or `"openai/o3-mini"` in [`AgentSpec`].
-    pub fn model_openai(mut self, api_key: String) -> Self {
+    pub fn model_openai(mut self, api_key: impl Into<String>) -> Self {
         self.models.insert(
             "openai/*".to_string(),
             LangModelProvider::API {
                 schema: LangModelAPISchema::ChatCompletion,
                 url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
-                api_key: Some(api_key),
+                api_key: Some(api_key.into()),
                 max_tokens: None,
             },
         );
@@ -143,13 +143,13 @@ impl AgentProvider {
     /// Register all Claude models under the `anthropic/*` namespace via the Messages API.
     ///
     /// Use model names like `"anthropic/claude-sonnet-4-6"` in [`AgentSpec`].
-    pub fn model_claude(mut self, api_key: String) -> Self {
+    pub fn model_claude(mut self, api_key: impl Into<String>) -> Self {
         self.models.insert(
             "anthropic/claude-*".to_string(),
             LangModelProvider::API {
                 schema: LangModelAPISchema::Anthropic,
                 url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
-                api_key: Some(api_key),
+                api_key: Some(api_key.into()),
                 max_tokens: None,
             },
         );
@@ -159,14 +159,14 @@ impl AgentProvider {
     /// Register all Gemini models under the `google/*` namespace via the Generative Language API.
     ///
     /// Use model names like `"google/gemini-2.0-flash"` in [`AgentSpec`].
-    pub fn model_gemini(mut self, api_key: String) -> Self {
+    pub fn model_gemini(mut self, api_key: impl Into<String>) -> Self {
         self.models.insert(
             "google/gemini-*".to_string(),
             LangModelProvider::API {
                 schema: LangModelAPISchema::Gemini,
                 url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
                     .unwrap(),
-                api_key: Some(api_key),
+                api_key: Some(api_key.into()),
                 max_tokens: None,
             },
         );
