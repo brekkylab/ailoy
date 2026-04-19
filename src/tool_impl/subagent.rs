@@ -57,7 +57,7 @@ pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<AgentRuntime>>) -> T
 
             {
                 let mut agent_guard = agent.lock().await;
-                let mut strm = agent_guard.stream_turn(query);
+                let mut strm = agent_guard.run(query);
                 while let Some(result) = strm.next().await {
                     match result {
                         Ok(output) => {

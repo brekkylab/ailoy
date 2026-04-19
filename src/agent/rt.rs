@@ -92,7 +92,7 @@ impl AgentRuntime {
     }
 
     /// Stream all events for a single agent turn.
-    pub fn stream_turn(
+    pub fn run(
         &mut self,
         query: Message,
     ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageOutput>> + Send + '_>> {
@@ -144,7 +144,7 @@ impl AgentRuntime {
 
                     match last {
                         Some(mut item) => {
-                            item.depth = Some(0);
+                            item.depth = None;
                             self.state.history.push(item.message.clone());
                             yield item;
                         }
@@ -215,7 +215,7 @@ mod tests {
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the current temperature in Seoul?")]);
 
-        let mut strm = agent.stream_turn(query);
+        let mut strm = agent.run(query);
         let mut events = vec![];
         while let Some(event) = strm.next().await {
             events.push(event.unwrap());
@@ -287,7 +287,7 @@ mod tests {
             Message::new(Role::User).with_contents([Part::text("What is 123 multiplied by 7?")]);
 
         {
-            let mut strm = main_agent.stream_turn(query);
+            let mut strm = main_agent.run(query);
             while let Some(event) = strm.next().await {
                 event.unwrap();
             }
@@ -312,7 +312,7 @@ mod tests {
         );
     }
 
-    /// Verifies that stream_turn() emits intermediate sub-agent outputs (depth > 0)
+    /// Verifies that run() emits intermediate sub-agent outputs (depth > 0)
     /// followed by a final Role::Tool result (depth == 0) when using a streaming
     /// subagent tool.
     #[test_with::env(OPENAI_API_KEY)]
@@ -354,7 +354,7 @@ mod tests {
 
         let query = Message::new(Role::User).with_contents([Part::text("What is 99 plus 1?")]);
 
-        let mut strm = main_agent.stream_turn(query);
+        let mut strm = main_agent.run(query);
         let mut tool_deltas = 0usize;
         let mut tool_results = 0usize;
 
@@ -400,7 +400,7 @@ mod tests {
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the temperature in Seoul?")]);
 
-        let mut strm = agent.stream_turn(query);
+        let mut strm = agent.run(query);
         let mut events = vec![];
         while let Some(event) = strm.next().await {
             events.push(event.unwrap());
@@ -511,7 +511,7 @@ mod tests {
         )]);
 
         {
-            let mut strm = agent.stream_turn(query);
+            let mut strm = agent.run(query);
             while let Some(event) = strm.next().await {
                 event.unwrap();
             }
@@ -632,7 +632,7 @@ mod tests {
         )]);
 
         {
-            let mut strm = agent.stream_turn(query);
+            let mut strm = agent.run(query);
             while let Some(result) = strm.next().await {
                 let _ = result; // ignore errors produced by the panic
             }
