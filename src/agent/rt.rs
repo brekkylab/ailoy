@@ -4,10 +4,10 @@ use futures::{Stream, StreamExt as _};
 
 use crate::{
     agent::{AgentProvider, AgentSpec},
-    lang_model::LangModelRuntime,
+    lang_model::LangModel,
     message::{FinishReason, Message, MessageOutput, Part, Role},
     shell::Shell,
-    tool::{ToolRuntime, ToolSet},
+    tool::{Tool, ToolSet},
 };
 
 pub struct AgentState {
@@ -37,13 +37,13 @@ impl AgentState {
     }
 }
 
-pub struct AgentRuntime {
-    lm: LangModelRuntime,
-    tools: Vec<ToolRuntime>,
+pub struct Agent {
+    lm: LangModel,
+    tools: Vec<Tool>,
     pub state: AgentState,
 }
 
-impl AgentRuntime {
+impl Agent {
     /// Return the full message history accumulated so far.
     pub fn get_history(&self) -> &[Message] {
         &self.state.history
@@ -67,7 +67,7 @@ impl AgentRuntime {
             .clone();
 
         // Collect tools from tool_set; error if any tool is missing
-        let tools: Vec<ToolRuntime> = spec
+        let tools: Vec<Tool> = spec
             .tools
             .iter()
             .map(|n| {
@@ -85,7 +85,7 @@ impl AgentRuntime {
             .unwrap_or_default();
 
         Ok(Self {
-            lm: LangModelRuntime::new(spec.model.clone(), lm_provider),
+            lm: LangModel::new(spec.model.clone(), lm_provider),
             tools,
             state: AgentState::with_history(history),
         })
@@ -145,6 +145,7 @@ impl AgentRuntime {
                     match last {
                         Some(mut item) => {
                             item.depth = None;
+                            item.message.role = Role::Tool;
                             self.state.history.push(item.message.clone());
                             yield item;
                         }
@@ -210,7 +211,7 @@ mod tests {
 
         let provider = AgentProvider::new().model_openai(api_key);
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
-        let mut agent = AgentRuntime::try_from_toolset(spec, provider, &tool_set).unwrap();
+        let mut agent = Agent::try_from_toolset(spec, provider, &tool_set).unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the current temperature in Seoul?")]);
@@ -245,7 +246,7 @@ mod tests {
     /// message (proof that the subagent tool was called), and that the final reply is text.
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
-    async fn test_delegate_to_in_memory_subagent() {
+    async fn test_delegate_to_subagent() {
         dotenvy::dotenv().ok();
 
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
@@ -256,7 +257,7 @@ mod tests {
             "You are a calculator. Answer math questions with the numeric result only.".to_string(),
         );
         let sub_agent =
-            AgentRuntime::try_from_toolset(sub_spec, provider.clone(), &ToolSet::new()).unwrap();
+            Agent::try_from_toolset(sub_spec, provider.clone(), &ToolSet::new()).unwrap();
         let sub_agent = Arc::new(Mutex::new(sub_agent));
 
         let card = AgentCard {
@@ -276,8 +277,14 @@ mod tests {
             sub_tool.get_func(),
         );
 
-        let mut main_agent = AgentRuntime::try_from_toolset(
-            AgentSpec::new("openai/gpt-4o-mini").tool("math-agent"),
+        let mut main_agent = Agent::try_from_toolset(
+            AgentSpec::new("openai/gpt-4o-mini")
+                .tool("math-agent")
+                .instruction(
+                    "You are a coordinator. For any arithmetic or math question, \
+                     always delegate to the math-agent tool."
+                        .to_string(),
+                ),
             provider,
             &tool_set,
         )
@@ -289,7 +296,8 @@ mod tests {
         {
             let mut strm = main_agent.run(query);
             while let Some(event) = strm.next().await {
-                event.unwrap();
+                let event = event.unwrap();
+                println!("{}", event);
             }
         }
 
@@ -328,7 +336,7 @@ mod tests {
             "You are a calculator. Answer math questions with the numeric result only.".to_string(),
         );
         let sub_agent =
-            AgentRuntime::try_from_toolset(sub_spec, provider.clone(), &ToolSet::new()).unwrap();
+            Agent::try_from_toolset(sub_spec, provider.clone(), &ToolSet::new()).unwrap();
         let sub_agent = Arc::new(Mutex::new(sub_agent));
 
         let card = AgentCard {
@@ -345,7 +353,7 @@ mod tests {
             sub_tool.get_func(),
         );
 
-        let mut main_agent = AgentRuntime::try_from_toolset(
+        let mut main_agent = Agent::try_from_toolset(
             AgentSpec::new("openai/gpt-4o-mini").tool("math-agent"),
             provider,
             &tool_set,
@@ -395,7 +403,7 @@ mod tests {
 
         let provider = AgentProvider::new().model_openai(api_key);
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
-        let mut agent = AgentRuntime::try_from_toolset(spec, provider, &tool_set).unwrap();
+        let mut agent = Agent::try_from_toolset(spec, provider, &tool_set).unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the temperature in Seoul?")]);
@@ -492,7 +500,7 @@ mod tests {
         tool_set.insert("temperature_slow", slow_desc, slow_fn);
 
         let provider = AgentProvider::new().model_claude(api_key);
-        let mut agent = AgentRuntime::try_from_toolset(
+        let mut agent = Agent::try_from_toolset(
             AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
                 .tools(["temperature_fast", "temperature_slow"])
                 .instruction(
@@ -614,7 +622,7 @@ mod tests {
         tool_set.insert("get_traffic", bad_desc, bad_fn);
 
         let provider = AgentProvider::new().model_openai(api_key);
-        let mut agent = AgentRuntime::try_from_toolset(
+        let mut agent = Agent::try_from_toolset(
             AgentSpec::new("openai/gpt-4o-mini")
                 .tools(["get_weather", "get_traffic"])
                 .instruction(

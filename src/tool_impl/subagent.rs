@@ -4,20 +4,20 @@ use futures::StreamExt as _;
 use tokio::sync::Mutex;
 
 use crate::{
-    agent::AgentRuntime,
+    agent::Agent,
     datatype::Value,
     message::{AgentCard, FinishReason, Message, MessageOutput, Part, Role, ToolDescBuilder},
-    tool::{ToolFunc, ToolRuntime},
+    tool::{Tool, ToolFunc},
 };
 
-/// Creates a [`ToolRuntime`] that wraps `agent` as a callable sub-agent tool.
+/// Creates a [`Tool`] that wraps `agent` as a callable sub-agent tool.
 ///
 /// The tool accepts a single `string` argument (the task for the sub-agent) and:
 /// 1. Streams all [`MessageOutput`] items produced during the sub-agent's turn as
 ///    intermediate outputs. The outer agent's [`stream_turn`] assigns these `depth + 1`.
 /// 2. Emits a final `Role::Tool` [`MessageOutput`] whose text content is the sub-agent's
 ///    last assistant answer. The outer agent assigns this `depth 0` and pushes it to history.
-pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<AgentRuntime>>) -> ToolRuntime {
+pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
     let description = if card.skills.is_empty() {
         card.description
     } else {
@@ -100,5 +100,5 @@ pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<AgentRuntime>>) -> T
         }) as futures::stream::BoxStream<'static, MessageOutput>
     }));
 
-    ToolRuntime::new(desc, Arc::new(f))
+    Tool::new(desc, Arc::new(f))
 }

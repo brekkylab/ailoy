@@ -297,7 +297,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang_model::{LangModelAPISchema, LangModelProvider, LangModelRuntime},
+        lang_model::{LangModelAPISchema, LangModelProvider, LangModel},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
@@ -354,7 +354,7 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let lm = LangModelRuntime::new(
+        let lm = LangModel::new(
             "gpt-4.1-mini".to_string(),
             LangModelProvider::API {
                 schema: LangModelAPISchema::ChatCompletion,

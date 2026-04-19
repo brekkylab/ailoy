@@ -6,17 +6,17 @@ use url::Url;
 use crate::{
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role, ToolDescBuilder},
-    tool::{ToolFunc, ToolRuntime},
+    tool::{Tool, ToolFunc},
 };
 
 // ── Tool constructor ──────────────────────────────────────────────────────────
 
-/// Build a [`ToolRuntime`] that delegates to a remote A2A agent.
+/// Build a [`Tool`] that delegates to a remote A2A agent.
 ///
 /// Eagerly fetches the agent card from `{url}/.well-known/agent-card.json` so
 /// that the tool name and description are known at startup.  Each call sends a
 /// JSON-RPC `message/send` request and returns the agent's text response.
-pub(crate) async fn make_a2a_tool(url: Url) -> anyhow::Result<ToolRuntime> {
+pub(crate) async fn make_a2a_tool(url: Url) -> anyhow::Result<Tool> {
     let base_url = url.to_string();
     let card = discover(&base_url).await?;
 
@@ -71,7 +71,7 @@ pub(crate) async fn make_a2a_tool(url: Url) -> anyhow::Result<ToolRuntime> {
         }
     });
 
-    Ok(ToolRuntime::new(desc, Arc::new(f)))
+    Ok(Tool::new(desc, Arc::new(f)))
 }
 
 // ── Agent Discovery ──────────────────────────────────────────────────────────

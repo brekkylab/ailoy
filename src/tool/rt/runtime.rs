@@ -3,12 +3,12 @@ use std::sync::Arc;
 use crate::{message::ToolDesc, tool::ToolFunc};
 
 #[derive(Clone)]
-pub struct ToolRuntime {
+pub struct Tool {
     desc: ToolDesc,
     f: Arc<ToolFunc>,
 }
 
-impl ToolRuntime {
+impl Tool {
     pub(crate) fn new(desc: ToolDesc, f: Arc<ToolFunc>) -> Self {
         Self { desc, f }
     }

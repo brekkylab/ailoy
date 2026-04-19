@@ -345,7 +345,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang_model::{LangModelAPISchema, LangModelProvider, LangModelRuntime},
+        lang_model::{LangModelAPISchema, LangModelProvider, LangModel},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
@@ -396,7 +396,7 @@ mod tests {
         let api_key =
             std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
 
-        let lm = LangModelRuntime::new(
+        let lm = LangModel::new(
             "claude-haiku-4-5".to_string(),
             LangModelProvider::API {
                 schema: LangModelAPISchema::Anthropic,

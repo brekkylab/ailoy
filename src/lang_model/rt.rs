@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Runtime
-pub struct LangModelRuntime {
+pub struct LangModel {
     model: String,
     provider: LangModelProvider,
 }
@@ -23,7 +23,7 @@ pub(crate) struct LangModelRequest<'a> {
     pub max_tokens: Option<u64>,
 }
 
-impl LangModelRuntime {
+impl LangModel {
     pub fn new(model: String, provider: LangModelProvider) -> Self {
         Self { model, provider }
     }
@@ -148,8 +148,8 @@ mod tests {
         to_value,
     };
 
-    fn openai_chat_completion(model: &str, api_key: String) -> LangModelRuntime {
-        LangModelRuntime::new(
+    fn openai_chat_completion(model: &str, api_key: String) -> LangModel {
+        LangModel::new(
             model.to_string(),
             LangModelProvider::chat_completion(
                 "https://api.openai.com/v1/chat/completions",

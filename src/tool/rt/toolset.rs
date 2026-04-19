@@ -3,9 +3,9 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::{
-    agent::{AgentProvider, AgentRuntime},
+    agent::{Agent, AgentProvider},
     message::ToolDesc,
-    tool::{BuiltinToolProvider, MCPToolProvider, ToolFunc, ToolProvider, ToolRuntime},
+    tool::{BuiltinToolProvider, MCPToolProvider, Tool, ToolFunc, ToolProvider},
     tool_impl::{
         builtins::{
             PythonReplConfig, build_python_repl_tool, make_web_search_func,
@@ -21,17 +21,7 @@ pub struct ToolSet {
 }
 
 impl ToolSet {
-    /// Build a [`ToolSet`] from the tool providers declared in `provider`.
-    ///
-    /// Uses a two-pass strategy to avoid infinite recursion:
-    ///
-    /// 1. **Pass 1** — all non-SubAgent providers are initialised first.
-    /// 2. **Pass 2** — each `SubAgent` provider creates an [`AgentRuntime`] that
-    ///    receives the tool set produced by pass 1, so sub-agents can call any
-    ///    regular tool but cannot themselves contain further sub-agents.
-    /// Create an empty [`ToolSet`].
-    ///
-    /// Useful in tests or when tools are registered manually via [`insert`](Self::insert).
+    /// Build an empty [`ToolSet`].
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
@@ -43,7 +33,7 @@ impl ToolSet {
     /// Uses a two-pass strategy to avoid infinite recursion:
     ///
     /// 1. **Pass 1** — all non-SubAgent providers are initialised first.
-    /// 2. **Pass 2** — each `SubAgent` provider creates an [`AgentRuntime`] that
+    /// 2. **Pass 2** — each `SubAgent` provider creates an [`Agent`] that
     ///    receives the tool set produced by pass 1, so sub-agents can call any
     ///    regular tool but cannot themselves contain further sub-agents.
     pub async fn from_providers(provider: &AgentProvider) -> anyhow::Result<Self> {
@@ -106,7 +96,7 @@ impl ToolSet {
                 })?;
                 let tool_name = card.name.clone();
                 let sub_agent =
-                    AgentRuntime::try_from_toolset(spec.clone(), provider.clone(), &this)?;
+                    Agent::try_from_toolset(spec.clone(), provider.clone(), &this)?;
                 let sub_agent = Arc::new(Mutex::new(sub_agent));
                 let tool_runtime = make_subagent_tool(card, sub_agent);
                 this.tools.insert(
@@ -122,7 +112,7 @@ impl ToolSet {
     /// Insert a tool by key.
     ///
     /// `f` can be a [`ToolFunc`] (wrapped in an `Arc` automatically) or an
-    /// existing `Arc<ToolFunc>` — e.g. one obtained from [`ToolRuntime::get_func`].
+    /// existing `Arc<ToolFunc>` — e.g. one obtained from [`Tool::get_func`].
     pub fn insert(
         &mut self,
         key: impl Into<String>,
@@ -136,10 +126,10 @@ impl ToolSet {
         self.tools.remove(key.as_ref())
     }
 
-    pub fn make_runtime(&self, key: impl AsRef<str>) -> Option<ToolRuntime> {
+    pub fn make_runtime(&self, key: impl AsRef<str>) -> Option<Tool> {
         self.tools
             .get(key.as_ref())
-            .map(|(desc, f)| ToolRuntime::new(desc.clone(), Arc::clone(f)))
+            .map(|(desc, f)| Tool::new(desc.clone(), Arc::clone(f)))
     }
 
     /// Merge another [`ToolSet`] into this one.
@@ -163,6 +153,14 @@ impl ToolSet {
     /// Return the names of all registered tools.
     pub fn names(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
+    }
+}
+
+impl FromIterator<(String, (ToolDesc, Arc<ToolFunc>))> for ToolSet {
+    fn from_iter<I: IntoIterator<Item = (String, (ToolDesc, Arc<ToolFunc>))>>(iter: I) -> Self {
+        Self {
+            tools: iter.into_iter().collect(),
+        }
     }
 }
 

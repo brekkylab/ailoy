@@ -9,7 +9,7 @@ use uv::ensure_uv;
 use crate::{
     datatype::Value,
     message::ToolDescBuilder,
-    tool::{ToolFunc, ToolRuntime},
+    tool::{Tool, ToolFunc},
 };
 
 /// ```text
@@ -17,7 +17,7 @@ use crate::{
 /// | PythonReplConfig     |                                 |
 /// | - python_version     |                                 v
 /// | - venv_path          |   +-----------------------------+--------------------+
-/// | - packages           |-->| "python_repl" ToolRuntime                        |
+/// | - packages           |-->| "python_repl" Tool                        |
 /// +----------------------+   |                                                  |
 ///                            | +-----------+     +----------------------------+ |
 ///                            | | Acquire   | --> | Create PythonEnv           | |
@@ -43,7 +43,7 @@ pub struct PythonReplConfig {
     pub packages: Vec<String>,
 }
 
-/// Build the `python_repl` [`ToolRuntime`].
+/// Build the `python_repl` [`Tool`].
 ///
 /// Resolves the `uv` binary, creates (or reuses) the virtual environment,
 /// and pre-installs any packages listed in `config.packages`.
@@ -52,7 +52,7 @@ pub struct PythonReplConfig {
 /// - `uv` cannot be found or downloaded
 /// - the virtual environment cannot be created
 /// - any package listed in `config.packages` fails to install
-pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<ToolRuntime> {
+pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<Tool> {
     let uv = ensure_uv().await?;
 
     let env = match config.venv_path {
@@ -170,7 +170,7 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
         }
     });
 
-    Ok(ToolRuntime::new(desc, Arc::new(f)))
+    Ok(Tool::new(desc, Arc::new(f)))
 }
 
 #[cfg(test)]
@@ -188,7 +188,7 @@ mod tests {
     }
 
     // Helper: run a tool call and return the result message.
-    async fn run(tool: &ToolRuntime, call: crate::message::Part) -> crate::message::Message {
+    async fn run(tool: &Tool, call: crate::message::Part) -> crate::message::Message {
         tool.get_func()
             .call(call)
             .unwrap()

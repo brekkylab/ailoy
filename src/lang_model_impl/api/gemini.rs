@@ -348,7 +348,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang_model::{LangModelAPISchema, LangModelProvider, LangModelRuntime},
+        lang_model::{LangModelAPISchema, LangModelProvider, LangModel},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
@@ -396,12 +396,13 @@ mod tests {
     }
 
     /// Verifies that max_tokens is respected by the Gemini API (finishReason: MAX_TOKENS).
+    #[test_with::env(GEMINI_API_KEY)]
     #[tokio::test]
     async fn test_run_max_tokens() {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set in .env");
 
-        let lm = LangModelRuntime::new(
+        let lm = LangModel::new(
             "gemini-2.5-flash-lite".to_string(),
             LangModelProvider::API {
                 schema: LangModelAPISchema::Gemini,
