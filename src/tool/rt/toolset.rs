@@ -141,4 +141,36 @@ impl ToolSet {
             .get(key.as_ref())
             .map(|(desc, f)| ToolRuntime::new(desc.clone(), Arc::clone(f)))
     }
+
+    /// Merge another [`ToolSet`] into this one.
+    ///
+    /// Tools from `other` are inserted into `self`. If a key already exists in
+    /// `self`, the entry from `other` overwrites it.
+    pub fn merge(&mut self, other: ToolSet) {
+        self.tools.extend(other.tools);
+    }
+
+    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, String, (ToolDesc, Arc<ToolFunc>)> {
+        self.tools.iter()
+    }
+
+    pub fn iter_mut(
+        &mut self,
+    ) -> std::collections::hash_map::IterMut<'_, String, (ToolDesc, Arc<ToolFunc>)> {
+        self.tools.iter_mut()
+    }
+
+    /// Return the names of all registered tools.
+    pub fn names(&self) -> Vec<String> {
+        self.tools.keys().cloned().collect()
+    }
+}
+
+impl IntoIterator for ToolSet {
+    type Item = (String, (ToolDesc, Arc<ToolFunc>));
+    type IntoIter = std::collections::hash_map::IntoIter<String, (ToolDesc, Arc<ToolFunc>)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.tools.into_iter()
+    }
 }
