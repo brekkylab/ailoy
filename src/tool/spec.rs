@@ -47,7 +47,7 @@ pub enum ToolProvider {
     /// The `spec` must have a [`card`](AgentSpec::card) — its `name` becomes
     /// the tool name the orchestrating agent calls, and its `description` is
     /// shown to the model to help it decide when to delegate.
-    SubAgent { spec: AgentSpec },
+    SubAgent(AgentSpec),
 
     /// A remote A2A (Agent-to-Agent) server exposed as a callable tool.
     ///

@@ -238,7 +238,7 @@ impl AgentProvider {
     /// becomes the tool name that the orchestrating agent calls, and its
     /// `description` is shown to the model to help it decide when to delegate.
     pub fn tool_sub_agent(mut self, spec: AgentSpec) -> Self {
-        self.tools.push(ToolProvider::SubAgent { spec });
+        self.tools.push(ToolProvider::SubAgent(spec));
         self
     }
 

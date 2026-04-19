@@ -97,7 +97,7 @@ impl ToolSet {
 
         // Pass 2: initialise SubAgent tools using the toolset built above.
         for tool_provider in &provider.tools {
-            if let ToolProvider::SubAgent { spec } = tool_provider {
+            if let ToolProvider::SubAgent(spec) = tool_provider {
                 let card = spec.card.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "SubAgent spec must have a card (name + description) to be \
