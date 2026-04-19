@@ -23,6 +23,7 @@ use crate::{
 ///
 /// # Example
 /// ```rust
+/// # use ailoy::message::PartDeltaFunction;
 /// let delta = PartDeltaFunction::WithStringArgs {
 ///     name: "translate".into(),
 ///     arguments: r#"{"text":"hi"}"#.into(),
@@ -46,6 +47,7 @@ pub enum PartDeltaFunction {
 ///
 /// ## Rust
 /// ```rust
+/// # use ailoy::message::{PartDelta, Delta};
 /// let d1 = PartDelta::Text { text: "Hel".into() };
 /// let d2 = PartDelta::Text { text: "lo".into() };
 /// let merged = d1.accumulate(d2).unwrap();

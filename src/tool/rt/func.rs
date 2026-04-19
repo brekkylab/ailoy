@@ -18,7 +18,7 @@
 //!
 //! - **[`IntoToolFunc`]** is the *construction* interface.  It is a trait
 //!   implemented for common function shapes, letting callers pass plain closures
-//!   directly to [`ToolRuntime::new`] without any boxing or naming.
+//!   directly to [`Tool::new`] without any boxing or naming.
 //!
 //! # Phantom marker pattern
 //!
@@ -61,11 +61,13 @@ impl ToolFunc {
     /// # Examples
     ///
     /// ```rust
+    /// # use ailoy::tool::ToolFunc;
+    /// # use ailoy::datatype::Value;
     /// // sync
-    /// let f = ToolFunc::new(|args| Value::string("ok"));
+    /// let f = ToolFunc::new(|_args: Value| Value::string("ok"));
     ///
     /// // async
-    /// let f = ToolFunc::new(|args| async move { Value::string("ok") });
+    /// let f = ToolFunc::new(|_args: Value| async move { Value::string("ok") });
     /// ```
     pub fn new<M>(f: impl IntoToolFunc<M>) -> Self {
         f.into_tool_func()

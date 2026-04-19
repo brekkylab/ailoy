@@ -36,6 +36,7 @@ pub enum Role {
 ///
 /// ## Rust
 /// ```rust
+/// # use ailoy::message::{Message, Part, Role};
 /// let msg = Message::new(Role::User).with_contents([Part::text("hello")]);
 /// assert_eq!(msg.role, Role::User);
 /// assert_eq!(msg.contents.len(), 1);

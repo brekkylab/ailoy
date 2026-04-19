@@ -22,6 +22,7 @@ use crate::message::{Delta, FinishReason, Message, MessageOutput, PartDelta, Rol
 ///
 /// # Examples
 /// ```rust
+/// # use ailoy::message::{MessageDelta, PartDelta, Role, Delta};
 /// let d1 = MessageDelta::new().with_role(Role::Assistant).with_contents([PartDelta::Text { text: "Hel".into() }]);
 /// let d2 = MessageDelta::new().with_contents([PartDelta::Text { text: "lo".into() }]);
 ///
@@ -261,7 +262,8 @@ impl fmt::Display for MessageDelta {
 ///
 /// # Examples
 /// ```rust
-/// let mut out = MessageOutput::new();
+/// # use ailoy::message::{MessageDeltaOutput, MessageDelta, PartDelta, Role};
+/// let mut out = MessageDeltaOutput::new();
 /// out.delta = MessageDelta::new().with_role(Role::Assistant).with_contents([PartDelta::Text { text: "Hi".into() }]);
 /// assert!(out.finish_reason.is_none());
 /// ```

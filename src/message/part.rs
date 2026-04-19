@@ -22,12 +22,9 @@ pub struct PartFunction {
 ///
 /// # Example
 /// ```rust
-/// let part = Part::image_binary(640, 480, "rgb", (0..640*480*3).map(|i| (i % 255) as u8)).unwrap();
-///
-/// if let Some(img) = part.as_image() {
-///     assert_eq!(img.height(), 640);
-///     assert_eq!(img.width(), 480);
-/// }
+/// # use ailoy::message::Part;
+/// let part = Part::image_url("https://example.com/image.png".to_string()).unwrap();
+/// assert!(part.is_image());
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -52,6 +49,7 @@ pub enum PartImage {
 ///
 /// ## Rust
 /// ```rust
+/// # use ailoy::message::Part;
 /// let part = Part::text("Hello, world!");
 /// assert!(part.is_text());
 /// ```
@@ -74,9 +72,11 @@ pub enum Part {
     ///
     /// # Examples
     /// ```rust
+    /// # use ailoy::message::PartFunction;
+    /// # use ailoy::to_value;
     /// let f = PartFunction {
     ///     name: "translate".to_string(),
-    ///     arguments: Value::from_json(r#"{"source": "hello", "lang": "cn"}"#).unwrap(),
+    ///     arguments: to_value!({"source": "hello", "lang": "cn"}),
     /// };
     /// ```
     Function { id: String, function: PartFunction },
