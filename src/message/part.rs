@@ -79,10 +79,7 @@ pub enum Part {
     ///     arguments: Value::from_json(r#"{"source": "hello", "lang": "cn"}"#).unwrap(),
     /// };
     /// ```
-    Function {
-        id: Option<String>,
-        function: PartFunction,
-    },
+    Function { id: String, function: PartFunction },
 
     /// Holds a structured data value, typically considered as a JSON structure.
     Value { value: Value },
@@ -98,23 +95,13 @@ impl Part {
         Self::Text { text: v.into() }
     }
 
-    pub fn function(name: impl Into<String>, arguments: impl Into<Value>) -> Self {
-        Self::Function {
-            id: None,
-            function: PartFunction {
-                name: name.into(),
-                arguments: arguments.into(),
-            },
-        }
-    }
-
-    pub fn function_with_id(
+    pub fn function(
         id: impl Into<String>,
         name: impl Into<String>,
         arguments: impl Into<Value>,
     ) -> Self {
         Self::Function {
-            id: Some(id.into()),
+            id: id.into(),
             function: PartFunction {
                 name: name.into(),
                 arguments: arguments.into(),
@@ -136,6 +123,12 @@ impl Part {
         Ok(Part::Image {
             image: PartImage::Url { url: url.into() },
         })
+    }
+
+    pub fn value(value: impl Into<Value>) -> Self {
+        Part::Value {
+            value: value.into(),
+        }
     }
 
     pub fn is_text(&self) -> bool {
@@ -180,22 +173,22 @@ impl Part {
         }
     }
 
-    pub fn as_function(&self) -> Option<(Option<&str>, &str, &Value)> {
+    pub fn as_function(&self) -> Option<(&str, &str, &Value)> {
         match self {
             Self::Function {
                 id,
                 function: PartFunction { name, arguments },
-            } => Some((id.as_deref(), name.as_str(), arguments)),
+            } => Some((id.as_str(), name.as_str(), arguments)),
             _ => None,
         }
     }
 
-    pub fn as_function_mut(&mut self) -> Option<(Option<&mut String>, &mut String, &mut Value)> {
+    pub fn as_function_mut(&mut self) -> Option<(&mut String, &mut String, &mut Value)> {
         match self {
             Self::Function {
                 id,
                 function: PartFunction { name, arguments },
-            } => Some((id.as_mut(), name, arguments)),
+            } => Some((id, name, arguments)),
             _ => None,
         }
     }

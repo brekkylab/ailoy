@@ -285,6 +285,7 @@ impl Delta for PartDelta {
             }),
             PartDelta::Function { .. } => {
                 let (id, name, arguments) = self.to_parsed_function().unwrap();
+                let id = id.unwrap_or("fn".into());
                 Ok(Part::Function {
                     id,
                     function: PartFunction { name, arguments },

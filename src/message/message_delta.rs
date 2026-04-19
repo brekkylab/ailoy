@@ -304,6 +304,7 @@ impl Delta for MessageDeltaOutput {
             .finish_reason
             .ok_or_else(|| anyhow::anyhow!("finish_reason not specified"))?;
         Ok(MessageOutput {
+            depth: None,
             message,
             finish_reason,
         })

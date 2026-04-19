@@ -1,3 +1,4 @@
+mod agent_card;
 mod delta;
 mod marshal;
 mod message;
@@ -7,6 +8,7 @@ mod part_delta;
 mod tool_desc;
 mod tool_result;
 
+pub use agent_card::*;
 pub use delta::Delta;
 pub use marshal::{Marshal, Marshaled, Unmarshal, Unmarshaled};
 pub use message::{FinishReason, Message, MessageOutput, Role};
