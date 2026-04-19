@@ -1,8 +1,5 @@
-#[cfg(feature = "rt")]
 mod rt;
 mod spec;
 
-// pub use lang_model::*;
-#[cfg(feature = "rt")]
 pub use rt::*;
 pub use spec::*;

@@ -22,9 +22,6 @@ license.workspace = true
 crate-type = ["rlib"]
 path = "src/lib.rs"
 
-[features]
-rt = []
-default = ["rt"]
 
 [dependencies]
 anyhow = "1"
