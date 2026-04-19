@@ -54,8 +54,8 @@ impl AgentSpec {
         }
     }
 
-    pub fn instruction(mut self, inst: String) -> Self {
-        self.instruction = Some(inst);
+    pub fn instruction(mut self, inst: impl Into<String>) -> Self {
+        self.instruction = Some(inst.into());
         self
     }
 

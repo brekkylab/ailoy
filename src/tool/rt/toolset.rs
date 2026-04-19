@@ -95,8 +95,7 @@ impl ToolSet {
                     )
                 })?;
                 let tool_name = card.name.clone();
-                let sub_agent =
-                    Agent::try_from_toolset(spec.clone(), provider.clone(), &this)?;
+                let sub_agent = Agent::try_with_tools(spec.clone(), &provider, &this)?;
                 let sub_agent = Arc::new(Mutex::new(sub_agent));
                 let tool_runtime = make_subagent_tool(card, sub_agent);
                 this.tools.insert(
@@ -170,5 +169,18 @@ impl IntoIterator for ToolSet {
 
     fn into_iter(self) -> Self::IntoIter {
         self.tools.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ToolSet {
+    type Item = (ToolDesc, Arc<ToolFunc>);
+    type IntoIter = std::vec::IntoIter<(ToolDesc, Arc<ToolFunc>)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.tools
+            .values()
+            .map(|(desc, f)| (desc.clone(), Arc::clone(f)))
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 }

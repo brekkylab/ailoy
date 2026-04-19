@@ -1,13 +1,13 @@
-use std::pin::Pin;
+use std::{collections::HashMap, pin::Pin, sync::Arc};
 
 use futures::{Stream, StreamExt as _};
 
 use crate::{
     agent::{AgentProvider, AgentSpec},
     lang_model::LangModel,
-    message::{FinishReason, Message, MessageOutput, Part, Role},
+    message::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
     shell::Shell,
-    tool::{Tool, ToolSet},
+    tool::{Tool, ToolFunc, ToolSet},
 };
 
 pub struct AgentState {
@@ -49,16 +49,15 @@ impl Agent {
         &self.state.history
     }
 
-    pub async fn try_new(spec: AgentSpec, provider: AgentProvider) -> anyhow::Result<Self> {
-        // Initialize tool set
-        let tool_set = ToolSet::from_providers(&provider).await?;
-        Self::try_from_toolset(spec, provider, &tool_set)
+    pub async fn try_new(spec: AgentSpec, provider: &AgentProvider) -> anyhow::Result<Self> {
+        let tool_set = ToolSet::from_providers(provider).await?;
+        Self::try_with_tools(spec, provider, &tool_set)
     }
 
-    pub fn try_from_toolset(
+    pub fn try_with_tools(
         spec: AgentSpec,
-        provider: AgentProvider,
-        tool_set: &ToolSet,
+        provider: &AgentProvider,
+        tools: impl IntoIterator<Item = (ToolDesc, Arc<ToolFunc>)>,
     ) -> anyhow::Result<Self> {
         // Resolve LM provider
         let lm_provider = provider
@@ -66,14 +65,21 @@ impl Agent {
             .ok_or_else(|| anyhow::anyhow!("No provider found for model '{}'", spec.model))?
             .clone();
 
-        // Collect tools from tool_set; error if any tool is missing
+        // Build a name-keyed map from the provided tools
+        let tool_map: HashMap<String, (ToolDesc, Arc<ToolFunc>)> = tools
+            .into_iter()
+            .map(|(desc, f)| (desc.name.clone(), (desc, f)))
+            .collect();
+
+        // Collect tools required by the spec; error if any tool is missing
         let tools: Vec<Tool> = spec
             .tools
             .iter()
             .map(|n| {
-                tool_set
-                    .make_runtime(n)
-                    .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found in tool_set", n))
+                tool_map
+                    .get(n)
+                    .map(|(desc, f)| Tool::new(desc.clone(), Arc::clone(f)))
+                    .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found", n))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -211,7 +217,7 @@ mod tests {
 
         let provider = AgentProvider::new().model_openai(api_key);
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
-        let mut agent = Agent::try_from_toolset(spec, provider, &tool_set).unwrap();
+        let mut agent = Agent::try_with_tools(spec, &provider, &tool_set).unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the current temperature in Seoul?")]);
@@ -256,8 +262,7 @@ mod tests {
         let sub_spec = AgentSpec::new("openai/gpt-4o-mini").instruction(
             "You are a calculator. Answer math questions with the numeric result only.".to_string(),
         );
-        let sub_agent =
-            Agent::try_from_toolset(sub_spec, provider.clone(), &ToolSet::new()).unwrap();
+        let sub_agent = Agent::try_with_tools(sub_spec, &provider, &ToolSet::new()).unwrap();
         let sub_agent = Arc::new(Mutex::new(sub_agent));
 
         let card = AgentCard {
@@ -277,7 +282,7 @@ mod tests {
             sub_tool.get_func(),
         );
 
-        let mut main_agent = Agent::try_from_toolset(
+        let mut main_agent = Agent::try_with_tools(
             AgentSpec::new("openai/gpt-4o-mini")
                 .tool("math-agent")
                 .instruction(
@@ -285,7 +290,7 @@ mod tests {
                      always delegate to the math-agent tool."
                         .to_string(),
                 ),
-            provider,
+            &provider,
             &tool_set,
         )
         .unwrap();
@@ -335,8 +340,7 @@ mod tests {
         let sub_spec = AgentSpec::new("openai/gpt-4o-mini").instruction(
             "You are a calculator. Answer math questions with the numeric result only.".to_string(),
         );
-        let sub_agent =
-            Agent::try_from_toolset(sub_spec, provider.clone(), &ToolSet::new()).unwrap();
+        let sub_agent = Agent::try_with_tools(sub_spec, &provider, &ToolSet::new()).unwrap();
         let sub_agent = Arc::new(Mutex::new(sub_agent));
 
         let card = AgentCard {
@@ -353,9 +357,9 @@ mod tests {
             sub_tool.get_func(),
         );
 
-        let mut main_agent = Agent::try_from_toolset(
+        let mut main_agent = Agent::try_with_tools(
             AgentSpec::new("openai/gpt-4o-mini").tool("math-agent"),
-            provider,
+            &provider,
             &tool_set,
         )
         .unwrap();
@@ -403,7 +407,7 @@ mod tests {
 
         let provider = AgentProvider::new().model_openai(api_key);
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
-        let mut agent = Agent::try_from_toolset(spec, provider, &tool_set).unwrap();
+        let mut agent = Agent::try_with_tools(spec, &provider, &tool_set).unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the temperature in Seoul?")]);
@@ -500,7 +504,7 @@ mod tests {
         tool_set.insert("temperature_slow", slow_desc, slow_fn);
 
         let provider = AgentProvider::new().model_claude(api_key);
-        let mut agent = Agent::try_from_toolset(
+        let mut agent = Agent::try_with_tools(
             AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
                 .tools(["temperature_fast", "temperature_slow"])
                 .instruction(
@@ -508,7 +512,7 @@ mod tests {
                      temperature_fast and temperature_slow in a single response."
                         .to_string(),
                 ),
-            provider,
+            &provider,
             &tool_set,
         )
         .unwrap();
@@ -622,7 +626,7 @@ mod tests {
         tool_set.insert("get_traffic", bad_desc, bad_fn);
 
         let provider = AgentProvider::new().model_openai(api_key);
-        let mut agent = Agent::try_from_toolset(
+        let mut agent = Agent::try_with_tools(
             AgentSpec::new("openai/gpt-4o-mini")
                 .tools(["get_weather", "get_traffic"])
                 .instruction(
@@ -630,7 +634,7 @@ mod tests {
                      get_traffic tools in a single response. Never call just one."
                         .to_string(),
                 ),
-            provider,
+            &provider,
             &tool_set,
         )
         .unwrap();
