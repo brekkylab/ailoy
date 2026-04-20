@@ -396,7 +396,7 @@ mod tests {
         let api_key =
             std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
 
-        let lm = LangModel::new(
+        let model = LangModel::new(
             "claude-haiku-4-5".to_string(),
             LangModelProvider::API {
                 schema: LangModelAPISchema::Anthropic,
