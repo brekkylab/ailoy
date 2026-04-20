@@ -1,10 +1,12 @@
-mod env;
-mod uv;
+pub(crate) mod env;
+mod source_tool;
+pub(crate) mod uv;
 
 use std::sync::Arc;
 
 use env::{InstallResult, PythonEnv};
 use uv::ensure_uv;
+pub(crate) use source_tool::{PythonSourceToolConfig, build_python_source_tool};
 
 use crate::{
     datatype::Value,
@@ -34,6 +36,7 @@ use crate::{
 /// ```
 
 /// Config supplied by the user when declaring a `PythonRepl` tool provider.
+#[derive(Clone, Debug, Default)]
 pub struct PythonReplConfig {
     /// Python version to provision (e.g. `"3.12"`). `None` → latest stable.
     pub python_version: Option<String>,
@@ -173,6 +176,40 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
     Ok(Tool::new(desc, Arc::new(f)))
 }
 
+pub(crate) async fn prepare_python_env(config: &PythonReplConfig) -> anyhow::Result<PythonEnv> {
+    let uv = ensure_uv().await?;
+
+    match config.venv_path.as_deref() {
+        Some(path) => {
+            let expanded = shellexpand::tilde(path).into_owned();
+            PythonEnv::new(
+                uv,
+                config.python_version.clone(),
+                std::path::PathBuf::from(expanded),
+                false,
+            )
+            .await
+        }
+        None => PythonEnv::new_temp(uv, config.python_version.clone()).await,
+    }
+}
+
+pub(crate) async fn install_python_packages(
+    env: &PythonEnv,
+    packages: &[String],
+) -> anyhow::Result<()> {
+    if packages.is_empty() {
+        return Ok(());
+    }
+
+    match env.install_packages(packages).await {
+        InstallResult::Failed { stderr } => {
+            anyhow::bail!("Failed to pre-install packages {:?}: {}", packages, stderr);
+        }
+        InstallResult::AlreadyInstalled | InstallResult::Success => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use futures::StreamExt as _;
@@ -214,7 +251,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_schema_requires_code() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+        let tool = build_python_repl_tool(PythonReplConfig::default())
+            .await
+            .unwrap();
         let required = tool
             .get_desc()
             .parameters
@@ -227,7 +266,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_schema_pip_install_is_array_of_strings() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+        let tool = build_python_repl_tool(PythonReplConfig::default())
+            .await
+            .unwrap();
         let item_type = tool
             .get_desc()
             .parameters

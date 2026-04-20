@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use crate::agent::AgentCard;
 
@@ -81,4 +82,89 @@ impl AgentSpec {
         self.card = Some(card);
         self
     }
+}
+
+/// Wire protocol used when calling a language model API.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LangModelAPISchema {
+    /// OpenAI-compatible `/v1/chat/completions` format
+    ChatCompletion,
+
+    /// Anthropic Messages API format
+    Anthropic,
+
+    /// Google Gemini API format
+    Gemini,
+
+    /// OpenAI Responses API format
+    #[serde(rename = "openai")]
+    OpenAI,
+}
+
+/// Describes the runtime endpoint used to invoke a language model.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum LangModelProvider {
+    /// Calls a remote HTTP API. Requires the wire `schema`, the `url` of the endpoint, and an optional `api_key` for authentication.
+    API {
+        schema: LangModelAPISchema,
+
+        url: Url,
+
+        api_key: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BuiltinToolProvider {
+    WebSearch {},
+    ConvertPdfToMd {},
+    PythonRepl {
+        /// Python version to provision (e.g. `"3.12"`). `None` → latest stable.
+        python_version: Option<String>,
+        /// Persistent venv path. `None` → temp dir cleaned up when the tool is dropped.
+        /// Supports `~` expansion.
+        venv_path: Option<String>,
+        /// Packages to pre-install before the first tool call.
+        #[serde(default)]
+        packages: Vec<String>,
+    },
+}
+
+/// Transport configuration for an MCP (Model Context Protocol) tool server.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum MCPToolProvider {
+    /// Spawns a child process and communicates over its stdio
+    Stdio { command: String },
+
+    /// Connects to a remote MCP server over HTTP streaming
+    StreamableHTTP { url: Url },
+}
+
+/// Identifies where a tool's implementation lives at runtime.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolProvider {
+    /// A tool baked into the agent runtime, referenced by `name`
+    Builtin(BuiltinToolProvider),
+
+    /// A tool served by an external MCP server described by [`MCPToolProvider`]
+    MCP(MCPToolProvider),
+}
+
+/// Supplies the runtime parameters needed to execute an agent.
+///
+/// `AgentProvider` is separate from [`AgentSpec`] because these settings describe *how*
+/// to run an agent, not *what* the agent is. Swapping the API endpoint or key does not
+/// change the agent's identity; swapping the model or instruction does.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct AgentProvider {
+    /// The concrete language model provider (API schema, endpoint URL, credentials)
+    pub lm: LangModelProvider,
+
+    /// Resolved tool providers that back each tool name declared in [`AgentSpec::tools`]
+    pub tools: Vec<ToolProvider>,
 }

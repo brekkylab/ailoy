@@ -197,17 +197,31 @@ impl PythonEnv {
     /// On timeout the child process is killed and [`ExecResult::timed_out`] is
     /// set to `true`; the function still returns `Ok`.
     pub async fn run_code(&self, code: &str, timeout_secs: u64) -> Result<ExecResult> {
+        self.run_code_with_env(code, timeout_secs, &[]).await
+    }
+
+    /// Execute Python code with additional environment variables.
+    ///
+    /// Output truncation follows the same policy as [`Self::run_code`].
+    pub async fn run_code_with_env(
+        &self,
+        code: &str,
+        timeout_secs: u64,
+        extra_env: &[(&str, &str)],
+    ) -> Result<ExecResult> {
         // Write code to a temp file.
         let script = tempfile::NamedTempFile::with_suffix(".py")
             .context("failed to create temp script file")?;
         std::fs::write(script.path(), code).context("failed to write script to temp file")?;
 
-        let mut child = Command::new(self.python_path())
-            .arg(script.path())
+        let mut cmd = Command::new(self.python_path());
+        cmd.arg(script.path())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .context("failed to spawn Python interpreter")?;
+            .stderr(std::process::Stdio::piped());
+        for (key, value) in extra_env {
+            cmd.env(key, value);
+        }
+        let mut child = cmd.spawn().context("failed to spawn Python interpreter")?;
 
         // Drain stdout and stderr on separate tasks to prevent pipe-buffer
         // deadlock when a process produces large output on both streams.
@@ -548,6 +562,28 @@ mod tests {
             result.stderr.len() <= MAX_OUTPUT_CHARS + 100,
             "stderr should be truncated, got {} chars",
             result.stderr.len()
+        );
+    }
+
+    #[test_with::executable(uv)]
+    #[tokio::test]
+    async fn test_run_code_with_env_large_output_is_truncated() {
+        let uv = resolve_uv_path().unwrap();
+        let env = PythonEnv::new_temp(uv, None).await.unwrap();
+        let code = "import os\nprint((os.environ.get('TOKEN') or '') + ('x' * 20000))";
+        let result = env
+            .run_code_with_env(code, 30, &[("TOKEN", "abc")])
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.len() <= MAX_OUTPUT_CHARS + 100,
+            "stdout should be truncated, got {} chars",
+            result.stdout.len()
+        );
+        assert!(
+            result.stdout.contains("[output truncated"),
+            "should contain truncation marker"
         );
     }
 }
