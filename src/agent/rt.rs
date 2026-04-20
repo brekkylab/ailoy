@@ -176,7 +176,7 @@ impl Agent {
             .split_once('/')
             .map(|(_, id)| id.to_string())
             .unwrap_or_else(|| spec.model.clone());
-            
+
         Ok(Self {
             lm: LangModel::new(model_id, lm_provider),
             tools,

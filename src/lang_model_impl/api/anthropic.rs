@@ -345,7 +345,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang_model::{LangModelAPISchema, LangModelProvider, LangModel},
+        lang_model::{LangModel, LangModelAPISchema, LangModelProvider},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
@@ -411,7 +411,7 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = lm.run(&messages, &tools).await.unwrap();
+        let resp = model.run(&messages, &tools).await.unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }

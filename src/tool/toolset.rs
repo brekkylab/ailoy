@@ -5,14 +5,8 @@ use tokio::sync::Mutex;
 use crate::{
     agent::{Agent, AgentProvider, AgentSpec},
     message::ToolDesc,
-    tool::{BuiltinToolProvider, MCPToolProvider, Tool, ToolFunc, ToolProvider},
-    tool_impl::{
-        builtins::{
-            PythonReplConfig, build_python_repl_tool, make_web_search_func,
-            make_web_search_tool_desc,
-        },
-        make_a2a_tool, make_subagent_tool,
-    },
+    tool::{MCPToolProvider, Tool, ToolFunc, ToolProvider},
+    tool_impl::{builtins::make_builtin_tool, make_a2a_tool, make_subagent_tool},
 };
 
 #[derive(Clone)]
@@ -39,33 +33,13 @@ impl ToolSet {
         // Initialise all provider tools.
         for tool_provider in &provider.tools {
             match tool_provider {
-                ToolProvider::Builtin(builtin_tool_provider) => match builtin_tool_provider {
-                    BuiltinToolProvider::WebSearch {} => {
-                        this.tools.insert(
-                            "web_search".into(),
-                            (
-                                make_web_search_tool_desc(),
-                                Arc::new(make_web_search_func()),
-                            ),
-                        );
-                    }
-                    BuiltinToolProvider::PythonRepl {
-                        python_version,
-                        venv_path,
-                        packages,
-                    } => {
-                        let tool_runtime = build_python_repl_tool(PythonReplConfig {
-                            python_version: python_version.clone(),
-                            venv_path: venv_path.clone(),
-                            packages: packages.clone(),
-                        })
-                        .await?;
-                        this.tools.insert(
-                            "python_repl".into(),
-                            (tool_runtime.get_desc().clone(), tool_runtime.get_func()),
-                        );
-                    }
-                },
+                ToolProvider::Builtin(builtin_tool_provider) => {
+                    let tool_runtime = make_builtin_tool(builtin_tool_provider).await?;
+                    this.tools.insert(
+                        tool_runtime.get_desc().name.clone(),
+                        (tool_runtime.get_desc().clone(), tool_runtime.get_func()),
+                    );
+                }
                 ToolProvider::A2A { url } => {
                     let tool_runtime = make_a2a_tool(url.clone()).await?;
                     this.tools.insert(
