@@ -171,8 +171,14 @@ impl Agent {
             .map(|inst| vec![Message::new(Role::System).with_contents([Part::text(inst)])])
             .unwrap_or_default();
 
+        let model_id = spec
+            .model
+            .split_once('/')
+            .map(|(_, id)| id.to_string())
+            .unwrap_or_else(|| spec.model.clone());
+            
         Ok(Self {
-            lm: LangModel::new(spec.model.clone(), lm_provider),
+            lm: LangModel::new(model_id, lm_provider),
             tools,
             state: AgentState::with_history(history),
         })
