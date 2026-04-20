@@ -6,7 +6,8 @@ use crate::message::AgentCard;
 /// Defines the logical identity of an agent as configured by the user.
 ///
 /// `AgentSpec` captures what makes an agent distinct — the language model it uses,
-/// the system instruction that shapes its behavior, and the set of tools it has access to.
+/// the system instruction that shapes its behavior, the set of tools it has access to,
+/// and the sub-agents it can delegate work to.
 /// Changing any of these fields changes the fundamental nature of the agent.
 ///
 /// # `instruction` vs `card`
@@ -29,7 +30,7 @@ pub struct AgentSpec {
     /// Names of tools available to the agent
     pub tools: Vec<String>,
 
-    /// Names of sub-agents available to the agent
+    /// Sub-agents available to the agent (each registered as a callable tool)
     pub subagents: Vec<AgentSpec>,
 
     /// Public self-introduction exposed to a calling agent or orchestrator.

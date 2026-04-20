@@ -45,7 +45,7 @@ impl AgentState {
 
 /// An agent that drives a language model through multi-turn, tool-augmented conversations.
 ///
-/// `Agent` pairs an [`AgentSpec`] (model + instruction + required tools) with an
+/// `Agent` pairs an [`AgentSpec`] (model + instruction + tools + sub-agents) with an
 /// [`AgentProvider`] (credentials + tool sources) and an internal [`AgentState`]
 /// (message history).  Call [`Agent::run`] to stream a single turn; tool calls are
 /// resolved automatically and the conversation is appended to history after each turn.

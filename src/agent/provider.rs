@@ -20,9 +20,9 @@ use crate::{
 ///   credentials.  An agent looks up its [`AgentSpec::model`] here at startup.
 ///
 /// * **How do I initialise a tool?** — `tools` lists the tool-source configurations
-///   (built-in tool settings and MCP server connections) that are spun up to
-///   populate the [`ToolSet`] before an agent starts.  Each entry can contribute
-///   one or more runnable tools.
+///   (built-in tool settings, MCP server connections, and remote A2A agents) that are
+///   spun up to populate the [`ToolSet`] before an agent starts.  Each entry can
+///   contribute one or more runnable tools.
 ///
 /// `AgentProvider` is separate from [`AgentSpec`] because these settings describe
 /// *how* to run an agent, not *what* the agent is.  Swapping the API endpoint or
