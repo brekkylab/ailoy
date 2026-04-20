@@ -120,7 +120,7 @@ impl AgentProvider {
     }
 
     /// Register a model name or glob pattern with an explicit provider.
-    pub fn model(mut self, pattern: impl Into<String>, provider: LangModelProvider) -> Self {
+    pub fn model(&mut self, pattern: impl Into<String>, provider: LangModelProvider) -> &mut Self {
         self.models.insert(pattern.into(), provider);
         self
     }
@@ -128,7 +128,7 @@ impl AgentProvider {
     /// Register all OpenAI models under the `openai/*` namespace via the Responses API.
     ///
     /// Use model names like `"openai/gpt-4o"` or `"openai/o3-mini"` in [`AgentSpec`].
-    pub fn model_openai(mut self, api_key: impl Into<String>) -> Self {
+    pub fn model_openai(&mut self, api_key: impl Into<String>) -> &mut Self {
         self.models.insert(
             "openai/*".to_string(),
             LangModelProvider::API {
@@ -144,7 +144,7 @@ impl AgentProvider {
     /// Register all Claude models under the `anthropic/*` namespace via the Messages API.
     ///
     /// Use model names like `"anthropic/claude-sonnet-4-6"` in [`AgentSpec`].
-    pub fn model_claude(mut self, api_key: impl Into<String>) -> Self {
+    pub fn model_claude(&mut self, api_key: impl Into<String>) -> &mut Self {
         self.models.insert(
             "anthropic/claude-*".to_string(),
             LangModelProvider::API {
@@ -160,7 +160,7 @@ impl AgentProvider {
     /// Register all Gemini models under the `google/*` namespace via the Generative Language API.
     ///
     /// Use model names like `"google/gemini-2.0-flash"` in [`AgentSpec`].
-    pub fn model_gemini(mut self, api_key: impl Into<String>) -> Self {
+    pub fn model_gemini(&mut self, api_key: impl Into<String>) -> &mut Self {
         self.models.insert(
             "google/gemini-*".to_string(),
             LangModelProvider::API {
@@ -213,13 +213,13 @@ impl AgentProvider {
     }
 
     /// Register a tool.
-    pub fn tool(mut self, tool: ToolProvider) -> Self {
+    pub fn tool(&mut self, tool: ToolProvider) -> &mut Self {
         self.tools.push(tool);
         self
     }
 
     /// Register tools.
-    pub fn tools(mut self, tools: impl IntoIterator<Item = ToolProvider>) -> Self {
+    pub fn tools(&mut self, tools: impl IntoIterator<Item = ToolProvider>) -> &mut Self {
         for tool in tools.into_iter() {
             self.tools.push(tool);
         }
@@ -227,7 +227,7 @@ impl AgentProvider {
     }
 
     /// Register the built-in web search tool.
-    pub fn tool_web_search(mut self) -> Self {
+    pub fn tool_web_search(&mut self) -> &mut Self {
         self.tools
             .push(ToolProvider::Builtin(BuiltinToolProvider::WebSearch {}));
         self
@@ -238,13 +238,13 @@ impl AgentProvider {
     /// The `spec` must have a [`card`](AgentSpec::card) set — the card's `name`
     /// becomes the tool name that the orchestrating agent calls, and its
     /// `description` is shown to the model to help it decide when to delegate.
-    pub fn tool_sub_agent(mut self, spec: AgentSpec) -> Self {
+    pub fn tool_sub_agent(&mut self, spec: AgentSpec) -> &mut Self {
         self.tools.push(ToolProvider::SubAgent(spec));
         self
     }
 
     /// Register an MCP tool server reachable via a child-process stdio connection.
-    pub fn tool_mcp_stdio(mut self, command: impl Into<String>) -> Self {
+    pub fn tool_mcp_stdio(&mut self, command: impl Into<String>) -> &mut Self {
         self.tools.push(ToolProvider::MCP(MCPToolProvider::Stdio {
             command: command.into(),
         }));
@@ -252,7 +252,7 @@ impl AgentProvider {
     }
 
     /// Register an MCP tool server reachable via HTTP streaming.
-    pub fn tool_mcp_streamable_http(mut self, url: Url) -> Self {
+    pub fn tool_mcp_streamable_http(&mut self, url: Url) -> &mut Self {
         self.tools
             .push(ToolProvider::MCP(MCPToolProvider::StreamableHTTP { url }));
         self
@@ -262,7 +262,7 @@ impl AgentProvider {
     ///
     /// The runtime fetches `{url}/.well-known/agent-card.json` at startup to
     /// discover the agent's name and description.
-    pub fn tool_a2a(mut self, url: Url) -> Self {
+    pub fn tool_a2a(&mut self, url: Url) -> &mut Self {
         self.tools.push(ToolProvider::A2A { url });
         self
     }

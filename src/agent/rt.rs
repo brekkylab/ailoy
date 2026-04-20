@@ -37,6 +37,15 @@ impl AgentState {
     }
 }
 
+/// An agent that drives a language model through multi-turn, tool-augmented conversations.
+///
+/// `Agent` pairs an [`AgentSpec`] (model + instruction + required tools) with an
+/// [`AgentProvider`] (credentials + tool sources) and an internal [`AgentState`]
+/// (message history).  Call [`Agent::run`] to stream a single turn; tool calls are
+/// resolved automatically and the conversation is appended to history after each turn.
+///
+/// For construction examples, see [`Agent::try_new`], [`Agent::try_with_provider`], and
+/// [`Agent::try_with_tools`].
 pub struct Agent {
     lm: LangModel,
     tools: Vec<Tool>,
@@ -44,11 +53,48 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// Create an agent.
+    ///
+    /// Uses the process-wide [`default_provider`] for configuration. Configure it once
+    /// at startup; all agents built with this method share those credentials and tool
+    /// sources without passing a provider around.
+    ///
+    /// ```rust
+    /// # use ailoy::{agent::{Agent, AgentSpec, default_provider_mut}, message::{Message, Part, Role}};
+    /// # use futures::StreamExt as _;
+    /// # #[tokio::main]
+    /// # async fn main() -> anyhow::Result<()> {
+    /// // One-time setup — configure the global provider before creating any agents.
+    /// default_provider_mut().await.model_claude("ANTHROPIC_API_KEY");
+    ///
+    /// let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001");
+    /// let agent = Agent::try_new(spec).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
         let provider = default_provider().await;
         Self::try_with_provider(spec, &*provider).await
     }
 
+    /// Create an agent with an explicit [`AgentProvider`].
+    ///
+    /// Use this for scoped, explicit control over models and tool sources without
+    /// touching global state.  The provider is not stored in the agent and can be
+    /// reused across multiple agents.
+    ///
+    /// ```rust
+    /// # use ailoy::agent::{Agent, AgentProvider, AgentSpec};
+    /// # #[tokio::main]
+    /// # async fn main() -> anyhow::Result<()> {
+    /// let mut provider = AgentProvider::new();
+    /// provider.model_openai("OPENAI_API_KEY").tool_web_search();
+    ///
+    /// let spec = AgentSpec::new("openai/gpt-4o").tool("web_search");
+    /// let agent = Agent::try_with_provider(spec, &provider).await?;
+    /// #   Ok(())
+    /// # }
+    /// ```
     pub async fn try_with_provider(
         spec: AgentSpec,
         provider: &AgentProvider,
@@ -57,6 +103,32 @@ impl Agent {
         Self::try_with_tools(spec, provider, &tools).await
     }
 
+    /// Create an agent with a pre-built toolset, bypassing automatic tool-source initialisation.
+    ///
+    /// Use this when you need deterministic, in-process tools (e.g. unit tests, mock tools,
+    /// or tools assembled at runtime from a [`ToolSet`]).
+    ///
+    /// ```rust
+    /// # use ailoy::{agent::{Agent, AgentProvider, AgentSpec}, datatype::Value, message::ToolDescBuilder, to_value, tool::{ToolFunc, ToolSet}};
+    /// # #[tokio::main]
+    /// # async fn main() -> anyhow::Result<()> {
+    ///     let mut tool_set = ToolSet::new();
+    ///     tool_set.insert(
+    ///         "temperature",
+    ///         ToolDescBuilder::new("temperature")
+    ///             .description("Return the temperature for a city")
+    ///             .parameters(to_value!({"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}))
+    ///             .build(),
+    ///         ToolFunc::new(|_args: Value| Value::unsigned(25)),
+    ///     );
+    ///
+    ///     let mut provider = AgentProvider::new();
+    ///     provider.model_openai("OPENAI_API_KEY");
+    ///     let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
+    ///     let agent = Agent::try_with_tools(spec, &provider, &tool_set).await?;
+    /// #   Ok(())
+    /// # }
+    /// ```
     pub async fn try_with_tools(
         spec: AgentSpec,
         provider: &AgentProvider,
@@ -223,7 +295,8 @@ mod tests {
             ToolFunc::new(|_args: Value| Value::unsigned(25)),
         );
 
-        let provider = AgentProvider::new().model_openai(api_key);
+        let mut provider = AgentProvider::new();
+        provider.model_openai(api_key);
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
         let mut agent = Agent::try_with_tools(spec, &provider, &tool_set)
             .await
@@ -266,7 +339,8 @@ mod tests {
         dotenvy::dotenv().ok();
 
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
-        let provider = AgentProvider::new().model_openai(api_key.clone());
+        let mut provider = AgentProvider::new();
+        provider.model_openai(api_key.clone());
 
         // Sub-agent: a minimal calculator that replies with just the numeric result.
         let sub_spec = AgentSpec::new("openai/gpt-4o-mini").instruction(
@@ -347,7 +421,8 @@ mod tests {
         dotenvy::dotenv().ok();
 
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
-        let provider = AgentProvider::new().model_openai(api_key.clone());
+        let mut provider = AgentProvider::new();
+        provider.model_openai(api_key.clone());
 
         // Sub-agent: gives a multi-step response so we see intermediate messages.
         let sub_spec = AgentSpec::new("openai/gpt-4o-mini").instruction(
@@ -421,7 +496,8 @@ mod tests {
             ToolFunc::new(|_args: Value| Value::unsigned(25)),
         );
 
-        let provider = AgentProvider::new().model_openai(api_key);
+        let mut provider = AgentProvider::new();
+        provider.model_openai(api_key);
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
         let mut agent = Agent::try_with_tools(spec, &provider, &tool_set)
             .await
@@ -521,7 +597,8 @@ mod tests {
         tool_set.insert("temperature_fast", fast_desc, fast_fn);
         tool_set.insert("temperature_slow", slow_desc, slow_fn);
 
-        let provider = AgentProvider::new().model_claude(api_key);
+        let mut provider = AgentProvider::new();
+        provider.model_claude(api_key);
         let mut agent = Agent::try_with_tools(
             AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
                 .tools(["temperature_fast", "temperature_slow"])
@@ -644,7 +721,8 @@ mod tests {
         tool_set.insert("get_weather", good_desc, good_fn);
         tool_set.insert("get_traffic", bad_desc, bad_fn);
 
-        let provider = AgentProvider::new().model_openai(api_key);
+        let mut provider = AgentProvider::new();
+        provider.model_openai(api_key);
         let mut agent = Agent::try_with_tools(
             AgentSpec::new("openai/gpt-4o-mini")
                 .tools(["get_weather", "get_traffic"])
