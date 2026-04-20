@@ -165,11 +165,11 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let lm = openai_chat_completion("gpt-5.4-mini", api_key);
+        let model = openai_chat_completion("gpt-5.4-mini", api_key);
         let messages = vec![Message::new(Role::User).with_contents([Part::text("Hi")])];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = lm.run(&messages, &tools).await.unwrap();
+        let resp = model.run(&messages, &tools).await.unwrap();
         assert!(
             !resp.message.contents.is_empty(),
             "Expected at least one message content"
@@ -186,7 +186,7 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let lm = openai_chat_completion("gpt-5.4-mini", api_key);
+        let model = openai_chat_completion("gpt-5.4-mini", api_key);
         let messages = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("What is the current temperature in Seoul?")]),
@@ -212,7 +212,7 @@ mod tests {
                 .build(),
         ];
 
-        let resp = lm.run(&messages, &tools).await.unwrap();
+        let resp = model.run(&messages, &tools).await.unwrap();
 
         // The model should respond with a tool call
         assert_eq!(resp.finish_reason, FinishReason::ToolCall {});
@@ -223,7 +223,7 @@ mod tests {
             .expect("Expected tool_calls in response");
         assert!(!tool_calls.is_empty(), "Expected at least one tool call");
 
-        let (id, name, arguments) = tool_calls[0]
+        let (_, name, arguments) = tool_calls[0]
             .as_function()
             .expect("Expected function part in tool call");
         assert_eq!(name, "get_temperature");

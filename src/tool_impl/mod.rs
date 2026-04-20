@@ -1,6 +1,7 @@
 mod a2a;
-pub mod builtins;
+mod builtins;
 mod subagent;
 
 pub(crate) use a2a::*;
-pub use subagent::*;
+pub(crate) use builtins::*;
+pub(crate) use subagent::*;

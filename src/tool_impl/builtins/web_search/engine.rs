@@ -165,8 +165,10 @@ mod tests {
     #[test]
     fn test_has_no_results() {
         let parser = make_parser();
-        let html_with_no_results = r#"<html><body><div class="no-results">No results found</div></body></html>"#;
-        let html_with_results = r#"<html><body><div class="result"><a class="result-title">X</a></div></body></html>"#;
+        let html_with_no_results =
+            r#"<html><body><div class="no-results">No results found</div></body></html>"#;
+        let html_with_results =
+            r#"<html><body><div class="result"><a class="result-title">X</a></div></body></html>"#;
 
         assert!(parser.has_no_results(&Html::parse_document(html_with_no_results)));
         assert!(!parser.has_no_results(&Html::parse_document(html_with_results)));

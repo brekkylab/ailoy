@@ -1,6 +1,6 @@
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 
-use futures::{Stream, StreamExt as _};
+use futures::{FutureExt as _, Stream, StreamExt as _};
 
 use crate::{
     agent::{AgentProvider, AgentSpec, default_provider},
@@ -53,7 +53,7 @@ impl AgentState {
 /// For construction examples, see [`Agent::try_new`], [`Agent::try_with_provider`], and
 /// [`Agent::try_with_tools`].
 pub struct Agent {
-    lm: LangModel,
+    model: LangModel,
     tools: Vec<Tool>,
     pub state: AgentState,
 }
@@ -140,8 +140,14 @@ impl Agent {
         provider: &AgentProvider,
         tools: impl IntoIterator<Item = (ToolDesc, Arc<ToolFunc>)>,
     ) -> anyhow::Result<Self> {
-        // Resolve LM provider
-        let lm_provider = provider
+        // Parse model id
+        let model_id = spec
+            .model
+            .split_once('/')
+            .map(|(_, id)| id.to_string())
+            .unwrap_or_else(|| spec.model.clone());
+        // Resolve LangModel provider
+        let model_provider = provider
             .get_model(&spec.model)
             .ok_or_else(|| anyhow::anyhow!("No provider found for model '{}'", spec.model))?
             .clone();
@@ -171,17 +177,112 @@ impl Agent {
             .map(|inst| vec![Message::new(Role::System).with_contents([Part::text(inst)])])
             .unwrap_or_default();
 
-        let model_id = spec
-            .model
-            .split_once('/')
-            .map(|(_, id)| id.to_string())
-            .unwrap_or_else(|| spec.model.clone());
-
         Ok(Self {
-            lm: LangModel::new(model_id, lm_provider),
+            model: LangModel::new(model_id, model_provider),
             tools,
             state: AgentState::with_history(history),
         })
+    }
+
+    /// Execute tool calls in parallel and return a stream of all outputs.
+    ///
+    /// Synchronously spawns one tokio task per tool call, then returns a stream
+    /// backed by an mpsc channel. Each task runs the tool, forwards intermediate
+    /// sub-agent outputs (with bumped depth), and emits a final `Role::Tool`
+    /// message at `depth = Some(0)`. Panics are caught via `catch_unwind` and
+    /// converted to synthetic error tool results so the LM always receives
+    /// exactly one result per call.
+    ///
+    /// Returns `Err` immediately (before spawning) if any tool name is not found.
+    fn execute_tool_calls(
+        &self,
+        tool_calls: Vec<Part>,
+    ) -> anyhow::Result<futures::stream::BoxStream<'static, anyhow::Result<MessageOutput>>> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
+
+        for tool_call in tool_calls {
+            let Some((call_id, tool_name, _)) = tool_call.as_function() else {
+                continue;
+            };
+            let (tool_name, call_id) = (tool_name.to_string(), call_id.to_string());
+
+            let func = self
+                .tools
+                .iter()
+                .find(|t| t.get_desc().name == tool_name)
+                .map(|t| t.get_func())
+                .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
+
+            let tx = tx.clone();
+
+            tokio::spawn(async move {
+                // tx_inner is moved into AssertUnwindSafe and may be dropped
+                // during a panic unwind. tx stays alive for the fallback send.
+                let tx_inner = tx.clone();
+                let tool_name_inner = tool_name.clone();
+
+                let outcome: Result<anyhow::Result<bool>, _> =
+                    std::panic::AssertUnwindSafe(async move {
+                        let mut stream = func.call(tool_call)?;
+                        let mut last: Option<MessageOutput> = None;
+
+                        while let Some(item) = stream.next().await {
+                            if let Some(mut prev) = last.replace(item) {
+                                prev.depth = Some(prev.depth.map_or(0, |d| d) + 1);
+                                if tx_inner.send(Ok(prev)).is_err() {
+                                    return anyhow::Ok(false);
+                                }
+                            }
+                        }
+
+                        match last {
+                            Some(mut item) => {
+                                item.depth = Some(0);
+                                item.message.role = Role::Tool;
+                                let _ = tx_inner.send(Ok(item));
+                                anyhow::Ok(true)
+                            }
+                            None => anyhow::Ok(false),
+                        }
+                    })
+                    .catch_unwind()
+                    .await;
+
+                let needs_fallback = !matches!(outcome, Ok(Ok(true)));
+                if needs_fallback {
+                    if let Ok(Err(e)) = outcome {
+                        let _ = tx.send(Err(e));
+                    } else {
+                        let reason = if outcome.is_err() {
+                            "panicked during execution"
+                        } else {
+                            "produced no output"
+                        };
+                        let err_msg = Message::new(Role::Tool)
+                            .with_contents([Part::value(crate::datatype::Value::string(format!(
+                                "tool '{}' {}",
+                                tool_name_inner, reason
+                            )))])
+                            .with_id(call_id);
+                        let _ = tx.send(Ok(MessageOutput {
+                            depth: Some(0),
+                            message: err_msg,
+                            finish_reason: FinishReason::Stop {},
+                        }));
+                    }
+                }
+            });
+        }
+
+        // Drop the original sender so the channel closes once all tasks finish.
+        drop(tx);
+
+        Ok(Box::pin(async_stream::stream! {
+            let mut rx = rx;
+            while let Some(event) = rx.recv().await {
+                yield event;
+            }
+        }))
     }
 
     /// Return the full message history accumulated so far.
@@ -199,7 +300,7 @@ impl Agent {
             let tool_descs: Vec<_> = self.tools.iter().map(|t| t.get_desc().clone()).collect();
 
             loop {
-                let mut output = self.lm.run(&self.state.history, &tool_descs).await?;
+                let mut output = self.model.run(&self.state.history, &tool_descs).await?;
                 output.depth = Some(0);
                 self.state.history.push(output.message.clone());
 
@@ -215,39 +316,16 @@ impl Agent {
                     }
                 };
 
-                // Execute tool calls sequentially.
-                for tool_call in tool_calls {
-                    let tool_name = match tool_call.as_function() {
-                        Some((_, name, _)) => name.to_string(),
-                        None => continue,
-                    };
-
-                    let func = match self.tools.iter().find(|t| t.get_desc().name == tool_name) {
-                        Some(t) => t.get_func(),
-                        None => Err(anyhow::anyhow!("No tool found for '{}'", tool_name))?,
-                    };
-
-                    let mut stream = func.call(tool_call)?;
-
-                    // Buffer one item so we can push the last one to history.
-                    // Intermediate outputs are tool-internal messages (depth + 1).
-                    // The final output is the tool response at the current depth (0).
-                    let mut last: Option<MessageOutput> = None;
-                    while let Some(item) = stream.next().await {
-                        if let Some(mut prev) = last.replace(item) {
-                            prev.depth = Some(prev.depth.map_or(0, |d| d) + 1);
-                            yield prev;
+                let mut tool_stream = self.execute_tool_calls(tool_calls)?;
+                while let Some(event) = tool_stream.next().await {
+                    match event {
+                        Err(e) => Err(e)?,
+                        Ok(output) => {
+                            if output.message.role == Role::Tool && output.depth == Some(0) {
+                                self.state.history.push(output.message.clone());
+                            }
+                            yield output;
                         }
-                    }
-
-                    match last {
-                        Some(mut item) => {
-                            item.depth = None;
-                            item.message.role = Role::Tool;
-                            self.state.history.push(item.message.clone());
-                            yield item;
-                        }
-                        None => Err(anyhow::anyhow!("tool '{}' produced no output", tool_name))?,
                     }
                 }
             }
@@ -266,7 +344,7 @@ mod tests {
     use crate::{
         agent::{AgentCard, AgentProvider, AgentSpec},
         datatype::Value,
-        message::{FinishReason, Message, Part, Role, ToolDesc, ToolDescBuilder},
+        message::{Message, Part, Role, ToolDesc, ToolDescBuilder},
         suppress_panics, to_value,
         tool::{ToolFunc, ToolSet},
         tool_impl::make_subagent_tool,
@@ -295,7 +373,7 @@ mod tests {
     /// Verifies that the agent calls the temperature tool and returns a final answer.
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
-    async fn test_run_agent() {
+    async fn test_simple_tool_call() {
         dotenvy::dotenv().ok();
 
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
@@ -315,7 +393,7 @@ mod tests {
             .unwrap();
 
         let query = Message::new(Role::User)
-            .with_contents([Part::text("What is the current temperature in Seoul?")]);
+            .with_contents([Part::text("What is the temperature in Seoul?")]);
 
         let mut strm = agent.run(query);
         let mut events = vec![];
@@ -323,23 +401,29 @@ mod tests {
             events.push(event.unwrap());
         }
 
-        // The last assistant Stop message is the final answer.
-        let final_output = events
+        // Must contain at least one ToolCall assistant message.
+        let has_tool_call = events
             .iter()
-            .rev()
-            .find(|e| {
-                e.message.role == Role::Assistant
-                    && matches!(e.finish_reason, FinishReason::Stop {})
-            })
-            .expect("Expected a final assistant message");
-
-        assert_eq!(final_output.message.role, Role::Assistant);
+            .any(|e| e.message.role == Role::Assistant && e.message.tool_calls.is_some());
         assert!(
-            final_output.message.contents.iter().any(|p| p.is_text()),
-            "Expected final assistant message to contain text"
+            has_tool_call,
+            "Expected an assistant message with tool calls"
+        );
+
+        // Must contain at least one tool result.
+        let has_tool_result = events.iter().any(|e| e.message.role == Role::Tool);
+        assert!(has_tool_result, "Expected a tool result message");
+
+        // Last event must be a final assistant text response.
+        let last = events.last().expect("Expected at least one event");
+        assert_eq!(last.message.role, Role::Assistant);
+        assert!(
+            last.message.contents.iter().any(|p| p.is_text()),
+            "Last event should contain text"
         );
     }
 
+    /// Verifies that the agent calls the temperature tool and returns a final answer.
     /// Verifies that the main agent actually delegates to the in-memory subagent.
     ///
     /// Sets up a math subagent and registers it as a subagent tool on a coordinator agent.
@@ -489,60 +573,6 @@ mod tests {
         assert!(
             tool_deltas > 0,
             "Expected at least one intermediate sub-agent output (tool delta)"
-        );
-    }
-
-    /// Verifies event sequence for a simple tool call:
-    /// AssistantMessage(ToolCall) -> Tool result -> AssistantMessage(Stop)
-    #[test_with::env(OPENAI_API_KEY)]
-    #[tokio::test]
-    async fn test_turn_event_sequence() {
-        dotenvy::dotenv().ok();
-
-        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
-
-        let mut tool_set = ToolSet::new();
-        tool_set.insert(
-            "temperature",
-            temperature_tool_desc(),
-            ToolFunc::new(|_args: Value| Value::unsigned(25)),
-        );
-
-        let mut provider = AgentProvider::new();
-        provider.model_openai(api_key);
-        let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
-        let mut agent = Agent::try_with_tools(spec, &provider, &tool_set)
-            .await
-            .unwrap();
-
-        let query = Message::new(Role::User)
-            .with_contents([Part::text("What is the temperature in Seoul?")]);
-
-        let mut strm = agent.run(query);
-        let mut events = vec![];
-        while let Some(event) = strm.next().await {
-            events.push(event.unwrap());
-        }
-
-        // Must contain at least one ToolCall assistant message.
-        let has_tool_call = events
-            .iter()
-            .any(|e| e.message.role == Role::Assistant && e.message.tool_calls.is_some());
-        assert!(
-            has_tool_call,
-            "Expected an assistant message with tool calls"
-        );
-
-        // Must contain at least one tool result.
-        let has_tool_result = events.iter().any(|e| e.message.role == Role::Tool);
-        assert!(has_tool_result, "Expected a tool result message");
-
-        // Last event must be a final assistant text response.
-        let last = events.last().expect("Expected at least one event");
-        assert_eq!(last.message.role, Role::Assistant);
-        assert!(
-            last.message.contents.iter().any(|p| p.is_text()),
-            "Last event should contain text"
         );
     }
 
@@ -723,11 +753,7 @@ mod tests {
                 "required": ["city"]
             }))
             .build();
-        let bad_fn = ToolFunc::new(|_args: Value| async move {
-            panic!("simulated tool crash");
-            #[allow(unreachable_code)]
-            to_value!("unreachable")
-        });
+        let bad_fn = ToolFunc::new(|_args: Value| async move { panic!("simulated tool crash") });
 
         let mut tool_set = ToolSet::new();
         tool_set.insert("get_weather", good_desc, good_fn);
@@ -779,11 +805,41 @@ mod tests {
             return;
         }
 
+        // 1. Every tool call must have a corresponding tool result — no silent drops.
         assert_eq!(
             tool_use_count, tool_result_count,
             "History is inconsistent: {} tool_use call(s) but {} tool result(s). \
              The panicked tool's result was silently lost.",
             tool_use_count, tool_result_count,
+        );
+
+        // 2. All tool result messages must use Part::Value, not Part::Text.
+        //    Part::Text is marshalled as a JSON object by provider codecs, which
+        //    breaks the `function_call_output.output` field (must be a string).
+        for tool_msg in history.iter().filter(|m| m.role == Role::Tool) {
+            for part in &tool_msg.contents {
+                assert!(
+                    part.as_value().is_some(),
+                    "Tool result content must be Part::Value for correct API marshalling, \
+                     but found a non-Value part. This causes provider API errors when the \
+                     result is sent back to the model."
+                );
+            }
+        }
+
+        // 3. History must end with a final Assistant text response, not a tool call.
+        //    If the second LM call fails (e.g. due to a malformed tool result), the
+        //    stream terminates early and the agent never produces a closing answer.
+        let last_msg = history.last().expect("History should not be empty");
+        assert_eq!(
+            last_msg.role,
+            Role::Assistant,
+            "History must end with an Assistant message, not {:?}",
+            last_msg.role
+        );
+        assert!(
+            last_msg.contents.iter().any(|p| p.is_text()),
+            "Final Assistant message must contain text — the agent never produced a closing answer."
         );
     }
 }

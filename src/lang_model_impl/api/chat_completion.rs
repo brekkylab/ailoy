@@ -297,7 +297,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang_model::{LangModelAPISchema, LangModelProvider, LangModel},
+        lang_model::{LangModel, LangModelAPISchema, LangModelProvider},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
@@ -354,7 +354,7 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let lm = LangModel::new(
+        let model = LangModel::new(
             "gpt-4.1-mini".to_string(),
             LangModelProvider::API {
                 schema: LangModelAPISchema::ChatCompletion,
@@ -369,7 +369,7 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = lm.run(&messages, &tools).await.unwrap();
+        let resp = model.run(&messages, &tools).await.unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }

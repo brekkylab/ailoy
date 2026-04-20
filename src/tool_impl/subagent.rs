@@ -32,19 +32,32 @@ pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
 
     let desc = ToolDescBuilder::new(&card.name)
         .description(description)
-        .parameters(crate::to_value!({"type": "string"}))
+        .parameters(crate::to_value!({
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "The task description to send to the sub-agent"
+                }
+            },
+            "required": ["task"]
+        }))
         .build();
 
     let f = ToolFunc::Stream(Box::new(move |id: String, args: Value| {
         let agent = agent.clone();
         Box::pin(async_stream::stream! {
-            let task = match args.as_str() {
+            let task = match args
+                .as_object()
+                .and_then(|o| o.get("task"))
+                .and_then(|v| v.as_str())
+            {
                 Some(v) => v.to_string(),
                 None => {
                     yield MessageOutput {
                         depth: None,
                         message: Message::new(Role::Tool)
-                            .with_contents([Part::text("Error: expected string argument")])
+                            .with_contents([Part::value(Value::string("Error: expected 'task' string field in arguments"))])
                             .with_id(id),
                         finish_reason: FinishReason::Stop {},
                     };
@@ -79,7 +92,7 @@ pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
                             yield MessageOutput {
                                 depth: None,
                                 message: Message::new(Role::Tool)
-                                    .with_contents([Part::text(format!("Error: {e}"))])
+                                    .with_contents([Part::value(Value::string(format!("Error: {e}")))])
                                     .with_id(id),
                                 finish_reason: FinishReason::Stop {},
                             };
@@ -90,10 +103,11 @@ pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
             } // drop strm and agent_guard
 
             // Emit the final tool response — the outer agent assigns this depth 0.
+            // Use Part::value so provider codecs marshal it as a plain string output.
             yield MessageOutput {
                 depth: None,
                 message: Message::new(Role::Tool)
-                    .with_contents([Part::text(last_answer)])
+                    .with_contents([Part::value(Value::string(last_answer))])
                     .with_id(id),
                 finish_reason: FinishReason::Stop {},
             };

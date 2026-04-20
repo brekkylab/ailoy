@@ -6,7 +6,7 @@ use crate::{
     agent::{Agent, AgentProvider, AgentSpec},
     message::ToolDesc,
     tool::{MCPToolProvider, Tool, ToolFunc, ToolProvider},
-    tool_impl::{builtins::make_builtin_tool, make_a2a_tool, make_subagent_tool},
+    tool_impl::{make_a2a_tool, make_builtin_tool, make_subagent_tool},
 };
 
 #[derive(Clone)]
