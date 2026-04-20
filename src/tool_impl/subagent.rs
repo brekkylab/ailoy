@@ -4,9 +4,9 @@ use futures::StreamExt as _;
 use tokio::sync::Mutex;
 
 use crate::{
-    agent::Agent,
+    agent::{Agent, AgentCard},
     datatype::Value,
-    message::{AgentCard, FinishReason, Message, MessageOutput, Part, Role, ToolDescBuilder},
+    message::{FinishReason, Message, MessageOutput, Part, Role, ToolDescBuilder},
     tool::{Tool, ToolFunc},
 };
 

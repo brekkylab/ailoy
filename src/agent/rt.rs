@@ -258,9 +258,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{AgentProvider, AgentSpec},
+        agent::{AgentCard, AgentProvider, AgentSpec},
         datatype::Value,
-        message::{AgentCard, FinishReason, Message, Part, Role, ToolDesc, ToolDescBuilder},
+        message::{FinishReason, Message, Part, Role, ToolDesc, ToolDescBuilder},
         suppress_panics, to_value,
         tool::{ToolFunc, ToolSet},
         tool_impl::make_subagent_tool,

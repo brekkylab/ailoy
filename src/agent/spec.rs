@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::message::AgentCard;
+use crate::agent::AgentCard;
 
 /// Defines the logical identity of an agent as configured by the user.
 ///
