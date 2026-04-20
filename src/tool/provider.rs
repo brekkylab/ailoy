@@ -2,7 +2,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::agent::AgentSpec;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -41,13 +40,6 @@ pub enum ToolProvider {
 
     /// A tool served by an external MCP server described by [`MCPToolProvider`]
     MCP(MCPToolProvider),
-
-    /// A sub-agent exposed as a callable tool.
-    ///
-    /// The `spec` must have a [`card`](AgentSpec::card) — its `name` becomes
-    /// the tool name the orchestrating agent calls, and its `description` is
-    /// shown to the model to help it decide when to delegate.
-    SubAgent(AgentSpec),
 
     /// A remote A2A (Agent-to-Agent) server exposed as a callable tool.
     ///

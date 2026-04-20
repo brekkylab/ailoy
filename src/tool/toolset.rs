@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::{
-    agent::{Agent, AgentProvider},
+    agent::{Agent, AgentProvider, AgentSpec},
     message::ToolDesc,
     tool::{BuiltinToolProvider, MCPToolProvider, Tool, ToolFunc, ToolProvider},
     tool_impl::{
@@ -28,18 +28,15 @@ impl ToolSet {
         }
     }
 
-    /// Build a [`ToolSet`] from the tool providers declared in `provider`.
-    ///
-    /// Uses a two-pass strategy to avoid infinite recursion:
-    ///
-    /// 1. **Pass 1** — all non-SubAgent providers are initialised first.
-    /// 2. **Pass 2** — each `SubAgent` provider creates an [`Agent`] that
-    ///    receives the tool set produced by pass 1, so sub-agents can call any
-    ///    regular tool but cannot themselves contain further sub-agents.
-    pub async fn from_providers(provider: &AgentProvider) -> anyhow::Result<Self> {
+    /// Build a [`ToolSet`] from the tool providers declared in `provider` and
+    /// the sub-agents declared in `spec`.
+    pub async fn from_providers(
+        spec: &AgentSpec,
+        provider: &AgentProvider,
+    ) -> anyhow::Result<Self> {
         let mut this = Self::new();
 
-        // Pass 1: initialise all non-SubAgent tools.
+        // Initialise all provider tools.
         for tool_provider in &provider.tools {
             match tool_provider {
                 ToolProvider::Builtin(builtin_tool_provider) => match builtin_tool_provider {
@@ -69,8 +66,6 @@ impl ToolSet {
                         );
                     }
                 },
-                // Skip sub-agents in the first pass.
-                ToolProvider::SubAgent { .. } => {}
                 ToolProvider::A2A { url } => {
                     let tool_runtime = make_a2a_tool(url.clone()).await?;
                     this.tools.insert(
@@ -85,24 +80,22 @@ impl ToolSet {
             }
         }
 
-        // Pass 2: initialise SubAgent tools using the toolset built above.
-        for tool_provider in &provider.tools {
-            if let ToolProvider::SubAgent(spec) = tool_provider {
-                let card = spec.card.clone().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "SubAgent spec must have a card (name + description) to be \
-                         registered as a tool"
-                    )
-                })?;
-                let tool_name = card.name.clone();
-                let sub_agent = Agent::try_with_tools(spec.clone(), &provider, &this).await?;
-                let sub_agent = Arc::new(Mutex::new(sub_agent));
-                let tool_runtime = make_subagent_tool(card, sub_agent);
-                this.tools.insert(
-                    tool_name,
-                    (tool_runtime.get_desc().clone(), tool_runtime.get_func()),
-                );
-            }
+        // Initialise sub-agents using the toolset built above.
+        for sub_spec in &spec.subagents {
+            let card = sub_spec.card.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "SubAgent spec must have a card (name + description) to be \
+                     registered as a tool"
+                )
+            })?;
+            let tool_name = card.name.clone();
+            let sub_agent = Agent::try_with_tools(sub_spec.clone(), provider, &this).await?;
+            let sub_agent = Arc::new(Mutex::new(sub_agent));
+            let tool_runtime = make_subagent_tool(card, sub_agent);
+            this.tools.insert(
+                tool_name,
+                (tool_runtime.get_desc().clone(), tool_runtime.get_func()),
+            );
         }
 
         Ok(this)
@@ -172,7 +165,7 @@ impl IntoIterator for ToolSet {
     }
 }
 
-impl<'a> IntoIterator for &'a ToolSet {
+impl IntoIterator for &ToolSet {
     type Item = (ToolDesc, Arc<ToolFunc>);
     type IntoIter = std::vec::IntoIter<(ToolDesc, Arc<ToolFunc>)>;
 

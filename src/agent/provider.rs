@@ -6,7 +6,6 @@ use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use url::Url;
 
 use crate::{
-    agent::AgentSpec,
     lang_model::{LangModelAPISchema, LangModelProvider},
     tool::{BuiltinToolProvider, MCPToolProvider, ToolProvider},
 };
@@ -165,16 +164,6 @@ impl AgentProvider {
     pub fn tool_web_search(&mut self) -> &mut Self {
         self.tools
             .push(ToolProvider::Builtin(BuiltinToolProvider::WebSearch {}));
-        self
-    }
-
-    /// Register a sub-agent as a tool.
-    ///
-    /// The `spec` must have a [`card`](AgentSpec::card) set — the card's `name`
-    /// becomes the tool name that the orchestrating agent calls, and its
-    /// `description` is shown to the model to help it decide when to delegate.
-    pub fn tool_sub_agent(&mut self, spec: AgentSpec) -> &mut Self {
-        self.tools.push(ToolProvider::SubAgent(spec));
         self
     }
 

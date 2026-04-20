@@ -16,6 +16,12 @@ pub struct AgentState {
     pub shell: Option<Shell>,
 }
 
+impl Default for AgentState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentState {
     pub fn new() -> Self {
         Self {
@@ -74,7 +80,7 @@ impl Agent {
     /// ```
     pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
         let provider = default_provider().await;
-        Self::try_with_provider(spec, &*provider).await
+        Self::try_with_provider(spec, &provider).await
     }
 
     /// Create an agent with an explicit [`AgentProvider`].
@@ -99,7 +105,7 @@ impl Agent {
         spec: AgentSpec,
         provider: &AgentProvider,
     ) -> anyhow::Result<Self> {
-        let tools = ToolSet::from_providers(provider).await?;
+        let tools = ToolSet::from_providers(&spec, provider).await?;
         Self::try_with_tools(spec, provider, &tools).await
     }
 

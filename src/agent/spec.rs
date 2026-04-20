@@ -29,6 +29,9 @@ pub struct AgentSpec {
     /// Names of tools available to the agent
     pub tools: Vec<String>,
 
+    /// Names of sub-agents available to the agent
+    pub subagents: Vec<AgentSpec>,
+
     /// Public self-introduction exposed to a calling agent or orchestrator.
     ///
     /// Only relevant when this agent acts as a sub-agent.
@@ -43,6 +46,7 @@ impl AgentSpec {
             model: model.into(),
             instruction: None,
             tools: Vec::new(),
+            subagents: Vec::new(),
             card: None,
         }
     }
@@ -59,6 +63,16 @@ impl AgentSpec {
 
     pub fn tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.tools = tools.into_iter().map(|v| v.into()).collect();
+        self
+    }
+
+    pub fn subagent(mut self, spec: AgentSpec) -> Self {
+        self.subagents.push(spec);
+        self
+    }
+
+    pub fn subagents(mut self, specs: impl IntoIterator<Item = AgentSpec>) -> Self {
+        self.subagents = specs.into_iter().collect();
         self
     }
 
