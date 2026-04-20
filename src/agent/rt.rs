@@ -3,7 +3,7 @@ use std::{collections::HashMap, pin::Pin, sync::Arc};
 use futures::{Stream, StreamExt as _};
 
 use crate::{
-    agent::{AgentProvider, AgentSpec},
+    agent::{AgentProvider, AgentSpec, default_provider},
     lang_model::LangModel,
     message::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
     shell::Shell,
@@ -44,17 +44,20 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// Return the full message history accumulated so far.
-    pub fn get_history(&self) -> &[Message] {
-        &self.state.history
+    pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
+        let provider = default_provider().await;
+        Self::try_with_provider(spec, &*provider).await
     }
 
-    pub async fn try_new(spec: AgentSpec, provider: &AgentProvider) -> anyhow::Result<Self> {
-        let tool_set = ToolSet::from_providers(provider).await?;
-        Self::try_with_tools(spec, provider, &tool_set)
+    pub async fn try_with_provider(
+        spec: AgentSpec,
+        provider: &AgentProvider,
+    ) -> anyhow::Result<Self> {
+        let tools = ToolSet::from_providers(provider).await?;
+        Self::try_with_tools(spec, provider, &tools).await
     }
 
-    pub fn try_with_tools(
+    pub async fn try_with_tools(
         spec: AgentSpec,
         provider: &AgentProvider,
         tools: impl IntoIterator<Item = (ToolDesc, Arc<ToolFunc>)>,
@@ -95,6 +98,11 @@ impl Agent {
             tools,
             state: AgentState::with_history(history),
         })
+    }
+
+    /// Return the full message history accumulated so far.
+    pub fn get_history(&self) -> &[Message] {
+        &self.state.history
     }
 
     /// Stream all events for a single agent turn.
@@ -217,7 +225,9 @@ mod tests {
 
         let provider = AgentProvider::new().model_openai(api_key);
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
-        let mut agent = Agent::try_with_tools(spec, &provider, &tool_set).unwrap();
+        let mut agent = Agent::try_with_tools(spec, &provider, &tool_set)
+            .await
+            .unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the current temperature in Seoul?")]);
@@ -262,7 +272,9 @@ mod tests {
         let sub_spec = AgentSpec::new("openai/gpt-4o-mini").instruction(
             "You are a calculator. Answer math questions with the numeric result only.".to_string(),
         );
-        let sub_agent = Agent::try_with_tools(sub_spec, &provider, &ToolSet::new()).unwrap();
+        let sub_agent = Agent::try_with_tools(sub_spec, &provider, &ToolSet::new())
+            .await
+            .unwrap();
         let sub_agent = Arc::new(Mutex::new(sub_agent));
 
         let card = AgentCard {
@@ -293,6 +305,7 @@ mod tests {
             &provider,
             &tool_set,
         )
+        .await
         .unwrap();
 
         let query =
@@ -340,7 +353,9 @@ mod tests {
         let sub_spec = AgentSpec::new("openai/gpt-4o-mini").instruction(
             "You are a calculator. Answer math questions with the numeric result only.".to_string(),
         );
-        let sub_agent = Agent::try_with_tools(sub_spec, &provider, &ToolSet::new()).unwrap();
+        let sub_agent = Agent::try_with_tools(sub_spec, &provider, &ToolSet::new())
+            .await
+            .unwrap();
         let sub_agent = Arc::new(Mutex::new(sub_agent));
 
         let card = AgentCard {
@@ -362,6 +377,7 @@ mod tests {
             &provider,
             &tool_set,
         )
+        .await
         .unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text("What is 99 plus 1?")]);
@@ -407,7 +423,9 @@ mod tests {
 
         let provider = AgentProvider::new().model_openai(api_key);
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
-        let mut agent = Agent::try_with_tools(spec, &provider, &tool_set).unwrap();
+        let mut agent = Agent::try_with_tools(spec, &provider, &tool_set)
+            .await
+            .unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the temperature in Seoul?")]);
@@ -515,6 +533,7 @@ mod tests {
             &provider,
             &tool_set,
         )
+        .await
         .unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text(
@@ -637,6 +656,7 @@ mod tests {
             &provider,
             &tool_set,
         )
+        .await
         .unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text(

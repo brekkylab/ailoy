@@ -95,7 +95,7 @@ impl ToolSet {
                     )
                 })?;
                 let tool_name = card.name.clone();
-                let sub_agent = Agent::try_with_tools(spec.clone(), &provider, &this)?;
+                let sub_agent = Agent::try_with_tools(spec.clone(), &provider, &this).await?;
                 let sub_agent = Arc::new(Mutex::new(sub_agent));
                 let tool_runtime = make_subagent_tool(card, sub_agent);
                 this.tools.insert(

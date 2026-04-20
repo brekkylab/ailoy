@@ -1,7 +1,8 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::LazyLock};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use url::Url;
 
 use crate::{
@@ -276,4 +277,15 @@ impl Default for AgentProvider {
     fn default() -> Self {
         Self::new()
     }
+}
+
+static DEFAULT_PROVIDER: LazyLock<RwLock<AgentProvider>> =
+    LazyLock::new(|| RwLock::new(AgentProvider::new()));
+
+pub async fn default_provider() -> RwLockReadGuard<'static, AgentProvider> {
+    DEFAULT_PROVIDER.read().await
+}
+
+pub async fn default_provider_mut() -> RwLockWriteGuard<'static, AgentProvider> {
+    DEFAULT_PROVIDER.write().await
 }
