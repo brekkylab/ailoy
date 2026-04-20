@@ -4,9 +4,9 @@ use futures::future::BoxFuture;
 
 use super::{PythonReplConfig, install_python_packages, prepare_python_env};
 use crate::{
-    agent::rt::tool::{ToolAsyncFunc, ToolKind, ToolRuntime},
     datatype::Value,
     message::ToolDesc,
+    tool::{Tool, ToolFunc},
 };
 
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
@@ -40,14 +40,14 @@ impl PythonSourceToolConfig {
 pub(crate) async fn build_python_source_tool(
     desc: ToolDesc,
     config: PythonSourceToolConfig,
-) -> anyhow::Result<ToolRuntime> {
+) -> anyhow::Result<Tool> {
     let env = Arc::new(prepare_python_env(&config.python).await?);
     install_python_packages(env.as_ref(), &config.python.packages).await?;
 
     let source = std::sync::Arc::new(config.source);
     let timeout_secs = config.timeout_secs;
 
-    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value| {
+    let f: ToolFunc = ToolFunc::new(move |args: Value| {
         let env = env.clone();
         let source = source.clone();
 
@@ -132,7 +132,7 @@ pub(crate) async fn build_python_source_tool(
         }) as BoxFuture<'static, Value>
     });
 
-    Ok(ToolRuntime::new_async_with_kind(desc, f, ToolKind::Builtin))
+    Ok(Tool::new(desc, Arc::new(f)))
 }
 
 fn python_execution_error_message(result: &super::env::ExecResult, timeout_secs: u64) -> String {
@@ -260,7 +260,7 @@ mod tests {
         .await
         .expect("failed to build source tool");
 
-        let desc = tool.desc();
+        let desc = tool.get_desc();
         assert_eq!(desc.name, "echo_json");
         assert_eq!(desc.description.as_deref(), Some("Echo args"));
         assert_eq!(
@@ -290,8 +290,8 @@ mod tests {
         .await
         .expect("failed to build source tool");
 
-        let call = Part::function_with_id("call-1", "echo_json", to_value!({ "value": 7 }));
-        let msg = tool.run(call).await.expect("tool execution failed");
+        let args = Part::function("call-1", "echo_json", to_value!({ "value": 7 }));
+        let msg = tool.call(&args).await.expect("tool execution failed");
         let value = msg.contents[0].as_value().unwrap();
 
         assert_eq!(
@@ -313,8 +313,8 @@ mod tests {
         .await
         .expect("failed to build source tool");
 
-        let call = Part::function_with_id("call-1", "args_from_env", to_value!({ "value": 11 }));
-        let msg = tool.run(call).await.expect("tool execution failed");
+        let args = Part::function("call-1", "args_from_env", to_value!({ "value": 11 }));
+        let msg = tool.call(&args).await.expect("tool execution failed");
         let value = msg.contents[0].as_value().unwrap();
 
         assert_eq!(
@@ -336,8 +336,8 @@ mod tests {
         .await
         .expect("failed to build source tool");
 
-        let call = Part::function_with_id("call-1", "big_payload", to_value!({}));
-        let msg = tool.run(call).await.expect("tool execution failed");
+        let args = Part::function("call-1", "big_payload", to_value!({}));
+        let msg = tool.call(&args).await.expect("tool execution failed");
         let value = msg.contents[0].as_value().unwrap();
         assert_eq!(
             value.pointer("/phase").and_then(|value| value.as_str()),
@@ -361,8 +361,8 @@ mod tests {
         .await
         .expect("failed to build source tool");
 
-        let call = Part::function_with_id("call-1", "raise_error", to_value!({ "value": "x" }));
-        let msg = tool.run(call).await.expect("tool execution failed");
+        let args = Part::function("call-1", "raise_error", to_value!({ "value": "x" }));
+        let msg = tool.call(&args).await.expect("tool execution failed");
         let value = msg.contents[0].as_value().unwrap();
 
         assert_eq!(
@@ -390,8 +390,8 @@ mod tests {
         .await
         .expect("failed to build source tool");
 
-        let call = Part::function_with_id("call-1", "invalid_stdout", to_value!({}));
-        let msg = tool.run(call).await.expect("tool execution failed");
+        let args = Part::function("call-1", "invalid_stdout", to_value!({}));
+        let msg = tool.call(&args).await.expect("tool execution failed");
         let value = msg.contents[0].as_value().unwrap();
 
         assert_eq!(

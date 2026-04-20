@@ -1,12 +1,12 @@
-pub(crate) mod env;
+mod env;
 mod source_tool;
-pub(crate) mod uv;
+mod uv;
 
 use std::sync::Arc;
 
-use env::{InstallResult, PythonEnv};
-use uv::ensure_uv;
+pub(crate) use env::{InstallResult, PythonEnv};
 pub(crate) use source_tool::{PythonSourceToolConfig, build_python_source_tool};
+pub(crate) use uv::ensure_uv;
 
 use crate::{
     datatype::Value,
@@ -56,36 +56,8 @@ pub struct PythonReplConfig {
 /// - the virtual environment cannot be created
 /// - any package listed in `config.packages` fails to install
 pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<Tool> {
-    let uv = ensure_uv().await?;
-
-    let env = match config.venv_path {
-        Some(ref path) => {
-            let expanded = shellexpand::tilde(path).into_owned();
-            PythonEnv::new(
-                uv,
-                config.python_version,
-                std::path::PathBuf::from(expanded),
-                false,
-            )
-            .await?
-        }
-        None => PythonEnv::new_temp(uv, config.python_version).await?,
-    };
-
-    // Pre-install user-specified packages.  Failure here is fatal so the
-    // user learns about misconfigured environments early.
-    if !config.packages.is_empty() {
-        match env.install_packages(&config.packages).await {
-            InstallResult::Failed { stderr } => {
-                anyhow::bail!(
-                    "Failed to pre-install packages {:?}: {}",
-                    config.packages,
-                    stderr
-                );
-            }
-            _ => {}
-        }
-    }
+    let env = prepare_python_env(&config).await?;
+    install_python_packages(&env, &config.packages).await?;
 
     let env = Arc::new(env);
 
@@ -212,8 +184,6 @@ pub(crate) async fn install_python_packages(
 
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt as _;
-
     use super::*;
 
     fn default_config() -> PythonReplConfig {
@@ -222,17 +192,6 @@ mod tests {
             venv_path: None,
             packages: vec![],
         }
-    }
-
-    // Helper: run a tool call and return the result message.
-    async fn run(tool: &Tool, call: crate::message::Part) -> crate::message::Message {
-        tool.get_func()
-            .call(call)
-            .unwrap()
-            .next()
-            .await
-            .unwrap()
-            .message
     }
 
     // ── descriptor tests (no uv required) ────────────────────────────────────
@@ -283,8 +242,8 @@ mod tests {
     #[tokio::test]
     async fn test_missing_code_param_returns_validation_error() {
         let tool = build_python_repl_tool(default_config()).await.unwrap();
-        let call = crate::message::Part::function("call-1", "python_repl", crate::to_value!({}));
-        let msg = run(&tool, call).await;
+        let args = crate::message::Part::function("call-1", "python_repl", crate::to_value!({}));
+        let msg = tool.call(&args).await.unwrap();
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -297,12 +256,12 @@ mod tests {
     #[tokio::test]
     async fn test_run_print_returns_stdout() {
         let tool = build_python_repl_tool(default_config()).await.unwrap();
-        let call = crate::message::Part::function(
+        let args = crate::message::Part::function(
             "call-1",
             "python_repl",
             crate::to_value!({ "code": "print('ailoy')" }),
         );
-        let msg = run(&tool, call).await;
+        let msg = tool.call(&args).await.unwrap();
         let stdout = msg.contents[0]
             .as_value()
             .unwrap()
@@ -315,7 +274,7 @@ mod tests {
     #[tokio::test]
     async fn test_pip_install_failure_returns_phase_pip_install() {
         let tool = build_python_repl_tool(default_config()).await.unwrap();
-        let call = crate::message::Part::function(
+        let args = crate::message::Part::function(
             "call-1",
             "python_repl",
             crate::to_value!({
@@ -323,7 +282,7 @@ mod tests {
                 "pip_install": ["xyzzy-nonexistent-pkg-12345"]
             }),
         );
-        let msg = run(&tool, call).await;
+        let msg = tool.call(&args).await.unwrap();
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -355,7 +314,7 @@ mod tests {
             chart_path.display()
         );
 
-        let call = crate::message::Part::function(
+        let args = crate::message::Part::function(
             "call-1",
             "python_repl",
             crate::to_value!({
@@ -363,7 +322,7 @@ mod tests {
                 "pip_install": ["numpy", "matplotlib"]
             }),
         );
-        let msg = run(&tool, call).await;
+        let msg = tool.call(&args).await.unwrap();
         let result = msg.contents[0].as_value().unwrap();
 
         let exit_code = result

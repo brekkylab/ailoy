@@ -7,12 +7,12 @@ use std::{
 use anyhow::Context as _;
 
 use crate::{
-    agent::rt::tool::{
-        ToolAsyncFunc, ToolKind, ToolRuntime,
-        python_repl::{PythonReplConfig, PythonSourceToolConfig, build_python_source_tool},
-    },
     datatype::Value,
     message::{Part, ToolDesc, ToolDescBuilder},
+    tool::{Tool, ToolFunc},
+    tool_impl::builtins::python_repl::{
+        PythonReplConfig, PythonSourceToolConfig, build_python_source_tool,
+    },
 };
 
 const TOOL_NAME: &str = "convert_pdf_to_md";
@@ -93,11 +93,11 @@ if __name__ == "__main__":
     main()
 "#;
 
-pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<ToolRuntime> {
+pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<Tool> {
     let python_tool = Arc::new(build_convert_pdf_to_md_python_tool().await?);
     let desc = convert_pdf_to_md_tool_desc();
 
-    let f: Arc<ToolAsyncFunc> = Arc::new(move |args: Value| {
+    let f: ToolFunc = ToolFunc::new(move |args: Value| {
         let python_tool = python_tool.clone();
         Box::pin(async move {
             let pdf_path = match validate_pdf_path(&args) {
@@ -105,7 +105,7 @@ pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<ToolRuntime> {
                 Err(err) => return err,
             };
 
-            let tool_call = Part::function_with_id(
+            let tool_call = Part::function(
                 "convert-pdf-to-md-internal",
                 TOOL_NAME,
                 crate::to_value!({
@@ -113,7 +113,7 @@ pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<ToolRuntime> {
                 }),
             );
 
-            match python_tool.run(tool_call).await {
+            match python_tool.call(&tool_call).await {
                 Ok(msg) => {
                     let value = match msg.contents.first().and_then(|part| part.as_value()) {
                         Some(value) => value,
@@ -145,10 +145,10 @@ pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<ToolRuntime> {
         })
     });
 
-    Ok(ToolRuntime::new_async_with_kind(desc, f, ToolKind::Builtin))
+    Ok(Tool::new(desc, Arc::new(f)))
 }
 
-async fn build_convert_pdf_to_md_python_tool() -> anyhow::Result<ToolRuntime> {
+async fn build_convert_pdf_to_md_python_tool() -> anyhow::Result<Tool> {
     build_python_source_tool(
         convert_pdf_to_md_tool_desc(),
         convert_pdf_to_md_tool_config()?,
@@ -311,10 +311,7 @@ fn error_value(pdf_path: &str, phase: &str, error: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        agent::{BuiltinToolProvider, ToolSet},
-        message::Part,
-    };
+    use crate::message::Part;
 
     fn write_minimal_pdf(path: &Path, text: &str) {
         let text = escape_pdf_string(text);
@@ -476,18 +473,6 @@ mod tests {
 
     #[test_with::executable(uv)]
     #[tokio::test]
-    #[ignore = "requires real uv + docling installation"]
-    async fn test_builtin_provider_registers_convert_pdf_to_md() {
-        let tool_set = ToolSet::new()
-            .with_builtin(&BuiltinToolProvider::ConvertPdfToMd {})
-            .await
-            .expect("failed to build builtin tool");
-
-        assert!(tool_set.get(TOOL_NAME).is_some());
-    }
-
-    #[test_with::executable(uv)]
-    #[tokio::test]
     #[ignore = "requires docling installation and model artifacts"]
     async fn test_convert_pdf_to_md_smoke() {
         let tool = build_convert_pdf_to_md_tool()
@@ -498,14 +483,14 @@ mod tests {
         let pdf_path = dir.path().join("hello.pdf");
         write_minimal_pdf(&pdf_path, "Hello Docling");
 
-        let call = Part::function_with_id(
+        let args = Part::function(
             "call-1",
             TOOL_NAME,
             crate::to_value!({
                 "pdf_path": pdf_path.to_string_lossy().to_string()
             }),
         );
-        let msg = tool.run(call).await.expect("tool call failed");
+        let msg = tool.call(&args).await.expect("tool call failed");
         let value = msg.contents[0].as_value().expect("expected value response");
 
         assert!(

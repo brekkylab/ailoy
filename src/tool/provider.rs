@@ -17,6 +17,7 @@ pub enum BuiltinToolProvider {
         #[serde(default)]
         packages: Vec<String>,
     },
+    ConvertPdfToMd {},
 }
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.

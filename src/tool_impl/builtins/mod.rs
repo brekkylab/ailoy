@@ -1,10 +1,12 @@
+mod convert_pdf_to_md;
 mod python_repl;
 mod web_search;
 
+use std::sync::Arc;
+
+use convert_pdf_to_md::*;
 use python_repl::*;
 use web_search::*;
-
-use std::sync::Arc;
 
 use crate::tool::{BuiltinToolProvider, Tool};
 
@@ -26,5 +28,6 @@ pub async fn make_builtin_tool(provider: &BuiltinToolProvider) -> anyhow::Result
             })
             .await
         }
+        BuiltinToolProvider::ConvertPdfToMd {} => build_convert_pdf_to_md_tool().await,
     }
 }
