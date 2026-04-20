@@ -66,8 +66,8 @@ impl AgentProvider {
         self.models.insert(
             "openai/*".to_string(),
             LangModelProvider::API {
-                schema: LangModelAPISchema::ChatCompletion,
-                url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
+                schema: LangModelAPISchema::OpenAI,
+                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
                 api_key: Some(api_key.into()),
                 max_tokens: None,
             },
