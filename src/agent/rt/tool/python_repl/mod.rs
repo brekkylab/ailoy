@@ -1,11 +1,13 @@
-mod env;
-mod uv;
+pub(crate) mod env;
+mod source_tool;
+pub(crate) mod uv;
 
 use std::sync::Arc;
 
-use env::{InstallResult, PythonEnv};
+pub(crate) use env::{InstallResult, PythonEnv};
 use futures::future::BoxFuture;
-use uv::ensure_uv;
+pub(crate) use source_tool::{PythonSourceToolConfig, build_python_source_tool};
+pub(crate) use uv::ensure_uv;
 
 use crate::{
     agent::rt::tool::{ToolAsyncFunc, ToolRuntime},
@@ -35,6 +37,7 @@ use crate::{
 /// ```
 
 /// Config supplied by the user when declaring a `PythonRepl` tool provider.
+#[derive(Clone, Debug, Default)]
 pub struct PythonReplConfig {
     /// Python version to provision (e.g. `"3.12"`). `None` → latest stable.
     pub python_version: Option<String>,
@@ -54,36 +57,8 @@ pub struct PythonReplConfig {
 /// - the virtual environment cannot be created
 /// - any package listed in `config.packages` fails to install
 pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<ToolRuntime> {
-    let uv = ensure_uv().await?;
-
-    let env = match config.venv_path {
-        Some(ref path) => {
-            let expanded = shellexpand::tilde(path).into_owned();
-            PythonEnv::new(
-                uv,
-                config.python_version,
-                std::path::PathBuf::from(expanded),
-                false,
-            )
-            .await?
-        }
-        None => PythonEnv::new_temp(uv, config.python_version).await?,
-    };
-
-    // Pre-install user-specified packages.  Failure here is fatal so the
-    // user learns about misconfigured environments early.
-    if !config.packages.is_empty() {
-        match env.install_packages(&config.packages).await {
-            InstallResult::Failed { stderr } => {
-                anyhow::bail!(
-                    "Failed to pre-install packages {:?}: {}",
-                    config.packages,
-                    stderr
-                );
-            }
-            _ => {}
-        }
-    }
+    let env = prepare_python_env(&config).await?;
+    install_python_packages(&env, &config.packages).await?;
 
     let env = Arc::new(env);
 
@@ -174,35 +149,67 @@ pub async fn build_python_repl_tool(config: PythonReplConfig) -> anyhow::Result<
     Ok(ToolRuntime::new_async(desc, f))
 }
 
+pub(crate) async fn prepare_python_env(config: &PythonReplConfig) -> anyhow::Result<PythonEnv> {
+    let uv = ensure_uv().await?;
+
+    match config.venv_path.as_deref() {
+        Some(path) => {
+            let expanded = shellexpand::tilde(path).into_owned();
+            PythonEnv::new(
+                uv,
+                config.python_version.clone(),
+                std::path::PathBuf::from(expanded),
+                false,
+            )
+            .await
+        }
+        None => PythonEnv::new_temp(uv, config.python_version.clone()).await,
+    }
+}
+
+pub(crate) async fn install_python_packages(
+    env: &PythonEnv,
+    packages: &[String],
+) -> anyhow::Result<()> {
+    if packages.is_empty() {
+        return Ok(());
+    }
+
+    match env.install_packages(packages).await {
+        InstallResult::Failed { stderr } => {
+            anyhow::bail!("Failed to pre-install packages {:?}: {}", packages, stderr);
+        }
+        InstallResult::AlreadyInstalled | InstallResult::Success => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn default_config() -> PythonReplConfig {
-        PythonReplConfig {
-            python_version: None,
-            venv_path: None,
-            packages: vec![],
-        }
-    }
 
     // ── descriptor tests (no uv required) ────────────────────────────────────
 
     #[tokio::test]
     async fn test_tool_name_is_python_repl() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+        let tool = build_python_repl_tool(PythonReplConfig::default())
+            .await
+            .unwrap();
         assert_eq!(tool.desc().name, "python_repl");
     }
 
     #[tokio::test]
     async fn test_tool_has_description() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+        let tool = build_python_repl_tool(PythonReplConfig::default())
+            .await
+            .unwrap();
         assert!(tool.desc().description.is_some());
     }
 
     #[tokio::test]
     async fn test_tool_schema_requires_code() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+        let tool = build_python_repl_tool(PythonReplConfig::default())
+            .await
+            .unwrap();
         let required = tool
             .desc()
             .parameters
@@ -215,7 +222,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_schema_pip_install_is_array_of_strings() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+        let tool = build_python_repl_tool(PythonReplConfig::default())
+            .await
+            .unwrap();
         let item_type = tool
             .desc()
             .parameters
@@ -229,7 +238,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_code_param_returns_validation_error() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+        let tool = build_python_repl_tool(PythonReplConfig::default())
+            .await
+            .unwrap();
         use crate::message::Part;
         let call = Part::function_with_id("call-1", "python_repl", crate::to_value!({}));
         let msg = tool.run(call).await.unwrap();
@@ -244,7 +255,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_print_returns_stdout() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+        let tool = build_python_repl_tool(PythonReplConfig::default())
+            .await
+            .unwrap();
         use crate::message::Part;
         let call = Part::function_with_id(
             "call-1",
@@ -263,7 +276,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_pip_install_failure_returns_phase_pip_install() {
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+        let tool = build_python_repl_tool(PythonReplConfig::default())
+            .await
+            .unwrap();
         use crate::message::Part;
         let call = Part::function_with_id(
             "call-1",
@@ -290,7 +305,9 @@ mod tests {
     async fn test_numpy_matplotlib_chart() {
         use crate::message::Part;
 
-        let tool = build_python_repl_tool(default_config()).await.unwrap();
+        let tool = build_python_repl_tool(PythonReplConfig::default())
+            .await
+            .unwrap();
         let chart_dir = tempfile::tempdir().expect("failed to create temp dir");
         let chart_path = chart_dir.path().join("sine_chart.png");
 

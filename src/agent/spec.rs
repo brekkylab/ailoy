@@ -85,6 +85,7 @@ pub enum LangModelProvider {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BuiltinToolProvider {
     WebSearch {},
+    ConvertPdfToMd {},
     PythonRepl {
         /// Python version to provision (e.g. `"3.12"`). `None` → latest stable.
         python_version: Option<String>,

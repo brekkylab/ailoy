@@ -9,6 +9,7 @@ use crate::{
     message::{Message, Part, Role, StreamingToolOutput, ToolDesc},
 };
 
+mod convert_pdf_to_md;
 mod python_repl;
 mod subagent;
 mod web_search;
@@ -218,6 +219,11 @@ impl ToolSet {
             BuiltinToolProvider::WebSearch {} => {
                 let tool = web_search::build_web_search_tool();
                 self.tools.insert("web_search".to_string(), tool);
+                Ok(self)
+            }
+            BuiltinToolProvider::ConvertPdfToMd {} => {
+                let tool = convert_pdf_to_md::build_convert_pdf_to_md_tool().await?;
+                self.tools.insert("convert_pdf_to_md".to_string(), tool);
                 Ok(self)
             }
             BuiltinToolProvider::PythonRepl {
