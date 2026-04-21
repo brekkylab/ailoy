@@ -43,11 +43,6 @@ pub struct AgentProvider {
     /// external MCP server (stdio child-process or HTTP stream).  All sources
     /// are initialised at agent startup and merged into the agent's [`ToolSet`].
     pub tools: Vec<ToolProvider>,
-
-    /// Sandbox instance shared with all builtin tools that need isolation.
-    #[cfg(feature = "sandbox")]
-    #[serde(skip)]
-    pub sandbox: Option<std::sync::Arc<crate::sandbox::Sandbox>>,
 }
 
 impl AgentProvider {
@@ -55,8 +50,6 @@ impl AgentProvider {
         Self {
             models: Default::default(),
             tools: Default::default(),
-            #[cfg(feature = "sandbox")]
-            sandbox: None,
         }
     }
 
@@ -201,13 +194,6 @@ impl AgentProvider {
     /// Get tools
     pub fn get_tools(&self) -> &[ToolProvider] {
         &self.tools
-    }
-
-    /// Attach a sandbox instance to be shared with all builtin tools that need isolation.
-    #[cfg(feature = "sandbox")]
-    pub fn with_sandbox(&mut self, sandbox: std::sync::Arc<crate::sandbox::Sandbox>) -> &mut Self {
-        self.sandbox = Some(sandbox);
-        self
     }
 }
 

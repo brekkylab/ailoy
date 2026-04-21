@@ -1,39 +1,4 @@
-//! Tool function representation and ergonomic construction.
-//!
-//! # Design intent
-//!
-//! A tool exposed to a language model is ultimately a function that receives a
-//! [`Value`] (the model's arguments) and produces a [`MessageOutput`] (the tool
-//! result sent back to the model).  In practice, tool implementations come in
-//! several shapes — synchronous or async — and forcing callers to manually box
-//! closures or convert between these forms creates unnecessary boilerplate.
-//!
-//! This module addresses that by splitting responsibilities across two types:
-//!
-//! - **[`ToolFunc`]** is the *stored* representation.  It is an enum whose
-//!   variants hold type-erased, heap-allocated function objects.  The internal
-//!   signature always includes the tool-call `id` (`String`) and `args`
-//!   ([`Value`]) so that the runtime can build a well-formed [`MessageOutput`]
-//!   without knowing anything about the original closure type.
-//!
-//! - **[`IntoToolFunc`]** is the *construction* interface.  It is a trait
-//!   implemented for common function shapes, letting callers pass plain closures
-//!   directly to [`Tool::new`] without any boxing or naming.
-//!
-//! # Phantom marker pattern
-//!
-//! Rust's coherence rules prevent multiple blanket `impl`s of the same trait for
-//! overlapping types.  Because the `Fn` shapes are distinguished only by their
-//! return type — not by a separate wrapper struct — a naïve approach would produce
-//! conflicting impls.
-//!
-//! The solution is the [`marker`] module: each shape is paired with a unique,
-//! zero-sized marker type.  The `IntoToolFunc<Marker>` trait is generic over
-//! `Marker`, so each impl targets a distinct trait instantiation and there is no
-//! overlap.  Rust's type inference resolves the correct `Marker` from the
-//! closure's return type automatically — callers never need to name or specify it.
-
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
 use futures::{
     Stream, StreamExt,
@@ -46,10 +11,40 @@ use crate::{
     message::{FinishReason, Message, MessageOutput, Part, Role},
 };
 
+/// Runtime context forwarded to every tool call.
+///
+/// Tools that don't need the context simply ignore it.  Constructed by the
+/// caller (typically the agent) and passed through [`ToolFunc::call`].
+pub struct ToolContext {
+    #[cfg(feature = "sandbox")]
+    pub sandbox: Option<Arc<crate::sandbox::Sandbox>>,
+}
+
+impl Default for ToolContext {
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "sandbox")]
+            sandbox: None,
+        }
+    }
+}
+
 pub enum ToolFunc {
     Simple(Box<dyn Fn(String, Value) -> MessageOutput + Send + Sync>),
     Future(Box<dyn Fn(String, Value) -> BoxFuture<'static, MessageOutput> + Send + Sync>),
     Stream(Box<dyn Fn(String, Value) -> BoxStream<'static, MessageOutput> + Send + Sync>),
+    #[cfg(feature = "sandbox")]
+    SandboxFuture(
+        Box<
+            dyn Fn(
+                    String,
+                    Value,
+                    Option<Arc<crate::sandbox::Sandbox>>,
+                ) -> BoxFuture<'static, MessageOutput>
+                + Send
+                + Sync,
+        >,
+    ),
 }
 
 impl ToolFunc {
@@ -73,7 +68,11 @@ impl ToolFunc {
         f.into_tool_func()
     }
 
-    pub fn call(&self, tool_call: Part) -> anyhow::Result<BoxStream<'static, MessageOutput>> {
+    pub fn call(
+        &self,
+        tool_call: Part,
+        ctx: ToolContext,
+    ) -> anyhow::Result<BoxStream<'static, MessageOutput>> {
         let (id, _, args) = tool_call
             .as_function()
             .ok_or(anyhow::anyhow!("Part is not function"))?;
@@ -83,6 +82,8 @@ impl ToolFunc {
             ToolFunc::Simple(f) => stream::once(std::future::ready(f(id, args))).boxed(),
             ToolFunc::Future(f) => stream::once(f(id, args)).boxed(),
             ToolFunc::Stream(f) => f(id, args),
+            #[cfg(feature = "sandbox")]
+            ToolFunc::SandboxFuture(f) => stream::once(f(id, args, ctx.sandbox)).boxed(),
         })
     }
 }
@@ -101,6 +102,10 @@ mod marker {
 
     /// `Fn(String, Value) -> Stream<Item = MessageOutput>`
     pub struct AsyncMessageStreamOutput;
+
+    /// `Fn(Value, Option<Arc<Sandbox>>) -> Future<Output = Value>`
+    #[cfg(feature = "sandbox")]
+    pub struct AsyncSandboxValueOutput;
 }
 
 /// Converts a function into a [`ToolFunc`].
@@ -167,6 +172,28 @@ where
     }
 }
 
+#[cfg(feature = "sandbox")]
+impl<F, Fut> IntoToolFunc<marker::AsyncSandboxValueOutput> for F
+where
+    F: Fn(Value, Option<Arc<crate::sandbox::Sandbox>>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Value> + Send + 'static,
+{
+    fn into_tool_func(self) -> ToolFunc {
+        ToolFunc::SandboxFuture(Box::new(move |id, args, sandbox| {
+            let fut = self(args, sandbox);
+            Box::pin(async move {
+                MessageOutput {
+                    depth: None,
+                    message: Message::new(Role::Tool)
+                        .with_contents([Part::value(fut.await)])
+                        .with_id(id),
+                    finish_reason: FinishReason::Stop {},
+                }
+            })
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,7 +206,7 @@ mod tests {
     async fn test_sync() {
         let f = ToolFunc::new(|_args: Value| Value::string("ok"));
         let out = f
-            .call(tool_call(Value::object_empty()))
+            .call(tool_call(Value::object_empty()), ToolContext::default())
             .unwrap()
             .next()
             .await
@@ -196,7 +223,7 @@ mod tests {
         let f = ToolFunc::new(|args: Value| args);
         let input = Value::integer(99);
         let out = f
-            .call(tool_call(input.clone()))
+            .call(tool_call(input.clone()), ToolContext::default())
             .unwrap()
             .next()
             .await
@@ -208,7 +235,7 @@ mod tests {
     async fn test_async() {
         let f = ToolFunc::new(|_args: Value| async move { Value::bool(true) });
         let out = f
-            .call(tool_call(Value::object_empty()))
+            .call(tool_call(Value::object_empty()), ToolContext::default())
             .unwrap()
             .next()
             .await

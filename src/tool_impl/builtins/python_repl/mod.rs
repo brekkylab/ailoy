@@ -9,7 +9,7 @@ use crate::{
     tool::{Tool, ToolFunc},
 };
 
-pub async fn build_python_repl_tool(sandbox: Arc<Sandbox>) -> anyhow::Result<Tool> {
+pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
     let desc = ToolDescBuilder::new("python_repl")
         .description(
             "Execute a Python script in an isolated MicroVM and return stdout/stderr. \
@@ -35,9 +35,20 @@ pub async fn build_python_repl_tool(sandbox: Arc<Sandbox>) -> anyhow::Result<Too
         }))
         .build();
 
-    let f = ToolFunc::new(move |args: Value| {
-        let sandbox = sandbox.clone();
-        async move {
+    let f = ToolFunc::new(
+        move |args: Value, sandbox: Option<Arc<Sandbox>>| async move {
+            let sandbox = match sandbox {
+                Some(sb) => sb,
+                None => {
+                    return crate::to_value!({
+                        "stdout": "",
+                        "stderr": "sandbox required for python_repl",
+                        "exit_code": -1,
+                        "phase": "validation"
+                    });
+                }
+            };
+
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
                 Some(c) => c.to_string(),
                 None => {
@@ -60,7 +71,6 @@ pub async fn build_python_repl_tool(sandbox: Arc<Sandbox>) -> anyhow::Result<Too
                 })
                 .unwrap_or_default();
 
-            // pip install if requested
             if !pip_packages.is_empty() {
                 let pkg_args: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
                 let mut install_args = vec!["install"];
@@ -86,7 +96,6 @@ pub async fn build_python_repl_tool(sandbox: Arc<Sandbox>) -> anyhow::Result<Too
                 }
             }
 
-            // Write code to file and execute
             if let Err(e) = sandbox
                 .write_file("/workspace/__ailoy_run.py", code.as_bytes())
                 .await
@@ -114,8 +123,8 @@ pub async fn build_python_repl_tool(sandbox: Arc<Sandbox>) -> anyhow::Result<Too
                     "phase": "execution"
                 }),
             }
-        }
-    });
+        },
+    );
 
     Ok(Tool::new(desc, Arc::new(f)))
 }
@@ -123,7 +132,9 @@ pub async fn build_python_repl_tool(sandbox: Arc<Sandbox>) -> anyhow::Result<Too
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{message::Part, sandbox::SandboxConfig, to_value};
+    use crate::{
+        message::Part, sandbox::SandboxConfig, to_value, tool::test_helpers::call_with_sandbox,
+    };
 
     async fn make_sandbox() -> Arc<Sandbox> {
         Arc::new(
@@ -133,23 +144,21 @@ mod tests {
         )
     }
 
-    // ── descriptor tests (sandbox needed to build the tool, but no code runs) ──
-
     #[tokio::test]
     async fn test_tool_name_is_python_repl() {
-        let tool = build_python_repl_tool(make_sandbox().await).await.unwrap();
+        let tool = build_python_repl_tool().await.unwrap();
         assert_eq!(tool.get_desc().name, "python_repl");
     }
 
     #[tokio::test]
     async fn test_tool_has_description() {
-        let tool = build_python_repl_tool(make_sandbox().await).await.unwrap();
+        let tool = build_python_repl_tool().await.unwrap();
         assert!(tool.get_desc().description.is_some());
     }
 
     #[tokio::test]
     async fn test_tool_schema_requires_code() {
-        let tool = build_python_repl_tool(make_sandbox().await).await.unwrap();
+        let tool = build_python_repl_tool().await.unwrap();
         let required = tool
             .get_desc()
             .parameters
@@ -162,7 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_schema_pip_install_is_array_of_strings() {
-        let tool = build_python_repl_tool(make_sandbox().await).await.unwrap();
+        let tool = build_python_repl_tool().await.unwrap();
         let item_type = tool
             .get_desc()
             .parameters
@@ -172,13 +181,11 @@ mod tests {
         assert_eq!(item_type, "string");
     }
 
-    // ── execution tests (require VM boot + python:3.12-slim image) ────────────
-
     #[tokio::test]
     async fn test_missing_code_param_returns_validation_error() {
-        let tool = build_python_repl_tool(make_sandbox().await).await.unwrap();
+        let tool = build_python_repl_tool().await.unwrap();
         let args = Part::function("call-1", "python_repl", to_value!({}));
-        let msg = tool.call(&args).await.unwrap();
+        let msg = call_with_sandbox(&tool, args, make_sandbox().await).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -190,13 +197,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_print_returns_stdout() {
-        let tool = build_python_repl_tool(make_sandbox().await).await.unwrap();
+        let tool = build_python_repl_tool().await.unwrap();
         let args = Part::function(
             "call-1",
             "python_repl",
             to_value!({ "code": "print('ailoy')" }),
         );
-        let msg = tool.call(&args).await.unwrap();
+        let msg = call_with_sandbox(&tool, args, make_sandbox().await).await;
         let stdout = msg.contents[0]
             .as_value()
             .unwrap()
@@ -208,7 +215,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pip_install_failure_returns_phase_pip_install() {
-        let tool = build_python_repl_tool(make_sandbox().await).await.unwrap();
+        let tool = build_python_repl_tool().await.unwrap();
         let args = Part::function(
             "call-1",
             "python_repl",
@@ -217,7 +224,7 @@ mod tests {
                 "pip_install": ["xyzzy-nonexistent-pkg-12345"]
             }),
         );
-        let msg = tool.call(&args).await.unwrap();
+        let msg = call_with_sandbox(&tool, args, make_sandbox().await).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -227,20 +234,18 @@ mod tests {
         assert_eq!(phase, "pip_install");
     }
 
-    /// Verifies that VM state persists across tool calls — a key property of the
-    /// sandbox approach over the old per-call subprocess model.
+    /// Verifies that VM state persists across tool calls when the same sandbox is reused.
     #[tokio::test]
     async fn test_state_persists_across_calls() {
         let sandbox = make_sandbox().await;
-        let tool = build_python_repl_tool(sandbox).await.unwrap();
+        let tool = build_python_repl_tool().await.unwrap();
 
-        // First call: set a variable by writing to a file
         let call1 = Part::function(
             "call-1",
             "python_repl",
             to_value!({ "code": "with open('/workspace/counter.txt', 'w') as f: f.write('42')" }),
         );
-        let r1 = tool.call(&call1).await.unwrap();
+        let r1 = call_with_sandbox(&tool, call1, sandbox.clone()).await;
         let exit1 = r1.contents[0]
             .as_value()
             .unwrap()
@@ -249,13 +254,12 @@ mod tests {
             .unwrap_or(-1);
         assert_eq!(exit1, 0, "first call should succeed");
 
-        // Second call: read the file written in the first call
         let call2 = Part::function(
             "call-2",
             "python_repl",
             to_value!({ "code": "print(open('/workspace/counter.txt').read())" }),
         );
-        let r2 = tool.call(&call2).await.unwrap();
+        let r2 = call_with_sandbox(&tool, call2, sandbox.clone()).await;
         let stdout = r2.contents[0]
             .as_value()
             .unwrap()
@@ -271,7 +275,7 @@ mod tests {
     #[tokio::test]
     async fn test_pip_install_and_plot_image() {
         let sandbox = make_sandbox().await;
-        let tool = build_python_repl_tool(sandbox.clone()).await.unwrap();
+        let tool = build_python_repl_tool().await.unwrap();
 
         let args = Part::function(
             "call-1",
@@ -281,7 +285,7 @@ mod tests {
                 "pip_install": ["numpy", "matplotlib"]
             }),
         );
-        let msg = tool.call(&args).await.unwrap();
+        let msg = call_with_sandbox(&tool, args, sandbox.clone()).await;
         let result = msg.contents[0].as_value().unwrap();
         let exit_code = result
             .pointer("/exit_code")
@@ -302,7 +306,6 @@ mod tests {
             "expected 'saved' in stdout, got: {stdout:?}"
         );
 
-        // Verify PNG magic bytes in the written file
         let bytes = sandbox
             .read_file_bytes("/workspace/plot.png")
             .await

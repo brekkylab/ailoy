@@ -1,19 +1,18 @@
-#[cfg(feature = "sandbox")]
-use std::sync::Arc;
 use std::{
     io::Read as _,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::Context as _;
 
-#[cfg(feature = "sandbox")]
-use crate::tool::ToolFunc;
 use crate::{
     datatype::Value,
     message::{ToolDesc, ToolDescBuilder},
     tool::Tool,
 };
+#[cfg(feature = "sandbox")]
+use crate::{sandbox::Sandbox, tool::ToolFunc};
 
 const TOOL_NAME: &str = "convert_pdf_to_md";
 const DOCLING_PACKAGE: &str = "docling>=2,<3";
@@ -71,46 +70,42 @@ if __name__ == "__main__":
 "#;
 
 #[cfg(feature = "sandbox")]
-pub async fn build_convert_pdf_to_md_tool(
-    sandbox: Arc<crate::sandbox::Sandbox>,
-) -> anyhow::Result<Tool> {
-    // Install docling once at tool-build time so per-call latency is purely conversion.
-    // docling pulls PyTorch and other heavy deps, so we give it the full conversion budget.
-    //
-    // After docling installs opencv-python (which requires X11/libxcb), replace it with
-    // opencv-python-headless so the sandbox doesn't need display system libraries.
-    let install = sandbox
-        .shell_with_timeout(
-            &format!(
-                "pip install '{DOCLING_PACKAGE}' \
-                 && pip install --force-reinstall --no-deps opencv-python-headless"
-            ),
-            CONVERSION_TIMEOUT_SECS,
-        )
-        .await
-        .context("failed to run pip install for docling")?;
-    if install.timed_out {
-        anyhow::bail!("pip install docling timed out after {CONVERSION_TIMEOUT_SECS}s");
-    }
-    if install.exit_code != 0 {
-        anyhow::bail!(
-            "failed to pre-install docling (exit {}): {}",
-            install.exit_code,
-            install.stderr
-        );
-    }
-
-    // Write the conversion script once; it persists for the session lifetime.
-    sandbox
-        .write_file(SANDBOX_SCRIPT_PATH, DOCLING_SOURCE.as_bytes())
-        .await
-        .context("failed to write docling script to sandbox")?;
-
+pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<Tool> {
+    // Lazy initialisation: docling is installed and the script is written on the
+    // first call, not at build time.  A Mutex<bool> flag ensures setup runs once
+    // even under concurrent first calls.
+    let initialized = Arc::new(tokio::sync::Mutex::new(false));
     let desc = convert_pdf_to_md_tool_desc();
 
-    let f: ToolFunc = ToolFunc::new(move |args: Value| {
-        let sandbox = sandbox.clone();
+    let f: ToolFunc = ToolFunc::new(move |args: Value, sandbox: Option<Arc<Sandbox>>| {
+        let initialized = initialized.clone();
         async move {
+            let sandbox = match sandbox {
+                Some(sb) => sb,
+                None => {
+                    return error_value(
+                        "",
+                        "initialization",
+                        "sandbox required for convert_pdf_to_md",
+                    );
+                }
+            };
+
+            // Run setup exactly once per tool instance.
+            {
+                let mut guard = initialized.lock().await;
+                if !*guard {
+                    if let Err(e) = setup_sandbox(&sandbox).await {
+                        return error_value(
+                            "",
+                            "initialization",
+                            &format!("failed to set up docling: {e}"),
+                        );
+                    }
+                    *guard = true;
+                }
+            }
+
             let pdf_path = match validate_pdf_path(&args) {
                 Ok(p) => p,
                 Err(e) => return e,
@@ -188,6 +183,39 @@ pub async fn build_convert_pdf_to_md_tool(
     });
 
     Ok(Tool::new(desc, Arc::new(f)))
+}
+
+/// Install docling and write the conversion script into the sandbox.
+/// Called at most once per tool instance (guarded by the `initialized` mutex).
+#[cfg(feature = "sandbox")]
+async fn setup_sandbox(sandbox: &Sandbox) -> anyhow::Result<()> {
+    let install = sandbox
+        .shell_with_timeout(
+            &format!(
+                "pip install '{DOCLING_PACKAGE}' \
+                 && pip install --force-reinstall --no-deps opencv-python-headless"
+            ),
+            CONVERSION_TIMEOUT_SECS,
+        )
+        .await
+        .context("failed to run pip install for docling")?;
+    if install.timed_out {
+        anyhow::bail!("pip install docling timed out after {CONVERSION_TIMEOUT_SECS}s");
+    }
+    if install.exit_code != 0 {
+        anyhow::bail!(
+            "failed to pre-install docling (exit {}): {}",
+            install.exit_code,
+            install.stderr
+        );
+    }
+
+    sandbox
+        .write_file(SANDBOX_SCRIPT_PATH, DOCLING_SOURCE.as_bytes())
+        .await
+        .context("failed to write docling script to sandbox")?;
+
+    Ok(())
 }
 
 #[cfg(not(feature = "sandbox"))]
@@ -493,9 +521,12 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires docling installation and model artifacts"]
     async fn test_convert_pdf_to_md_smoke() {
-        use crate::sandbox::{Sandbox, SandboxConfig};
+        use crate::{
+            message::Part,
+            sandbox::{Sandbox, SandboxConfig},
+            tool::test_helpers::call_with_sandbox,
+        };
 
-        // docling loads PyTorch models at runtime; 512 MiB (default) is not enough.
         let sandbox = Arc::new(
             Sandbox::new(SandboxConfig {
                 memory_mib: 4096,
@@ -504,7 +535,7 @@ mod tests {
             .await
             .expect("failed to create sandbox"),
         );
-        let tool = build_convert_pdf_to_md_tool(sandbox)
+        let tool = build_convert_pdf_to_md_tool()
             .await
             .expect("failed to build convert_pdf_to_md tool");
 
@@ -512,14 +543,14 @@ mod tests {
         let pdf_path = dir.path().join("hello.pdf");
         write_minimal_pdf(&pdf_path, "Hello Docling");
 
-        let args = crate::message::Part::function(
+        let args = Part::function(
             "call-1",
             TOOL_NAME,
             crate::to_value!({
                 "pdf_path": pdf_path.to_string_lossy().to_string()
             }),
         );
-        let msg = tool.call(&args).await.expect("tool call failed");
+        let msg = call_with_sandbox(&tool, args, sandbox).await;
         let value = msg.contents[0].as_value().expect("expected value response");
 
         assert!(
@@ -529,17 +560,13 @@ mod tests {
         let md_path = value
             .pointer("/md_path")
             .and_then(|v| v.as_str())
-            .unwrap_or_else(|| panic!("expected md_path in success result, got: {value:?}"));
+            .expect("expected md_path in success result");
         let markdown = std::fs::read_to_string(md_path).expect("failed to read markdown file");
         let size_chars = value
             .pointer("/size_chars")
             .and_then(|v| v.as_integer())
             .expect("expected size_chars in success result");
-        assert_eq!(
-            size_chars,
-            markdown.chars().count() as i64,
-            "size_chars should match markdown character count",
-        );
+        assert_eq!(size_chars, markdown.chars().count() as i64);
         assert!(!markdown.trim().is_empty(), "markdown should not be empty");
     }
 }

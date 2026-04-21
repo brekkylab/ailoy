@@ -1,12 +1,12 @@
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc};
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
 use crate::{
     agent::{AgentProvider, AgentSpec, default_provider},
     lang_model::LangModel,
-    message::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
-    tool::{Tool, ToolFunc, ToolSet},
+    message::{FinishReason, Message, MessageOutput, Part, Role},
+    tool::{Tool, ToolContext, ToolSet},
 };
 
 pub struct AgentState {
@@ -135,7 +135,7 @@ impl Agent {
     pub async fn try_with_tools(
         spec: AgentSpec,
         provider: &AgentProvider,
-        tools: impl IntoIterator<Item = (ToolDesc, Arc<ToolFunc>)>,
+        tools: &ToolSet,
     ) -> anyhow::Result<Self> {
         // Parse model id
         let model_id = spec
@@ -149,20 +149,13 @@ impl Agent {
             .ok_or_else(|| anyhow::anyhow!("No provider found for model '{}'", spec.model))?
             .clone();
 
-        // Build a name-keyed map from the provided tools
-        let tool_map: HashMap<String, (ToolDesc, Arc<ToolFunc>)> = tools
-            .into_iter()
-            .map(|(desc, f)| (desc.name.clone(), (desc, f)))
-            .collect();
-
         // Collect tools required by the spec; error if any tool is missing
         let tools: Vec<Tool> = spec
             .tools
             .iter()
             .map(|n| {
-                tool_map
-                    .get(n)
-                    .map(|(desc, f)| Tool::new(desc.clone(), Arc::clone(f)))
+                tools
+                    .make_runtime(n)
                     .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found", n))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
@@ -178,7 +171,12 @@ impl Agent {
         let mut state = AgentState::with_history(history);
         #[cfg(feature = "sandbox")]
         {
-            state.sandbox = provider.sandbox.clone();
+            use crate::sandbox::{Sandbox, SandboxConfig};
+
+            let sandbox = Sandbox::new(SandboxConfig::default())
+                .await
+                .expect("Failed to initialize sandbox");
+            state.sandbox = Some(Arc::new(sandbox));
         }
         Ok(Self {
             model: LangModel::new(model_id, model_provider),
@@ -209,12 +207,17 @@ impl Agent {
             };
             let (tool_name, call_id) = (tool_name.to_string(), call_id.to_string());
 
-            let func = self
+            let tool = self
                 .tools
                 .iter()
                 .find(|t| t.get_desc().name == tool_name)
-                .map(|t| t.get_func())
+                .cloned()
                 .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
+
+            let ctx = ToolContext {
+                #[cfg(feature = "sandbox")]
+                sandbox: self.state.sandbox.clone(),
+            };
 
             let tx = tx.clone();
 
@@ -226,7 +229,7 @@ impl Agent {
 
                 let outcome: Result<anyhow::Result<bool>, _> =
                     std::panic::AssertUnwindSafe(async move {
-                        let mut stream = func.call(tool_call)?;
+                        let mut stream = tool.call(&tool_call, ctx)?;
                         let mut last: Option<MessageOutput> = None;
 
                         while let Some(item) = stream.next().await {
