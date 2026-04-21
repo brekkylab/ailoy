@@ -1,3 +1,5 @@
+#[cfg(feature = "sandbox-microvm")]
+use std::sync::Arc;
 use std::{
     io::Read as _,
     path::{Path, PathBuf},
@@ -5,30 +7,25 @@ use std::{
 
 use anyhow::Context as _;
 
+#[cfg(feature = "sandbox-microvm")]
+use crate::tool::ToolFunc;
 use crate::{
     datatype::Value,
     message::{ToolDesc, ToolDescBuilder},
     tool::Tool,
 };
 
-#[cfg(feature = "sandbox-microvm")]
-use std::sync::Arc;
-
-#[cfg(feature = "sandbox-microvm")]
-use crate::{
-    message::Part,
-    tool::ToolFunc,
-    tool_impl::builtins::python_repl::{PythonSourceToolConfig, build_python_source_tool},
-};
-
 const TOOL_NAME: &str = "convert_pdf_to_md";
 const DOCLING_PACKAGE: &str = "docling>=2,<3";
 const CONVERSION_TIMEOUT_SECS: u64 = 600;
+
+const SANDBOX_INPUT_PDF: &str = "/workspace/__ailoy_input.pdf";
+const SANDBOX_OUTPUT_MD: &str = "/workspace/__ailoy_output.md";
+const SANDBOX_SCRIPT_PATH: &str = "/workspace/__ailoy_docling.py";
+
 const DOCLING_SOURCE: &str = r#"
-import json
 import logging
 import os
-import tempfile
 from pathlib import Path
 
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
@@ -66,91 +63,128 @@ def build_converter():
     )
 
 
-def load_args():
-    args_path = os.environ.get("AILOY_ARGS_JSON_PATH", "")
-    if not args_path:
-        raise ValueError("missing AILOY_ARGS_JSON_PATH")
-    return json.loads(Path(args_path).read_text(encoding="utf-8"))
-
-
-def main():
-    args = load_args()
-    raw_pdf_path = args.get("pdf_path")
-    if not isinstance(raw_pdf_path, str) or not raw_pdf_path.strip():
-        raise ValueError("`pdf_path` must be a non-empty string")
-
-    pdf_path = Path(raw_pdf_path)
-    markdown = build_converter().convert(pdf_path).document.export_to_markdown()
-    size_chars = len(markdown)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".md",
-        prefix="convert_pdf_to_md-",
-        delete=False,
-        encoding="utf-8",
-    ) as fp:
-        fp.write(markdown)
-        md_path = str(Path(fp.name).resolve())
-    print(json.dumps({"md_path": md_path, "size_chars": size_chars}, ensure_ascii=False), end="")
-
-
 if __name__ == "__main__":
-    main()
+    pdf_path = Path(os.environ["AILOY_PDF_PATH"])
+    output_path = Path(os.environ["AILOY_OUTPUT_PATH"])
+    markdown = build_converter().convert(pdf_path).document.export_to_markdown()
+    output_path.write_text(markdown, encoding="utf-8")
 "#;
 
 #[cfg(feature = "sandbox-microvm")]
 pub async fn build_convert_pdf_to_md_tool(
     sandbox: Arc<crate::sandbox::Sandbox>,
 ) -> anyhow::Result<Tool> {
-    let python_tool = Arc::new(build_convert_pdf_to_md_python_tool(sandbox).await?);
+    // Install docling once at tool-build time so per-call latency is purely conversion.
+    // docling pulls PyTorch and other heavy deps, so we give it the full conversion budget.
+    //
+    // After docling installs opencv-python (which requires X11/libxcb), replace it with
+    // opencv-python-headless so the sandbox doesn't need display system libraries.
+    let install = sandbox
+        .shell_with_timeout(
+            &format!(
+                "pip install '{DOCLING_PACKAGE}' \
+                 && pip install --force-reinstall --no-deps opencv-python-headless"
+            ),
+            CONVERSION_TIMEOUT_SECS,
+        )
+        .await
+        .context("failed to run pip install for docling")?;
+    if install.timed_out {
+        anyhow::bail!("pip install docling timed out after {CONVERSION_TIMEOUT_SECS}s");
+    }
+    if install.exit_code != 0 {
+        anyhow::bail!(
+            "failed to pre-install docling (exit {}): {}",
+            install.exit_code,
+            install.stderr
+        );
+    }
+
+    // Write the conversion script once; it persists for the session lifetime.
+    sandbox
+        .write_file(SANDBOX_SCRIPT_PATH, DOCLING_SOURCE.as_bytes())
+        .await
+        .context("failed to write docling script to sandbox")?;
+
     let desc = convert_pdf_to_md_tool_desc();
 
     let f: ToolFunc = ToolFunc::new(move |args: Value| {
-        let python_tool = python_tool.clone();
-        Box::pin(async move {
+        let sandbox = sandbox.clone();
+        async move {
             let pdf_path = match validate_pdf_path(&args) {
-                Ok(path) => path,
-                Err(err) => return err,
+                Ok(p) => p,
+                Err(e) => return e,
             };
 
-            let tool_call = Part::function(
-                "convert-pdf-to-md-internal",
-                TOOL_NAME,
-                crate::to_value!({
-                    "pdf_path": pdf_path.to_string_lossy().to_string()
-                }),
-            );
-
-            match python_tool.call(&tool_call).await {
-                Ok(msg) => {
-                    let value = match msg.contents.first().and_then(|part| part.as_value()) {
-                        Some(value) => value,
-                        None => {
-                            return error_value(
-                                &pdf_path.to_string_lossy(),
-                                "execution",
-                                "python source tool returned no value payload",
-                            );
-                        }
-                    };
-
-                    if value.is_object() {
-                        return value.clone();
-                    }
-
-                    error_value(
-                        &pdf_path.to_string_lossy(),
-                        "execution",
-                        "python source tool returned unexpected payload type",
-                    )
-                }
-                Err(err) => error_value(
+            if let Err(e) = sandbox.copy_from_host(&pdf_path, SANDBOX_INPUT_PDF).await {
+                return error_value(
                     &pdf_path.to_string_lossy(),
                     "execution",
-                    &format!("failed to run python source tool: {err}"),
+                    &format!("failed to copy PDF into sandbox: {e}"),
+                );
+            }
+
+            let cmd = format!(
+                "AILOY_PDF_PATH={SANDBOX_INPUT_PDF} AILOY_OUTPUT_PATH={SANDBOX_OUTPUT_MD} \
+                 python3 {SANDBOX_SCRIPT_PATH}"
+            );
+            let result = match sandbox
+                .shell_with_timeout(&cmd, CONVERSION_TIMEOUT_SECS)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    return error_value(
+                        &pdf_path.to_string_lossy(),
+                        "execution",
+                        &format!("sandbox error: {e}"),
+                    );
+                }
+            };
+
+            if result.timed_out {
+                return error_value(
+                    &pdf_path.to_string_lossy(),
+                    "execution",
+                    &format!("docling timed out after {CONVERSION_TIMEOUT_SECS}s"),
+                );
+            }
+            if result.exit_code != 0 {
+                return error_value(
+                    &pdf_path.to_string_lossy(),
+                    "execution",
+                    &format!(
+                        "docling failed (exit {}): {}",
+                        result.exit_code,
+                        result.stderr.trim()
+                    ),
+                );
+            }
+
+            let markdown = match sandbox.read_file(SANDBOX_OUTPUT_MD).await {
+                Ok(md) => md,
+                Err(e) => {
+                    return error_value(
+                        &pdf_path.to_string_lossy(),
+                        "execution",
+                        &format!("failed to read markdown output from sandbox: {e}"),
+                    );
+                }
+            };
+
+            let size_chars = markdown.chars().count();
+            match write_host_temp_file(&markdown) {
+                Ok(md_path) => crate::to_value!({
+                    "md_path": md_path.to_string_lossy().to_string(),
+                    "size_chars": size_chars as i64
+                }),
+                Err(e) => error_value(
+                    &pdf_path.to_string_lossy(),
+                    "execution",
+                    &format!("failed to write output file: {e}"),
                 ),
             }
-        })
+        }
     });
 
     Ok(Tool::new(desc, Arc::new(f)))
@@ -161,33 +195,17 @@ pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<Tool> {
     anyhow::bail!("sandbox-microvm feature required for convert_pdf_to_md")
 }
 
-#[cfg(feature = "sandbox-microvm")]
-async fn build_convert_pdf_to_md_python_tool(
-    sandbox: Arc<crate::sandbox::Sandbox>,
-) -> anyhow::Result<Tool> {
-    // Pre-install docling once at tool-build time
-    let install_result = sandbox
-        .exec("pip", &["install", DOCLING_PACKAGE])
-        .await
-        .context("failed to run pip install for docling")?;
-    if install_result.exit_code != 0 {
-        anyhow::bail!(
-            "failed to pre-install docling: {}",
-            install_result.stderr
-        );
-    }
-
-    build_python_source_tool(
-        convert_pdf_to_md_tool_desc(),
-        convert_pdf_to_md_tool_config(),
-        sandbox,
-    )
-    .await
-}
-
-#[cfg(feature = "sandbox-microvm")]
-fn convert_pdf_to_md_tool_config() -> PythonSourceToolConfig {
-    PythonSourceToolConfig::new(DOCLING_SOURCE).timeout_secs(CONVERSION_TIMEOUT_SECS)
+fn write_host_temp_file(content: &str) -> anyhow::Result<PathBuf> {
+    use std::io::Write as _;
+    let mut file = tempfile::Builder::new()
+        .prefix("convert_pdf_to_md-")
+        .suffix(".md")
+        .tempfile()
+        .context("failed to create temp file")?;
+    file.write_all(content.as_bytes())
+        .context("failed to write markdown to temp file")?;
+    let (_, path) = file.keep().context("failed to persist temp file")?;
+    Ok(path)
 }
 
 fn convert_pdf_to_md_tool_desc() -> ToolDesc {
@@ -396,18 +414,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "sandbox-microvm")]
-    #[test]
-    fn test_convert_pdf_to_md_tool_config_sets_runtime_and_docling() {
-        let config = convert_pdf_to_md_tool_config();
-
-        assert_eq!(config.timeout_secs, CONVERSION_TIMEOUT_SECS);
-        assert!(config.source.contains("DocumentConverter"));
-        assert!(config.source.contains("export_to_markdown"));
-        assert!(config.source.contains("NamedTemporaryFile"));
-        assert!(config.source.contains("\"md_path\""));
-    }
-
     #[test]
     fn test_missing_pdf_path_returns_validation_error() {
         let err = validate_pdf_path(&crate::to_value!({})).unwrap_err();
@@ -475,11 +481,65 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_docling_source_reads_from_env_vars() {
+        assert!(DOCLING_SOURCE.contains("AILOY_PDF_PATH"));
+        assert!(DOCLING_SOURCE.contains("AILOY_OUTPUT_PATH"));
+        assert!(DOCLING_SOURCE.contains("DocumentConverter"));
+        assert!(DOCLING_SOURCE.contains("export_to_markdown"));
+    }
+
     #[cfg(feature = "sandbox-microvm")]
     #[tokio::test]
     #[ignore = "requires docling installation and model artifacts"]
     async fn test_convert_pdf_to_md_smoke() {
-        // This test requires a running sandbox; skip in unit test runs
-        unimplemented!("smoke test requires sandbox integration")
+        use crate::sandbox::{Sandbox, SandboxConfig};
+
+        // docling loads PyTorch models at runtime; 512 MiB (default) is not enough.
+        let sandbox = Arc::new(
+            Sandbox::new(SandboxConfig {
+                memory_mib: 4096,
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("failed to create sandbox"),
+        );
+        let tool = build_convert_pdf_to_md_tool(sandbox)
+            .await
+            .expect("failed to build convert_pdf_to_md tool");
+
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let pdf_path = dir.path().join("hello.pdf");
+        write_minimal_pdf(&pdf_path, "Hello Docling");
+
+        let args = crate::message::Part::function(
+            "call-1",
+            TOOL_NAME,
+            crate::to_value!({
+                "pdf_path": pdf_path.to_string_lossy().to_string()
+            }),
+        );
+        let msg = tool.call(&args).await.expect("tool call failed");
+        let value = msg.contents[0].as_value().expect("expected value response");
+
+        assert!(
+            value.is_object(),
+            "expected object response, got: {value:?}"
+        );
+        let md_path = value
+            .pointer("/md_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| panic!("expected md_path in success result, got: {value:?}"));
+        let markdown = std::fs::read_to_string(md_path).expect("failed to read markdown file");
+        let size_chars = value
+            .pointer("/size_chars")
+            .and_then(|v| v.as_integer())
+            .expect("expected size_chars in success result");
+        assert_eq!(
+            size_chars,
+            markdown.chars().count() as i64,
+            "size_chars should match markdown character count",
+        );
+        assert!(!markdown.trim().is_empty(), "markdown should not be empty");
     }
 }
