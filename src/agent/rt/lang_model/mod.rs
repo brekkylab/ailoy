@@ -4,7 +4,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
 use crate::{
-    agent::{LangModelAPISchema, LangModelInferConfig, LangModelProvider},
+    agent::{LangModelAPISchema, LangModelProvider},
     datatype::Value,
     message::{Delta as _, Marshaled, Message, MessageOutput, ToolDesc, Unmarshal as _},
 };
@@ -21,7 +21,7 @@ struct LangModelRequest<'a> {
     pub tools: &'a [ToolDesc],
     pub url: &'a Url,
     pub api_key: &'a Option<String>,
-    pub infer_config: &'a LangModelInferConfig,
+    pub max_tokens: Option<u64>,
 }
 
 impl LangModelRuntime {
@@ -33,13 +33,13 @@ impl LangModelRuntime {
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
-        infer_config: &LangModelInferConfig,
     ) -> anyhow::Result<MessageOutput> {
         match &self.provider {
             LangModelProvider::API {
                 schema,
                 url,
                 api_key,
+                max_tokens,
             } => {
                 // Create request
                 let req = LangModelRequest {
@@ -48,7 +48,7 @@ impl LangModelRuntime {
                     tools,
                     url,
                     api_key,
-                    infer_config,
+                    max_tokens: *max_tokens,
                 };
 
                 let req = match schema {
@@ -170,10 +170,7 @@ mod tests {
         let messages = vec![Message::new(Role::User).with_contents([Part::text("Hi")])];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = lm
-            .run(&messages, &tools, &Default::default())
-            .await
-            .unwrap();
+        let resp = lm.run(&messages, &tools).await.unwrap();
         assert!(
             !resp.message.contents.is_empty(),
             "Expected at least one message content"
@@ -216,10 +213,7 @@ mod tests {
                 .build(),
         ];
 
-        let resp = lm
-            .run(&messages, &tools, &Default::default())
-            .await
-            .unwrap();
+        let resp = lm.run(&messages, &tools).await.unwrap();
 
         // The model should respond with a tool call
         assert_eq!(resp.finish_reason, FinishReason::ToolCall {});

@@ -17,6 +17,7 @@ impl LangModelProvider {
             schema: LangModelAPISchema::ChatCompletion,
             url: Url::parse("https://api.x.ai/v1/chat/completions").unwrap(),
             api_key: Some(api_key),
+            max_tokens: None,
         }
     }
 
@@ -25,6 +26,7 @@ impl LangModelProvider {
             schema: LangModelAPISchema::ChatCompletion,
             url: Url::parse(url)?,
             api_key,
+            max_tokens: None,
         })
     }
 }
@@ -156,7 +158,7 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 .unwrap()
                 .insert("tools".to_owned(), tools);
         }
-        if let Some(max_tokens) = req.infer_config.max_tokens {
+        if let Some(max_tokens) = req.max_tokens {
             body.as_object_mut().unwrap().insert(
                 "max_completion_tokens".to_owned(),
                 (max_tokens as i64).into(),
@@ -303,11 +305,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{LangModelInferConfig, LangModelProvider, LangModelRuntime},
+        agent::{LangModelAPISchema, LangModelProvider, LangModelRuntime},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
-    fn with_req<F, R>(model: &str, infer_config: LangModelInferConfig, f: F) -> R
+    fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
     where
         F: FnOnce(&LangModelRequest<'_>) -> R,
     {
@@ -321,35 +323,28 @@ mod tests {
             tools: &tools,
             url: &url,
             api_key: &api_key,
-            infer_config: &infer_config,
+            max_tokens,
         };
         f(&req)
     }
 
     #[test]
     fn test_marshal_max_tokens_set() {
-        with_req(
-            "gpt-4.1-mini",
-            LangModelInferConfig {
-                max_tokens: Some(256),
-                ..Default::default()
-            },
-            |req| {
-                let val = ChatCompletionMarshal::default().marshal(req);
-                let body = val.as_object().unwrap().get("body").unwrap();
-                let max_tokens = body
-                    .as_object()
-                    .unwrap()
-                    .get("max_completion_tokens")
-                    .unwrap();
-                assert_eq!(max_tokens.as_integer().unwrap(), 256);
-            },
-        );
+        with_req("gpt-4.1-mini", Some(256), |req| {
+            let val = ChatCompletionMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            let max_tokens = body
+                .as_object()
+                .unwrap()
+                .get("max_completion_tokens")
+                .unwrap();
+            assert_eq!(max_tokens.as_integer().unwrap(), 256);
+        });
     }
 
     #[test]
     fn test_marshal_max_tokens_absent_when_none() {
-        with_req("gpt-4.1-mini", LangModelInferConfig::default(), |req| {
+        with_req("gpt-4.1-mini", None, |req| {
             let val = ChatCompletionMarshal::default().marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             assert!(
@@ -369,23 +364,20 @@ mod tests {
 
         let lm = LangModelRuntime::new(
             "gpt-4.1-mini".to_string(),
-            LangModelProvider::chat_completion(
-                "https://api.openai.com/v1/chat/completions",
-                Some(api_key),
-            )
-            .unwrap(),
+            LangModelProvider::API {
+                schema: LangModelAPISchema::ChatCompletion,
+                url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
+                api_key: Some(api_key),
+                max_tokens: Some(32),
+            },
         );
         let messages = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("Tell me a long story about a dragon.")]),
         ];
         let tools: Vec<ToolDesc> = vec![];
-        let config = LangModelInferConfig {
-            max_tokens: Some(32),
-            ..Default::default()
-        };
 
-        let resp = lm.run(&messages, &tools, &config).await.unwrap();
+        let resp = lm.run(&messages, &tools).await.unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }
