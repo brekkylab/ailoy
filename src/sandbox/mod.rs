@@ -1,4 +1,4 @@
-#![cfg(feature = "sandbox-microvm")]
+#![cfg(feature = "sandbox")]
 //! Thin wrapper around the `microsandbox` crate, exposing an ailoy-internal
 //! `Sandbox` type so the public API is not coupled to the underlying library.
 

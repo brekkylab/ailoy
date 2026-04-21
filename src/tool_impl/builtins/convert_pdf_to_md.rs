@@ -1,4 +1,4 @@
-#[cfg(feature = "sandbox-microvm")]
+#[cfg(feature = "sandbox")]
 use std::sync::Arc;
 use std::{
     io::Read as _,
@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Context as _;
 
-#[cfg(feature = "sandbox-microvm")]
+#[cfg(feature = "sandbox")]
 use crate::tool::ToolFunc;
 use crate::{
     datatype::Value,
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     output_path.write_text(markdown, encoding="utf-8")
 "#;
 
-#[cfg(feature = "sandbox-microvm")]
+#[cfg(feature = "sandbox")]
 pub async fn build_convert_pdf_to_md_tool(
     sandbox: Arc<crate::sandbox::Sandbox>,
 ) -> anyhow::Result<Tool> {
@@ -190,9 +190,9 @@ pub async fn build_convert_pdf_to_md_tool(
     Ok(Tool::new(desc, Arc::new(f)))
 }
 
-#[cfg(not(feature = "sandbox-microvm"))]
+#[cfg(not(feature = "sandbox"))]
 pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<Tool> {
-    anyhow::bail!("sandbox-microvm feature required for convert_pdf_to_md")
+    anyhow::bail!("sandbox feature required for convert_pdf_to_md")
 }
 
 fn write_host_temp_file(content: &str) -> anyhow::Result<PathBuf> {
@@ -489,7 +489,7 @@ mod tests {
         assert!(DOCLING_SOURCE.contains("export_to_markdown"));
     }
 
-    #[cfg(feature = "sandbox-microvm")]
+    #[cfg(feature = "sandbox")]
     #[tokio::test]
     #[ignore = "requires docling installation and model artifacts"]
     async fn test_convert_pdf_to_md_smoke() {

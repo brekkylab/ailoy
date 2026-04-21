@@ -25,7 +25,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-sandbox-microvm = ["dep:microsandbox"]
+sandbox = ["dep:microsandbox"]
 
 [dependencies]
 microsandbox = { version = "0", optional = true }

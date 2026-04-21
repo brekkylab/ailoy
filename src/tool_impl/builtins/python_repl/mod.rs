@@ -1,4 +1,4 @@
-#![cfg(feature = "sandbox-microvm")]
+#![cfg(feature = "sandbox")]
 
 use std::sync::Arc;
 

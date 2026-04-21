@@ -45,7 +45,7 @@ pub struct AgentProvider {
     pub tools: Vec<ToolProvider>,
 
     /// Sandbox instance shared with all builtin tools that need isolation.
-    #[cfg(feature = "sandbox-microvm")]
+    #[cfg(feature = "sandbox")]
     #[serde(skip)]
     pub sandbox: Option<std::sync::Arc<crate::sandbox::Sandbox>>,
 }
@@ -55,7 +55,7 @@ impl AgentProvider {
         Self {
             models: Default::default(),
             tools: Default::default(),
-            #[cfg(feature = "sandbox-microvm")]
+            #[cfg(feature = "sandbox")]
             sandbox: None,
         }
     }
@@ -204,7 +204,7 @@ impl AgentProvider {
     }
 
     /// Attach a sandbox instance to be shared with all builtin tools that need isolation.
-    #[cfg(feature = "sandbox-microvm")]
+    #[cfg(feature = "sandbox")]
     pub fn with_sandbox(&mut self, sandbox: std::sync::Arc<crate::sandbox::Sandbox>) -> &mut Self {
         self.sandbox = Some(sandbox);
         self

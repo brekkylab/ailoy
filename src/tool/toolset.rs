@@ -35,9 +35,9 @@ impl ToolSet {
             match tool_provider {
                 ToolProvider::Builtin(builtin_tool_provider) => {
                     let tool_runtime = {
-                        #[cfg(feature = "sandbox-microvm")]
+                        #[cfg(feature = "sandbox")]
                         { make_builtin_tool(builtin_tool_provider, provider.sandbox.clone()).await? }
-                        #[cfg(not(feature = "sandbox-microvm"))]
+                        #[cfg(not(feature = "sandbox"))]
                         { make_builtin_tool(builtin_tool_provider).await? }
                     };
                     this.tools.insert(

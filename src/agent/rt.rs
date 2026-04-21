@@ -12,7 +12,7 @@ use crate::{
 pub struct AgentState {
     pub history: Vec<Message>,
 
-    #[cfg(feature = "sandbox-microvm")]
+    #[cfg(feature = "sandbox")]
     pub sandbox: Option<std::sync::Arc<crate::sandbox::Sandbox>>,
 }
 
@@ -26,7 +26,7 @@ impl AgentState {
     pub fn new() -> Self {
         Self {
             history: Vec::new(),
-            #[cfg(feature = "sandbox-microvm")]
+            #[cfg(feature = "sandbox")]
             sandbox: None,
         }
     }
@@ -34,7 +34,7 @@ impl AgentState {
     pub fn with_history(history: Vec<Message>) -> Self {
         Self {
             history,
-            #[cfg(feature = "sandbox-microvm")]
+            #[cfg(feature = "sandbox")]
             sandbox: None,
         }
     }
@@ -176,7 +176,7 @@ impl Agent {
 
         #[allow(unused_mut)]
         let mut state = AgentState::with_history(history);
-        #[cfg(feature = "sandbox-microvm")]
+        #[cfg(feature = "sandbox")]
         {
             state.sandbox = provider.sandbox.clone();
         }
