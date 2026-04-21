@@ -55,7 +55,9 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
                             let data = captures.get(3).map(|m| m.as_str().to_string()).unwrap();
                             (mime, data)
                         } else {
-                            panic!("Gemini does not support image url inputs")
+                            return to_value!({
+                                "error": "Gemini does not support image URL inputs; provide a base64 data URI instead"
+                            });
                         }
                     }
                 };
