@@ -7,6 +7,7 @@ pub mod lang_model;
 pub(crate) mod lang_model_impl;
 pub(crate) mod macros;
 pub mod message;
-pub mod shell;
+#[cfg(feature = "sandbox-microvm")]
+pub mod sandbox;
 pub mod tool;
 pub(crate) mod tool_impl;

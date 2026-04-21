@@ -6,14 +6,14 @@ use crate::{
     agent::{AgentProvider, AgentSpec, default_provider},
     lang_model::LangModel,
     message::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
-    shell::Shell,
     tool::{Tool, ToolFunc, ToolSet},
 };
 
 pub struct AgentState {
     pub history: Vec<Message>,
 
-    pub shell: Option<Shell>,
+    #[cfg(feature = "sandbox-microvm")]
+    pub sandbox: Option<std::sync::Arc<crate::sandbox::Sandbox>>,
 }
 
 impl Default for AgentState {
@@ -26,20 +26,17 @@ impl AgentState {
     pub fn new() -> Self {
         Self {
             history: Vec::new(),
-            shell: None,
+            #[cfg(feature = "sandbox-microvm")]
+            sandbox: None,
         }
     }
 
     pub fn with_history(history: Vec<Message>) -> Self {
         Self {
             history,
-            shell: None,
+            #[cfg(feature = "sandbox-microvm")]
+            sandbox: None,
         }
-    }
-
-    pub fn shell(mut self) -> Self {
-        self.shell = Some(Shell::new());
-        self
     }
 }
 
@@ -177,10 +174,16 @@ impl Agent {
             .map(|inst| vec![Message::new(Role::System).with_contents([Part::text(inst)])])
             .unwrap_or_default();
 
+        #[allow(unused_mut)]
+        let mut state = AgentState::with_history(history);
+        #[cfg(feature = "sandbox-microvm")]
+        {
+            state.sandbox = provider.sandbox.clone();
+        }
         Ok(Self {
             model: LangModel::new(model_id, model_provider),
             tools,
-            state: AgentState::with_history(history),
+            state,
         })
     }
 

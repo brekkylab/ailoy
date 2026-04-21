@@ -23,7 +23,12 @@ crate-type = ["rlib"]
 path = "src/lib.rs"
 
 
+[features]
+default = []
+sandbox-microvm = ["dep:microsandbox"]
+
 [dependencies]
+microsandbox = { version = "0", optional = true }
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
