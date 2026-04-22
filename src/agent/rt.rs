@@ -944,4 +944,218 @@ mod tests {
             "python_repl should have produced expected output, got stdout: {stdout:?}"
         );
     }
+
+    /// Verifies the convert_pdf_to_md skill end-to-end:
+    ///   1. Agent receives an instruction listing available skills (name, description, path only).
+    ///   2. Agent reads the SKILL.md via `bash cat` to activate the skill.
+    ///   3. Agent installs Docling and converts the PDF to Markdown.
+    ///
+    /// Requires ANTHROPIC_API_KEY and the sandbox feature.
+    #[cfg(feature = "sandbox")]
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    #[ignore = "slow: installs docling (~minutes) and requires model artifacts"]
+    async fn test_convert_pdf_to_md_skill() {
+        use crate::{
+            agent::{AgentProvider, AgentSpec},
+            tool::{BuiltinToolProvider, ToolProvider},
+        };
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+
+        // Skill content hardcoded — not loaded from disk at test time.
+        // This is what gets written to /workspace/skills/convert_pdf_to_md.md inside the sandbox.
+        let skill_md = r#"# Skill: Convert PDF to Markdown
+
+Convert a local PDF file to Markdown using [Docling](https://github.com/DS4SD/docling).
+
+## When to use
+
+When asked to convert a PDF file to Markdown (or extract text/structure from a PDF).
+
+## Steps
+
+### 1. Install dependencies
+
+Install Docling (this takes a few minutes the first time):
+
+```
+pip install 'docling>=2,<3'
+```
+
+If the conversion later fails with an error related to `libxcb` or OpenCV display libraries,
+replace the OpenCV build with the headless variant:
+
+```
+pip install --force-reinstall --no-deps opencv-python-headless
+```
+
+### 2. Run the conversion
+
+Run the following script, substituting the actual paths:
+
+```python
+import logging
+import os
+from pathlib import Path
+
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+logging.getLogger("docling").setLevel(logging.CRITICAL)
+
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions, TableStructureOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
+
+pipeline_options = PdfPipelineOptions(
+    do_ocr=False,
+    do_table_structure=True,
+    table_structure_options=TableStructureOptions(do_cell_matching=True, mode="accurate"),
+    accelerator_options={"num_threads": 4, "device": "auto"},
+    do_picture_classification=False,
+    do_picture_description=False,
+    do_chart_extraction=False,
+    do_code_enrichment=False,
+    do_formula_enrichment=False,
+    generate_page_images=False,
+    generate_picture_images=False,
+)
+
+converter = DocumentConverter(
+    format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
+)
+
+pdf_path = Path("/workspace/input.pdf")   # ← replace with actual path
+output_path = pdf_path.with_suffix(".md")
+
+markdown = converter.convert(pdf_path).document.export_to_markdown()
+output_path.write_text(markdown, encoding="utf-8")
+print(f"Saved: {output_path}")
+```
+
+### 3. Confirm
+
+After the script exits with code 0, the Markdown file is written next to the PDF (same path,
+`.md` extension) unless you specified a different `output_path`.
+"#;
+
+        // Instruction lists available skills by name, description, and SKILL.md path only.
+        // The agent must `cat` the SKILL.md to obtain the full instructions before proceeding.
+        let instruction = "\
+You are a helpful assistant with access to a set of skills. \
+Skills provide step-by-step instructions for specific tasks. \
+To activate a skill, read its SKILL.md using the bash tool \
+(`cat <path>`), then follow the instructions inside.
+
+## Available Skills
+
+| Name | Description | Path |
+|------|-------------|------|
+| convert_pdf_to_md | Convert a local PDF file to Markdown using Docling. | /workspace/skills/convert_pdf_to_md.md |
+";
+
+        let mut provider = AgentProvider::new();
+        provider
+            .model_claude(api_key)
+            .tool(ToolProvider::Builtin(BuiltinToolProvider::Bash {}))
+            .tool(ToolProvider::Builtin(BuiltinToolProvider::PythonRepl {}));
+
+        let spec = AgentSpec::new("anthropic/claude-sonnet-4-6")
+            .tools(["bash", "python_repl"])
+            .instruction(instruction);
+
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
+
+        // Seed the sandbox with the skill file and the test PDF before running the agent.
+        let pdf_bytes = minimal_pdf_bytes();
+        let sb = agent.state.sandbox.as_ref().expect("sandbox must exist");
+        sb.start().await.expect("failed to start sandbox for setup");
+        sb.shell("mkdir -p /workspace/skills")
+            .await
+            .expect("failed to create skills directory");
+        sb.write_file(
+            "/workspace/skills/convert_pdf_to_md.md",
+            skill_md.as_bytes(),
+        )
+        .await
+        .expect("failed to write skill file into sandbox");
+        sb.write_file("/workspace/test.pdf", &pdf_bytes)
+            .await
+            .expect("failed to write PDF into sandbox");
+        sb.stop().await.expect("failed to stop sandbox after setup");
+
+        // Ask the agent to convert the PDF — it must cat the SKILL.md first.
+        let query = Message::new(Role::User).with_contents([Part::text(
+            "Convert /workspace/test.pdf to Markdown. \
+             The output file should be at /workspace/test.md.",
+        )]);
+
+        {
+            let mut stream = agent.run(query);
+            while let Some(event) = stream.next().await {
+                println!("{:?}", event);
+                event.expect("agent stream error");
+            }
+        }
+
+        // Verify the markdown file was written to the sandbox.
+        agent
+            .state
+            .sandbox
+            .as_ref()
+            .unwrap()
+            .start()
+            .await
+            .expect("failed to start sandbox for verification");
+
+        let markdown = agent
+            .state
+            .sandbox
+            .as_ref()
+            .unwrap()
+            .read_file("/workspace/test.md")
+            .await
+            .expect("agent should have written /workspace/test.md");
+
+        assert!(
+            !markdown.trim().is_empty(),
+            "converted markdown should not be empty"
+        );
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    #[cfg(feature = "sandbox")]
+    fn minimal_pdf_bytes() -> Vec<u8> {
+        let stream = "BT\n/F1 24 Tf\n72 100 Td\n(Hello Docling) Tj\nET";
+        let objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_string(),
+            format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        ];
+        let mut pdf = Vec::from("%PDF-1.4\n".as_bytes());
+        let mut offsets = Vec::with_capacity(objects.len());
+        for (i, obj) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", i + 1, obj).as_bytes());
+        }
+        let xref = pdf.len();
+        pdf.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for o in offsets {
+            pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Root 1 0 R /Size {} >>\nstartxref\n{}\n%%EOF\n",
+                objects.len() + 1,
+                xref
+            )
+            .as_bytes(),
+        );
+        pdf
+    }
 }
