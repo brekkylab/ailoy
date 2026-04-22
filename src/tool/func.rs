@@ -16,16 +16,12 @@ use crate::{
 /// Tools that don't need the context simply ignore it.  Constructed by the
 /// caller (typically the agent) and passed through [`ToolFunc::call`].
 pub struct ToolContext {
-    #[cfg(feature = "sandbox")]
     pub sandbox: Option<Arc<crate::sandbox::Sandbox>>,
 }
 
 impl Default for ToolContext {
     fn default() -> Self {
-        Self {
-            #[cfg(feature = "sandbox")]
-            sandbox: None,
-        }
+        Self { sandbox: None }
     }
 }
 
@@ -33,7 +29,6 @@ pub enum ToolFunc {
     Simple(Box<dyn Fn(String, Value) -> MessageOutput + Send + Sync>),
     Future(Box<dyn Fn(String, Value) -> BoxFuture<'static, MessageOutput> + Send + Sync>),
     Stream(Box<dyn Fn(String, Value) -> BoxStream<'static, MessageOutput> + Send + Sync>),
-    #[cfg(feature = "sandbox")]
     SandboxFuture(
         Box<
             dyn Fn(
@@ -82,7 +77,6 @@ impl ToolFunc {
             ToolFunc::Simple(f) => stream::once(std::future::ready(f(id, args))).boxed(),
             ToolFunc::Future(f) => stream::once(f(id, args)).boxed(),
             ToolFunc::Stream(f) => f(id, args),
-            #[cfg(feature = "sandbox")]
             ToolFunc::SandboxFuture(f) => stream::once(f(id, args, ctx.sandbox)).boxed(),
         })
     }
@@ -104,7 +98,6 @@ mod marker {
     pub struct AsyncMessageStreamOutput;
 
     /// `Fn(Value, Option<Arc<Sandbox>>) -> Future<Output = Value>`
-    #[cfg(feature = "sandbox")]
     pub struct AsyncSandboxValueOutput;
 }
 
@@ -172,7 +165,6 @@ where
     }
 }
 
-#[cfg(feature = "sandbox")]
 impl<F, Fut> IntoToolFunc<marker::AsyncSandboxValueOutput> for F
 where
     F: Fn(Value, Option<Arc<crate::sandbox::Sandbox>>) -> Fut + Send + Sync + 'static,

@@ -1,6 +1,8 @@
-#![cfg(feature = "sandbox")]
+mod runner;
 
 use std::sync::Arc;
+
+pub(crate) use runner::PythonScriptRunner;
 
 use crate::{
     datatype::Value,
@@ -12,10 +14,10 @@ use crate::{
 pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
     let desc = ToolDescBuilder::new("python_repl")
         .description(
-            "Execute a Python script in an isolated MicroVM and return stdout/stderr. \
-             The VM persists across calls within a session — pip-installed packages \
-             and created files are available in subsequent calls. \
-             Use `/workspace` as the working directory for any files you create or read. \
+            "Execute a Python script and return stdout/stderr. \
+             When a sandbox is active the VM persists across calls within a session — \
+             pip-installed packages and created files survive between calls. \
+             Without a sandbox the script runs in the host process; state does not persist. \
              Use `pip_install` to install packages before execution.",
         )
         .parameters(crate::to_value!({
@@ -35,20 +37,11 @@ pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
         }))
         .build();
 
-    let f = ToolFunc::new(
-        move |args: Value, sandbox: Option<Arc<Sandbox>>| async move {
-            let sandbox = match sandbox {
-                Some(sb) => sb,
-                None => {
-                    return crate::to_value!({
-                        "stdout": "",
-                        "stderr": "sandbox required for python_repl",
-                        "exit_code": -1,
-                        "phase": "validation"
-                    });
-                }
-            };
+    let runner = Arc::new(PythonScriptRunner::new(None, 0));
 
+    let f = ToolFunc::new(move |args: Value, sandbox: Option<Arc<Sandbox>>| {
+        let runner = runner.clone();
+        async move {
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
                 Some(c) => c.to_string(),
                 None => {
@@ -71,11 +64,11 @@ pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
                 })
                 .unwrap_or_default();
 
+            let sandbox = sandbox.as_ref();
+
             if !pip_packages.is_empty() {
-                let pkg_args: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
-                let mut install_args = vec!["install"];
-                install_args.extend_from_slice(&pkg_args);
-                match sandbox.exec("pip", &install_args).await {
+                let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
+                match runner.install_packages(sandbox, &pkg_refs).await {
                     Ok(r) if r.exit_code != 0 => {
                         return crate::to_value!({
                             "stdout": "",
@@ -96,24 +89,12 @@ pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
                 }
             }
 
-            if let Err(e) = sandbox
-                .write_file("/workspace/__ailoy_run.py", code.as_bytes())
-                .await
-            {
-                return crate::to_value!({
-                    "stdout": "",
-                    "stderr": format!("failed to write code file: {e}").as_str(),
-                    "exit_code": -1,
-                    "phase": "execution"
-                });
-            }
-
-            match sandbox.shell("python3 /workspace/__ailoy_run.py").await {
-                Ok(result) => crate::to_value!({
-                    "stdout": result.stdout.as_str(),
-                    "stderr": result.stderr.as_str(),
-                    "exit_code": result.exit_code as i64,
-                    "timed_out": result.timed_out
+            match runner.run(sandbox, &code, &[]).await {
+                Ok(r) => crate::to_value!({
+                    "stdout": r.stdout.as_str(),
+                    "stderr": r.stderr.as_str(),
+                    "exit_code": r.exit_code as i64,
+                    "timed_out": r.timed_out
                 }),
                 Err(e) => crate::to_value!({
                     "stdout": "",
@@ -123,26 +104,19 @@ pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
                     "phase": "execution"
                 }),
             }
-        },
-    );
+        }
+    });
 
     Ok(Tool::new(desc, Arc::new(f)))
 }
 
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        message::Part, sandbox::SandboxConfig, to_value, tool::test_helpers::call_with_sandbox,
-    };
-
-    async fn make_sandbox() -> Arc<Sandbox> {
-        Arc::new(
-            Sandbox::new(SandboxConfig::default())
-                .await
-                .expect("failed to create sandbox"),
-        )
-    }
 
     #[tokio::test]
     async fn test_tool_name_is_python_repl() {
@@ -181,138 +155,158 @@ mod tests {
         assert_eq!(item_type, "string");
     }
 
-    #[tokio::test]
-    async fn test_missing_code_param_returns_validation_error() {
-        let tool = build_python_repl_tool().await.unwrap();
-        let args = Part::function("call-1", "python_repl", to_value!({}));
-        let msg = call_with_sandbox(&tool, args, make_sandbox().await).await;
-        let phase = msg.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/phase")
-            .and_then(|v| v.as_str())
-            .unwrap();
-        assert_eq!(phase, "validation");
-    }
+    #[cfg(feature = "sandbox")]
+    mod sandbox_tests {
+        use std::sync::Arc;
 
-    #[tokio::test]
-    async fn test_run_print_returns_stdout() {
-        let tool = build_python_repl_tool().await.unwrap();
-        let args = Part::function(
-            "call-1",
-            "python_repl",
-            to_value!({ "code": "print('ailoy')" }),
-        );
-        let msg = call_with_sandbox(&tool, args, make_sandbox().await).await;
-        let stdout = msg.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/stdout")
-            .and_then(|v| v.as_str())
-            .unwrap();
-        assert!(stdout.contains("ailoy"), "stdout: {stdout:?}");
-    }
+        use super::*;
+        use crate::{
+            message::Part,
+            sandbox::{Sandbox, SandboxConfig},
+            to_value,
+            tool::test_helpers::call_with_sandbox,
+        };
 
-    #[tokio::test]
-    async fn test_pip_install_failure_returns_phase_pip_install() {
-        let tool = build_python_repl_tool().await.unwrap();
-        let args = Part::function(
-            "call-1",
-            "python_repl",
-            to_value!({
-                "code": "import xyzzy_nonexistent",
-                "pip_install": ["xyzzy-nonexistent-pkg-12345"]
-            }),
-        );
-        let msg = call_with_sandbox(&tool, args, make_sandbox().await).await;
-        let phase = msg.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/phase")
-            .and_then(|v| v.as_str())
-            .unwrap();
-        assert_eq!(phase, "pip_install");
-    }
+        async fn make_sandbox() -> Arc<Sandbox> {
+            Arc::new(
+                Sandbox::new(SandboxConfig::default())
+                    .await
+                    .expect("failed to create sandbox"),
+            )
+        }
 
-    /// Verifies that VM state persists across tool calls when the same sandbox is reused.
-    #[tokio::test]
-    async fn test_state_persists_across_calls() {
-        let sandbox = make_sandbox().await;
-        let tool = build_python_repl_tool().await.unwrap();
+        #[tokio::test]
+        async fn test_missing_code_param_returns_validation_error() {
+            let tool = build_python_repl_tool().await.unwrap();
+            let args = Part::function("call-1", "python_repl", to_value!({}));
+            let msg = call_with_sandbox(&tool, args, make_sandbox().await).await;
+            let phase = msg.contents[0]
+                .as_value()
+                .unwrap()
+                .pointer("/phase")
+                .and_then(|v| v.as_str())
+                .unwrap();
+            assert_eq!(phase, "validation");
+        }
 
-        let call1 = Part::function(
-            "call-1",
-            "python_repl",
-            to_value!({ "code": "with open('/workspace/counter.txt', 'w') as f: f.write('42')" }),
-        );
-        let r1 = call_with_sandbox(&tool, call1, sandbox.clone()).await;
-        let exit1 = r1.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/exit_code")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(-1);
-        assert_eq!(exit1, 0, "first call should succeed");
+        #[tokio::test]
+        async fn test_run_print_returns_stdout() {
+            let tool = build_python_repl_tool().await.unwrap();
+            let args = Part::function(
+                "call-1",
+                "python_repl",
+                to_value!({ "code": "print('ailoy')" }),
+            );
+            let msg = call_with_sandbox(&tool, args, make_sandbox().await).await;
+            let stdout = msg.contents[0]
+                .as_value()
+                .unwrap()
+                .pointer("/stdout")
+                .and_then(|v| v.as_str())
+                .unwrap();
+            assert!(stdout.contains("ailoy"), "stdout: {stdout:?}");
+        }
 
-        let call2 = Part::function(
-            "call-2",
-            "python_repl",
-            to_value!({ "code": "print(open('/workspace/counter.txt').read())" }),
-        );
-        let r2 = call_with_sandbox(&tool, call2, sandbox.clone()).await;
-        let stdout = r2.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/stdout")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        assert!(
-            stdout.contains("42"),
-            "second call should see file from first call, got: {stdout:?}"
-        );
-    }
+        #[tokio::test]
+        async fn test_pip_install_failure_returns_phase_pip_install() {
+            let tool = build_python_repl_tool().await.unwrap();
+            let args = Part::function(
+                "call-1",
+                "python_repl",
+                to_value!({
+                    "code": "import xyzzy_nonexistent",
+                    "pip_install": ["xyzzy-nonexistent-pkg-12345"]
+                }),
+            );
+            let msg = call_with_sandbox(&tool, args, make_sandbox().await).await;
+            let phase = msg.contents[0]
+                .as_value()
+                .unwrap()
+                .pointer("/phase")
+                .and_then(|v| v.as_str())
+                .unwrap();
+            assert_eq!(phase, "pip_install");
+        }
 
-    #[tokio::test]
-    async fn test_pip_install_and_plot_image() {
-        let sandbox = make_sandbox().await;
-        let tool = build_python_repl_tool().await.unwrap();
+        #[tokio::test]
+        async fn test_state_persists_across_calls() {
+            let sandbox = make_sandbox().await;
+            let tool = build_python_repl_tool().await.unwrap();
 
-        let args = Part::function(
-            "call-1",
-            "python_repl",
-            to_value!({
-                "code": "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nimport numpy as np\nx = np.linspace(0, 2 * np.pi, 100)\nplt.plot(x, np.sin(x))\nplt.savefig('/workspace/plot.png')\nprint('saved')",
-                "pip_install": ["numpy", "matplotlib"]
-            }),
-        );
-        let msg = call_with_sandbox(&tool, args, sandbox.clone()).await;
-        let result = msg.contents[0].as_value().unwrap();
-        let exit_code = result
-            .pointer("/exit_code")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(-1);
-        let stdout = result
-            .pointer("/stdout")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        assert_eq!(
-            exit_code,
-            0,
-            "plot script failed — stderr: {:?}",
-            result.pointer("/stderr")
-        );
-        assert!(
-            stdout.contains("saved"),
-            "expected 'saved' in stdout, got: {stdout:?}"
-        );
+            let call1 = Part::function(
+                "call-1",
+                "python_repl",
+                to_value!({ "code": "with open('/workspace/counter.txt', 'w') as f: f.write('42')" }),
+            );
+            let r1 = call_with_sandbox(&tool, call1, sandbox.clone()).await;
+            let exit1 = r1.contents[0]
+                .as_value()
+                .unwrap()
+                .pointer("/exit_code")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(-1);
+            assert_eq!(exit1, 0, "first call should succeed");
 
-        let bytes = sandbox
-            .read_file_bytes("/workspace/plot.png")
-            .await
-            .unwrap();
-        assert!(
-            bytes.starts_with(b"\x89PNG"),
-            "expected PNG magic bytes in plot file"
-        );
+            let call2 = Part::function(
+                "call-2",
+                "python_repl",
+                to_value!({ "code": "print(open('/workspace/counter.txt').read())" }),
+            );
+            let r2 = call_with_sandbox(&tool, call2, sandbox.clone()).await;
+            let stdout = r2.contents[0]
+                .as_value()
+                .unwrap()
+                .pointer("/stdout")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            assert!(
+                stdout.contains("42"),
+                "second call should see file from first call, got: {stdout:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_pip_install_and_plot_image() {
+            let sandbox = make_sandbox().await;
+            let tool = build_python_repl_tool().await.unwrap();
+
+            let args = Part::function(
+                "call-1",
+                "python_repl",
+                to_value!({
+                    "code": "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nimport numpy as np\nx = np.linspace(0, 2 * np.pi, 100)\nplt.plot(x, np.sin(x))\nplt.savefig('/workspace/plot.png')\nprint('saved')",
+                    "pip_install": ["numpy", "matplotlib"]
+                }),
+            );
+            let msg = call_with_sandbox(&tool, args, sandbox.clone()).await;
+            let result = msg.contents[0].as_value().unwrap();
+            let exit_code = result
+                .pointer("/exit_code")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(-1);
+            let stdout = result
+                .pointer("/stdout")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            assert_eq!(
+                exit_code,
+                0,
+                "plot script failed — stderr: {:?}",
+                result.pointer("/stderr")
+            );
+            assert!(
+                stdout.contains("saved"),
+                "expected 'saved' in stdout, got: {stdout:?}"
+            );
+
+            let bytes = sandbox
+                .read_file_bytes("/workspace/plot.png")
+                .await
+                .unwrap();
+            assert!(
+                bytes.starts_with(b"\x89PNG"),
+                "expected PNG magic bytes in plot file"
+            );
+        }
     }
 }

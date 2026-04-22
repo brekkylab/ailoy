@@ -1,26 +1,19 @@
-use std::{
-    io::Read as _,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
-use anyhow::Context as _;
-
+use super::python_repl::PythonScriptRunner;
 use crate::{
     datatype::Value,
     message::{ToolDesc, ToolDescBuilder},
-    tool::Tool,
+    sandbox::Sandbox,
+    tool::{Tool, ToolFunc},
 };
-#[cfg(feature = "sandbox")]
-use crate::{sandbox::Sandbox, tool::ToolFunc};
 
 const TOOL_NAME: &str = "convert_pdf_to_md";
-const DOCLING_PACKAGE: &str = "docling>=2,<3";
-const CONVERSION_TIMEOUT_SECS: u64 = 600;
 
-const SANDBOX_INPUT_PDF: &str = "/workspace/__ailoy_input.pdf";
-const SANDBOX_OUTPUT_MD: &str = "/workspace/__ailoy_output.md";
-const SANDBOX_SCRIPT_PATH: &str = "/workspace/__ailoy_docling.py";
+const SETUP_SCRIPT: &str = "pip install 'docling>=2,<3' \
+     && pip install --force-reinstall --no-deps opencv-python-headless";
+const SETUP_TIMEOUT_SECS: u64 = 600;
+const CONVERSION_TIMEOUT_SECS: u64 = 600;
 
 const DOCLING_SOURCE: &str = r#"
 import logging
@@ -69,115 +62,59 @@ if __name__ == "__main__":
     output_path.write_text(markdown, encoding="utf-8")
 "#;
 
-#[cfg(feature = "sandbox")]
+// ---------------------------------------------------------------------------
+// Tool factory
+// ---------------------------------------------------------------------------
+
 pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<Tool> {
-    // Lazy initialisation: docling is installed and the script is written on the
-    // first call, not at build time.  A Mutex<bool> flag ensures setup runs once
-    // even under concurrent first calls.
-    let initialized = Arc::new(tokio::sync::Mutex::new(false));
+    let runner = Arc::new(PythonScriptRunner::new(
+        Some(SETUP_SCRIPT.to_string()),
+        SETUP_TIMEOUT_SECS,
+    ));
     let desc = convert_pdf_to_md_tool_desc();
 
-    let f: ToolFunc = ToolFunc::new(move |args: Value, sandbox: Option<Arc<Sandbox>>| {
-        let initialized = initialized.clone();
+    let f = ToolFunc::new(move |args: Value, sandbox: Option<Arc<Sandbox>>| {
+        let runner = runner.clone();
         async move {
-            let sandbox = match sandbox {
-                Some(sb) => sb,
-                None => {
-                    return error_value(
-                        "",
-                        "initialization",
-                        "sandbox required for convert_pdf_to_md",
-                    );
-                }
-            };
-
-            // Run setup exactly once per tool instance.
-            {
-                let mut guard = initialized.lock().await;
-                if !*guard {
-                    if let Err(e) = setup_sandbox(&sandbox).await {
-                        return error_value(
-                            "",
-                            "initialization",
-                            &format!("failed to set up docling: {e}"),
-                        );
-                    }
-                    *guard = true;
-                }
-            }
-
             let pdf_path = match validate_pdf_path(&args) {
                 Ok(p) => p,
                 Err(e) => return e,
             };
+            let output_path = derive_output_path(
+                &pdf_path,
+                args.pointer("/output_path").and_then(|v| v.as_str()),
+            );
 
-            if let Err(e) = sandbox.copy_from_host(&pdf_path, SANDBOX_INPUT_PDF).await {
+            let sandbox = sandbox.as_ref();
+
+            if let Err(e) = runner.ensure_setup(sandbox).await {
                 return error_value(
-                    &pdf_path.to_string_lossy(),
-                    "execution",
-                    &format!("failed to copy PDF into sandbox: {e}"),
+                    "",
+                    "initialization",
+                    &format!("failed to set up docling: {e}"),
                 );
             }
 
-            let cmd = format!(
-                "AILOY_PDF_PATH={SANDBOX_INPUT_PDF} AILOY_OUTPUT_PATH={SANDBOX_OUTPUT_MD} \
-                 python3 {SANDBOX_SCRIPT_PATH}"
-            );
-            let result = match sandbox
-                .shell_with_timeout(&cmd, CONVERSION_TIMEOUT_SECS)
+            match runner
+                .run_with_timeout(
+                    sandbox,
+                    DOCLING_SOURCE,
+                    &[
+                        ("AILOY_PDF_PATH", pdf_path.as_str()),
+                        ("AILOY_OUTPUT_PATH", output_path.as_str()),
+                    ],
+                    CONVERSION_TIMEOUT_SECS,
+                )
                 .await
             {
-                Ok(r) => r,
-                Err(e) => {
-                    return error_value(
-                        &pdf_path.to_string_lossy(),
-                        "execution",
-                        &format!("sandbox error: {e}"),
-                    );
-                }
-            };
-
-            if result.timed_out {
-                return error_value(
-                    &pdf_path.to_string_lossy(),
+                Ok(r) if r.timed_out => error_value(
+                    &pdf_path,
                     "execution",
-                    &format!("docling timed out after {CONVERSION_TIMEOUT_SECS}s"),
-                );
-            }
-            if result.exit_code != 0 {
-                return error_value(
-                    &pdf_path.to_string_lossy(),
-                    "execution",
-                    &format!(
-                        "docling failed (exit {}): {}",
-                        result.exit_code,
-                        result.stderr.trim()
-                    ),
-                );
-            }
-
-            let markdown = match sandbox.read_file(SANDBOX_OUTPUT_MD).await {
-                Ok(md) => md,
-                Err(e) => {
-                    return error_value(
-                        &pdf_path.to_string_lossy(),
-                        "execution",
-                        &format!("failed to read markdown output from sandbox: {e}"),
-                    );
-                }
-            };
-
-            let size_chars = markdown.chars().count();
-            match write_host_temp_file(&markdown) {
-                Ok(md_path) => crate::to_value!({
-                    "md_path": md_path.to_string_lossy().to_string(),
-                    "size_chars": size_chars as i64
-                }),
-                Err(e) => error_value(
-                    &pdf_path.to_string_lossy(),
-                    "execution",
-                    &format!("failed to write output file: {e}"),
+                    &format!("timed out after {CONVERSION_TIMEOUT_SECS}s"),
                 ),
+                Ok(r) if r.exit_code != 0 => error_value(&pdf_path, "execution", r.stderr.trim()),
+                Ok(_) => crate::to_value!({ "md_path": output_path }),
+                Err(e) => error_value(&pdf_path, "execution", &e.to_string()),
             }
         }
     });
@@ -185,55 +122,35 @@ pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<Tool> {
     Ok(Tool::new(desc, Arc::new(f)))
 }
 
-/// Install docling and write the conversion script into the sandbox.
-/// Called at most once per tool instance (guarded by the `initialized` mutex).
-#[cfg(feature = "sandbox")]
-async fn setup_sandbox(sandbox: &Sandbox) -> anyhow::Result<()> {
-    let install = sandbox
-        .shell_with_timeout(
-            &format!(
-                "pip install '{DOCLING_PACKAGE}' \
-                 && pip install --force-reinstall --no-deps opencv-python-headless"
-            ),
-            CONVERSION_TIMEOUT_SECS,
-        )
-        .await
-        .context("failed to run pip install for docling")?;
-    if install.timed_out {
-        anyhow::bail!("pip install docling timed out after {CONVERSION_TIMEOUT_SECS}s");
-    }
-    if install.exit_code != 0 {
-        anyhow::bail!(
-            "failed to pre-install docling (exit {}): {}",
-            install.exit_code,
-            install.stderr
-        );
-    }
+// ---------------------------------------------------------------------------
+// Utility helpers
+// ---------------------------------------------------------------------------
 
-    sandbox
-        .write_file(SANDBOX_SCRIPT_PATH, DOCLING_SOURCE.as_bytes())
-        .await
-        .context("failed to write docling script to sandbox")?;
-
-    Ok(())
+fn validate_pdf_path(args: &Value) -> Result<String, Value> {
+    let raw = args
+        .pointer("/pdf_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if raw.is_empty() {
+        return Err(error_value(
+            "",
+            "validation",
+            "missing required parameter: pdf_path",
+        ));
+    }
+    Ok(raw)
 }
 
-#[cfg(not(feature = "sandbox"))]
-pub async fn build_convert_pdf_to_md_tool() -> anyhow::Result<Tool> {
-    anyhow::bail!("sandbox feature required for convert_pdf_to_md")
-}
-
-fn write_host_temp_file(content: &str) -> anyhow::Result<PathBuf> {
-    use std::io::Write as _;
-    let mut file = tempfile::Builder::new()
-        .prefix("convert_pdf_to_md-")
-        .suffix(".md")
-        .tempfile()
-        .context("failed to create temp file")?;
-    file.write_all(content.as_bytes())
-        .context("failed to write markdown to temp file")?;
-    let (_, path) = file.keep().context("failed to persist temp file")?;
-    Ok(path)
+fn derive_output_path(pdf_path: &str, override_path: Option<&str>) -> String {
+    if let Some(p) = override_path.filter(|s| !s.trim().is_empty()) {
+        return p.to_string();
+    }
+    Path::new(pdf_path)
+        .with_extension("md")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn convert_pdf_to_md_tool_desc() -> ToolDesc {
@@ -243,7 +160,11 @@ fn convert_pdf_to_md_tool_desc() -> ToolDesc {
             "properties": {
                 "pdf_path": {
                     "type": "string",
-                    "description": "Path to the PDF file to convert"
+                    "description": "Path to the input PDF file. When a sandbox is active this must be a path inside the VM (e.g. `/workspace/doc.pdf`); otherwise it is a host filesystem path."
+                },
+                "output_path": {
+                    "type": "string",
+                    "description": "Path to write the output Markdown file. Uses the same path context as `pdf_path`. Defaults to the input path with the `.pdf` extension replaced by `.md`."
                 }
             },
             "required": ["pdf_path"]
@@ -254,11 +175,8 @@ fn convert_pdf_to_md_tool_desc() -> ToolDesc {
         "oneOf": [
             {
                 "type": "object",
-                "properties": {
-                    "md_path": { "type": "string" },
-                    "size_chars": { "type": "integer", "minimum": 0 }
-                },
-                "required": ["md_path", "size_chars"]
+                "properties": { "md_path": { "type": "string" } },
+                "required": ["md_path"]
             },
             {
                 "type": "object",
@@ -274,154 +192,21 @@ fn convert_pdf_to_md_tool_desc() -> ToolDesc {
     desc
 }
 
-fn validate_pdf_path(args: &Value) -> Result<PathBuf, Value> {
-    let raw_path = args
-        .pointer("/pdf_path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-
-    if raw_path.is_empty() {
-        return Err(error_value(
-            "",
-            "validation",
-            "missing required parameter: pdf_path",
-        ));
-    }
-
-    let resolved = match resolve_input_path(&raw_path) {
-        Ok(path) => path,
-        Err(err) => {
-            return Err(error_value(&raw_path, "validation", &err.to_string()));
-        }
-    };
-    let resolved_string = resolved.to_string_lossy().into_owned();
-
-    if !resolved.exists() {
-        return Err(error_value(
-            &resolved_string,
-            "validation",
-            "input path does not exist",
-        ));
-    }
-    if !resolved.is_file() {
-        return Err(error_value(
-            &resolved_string,
-            "validation",
-            "input path must be a file",
-        ));
-    }
-
-    let canonical = match resolved.canonicalize() {
-        Ok(path) => path,
-        Err(err) => {
-            return Err(error_value(
-                &resolved_string,
-                "validation",
-                &format!("failed to canonicalize input path: {err}"),
-            ));
-        }
-    };
-    let canonical_string = canonical.to_string_lossy().into_owned();
-
-    match is_pdf_file(&canonical) {
-        Ok(true) => Ok(canonical),
-        Ok(false) => Err(error_value(
-            &canonical_string,
-            "validation",
-            "input path must be a PDF file",
-        )),
-        Err(err) => Err(error_value(
-            &canonical_string,
-            "validation",
-            &format!("failed to read input file: {err}"),
-        )),
-    }
-}
-
-fn resolve_input_path(raw_path: &str) -> anyhow::Result<PathBuf> {
-    let expanded = shellexpand::tilde(raw_path).into_owned();
-    let path = PathBuf::from(expanded);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        Ok(std::env::current_dir()
-            .context("failed to get current working directory")?
-            .join(path))
-    }
-}
-
-fn is_pdf_file(path: &Path) -> std::io::Result<bool> {
-    let mut file = std::fs::File::open(path)?;
-    let mut header = [0_u8; 5];
-    match file.read_exact(&mut header) {
-        Ok(()) => Ok(&header == b"%PDF-"),
-        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
-        Err(err) => Err(err),
-    }
-}
-
 fn error_value(pdf_path: &str, phase: &str, error: &str) -> Value {
-    crate::to_value!({
-        "pdf_path": pdf_path,
-        "error": error,
-        "phase": phase
-    })
+    crate::to_value!({ "pdf_path": pdf_path, "error": error, "phase": phase })
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn write_minimal_pdf(path: &Path, text: &str) {
-        let text = escape_pdf_string(text);
-        let stream = format!("BT\n/F1 24 Tf\n72 100 Td\n({text}) Tj\nET");
-        let objects = vec![
-            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_string(),
-            format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
-        ];
-
-        let mut pdf = Vec::from("%PDF-1.4\n".as_bytes());
-        let mut offsets = Vec::with_capacity(objects.len());
-
-        for (index, object) in objects.iter().enumerate() {
-            offsets.push(pdf.len());
-            pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", index + 1, object).as_bytes());
-        }
-
-        let xref_offset = pdf.len();
-        pdf.extend_from_slice(
-            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
-        );
-        for offset in offsets {
-            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
-        }
-        pdf.extend_from_slice(
-            format!(
-                "trailer\n<< /Root 1 0 R /Size {} >>\nstartxref\n{}\n%%EOF\n",
-                objects.len() + 1,
-                xref_offset
-            )
-            .as_bytes(),
-        );
-
-        std::fs::write(path, pdf).expect("failed to write test pdf");
-    }
-
-    fn escape_pdf_string(text: &str) -> String {
-        text.replace('\\', "\\\\")
-            .replace('(', "\\(")
-            .replace(')', "\\)")
-    }
-
     #[test]
     fn test_convert_pdf_to_md_tool_desc_sets_name_schema_and_returns() {
         let desc = convert_pdf_to_md_tool_desc();
-
         assert_eq!(desc.name, TOOL_NAME);
         assert_eq!(
             desc.parameters
@@ -443,6 +228,30 @@ mod tests {
     }
 
     #[test]
+    fn test_derive_output_path_replaces_extension() {
+        assert_eq!(
+            derive_output_path("/workspace/doc.pdf", None),
+            "/workspace/doc.md"
+        );
+    }
+
+    #[test]
+    fn test_derive_output_path_uses_override() {
+        assert_eq!(
+            derive_output_path("/workspace/doc.pdf", Some("/workspace/out.md")),
+            "/workspace/out.md"
+        );
+    }
+
+    #[test]
+    fn test_docling_source_reads_from_env_vars() {
+        assert!(DOCLING_SOURCE.contains("AILOY_PDF_PATH"));
+        assert!(DOCLING_SOURCE.contains("AILOY_OUTPUT_PATH"));
+        assert!(DOCLING_SOURCE.contains("DocumentConverter"));
+        assert!(DOCLING_SOURCE.contains("export_to_markdown"));
+    }
+
+    #[test]
     fn test_missing_pdf_path_returns_validation_error() {
         let err = validate_pdf_path(&crate::to_value!({})).unwrap_err();
         assert_eq!(
@@ -456,65 +265,8 @@ mod tests {
     }
 
     #[test]
-    fn test_nonexistent_pdf_path_returns_validation_error() {
-        let err = validate_pdf_path(&crate::to_value!({
-            "pdf_path": "definitely-missing-file.pdf"
-        }))
-        .unwrap_err();
-        assert_eq!(
-            err.pointer("/phase").and_then(|v| v.as_str()),
-            Some("validation")
-        );
-        assert_eq!(
-            err.pointer("/error").and_then(|v| v.as_str()),
-            Some("input path does not exist")
-        );
-    }
-
-    #[test]
-    fn test_directory_path_returns_validation_error() {
-        let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let err = validate_pdf_path(&crate::to_value!({
-            "pdf_path": dir.path().to_string_lossy().to_string()
-        }))
-        .unwrap_err();
-        assert_eq!(
-            err.pointer("/phase").and_then(|v| v.as_str()),
-            Some("validation")
-        );
-        assert_eq!(
-            err.pointer("/error").and_then(|v| v.as_str()),
-            Some("input path must be a file")
-        );
-    }
-
-    #[test]
-    fn test_non_pdf_file_returns_validation_error() {
-        let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let path = dir.path().join("note.txt");
-        std::fs::write(&path, "not a pdf").expect("failed to write test file");
-
-        let err = validate_pdf_path(&crate::to_value!({
-            "pdf_path": path.to_string_lossy().to_string()
-        }))
-        .unwrap_err();
-
-        assert_eq!(
-            err.pointer("/phase").and_then(|v| v.as_str()),
-            Some("validation")
-        );
-        assert_eq!(
-            err.pointer("/error").and_then(|v| v.as_str()),
-            Some("input path must be a PDF file")
-        );
-    }
-
-    #[test]
-    fn test_docling_source_reads_from_env_vars() {
-        assert!(DOCLING_SOURCE.contains("AILOY_PDF_PATH"));
-        assert!(DOCLING_SOURCE.contains("AILOY_OUTPUT_PATH"));
-        assert!(DOCLING_SOURCE.contains("DocumentConverter"));
-        assert!(DOCLING_SOURCE.contains("export_to_markdown"));
+    fn test_nonempty_pdf_path_passes_validation() {
+        assert!(validate_pdf_path(&crate::to_value!({ "pdf_path": "/workspace/doc.pdf" })).is_ok());
     }
 
     #[cfg(feature = "sandbox")]
@@ -526,6 +278,39 @@ mod tests {
             sandbox::{Sandbox, SandboxConfig},
             tool::test_helpers::call_with_sandbox,
         };
+
+        fn minimal_pdf_bytes() -> Vec<u8> {
+            let stream = "BT\n/F1 24 Tf\n72 100 Td\n(Hello Docling) Tj\nET";
+            let objects = vec![
+                "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_string(),
+                format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+            ];
+            let mut pdf = Vec::from("%PDF-1.4\n".as_bytes());
+            let mut offsets = Vec::with_capacity(objects.len());
+            for (i, obj) in objects.iter().enumerate() {
+                offsets.push(pdf.len());
+                pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", i + 1, obj).as_bytes());
+            }
+            let xref = pdf.len();
+            pdf.extend_from_slice(
+                format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+            );
+            for o in offsets {
+                pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+            }
+            pdf.extend_from_slice(
+                format!(
+                    "trailer\n<< /Root 1 0 R /Size {} >>\nstartxref\n{}\n%%EOF\n",
+                    objects.len() + 1,
+                    xref
+                )
+                .as_bytes(),
+            );
+            pdf
+        }
 
         let sandbox = Arc::new(
             Sandbox::new(SandboxConfig {
@@ -539,18 +324,17 @@ mod tests {
             .await
             .expect("failed to build convert_pdf_to_md tool");
 
-        let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let pdf_path = dir.path().join("hello.pdf");
-        write_minimal_pdf(&pdf_path, "Hello Docling");
+        sandbox
+            .write_file("/workspace/hello.pdf", &minimal_pdf_bytes())
+            .await
+            .expect("failed to write PDF into sandbox");
 
         let args = Part::function(
             "call-1",
             TOOL_NAME,
-            crate::to_value!({
-                "pdf_path": pdf_path.to_string_lossy().to_string()
-            }),
+            crate::to_value!({ "pdf_path": "/workspace/hello.pdf" }),
         );
-        let msg = call_with_sandbox(&tool, args, sandbox).await;
+        let msg = call_with_sandbox(&tool, args, sandbox.clone()).await;
         let value = msg.contents[0].as_value().expect("expected value response");
 
         assert!(
@@ -561,12 +345,12 @@ mod tests {
             .pointer("/md_path")
             .and_then(|v| v.as_str())
             .expect("expected md_path in success result");
-        let markdown = std::fs::read_to_string(md_path).expect("failed to read markdown file");
-        let size_chars = value
-            .pointer("/size_chars")
-            .and_then(|v| v.as_integer())
-            .expect("expected size_chars in success result");
-        assert_eq!(size_chars, markdown.chars().count() as i64);
+        assert_eq!(md_path, "/workspace/hello.md");
+
+        let markdown = sandbox
+            .read_file(md_path)
+            .await
+            .expect("failed to read markdown from sandbox");
         assert!(!markdown.trim().is_empty(), "markdown should not be empty");
     }
 }

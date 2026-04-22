@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc};
+use std::pin::Pin;
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
@@ -11,8 +11,6 @@ use crate::{
 
 pub struct AgentState {
     pub history: Vec<Message>,
-
-    #[cfg(feature = "sandbox")]
     pub sandbox: Option<std::sync::Arc<crate::sandbox::Sandbox>>,
 }
 
@@ -26,7 +24,6 @@ impl AgentState {
     pub fn new() -> Self {
         Self {
             history: Vec::new(),
-            #[cfg(feature = "sandbox")]
             sandbox: None,
         }
     }
@@ -34,7 +31,6 @@ impl AgentState {
     pub fn with_history(history: Vec<Message>) -> Self {
         Self {
             history,
-            #[cfg(feature = "sandbox")]
             sandbox: None,
         }
     }
@@ -171,12 +167,24 @@ impl Agent {
         let mut state = AgentState::with_history(history);
         #[cfg(feature = "sandbox")]
         {
-            use crate::sandbox::{Sandbox, SandboxConfig};
+            use std::sync::Arc;
 
-            let sandbox = Sandbox::new(SandboxConfig::default())
+            use crate::sandbox::{Sandbox, SandboxConfig};
+            let config = provider
+                .sandbox_config
+                .clone()
+                .unwrap_or_else(SandboxConfig::default);
+            let sandbox = Arc::new(
+                Sandbox::new(config)
+                    .await
+                    .expect("Failed to initialize sandbox"),
+            );
+            // Stop immediately after setup — VM only runs during tool execution.
+            sandbox
+                .stop()
                 .await
-                .expect("Failed to initialize sandbox");
-            state.sandbox = Some(Arc::new(sandbox));
+                .expect("Failed to stop sandbox after init");
+            state.sandbox = Some(sandbox);
         }
         Ok(Self {
             model: LangModel::new(model_id, model_provider),
@@ -215,7 +223,6 @@ impl Agent {
                 .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
 
             let ctx = ToolContext {
-                #[cfg(feature = "sandbox")]
                 sandbox: self.state.sandbox.clone(),
             };
 
@@ -322,6 +329,10 @@ impl Agent {
                     }
                 };
 
+                if let Some(sb) = &self.state.sandbox {
+                    sb.start().await?;
+                }
+
                 let mut tool_stream = self.execute_tool_calls(tool_calls)?;
                 while let Some(event) = tool_stream.next().await {
                     match event {
@@ -333,6 +344,10 @@ impl Agent {
                             yield output;
                         }
                     }
+                }
+
+                if let Some(sb) = &self.state.sandbox {
+                    sb.stop().await?;
                 }
             }
         })
@@ -846,6 +861,83 @@ mod tests {
         assert!(
             last_msg.contents.iter().any(|p| p.is_text()),
             "Final Assistant message must contain text — the agent never produced a closing answer."
+        );
+    }
+
+    /// Verifies the sandbox VM lifecycle using the `python_repl` builtin tool:
+    ///
+    /// 1. Stopped right after agent creation.
+    /// 2. python_repl executes successfully (proves VM was running during the call).
+    /// 3. Stopped again once the tool-call batch stream is exhausted.
+    #[cfg(feature = "sandbox")]
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    async fn test_sandbox_lifecycle_with_python_repl() {
+        use crate::{
+            agent::{AgentProvider, AgentSpec},
+            tool::{BuiltinToolProvider, ToolProvider},
+        };
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+
+        let mut provider = AgentProvider::new();
+        provider
+            .model_claude(api_key)
+            .tool(ToolProvider::Builtin(BuiltinToolProvider::PythonRepl {}));
+
+        let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
+            .tool("python_repl")
+            .instruction(
+                "When asked to run Python code, always use the python_repl tool. \
+                 Never skip the tool call.",
+            );
+
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
+
+        // ── 1. After creation: sandbox must be stopped ──────────────────────
+        let sb = agent.state.sandbox.as_ref().unwrap();
+        assert!(
+            !sb.is_running(),
+            "sandbox should be stopped right after agent creation"
+        );
+
+        // ── 2. Run a turn that triggers python_repl ─────────────────────────
+        let query = Message::new(Role::User).with_contents([Part::text(
+            "Run this Python code and tell me the output: print('ailoy_sandbox_ok')",
+        )]);
+        {
+            let mut stream = agent.run(query);
+            while let Some(event) = stream.next().await {
+                event.unwrap();
+            }
+        }
+
+        // ── 3. After run(): sandbox must be stopped again ───────────────────
+        let sb = agent.state.sandbox.as_ref().unwrap();
+        assert!(
+            !sb.is_running(),
+            "sandbox should be stopped after run() completes"
+        );
+
+        // ── 2b. Verify python_repl actually ran inside the VM ───────────────
+        let tool_result = agent
+            .get_history()
+            .iter()
+            .find(|m| m.role == Role::Tool)
+            .expect("history should contain a tool result");
+
+        let stdout = tool_result
+            .contents
+            .iter()
+            .find_map(|p| p.as_value())
+            .and_then(|v| v.pointer("/stdout"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        assert!(
+            stdout.contains("ailoy_sandbox_ok"),
+            "python_repl should have produced expected output, got stdout: {stdout:?}"
         );
     }
 }

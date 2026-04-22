@@ -1,22 +1,33 @@
-#![cfg(feature = "sandbox")]
 //! Thin wrapper around the `microsandbox` crate, exposing an ailoy-internal
 //! `Sandbox` type so the public API is not coupled to the underlying library.
 
-use std::{collections::HashMap, path::Path, time::Duration};
+#[cfg(feature = "sandbox")]
+use std::time::Duration;
+use std::{collections::HashMap, path::Path};
 
+#[cfg(feature = "sandbox")]
 use microsandbox::{
     Sandbox as MsbSandbox,
     sandbox::{ExecOptionsBuilder, PullPolicy, SandboxStatus},
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 //--------------------------------------------------------------------------------------------------
-// Types
+// Types shared between sandbox and no-sandbox builds
 //--------------------------------------------------------------------------------------------------
 
+fn fresh_sandbox_name() -> String {
+    format!("ailoy-{}", Uuid::new_v4())
+}
+
 /// Configuration for creating a new sandbox.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SandboxConfig {
-    /// Unique sandbox name (e.g. "ailoy-{uuid}").
+    /// Unique sandbox name — auto-generated at runtime, not serialized.
+    #[serde(default = "fresh_sandbox_name", skip_serializing)]
+    #[schemars(skip)]
     pub name: String,
 
     /// OCI container image. Default: `"python:3.12-slim"`.
@@ -25,7 +36,7 @@ pub struct SandboxConfig {
     /// Number of virtual CPUs. Default: `2`.
     pub cpus: u8,
 
-    /// Guest memory in MiB. Default: `512`.
+    /// Guest memory in MiB. Default: `2048`.
     pub memory_mib: u32,
 
     /// Default working directory inside the sandbox. Default: `"/workspace"`.
@@ -58,7 +69,7 @@ impl Default for SandboxConfig {
             name: format!("ailoy-{}", Uuid::new_v4()),
             image: "python:3.12-slim".to_string(),
             cpus: 2,
-            memory_mib: 512,
+            memory_mib: 2048,
             workdir: "/workspace".to_string(),
             env: HashMap::new(),
             disable_network: false,
@@ -71,6 +82,7 @@ impl Default for SandboxConfig {
 }
 
 /// The result of running a command inside a sandbox.
+#[derive(Debug)]
 pub struct ExecResult {
     /// Captured stdout (possibly truncated to `max_output_chars`).
     pub stdout: String,
@@ -82,17 +94,23 @@ pub struct ExecResult {
     pub timed_out: bool,
 }
 
-/// A running sandbox wrapping a `microsandbox::Sandbox`.
+//--------------------------------------------------------------------------------------------------
+// Real Sandbox implementation (requires "sandbox" feature)
+//--------------------------------------------------------------------------------------------------
+
+/// `inner` is behind a `RwLock` so that:
+/// - `exec`/`shell`/file ops hold a **read lock** → multiple tool calls run concurrently.
+/// - `start`/`stop`/`shutdown` hold a **write lock** → exclusive, wait for all readers.
+#[cfg(feature = "sandbox")]
 pub struct Sandbox {
-    /// The underlying microsandbox handle, wrapped in `Option` so it can be
-    /// moved out in `Drop` for async cleanup.
-    inner: Option<MsbSandbox>,
+    inner: tokio::sync::RwLock<Option<MsbSandbox>>,
     name: String,
     persist: bool,
     default_timeout_secs: u64,
     max_output_chars: usize,
 }
 
+#[cfg(feature = "sandbox")]
 impl std::fmt::Debug for Sandbox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Sandbox")
@@ -104,32 +122,16 @@ impl std::fmt::Debug for Sandbox {
     }
 }
 
+#[cfg(feature = "sandbox")]
 impl Drop for Sandbox {
     fn drop(&mut self) {
         if self.persist {
             return;
         }
-        let Some(inner) = self.inner.take() else {
-            return;
-        };
+        // `get_mut` bypasses the lock — safe here because Drop has `&mut self`,
+        // guaranteeing no other owner exists.
+        let inner = self.inner.get_mut().take();
         let name = self.name.clone();
-        // Spawn a dedicated OS thread with its own tokio runtime for cleanup,
-        // then block until it completes.
-        //
-        // Key design decisions:
-        //
-        // 1. Blocking wait (`rx.recv_timeout`) is required: fire-and-forget threads
-        //    are killed when the test binary exits, leaving the sandbox in the DB as
-        //    "Running" — which microsandbox later reconciles as "crashed".
-        //
-        // 2. `remove_persisted()` is used instead of `handle.remove()` because
-        //    `handle.remove()` requires status == Stopped.  `remove_persisted()`
-        //    directly deletes the DB record and files with no status check, and
-        //    has no dependency on the AgentClient (unlike `stop_and_wait()`).
-        //
-        // 3. `handle.kill()` first (signal-based, no AgentClient) ensures the VM
-        //    process is dead before we delete the record.  ProcessHandle::drop()
-        //    on `inner` sends SIGTERM as a fallback if kill() was skipped/failed.
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         std::thread::spawn(move || {
             if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
@@ -137,13 +139,22 @@ impl Drop for Sandbox {
                 .build()
             {
                 rt.block_on(async move {
-                    // Kill via signal (no AgentClient needed)
-                    if let Ok(mut handle) = MsbSandbox::get(&name).await {
-                        let _ = handle.kill().await;
+                    match inner {
+                        Some(inner) => {
+                            // VM was running: kill then remove persisted state.
+                            if let Ok(mut handle) = MsbSandbox::get(&name).await {
+                                let _ = handle.kill().await;
+                            }
+                            let _ = inner.remove_persisted().await;
+                        }
+                        None => {
+                            // VM was stopped: SandboxHandle::remove() deletes
+                            // persisted state without needing to start the VM.
+                            if let Ok(handle) = MsbSandbox::get(&name).await {
+                                let _ = handle.remove().await;
+                            }
+                        }
                     }
-                    // remove_persisted: deletes DB record + files unconditionally;
-                    // ProcessHandle::drop() sends SIGTERM as a fallback.
-                    let _ = inner.remove_persisted().await;
                 });
             }
             let _ = tx.send(());
@@ -152,19 +163,9 @@ impl Drop for Sandbox {
     }
 }
 
-//--------------------------------------------------------------------------------------------------
-// Methods
-//--------------------------------------------------------------------------------------------------
-
+#[cfg(feature = "sandbox")]
 impl Sandbox {
-    /// Boot a new sandbox, or reuse an existing one when `config.persist` is `true`.
-    ///
-    /// - `persist: false` (default): always creates a fresh sandbox; on drop it is
-    ///   stopped and its data removed automatically.
-    /// - `persist: true`: if a sandbox with the same `name` already exists it is
-    ///   reused (connected if running, restarted if stopped); otherwise a new one
-    ///   is created. The sandbox is **not** removed on drop, so it survives across
-    ///   process restarts.
+    /// Create and start a new sandbox.  The VM is running on return.
     pub async fn new(config: SandboxConfig) -> anyhow::Result<Self> {
         let persist = config.persist;
         let default_timeout_secs = config.default_timeout_secs;
@@ -179,48 +180,96 @@ impl Sandbox {
 
         let name = inner.name().to_string();
         let sandbox = Self {
-            inner: Some(inner),
+            inner: tokio::sync::RwLock::new(Some(inner)),
             name,
             persist,
             default_timeout_secs,
             max_output_chars,
         };
 
-        // Create workdir after sandbox has been booted
-        sandbox.msb().shell(&format!("mkdir -p {workdir}")).await?;
+        sandbox.shell(&format!("mkdir -p {workdir}")).await?;
 
         Ok(sandbox)
     }
 
-    /// Run a command and wait for completion.
+    /// Return `true` if the VM is currently running.
+    pub fn is_running(&self) -> bool {
+        self.inner.try_read().map(|g| g.is_some()).unwrap_or(false)
+    }
+
+    /// Start a stopped sandbox.  No-op if already running.
+    pub async fn start(&self) -> anyhow::Result<()> {
+        let mut guard = self.inner.write().await;
+        if guard.is_some() {
+            return Ok(());
+        }
+        let inner = MsbSandbox::start_detached(&self.name).await?;
+        *guard = Some(inner);
+        Ok(())
+    }
+
+    /// Stop the running sandbox without removing its persisted state.
+    /// No-op if already stopped.  Waits for all ongoing exec/shell calls to
+    /// finish before stopping (write lock blocks until all read locks release).
+    pub async fn stop(&self) -> anyhow::Result<()> {
+        let mut guard = self.inner.write().await;
+        let Some(inner) = guard.take() else {
+            return Ok(());
+        };
+        inner.stop_and_wait().await?;
+        Ok(())
+    }
+
+    /// Stop the sandbox and, if not persisted, remove its on-disk state.
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
+        let mut guard = self.inner.write().await;
+        let Some(inner) = guard.take() else {
+            return Ok(());
+        };
+        inner.stop_and_wait().await?;
+        if !self.persist {
+            inner.remove_persisted().await?;
+        }
+        Ok(())
+    }
+
+    // ---- execution methods (read lock — concurrent) -------------------------
+
     pub async fn exec(&self, cmd: &str, args: &[&str]) -> anyhow::Result<ExecResult> {
         let timeout = Duration::from_secs(self.default_timeout_secs);
         let owned_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let result = self
-            .msb()
+        let guard = self.inner.read().await;
+        let inner = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
+        let result = inner
             .exec_with(cmd, |b: ExecOptionsBuilder| {
                 b.args(owned_args.iter().map(|s| s.as_str()))
                     .timeout(timeout)
             })
             .await;
-
         self.handle_exec_result(result)
     }
 
-    /// Run a shell command via the sandbox's default shell.
     pub async fn shell(&self, script: &str) -> anyhow::Result<ExecResult> {
-        let result = self.msb().shell(script).await;
+        let guard = self.inner.read().await;
+        let inner = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
+        let result = inner.shell(script).await;
         self.handle_exec_result(result)
     }
 
-    /// Run a shell command with a custom per-call timeout.
     pub async fn shell_with_timeout(
         &self,
         script: &str,
         timeout_secs: u64,
     ) -> anyhow::Result<ExecResult> {
-        let result = self
-            .msb()
+        let guard = self.inner.read().await;
+        let inner = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
+        let result = inner
             .exec_with("sh", |b: ExecOptionsBuilder| {
                 b.args(["-c", script])
                     .timeout(Duration::from_secs(timeout_secs))
@@ -229,71 +278,58 @@ impl Sandbox {
         self.handle_exec_result(result)
     }
 
-    /// Write raw bytes to a file inside the sandbox.
     pub async fn write_file(&self, guest_path: &str, data: &[u8]) -> anyhow::Result<()> {
-        self.msb().fs().write(guest_path, data).await?;
+        let guard = self.inner.read().await;
+        let inner = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
+        inner.fs().write(guest_path, data).await?;
         Ok(())
     }
 
-    /// Read a file from the sandbox as a UTF-8 string.
     pub async fn read_file(&self, guest_path: &str) -> anyhow::Result<String> {
-        let s = self.msb().fs().read_to_string(guest_path).await?;
+        let guard = self.inner.read().await;
+        let inner = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
+        let s = inner.fs().read_to_string(guest_path).await?;
         Ok(s)
     }
 
-    /// Read a file from the sandbox as raw bytes.
     pub async fn read_file_bytes(&self, guest_path: &str) -> anyhow::Result<Vec<u8>> {
-        let bytes = self.msb().fs().read(guest_path).await?;
+        let guard = self.inner.read().await;
+        let inner = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
+        let bytes = inner.fs().read(guest_path).await?;
         Ok(bytes.to_vec())
     }
 
-    /// Copy a file from the host filesystem into the sandbox.
     pub async fn copy_from_host(&self, host: &Path, guest: &str) -> anyhow::Result<()> {
-        self.msb().fs().copy_from_host(host, guest).await?;
-        Ok(())
-    }
-
-    /// Copy a file from the sandbox to the host filesystem.
-    pub async fn copy_to_host(&self, guest: &str, host: &Path) -> anyhow::Result<()> {
-        self.msb().fs().copy_to_host(guest, host).await?;
-        Ok(())
-    }
-
-    /// Explicitly stop the sandbox.
-    ///
-    /// For non-persistent sandboxes this also removes all persisted data — the
-    /// same cleanup that would happen on drop.  For persistent sandboxes only
-    /// the VM is stopped; data is kept for the next `Sandbox::new` call.
-    pub async fn shutdown(&mut self) -> anyhow::Result<()> {
-        let Some(inner) = self.inner.take() else {
-            return Ok(());
-        };
-        // stop_and_wait() uses the AgentClient and works here because shutdown()
-        // is called on the same runtime that created the sandbox.
-        inner.stop_and_wait().await?;
-        if !self.persist {
-            // remove_persisted: delete DB record + files without status check.
-            inner.remove_persisted().await?;
-        }
-        Ok(())
-    }
-
-    //----------------------------------------------------------------------------------------------
-    // Helpers
-    //----------------------------------------------------------------------------------------------
-
-    fn msb(&self) -> &MsbSandbox {
-        self.inner
+        let guard = self.inner.read().await;
+        let inner = guard
             .as_ref()
-            .expect("sandbox has already been shut down")
+            .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
+        inner.fs().copy_from_host(host, guest).await?;
+        Ok(())
     }
+
+    pub async fn copy_to_host(&self, guest: &str, host: &Path) -> anyhow::Result<()> {
+        let guard = self.inner.read().await;
+        let inner = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
+        inner.fs().copy_to_host(guest, host).await?;
+        Ok(())
+    }
+
+    // ---- internal -----------------------------------------------------------
 
     fn handle_exec_result(
         &self,
         result: Result<microsandbox::ExecOutput, microsandbox::MicrosandboxError>,
     ) -> anyhow::Result<ExecResult> {
         use microsandbox::MicrosandboxError;
-
         match result {
             Ok(output) => {
                 let stdout =
@@ -319,10 +355,71 @@ impl Sandbox {
 }
 
 //--------------------------------------------------------------------------------------------------
-// Free functions
+// Stub Sandbox (no "sandbox" feature — methods always return Err at runtime)
 //--------------------------------------------------------------------------------------------------
 
-/// Create a brand-new ephemeral sandbox (persist = false).
+/// Stub type that exists so `Option<Arc<Sandbox>>` compiles in all builds.
+/// All methods return `Err` immediately; no `Sandbox` instance is ever
+/// constructed without the `sandbox` feature.
+#[cfg(not(feature = "sandbox"))]
+pub struct Sandbox;
+
+#[cfg(not(feature = "sandbox"))]
+impl Sandbox {
+    pub async fn start(&self) -> anyhow::Result<()> {
+        anyhow::bail!("sandbox feature not enabled")
+    }
+
+    pub async fn stop(&self) -> anyhow::Result<()> {
+        anyhow::bail!("sandbox feature not enabled")
+    }
+
+    pub fn is_running(&self) -> bool {
+        false
+    }
+
+    pub async fn exec(&self, _cmd: &str, _args: &[&str]) -> anyhow::Result<ExecResult> {
+        anyhow::bail!("sandbox feature not enabled")
+    }
+
+    pub async fn shell(&self, _script: &str) -> anyhow::Result<ExecResult> {
+        anyhow::bail!("sandbox feature not enabled")
+    }
+
+    pub async fn shell_with_timeout(
+        &self,
+        _script: &str,
+        _timeout_secs: u64,
+    ) -> anyhow::Result<ExecResult> {
+        anyhow::bail!("sandbox feature not enabled")
+    }
+
+    pub async fn write_file(&self, _guest_path: &str, _data: &[u8]) -> anyhow::Result<()> {
+        anyhow::bail!("sandbox feature not enabled")
+    }
+
+    pub async fn read_file(&self, _guest_path: &str) -> anyhow::Result<String> {
+        anyhow::bail!("sandbox feature not enabled")
+    }
+
+    pub async fn read_file_bytes(&self, _guest_path: &str) -> anyhow::Result<Vec<u8>> {
+        anyhow::bail!("sandbox feature not enabled")
+    }
+
+    pub async fn copy_from_host(&self, _host: &Path, _guest: &str) -> anyhow::Result<()> {
+        anyhow::bail!("sandbox feature not enabled")
+    }
+
+    pub async fn copy_to_host(&self, _guest: &str, _host: &Path) -> anyhow::Result<()> {
+        anyhow::bail!("sandbox feature not enabled")
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Free functions (sandbox feature only)
+//--------------------------------------------------------------------------------------------------
+
+#[cfg(feature = "sandbox")]
 async fn create_fresh(config: SandboxConfig) -> anyhow::Result<MsbSandbox> {
     let mut builder = MsbSandbox::builder(&config.name)
         .image(config.image.as_str())
@@ -337,15 +434,10 @@ async fn create_fresh(config: SandboxConfig) -> anyhow::Result<MsbSandbox> {
     if config.disable_network {
         builder = builder.disable_network();
     }
-
     Ok(builder.create().await?)
 }
 
-/// Reuse an existing sandbox by name or create it if not found (persist = true).
-///
-/// Running sandbox → connect (no lifecycle takeover).
-/// Stopped sandbox → restart in detached mode.
-/// Unknown name    → create new in detached mode.
+#[cfg(feature = "sandbox")]
 async fn create_or_reuse(config: SandboxConfig) -> anyhow::Result<MsbSandbox> {
     match MsbSandbox::get(&config.name).await {
         Ok(handle) => {
@@ -356,8 +448,6 @@ async fn create_or_reuse(config: SandboxConfig) -> anyhow::Result<MsbSandbox> {
             Ok(sb)
         }
         Err(_) => {
-            // Sandbox not found — create a new one in detached mode so it
-            // outlives the current Sandbox wrapper when dropped.
             let mut builder = MsbSandbox::builder(&config.name)
                 .image(config.image.as_str())
                 .cpus(config.cpus)
@@ -371,17 +461,109 @@ async fn create_or_reuse(config: SandboxConfig) -> anyhow::Result<MsbSandbox> {
             if config.disable_network {
                 builder = builder.disable_network();
             }
-
             Ok(builder.create_detached().await?)
         }
     }
 }
 
-/// Truncate a `String` to at most `max_chars` Unicode scalar values.
+#[cfg(feature = "sandbox")]
 fn truncate_output(s: String, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         s
     } else {
         s.chars().take(max_chars).collect()
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Tests
+//--------------------------------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "sandbox"))]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    async fn make_sandbox() -> Arc<Sandbox> {
+        Arc::new(
+            Sandbox::new(SandboxConfig::default())
+                .await
+                .expect("failed to create sandbox"),
+        )
+    }
+
+    /// new() starts the VM and it is immediately running.
+    #[tokio::test]
+    async fn test_new_sandbox_is_running() {
+        let sb = make_sandbox().await;
+        assert!(sb.is_running(), "sandbox should be running after new()");
+    }
+
+    /// stop() halts the VM; start() brings it back up.
+    #[tokio::test]
+    async fn test_stop_and_start() {
+        let sb = make_sandbox().await;
+
+        sb.stop().await.expect("stop failed");
+        assert!(!sb.is_running(), "sandbox should be stopped after stop()");
+
+        sb.start().await.expect("start failed");
+        assert!(sb.is_running(), "sandbox should be running after start()");
+    }
+
+    /// start() and stop() are idempotent.
+    #[tokio::test]
+    async fn test_start_stop_idempotent() {
+        let sb = make_sandbox().await;
+
+        // Double stop
+        sb.stop().await.expect("first stop failed");
+        sb.stop().await.expect("second stop should be a no-op");
+        assert!(!sb.is_running());
+
+        // Double start
+        sb.start().await.expect("first start failed");
+        sb.start().await.expect("second start should be a no-op");
+        assert!(sb.is_running());
+    }
+
+    /// VM state (files written before stop) survives a stop/start cycle.
+    #[tokio::test]
+    async fn test_filesystem_persists_across_stop_start() {
+        let sb = make_sandbox().await;
+
+        sb.shell("echo hello > /workspace/test.txt")
+            .await
+            .expect("write failed");
+
+        sb.stop().await.expect("stop failed");
+        sb.start().await.expect("start failed");
+
+        let content = sb
+            .read_file("/workspace/test.txt")
+            .await
+            .expect("read failed");
+        assert!(
+            content.contains("hello"),
+            "file should survive stop/start cycle, got: {content:?}"
+        );
+    }
+
+    /// exec() fails with a clear error when the VM is stopped.
+    #[tokio::test]
+    async fn test_exec_while_stopped_returns_error() {
+        let sb = make_sandbox().await;
+        sb.stop().await.expect("stop failed");
+
+        let result = sb.shell("echo test").await;
+        assert!(
+            result.is_err(),
+            "shell() should fail when sandbox is stopped"
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("not running"),
+            "error should mention 'not running'"
+        );
     }
 }
