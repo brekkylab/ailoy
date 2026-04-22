@@ -895,11 +895,15 @@ mod tests {
 
         let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
-        // ── 1. After creation: sandbox must be stopped ──────────────────────
-        let sb = agent.state.sandbox.as_ref().unwrap();
+        // ── 1. After creation: sandbox exists but is stopped ───────────────
+        let sb = agent
+            .state
+            .sandbox
+            .as_ref()
+            .expect("sandbox should exist after construction");
         assert!(
             !sb.is_running(),
-            "sandbox should be stopped right after agent creation"
+            "sandbox should be stopped after construction"
         );
 
         // ── 2. Run a turn that triggers python_repl ─────────────────────────
@@ -913,7 +917,7 @@ mod tests {
             }
         }
 
-        // ── 3. After run(): sandbox must be stopped again ───────────────────
+        // ── 3. After run(): sandbox stopped ────────────────────────────────
         let sb = agent.state.sandbox.as_ref().unwrap();
         assert!(
             !sb.is_running(),

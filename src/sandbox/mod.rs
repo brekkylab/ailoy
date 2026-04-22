@@ -3,7 +3,10 @@
 
 #[cfg(feature = "sandbox")]
 use std::time::Duration;
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 #[cfg(feature = "sandbox")]
 use microsandbox::{
@@ -20,6 +23,40 @@ use uuid::Uuid;
 
 fn fresh_sandbox_name() -> String {
     format!("ailoy-{}", Uuid::new_v4())
+}
+
+/// A volume mount attached to a sandbox at creation time.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum VolumeMount {
+    /// Bind-mount a host directory into the guest.
+    Bind {
+        /// Absolute or relative host path.
+        host: PathBuf,
+        /// Absolute guest path (e.g. `/data`).
+        guest: String,
+        /// When `true`, the guest cannot write to this mount.
+        #[serde(default)]
+        readonly: bool,
+    },
+    /// Mount a microsandbox named volume (`~/.microsandbox/volumes/<name>/`).
+    /// The volume persists across sandbox restarts and can be shared between sandboxes.
+    Named {
+        /// Name of the pre-existing microsandbox volume.
+        name: String,
+        /// Absolute guest path.
+        guest: String,
+        /// When `true`, the guest cannot write to this mount.
+        #[serde(default)]
+        readonly: bool,
+    },
+    /// Memory-backed temporary filesystem. Disappears when the sandbox stops.
+    Tmpfs {
+        /// Absolute guest path.
+        guest: String,
+        /// Size limit in MiB. `None` means no limit.
+        size_mib: Option<u32>,
+    },
 }
 
 /// Configuration for creating a new sandbox.
@@ -61,6 +98,10 @@ pub struct SandboxConfig {
     /// When `true`, the sandbox is not removed on drop and can be reused by
     /// name in a future session. Default: `false`.
     pub persist: bool,
+
+    /// Volume mounts attached at sandbox creation time.
+    #[serde(default)]
+    pub volumes: Vec<VolumeMount>,
 }
 
 impl Default for SandboxConfig {
@@ -77,6 +118,7 @@ impl Default for SandboxConfig {
             default_timeout_secs: 60,
             max_output_chars: 8000,
             persist: false,
+            volumes: Vec::new(),
         }
     }
 }
@@ -141,10 +183,10 @@ impl Drop for Sandbox {
                 rt.block_on(async move {
                     match inner {
                         Some(inner) => {
-                            // VM was running: kill then remove persisted state.
-                            if let Ok(mut handle) = MsbSandbox::get(&name).await {
-                                let _ = handle.kill().await;
-                            }
+                            // VM was running: use the owned handle so stop_and_wait()
+                            // can properly reap the child process via waitpid().
+                            // (SandboxHandle::kill() would hit the 5s zombie timeout.)
+                            let _ = inner.stop_and_wait().await;
                             let _ = inner.remove_persisted().await;
                         }
                         None => {
@@ -434,6 +476,9 @@ async fn create_fresh(config: SandboxConfig) -> anyhow::Result<MsbSandbox> {
     if config.disable_network {
         builder = builder.disable_network();
     }
+    for mount in &config.volumes {
+        builder = apply_volume_mount(builder, mount);
+    }
     Ok(builder.create().await?)
 }
 
@@ -461,12 +506,54 @@ async fn create_or_reuse(config: SandboxConfig) -> anyhow::Result<MsbSandbox> {
             if config.disable_network {
                 builder = builder.disable_network();
             }
+            for mount in &config.volumes {
+                builder = apply_volume_mount(builder, mount);
+            }
             Ok(builder.create_detached().await?)
         }
     }
 }
 
 #[cfg(feature = "sandbox")]
+fn apply_volume_mount(
+    builder: microsandbox::sandbox::SandboxBuilder,
+    mount: &VolumeMount,
+) -> microsandbox::sandbox::SandboxBuilder {
+    match mount {
+        VolumeMount::Bind {
+            host,
+            guest,
+            readonly,
+        } => {
+            let host = host.clone();
+            let ro = *readonly;
+            builder.volume(guest, move |m| {
+                let m = m.bind(host);
+                if ro { m.readonly() } else { m }
+            })
+        }
+        VolumeMount::Named {
+            name,
+            guest,
+            readonly,
+        } => {
+            let name = name.clone();
+            let ro = *readonly;
+            builder.volume(guest, move |m| {
+                let m = m.named(name);
+                if ro { m.readonly() } else { m }
+            })
+        }
+        VolumeMount::Tmpfs { guest, size_mib } => {
+            let size = *size_mib;
+            builder.volume(guest, move |m| {
+                let m = m.tmpfs();
+                if let Some(s) = size { m.size(s) } else { m }
+            })
+        }
+    }
+}
+
 fn truncate_output(s: String, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         s
@@ -564,6 +651,229 @@ mod tests {
         assert!(
             result.unwrap_err().to_string().contains("not running"),
             "error should mention 'not running'"
+        );
+    }
+
+    /// Measure stop()+start() latency to confirm it is much cheaper than fresh create().
+    #[tokio::test]
+    async fn test_restart_latency() {
+        let sb = make_sandbox().await;
+
+        sb.stop().await.expect("stop failed");
+
+        let t = std::time::Instant::now();
+        sb.start().await.expect("start failed");
+        let restart_ms = t.elapsed().as_millis();
+
+        assert!(
+            restart_ms < 3000,
+            "restart should be well under 3s, got {restart_ms}ms"
+        );
+    }
+
+    // ── Volume mount tests ────────────────────────────────────────────────────
+
+    /// Bind mount: a file written to the host directory is visible inside the guest.
+    #[tokio::test]
+    async fn test_bind_mount_host_to_guest() {
+        let host_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let host_file = host_dir.path().join("hello.txt");
+        std::fs::write(&host_file, "bind_mount_works").expect("failed to write host file");
+
+        let sb = Arc::new(
+            Sandbox::new(SandboxConfig {
+                volumes: vec![VolumeMount::Bind {
+                    host: host_dir.path().to_path_buf(),
+                    guest: "/mnt/host".to_string(),
+                    readonly: false,
+                }],
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("failed to create sandbox"),
+        );
+
+        let result = sb
+            .shell("cat /mnt/host/hello.txt")
+            .await
+            .expect("shell failed");
+        assert_eq!(
+            result.exit_code, 0,
+            "cat should succeed, stderr: {}",
+            result.stderr
+        );
+        assert!(
+            result.stdout.contains("bind_mount_works"),
+            "guest should see host file, stdout: {:?}",
+            result.stdout
+        );
+    }
+
+    /// Bind mount readonly: guest write is rejected.
+    #[tokio::test]
+    async fn test_bind_mount_readonly_rejects_guest_write() {
+        let host_dir = tempfile::tempdir().expect("failed to create temp dir");
+
+        let sb = Arc::new(
+            Sandbox::new(SandboxConfig {
+                volumes: vec![VolumeMount::Bind {
+                    host: host_dir.path().to_path_buf(),
+                    guest: "/mnt/ro".to_string(),
+                    readonly: true,
+                }],
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("failed to create sandbox"),
+        );
+
+        let result = sb
+            .shell("echo should_fail > /mnt/ro/file.txt")
+            .await
+            .expect("shell failed");
+        assert_ne!(result.exit_code, 0, "write to read-only mount should fail");
+    }
+
+    /// Bind mount: a file written inside the guest is visible on the host.
+    #[tokio::test]
+    async fn test_bind_mount_guest_write_visible_on_host() {
+        let host_dir = tempfile::tempdir().expect("failed to create temp dir");
+
+        let sb = Arc::new(
+            Sandbox::new(SandboxConfig {
+                volumes: vec![VolumeMount::Bind {
+                    host: host_dir.path().to_path_buf(),
+                    guest: "/mnt/shared".to_string(),
+                    readonly: false,
+                }],
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("failed to create sandbox"),
+        );
+
+        let result = sb
+            .shell("echo guest_wrote > /mnt/shared/out.txt")
+            .await
+            .expect("shell failed");
+        assert_eq!(
+            result.exit_code, 0,
+            "guest write should succeed, stderr: {}",
+            result.stderr
+        );
+
+        let host_content =
+            std::fs::read_to_string(host_dir.path().join("out.txt")).expect("host file not found");
+        assert!(
+            host_content.contains("guest_wrote"),
+            "host should see guest-written file, got: {host_content:?}"
+        );
+    }
+
+    /// Tmpfs: writable in-memory filesystem visible at the specified guest path.
+    #[tokio::test]
+    async fn test_tmpfs_mount_is_writable() {
+        let sb = Arc::new(
+            Sandbox::new(SandboxConfig {
+                volumes: vec![VolumeMount::Tmpfs {
+                    guest: "/mnt/tmp".to_string(),
+                    size_mib: Some(64),
+                }],
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("failed to create sandbox"),
+        );
+
+        let result = sb
+            .shell("echo tmpfs_ok > /mnt/tmp/test.txt && cat /mnt/tmp/test.txt")
+            .await
+            .expect("shell failed");
+        assert_eq!(
+            result.exit_code, 0,
+            "tmpfs write/read should succeed, stderr: {}",
+            result.stderr
+        );
+        assert!(
+            result.stdout.contains("tmpfs_ok"),
+            "tmpfs should be writable, stdout: {:?}",
+            result.stdout
+        );
+    }
+
+    /// Named volume: data written in one sandbox instance is visible in another using the same volume.
+    #[tokio::test]
+    async fn test_named_volume_persists_across_sandboxes() {
+        use microsandbox::Volume;
+
+        let vol_name = format!("ailoy-test-vol-{}", uuid::Uuid::new_v4());
+
+        // Pre-create the named volume.
+        Volume::builder(&vol_name)
+            .create()
+            .await
+            .expect("failed to create named volume");
+
+        // First sandbox: write a file into the named volume.
+        let write_result = async {
+            let sb = Arc::new(
+                Sandbox::new(SandboxConfig {
+                    volumes: vec![VolumeMount::Named {
+                        name: vol_name.clone(),
+                        guest: "/mnt/vol".to_string(),
+                        readonly: false,
+                    }],
+                    ..SandboxConfig::default()
+                })
+                .await
+                .expect("failed to create first sandbox"),
+            );
+            sb.shell("echo named_vol_works > /mnt/vol/data.txt")
+                .await
+                .expect("write failed")
+        }
+        .await;
+
+        assert_eq!(
+            write_result.exit_code, 0,
+            "write to named volume failed, stderr: {}",
+            write_result.stderr
+        );
+
+        // Second sandbox: read the file from the same named volume.
+        let read_result = async {
+            let sb = Arc::new(
+                Sandbox::new(SandboxConfig {
+                    volumes: vec![VolumeMount::Named {
+                        name: vol_name.clone(),
+                        guest: "/mnt/vol".to_string(),
+                        readonly: false,
+                    }],
+                    ..SandboxConfig::default()
+                })
+                .await
+                .expect("failed to create second sandbox"),
+            );
+            sb.shell("cat /mnt/vol/data.txt")
+                .await
+                .expect("read failed")
+        }
+        .await;
+
+        // Clean up the named volume regardless of test outcome.
+        if let Ok(handle) = Volume::get(&vol_name).await {
+            let _ = handle.remove().await;
+        }
+
+        assert_eq!(
+            read_result.exit_code, 0,
+            "read from named volume failed, stderr: {}",
+            read_result.stderr
+        );
+        assert!(
+            read_result.stdout.contains("named_vol_works"),
+            "second sandbox should see data written by first, stdout: {:?}",
+            read_result.stdout
         );
     }
 }
