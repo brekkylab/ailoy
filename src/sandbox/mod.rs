@@ -67,7 +67,7 @@ pub struct SandboxConfig {
     #[schemars(skip)]
     pub name: String,
 
-    /// OCI container image. Default: `"python:3.12-slim"`.
+    /// OCI container image. Default: `"ubuntu:latest"`.
     pub image: String,
 
     /// Number of virtual CPUs. Default: `2`.
@@ -108,7 +108,7 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
             name: format!("ailoy-{}", Uuid::new_v4()),
-            image: "python:3.12-slim".to_string(),
+            image: "ubuntu:latest".to_string(),
             cpus: 2,
             memory_mib: 2048,
             workdir: "/workspace".to_string(),
@@ -116,7 +116,7 @@ impl Default for SandboxConfig {
             disable_network: false,
             idle_timeout_secs: 300,
             default_timeout_secs: 60,
-            max_output_chars: 8000,
+            max_output_chars: 30_000,
             persist: false,
             volumes: Vec::new(),
         }
@@ -554,12 +554,18 @@ fn apply_volume_mount(
     }
 }
 
+#[cfg(feature = "sandbox")]
 fn truncate_output(s: String, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s
-    } else {
-        s.chars().take(max_chars).collect()
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        return s;
     }
+    let head = max_chars / 2;
+    let tail = max_chars - head;
+    let omitted = chars.len() - head - tail;
+    let head_str: String = chars[..head].iter().collect();
+    let tail_str: String = chars[chars.len() - tail..].iter().collect();
+    format!("{head_str}\n\n... [{omitted} characters omitted] ...\n\n{tail_str}")
 }
 
 //--------------------------------------------------------------------------------------------------

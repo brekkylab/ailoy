@@ -41,7 +41,7 @@ impl Tool {
     }
 }
 
-#[cfg(all(test, feature = "sandbox"))]
+#[cfg(test)]
 pub(crate) mod test_helpers {
     use std::sync::Arc;
 
@@ -53,17 +53,14 @@ pub(crate) mod test_helpers {
         tool::{Tool, ToolContext},
     };
 
-    pub async fn call_with_sandbox(tool: &Tool, args: Part, sandbox: Arc<Sandbox>) -> Message {
-        tool.call(
-            &args,
-            ToolContext {
-                sandbox: Some(sandbox),
-            },
-        )
-        .unwrap()
-        .next()
-        .await
-        .unwrap()
-        .message
+    impl Tool {
+        pub async fn call_next(&self, args: Part, sandbox: Option<Arc<Sandbox>>) -> Message {
+            self.call(&args, ToolContext { sandbox })
+                .unwrap()
+                .next()
+                .await
+                .unwrap()
+                .message
+        }
     }
 }

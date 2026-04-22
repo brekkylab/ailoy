@@ -6,9 +6,8 @@ use url::Url;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BuiltinToolProvider {
     WebSearch {},
-
     PythonRepl {},
-    ConvertPdfToMd {},
+    Bash {},
 }
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
