@@ -140,12 +140,12 @@ pub struct ExecResult {
 // Real Sandbox implementation (requires "sandbox" feature)
 //--------------------------------------------------------------------------------------------------
 
-/// `inner` is behind a `RwLock` so that:
-/// - `exec`/`shell`/file ops hold a **read lock** → multiple tool calls run concurrently.
-/// - `start`/`stop`/`shutdown` hold a **write lock** → exclusive, wait for all readers.
+/// `inner` is behind a `Mutex` so that all sandbox operations (exec, shell, file I/O,
+/// start/stop) are serialized. Tool calls may be spawned in parallel but queue up here,
+/// preventing concurrent commands from racing on the same VM filesystem.
 #[cfg(feature = "sandbox")]
 pub struct Sandbox {
-    inner: tokio::sync::RwLock<Option<MsbSandbox>>,
+    inner: tokio::sync::Mutex<Option<MsbSandbox>>,
     name: String,
     persist: bool,
     default_timeout_secs: u64,
@@ -230,7 +230,7 @@ impl Sandbox {
 
         let name = inner.name().to_string();
         let sandbox = Self {
-            inner: tokio::sync::RwLock::new(Some(inner)),
+            inner: tokio::sync::Mutex::new(Some(inner)),
             name,
             persist,
             default_timeout_secs,
@@ -244,12 +244,12 @@ impl Sandbox {
 
     /// Return `true` if the VM is currently running.
     pub fn is_running(&self) -> bool {
-        self.inner.try_read().map(|g| g.is_some()).unwrap_or(false)
+        self.inner.try_lock().map(|g| g.is_some()).unwrap_or(false)
     }
 
     /// Start a stopped sandbox.  No-op if already running.
     pub async fn start(&self) -> anyhow::Result<()> {
-        let mut guard = self.inner.write().await;
+        let mut guard = self.inner.lock().await;
         if guard.is_some() {
             return Ok(());
         }
@@ -259,10 +259,9 @@ impl Sandbox {
     }
 
     /// Stop the running sandbox without removing its persisted state.
-    /// No-op if already stopped.  Waits for all ongoing exec/shell calls to
-    /// finish before stopping (write lock blocks until all read locks release).
+    /// No-op if already stopped.
     pub async fn stop(&self) -> anyhow::Result<()> {
-        let mut guard = self.inner.write().await;
+        let mut guard = self.inner.lock().await;
         let Some(inner) = guard.take() else {
             return Ok(());
         };
@@ -272,7 +271,7 @@ impl Sandbox {
 
     /// Stop the sandbox and, if not persisted, remove its on-disk state.
     pub async fn shutdown(&self) -> anyhow::Result<()> {
-        let mut guard = self.inner.write().await;
+        let mut guard = self.inner.lock().await;
         let Some(inner) = guard.take() else {
             return Ok(());
         };
@@ -283,12 +282,12 @@ impl Sandbox {
         Ok(())
     }
 
-    // ---- execution methods (read lock — concurrent) -------------------------
+    // ---- execution methods (serialized via Mutex) ---------------------------
 
     pub async fn exec(&self, cmd: &str, args: &[&str]) -> anyhow::Result<ExecResult> {
         let timeout = Duration::from_secs(self.default_timeout_secs);
         let owned_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let guard = self.inner.read().await;
+        let guard = self.inner.lock().await;
         let inner = guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
@@ -302,7 +301,7 @@ impl Sandbox {
     }
 
     pub async fn shell(&self, script: &str) -> anyhow::Result<ExecResult> {
-        let guard = self.inner.read().await;
+        let guard = self.inner.lock().await;
         let inner = guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
@@ -315,7 +314,7 @@ impl Sandbox {
         script: &str,
         timeout_secs: u64,
     ) -> anyhow::Result<ExecResult> {
-        let guard = self.inner.read().await;
+        let guard = self.inner.lock().await;
         let inner = guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
@@ -329,7 +328,7 @@ impl Sandbox {
     }
 
     pub async fn write_file(&self, guest_path: &str, data: &[u8]) -> anyhow::Result<()> {
-        let guard = self.inner.read().await;
+        let guard = self.inner.lock().await;
         let inner = guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
@@ -338,7 +337,7 @@ impl Sandbox {
     }
 
     pub async fn read_file(&self, guest_path: &str) -> anyhow::Result<String> {
-        let guard = self.inner.read().await;
+        let guard = self.inner.lock().await;
         let inner = guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
@@ -347,7 +346,7 @@ impl Sandbox {
     }
 
     pub async fn read_file_bytes(&self, guest_path: &str) -> anyhow::Result<Vec<u8>> {
-        let guard = self.inner.read().await;
+        let guard = self.inner.lock().await;
         let inner = guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
@@ -356,7 +355,7 @@ impl Sandbox {
     }
 
     pub async fn copy_from_host(&self, host: &Path, guest: &str) -> anyhow::Result<()> {
-        let guard = self.inner.read().await;
+        let guard = self.inner.lock().await;
         let inner = guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;
@@ -365,7 +364,7 @@ impl Sandbox {
     }
 
     pub async fn copy_to_host(&self, guest: &str, host: &Path) -> anyhow::Result<()> {
-        let guard = self.inner.read().await;
+        let guard = self.inner.lock().await;
         let inner = guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("sandbox is not running"))?;

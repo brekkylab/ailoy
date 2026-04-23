@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
@@ -6,12 +6,13 @@ use crate::{
     agent::{AgentProvider, AgentSpec, default_provider},
     lang_model::LangModel,
     message::{FinishReason, Message, MessageOutput, Part, Role},
+    sandbox::Sandbox,
     tool::{Tool, ToolContext, ToolSet},
 };
 
 pub struct AgentState {
     pub history: Vec<Message>,
-    pub sandbox: Option<std::sync::Arc<crate::sandbox::Sandbox>>,
+    pub sandbox: Option<Arc<Sandbox>>,
 }
 
 impl Default for AgentState {
@@ -951,6 +952,102 @@ mod tests {
         assert!(
             stdout.contains("ailoy_sandbox_ok"),
             "python_repl should have produced expected output, got stdout: {stdout:?}"
+        );
+    }
+
+    /// Verifies that parallel bash tool calls from the agent loop do not interleave
+    /// inside the sandbox. The LLM is instructed to issue both bash calls in a single
+    /// response. Each command writes "start_N", sleeps, then writes "end_N" to a shared
+    /// log file. The sandbox Mutex guarantees serial execution, so no interleaving occurs.
+    #[cfg(feature = "sandbox")]
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    async fn test_agent_parallel_bash_calls_are_serialized_in_sandbox() {
+        use futures::StreamExt as _;
+
+        use crate::{
+            agent::{AgentProvider, AgentSpec},
+            message::{Message, Part, Role},
+            tool::{BuiltinToolProvider, ToolProvider},
+        };
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+
+        let mut provider = AgentProvider::new();
+        provider
+            .model_claude(api_key)
+            .tool(ToolProvider::Builtin(BuiltinToolProvider::Bash {}));
+
+        let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
+            .tool("bash")
+            .instruction(
+                "You have a bash tool. When asked to run two commands, always call bash \
+                 TWICE in a SINGLE response (parallel tool calls). Never run them sequentially \
+                 across multiple turns.",
+            );
+
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
+
+        // Start the sandbox manually so tool calls can proceed.
+        agent
+            .state
+            .sandbox
+            .as_ref()
+            .unwrap()
+            .start()
+            .await
+            .expect("failed to start sandbox");
+
+        let log = "/tmp/agent_serial_test.txt";
+        let query = Message::new(Role::User).with_contents([Part::text(format!(
+            "Run these two shell commands in a single response using two parallel bash tool calls:\n\
+             1. echo start_1 >> {log} && sleep 0.3 && echo end_1 >> {log}\n\
+             2. echo start_2 >> {log} && sleep 0.3 && echo end_2 >> {log}"
+        ))]);
+
+        {
+            let mut stream = agent.run(query);
+            while let Some(event) = stream.next().await {
+                event.expect("agent stream error");
+            }
+        }
+
+        // Re-start the sandbox (agent.run() stops it) to read the log.
+        let sb = agent.state.sandbox.as_ref().unwrap();
+        sb.start()
+            .await
+            .expect("failed to restart sandbox for log read");
+        let log_content = sb
+            .shell(&format!("cat {log}"))
+            .await
+            .expect("failed to read log");
+        sb.stop().await.ok();
+
+        let lines: Vec<&str> = log_content.stdout.lines().collect();
+        assert_eq!(lines.len(), 4, "expected 4 log lines, got: {lines:?}");
+
+        // Serial: start_N must be immediately followed by end_N (same N).
+        let id0 = lines[0]
+            .strip_prefix("start_")
+            .expect("line 0 should be start_N");
+        let id1 = lines[1]
+            .strip_prefix("end_")
+            .expect("line 1 should be end_N");
+        assert_eq!(
+            id0, id1,
+            "first command's start and end must be adjacent — interleaving detected: {lines:?}"
+        );
+
+        let id2 = lines[2]
+            .strip_prefix("start_")
+            .expect("line 2 should be start_N");
+        let id3 = lines[3]
+            .strip_prefix("end_")
+            .expect("line 3 should be end_N");
+        assert_eq!(
+            id2, id3,
+            "second command's start and end must be adjacent — interleaving detected: {lines:?}"
         );
     }
 
