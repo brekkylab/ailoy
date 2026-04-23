@@ -9,13 +9,13 @@ use aggregator::MetaSearcher;
 use crate::{
     datatype::Value,
     message::{ToolDesc, ToolDescBuilder},
-    tool::{Tool, ToolFunc},
+    tool::{ToolFactory, ToolFunc},
 };
 
-pub async fn build_web_search_tool() -> anyhow::Result<Tool> {
-    Ok(Tool::new(
+pub async fn build_web_search_tool() -> anyhow::Result<ToolFactory> {
+    Ok(ToolFactory::simple(
         make_web_search_tool_desc(),
-        std::sync::Arc::new(make_web_search_func()),
+        make_web_search_func(),
     ))
 }
 

@@ -4,14 +4,12 @@ use tokio::sync::Mutex;
 
 use crate::{
     agent::{Agent, AgentProvider, AgentSpec},
-    message::ToolDesc,
-    tool::{MCPToolProvider, Tool, ToolFunc, ToolProvider},
+    tool::{MCPToolProvider, Tool, ToolFactory, ToolProvider},
     tool_impl::{make_a2a_tool, make_builtin_tool, make_subagent_tool},
 };
 
-#[derive(Clone)]
 pub struct ToolSet {
-    tools: HashMap<String, (ToolDesc, Arc<ToolFunc>)>,
+    tools: HashMap<String, ToolFactory>,
 }
 
 impl ToolSet {
@@ -34,18 +32,12 @@ impl ToolSet {
         for tool_provider in &provider.tools {
             match tool_provider {
                 ToolProvider::Builtin(builtin_tool_provider) => {
-                    let tool_runtime = make_builtin_tool(builtin_tool_provider).await?;
-                    this.tools.insert(
-                        tool_runtime.get_desc().name.clone(),
-                        (tool_runtime.get_desc().clone(), tool_runtime.get_func()),
-                    );
+                    let factory = make_builtin_tool(builtin_tool_provider).await?;
+                    this.tools.insert(factory.get_name().into(), factory);
                 }
                 ToolProvider::A2A { url } => {
-                    let tool_runtime = make_a2a_tool(url.clone()).await?;
-                    this.tools.insert(
-                        tool_runtime.get_desc().name.clone(),
-                        (tool_runtime.get_desc().clone(), tool_runtime.get_func()),
-                    );
+                    let factory = make_a2a_tool(url.clone()).await?;
+                    this.tools.insert(factory.get_name().into(), factory);
                 }
                 ToolProvider::MCP(mcptool_provider) => match mcptool_provider {
                     MCPToolProvider::Stdio { command: _ } => todo!(),
@@ -62,14 +54,10 @@ impl ToolSet {
                      registered as a tool"
                 )
             })?;
-            let tool_name = card.name.clone();
             let sub_agent = Agent::try_with_tools(sub_spec.clone(), provider, &this).await?;
             let sub_agent = Arc::new(Mutex::new(sub_agent));
-            let tool_runtime = make_subagent_tool(card, sub_agent);
-            this.tools.insert(
-                tool_name,
-                (tool_runtime.get_desc().clone(), tool_runtime.get_func()),
-            );
+            let factory = make_subagent_tool(card, sub_agent);
+            this.tools.insert(factory.get_name().into(), factory);
         }
 
         Ok(this)
@@ -79,23 +67,18 @@ impl ToolSet {
     ///
     /// `f` can be a [`ToolFunc`] (wrapped in an `Arc` automatically) or an
     /// existing `Arc<ToolFunc>` — e.g. one obtained from [`Tool::get_func`].
-    pub fn insert(
-        &mut self,
-        key: impl Into<String>,
-        desc: ToolDesc,
-        f: impl Into<Arc<ToolFunc>>,
-    ) -> Option<(ToolDesc, Arc<ToolFunc>)> {
-        self.tools.insert(key.into(), (desc, f.into()))
+    pub fn insert(&mut self, key: impl Into<String>, factory: ToolFactory) -> Option<ToolFactory> {
+        self.tools.insert(key.into(), factory)
     }
 
-    pub fn remove(&mut self, key: impl AsRef<str>) -> Option<(ToolDesc, Arc<ToolFunc>)> {
+    pub fn remove(&mut self, key: impl AsRef<str>) -> Option<ToolFactory> {
         self.tools.remove(key.as_ref())
     }
 
-    pub fn make_runtime(&self, key: impl AsRef<str>) -> Option<Tool> {
+    pub fn make_runtime(&self, key: impl AsRef<str>, spec: &AgentSpec) -> Option<Tool> {
         self.tools
             .get(key.as_ref())
-            .map(|(desc, f)| Tool::new(desc.clone(), Arc::clone(f)))
+            .map(|factory| factory.make(spec))
     }
 
     /// Merge another [`ToolSet`] into this one.
@@ -106,13 +89,11 @@ impl ToolSet {
         self.tools.extend(other.tools);
     }
 
-    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, String, (ToolDesc, Arc<ToolFunc>)> {
+    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, String, ToolFactory> {
         self.tools.iter()
     }
 
-    pub fn iter_mut(
-        &mut self,
-    ) -> std::collections::hash_map::IterMut<'_, String, (ToolDesc, Arc<ToolFunc>)> {
+    pub fn iter_mut(&mut self) -> std::collections::hash_map::IterMut<'_, String, ToolFactory> {
         self.tools.iter_mut()
     }
 
@@ -122,8 +103,8 @@ impl ToolSet {
     }
 }
 
-impl FromIterator<(String, (ToolDesc, Arc<ToolFunc>))> for ToolSet {
-    fn from_iter<I: IntoIterator<Item = (String, (ToolDesc, Arc<ToolFunc>))>>(iter: I) -> Self {
+impl FromIterator<(String, ToolFactory)> for ToolSet {
+    fn from_iter<I: IntoIterator<Item = (String, ToolFactory)>>(iter: I) -> Self {
         Self {
             tools: iter.into_iter().collect(),
         }
@@ -131,8 +112,8 @@ impl FromIterator<(String, (ToolDesc, Arc<ToolFunc>))> for ToolSet {
 }
 
 impl IntoIterator for ToolSet {
-    type Item = (String, (ToolDesc, Arc<ToolFunc>));
-    type IntoIter = std::collections::hash_map::IntoIter<String, (ToolDesc, Arc<ToolFunc>)>;
+    type Item = (String, ToolFactory);
+    type IntoIter = std::collections::hash_map::IntoIter<String, ToolFactory>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.tools.into_iter()
@@ -140,13 +121,13 @@ impl IntoIterator for ToolSet {
 }
 
 impl IntoIterator for &ToolSet {
-    type Item = (ToolDesc, Arc<ToolFunc>);
-    type IntoIter = std::vec::IntoIter<(ToolDesc, Arc<ToolFunc>)>;
+    type Item = (String, ToolFactory);
+    type IntoIter = std::vec::IntoIter<(String, ToolFactory)>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.tools
-            .values()
-            .map(|(desc, f)| (desc.clone(), Arc::clone(f)))
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
             .collect::<Vec<_>>()
             .into_iter()
     }

@@ -7,13 +7,13 @@ pub(crate) use runner::PythonScriptRunner;
 use crate::{
     datatype::Value,
     message::ToolDescBuilder,
-    tool::{Tool, ToolContext, ToolFunc},
+    tool::{ToolContext, ToolFactory, ToolFunc},
 };
 
-pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
+pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
     let desc = ToolDescBuilder::new("python_repl")
         .description(
-            "Execute a Python script and return stdout/stderr. 
+            "Execute a Python script and return stdout/stderr.
              Use `pip_install` to install packages before execution.",
         )
         .parameters(crate::to_value!({
@@ -34,9 +34,11 @@ pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
         .build();
 
     let runner = Arc::new(PythonScriptRunner::new());
+    let runner_sb = runner.clone();
+    let runner_local = runner;
 
-    let f = ToolFunc::new(move |args: Value, ctx: ToolContext| {
-        let runner = runner.clone();
+    let f_sandbox = ToolFunc::new(move |args: Value, ctx: ToolContext| {
+        let runner = runner_sb.clone();
         async move {
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
                 Some(c) => c.to_string(),
@@ -103,7 +105,73 @@ pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
         }
     });
 
-    Ok(Tool::new(desc, Arc::new(f)))
+    let f_local = ToolFunc::new(move |args: Value| {
+        let runner = runner_local.clone();
+        async move {
+            let code = match args.pointer("/code").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => {
+                    return crate::to_value!({
+                        "stdout": "",
+                        "stderr": "missing required parameter: code",
+                        "exit_code": -1,
+                        "phase": "validation"
+                    });
+                }
+            };
+
+            let pip_packages: Vec<String> = args
+                .pointer("/pip_install")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if !pip_packages.is_empty() {
+                let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
+                match runner.install_packages(None, &pkg_refs).await {
+                    Ok(r) if r.exit_code != 0 => {
+                        return crate::to_value!({
+                            "stdout": "",
+                            "stderr": r.stderr.as_str(),
+                            "exit_code": r.exit_code as i64,
+                            "phase": "pip_install"
+                        });
+                    }
+                    Err(e) => {
+                        return crate::to_value!({
+                            "stdout": "",
+                            "stderr": format!("pip install error: {e}").as_str(),
+                            "exit_code": 1,
+                            "phase": "pip_install"
+                        });
+                    }
+                    Ok(_) => {}
+                }
+            }
+
+            match runner.run(None, &code, &[]).await {
+                Ok(r) => crate::to_value!({
+                    "stdout": r.stdout.as_str(),
+                    "stderr": r.stderr.as_str(),
+                    "exit_code": r.exit_code as i64,
+                    "timed_out": r.timed_out
+                }),
+                Err(e) => crate::to_value!({
+                    "stdout": "",
+                    "stderr": format!("execution error: {e}").as_str(),
+                    "exit_code": -1,
+                    "timed_out": false,
+                    "phase": "execution"
+                }),
+            }
+        }
+    });
+
+    Ok(ToolFactory::sandbox_aware(desc, f_sandbox, f_local))
 }
 
 // ---------------------------------------------------------------------------
@@ -113,22 +181,36 @@ pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::AgentSpec;
+
+    fn no_sandbox_spec() -> AgentSpec {
+        AgentSpec::new("test")
+    }
 
     #[tokio::test]
     async fn test_tool_name_is_python_repl() {
-        let tool = build_python_repl_tool().await.unwrap();
+        let tool = build_python_repl_tool()
+            .await
+            .unwrap()
+            .make(&no_sandbox_spec());
         assert_eq!(tool.get_desc().name, "python_repl");
     }
 
     #[tokio::test]
     async fn test_tool_has_description() {
-        let tool = build_python_repl_tool().await.unwrap();
+        let tool = build_python_repl_tool()
+            .await
+            .unwrap()
+            .make(&no_sandbox_spec());
         assert!(tool.get_desc().description.is_some());
     }
 
     #[tokio::test]
     async fn test_tool_schema_requires_code() {
-        let tool = build_python_repl_tool().await.unwrap();
+        let tool = build_python_repl_tool()
+            .await
+            .unwrap()
+            .make(&no_sandbox_spec());
         let required = tool
             .get_desc()
             .parameters
@@ -141,7 +223,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_schema_pip_install_is_array_of_strings() {
-        let tool = build_python_repl_tool().await.unwrap();
+        let tool = build_python_repl_tool()
+            .await
+            .unwrap()
+            .make(&no_sandbox_spec());
         let item_type = tool
             .get_desc()
             .parameters
@@ -157,7 +242,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_missing_code_param_returns_validation_error() {
-            let tool = build_python_repl_tool().await.unwrap();
+            let tool = build_python_repl_tool()
+                .await
+                .unwrap()
+                .make(&no_sandbox_spec());
             let args = to_value!({});
             let msg = tool.call_next(args, ToolContext::new("1")).await;
             let phase = msg.contents[0]
@@ -171,7 +259,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_run_print_returns_stdout() {
-            let tool = build_python_repl_tool().await.unwrap();
+            let tool = build_python_repl_tool()
+                .await
+                .unwrap()
+                .make(&no_sandbox_spec());
             let args = to_value!({ "code": "print('ailoy')" });
             let msg = tool.call_next(args, ToolContext::new("1")).await;
             let result = msg.contents[0].as_value().unwrap();
@@ -184,7 +275,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_exit_code_nonzero_on_error() {
-            let tool = build_python_repl_tool().await.unwrap();
+            let tool = build_python_repl_tool()
+                .await
+                .unwrap()
+                .make(&no_sandbox_spec());
             let args = to_value!({ "code": "raise SystemExit(42)" });
             let msg = tool.call_next(args, ToolContext::new("1")).await;
             let exit_code = msg.contents[0]
@@ -198,7 +292,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_pip_install_failure_returns_phase_pip_install() {
-            let tool = build_python_repl_tool().await.unwrap();
+            let tool = build_python_repl_tool()
+                .await
+                .unwrap()
+                .make(&no_sandbox_spec());
             let args = to_value!({
                 "code": "import xyzzy_nonexistent",
                 "pip_install": ["xyzzy-nonexistent-pkg-12345"]
@@ -215,7 +312,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_stderr_captured_on_script_error() {
-            let tool = build_python_repl_tool().await.unwrap();
+            let tool = build_python_repl_tool()
+                .await
+                .unwrap()
+                .make(&no_sandbox_spec());
             let args = to_value!({ "code": "import sys; print('err', file=sys.stderr); raise SystemExit(1)" });
             let msg = tool.call_next(args, ToolContext::new("1")).await;
             let result = msg.contents[0].as_value().unwrap();
@@ -228,7 +328,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_pip_install_and_plot_image() {
-            let tool = build_python_repl_tool().await.unwrap();
+            let tool = build_python_repl_tool()
+                .await
+                .unwrap()
+                .make(&no_sandbox_spec());
             let plot_path = std::env::temp_dir().join("ailoy_test_plot.png");
             let plot_path_str = plot_path.to_string_lossy();
             let args = to_value!({
@@ -280,6 +383,10 @@ mod tests {
             to_value,
         };
 
+        fn sandbox_spec() -> AgentSpec {
+            AgentSpec::new("test").sandbox("test")
+        }
+
         async fn make_sandbox() -> Arc<Sandbox> {
             Arc::new(
                 Sandbox::new(SandboxConfig {
@@ -293,7 +400,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_missing_code_param_returns_validation_error() {
-            let tool = build_python_repl_tool().await.unwrap();
+            let tool = build_python_repl_tool()
+                .await
+                .unwrap()
+                .make(&sandbox_spec());
             let args = to_value!({});
             let msg = tool
                 .call_next(
@@ -315,7 +425,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_run_print_returns_stdout() {
-            let tool = build_python_repl_tool().await.unwrap();
+            let tool = build_python_repl_tool()
+                .await
+                .unwrap()
+                .make(&sandbox_spec());
             let args = to_value!({ "code": "print('ailoy')" });
             let msg = tool
                 .call_next(
@@ -337,7 +450,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_pip_install_failure_returns_phase_pip_install() {
-            let tool = build_python_repl_tool().await.unwrap();
+            let tool = build_python_repl_tool()
+                .await
+                .unwrap()
+                .make(&sandbox_spec());
             let args = to_value!({
                 "code": "import xyzzy_nonexistent",
                 "pip_install": ["xyzzy-nonexistent-pkg-12345"]
@@ -363,7 +479,10 @@ mod tests {
         #[tokio::test]
         async fn test_state_persists_across_calls() {
             let sandbox = make_sandbox().await;
-            let tool = build_python_repl_tool().await.unwrap();
+            let tool = build_python_repl_tool()
+                .await
+                .unwrap()
+                .make(&sandbox_spec());
 
             let call1 = to_value!({ "code": "with open('/workspace/counter.txt', 'w') as f: f.write('42')" });
             let r1 = tool
@@ -408,7 +527,10 @@ mod tests {
         #[tokio::test]
         async fn test_pip_install_and_plot_image() {
             let sandbox = make_sandbox().await;
-            let tool = build_python_repl_tool().await.unwrap();
+            let tool = build_python_repl_tool()
+                .await
+                .unwrap()
+                .make(&sandbox_spec());
 
             let args = to_value!({
                 "code": "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nimport numpy as np\nx = np.linspace(0, 2 * np.pi, 100)\nplt.plot(x, np.sin(x))\nplt.savefig('/workspace/plot.png')\nprint('saved')",

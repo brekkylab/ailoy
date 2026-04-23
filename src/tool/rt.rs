@@ -3,10 +3,62 @@ use std::sync::Arc;
 use futures::stream::BoxStream;
 
 use crate::{
+    agent::AgentSpec,
     datatype::Value,
     message::{MessageOutput, ToolDesc},
     tool::{ToolContext, ToolFunc},
 };
+
+#[derive(Clone)]
+pub struct ToolFactory {
+    name: String,
+    f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>)>,
+}
+
+impl ToolFactory {
+    pub fn new(
+        name: impl Into<String>,
+        f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>)>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            f,
+        }
+    }
+    // Always returning same F
+    pub fn simple(desc: ToolDesc, f: ToolFunc) -> Self {
+        let f = Arc::new(f);
+        Self::new(
+            desc.name.clone(),
+            Arc::new(move |_| (desc.clone(), f.clone())),
+        )
+    }
+
+    // Sandbox-aware, if agent have sandbox: f1, or f2
+    pub fn sandbox_aware(desc: ToolDesc, f1: ToolFunc, f2: ToolFunc) -> Self {
+        let f1 = Arc::new(f1);
+        let f2 = Arc::new(f2);
+        Self::new(
+            desc.name.clone(),
+            Arc::new(move |spec| {
+                if let Some(_) = spec.sandbox {
+                    (desc.clone(), f1.clone())
+                } else {
+                    (desc.clone(), f2.clone())
+                }
+            }),
+        )
+    }
+
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn make(&self, spec: &AgentSpec) -> Tool {
+        let (desc, f) = (self.f)(spec);
+        Tool::new(desc, f)
+    }
+}
 
 #[derive(Clone)]
 pub struct Tool {
