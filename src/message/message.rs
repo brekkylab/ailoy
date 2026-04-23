@@ -6,7 +6,15 @@ use crate::message::Part;
 
 /// The author of a message (or streaming delta) in a chat.
 #[derive(
-    Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
@@ -41,7 +49,7 @@ pub enum Role {
 /// assert_eq!(msg.role, Role::User);
 /// assert_eq!(msg.contents.len(), 1);
 /// ```
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Message {
     /// Author of the message.
     pub role: Role,
@@ -122,7 +130,7 @@ impl fmt::Display for Message {
 }
 
 /// Explains why a language model's streamed generation finished.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FinishReason {
     /// The model stopped naturally (e.g., EOS token or stop sequence).
@@ -151,7 +159,7 @@ impl fmt::Display for FinishReason {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageOutput {
     /// Nesting level of this message relative to the top-level agent turn.
     ///
