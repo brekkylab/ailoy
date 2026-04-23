@@ -173,23 +173,22 @@ impl Agent {
             use std::sync::Arc;
 
             use crate::sandbox::Sandbox;
-            if let Some(config) = spec
-                .sandbox
-                .as_ref()
-                .and_then(|key| provider.sandboxes.get(key))
-                .cloned()
-            {
-                let sandbox = Arc::new(
-                    Sandbox::new(config)
+            if let Some(key) = spec.sandbox {
+                if let Some(config) = provider.sandboxes.get(&key).cloned() {
+                    let sandbox = Arc::new(
+                        Sandbox::new(config)
+                            .await
+                            .expect("Failed to initialize sandbox"),
+                    );
+                    // Stop immediately after setup — VM only runs during tool execution.
+                    sandbox
+                        .stop()
                         .await
-                        .expect("Failed to initialize sandbox"),
-                );
-                // Stop immediately after setup — VM only runs during tool execution.
-                sandbox
-                    .stop()
-                    .await
-                    .expect("Failed to stop sandbox after init");
-                state.sandbox = Some(sandbox);
+                        .expect("Failed to stop sandbox after init");
+                    state.sandbox = Some(sandbox);
+                } else {
+                    return Err(anyhow::anyhow!("Sandbox '{}' not registered", key));
+                }
             }
         }
         Ok(Self {
