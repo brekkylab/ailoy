@@ -226,10 +226,10 @@ impl Agent {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
 
-            let ctx = ToolContext {
-                id: call_id.clone(),
-                sandbox: self.state.sandbox.clone(),
-            };
+            let mut ctx = ToolContext::new(call_id.clone());
+            if let Some(sandbox) = &self.state.sandbox {
+                ctx = ctx.sandbox(sandbox.clone());
+            }
 
             let tx = tx.clone();
 

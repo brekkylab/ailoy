@@ -9,7 +9,7 @@ use aggregator::MetaSearcher;
 use crate::{
     datatype::Value,
     message::{ToolDesc, ToolDescBuilder},
-    tool::{Tool, ToolContext, ToolFunc},
+    tool::{Tool, ToolFunc},
 };
 
 pub async fn build_web_search_tool() -> anyhow::Result<Tool> {
