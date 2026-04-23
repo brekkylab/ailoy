@@ -8,6 +8,11 @@ use crate::{
     tool_impl::{make_a2a_tool, make_builtin_tool, make_subagent_tool},
 };
 
+/// Agent-independent registry of [`ToolFactory`] instances, keyed by tool name.
+///
+/// Created before any agent is bound and shared across the system.
+/// Call [`ToolSet::make_runtime`] with an [`AgentSpec`] to materialise a
+/// concrete [`Tool`] for a specific agent instance.
 pub struct ToolSet {
     tools: HashMap<String, ToolFactory>,
 }

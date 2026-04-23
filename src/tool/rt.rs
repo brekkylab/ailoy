@@ -9,6 +9,12 @@ use crate::{
     tool::{ToolContext, ToolFunc},
 };
 
+/// Deferred constructor that produces a [`Tool`] tailored to a given [`AgentSpec`].
+///
+/// Held in a [`super::ToolSet`] until an agent is instantiated.  At that point
+/// [`ToolFactory::make`] is called with the agent's spec to select the right
+/// [`ToolFunc`] implementation (e.g. sandbox vs. no-sandbox) and return a
+/// ready-to-call [`Tool`].
 #[derive(Clone)]
 pub struct ToolFactory {
     name: String,
@@ -60,6 +66,11 @@ impl ToolFactory {
     }
 }
 
+/// Runtime tool bound to a specific [`AgentSpec`].
+///
+/// Produced by [`ToolFactory::make`], it pairs a [`ToolDesc`] (name, description,
+/// JSON schema exposed to the LLM) with the concrete [`ToolFunc`] chosen for
+/// that agent's configuration.  Call [`Tool::call`] to execute it.
 #[derive(Clone)]
 pub struct Tool {
     desc: ToolDesc,
