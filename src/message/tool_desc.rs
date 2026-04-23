@@ -48,7 +48,7 @@ use crate::datatype::Value;
 ///
 /// assert_eq!(desc.name, "temperature");
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct ToolDesc {
     /// The unique name of the tool or function.
     pub name: String,

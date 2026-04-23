@@ -30,7 +30,7 @@ use crate::message::{Delta, FinishReason, Message, MessageOutput, PartDelta, Rol
 /// let msg = merged.finish().unwrap();
 /// assert_eq!(msg.contents[0].as_text().unwrap(), "Hello");
 /// ```
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,
