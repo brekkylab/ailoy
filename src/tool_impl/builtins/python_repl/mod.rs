@@ -159,7 +159,7 @@ mod tests {
         async fn test_missing_code_param_returns_validation_error() {
             let tool = build_python_repl_tool().await.unwrap();
             let args = to_value!({});
-            let msg = tool.call_next(args, ToolContext::default()).await;
+            let msg = tool.call_next(args, ToolContext::new("1")).await;
             let phase = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -173,7 +173,7 @@ mod tests {
         async fn test_run_print_returns_stdout() {
             let tool = build_python_repl_tool().await.unwrap();
             let args = to_value!({ "code": "print('ailoy')" });
-            let msg = tool.call_next(args, ToolContext::default()).await;
+            let msg = tool.call_next(args, ToolContext::new("1")).await;
             let result = msg.contents[0].as_value().unwrap();
             let stdout = result
                 .pointer("/stdout")
@@ -186,7 +186,7 @@ mod tests {
         async fn test_exit_code_nonzero_on_error() {
             let tool = build_python_repl_tool().await.unwrap();
             let args = to_value!({ "code": "raise SystemExit(42)" });
-            let msg = tool.call_next(args, ToolContext::default()).await;
+            let msg = tool.call_next(args, ToolContext::new("1")).await;
             let exit_code = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -203,7 +203,7 @@ mod tests {
                 "code": "import xyzzy_nonexistent",
                 "pip_install": ["xyzzy-nonexistent-pkg-12345"]
             });
-            let msg = tool.call_next(args, ToolContext::default()).await;
+            let msg = tool.call_next(args, ToolContext::new("1")).await;
             let phase = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -217,7 +217,7 @@ mod tests {
         async fn test_stderr_captured_on_script_error() {
             let tool = build_python_repl_tool().await.unwrap();
             let args = to_value!({ "code": "import sys; print('err', file=sys.stderr); raise SystemExit(1)" });
-            let msg = tool.call_next(args, ToolContext::default()).await;
+            let msg = tool.call_next(args, ToolContext::new("1")).await;
             let result = msg.contents[0].as_value().unwrap();
             let stderr = result
                 .pointer("/stderr")
@@ -241,7 +241,7 @@ mod tests {
                 ),
                 "pip_install": ["numpy", "matplotlib"]
             });
-            let msg = tool.call_next(args, ToolContext::default()).await;
+            let msg = tool.call_next(args, ToolContext::new("1")).await;
             let result = msg.contents[0].as_value().unwrap();
             let exit_code = result
                 .pointer("/exit_code")

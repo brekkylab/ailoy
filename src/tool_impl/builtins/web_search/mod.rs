@@ -48,7 +48,7 @@ fn make_web_search_tool_desc() -> ToolDesc {
 fn make_web_search_func() -> ToolFunc {
     let searcher = Arc::new(MetaSearcher::new());
 
-    ToolFunc::new(move |args: Value, _ctx: ToolContext| {
+    ToolFunc::new(move |args: Value| {
         let searcher = searcher.clone();
         async move {
             let query = args
