@@ -209,6 +209,14 @@ impl Drop for Sandbox {
 impl Sandbox {
     /// Create and start a new sandbox.  The VM is running on return.
     pub async fn new(config: SandboxConfig) -> anyhow::Result<Self> {
+        if !microsandbox::setup::is_installed() {
+            log::warn!(
+                "microsandbox runtime not found — downloading to ~/.microsandbox, this may take a moment"
+            );
+            microsandbox::setup::install().await?;
+            log::info!("microsandbox runtime installed");
+        }
+
         let persist = config.persist;
         let default_timeout_secs = config.default_timeout_secs;
         let max_output_chars = config.max_output_chars;

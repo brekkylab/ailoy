@@ -2364,7 +2364,7 @@ dependencies = [
  "tokio",
  "tower-service",
  "tracing",
- "windows-registry 0.5.3",
+ "windows-registry 0.6.1",
 ]
 
 [[package]]
@@ -2949,9 +2949,6 @@ name = "lru"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "227748d55f2f0ab4735d87fd623798cb6b664512fe979705f829c9f81c934465"
-dependencies = [
- "hashbrown 0.15.5",
-]
 
 [[package]]
 name = "lru"
@@ -3372,7 +3369,7 @@ dependencies = [
  "libc",
  "libloading",
  "log",
- "lru 0.13.0",
+ "lru 0.16.4",
  "msb_krun_arch",
  "msb_krun_hvf",
  "msb_krun_polly",
