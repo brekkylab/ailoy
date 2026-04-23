@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
     datatype::Value,
     message::{Message, Part, Role, ToolDescBuilder},
-    tool::{Tool, ToolContext, ToolFactory, ToolFunc},
+    tool::{ToolContext, ToolFactory, ToolFunc},
 };
 
 // ── Tool constructor ──────────────────────────────────────────────────────────
