@@ -7,8 +7,7 @@ pub(crate) use runner::PythonScriptRunner;
 use crate::{
     datatype::Value,
     message::ToolDescBuilder,
-    sandbox::Sandbox,
-    tool::{Tool, ToolFunc},
+    tool::{Tool, ToolContext, ToolFunc},
 };
 
 pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
@@ -36,7 +35,7 @@ pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
 
     let runner = Arc::new(PythonScriptRunner::new());
 
-    let f = ToolFunc::new(move |args: Value, sandbox: Option<Arc<Sandbox>>| {
+    let f = ToolFunc::new(move |args: Value, ctx: ToolContext| {
         let runner = runner.clone();
         async move {
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
@@ -61,7 +60,7 @@ pub async fn build_python_repl_tool() -> anyhow::Result<Tool> {
                 })
                 .unwrap_or_default();
 
-            let sandbox = sandbox.as_ref();
+            let sandbox = ctx.sandbox.as_ref();
 
             if !pip_packages.is_empty() {
                 let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
@@ -154,13 +153,13 @@ mod tests {
 
     mod host_tests {
         use super::*;
-        use crate::{message::Part, to_value};
+        use crate::to_value;
 
         #[tokio::test]
         async fn test_missing_code_param_returns_validation_error() {
             let tool = build_python_repl_tool().await.unwrap();
-            let args = Part::function("call-1", "python_repl", to_value!({}));
-            let msg = tool.call_next(args, None).await;
+            let args = to_value!({});
+            let msg = tool.call_next(args, ToolContext::default()).await;
             let phase = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -173,12 +172,8 @@ mod tests {
         #[tokio::test]
         async fn test_run_print_returns_stdout() {
             let tool = build_python_repl_tool().await.unwrap();
-            let args = Part::function(
-                "call-1",
-                "python_repl",
-                to_value!({ "code": "print('ailoy')" }),
-            );
-            let msg = tool.call_next(args, None).await;
+            let args = to_value!({ "code": "print('ailoy')" });
+            let msg = tool.call_next(args, ToolContext::default()).await;
             let result = msg.contents[0].as_value().unwrap();
             let stdout = result
                 .pointer("/stdout")
@@ -190,12 +185,8 @@ mod tests {
         #[tokio::test]
         async fn test_exit_code_nonzero_on_error() {
             let tool = build_python_repl_tool().await.unwrap();
-            let args = Part::function(
-                "call-1",
-                "python_repl",
-                to_value!({ "code": "raise SystemExit(42)" }),
-            );
-            let msg = tool.call_next(args, None).await;
+            let args = to_value!({ "code": "raise SystemExit(42)" });
+            let msg = tool.call_next(args, ToolContext::default()).await;
             let exit_code = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -208,15 +199,11 @@ mod tests {
         #[tokio::test]
         async fn test_pip_install_failure_returns_phase_pip_install() {
             let tool = build_python_repl_tool().await.unwrap();
-            let args = Part::function(
-                "call-1",
-                "python_repl",
-                to_value!({
-                    "code": "import xyzzy_nonexistent",
-                    "pip_install": ["xyzzy-nonexistent-pkg-12345"]
-                }),
-            );
-            let msg = tool.call_next(args, None).await;
+            let args = to_value!({
+                "code": "import xyzzy_nonexistent",
+                "pip_install": ["xyzzy-nonexistent-pkg-12345"]
+            });
+            let msg = tool.call_next(args, ToolContext::default()).await;
             let phase = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -229,12 +216,8 @@ mod tests {
         #[tokio::test]
         async fn test_stderr_captured_on_script_error() {
             let tool = build_python_repl_tool().await.unwrap();
-            let args = Part::function(
-                "call-1",
-                "python_repl",
-                to_value!({ "code": "import sys; print('err', file=sys.stderr); raise SystemExit(1)" }),
-            );
-            let msg = tool.call_next(args, None).await;
+            let args = to_value!({ "code": "import sys; print('err', file=sys.stderr); raise SystemExit(1)" });
+            let msg = tool.call_next(args, ToolContext::default()).await;
             let result = msg.contents[0].as_value().unwrap();
             let stderr = result
                 .pointer("/stderr")
@@ -248,21 +231,17 @@ mod tests {
             let tool = build_python_repl_tool().await.unwrap();
             let plot_path = std::env::temp_dir().join("ailoy_test_plot.png");
             let plot_path_str = plot_path.to_string_lossy();
-            let args = Part::function(
-                "call-1",
-                "python_repl",
-                to_value!({
-                    "code": format!(
-                        "import matplotlib\nmatplotlib.use('Agg')\n\
-                         import matplotlib.pyplot as plt\nimport numpy as np\n\
-                         x = np.linspace(0, 2 * np.pi, 100)\n\
-                         plt.plot(x, np.sin(x))\n\
-                         plt.savefig('{plot_path_str}')\nprint('saved')"
-                    ),
-                    "pip_install": ["numpy", "matplotlib"]
-                }),
-            );
-            let msg = tool.call_next(args, None).await;
+            let args = to_value!({
+                "code": format!(
+                    "import matplotlib\nmatplotlib.use('Agg')\n\
+                     import matplotlib.pyplot as plt\nimport numpy as np\n\
+                     x = np.linspace(0, 2 * np.pi, 100)\n\
+                     plt.plot(x, np.sin(x))\n\
+                     plt.savefig('{plot_path_str}')\nprint('saved')"
+                ),
+                "pip_install": ["numpy", "matplotlib"]
+            });
+            let msg = tool.call_next(args, ToolContext::default()).await;
             let result = msg.contents[0].as_value().unwrap();
             let exit_code = result
                 .pointer("/exit_code")
@@ -297,7 +276,6 @@ mod tests {
 
         use super::*;
         use crate::{
-            message::Part,
             sandbox::{Sandbox, SandboxConfig},
             to_value,
         };
@@ -316,8 +294,16 @@ mod tests {
         #[tokio::test]
         async fn test_missing_code_param_returns_validation_error() {
             let tool = build_python_repl_tool().await.unwrap();
-            let args = Part::function("call-1", "python_repl", to_value!({}));
-            let msg = tool.call_next(args, Some(make_sandbox().await)).await;
+            let args = to_value!({});
+            let msg = tool
+                .call_next(
+                    args,
+                    ToolContext {
+                        id: String::new(),
+                        sandbox: Some(make_sandbox().await),
+                    },
+                )
+                .await;
             let phase = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -330,12 +316,16 @@ mod tests {
         #[tokio::test]
         async fn test_run_print_returns_stdout() {
             let tool = build_python_repl_tool().await.unwrap();
-            let args = Part::function(
-                "call-1",
-                "python_repl",
-                to_value!({ "code": "print('ailoy')" }),
-            );
-            let msg = tool.call_next(args, Some(make_sandbox().await)).await;
+            let args = to_value!({ "code": "print('ailoy')" });
+            let msg = tool
+                .call_next(
+                    args,
+                    ToolContext {
+                        id: String::new(),
+                        sandbox: Some(make_sandbox().await),
+                    },
+                )
+                .await;
             let stdout = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -348,15 +338,19 @@ mod tests {
         #[tokio::test]
         async fn test_pip_install_failure_returns_phase_pip_install() {
             let tool = build_python_repl_tool().await.unwrap();
-            let args = Part::function(
-                "call-1",
-                "python_repl",
-                to_value!({
-                    "code": "import xyzzy_nonexistent",
-                    "pip_install": ["xyzzy-nonexistent-pkg-12345"]
-                }),
-            );
-            let msg = tool.call_next(args, Some(make_sandbox().await)).await;
+            let args = to_value!({
+                "code": "import xyzzy_nonexistent",
+                "pip_install": ["xyzzy-nonexistent-pkg-12345"]
+            });
+            let msg = tool
+                .call_next(
+                    args,
+                    ToolContext {
+                        id: String::new(),
+                        sandbox: Some(make_sandbox().await),
+                    },
+                )
+                .await;
             let phase = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -371,12 +365,16 @@ mod tests {
             let sandbox = make_sandbox().await;
             let tool = build_python_repl_tool().await.unwrap();
 
-            let call1 = Part::function(
-                "call-1",
-                "python_repl",
-                to_value!({ "code": "with open('/workspace/counter.txt', 'w') as f: f.write('42')" }),
-            );
-            let r1 = tool.call_next(call1, Some(sandbox.clone())).await;
+            let call1 = to_value!({ "code": "with open('/workspace/counter.txt', 'w') as f: f.write('42')" });
+            let r1 = tool
+                .call_next(
+                    call1,
+                    ToolContext {
+                        id: String::new(),
+                        sandbox: Some(sandbox.clone()),
+                    },
+                )
+                .await;
             let exit1 = r1.contents[0]
                 .as_value()
                 .unwrap()
@@ -385,12 +383,16 @@ mod tests {
                 .unwrap_or(-1);
             assert_eq!(exit1, 0, "first call should succeed");
 
-            let call2 = Part::function(
-                "call-2",
-                "python_repl",
-                to_value!({ "code": "print(open('/workspace/counter.txt').read())" }),
-            );
-            let r2 = tool.call_next(call2, Some(sandbox.clone())).await;
+            let call2 = to_value!({ "code": "print(open('/workspace/counter.txt').read())" });
+            let r2 = tool
+                .call_next(
+                    call2,
+                    ToolContext {
+                        id: String::new(),
+                        sandbox: Some(sandbox.clone()),
+                    },
+                )
+                .await;
             let stdout = r2.contents[0]
                 .as_value()
                 .unwrap()
@@ -408,15 +410,19 @@ mod tests {
             let sandbox = make_sandbox().await;
             let tool = build_python_repl_tool().await.unwrap();
 
-            let args = Part::function(
-                "call-1",
-                "python_repl",
-                to_value!({
-                    "code": "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nimport numpy as np\nx = np.linspace(0, 2 * np.pi, 100)\nplt.plot(x, np.sin(x))\nplt.savefig('/workspace/plot.png')\nprint('saved')",
-                    "pip_install": ["numpy", "matplotlib"]
-                }),
-            );
-            let msg = tool.call_next(args, Some(sandbox.clone())).await;
+            let args = to_value!({
+                "code": "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nimport numpy as np\nx = np.linspace(0, 2 * np.pi, 100)\nplt.plot(x, np.sin(x))\nplt.savefig('/workspace/plot.png')\nprint('saved')",
+                "pip_install": ["numpy", "matplotlib"]
+            });
+            let msg = tool
+                .call_next(
+                    args,
+                    ToolContext {
+                        id: String::new(),
+                        sandbox: Some(sandbox.clone()),
+                    },
+                )
+                .await;
             let result = msg.contents[0].as_value().unwrap();
             let exit_code = result
                 .pointer("/exit_code")

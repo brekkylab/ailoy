@@ -118,7 +118,7 @@ impl Agent {
     ///             .description("Return the temperature for a city")
     ///             .parameters(to_value!({"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}))
     ///             .build(),
-    ///         ToolFunc::new(|_args: Value| Value::unsigned(25)),
+    ///         ToolFunc::new(|_args: Value, _ctx: ToolContext| Value::unsigned(25)),
     ///     );
     ///
     ///     let mut provider = AgentProvider::new();
@@ -210,10 +210,14 @@ impl Agent {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
 
         for tool_call in tool_calls {
-            let Some((call_id, tool_name, _)) = tool_call.as_function() else {
+            let Some((call_id, tool_name, call_args)) = tool_call.as_function() else {
                 continue;
             };
-            let (tool_name, call_id) = (tool_name.to_string(), call_id.to_string());
+            let (tool_name, call_id, call_args) = (
+                tool_name.to_string(),
+                call_id.to_string(),
+                call_args.to_owned(),
+            );
 
             let tool = self
                 .tools
@@ -223,6 +227,7 @@ impl Agent {
                 .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
 
             let ctx = ToolContext {
+                id: call_id.clone(),
                 sandbox: self.state.sandbox.clone(),
             };
 
@@ -236,7 +241,7 @@ impl Agent {
 
                 let outcome: Result<anyhow::Result<bool>, _> =
                     std::panic::AssertUnwindSafe(async move {
-                        let mut stream = tool.call(&tool_call, ctx)?;
+                        let mut stream = tool.call(call_args, ctx);
                         let mut last: Option<MessageOutput> = None;
 
                         while let Some(item) = stream.next().await {
@@ -367,7 +372,7 @@ mod tests {
         datatype::Value,
         message::{Message, Part, Role, ToolDesc, ToolDescBuilder},
         suppress_panics, to_value,
-        tool::{ToolFunc, ToolSet},
+        tool::{ToolContext, ToolFunc, ToolSet},
         tool_impl::make_subagent_tool,
     };
 
@@ -403,7 +408,7 @@ mod tests {
         tool_set.insert(
             "temperature",
             temperature_tool_desc(),
-            ToolFunc::new(|_args: Value| Value::unsigned(25)),
+            ToolFunc::new(|_args: Value, _ctx: ToolContext| Value::unsigned(25)),
         );
 
         let mut provider = AgentProvider::new();
@@ -629,7 +634,7 @@ mod tests {
                 "required": ["location"]
             }))
             .build();
-        let fast_fn = ToolFunc::new(move |_args: Value| {
+        let fast_fn = ToolFunc::new(move |_args: Value, _ctx: ToolContext| {
             let order = order_fast.clone();
             async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -647,7 +652,7 @@ mod tests {
                 "required": ["location"]
             }))
             .build();
-        let slow_fn = ToolFunc::new(move |_args: Value| {
+        let slow_fn = ToolFunc::new(move |_args: Value, _ctx: ToolContext| {
             let order = order_slow.clone();
             async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
@@ -761,7 +766,7 @@ mod tests {
                 "required": ["city"]
             }))
             .build();
-        let good_fn = ToolFunc::new(|_args: Value| async move {
+        let good_fn = ToolFunc::new(|_args: Value, _ctx: ToolContext| async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
             to_value!("sunny, 25 degrees")
         });
@@ -774,7 +779,11 @@ mod tests {
                 "required": ["city"]
             }))
             .build();
-        let bad_fn = ToolFunc::new(|_args: Value| async move { panic!("simulated tool crash") });
+        let bad_fn = ToolFunc::new(|_args: Value, _ctx: ToolContext| async move {
+            panic!("simulated tool crash");
+            #[allow(unreachable_code)]
+            Value::null()
+        });
 
         let mut tool_set = ToolSet::new();
         tool_set.insert("get_weather", good_desc, good_fn);

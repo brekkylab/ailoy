@@ -3,8 +3,7 @@ use std::sync::Arc;
 use crate::{
     datatype::Value,
     message::ToolDescBuilder,
-    sandbox::Sandbox,
-    tool::{Tool, ToolFunc},
+    tool::{Tool, ToolContext, ToolFunc},
 };
 
 const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
@@ -28,72 +27,71 @@ pub async fn build_bash_tool() -> anyhow::Result<Tool> {
         }))
         .build();
 
-    let f = ToolFunc::new(
-        move |args: Value, sandbox: Option<Arc<Sandbox>>| async move {
-            let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
-                Some(c) => c.to_string(),
-                None => {
-                    return crate::to_value!({
-                        "stdout": "",
-                        "stderr": "missing required parameter: cmd",
-                        "exit_code": -1,
-                        "phase": "validation"
-                    });
-                }
-            };
-
-            let timeout_secs = args
-                .pointer("/timeout_secs")
-                .and_then(|v| v.as_integer())
-                .unwrap_or(0)
-                .max(0) as u64;
-
-            let result = if let Some(sb) = sandbox.as_ref() {
-                if timeout_secs > 0 {
-                    sb.shell_with_timeout(&cmd, timeout_secs).await
-                } else {
-                    sb.shell(&cmd).await
-                }
-            } else {
-                let out = tokio::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(&cmd)
-                    .output()
-                    .await;
-                match out {
-                    Ok(o) => Ok(crate::sandbox::ExecResult {
-                        stdout: middle_truncate(
-                            String::from_utf8_lossy(&o.stdout).into_owned(),
-                            MAX_OUTPUT_CHARS,
-                        ),
-                        stderr: middle_truncate(
-                            String::from_utf8_lossy(&o.stderr).into_owned(),
-                            MAX_OUTPUT_CHARS,
-                        ),
-                        exit_code: o.status.code().unwrap_or(-1),
-                        timed_out: false,
-                    }),
-                    Err(e) => Err(anyhow::anyhow!(e)),
-                }
-            };
-
-            match result {
-                Ok(r) => crate::to_value!({
-                    "stdout": r.stdout.as_str(),
-                    "stderr": r.stderr.as_str(),
-                    "exit_code": r.exit_code as i64,
-                    "timed_out": r.timed_out
-                }),
-                Err(e) => crate::to_value!({
+    let f = ToolFunc::new(move |args: Value, ctx: ToolContext| async move {
+        let sandbox = ctx.sandbox;
+        let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
+            Some(c) => c.to_string(),
+            None => {
+                return crate::to_value!({
                     "stdout": "",
-                    "stderr": format!("execution error: {e}").as_str(),
+                    "stderr": "missing required parameter: cmd",
                     "exit_code": -1,
-                    "timed_out": false,
-                    "phase": "execution"
-                }),
+                    "phase": "validation"
+                });
             }
-        },
-    );
+        };
+
+        let timeout_secs = args
+            .pointer("/timeout_secs")
+            .and_then(|v| v.as_integer())
+            .unwrap_or(0)
+            .max(0) as u64;
+
+        let result = if let Some(sb) = sandbox.as_ref() {
+            if timeout_secs > 0 {
+                sb.shell_with_timeout(&cmd, timeout_secs).await
+            } else {
+                sb.shell(&cmd).await
+            }
+        } else {
+            let out = tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg(&cmd)
+                .output()
+                .await;
+            match out {
+                Ok(o) => Ok(crate::sandbox::ExecResult {
+                    stdout: middle_truncate(
+                        String::from_utf8_lossy(&o.stdout).into_owned(),
+                        MAX_OUTPUT_CHARS,
+                    ),
+                    stderr: middle_truncate(
+                        String::from_utf8_lossy(&o.stderr).into_owned(),
+                        MAX_OUTPUT_CHARS,
+                    ),
+                    exit_code: o.status.code().unwrap_or(-1),
+                    timed_out: false,
+                }),
+                Err(e) => Err(anyhow::anyhow!(e)),
+            }
+        };
+
+        match result {
+            Ok(r) => crate::to_value!({
+                "stdout": r.stdout.as_str(),
+                "stderr": r.stderr.as_str(),
+                "exit_code": r.exit_code as i64,
+                "timed_out": r.timed_out
+            }),
+            Err(e) => crate::to_value!({
+                "stdout": "",
+                "stderr": format!("execution error: {e}").as_str(),
+                "exit_code": -1,
+                "timed_out": false,
+                "phase": "execution"
+            }),
+        }
+    });
 
     Ok(Tool::new(desc, Arc::new(f)))
 }
@@ -140,7 +138,6 @@ mod tests {
 
         use super::*;
         use crate::{
-            message::Part,
             sandbox::{Sandbox, SandboxConfig},
             to_value,
         };
@@ -156,8 +153,16 @@ mod tests {
         #[tokio::test]
         async fn test_missing_cmd_returns_validation_error() {
             let tool = build_bash_tool().await.unwrap();
-            let args = Part::function("call-1", "bash", to_value!({}));
-            let msg = tool.call_next(args, Some(make_sandbox().await)).await;
+            let args = to_value!({});
+            let msg = tool
+                .call_next(
+                    args,
+                    ToolContext {
+                        id: String::new(),
+                        sandbox: Some(make_sandbox().await),
+                    },
+                )
+                .await;
             let phase = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -170,8 +175,16 @@ mod tests {
         #[tokio::test]
         async fn test_echo_returns_stdout() {
             let tool = build_bash_tool().await.unwrap();
-            let args = Part::function("call-1", "bash", to_value!({ "cmd": "echo ailoy" }));
-            let msg = tool.call_next(args, Some(make_sandbox().await)).await;
+            let args = to_value!({ "cmd": "echo ailoy" });
+            let msg = tool
+                .call_next(
+                    args,
+                    ToolContext {
+                        id: String::new(),
+                        sandbox: Some(make_sandbox().await),
+                    },
+                )
+                .await;
             let stdout = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -184,8 +197,16 @@ mod tests {
         #[tokio::test]
         async fn test_exit_code_is_captured() {
             let tool = build_bash_tool().await.unwrap();
-            let args = Part::function("call-1", "bash", to_value!({ "cmd": "exit 42" }));
-            let msg = tool.call_next(args, Some(make_sandbox().await)).await;
+            let args = to_value!({ "cmd": "exit 42" });
+            let msg = tool
+                .call_next(
+                    args,
+                    ToolContext {
+                        id: String::new(),
+                        sandbox: Some(make_sandbox().await),
+                    },
+                )
+                .await;
             let exit_code = msg.contents[0]
                 .as_value()
                 .unwrap()
@@ -200,12 +221,16 @@ mod tests {
             let sandbox = make_sandbox().await;
             let tool = build_bash_tool().await.unwrap();
 
-            let call1 = Part::function(
-                "call-1",
-                "bash",
-                to_value!({ "cmd": "echo persisted > /workspace/flag.txt" }),
-            );
-            let r1 = tool.call_next(call1, Some(sandbox.clone())).await;
+            let call1 = to_value!({ "cmd": "echo persisted > /workspace/flag.txt" });
+            let r1 = tool
+                .call_next(
+                    call1,
+                    ToolContext {
+                        id: String::new(),
+                        sandbox: Some(sandbox.clone()),
+                    },
+                )
+                .await;
             assert_eq!(
                 r1.contents[0]
                     .as_value()
@@ -216,12 +241,16 @@ mod tests {
                 0
             );
 
-            let call2 = Part::function(
-                "call-2",
-                "bash",
-                to_value!({ "cmd": "cat /workspace/flag.txt" }),
-            );
-            let r2 = tool.call_next(call2, Some(sandbox.clone())).await;
+            let call2 = to_value!({ "cmd": "cat /workspace/flag.txt" });
+            let r2 = tool
+                .call_next(
+                    call2,
+                    ToolContext {
+                        id: String::new(),
+                        sandbox: Some(sandbox.clone()),
+                    },
+                )
+                .await;
             let stdout = r2.contents[0]
                 .as_value()
                 .unwrap()

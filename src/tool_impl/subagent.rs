@@ -7,7 +7,7 @@ use crate::{
     agent::{Agent, AgentCard},
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role, ToolDescBuilder},
-    tool::{Tool, ToolFunc},
+    tool::{Tool, ToolContext, ToolFunc},
 };
 
 /// Creates a [`Tool`] that wraps `agent` as a callable sub-agent tool.
@@ -44,7 +44,8 @@ pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
         }))
         .build();
 
-    let f = ToolFunc::Stream(Box::new(move |id: String, args: Value| {
+    let f = ToolFunc::Stream(Box::new(move |args: Value, ctx: ToolContext| {
+        let id = ctx.id;
         let agent = agent.clone();
         Box::pin(async_stream::stream! {
             let task = match args

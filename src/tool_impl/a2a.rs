@@ -6,7 +6,7 @@ use url::Url;
 use crate::{
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role, ToolDescBuilder},
-    tool::{Tool, ToolFunc},
+    tool::{Tool, ToolContext, ToolFunc},
 };
 
 // ── Tool constructor ──────────────────────────────────────────────────────────
@@ -37,9 +37,10 @@ pub(crate) async fn make_a2a_tool(url: Url) -> anyhow::Result<Tool> {
         .parameters(crate::to_value!({"type": "string"}))
         .build();
 
-    let f = ToolFunc::new(move |id: String, args: Value| {
+    let f = ToolFunc::new(move |args: Value, ctx: ToolContext| {
         let url = base_url.clone();
         async move {
+            let id = ctx.id;
             let task = match args.as_str() {
                 Some(v) => v.to_string(),
                 None => {

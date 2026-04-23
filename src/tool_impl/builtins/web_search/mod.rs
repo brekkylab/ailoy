@@ -9,7 +9,7 @@ use aggregator::MetaSearcher;
 use crate::{
     datatype::Value,
     message::{ToolDesc, ToolDescBuilder},
-    tool::{Tool, ToolFunc},
+    tool::{Tool, ToolContext, ToolFunc},
 };
 
 pub async fn build_web_search_tool() -> anyhow::Result<Tool> {
@@ -48,7 +48,7 @@ fn make_web_search_tool_desc() -> ToolDesc {
 fn make_web_search_func() -> ToolFunc {
     let searcher = Arc::new(MetaSearcher::new());
 
-    ToolFunc::new(move |args: Value| {
+    ToolFunc::new(move |args: Value, _ctx: ToolContext| {
         let searcher = searcher.clone();
         async move {
             let query = args
