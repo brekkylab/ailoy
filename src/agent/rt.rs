@@ -782,8 +782,7 @@ mod tests {
                     "When asked about a city, ALWAYS call both get_weather AND \
                      get_traffic tools in a single response. Never call just one."
                         .to_string(),
-                )
-                .sandbox("default"),
+                ),
             &provider,
             &tool_set,
         )
