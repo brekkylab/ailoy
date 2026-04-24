@@ -162,6 +162,7 @@ mod tests {
         use crate::{
             sandbox::{Sandbox, SandboxConfig},
             to_value,
+            tool::ToolContext,
         };
 
         async fn make_sandbox() -> Arc<Sandbox> {

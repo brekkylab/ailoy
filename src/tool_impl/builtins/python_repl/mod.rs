@@ -31,71 +31,7 @@ pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
         }))
         .build();
 
-    let f_local = ToolFunc::new(move |args: Value| {
-        let runner = PythonScriptRunner::new();
-        async move {
-            let code = match args.pointer("/code").and_then(|v| v.as_str()) {
-                Some(c) => c.to_string(),
-                None => {
-                    return crate::to_value!({
-                        "stdout": "",
-                        "stderr": "missing required parameter: code",
-                        "exit_code": -1,
-                        "phase": "validation"
-                    });
-                }
-            };
-
-            let pip_packages: Vec<String> = args
-                .pointer("/pip_install")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            if !pip_packages.is_empty() {
-                let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
-                match runner.install_packages(&pkg_refs).await {
-                    Ok(r) if r.exit_code != 0 => {
-                        return crate::to_value!({
-                            "stdout": "",
-                            "stderr": r.stderr.as_str(),
-                            "exit_code": r.exit_code as i64,
-                            "phase": "pip_install"
-                        });
-                    }
-                    Err(e) => {
-                        return crate::to_value!({
-                            "stdout": "",
-                            "stderr": format!("pip install error: {e}").as_str(),
-                            "exit_code": 1,
-                            "phase": "pip_install"
-                        });
-                    }
-                    Ok(_) => {}
-                }
-            }
-
-            match runner.run(&code, &[]).await {
-                Ok(r) => crate::to_value!({
-                    "stdout": r.stdout.as_str(),
-                    "stderr": r.stderr.as_str(),
-                    "exit_code": r.exit_code as i64,
-                    "timed_out": r.timed_out
-                }),
-                Err(e) => crate::to_value!({
-                    "stdout": "",
-                    "stderr": format!("execution error: {e}").as_str(),
-                    "exit_code": -1,
-                    "timed_out": false,
-                    "phase": "execution"
-                }),
-            }
-        }
-    });
+    let f_local = ToolFunc::new(|args: Value| run_python(PythonScriptRunner::new(), args));
 
     #[cfg(not(feature = "sandbox"))]
     {
@@ -104,74 +40,74 @@ pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
 
     #[cfg(feature = "sandbox")]
     {
-        let f_sandbox = ToolFunc::new(
-            move |args: Value, ctx: crate::tool::ToolContext| async move {
-                let runner = PythonScriptRunner::with_sandbox(ctx.sandbox);
-
-                let code = match args.pointer("/code").and_then(|v| v.as_str()) {
-                    Some(c) => c.to_string(),
-                    None => {
-                        return crate::to_value!({
-                            "stdout": "",
-                            "stderr": "missing required parameter: code",
-                            "exit_code": -1,
-                            "phase": "validation"
-                        });
-                    }
-                };
-
-                let pip_packages: Vec<String> = args
-                    .pointer("/pip_install")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(str::to_string))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                if !pip_packages.is_empty() {
-                    let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
-                    match runner.install_packages(&pkg_refs).await {
-                        Ok(r) if r.exit_code != 0 => {
-                            return crate::to_value!({
-                                "stdout": "",
-                                "stderr": r.stderr.as_str(),
-                                "exit_code": r.exit_code as i64,
-                                "phase": "pip_install"
-                            });
-                        }
-                        Err(e) => {
-                            return crate::to_value!({
-                                "stdout": "",
-                                "stderr": format!("pip install error: {e}").as_str(),
-                                "exit_code": 1,
-                                "phase": "pip_install"
-                            });
-                        }
-                        Ok(_) => {}
-                    }
-                }
-
-                match runner.run(&code, &[]).await {
-                    Ok(r) => crate::to_value!({
-                        "stdout": r.stdout.as_str(),
-                        "stderr": r.stderr.as_str(),
-                        "exit_code": r.exit_code as i64,
-                        "timed_out": r.timed_out
-                    }),
-                    Err(e) => crate::to_value!({
-                        "stdout": "",
-                        "stderr": format!("execution error: {e}").as_str(),
-                        "exit_code": -1,
-                        "timed_out": false,
-                        "phase": "execution"
-                    }),
-                }
-            },
-        );
+        let f_sandbox = ToolFunc::new(|args: Value, ctx: crate::tool::ToolContext| {
+            run_python(PythonScriptRunner::with_sandbox(ctx.sandbox), args)
+        });
 
         Ok(ToolFactory::sandbox_aware(desc, f_sandbox, f_local))
+    }
+}
+
+async fn run_python(runner: PythonScriptRunner, args: Value) -> Value {
+    let code = match args.pointer("/code").and_then(|v| v.as_str()) {
+        Some(c) => c.to_string(),
+        None => {
+            return crate::to_value!({
+                "stdout": "",
+                "stderr": "missing required parameter: code",
+                "exit_code": -1,
+                "phase": "validation"
+            });
+        }
+    };
+
+    let pip_packages: Vec<String> = args
+        .pointer("/pip_install")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if !pip_packages.is_empty() {
+        let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
+        match runner.install_packages(&pkg_refs).await {
+            Ok(r) if r.exit_code != 0 => {
+                return crate::to_value!({
+                    "stdout": "",
+                    "stderr": r.stderr.as_str(),
+                    "exit_code": r.exit_code as i64,
+                    "phase": "pip_install"
+                });
+            }
+            Err(e) => {
+                return crate::to_value!({
+                    "stdout": "",
+                    "stderr": format!("pip install error: {e}").as_str(),
+                    "exit_code": 1,
+                    "phase": "pip_install"
+                });
+            }
+            Ok(_) => {}
+        }
+    }
+
+    match runner.run(&code, &[]).await {
+        Ok(r) => crate::to_value!({
+            "stdout": r.stdout.as_str(),
+            "stderr": r.stderr.as_str(),
+            "exit_code": r.exit_code as i64,
+            "timed_out": r.timed_out
+        }),
+        Err(e) => crate::to_value!({
+            "stdout": "",
+            "stderr": format!("execution error: {e}").as_str(),
+            "exit_code": -1,
+            "timed_out": false,
+            "phase": "execution"
+        }),
     }
 }
 
