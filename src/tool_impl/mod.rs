@@ -1,5 +1,5 @@
 mod a2a;
-pub mod builtins;
+mod builtins;
 mod subagent;
 
 // Crate-internal API — used by ToolSet and tests
