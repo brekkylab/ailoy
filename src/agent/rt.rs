@@ -782,7 +782,8 @@ mod tests {
                     "When asked about a city, ALWAYS call both get_weather AND \
                      get_traffic tools in a single response. Never call just one."
                         .to_string(),
-                ),
+                )
+                .sandbox("default"),
             &provider,
             &tool_set,
         )
@@ -879,7 +880,8 @@ mod tests {
             .instruction(
                 "When asked to run Python code, always use the python_repl tool. \
                  Never skip the tool call.",
-            );
+            )
+            .sandbox("default");
 
         let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
@@ -958,7 +960,8 @@ mod tests {
                 "You have a bash tool. When asked to run two commands, always call bash \
                  TWICE in a SINGLE response (parallel tool calls). Never run them sequentially \
                  across multiple turns.",
-            );
+            )
+            .sandbox("default");
 
         let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
@@ -1137,7 +1140,8 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         let spec = AgentSpec::new("anthropic/claude-sonnet-4-6")
             .tools(["bash", "python_repl"])
-            .instruction(instruction);
+            .instruction(instruction)
+            .sandbox("default");
 
         let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
