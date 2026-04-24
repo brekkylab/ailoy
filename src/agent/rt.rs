@@ -180,11 +180,6 @@ impl Agent {
                             .await
                             .expect("Failed to initialize sandbox"),
                     );
-                    // Stop immediately after setup — VM only runs during tool execution.
-                    sandbox
-                        .stop()
-                        .await
-                        .expect("Failed to stop sandbox after init");
                     state.sandbox = Some(sandbox);
                 } else {
                     return Err(anyhow::anyhow!("Sandbox '{}' not registered", key));
@@ -196,6 +191,16 @@ impl Agent {
             tools,
             state,
         })
+    }
+
+    /// Assemble an `Agent` directly from runtime objects without going through
+    /// `AgentSpec` or `AgentProvider`.  Used by [`crate::agent::AgentBuilder`].
+    pub(crate) fn from_parts(model: LangModel, tools: Vec<Tool>, state: AgentState) -> Self {
+        Self {
+            model,
+            tools,
+            state,
+        }
     }
 
     /// Execute tool calls in parallel and return a stream of all outputs.
@@ -339,10 +344,6 @@ impl Agent {
                     }
                 };
 
-                if let Some(sb) = &self.state.sandbox {
-                    sb.start().await?;
-                }
-
                 let mut tool_stream = self.execute_tool_calls(tool_calls)?;
                 while let Some(event) = tool_stream.next().await {
                     match event {
@@ -354,10 +355,6 @@ impl Agent {
                             yield output;
                         }
                     }
-                }
-
-                if let Some(sb) = &self.state.sandbox {
-                    sb.stop().await?;
                 }
             }
         })
@@ -378,7 +375,7 @@ mod tests {
         message::{Message, Part, Role, ToolDescBuilder},
         suppress_panics, to_value,
         tool::{ToolContext, ToolFactory, ToolFunc, ToolSet},
-        tool_impl::make_subagent_tool,
+        tool_impl::make_subagent_tool_factory,
     };
 
     // ── helpers ───────────────────────────────────────────────────────────────
@@ -487,7 +484,7 @@ mod tests {
                     .to_string(),
             skills: vec![],
         };
-        let sub_tool = make_subagent_tool(card, sub_agent);
+        let sub_tool = make_subagent_tool_factory(card, sub_agent);
 
         // Main agent: coordinator that should always delegate math to math-agent.
         let mut tool_set = ToolSet::new();
@@ -559,7 +556,7 @@ mod tests {
             description: "Handles arithmetic and math computations.".to_string(),
             skills: vec![],
         };
-        let sub_tool = make_subagent_tool(card, sub_agent);
+        let sub_tool = make_subagent_tool_factory(card, sub_agent);
 
         let mut tool_set = ToolSet::new();
         tool_set.insert("math-agent", sub_tool);
@@ -891,7 +888,7 @@ mod tests {
             .as_ref()
             .expect("sandbox should exist after construction");
         assert!(
-            !sb.is_running(),
+            !sb.is_running().await,
             "sandbox should be stopped after construction"
         );
 
@@ -909,7 +906,7 @@ mod tests {
         // ── 3. After run(): sandbox stopped ────────────────────────────────
         let sb = agent.state.sandbox.as_ref().unwrap();
         assert!(
-            !sb.is_running(),
+            !sb.is_running().await,
             "sandbox should be stopped after run() completes"
         );
 
@@ -964,16 +961,6 @@ mod tests {
 
         let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
-        // Start the sandbox manually so tool calls can proceed.
-        agent
-            .state
-            .sandbox
-            .as_ref()
-            .unwrap()
-            .start()
-            .await
-            .expect("failed to start sandbox");
-
         let log = "/tmp/agent_serial_test.txt";
         let query = Message::new(Role::User).with_contents([Part::text(format!(
             "Run these two shell commands in a single response using two parallel bash tool calls:\n\
@@ -988,16 +975,12 @@ mod tests {
             }
         }
 
-        // Re-start the sandbox (agent.run() stops it) to read the log.
+        // Read the log — shell() lazy-starts the VM.
         let sb = agent.state.sandbox.as_ref().unwrap();
-        sb.start()
-            .await
-            .expect("failed to restart sandbox for log read");
         let log_content = sb
             .shell(&format!("cat {log}"))
             .await
             .expect("failed to read log");
-        sb.stop().await.ok();
 
         let lines: Vec<&str> = log_content.stdout.lines().collect();
         assert_eq!(lines.len(), 4, "expected 4 log lines, got: {lines:?}");
@@ -1235,5 +1218,96 @@ To activate a skill, read its SKILL.md using the bash tool \
             .as_bytes(),
         );
         pdf
+    }
+
+    /// End-to-end: parent agent delegates to subagent via tool call, subagent writes
+    /// a sentinel file in the shared sandbox, parent reads it back with its own bash tool
+    /// and returns the content.  Proves sandbox state is shared across the agent boundary
+    /// during a real multi-turn run.
+    #[cfg(feature = "sandbox")]
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    async fn test_subagent_write_visible_to_parent_in_shared_sandbox() {
+        use futures::StreamExt as _;
+
+        use crate::{
+            agent::AgentBuilder,
+            lang_model::{LangModel, LangModelProvider},
+            message::{Message, Part, Role},
+            sandbox::{Sandbox, SandboxConfig},
+            tool_impl::builtins::build_bash_tool,
+        };
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+        let make_model = || {
+            LangModel::new(
+                "claude-haiku-4-5-20251001".to_string(),
+                LangModelProvider::anthropic(api_key.clone()),
+            )
+        };
+
+        let vm = Arc::new(
+            Sandbox::new(SandboxConfig::default())
+                .await
+                .expect("sandbox creation failed"),
+        );
+
+        // Subagent: writes a file when asked, has bash tool + shared sandbox.
+        let sub = AgentBuilder::new(make_model())
+            .instruction(
+                "You are a file-writer agent. When asked to write content to a path, \
+                 use the bash tool to do so (e.g. `echo CONTENT > PATH`). \
+                 Confirm once the write succeeded.",
+            )
+            .tool(build_bash_tool(true))
+            .sandbox(vm.clone())
+            .build()
+            .await
+            .expect("subagent build failed");
+
+        // Parent: delegates writing to the subagent, then reads back with bash.
+        let mut parent = AgentBuilder::new(make_model())
+            .instruction(
+                "You are an orchestrator. You have a 'file_writer' subagent and a bash tool. \
+                 When asked to verify shared sandbox state: \
+                 1. Call the file_writer subagent to write the text 'sandbox_shared_ok' to \
+                    /workspace/sentinel.txt. \
+                 2. After it confirms, use your bash tool to run `cat /workspace/sentinel.txt`. \
+                 3. Return the exact output of cat.",
+            )
+            .tool(build_bash_tool(true))
+            .sandbox(vm.clone())
+            .subagent(
+                AgentCard {
+                    name: "file_writer".into(),
+                    description: "Writes files to the sandbox filesystem.".into(),
+                    skills: vec![],
+                },
+                sub,
+            )
+            .build()
+            .await
+            .expect("parent build failed");
+
+        let query =
+            Message::new(Role::User).with_contents([Part::text("Verify shared sandbox state.")]);
+
+        let mut stream = parent.run(query);
+        while let Some(event) = stream.next().await {
+            event.expect("agent stream error");
+        }
+
+        // The sentinel must be readable directly through the shared vm Arc,
+        // confirming the subagent's write landed in the same VM.
+        let result = vm
+            .shell("cat /workspace/sentinel.txt")
+            .await
+            .expect("cat failed");
+        assert!(
+            result.stdout.contains("sandbox_shared_ok"),
+            "sentinel file written by subagent not visible in parent's sandbox; stdout: {:?}",
+            result.stdout,
+        );
     }
 }

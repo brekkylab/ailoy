@@ -1,13 +1,15 @@
+use std::sync::Arc;
+
 use crate::{
     datatype::Value,
     message::ToolDescBuilder,
-    tool::{ToolContext, ToolFactory, ToolFunc},
+    tool::{Tool, ToolContext, ToolFactory, ToolFunc},
 };
 
 const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
 
-pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
-    let desc = ToolDescBuilder::new("bash")
+fn bash_desc() -> crate::message::ToolDesc {
+    ToolDescBuilder::new("bash")
         .description("Execute a shell command and return stdout/stderr/exit_code.")
         .parameters(crate::to_value!({
             "type": "object",
@@ -23,9 +25,11 @@ pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
             },
             "required": ["cmd"]
         }))
-        .build();
+        .build()
+}
 
-    let f_sandbox = ToolFunc::new(|args: Value, ctx: ToolContext| async move {
+fn bash_func_sandbox() -> ToolFunc {
+    ToolFunc::new(|args: Value, ctx: ToolContext| async move {
         let sandbox = ctx
             .sandbox
             .expect("sandbox_aware f1 requires sandbox in ToolContext");
@@ -67,9 +71,11 @@ pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
                 "phase": "execution"
             }),
         }
-    });
+    })
+}
 
-    let f_local = ToolFunc::new(|args: Value| async move {
+fn bash_func_local() -> ToolFunc {
+    ToolFunc::new(|args: Value| async move {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
@@ -102,9 +108,24 @@ pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
                 "phase": "execution"
             }),
         }
-    });
+    })
+}
 
-    Ok(ToolFactory::sandbox_aware(desc, f_sandbox, f_local))
+pub fn build_bash_tool(with_sandbox: bool) -> Tool {
+    let func = if with_sandbox {
+        bash_func_sandbox()
+    } else {
+        bash_func_local()
+    };
+    Tool::new(bash_desc(), Arc::new(func))
+}
+
+pub async fn build_bash_tool_factory() -> anyhow::Result<ToolFactory> {
+    Ok(ToolFactory::sandbox_aware(
+        bash_desc(),
+        bash_func_sandbox(),
+        bash_func_local(),
+    ))
 }
 
 fn middle_truncate(s: String, max_chars: usize) -> String {
@@ -131,13 +152,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_name_is_bash() {
-        let tool = build_bash_tool().await.unwrap().make(&no_sandbox_spec());
+        let tool = build_bash_tool_factory()
+            .await
+            .unwrap()
+            .make(&no_sandbox_spec());
         assert_eq!(tool.get_desc().name, "bash");
     }
 
     #[tokio::test]
     async fn test_tool_schema_requires_cmd() {
-        let tool = build_bash_tool().await.unwrap().make(&no_sandbox_spec());
+        let tool = build_bash_tool_factory()
+            .await
+            .unwrap()
+            .make(&no_sandbox_spec());
         let required = tool
             .get_desc()
             .parameters
@@ -172,7 +199,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_missing_cmd_returns_validation_error() {
-            let factory = build_bash_tool().await.unwrap();
+            let factory = build_bash_tool_factory().await.unwrap();
             let tool = factory.make(&sandbox_spec());
             let args = to_value!({});
             let msg = tool
@@ -195,7 +222,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_echo_returns_stdout() {
-            let factory = build_bash_tool().await.unwrap();
+            let factory = build_bash_tool_factory().await.unwrap();
             let tool = factory.make(&sandbox_spec());
             let args = to_value!({ "cmd": "echo ailoy" });
             let msg = tool
@@ -218,7 +245,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_exit_code_is_captured() {
-            let factory = build_bash_tool().await.unwrap();
+            let factory = build_bash_tool_factory().await.unwrap();
             let tool = factory.make(&sandbox_spec());
             let args = to_value!({ "cmd": "exit 42" });
             let msg = tool
@@ -242,7 +269,7 @@ mod tests {
         #[tokio::test]
         async fn test_state_persists_across_calls() {
             let sandbox = make_sandbox().await;
-            let factory = build_bash_tool().await.unwrap();
+            let factory = build_bash_tool_factory().await.unwrap();
             let tool = factory.make(&sandbox_spec());
 
             let call1 = to_value!({ "cmd": "echo persisted > /workspace/flag.txt" });

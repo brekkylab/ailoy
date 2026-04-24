@@ -7,11 +7,11 @@ pub(crate) use runner::PythonScriptRunner;
 use crate::{
     datatype::Value,
     message::ToolDescBuilder,
-    tool::{ToolContext, ToolFactory, ToolFunc},
+    tool::{Tool, ToolContext, ToolFactory, ToolFunc},
 };
 
-pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
-    let desc = ToolDescBuilder::new("python_repl")
+fn python_repl_desc() -> crate::message::ToolDesc {
+    ToolDescBuilder::new("python_repl")
         .description(
             "Execute a Python script and return stdout/stderr.
              Use `pip_install` to install packages before execution.",
@@ -31,14 +31,12 @@ pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
             },
             "required": ["code"]
         }))
-        .build();
+        .build()
+}
 
-    let runner = Arc::new(PythonScriptRunner::new());
-    let runner_sb = runner.clone();
-    let runner_local = runner;
-
-    let f_sandbox = ToolFunc::new(move |args: Value, ctx: ToolContext| {
-        let runner = runner_sb.clone();
+fn python_repl_func_sandbox(runner: Arc<PythonScriptRunner>) -> ToolFunc {
+    ToolFunc::new(move |args: Value, ctx: ToolContext| {
+        let runner = runner.clone();
         async move {
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
                 Some(c) => c.to_string(),
@@ -103,10 +101,12 @@ pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
                 }),
             }
         }
-    });
+    })
+}
 
-    let f_local = ToolFunc::new(move |args: Value| {
-        let runner = runner_local.clone();
+fn python_repl_func_local(runner: Arc<PythonScriptRunner>) -> ToolFunc {
+    ToolFunc::new(move |args: Value| {
+        let runner = runner.clone();
         async move {
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
                 Some(c) => c.to_string(),
@@ -169,9 +169,26 @@ pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
                 }),
             }
         }
-    });
+    })
+}
 
-    Ok(ToolFactory::sandbox_aware(desc, f_sandbox, f_local))
+pub fn build_python_repl_tool(with_sandbox: bool) -> Tool {
+    let runner = Arc::new(PythonScriptRunner::new());
+    let func = if with_sandbox {
+        python_repl_func_sandbox(runner)
+    } else {
+        python_repl_func_local(runner)
+    };
+    Tool::new(python_repl_desc(), Arc::new(func))
+}
+
+pub async fn build_python_repl_tool_factory() -> anyhow::Result<ToolFactory> {
+    let runner = Arc::new(PythonScriptRunner::new());
+    Ok(ToolFactory::sandbox_aware(
+        python_repl_desc(),
+        python_repl_func_sandbox(runner.clone()),
+        python_repl_func_local(runner),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -189,7 +206,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_name_is_python_repl() {
-        let tool = build_python_repl_tool()
+        let tool = build_python_repl_tool_factory()
             .await
             .unwrap()
             .make(&no_sandbox_spec());
@@ -198,7 +215,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_has_description() {
-        let tool = build_python_repl_tool()
+        let tool = build_python_repl_tool_factory()
             .await
             .unwrap()
             .make(&no_sandbox_spec());
@@ -207,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_schema_requires_code() {
-        let tool = build_python_repl_tool()
+        let tool = build_python_repl_tool_factory()
             .await
             .unwrap()
             .make(&no_sandbox_spec());
@@ -223,7 +240,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_schema_pip_install_is_array_of_strings() {
-        let tool = build_python_repl_tool()
+        let tool = build_python_repl_tool_factory()
             .await
             .unwrap()
             .make(&no_sandbox_spec());
@@ -242,7 +259,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_missing_code_param_returns_validation_error() {
-            let tool = build_python_repl_tool()
+            let tool = build_python_repl_tool_factory()
                 .await
                 .unwrap()
                 .make(&no_sandbox_spec());
@@ -259,7 +276,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_run_print_returns_stdout() {
-            let tool = build_python_repl_tool()
+            let tool = build_python_repl_tool_factory()
                 .await
                 .unwrap()
                 .make(&no_sandbox_spec());
@@ -275,7 +292,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_exit_code_nonzero_on_error() {
-            let tool = build_python_repl_tool()
+            let tool = build_python_repl_tool_factory()
                 .await
                 .unwrap()
                 .make(&no_sandbox_spec());
@@ -292,7 +309,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_pip_install_failure_returns_phase_pip_install() {
-            let tool = build_python_repl_tool()
+            let tool = build_python_repl_tool_factory()
                 .await
                 .unwrap()
                 .make(&no_sandbox_spec());
@@ -312,7 +329,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_stderr_captured_on_script_error() {
-            let tool = build_python_repl_tool()
+            let tool = build_python_repl_tool_factory()
                 .await
                 .unwrap()
                 .make(&no_sandbox_spec());
@@ -328,7 +345,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_pip_install_and_plot_image() {
-            let tool = build_python_repl_tool()
+            let tool = build_python_repl_tool_factory()
                 .await
                 .unwrap()
                 .make(&no_sandbox_spec());
@@ -400,7 +417,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_missing_code_param_returns_validation_error() {
-            let tool = build_python_repl_tool()
+            let tool = build_python_repl_tool_factory()
                 .await
                 .unwrap()
                 .make(&sandbox_spec());
@@ -425,7 +442,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_run_print_returns_stdout() {
-            let tool = build_python_repl_tool()
+            let tool = build_python_repl_tool_factory()
                 .await
                 .unwrap()
                 .make(&sandbox_spec());
@@ -450,7 +467,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_pip_install_failure_returns_phase_pip_install() {
-            let tool = build_python_repl_tool()
+            let tool = build_python_repl_tool_factory()
                 .await
                 .unwrap()
                 .make(&sandbox_spec());
@@ -479,7 +496,7 @@ mod tests {
         #[tokio::test]
         async fn test_state_persists_across_calls() {
             let sandbox = make_sandbox().await;
-            let tool = build_python_repl_tool()
+            let tool = build_python_repl_tool_factory()
                 .await
                 .unwrap()
                 .make(&sandbox_spec());
@@ -527,7 +544,7 @@ mod tests {
         #[tokio::test]
         async fn test_pip_install_and_plot_image() {
             let sandbox = make_sandbox().await;
-            let tool = build_python_repl_tool()
+            let tool = build_python_repl_tool_factory()
                 .await
                 .unwrap()
                 .make(&sandbox_spec());
