@@ -1,14 +1,12 @@
-use std::sync::Arc;
-
 use crate::{
     datatype::Value,
     message::ToolDescBuilder,
-    tool::{Tool, ToolContext, ToolFunc},
+    tool::{ToolContext, ToolFactory, ToolFunc},
 };
 
 const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
 
-pub async fn build_bash_tool() -> anyhow::Result<Tool> {
+pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
     let desc = ToolDescBuilder::new("bash")
         .description("Execute a shell command and return stdout/stderr/exit_code.")
         .parameters(crate::to_value!({
@@ -27,8 +25,10 @@ pub async fn build_bash_tool() -> anyhow::Result<Tool> {
         }))
         .build();
 
-    let f = ToolFunc::new(move |args: Value, ctx: ToolContext| async move {
-        let sandbox = ctx.sandbox;
+    let f_sandbox = ToolFunc::new(|args: Value, ctx: ToolContext| async move {
+        let sandbox = ctx
+            .sandbox
+            .expect("sandbox_aware f1 requires sandbox in ToolContext");
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
@@ -40,40 +40,16 @@ pub async fn build_bash_tool() -> anyhow::Result<Tool> {
                 });
             }
         };
-
         let timeout_secs = args
             .pointer("/timeout_secs")
             .and_then(|v| v.as_integer())
             .unwrap_or(0)
             .max(0) as u64;
 
-        let result = if let Some(sb) = sandbox.as_ref() {
-            if timeout_secs > 0 {
-                sb.shell_with_timeout(&cmd, timeout_secs).await
-            } else {
-                sb.shell(&cmd).await
-            }
+        let result = if timeout_secs > 0 {
+            sandbox.shell_with_timeout(&cmd, timeout_secs).await
         } else {
-            let out = tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(&cmd)
-                .output()
-                .await;
-            match out {
-                Ok(o) => Ok(crate::sandbox::ExecResult {
-                    stdout: middle_truncate(
-                        String::from_utf8_lossy(&o.stdout).into_owned(),
-                        MAX_OUTPUT_CHARS,
-                    ),
-                    stderr: middle_truncate(
-                        String::from_utf8_lossy(&o.stderr).into_owned(),
-                        MAX_OUTPUT_CHARS,
-                    ),
-                    exit_code: o.status.code().unwrap_or(-1),
-                    timed_out: false,
-                }),
-                Err(e) => Err(anyhow::anyhow!(e)),
-            }
+            sandbox.shell(&cmd).await
         };
 
         match result {
@@ -93,7 +69,42 @@ pub async fn build_bash_tool() -> anyhow::Result<Tool> {
         }
     });
 
-    Ok(Tool::new(desc, Arc::new(f)))
+    let f_local = ToolFunc::new(|args: Value| async move {
+        let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
+            Some(c) => c.to_string(),
+            None => {
+                return crate::to_value!({
+                    "stdout": "",
+                    "stderr": "missing required parameter: cmd",
+                    "exit_code": -1,
+                    "phase": "validation"
+                });
+            }
+        };
+
+        let out = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .output()
+            .await;
+        match out {
+            Ok(o) => crate::to_value!({
+                "stdout": middle_truncate(String::from_utf8_lossy(&o.stdout).into_owned(), MAX_OUTPUT_CHARS).as_str(),
+                "stderr": middle_truncate(String::from_utf8_lossy(&o.stderr).into_owned(), MAX_OUTPUT_CHARS).as_str(),
+                "exit_code": o.status.code().unwrap_or(-1) as i64,
+                "timed_out": false
+            }),
+            Err(e) => crate::to_value!({
+                "stdout": "",
+                "stderr": format!("execution error: {e}").as_str(),
+                "exit_code": -1,
+                "timed_out": false,
+                "phase": "execution"
+            }),
+        }
+    });
+
+    Ok(ToolFactory::sandbox_aware(desc, f_sandbox, f_local))
 }
 
 fn middle_truncate(s: String, max_chars: usize) -> String {
@@ -112,16 +123,21 @@ fn middle_truncate(s: String, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::AgentSpec;
+
+    fn no_sandbox_spec() -> AgentSpec {
+        AgentSpec::new("test")
+    }
 
     #[tokio::test]
     async fn test_tool_name_is_bash() {
-        let tool = build_bash_tool().await.unwrap();
+        let tool = build_bash_tool().await.unwrap().make(&no_sandbox_spec());
         assert_eq!(tool.get_desc().name, "bash");
     }
 
     #[tokio::test]
     async fn test_tool_schema_requires_cmd() {
-        let tool = build_bash_tool().await.unwrap();
+        let tool = build_bash_tool().await.unwrap().make(&no_sandbox_spec());
         let required = tool
             .get_desc()
             .parameters
@@ -150,9 +166,14 @@ mod tests {
             )
         }
 
+        fn sandbox_spec() -> AgentSpec {
+            AgentSpec::new("test").sandbox("test")
+        }
+
         #[tokio::test]
         async fn test_missing_cmd_returns_validation_error() {
-            let tool = build_bash_tool().await.unwrap();
+            let factory = build_bash_tool().await.unwrap();
+            let tool = factory.make(&sandbox_spec());
             let args = to_value!({});
             let msg = tool
                 .call_next(
@@ -174,7 +195,8 @@ mod tests {
 
         #[tokio::test]
         async fn test_echo_returns_stdout() {
-            let tool = build_bash_tool().await.unwrap();
+            let factory = build_bash_tool().await.unwrap();
+            let tool = factory.make(&sandbox_spec());
             let args = to_value!({ "cmd": "echo ailoy" });
             let msg = tool
                 .call_next(
@@ -196,7 +218,8 @@ mod tests {
 
         #[tokio::test]
         async fn test_exit_code_is_captured() {
-            let tool = build_bash_tool().await.unwrap();
+            let factory = build_bash_tool().await.unwrap();
+            let tool = factory.make(&sandbox_spec());
             let args = to_value!({ "cmd": "exit 42" });
             let msg = tool
                 .call_next(
@@ -219,7 +242,8 @@ mod tests {
         #[tokio::test]
         async fn test_state_persists_across_calls() {
             let sandbox = make_sandbox().await;
-            let tool = build_bash_tool().await.unwrap();
+            let factory = build_bash_tool().await.unwrap();
+            let tool = factory.make(&sandbox_spec());
 
             let call1 = to_value!({ "cmd": "echo persisted > /workspace/flag.txt" });
             let r1 = tool

@@ -39,6 +39,11 @@ pub struct AgentSpec {
     /// `None` for top-level agents.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub card: Option<AgentCard>,
+
+    /// Sandbox to run
+    /// If specified, it'll run in sandbox environment
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
 }
 
 impl AgentSpec {
@@ -49,6 +54,7 @@ impl AgentSpec {
             tools: Vec::new(),
             subagents: Vec::new(),
             card: None,
+            sandbox: None,
         }
     }
 
@@ -79,6 +85,11 @@ impl AgentSpec {
 
     pub fn card(mut self, card: AgentCard) -> Self {
         self.card = Some(card);
+        self
+    }
+
+    pub fn sandbox(mut self, sandbox: impl Into<String>) -> Self {
+        self.sandbox = Some(sandbox.into());
         self
     }
 }

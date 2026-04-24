@@ -3,11 +3,74 @@ use std::sync::Arc;
 use futures::stream::BoxStream;
 
 use crate::{
+    agent::AgentSpec,
     datatype::Value,
     message::{MessageOutput, ToolDesc},
     tool::{ToolContext, ToolFunc},
 };
 
+/// Deferred constructor that produces a [`Tool`] tailored to a given [`AgentSpec`].
+///
+/// Held in a [`super::ToolSet`] until an agent is instantiated.  At that point
+/// [`ToolFactory::make`] is called with the agent's spec to select the right
+/// [`ToolFunc`] implementation (e.g. sandbox vs. no-sandbox) and return a
+/// ready-to-call [`Tool`].
+#[derive(Clone)]
+pub struct ToolFactory {
+    name: String,
+    f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>)>,
+}
+
+impl ToolFactory {
+    pub fn new(
+        name: impl Into<String>,
+        f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>)>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            f,
+        }
+    }
+    // Always returning same F
+    pub fn simple(desc: ToolDesc, f: ToolFunc) -> Self {
+        let f = Arc::new(f);
+        Self::new(
+            desc.name.clone(),
+            Arc::new(move |_| (desc.clone(), f.clone())),
+        )
+    }
+
+    // Sandbox-aware, if agent have sandbox: f1, or f2
+    pub fn sandbox_aware(desc: ToolDesc, f_sandbox: ToolFunc, f_no_sandbox: ToolFunc) -> Self {
+        let f_sandbox = Arc::new(f_sandbox);
+        let f_no_sandbox = Arc::new(f_no_sandbox);
+        Self::new(
+            desc.name.clone(),
+            Arc::new(move |spec| {
+                if let Some(_) = spec.sandbox {
+                    (desc.clone(), f_sandbox.clone())
+                } else {
+                    (desc.clone(), f_no_sandbox.clone())
+                }
+            }),
+        )
+    }
+
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn make(&self, spec: &AgentSpec) -> Tool {
+        let (desc, f) = (self.f)(spec);
+        Tool::new(desc, f)
+    }
+}
+
+/// Runtime tool bound to a specific [`AgentSpec`].
+///
+/// Produced by [`ToolFactory::make`], it pairs a [`ToolDesc`] (name, description,
+/// JSON schema exposed to the LLM) with the concrete [`ToolFunc`] chosen for
+/// that agent's configuration.  Call [`Tool::call`] to execute it.
 #[derive(Clone)]
 pub struct Tool {
     desc: ToolDesc,

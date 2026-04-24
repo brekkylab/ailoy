@@ -50,8 +50,8 @@ pub struct AgentProvider {
     /// Defaults to [`SandboxConfig::default`] when not set.  The `name` field is
     /// always regenerated at runtime and is not serialised.
     #[cfg(feature = "sandbox")]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sandbox_config: Option<crate::sandbox::SandboxConfig>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sandboxes: BTreeMap<String, crate::sandbox::SandboxConfig>,
 }
 
 impl AgentProvider {
@@ -60,7 +60,7 @@ impl AgentProvider {
             models: Default::default(),
             tools: Default::default(),
             #[cfg(feature = "sandbox")]
-            sandbox_config: None,
+            sandboxes: BTreeMap::new(),
         }
     }
 
@@ -162,8 +162,12 @@ impl AgentProvider {
     /// Controls memory, CPUs, and other MicroVM settings.  The `name` field of
     /// `config` is ignored — a fresh UUID is generated for each agent at startup.
     #[cfg(feature = "sandbox")]
-    pub fn sandbox_config(&mut self, config: crate::sandbox::SandboxConfig) -> &mut Self {
-        self.sandbox_config = Some(config);
+    pub fn sandbox(
+        &mut self,
+        key: impl Into<String>,
+        config: crate::sandbox::SandboxConfig,
+    ) -> &mut Self {
+        self.sandboxes.insert(key.into(), config);
         self
     }
 

@@ -7,7 +7,7 @@ use crate::{
     agent::{Agent, AgentCard},
     datatype::Value,
     message::{FinishReason, Message, Part, Role, ToolDescBuilder},
-    tool::{Tool, ToolContext, ToolFunc},
+    tool::{ToolContext, ToolFactory, ToolFunc},
 };
 
 /// Creates a [`Tool`] that wraps `agent` as a callable sub-agent tool.
@@ -17,7 +17,7 @@ use crate::{
 ///    intermediate outputs. The outer agent's [`stream_turn`] assigns these `depth + 1`.
 /// 2. Emits a final `Role::Tool` [`MessageOutput`] whose text content is the sub-agent's
 ///    last assistant answer. The outer agent assigns this `depth 0` and pushes it to history.
-pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
+pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> ToolFactory {
     let description = if card.skills.is_empty() {
         card.description
     } else {
@@ -103,5 +103,5 @@ pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
         }) as futures::stream::BoxStream<'static, Message>
     }));
 
-    Tool::new(desc, Arc::new(f))
+    ToolFactory::simple(desc, f)
 }
