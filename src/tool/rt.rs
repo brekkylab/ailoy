@@ -41,16 +41,16 @@ impl ToolFactory {
     }
 
     // Sandbox-aware, if agent have sandbox: f1, or f2
-    pub fn sandbox_aware(desc: ToolDesc, f1: ToolFunc, f2: ToolFunc) -> Self {
-        let f1 = Arc::new(f1);
-        let f2 = Arc::new(f2);
+    pub fn sandbox_aware(desc: ToolDesc, f_sandbox: ToolFunc, f_no_sandbox: ToolFunc) -> Self {
+        let f_sandbox = Arc::new(f_sandbox);
+        let f_no_sandbox = Arc::new(f_no_sandbox);
         Self::new(
             desc.name.clone(),
             Arc::new(move |spec| {
                 if let Some(_) = spec.sandbox {
-                    (desc.clone(), f1.clone())
+                    (desc.clone(), f_sandbox.clone())
                 } else {
-                    (desc.clone(), f2.clone())
+                    (desc.clone(), f_no_sandbox.clone())
                 }
             }),
         )

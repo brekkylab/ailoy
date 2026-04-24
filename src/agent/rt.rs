@@ -375,28 +375,25 @@ mod tests {
     use crate::{
         agent::{AgentCard, AgentProvider, AgentSpec},
         datatype::Value,
-        message::{Message, Part, Role, ToolDesc, ToolDescBuilder},
+        message::{Message, Part, Role, ToolDescBuilder},
         suppress_panics, to_value,
         tool::{ToolContext, ToolFactory, ToolFunc, ToolSet},
         tool_impl::make_subagent_tool,
     };
 
     // ── helpers ───────────────────────────────────────────────────────────────
+    fn get_provider() -> AgentProvider {
+        dotenvy::dotenv().ok();
+        let mut provider = AgentProvider::new();
+        provider.model_openai(std::env::var("OPENAI_API_KEY").unwrap_or_default());
+        provider.model_claude(std::env::var("ANTHROPIC_API_KEY").unwrap_or_default());
+        #[cfg(feature = "sandbox")]
+        {
+            use crate::sandbox::SandboxConfig;
 
-    fn temperature_tool_desc() -> ToolDesc {
-        ToolDescBuilder::new("temperature")
-            .description("Get the current temperature for a given city")
-            .parameters(to_value!({
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "The city name"
-                    }
-                },
-                "required": ["location"]
-            }))
-            .build()
+            provider.sandbox("default", SandboxConfig::default());
+        }
+        provider
     }
 
     // ── tests ─────────────────────────────────────────────────────────────────
@@ -405,21 +402,28 @@ mod tests {
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_simple_tool_call() {
-        dotenvy::dotenv().ok();
-
-        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
-
+        // let tool_set = get_tool_set();
         let mut tool_set = ToolSet::new();
         tool_set.insert(
             "temperature",
             ToolFactory::simple(
-                temperature_tool_desc(),
+                ToolDescBuilder::new("temperature")
+                    .description("Get the current temperature for a given city")
+                    .parameters(to_value!({
+                        "type": "object",
+                        "properties": {
+                            "location": {
+                                "type": "string",
+                                "description": "The city name"
+                            }
+                        },
+                        "required": ["location"]
+                    }))
+                    .build(),
                 ToolFunc::new(|_args: Value, _ctx: ToolContext| Value::unsigned(25)),
             ),
         );
-
-        let mut provider = AgentProvider::new();
-        provider.model_openai(api_key);
+        let provider = get_provider();
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
         let mut agent = Agent::try_with_tools(spec, &provider, &tool_set)
             .await
@@ -465,11 +469,7 @@ mod tests {
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_delegate_to_subagent() {
-        dotenvy::dotenv().ok();
-
-        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
-        let mut provider = AgentProvider::new();
-        provider.model_openai(api_key.clone());
+        let provider = get_provider();
 
         // Sub-agent: a minimal calculator that replies with just the numeric result.
         let sub_spec = AgentSpec::new("openai/gpt-4o-mini").instruction(
@@ -543,11 +543,7 @@ mod tests {
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_streaming_subagent_emits_tool_deltas() {
-        dotenvy::dotenv().ok();
-
-        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
-        let mut provider = AgentProvider::new();
-        provider.model_openai(api_key.clone());
+        let provider = get_provider();
 
         // Sub-agent: gives a multi-step response so we see intermediate messages.
         let sub_spec = AgentSpec::new("openai/gpt-4o-mini").instruction(
@@ -613,12 +609,7 @@ mod tests {
     #[test_with::env(ANTHROPIC_API_KEY)]
     #[tokio::test]
     async fn test_parallel_tool_calls() {
-        dotenvy::dotenv().ok();
-
         use std::sync::{Arc as StdArc, Mutex as StdMutex};
-
-        let api_key =
-            std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
 
         // Record the order in which tools complete.
         let completion_order: StdArc<StdMutex<Vec<&'static str>>> =
@@ -664,8 +655,7 @@ mod tests {
         tool_set.insert("temperature_fast", ToolFactory::simple(fast_desc, fast_fn));
         tool_set.insert("temperature_slow", ToolFactory::simple(slow_desc, slow_fn));
 
-        let mut provider = AgentProvider::new();
-        provider.model_claude(api_key);
+        let provider = get_provider();
         let mut agent = Agent::try_with_tools(
             AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
                 .tools(["temperature_fast", "temperature_slow"])
@@ -750,12 +740,8 @@ mod tests {
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_tool_panic_causes_inconsistent_history() {
-        dotenvy::dotenv().ok();
-
         // This test intentionally panics inside a tool function.
         suppress_panics!();
-
-        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
         let good_desc = ToolDescBuilder::new("get_weather")
             .description("Get the current weather for a city")
@@ -788,8 +774,7 @@ mod tests {
         tool_set.insert("get_weather", ToolFactory::simple(good_desc, good_fn));
         tool_set.insert("get_traffic", ToolFactory::simple(bad_desc, bad_fn));
 
-        let mut provider = AgentProvider::new();
-        provider.model_openai(api_key);
+        let provider = get_provider();
         let mut agent = Agent::try_with_tools(
             AgentSpec::new("openai/gpt-4o-mini")
                 .tools(["get_weather", "get_traffic"])
@@ -882,17 +867,12 @@ mod tests {
     #[tokio::test]
     async fn test_sandbox_lifecycle_with_python_repl() {
         use crate::{
-            agent::{AgentProvider, AgentSpec},
+            agent::AgentSpec,
             tool::{BuiltinToolProvider, ToolProvider},
         };
 
-        dotenvy::dotenv().ok();
-        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
-
-        let mut provider = AgentProvider::new();
-        provider
-            .model_claude(api_key)
-            .tool(ToolProvider::Builtin(BuiltinToolProvider::PythonRepl {}));
+        let mut provider = get_provider();
+        provider.tool(ToolProvider::Builtin(BuiltinToolProvider::PythonRepl {}));
 
         let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
             .tool("python_repl")
@@ -964,18 +944,13 @@ mod tests {
         use futures::StreamExt as _;
 
         use crate::{
-            agent::{AgentProvider, AgentSpec},
+            agent::AgentSpec,
             message::{Message, Part, Role},
             tool::{BuiltinToolProvider, ToolProvider},
         };
 
-        dotenvy::dotenv().ok();
-        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
-
-        let mut provider = AgentProvider::new();
-        provider
-            .model_claude(api_key)
-            .tool(ToolProvider::Builtin(BuiltinToolProvider::Bash {}));
+        let mut provider = get_provider();
+        provider.tool(ToolProvider::Builtin(BuiltinToolProvider::Bash {}));
 
         let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
             .tool("bash")
@@ -1061,12 +1036,9 @@ mod tests {
     #[ignore = "slow: installs docling (~minutes) and requires model artifacts"]
     async fn test_convert_pdf_to_md_skill() {
         use crate::{
-            agent::{AgentProvider, AgentSpec},
+            agent::AgentSpec,
             tool::{BuiltinToolProvider, ToolProvider},
         };
-
-        dotenvy::dotenv().ok();
-        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
 
         // Skill content hardcoded — not loaded from disk at test time.
         // This is what gets written to /workspace/skills/convert_pdf_to_md.md inside the sandbox.
@@ -1158,9 +1130,8 @@ To activate a skill, read its SKILL.md using the bash tool \
 | convert_pdf_to_md | Convert a local PDF file to Markdown using Docling. | /workspace/skills/convert_pdf_to_md.md |
 ";
 
-        let mut provider = AgentProvider::new();
+        let mut provider = get_provider();
         provider
-            .model_claude(api_key)
             .tool(ToolProvider::Builtin(BuiltinToolProvider::Bash {}))
             .tool(ToolProvider::Builtin(BuiltinToolProvider::PythonRepl {}));
 
