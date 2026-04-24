@@ -1,13 +1,11 @@
 mod runner;
 
-use std::sync::Arc;
-
 pub(crate) use runner::PythonScriptRunner;
 
 use crate::{
     datatype::Value,
     message::ToolDescBuilder,
-    tool::{ToolContext, ToolFactory, ToolFunc},
+    tool::{ToolFactory, ToolFunc},
 };
 
 pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
@@ -33,80 +31,8 @@ pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
         }))
         .build();
 
-    let runner = Arc::new(PythonScriptRunner::new());
-    let runner_sb = runner.clone();
-    let runner_local = runner;
-
-    let f_sandbox = ToolFunc::new(move |args: Value, ctx: ToolContext| {
-        let runner = runner_sb.clone();
-        async move {
-            let code = match args.pointer("/code").and_then(|v| v.as_str()) {
-                Some(c) => c.to_string(),
-                None => {
-                    return crate::to_value!({
-                        "stdout": "",
-                        "stderr": "missing required parameter: code",
-                        "exit_code": -1,
-                        "phase": "validation"
-                    });
-                }
-            };
-
-            let pip_packages: Vec<String> = args
-                .pointer("/pip_install")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let sandbox = ctx.sandbox.as_ref();
-
-            if !pip_packages.is_empty() {
-                let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
-                match runner.install_packages(sandbox, &pkg_refs).await {
-                    Ok(r) if r.exit_code != 0 => {
-                        return crate::to_value!({
-                            "stdout": "",
-                            "stderr": r.stderr.as_str(),
-                            "exit_code": r.exit_code as i64,
-                            "phase": "pip_install"
-                        });
-                    }
-                    Err(e) => {
-                        return crate::to_value!({
-                            "stdout": "",
-                            "stderr": format!("pip install error: {e}").as_str(),
-                            "exit_code": 1,
-                            "phase": "pip_install"
-                        });
-                    }
-                    Ok(_) => {}
-                }
-            }
-
-            match runner.run(sandbox, &code, &[]).await {
-                Ok(r) => crate::to_value!({
-                    "stdout": r.stdout.as_str(),
-                    "stderr": r.stderr.as_str(),
-                    "exit_code": r.exit_code as i64,
-                    "timed_out": r.timed_out
-                }),
-                Err(e) => crate::to_value!({
-                    "stdout": "",
-                    "stderr": format!("execution error: {e}").as_str(),
-                    "exit_code": -1,
-                    "timed_out": false,
-                    "phase": "execution"
-                }),
-            }
-        }
-    });
-
     let f_local = ToolFunc::new(move |args: Value| {
-        let runner = runner_local.clone();
+        let runner = PythonScriptRunner::new();
         async move {
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
                 Some(c) => c.to_string(),
@@ -132,7 +58,7 @@ pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
 
             if !pip_packages.is_empty() {
                 let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
-                match runner.install_packages(None, &pkg_refs).await {
+                match runner.install_packages(&pkg_refs).await {
                     Ok(r) if r.exit_code != 0 => {
                         return crate::to_value!({
                             "stdout": "",
@@ -153,7 +79,7 @@ pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
                 }
             }
 
-            match runner.run(None, &code, &[]).await {
+            match runner.run(&code, &[]).await {
                 Ok(r) => crate::to_value!({
                     "stdout": r.stdout.as_str(),
                     "stderr": r.stderr.as_str(),
@@ -171,7 +97,82 @@ pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
         }
     });
 
-    Ok(ToolFactory::sandbox_aware(desc, f_sandbox, f_local))
+    #[cfg(not(feature = "sandbox"))]
+    {
+        Ok(ToolFactory::simple(desc, f_local))
+    }
+
+    #[cfg(feature = "sandbox")]
+    {
+        let f_sandbox = ToolFunc::new(
+            move |args: Value, ctx: crate::tool::ToolContext| async move {
+                let runner = PythonScriptRunner::with_sandbox(ctx.sandbox);
+
+                let code = match args.pointer("/code").and_then(|v| v.as_str()) {
+                    Some(c) => c.to_string(),
+                    None => {
+                        return crate::to_value!({
+                            "stdout": "",
+                            "stderr": "missing required parameter: code",
+                            "exit_code": -1,
+                            "phase": "validation"
+                        });
+                    }
+                };
+
+                let pip_packages: Vec<String> = args
+                    .pointer("/pip_install")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                if !pip_packages.is_empty() {
+                    let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
+                    match runner.install_packages(&pkg_refs).await {
+                        Ok(r) if r.exit_code != 0 => {
+                            return crate::to_value!({
+                                "stdout": "",
+                                "stderr": r.stderr.as_str(),
+                                "exit_code": r.exit_code as i64,
+                                "phase": "pip_install"
+                            });
+                        }
+                        Err(e) => {
+                            return crate::to_value!({
+                                "stdout": "",
+                                "stderr": format!("pip install error: {e}").as_str(),
+                                "exit_code": 1,
+                                "phase": "pip_install"
+                            });
+                        }
+                        Ok(_) => {}
+                    }
+                }
+
+                match runner.run(&code, &[]).await {
+                    Ok(r) => crate::to_value!({
+                        "stdout": r.stdout.as_str(),
+                        "stderr": r.stderr.as_str(),
+                        "exit_code": r.exit_code as i64,
+                        "timed_out": r.timed_out
+                    }),
+                    Err(e) => crate::to_value!({
+                        "stdout": "",
+                        "stderr": format!("execution error: {e}").as_str(),
+                        "exit_code": -1,
+                        "timed_out": false,
+                        "phase": "execution"
+                    }),
+                }
+            },
+        );
+
+        Ok(ToolFactory::sandbox_aware(desc, f_sandbox, f_local))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +182,7 @@ pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::AgentSpec;
+    use crate::{agent::AgentSpec, tool::ToolContext};
 
     fn no_sandbox_spec() -> AgentSpec {
         AgentSpec::new("test")

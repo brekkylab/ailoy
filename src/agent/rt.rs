@@ -1,17 +1,21 @@
-use std::{pin::Pin, sync::Arc};
+use std::pin::Pin;
+#[cfg(feature = "sandbox")]
+use std::sync::Arc;
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
+#[cfg(feature = "sandbox")]
+use crate::sandbox::Sandbox;
 use crate::{
     agent::{AgentProvider, AgentSpec, default_provider},
     lang_model::LangModel,
     message::{FinishReason, Message, MessageOutput, Part, Role},
-    sandbox::Sandbox,
     tool::{Tool, ToolContext, ToolSet},
 };
 
 pub struct AgentState {
     pub history: Vec<Message>,
+    #[cfg(feature = "sandbox")]
     pub sandbox: Option<Arc<Sandbox>>,
 }
 
@@ -25,6 +29,7 @@ impl AgentState {
     pub fn new() -> Self {
         Self {
             history: Vec::new(),
+            #[cfg(feature = "sandbox")]
             sandbox: None,
         }
     }
@@ -32,6 +37,7 @@ impl AgentState {
     pub fn with_history(history: Vec<Message>) -> Self {
         Self {
             history,
+            #[cfg(feature = "sandbox")]
             sandbox: None,
         }
     }
@@ -231,7 +237,9 @@ impl Agent {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
 
+            #[allow(unused_mut)]
             let mut ctx = ToolContext::new(call_id.clone());
+            #[cfg(feature = "sandbox")]
             if let Some(sandbox) = &self.state.sandbox {
                 ctx = ctx.sandbox(sandbox.clone());
             }
@@ -339,6 +347,7 @@ impl Agent {
                     }
                 };
 
+                #[cfg(feature = "sandbox")]
                 if let Some(sb) = &self.state.sandbox {
                     sb.start().await?;
                 }
@@ -356,6 +365,7 @@ impl Agent {
                     }
                 }
 
+                #[cfg(feature = "sandbox")]
                 if let Some(sb) = &self.state.sandbox {
                     sb.stop().await?;
                 }

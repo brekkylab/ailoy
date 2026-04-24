@@ -1,7 +1,7 @@
 use crate::{
     datatype::Value,
     message::ToolDescBuilder,
-    tool::{ToolContext, ToolFactory, ToolFunc},
+    tool::{ToolFactory, ToolFunc},
 };
 
 const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
@@ -24,50 +24,6 @@ pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
             "required": ["cmd"]
         }))
         .build();
-
-    let f_sandbox = ToolFunc::new(|args: Value, ctx: ToolContext| async move {
-        let sandbox = ctx
-            .sandbox
-            .expect("sandbox_aware f1 requires sandbox in ToolContext");
-        let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
-            Some(c) => c.to_string(),
-            None => {
-                return crate::to_value!({
-                    "stdout": "",
-                    "stderr": "missing required parameter: cmd",
-                    "exit_code": -1,
-                    "phase": "validation"
-                });
-            }
-        };
-        let timeout_secs = args
-            .pointer("/timeout_secs")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(0)
-            .max(0) as u64;
-
-        let result = if timeout_secs > 0 {
-            sandbox.shell_with_timeout(&cmd, timeout_secs).await
-        } else {
-            sandbox.shell(&cmd).await
-        };
-
-        match result {
-            Ok(r) => crate::to_value!({
-                "stdout": r.stdout.as_str(),
-                "stderr": r.stderr.as_str(),
-                "exit_code": r.exit_code as i64,
-                "timed_out": r.timed_out
-            }),
-            Err(e) => crate::to_value!({
-                "stdout": "",
-                "stderr": format!("execution error: {e}").as_str(),
-                "exit_code": -1,
-                "timed_out": false,
-                "phase": "execution"
-            }),
-        }
-    });
 
     let f_local = ToolFunc::new(|args: Value| async move {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
@@ -103,8 +59,58 @@ pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
             }),
         }
     });
+    #[cfg(not(feature = "sandbox"))]
+    {
+        Ok(ToolFactory::simple(desc, f_local))
+    }
 
-    Ok(ToolFactory::sandbox_aware(desc, f_sandbox, f_local))
+    #[cfg(feature = "sandbox")]
+    {
+        let f_sandbox = ToolFunc::new(|args: Value, ctx: crate::tool::ToolContext| async move {
+            let sandbox = ctx
+                .sandbox
+                .expect("sandbox_aware f1 requires sandbox in ToolContext");
+            let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => {
+                    return crate::to_value!({
+                        "stdout": "",
+                        "stderr": "missing required parameter: cmd",
+                        "exit_code": -1,
+                        "phase": "validation"
+                    });
+                }
+            };
+            let timeout_secs = args
+                .pointer("/timeout_secs")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0)
+                .max(0) as u64;
+
+            let result = if timeout_secs > 0 {
+                sandbox.shell_with_timeout(&cmd, timeout_secs).await
+            } else {
+                sandbox.shell(&cmd).await
+            };
+
+            match result {
+                Ok(r) => crate::to_value!({
+                    "stdout": r.stdout.as_str(),
+                    "stderr": r.stderr.as_str(),
+                    "exit_code": r.exit_code as i64,
+                    "timed_out": r.timed_out
+                }),
+                Err(e) => crate::to_value!({
+                    "stdout": "",
+                    "stderr": format!("execution error: {e}").as_str(),
+                    "exit_code": -1,
+                    "timed_out": false,
+                    "phase": "execution"
+                }),
+            }
+        });
+        Ok(ToolFactory::sandbox_aware(desc, f_sandbox, f_local))
+    }
 }
 
 fn middle_truncate(s: String, max_chars: usize) -> String {

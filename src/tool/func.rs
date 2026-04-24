@@ -1,14 +1,17 @@
-use std::{future::Future, sync::Arc};
+use std::future::Future;
+#[cfg(feature = "sandbox")]
+use std::sync::Arc;
 
 use futures::{
     Stream, StreamExt,
     stream::{self, BoxStream},
 };
 
+#[cfg(feature = "sandbox")]
+use crate::sandbox::Sandbox;
 use crate::{
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
-    sandbox::Sandbox,
 };
 
 /// Runtime context forwarded to every tool call.
@@ -17,6 +20,8 @@ use crate::{
 /// caller (typically the agent) and passed through [`ToolFunc::call`].
 pub struct ToolContext {
     pub id: String,
+
+    #[cfg(feature = "sandbox")]
     pub sandbox: Option<Arc<Sandbox>>,
 }
 
@@ -24,10 +29,12 @@ impl ToolContext {
     pub(crate) fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            #[cfg(feature = "sandbox")]
             sandbox: None,
         }
     }
 
+    #[cfg(feature = "sandbox")]
     pub(crate) fn sandbox(mut self, sandbox: Arc<Sandbox>) -> Self {
         self.sandbox = Some(sandbox);
         self
@@ -390,19 +397,12 @@ where
 mod tests {
     use super::*;
 
-    fn ctx(id: &str) -> ToolContext {
-        ToolContext {
-            id: id.to_owned(),
-            sandbox: None,
-        }
-    }
-
     // ArgValueRetValueFn
     #[tokio::test]
     async fn test_sync_no_ctx() {
         let f = ToolFunc::new(|_args: Value| Value::string("ok"));
         let out = f
-            .call(Value::object_empty(), ctx("call-1"))
+            .call(Value::object_empty(), ToolContext::new("call-1"))
             .next()
             .await
             .unwrap();
@@ -418,7 +418,7 @@ mod tests {
     async fn test_sync_with_ctx() {
         let f = ToolFunc::new(|_args: Value, _ctx: ToolContext| Value::string("ok"));
         let out = f
-            .call(Value::object_empty(), ctx("call-1"))
+            .call(Value::object_empty(), ToolContext::new("call-1"))
             .next()
             .await
             .unwrap();
@@ -434,7 +434,11 @@ mod tests {
     async fn test_sync_echoes_args() {
         let f = ToolFunc::new(|args: Value, _ctx: ToolContext| args);
         let input = Value::integer(99);
-        let out = f.call(input.clone(), ctx("call-1")).next().await.unwrap();
+        let out = f
+            .call(input.clone(), ToolContext::new("call-1"))
+            .next()
+            .await
+            .unwrap();
         assert_eq!(out.message.contents[0].as_value(), Some(&input));
     }
 
@@ -443,7 +447,7 @@ mod tests {
     async fn test_async_no_ctx() {
         let f = ToolFunc::new(|_args: Value| async move { Value::bool(true) });
         let out = f
-            .call(Value::object_empty(), ctx("call-1"))
+            .call(Value::object_empty(), ToolContext::new("call-1"))
             .next()
             .await
             .unwrap();
@@ -455,7 +459,7 @@ mod tests {
     async fn test_async_with_ctx() {
         let f = ToolFunc::new(|_args: Value, _ctx: ToolContext| async move { Value::bool(true) });
         let out = f
-            .call(Value::object_empty(), ctx("call-1"))
+            .call(Value::object_empty(), ToolContext::new("call-1"))
             .next()
             .await
             .unwrap();
@@ -472,7 +476,10 @@ mod tests {
                 Value::integer(3),
             ])
         });
-        let outputs: Vec<_> = f.call(Value::object_empty(), ctx("call-1")).collect().await;
+        let outputs: Vec<_> = f
+            .call(Value::object_empty(), ToolContext::new("call-1"))
+            .collect()
+            .await;
         assert_eq!(outputs.len(), 3);
         assert_eq!(
             outputs[2].message.contents[0].as_value(),
@@ -487,7 +494,10 @@ mod tests {
         let f = ToolFunc::new(|_args: Value, _ctx: ToolContext| {
             stream::iter(vec![Value::bool(false), Value::bool(true)])
         });
-        let outputs: Vec<_> = f.call(Value::object_empty(), ctx("call-1")).collect().await;
+        let outputs: Vec<_> = f
+            .call(Value::object_empty(), ToolContext::new("call-1"))
+            .collect()
+            .await;
         assert_eq!(outputs.len(), 2);
         assert_eq!(outputs[0].message.id.as_deref(), Some("call-1"));
     }

@@ -7,6 +7,7 @@ pub mod lang_model;
 pub(crate) mod lang_model_impl;
 pub(crate) mod macros;
 pub mod message;
+#[cfg(feature = "sandbox")]
 pub mod sandbox;
 pub mod tool;
 pub(crate) mod tool_impl;

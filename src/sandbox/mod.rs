@@ -1,14 +1,12 @@
 //! Thin wrapper around the `microsandbox` crate, exposing an ailoy-internal
 //! `Sandbox` type so the public API is not coupled to the underlying library.
 
-#[cfg(feature = "sandbox")]
 use std::time::Duration;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
 
-#[cfg(feature = "sandbox")]
 use microsandbox::{
     Sandbox as MsbSandbox,
     sandbox::{ExecOptionsBuilder, PullPolicy, SandboxStatus},
@@ -143,7 +141,7 @@ pub struct ExecResult {
 /// `inner` is behind a `Mutex` so that all sandbox operations (exec, shell, file I/O,
 /// start/stop) are serialized. Tool calls may be spawned in parallel but queue up here,
 /// preventing concurrent commands from racing on the same VM filesystem.
-#[cfg(feature = "sandbox")]
+
 pub struct Sandbox {
     inner: tokio::sync::Mutex<Option<MsbSandbox>>,
     name: String,
@@ -152,7 +150,6 @@ pub struct Sandbox {
     max_output_chars: usize,
 }
 
-#[cfg(feature = "sandbox")]
 impl std::fmt::Debug for Sandbox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Sandbox")
@@ -164,7 +161,6 @@ impl std::fmt::Debug for Sandbox {
     }
 }
 
-#[cfg(feature = "sandbox")]
 impl Drop for Sandbox {
     fn drop(&mut self) {
         if self.persist {
@@ -205,7 +201,6 @@ impl Drop for Sandbox {
     }
 }
 
-#[cfg(feature = "sandbox")]
 impl Sandbox {
     /// Create and start a new sandbox.  The VM is running on return.
     pub async fn new(config: SandboxConfig) -> anyhow::Result<Self> {
@@ -403,72 +398,6 @@ impl Sandbox {
     }
 }
 
-//--------------------------------------------------------------------------------------------------
-// Stub Sandbox (no "sandbox" feature — methods always return Err at runtime)
-//--------------------------------------------------------------------------------------------------
-
-/// Stub type that exists so `Option<Arc<Sandbox>>` compiles in all builds.
-/// All methods return `Err` immediately; no `Sandbox` instance is ever
-/// constructed without the `sandbox` feature.
-#[cfg(not(feature = "sandbox"))]
-pub struct Sandbox;
-
-#[cfg(not(feature = "sandbox"))]
-impl Sandbox {
-    pub async fn start(&self) -> anyhow::Result<()> {
-        anyhow::bail!("sandbox feature not enabled")
-    }
-
-    pub async fn stop(&self) -> anyhow::Result<()> {
-        anyhow::bail!("sandbox feature not enabled")
-    }
-
-    pub fn is_running(&self) -> bool {
-        false
-    }
-
-    pub async fn exec(&self, _cmd: &str, _args: &[&str]) -> anyhow::Result<ExecResult> {
-        anyhow::bail!("sandbox feature not enabled")
-    }
-
-    pub async fn shell(&self, _script: &str) -> anyhow::Result<ExecResult> {
-        anyhow::bail!("sandbox feature not enabled")
-    }
-
-    pub async fn shell_with_timeout(
-        &self,
-        _script: &str,
-        _timeout_secs: u64,
-    ) -> anyhow::Result<ExecResult> {
-        anyhow::bail!("sandbox feature not enabled")
-    }
-
-    pub async fn write_file(&self, _guest_path: &str, _data: &[u8]) -> anyhow::Result<()> {
-        anyhow::bail!("sandbox feature not enabled")
-    }
-
-    pub async fn read_file(&self, _guest_path: &str) -> anyhow::Result<String> {
-        anyhow::bail!("sandbox feature not enabled")
-    }
-
-    pub async fn read_file_bytes(&self, _guest_path: &str) -> anyhow::Result<Vec<u8>> {
-        anyhow::bail!("sandbox feature not enabled")
-    }
-
-    pub async fn copy_from_host(&self, _host: &Path, _guest: &str) -> anyhow::Result<()> {
-        anyhow::bail!("sandbox feature not enabled")
-    }
-
-    pub async fn copy_to_host(&self, _guest: &str, _host: &Path) -> anyhow::Result<()> {
-        anyhow::bail!("sandbox feature not enabled")
-    }
-}
-
-//--------------------------------------------------------------------------------------------------
-// Free functions (sandbox feature only)
-//--------------------------------------------------------------------------------------------------
-
-#[cfg(feature = "sandbox")]
 async fn create_fresh(config: SandboxConfig) -> anyhow::Result<MsbSandbox> {
     let mut builder = MsbSandbox::builder(&config.name)
         .image(config.image.as_str())
@@ -489,7 +418,6 @@ async fn create_fresh(config: SandboxConfig) -> anyhow::Result<MsbSandbox> {
     Ok(builder.create().await?)
 }
 
-#[cfg(feature = "sandbox")]
 async fn create_or_reuse(config: SandboxConfig) -> anyhow::Result<MsbSandbox> {
     match MsbSandbox::get(&config.name).await {
         Ok(handle) => {
@@ -521,7 +449,6 @@ async fn create_or_reuse(config: SandboxConfig) -> anyhow::Result<MsbSandbox> {
     }
 }
 
-#[cfg(feature = "sandbox")]
 fn apply_volume_mount(
     builder: microsandbox::sandbox::SandboxBuilder,
     mount: &VolumeMount,
@@ -561,7 +488,6 @@ fn apply_volume_mount(
     }
 }
 
-#[cfg(feature = "sandbox")]
 fn truncate_output(s: String, max_chars: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
     if chars.len() <= max_chars {
@@ -579,7 +505,6 @@ fn truncate_output(s: String, max_chars: usize) -> String {
 // Tests
 //--------------------------------------------------------------------------------------------------
 
-#[cfg(all(test, feature = "sandbox"))]
 mod tests {
     use std::sync::Arc;
 
