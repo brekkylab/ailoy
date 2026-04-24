@@ -41,6 +41,19 @@ pub enum Value {
     Array(Vec<Value>),
 }
 
+impl schemars::JsonSchema for Value {
+    fn schema_name() -> String {
+        "Value".into()
+    }
+
+    fn json_schema(_gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        // Empty SchemaObject produces `{}`, which in JSON Schema accepts any value.
+        // This is intentional: `Value` is a free-form type that can hold any JSON-
+        // compatible value (null, bool, number, string, array, or object).
+        schemars::schema::SchemaObject::default().into()
+    }
+}
+
 impl Value {
     pub fn null() -> Self {
         Self::Null

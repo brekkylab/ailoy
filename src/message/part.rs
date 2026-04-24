@@ -6,7 +6,7 @@ use url::Url;
 use crate::datatype::{Bytes, Value};
 
 /// Represents a function call contained within a message part.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PartFunction {
     /// The name of the function
     pub name: String,
@@ -26,7 +26,7 @@ pub struct PartFunction {
 /// let part = Part::image_url("https://example.com/image.png".to_string()).unwrap();
 /// assert!(part.is_image());
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum PartImage {
     Embedded { mime_type: String, data: Bytes },
@@ -54,7 +54,7 @@ pub enum PartImage {
 /// assert!(part.is_text());
 /// ```
 ///
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Part {
     /// Plain utf-8 encoded text.

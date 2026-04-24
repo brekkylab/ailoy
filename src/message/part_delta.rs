@@ -29,7 +29,7 @@ use crate::{
 ///     arguments: r#"{"text":"hi"}"#.into(),
 /// };
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PartDeltaFunction {
     Verbatim { text: String },
@@ -57,7 +57,7 @@ pub enum PartDeltaFunction {
 /// # Error Handling
 /// Accumulation or finalization may return an error if incompatible deltas
 /// (e.g. mismatched function IDs) are combined or invalid JSON arguments are given.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PartDelta {
     /// Incremental text fragment.
