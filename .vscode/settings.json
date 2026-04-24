@@ -9,7 +9,9 @@
         "editor.defaultFormatter": "rust-lang.rust-analyzer"
     },
     "rust-analyzer.cargo.buildScripts.enable": true,
-    "rust-analyzer.cargo.features": [],
+    "rust-analyzer.cargo.features": [
+        "sandbox"
+    ],
     "rust-analyzer.procMacro.enable": true,
     "rust-analyzer.runnables.extraEnv": {
         "RUST_LOG": "debug"

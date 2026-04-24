@@ -23,6 +23,10 @@ crate-type = ["rlib"]
 path = "src/lib.rs"
 
 
+[features]
+default = []
+sandbox = ["dep:microsandbox"]
+
 [dependencies]
 anyhow = "1"
 async-stream = "0.3"
@@ -37,6 +41,7 @@ hex = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
 log = "0.4"
+microsandbox = { version = "0.3", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"

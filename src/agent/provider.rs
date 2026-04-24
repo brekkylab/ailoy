@@ -43,6 +43,15 @@ pub struct AgentProvider {
     /// external MCP server (stdio child-process or HTTP stream).  All sources
     /// are initialised at agent startup and merged into the agent's [`ToolSet`].
     pub tools: Vec<ToolProvider>,
+
+    /// Sandbox configuration used when the `sandbox` feature is enabled.
+    ///
+    /// Controls resources (memory, CPUs) for the MicroVM that runs sandbox tools.
+    /// Defaults to [`SandboxConfig::default`] when not set.  The `name` field is
+    /// always regenerated at runtime and is not serialised.
+    #[cfg(feature = "sandbox")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_config: Option<crate::sandbox::SandboxConfig>,
 }
 
 impl AgentProvider {
@@ -50,6 +59,8 @@ impl AgentProvider {
         Self {
             models: Default::default(),
             tools: Default::default(),
+            #[cfg(feature = "sandbox")]
+            sandbox_config: None,
         }
     }
 
@@ -144,6 +155,16 @@ impl AgentProvider {
             .filter(|(pattern, _)| glob_match(pattern, model))
             .max_by_key(|(pattern, _)| pattern.chars().filter(|&c| c != '*' && c != '?').count())
             .map(|(_, provider)| provider)
+    }
+
+    /// Configure the sandbox used by sandbox-backed tools.
+    ///
+    /// Controls memory, CPUs, and other MicroVM settings.  The `name` field of
+    /// `config` is ignored — a fresh UUID is generated for each agent at startup.
+    #[cfg(feature = "sandbox")]
+    pub fn sandbox_config(&mut self, config: crate::sandbox::SandboxConfig) -> &mut Self {
+        self.sandbox_config = Some(config);
+        self
     }
 
     /// Register a tool.

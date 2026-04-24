@@ -6,8 +6,8 @@ use tokio::sync::Mutex;
 use crate::{
     agent::{Agent, AgentCard},
     datatype::Value,
-    message::{FinishReason, Message, MessageOutput, Part, Role, ToolDescBuilder},
-    tool::{Tool, ToolFunc},
+    message::{FinishReason, Message, Part, Role, ToolDescBuilder},
+    tool::{Tool, ToolContext, ToolFunc},
 };
 
 /// Creates a [`Tool`] that wraps `agent` as a callable sub-agent tool.
@@ -44,7 +44,8 @@ pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
         }))
         .build();
 
-    let f = ToolFunc::Stream(Box::new(move |id: String, args: Value| {
+    let f = ToolFunc::new(Box::new(move |args: Value, ctx: ToolContext| {
+        let id = ctx.id;
         let agent = agent.clone();
         Box::pin(async_stream::stream! {
             let task = match args
@@ -54,13 +55,9 @@ pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
             {
                 Some(v) => v.to_string(),
                 None => {
-                    yield MessageOutput {
-                        depth: None,
-                        message: Message::new(Role::Tool)
-                            .with_contents([Part::value(Value::string("Error: expected 'task' string field in arguments"))])
-                            .with_id(id),
-                        finish_reason: FinishReason::Stop {},
-                    };
+                    yield Message::new(Role::Tool)
+                        .with_contents([Part::value(Value::string("Error: expected 'task' string field in arguments"))])
+                        .with_id(id);
                     return;
                 }
             };
@@ -86,16 +83,12 @@ pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
                                     .collect::<Vec<_>>()
                                     .join("");
                             }
-                            yield output;
+                            yield output.message;
                         }
                         Err(e) => {
-                            yield MessageOutput {
-                                depth: None,
-                                message: Message::new(Role::Tool)
-                                    .with_contents([Part::value(Value::string(format!("Error: {e}")))])
-                                    .with_id(id),
-                                finish_reason: FinishReason::Stop {},
-                            };
+                            yield Message::new(Role::Tool)
+                                .with_contents([Part::value(Value::string(format!("Error: {e}")))])
+                                .with_id(id);
                             return;
                         }
                     }
@@ -104,14 +97,10 @@ pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
 
             // Emit the final tool response — the outer agent assigns this depth 0.
             // Use Part::value so provider codecs marshal it as a plain string output.
-            yield MessageOutput {
-                depth: None,
-                message: Message::new(Role::Tool)
-                    .with_contents([Part::value(Value::string(last_answer))])
-                    .with_id(id),
-                finish_reason: FinishReason::Stop {},
-            };
-        }) as futures::stream::BoxStream<'static, MessageOutput>
+            yield Message::new(Role::Tool)
+                .with_contents([Part::value(Value::string(last_answer))])
+                .with_id(id);
+        }) as futures::stream::BoxStream<'static, Message>
     }));
 
     Tool::new(desc, Arc::new(f))

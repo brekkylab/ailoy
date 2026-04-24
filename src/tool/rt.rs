@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
-use anyhow::anyhow;
-use futures::StreamExt as _;
+use futures::stream::BoxStream;
 
-use crate::{message::ToolDesc, tool::ToolFunc};
+use crate::{
+    datatype::Value,
+    message::{MessageOutput, ToolDesc},
+    tool::{ToolContext, ToolFunc},
+};
 
 #[derive(Clone)]
 pub struct Tool {
@@ -24,16 +27,29 @@ impl Tool {
         self.f.clone()
     }
 
-    pub(crate) async fn call(
-        &self,
-        args: &crate::message::Part,
-    ) -> anyhow::Result<crate::message::Message> {
-        Ok(self
-            .get_func()
-            .call(args.clone())?
-            .next()
-            .await
-            .ok_or(anyhow!("tool function returned nothing"))?
-            .message)
+    /// Execute this tool and return a stream of [`MessageOutput`] items.
+    ///
+    /// The agent iterates the full stream to forward intermediate sub-agent
+    /// outputs and collect the final tool result.  For simple tools that emit
+    /// exactly one item, callers can just call `.next().await`.
+    pub fn call(&self, args: Value, ctx: ToolContext) -> BoxStream<'static, MessageOutput> {
+        self.f.call(args, ctx)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_helpers {
+    use futures::StreamExt as _;
+
+    use crate::{
+        datatype::Value,
+        message::Message,
+        tool::{Tool, ToolContext},
+    };
+
+    impl Tool {
+        pub async fn call_next(&self, args: Value, ctx: ToolContext) -> Message {
+            self.call(args, ctx).next().await.unwrap().message
+        }
     }
 }

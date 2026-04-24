@@ -9,10 +9,17 @@ use aggregator::MetaSearcher;
 use crate::{
     datatype::Value,
     message::{ToolDesc, ToolDescBuilder},
-    tool::ToolFunc,
+    tool::{Tool, ToolFunc},
 };
 
-pub fn make_web_search_tool_desc() -> ToolDesc {
+pub async fn build_web_search_tool() -> anyhow::Result<Tool> {
+    Ok(Tool::new(
+        make_web_search_tool_desc(),
+        std::sync::Arc::new(make_web_search_func()),
+    ))
+}
+
+fn make_web_search_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("web_search")
         .description(
             "Search the web using multiple search engines simultaneously. \
@@ -38,7 +45,7 @@ pub fn make_web_search_tool_desc() -> ToolDesc {
         .build()
 }
 
-pub fn make_web_search_func() -> ToolFunc {
+fn make_web_search_func() -> ToolFunc {
     let searcher = Arc::new(MetaSearcher::new());
 
     ToolFunc::new(move |args: Value| {

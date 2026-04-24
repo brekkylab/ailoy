@@ -5,8 +5,8 @@ use url::Url;
 
 use crate::{
     datatype::Value,
-    message::{FinishReason, Message, MessageOutput, Part, Role, ToolDescBuilder},
-    tool::{Tool, ToolFunc},
+    message::{Message, Part, Role, ToolDescBuilder},
+    tool::{Tool, ToolContext, ToolFunc},
 };
 
 // ── Tool constructor ──────────────────────────────────────────────────────────
@@ -37,36 +37,25 @@ pub(crate) async fn make_a2a_tool(url: Url) -> anyhow::Result<Tool> {
         .parameters(crate::to_value!({"type": "string"}))
         .build();
 
-    let f = ToolFunc::new(move |id: String, args: Value| {
+    let f = ToolFunc::new(move |args: Value, ctx: ToolContext| {
         let url = base_url.clone();
         async move {
+            let id = ctx.id;
             let task = match args.as_str() {
                 Some(v) => v.to_string(),
                 None => {
-                    return MessageOutput {
-                        depth: None,
-                        message: Message::new(Role::Tool)
-                            .with_contents([Part::text("Error: expected string argument")])
-                            .with_id(id),
-                        finish_reason: FinishReason::Stop {},
-                    };
+                    return Message::new(Role::Tool)
+                        .with_contents([Part::text("Error: expected string argument")])
+                        .with_id(id);
                 }
             };
             match message_send(&url, &task).await {
-                Ok(text) => MessageOutput {
-                    depth: None,
-                    message: Message::new(Role::Tool)
-                        .with_contents([Part::text(text)])
-                        .with_id(id),
-                    finish_reason: FinishReason::Stop {},
-                },
-                Err(e) => MessageOutput {
-                    depth: None,
-                    message: Message::new(Role::Tool)
-                        .with_contents([Part::text(format!("Error: {e}"))])
-                        .with_id(id),
-                    finish_reason: FinishReason::Stop {},
-                },
+                Ok(text) => Message::new(Role::Tool)
+                    .with_contents([Part::text(text)])
+                    .with_id(id),
+                Err(e) => Message::new(Role::Tool)
+                    .with_contents([Part::text(format!("Error: {e}"))])
+                    .with_id(id),
             }
         }
     });

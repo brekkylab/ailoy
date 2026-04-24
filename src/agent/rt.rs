@@ -1,19 +1,18 @@
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc};
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
 use crate::{
     agent::{AgentProvider, AgentSpec, default_provider},
     lang_model::LangModel,
-    message::{FinishReason, Message, MessageOutput, Part, Role, ToolDesc},
-    shell::Shell,
-    tool::{Tool, ToolFunc, ToolSet},
+    message::{FinishReason, Message, MessageOutput, Part, Role},
+    sandbox::Sandbox,
+    tool::{Tool, ToolContext, ToolSet},
 };
 
 pub struct AgentState {
     pub history: Vec<Message>,
-
-    pub shell: Option<Shell>,
+    pub sandbox: Option<Arc<Sandbox>>,
 }
 
 impl Default for AgentState {
@@ -26,20 +25,15 @@ impl AgentState {
     pub fn new() -> Self {
         Self {
             history: Vec::new(),
-            shell: None,
+            sandbox: None,
         }
     }
 
     pub fn with_history(history: Vec<Message>) -> Self {
         Self {
             history,
-            shell: None,
+            sandbox: None,
         }
-    }
-
-    pub fn shell(mut self) -> Self {
-        self.shell = Some(Shell::new());
-        self
     }
 }
 
@@ -125,7 +119,7 @@ impl Agent {
     ///             .description("Return the temperature for a city")
     ///             .parameters(to_value!({"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}))
     ///             .build(),
-    ///         ToolFunc::new(|_args: Value| Value::unsigned(25)),
+    ///         ToolFunc::new(|_args: Value, _ctx: ToolContext| Value::unsigned(25)),
     ///     );
     ///
     ///     let mut provider = AgentProvider::new();
@@ -138,7 +132,7 @@ impl Agent {
     pub async fn try_with_tools(
         spec: AgentSpec,
         provider: &AgentProvider,
-        tools: impl IntoIterator<Item = (ToolDesc, Arc<ToolFunc>)>,
+        tools: &ToolSet,
     ) -> anyhow::Result<Self> {
         // Parse model id
         let model_id = spec
@@ -152,20 +146,13 @@ impl Agent {
             .ok_or_else(|| anyhow::anyhow!("No provider found for model '{}'", spec.model))?
             .clone();
 
-        // Build a name-keyed map from the provided tools
-        let tool_map: HashMap<String, (ToolDesc, Arc<ToolFunc>)> = tools
-            .into_iter()
-            .map(|(desc, f)| (desc.name.clone(), (desc, f)))
-            .collect();
-
         // Collect tools required by the spec; error if any tool is missing
         let tools: Vec<Tool> = spec
             .tools
             .iter()
             .map(|n| {
-                tool_map
-                    .get(n)
-                    .map(|(desc, f)| Tool::new(desc.clone(), Arc::clone(f)))
+                tools
+                    .make_runtime(n)
                     .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found", n))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
@@ -177,10 +164,33 @@ impl Agent {
             .map(|inst| vec![Message::new(Role::System).with_contents([Part::text(inst)])])
             .unwrap_or_default();
 
+        #[allow(unused_mut)]
+        let mut state = AgentState::with_history(history);
+        #[cfg(feature = "sandbox")]
+        {
+            use std::sync::Arc;
+
+            use crate::sandbox::{Sandbox, SandboxConfig};
+            let config = provider
+                .sandbox_config
+                .clone()
+                .unwrap_or_else(SandboxConfig::default);
+            let sandbox = Arc::new(
+                Sandbox::new(config)
+                    .await
+                    .expect("Failed to initialize sandbox"),
+            );
+            // Stop immediately after setup — VM only runs during tool execution.
+            sandbox
+                .stop()
+                .await
+                .expect("Failed to stop sandbox after init");
+            state.sandbox = Some(sandbox);
+        }
         Ok(Self {
             model: LangModel::new(model_id, model_provider),
             tools,
-            state: AgentState::with_history(history),
+            state,
         })
     }
 
@@ -201,17 +211,26 @@ impl Agent {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<anyhow::Result<MessageOutput>>();
 
         for tool_call in tool_calls {
-            let Some((call_id, tool_name, _)) = tool_call.as_function() else {
+            let Some((call_id, tool_name, call_args)) = tool_call.as_function() else {
                 continue;
             };
-            let (tool_name, call_id) = (tool_name.to_string(), call_id.to_string());
+            let (tool_name, call_id, call_args) = (
+                tool_name.to_string(),
+                call_id.to_string(),
+                call_args.to_owned(),
+            );
 
-            let func = self
+            let tool = self
                 .tools
                 .iter()
                 .find(|t| t.get_desc().name == tool_name)
-                .map(|t| t.get_func())
+                .cloned()
                 .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
+
+            let mut ctx = ToolContext::new(call_id.clone());
+            if let Some(sandbox) = &self.state.sandbox {
+                ctx = ctx.sandbox(sandbox.clone());
+            }
 
             let tx = tx.clone();
 
@@ -223,7 +242,7 @@ impl Agent {
 
                 let outcome: Result<anyhow::Result<bool>, _> =
                     std::panic::AssertUnwindSafe(async move {
-                        let mut stream = func.call(tool_call)?;
+                        let mut stream = tool.call(call_args, ctx);
                         let mut last: Option<MessageOutput> = None;
 
                         while let Some(item) = stream.next().await {
@@ -316,6 +335,10 @@ impl Agent {
                     }
                 };
 
+                if let Some(sb) = &self.state.sandbox {
+                    sb.start().await?;
+                }
+
                 let mut tool_stream = self.execute_tool_calls(tool_calls)?;
                 while let Some(event) = tool_stream.next().await {
                     match event {
@@ -327,6 +350,10 @@ impl Agent {
                             yield output;
                         }
                     }
+                }
+
+                if let Some(sb) = &self.state.sandbox {
+                    sb.stop().await?;
                 }
             }
         })
@@ -346,7 +373,7 @@ mod tests {
         datatype::Value,
         message::{Message, Part, Role, ToolDesc, ToolDescBuilder},
         suppress_panics, to_value,
-        tool::{ToolFunc, ToolSet},
+        tool::{ToolContext, ToolFunc, ToolSet},
         tool_impl::make_subagent_tool,
     };
 
@@ -382,7 +409,7 @@ mod tests {
         tool_set.insert(
             "temperature",
             temperature_tool_desc(),
-            ToolFunc::new(|_args: Value| Value::unsigned(25)),
+            ToolFunc::new(|_args: Value, _ctx: ToolContext| Value::unsigned(25)),
         );
 
         let mut provider = AgentProvider::new();
@@ -608,7 +635,7 @@ mod tests {
                 "required": ["location"]
             }))
             .build();
-        let fast_fn = ToolFunc::new(move |_args: Value| {
+        let fast_fn = ToolFunc::new(move |_args: Value, _ctx: ToolContext| {
             let order = order_fast.clone();
             async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -626,7 +653,7 @@ mod tests {
                 "required": ["location"]
             }))
             .build();
-        let slow_fn = ToolFunc::new(move |_args: Value| {
+        let slow_fn = ToolFunc::new(move |_args: Value, _ctx: ToolContext| {
             let order = order_slow.clone();
             async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
@@ -740,7 +767,7 @@ mod tests {
                 "required": ["city"]
             }))
             .build();
-        let good_fn = ToolFunc::new(|_args: Value| async move {
+        let good_fn = ToolFunc::new(|_args: Value, _ctx: ToolContext| async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
             to_value!("sunny, 25 degrees")
         });
@@ -753,7 +780,11 @@ mod tests {
                 "required": ["city"]
             }))
             .build();
-        let bad_fn = ToolFunc::new(|_args: Value| async move { panic!("simulated tool crash") });
+        let bad_fn = ToolFunc::new(|_args: Value, _ctx: ToolContext| async move {
+            panic!("simulated tool crash");
+            #[allow(unreachable_code)]
+            Value::null()
+        });
 
         let mut tool_set = ToolSet::new();
         tool_set.insert("get_weather", good_desc, good_fn);
@@ -841,5 +872,396 @@ mod tests {
             last_msg.contents.iter().any(|p| p.is_text()),
             "Final Assistant message must contain text — the agent never produced a closing answer."
         );
+    }
+
+    /// Verifies the sandbox VM lifecycle using the `python_repl` builtin tool:
+    ///
+    /// 1. Stopped right after agent creation.
+    /// 2. python_repl executes successfully (proves VM was running during the call).
+    /// 3. Stopped again once the tool-call batch stream is exhausted.
+    #[cfg(feature = "sandbox")]
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    async fn test_sandbox_lifecycle_with_python_repl() {
+        use crate::{
+            agent::{AgentProvider, AgentSpec},
+            tool::{BuiltinToolProvider, ToolProvider},
+        };
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+
+        let mut provider = AgentProvider::new();
+        provider
+            .model_claude(api_key)
+            .tool(ToolProvider::Builtin(BuiltinToolProvider::PythonRepl {}));
+
+        let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
+            .tool("python_repl")
+            .instruction(
+                "When asked to run Python code, always use the python_repl tool. \
+                 Never skip the tool call.",
+            );
+
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
+
+        // ── 1. After creation: sandbox exists but is stopped ───────────────
+        let sb = agent
+            .state
+            .sandbox
+            .as_ref()
+            .expect("sandbox should exist after construction");
+        assert!(
+            !sb.is_running(),
+            "sandbox should be stopped after construction"
+        );
+
+        // ── 2. Run a turn that triggers python_repl ─────────────────────────
+        let query = Message::new(Role::User).with_contents([Part::text(
+            "Run this Python code and tell me the output: print('ailoy_sandbox_ok')",
+        )]);
+        {
+            let mut stream = agent.run(query);
+            while let Some(event) = stream.next().await {
+                event.unwrap();
+            }
+        }
+
+        // ── 3. After run(): sandbox stopped ────────────────────────────────
+        let sb = agent.state.sandbox.as_ref().unwrap();
+        assert!(
+            !sb.is_running(),
+            "sandbox should be stopped after run() completes"
+        );
+
+        // ── 2b. Verify python_repl actually ran inside the VM ───────────────
+        let tool_result = agent
+            .get_history()
+            .iter()
+            .find(|m| m.role == Role::Tool)
+            .expect("history should contain a tool result");
+
+        let stdout = tool_result
+            .contents
+            .iter()
+            .find_map(|p| p.as_value())
+            .and_then(|v| v.pointer("/stdout"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        assert!(
+            stdout.contains("ailoy_sandbox_ok"),
+            "python_repl should have produced expected output, got stdout: {stdout:?}"
+        );
+    }
+
+    /// Verifies that parallel bash tool calls from the agent loop do not interleave
+    /// inside the sandbox. The LLM is instructed to issue both bash calls in a single
+    /// response. Each command writes "start_N", sleeps, then writes "end_N" to a shared
+    /// log file. The sandbox Mutex guarantees serial execution, so no interleaving occurs.
+    #[cfg(feature = "sandbox")]
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    async fn test_agent_parallel_bash_calls_are_serialized_in_sandbox() {
+        use futures::StreamExt as _;
+
+        use crate::{
+            agent::{AgentProvider, AgentSpec},
+            message::{Message, Part, Role},
+            tool::{BuiltinToolProvider, ToolProvider},
+        };
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+
+        let mut provider = AgentProvider::new();
+        provider
+            .model_claude(api_key)
+            .tool(ToolProvider::Builtin(BuiltinToolProvider::Bash {}));
+
+        let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
+            .tool("bash")
+            .instruction(
+                "You have a bash tool. When asked to run two commands, always call bash \
+                 TWICE in a SINGLE response (parallel tool calls). Never run them sequentially \
+                 across multiple turns.",
+            );
+
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
+
+        // Start the sandbox manually so tool calls can proceed.
+        agent
+            .state
+            .sandbox
+            .as_ref()
+            .unwrap()
+            .start()
+            .await
+            .expect("failed to start sandbox");
+
+        let log = "/tmp/agent_serial_test.txt";
+        let query = Message::new(Role::User).with_contents([Part::text(format!(
+            "Run these two shell commands in a single response using two parallel bash tool calls:\n\
+             1. echo start_1 >> {log} && sleep 0.3 && echo end_1 >> {log}\n\
+             2. echo start_2 >> {log} && sleep 0.3 && echo end_2 >> {log}"
+        ))]);
+
+        {
+            let mut stream = agent.run(query);
+            while let Some(event) = stream.next().await {
+                event.expect("agent stream error");
+            }
+        }
+
+        // Re-start the sandbox (agent.run() stops it) to read the log.
+        let sb = agent.state.sandbox.as_ref().unwrap();
+        sb.start()
+            .await
+            .expect("failed to restart sandbox for log read");
+        let log_content = sb
+            .shell(&format!("cat {log}"))
+            .await
+            .expect("failed to read log");
+        sb.stop().await.ok();
+
+        let lines: Vec<&str> = log_content.stdout.lines().collect();
+        assert_eq!(lines.len(), 4, "expected 4 log lines, got: {lines:?}");
+
+        // Serial: start_N must be immediately followed by end_N (same N).
+        let id0 = lines[0]
+            .strip_prefix("start_")
+            .expect("line 0 should be start_N");
+        let id1 = lines[1]
+            .strip_prefix("end_")
+            .expect("line 1 should be end_N");
+        assert_eq!(
+            id0, id1,
+            "first command's start and end must be adjacent — interleaving detected: {lines:?}"
+        );
+
+        let id2 = lines[2]
+            .strip_prefix("start_")
+            .expect("line 2 should be start_N");
+        let id3 = lines[3]
+            .strip_prefix("end_")
+            .expect("line 3 should be end_N");
+        assert_eq!(
+            id2, id3,
+            "second command's start and end must be adjacent — interleaving detected: {lines:?}"
+        );
+    }
+
+    /// Verifies the convert_pdf_to_md skill end-to-end:
+    ///   1. Agent receives an instruction listing available skills (name, description, path only).
+    ///   2. Agent reads the SKILL.md via `bash cat` to activate the skill.
+    ///   3. Agent installs Docling and converts the PDF to Markdown.
+    ///
+    /// Requires ANTHROPIC_API_KEY and the sandbox feature.
+    #[cfg(feature = "sandbox")]
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    #[ignore = "slow: installs docling (~minutes) and requires model artifacts"]
+    async fn test_convert_pdf_to_md_skill() {
+        use crate::{
+            agent::{AgentProvider, AgentSpec},
+            tool::{BuiltinToolProvider, ToolProvider},
+        };
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+
+        // Skill content hardcoded — not loaded from disk at test time.
+        // This is what gets written to /workspace/skills/convert_pdf_to_md.md inside the sandbox.
+        let skill_md = r#"# Skill: Convert PDF to Markdown
+
+Convert a local PDF file to Markdown using [Docling](https://github.com/DS4SD/docling).
+
+## When to use
+
+When asked to convert a PDF file to Markdown (or extract text/structure from a PDF).
+
+## Steps
+
+### 1. Install dependencies
+
+Install Docling (this takes a few minutes the first time):
+
+```
+pip install 'docling>=2,<3'
+```
+
+If the conversion later fails with an error related to `libxcb` or OpenCV display libraries,
+replace the OpenCV build with the headless variant:
+
+```
+pip install --force-reinstall --no-deps opencv-python-headless
+```
+
+### 2. Run the conversion
+
+Run the following script, substituting the actual paths:
+
+```python
+import logging
+import os
+from pathlib import Path
+
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+logging.getLogger("docling").setLevel(logging.CRITICAL)
+
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions, TableStructureOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
+
+pipeline_options = PdfPipelineOptions(
+    do_ocr=False,
+    do_table_structure=True,
+    table_structure_options=TableStructureOptions(do_cell_matching=True, mode="accurate"),
+    accelerator_options={"num_threads": 4, "device": "auto"},
+    do_picture_classification=False,
+    do_picture_description=False,
+    do_chart_extraction=False,
+    do_code_enrichment=False,
+    do_formula_enrichment=False,
+    generate_page_images=False,
+    generate_picture_images=False,
+)
+
+converter = DocumentConverter(
+    format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
+)
+
+pdf_path = Path("/workspace/input.pdf")   # ← replace with actual path
+output_path = pdf_path.with_suffix(".md")
+
+markdown = converter.convert(pdf_path).document.export_to_markdown()
+output_path.write_text(markdown, encoding="utf-8")
+print(f"Saved: {output_path}")
+```
+
+### 3. Confirm
+
+After the script exits with code 0, the Markdown file is written next to the PDF (same path,
+`.md` extension) unless you specified a different `output_path`.
+"#;
+
+        // Instruction lists available skills by name, description, and SKILL.md path only.
+        // The agent must `cat` the SKILL.md to obtain the full instructions before proceeding.
+        let instruction = "\
+You are a helpful assistant with access to a set of skills. \
+Skills provide step-by-step instructions for specific tasks. \
+To activate a skill, read its SKILL.md using the bash tool \
+(`cat <path>`), then follow the instructions inside.
+
+## Available Skills
+
+| Name | Description | Path |
+|------|-------------|------|
+| convert_pdf_to_md | Convert a local PDF file to Markdown using Docling. | /workspace/skills/convert_pdf_to_md.md |
+";
+
+        let mut provider = AgentProvider::new();
+        provider
+            .model_claude(api_key)
+            .tool(ToolProvider::Builtin(BuiltinToolProvider::Bash {}))
+            .tool(ToolProvider::Builtin(BuiltinToolProvider::PythonRepl {}));
+
+        let spec = AgentSpec::new("anthropic/claude-sonnet-4-6")
+            .tools(["bash", "python_repl"])
+            .instruction(instruction);
+
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
+
+        // Seed the sandbox with the skill file and the test PDF before running the agent.
+        let pdf_bytes = minimal_pdf_bytes();
+        let sb = agent.state.sandbox.as_ref().expect("sandbox must exist");
+        sb.start().await.expect("failed to start sandbox for setup");
+        sb.shell("mkdir -p /workspace/skills")
+            .await
+            .expect("failed to create skills directory");
+        sb.write_file(
+            "/workspace/skills/convert_pdf_to_md.md",
+            skill_md.as_bytes(),
+        )
+        .await
+        .expect("failed to write skill file into sandbox");
+        sb.write_file("/workspace/test.pdf", &pdf_bytes)
+            .await
+            .expect("failed to write PDF into sandbox");
+        sb.stop().await.expect("failed to stop sandbox after setup");
+
+        // Ask the agent to convert the PDF — it must cat the SKILL.md first.
+        let query = Message::new(Role::User).with_contents([Part::text(
+            "Convert /workspace/test.pdf to Markdown. \
+             The output file should be at /workspace/test.md.",
+        )]);
+
+        {
+            let mut stream = agent.run(query);
+            while let Some(event) = stream.next().await {
+                println!("{:?}", event);
+                event.expect("agent stream error");
+            }
+        }
+
+        // Verify the markdown file was written to the sandbox.
+        agent
+            .state
+            .sandbox
+            .as_ref()
+            .unwrap()
+            .start()
+            .await
+            .expect("failed to start sandbox for verification");
+
+        let markdown = agent
+            .state
+            .sandbox
+            .as_ref()
+            .unwrap()
+            .read_file("/workspace/test.md")
+            .await
+            .expect("agent should have written /workspace/test.md");
+
+        assert!(
+            !markdown.trim().is_empty(),
+            "converted markdown should not be empty"
+        );
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    #[cfg(feature = "sandbox")]
+    fn minimal_pdf_bytes() -> Vec<u8> {
+        let stream = "BT\n/F1 24 Tf\n72 100 Td\n(Hello Docling) Tj\nET";
+        let objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_string(),
+            format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        ];
+        let mut pdf = Vec::from("%PDF-1.4\n".as_bytes());
+        let mut offsets = Vec::with_capacity(objects.len());
+        for (i, obj) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", i + 1, obj).as_bytes());
+        }
+        let xref = pdf.len();
+        pdf.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for o in offsets {
+            pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Root 1 0 R /Size {} >>\nstartxref\n{}\n%%EOF\n",
+                objects.len() + 1,
+                xref
+            )
+            .as_bytes(),
+        );
+        pdf
     }
 }
