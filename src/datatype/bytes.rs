@@ -1,8 +1,28 @@
+use schemars::{
+    JsonSchema,
+    r#gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
+};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Bytes(ByteBuf);
+
+impl JsonSchema for Bytes {
+    fn schema_name() -> String {
+        "Bytes".into()
+    }
+
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            format: Some("base64".into()),
+            ..Default::default()
+        }
+        .into()
+    }
+}
 
 impl Bytes {
     pub fn base64(&self) -> String {
