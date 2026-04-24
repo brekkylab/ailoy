@@ -22,6 +22,7 @@ use crate::message::{Delta, FinishReason, Message, MessageOutput, PartDelta, Rol
 ///
 /// # Examples
 /// ```rust
+/// # use ailoy::message::{MessageDelta, PartDelta, Role, Delta};
 /// let d1 = MessageDelta::new().with_role(Role::Assistant).with_contents([PartDelta::Text { text: "Hel".into() }]);
 /// let d2 = MessageDelta::new().with_contents([PartDelta::Text { text: "lo".into() }]);
 ///
@@ -29,7 +30,7 @@ use crate::message::{Delta, FinishReason, Message, MessageOutput, PartDelta, Rol
 /// let msg = merged.finish().unwrap();
 /// assert_eq!(msg.contents[0].as_text().unwrap(), "Hello");
 /// ```
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,
@@ -261,7 +262,8 @@ impl fmt::Display for MessageDelta {
 ///
 /// # Examples
 /// ```rust
-/// let mut out = MessageOutput::new();
+/// # use ailoy::message::{MessageDeltaOutput, MessageDelta, PartDelta, Role};
+/// let mut out = MessageDeltaOutput::new();
 /// out.delta = MessageDelta::new().with_role(Role::Assistant).with_contents([PartDelta::Text { text: "Hi".into() }]);
 /// assert!(out.finish_reason.is_none());
 /// ```
@@ -304,6 +306,7 @@ impl Delta for MessageDeltaOutput {
             .finish_reason
             .ok_or_else(|| anyhow::anyhow!("finish_reason not specified"))?;
         Ok(MessageOutput {
+            depth: None,
             message,
             finish_reason,
         })

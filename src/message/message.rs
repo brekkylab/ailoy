@@ -6,7 +6,15 @@ use crate::message::Part;
 
 /// The author of a message (or streaming delta) in a chat.
 #[derive(
-    Clone, Debug, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
@@ -36,21 +44,18 @@ pub enum Role {
 ///
 /// ## Rust
 /// ```rust
+/// # use ailoy::message::{Message, Part, Role};
 /// let msg = Message::new(Role::User).with_contents([Part::text("hello")]);
 /// assert_eq!(msg.role, Role::User);
 /// assert_eq!(msg.contents.len(), 1);
 /// ```
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Message {
     /// Author of the message.
     pub role: Role,
 
     /// Primary parts of the message (e.g., text, image, value, or function).
     pub contents: Vec<Part>,
-
-    /// Optional stable identifier for deduplication or threading.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
 
     /// Internal “thinking” text used by some models before producing final output.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -60,24 +65,15 @@ pub struct Message {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<Part>>,
 
+    /// Optional identifier for function calling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
     /// Optional signature for the `thinking` field.
     ///
     /// This is only applicable to certain LLM APIs that require a signature as part of the `thinking` payload.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
-}
-
-impl Default for Message {
-    fn default() -> Self {
-        Self {
-            role: Role::Assistant,
-            contents: Vec::new(),
-            id: None,
-            thinking: None,
-            tool_calls: None,
-            signature: None,
-        }
-    }
 }
 
 impl Message {
@@ -134,7 +130,7 @@ impl fmt::Display for Message {
 }
 
 /// Explains why a language model's streamed generation finished.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FinishReason {
     /// The model stopped naturally (e.g., EOS token or stop sequence).
@@ -163,9 +159,31 @@ impl fmt::Display for FinishReason {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageOutput {
+    /// Nesting level of this message relative to the top-level agent turn.
+    ///
+    /// `depth` reflects how many layers of tool calls separate this message from
+    /// the outermost agent turn:
+    ///
+    /// - `Some(0)` / `None` — the message belongs to the top-level turn: a
+    ///   direct LM response or the final tool result pushed into the top-level
+    ///   history.  `None` is the initial state produced by tools before the
+    ///   agent runtime assigns the value; it is semantically equivalent to
+    ///   `Some(0)`.
+    /// - `Some(1)` — the message was produced *inside* a tool call, e.g. an
+    ///   intermediate message emitted by a sub-agent tool during its own turn.
+    /// - `Some(n)` — the message was produced `n` tool-call layers deep (a
+    ///   sub-agent that itself invoked another tool, and so on).
+    ///
+    /// Ailoy sets this field automatically:
+    /// intermediate outputs from a tool stream are emitted with `depth + 1`,
+    /// and the final tool result is emitted with `depth 0`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth: Option<u8>,
+
     pub message: Message,
+
     pub finish_reason: FinishReason,
 }
 

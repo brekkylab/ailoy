@@ -1,0 +1,153 @@
+use std::{collections::HashMap, sync::Arc};
+
+use tokio::sync::Mutex;
+
+use crate::{
+    agent::{Agent, AgentProvider, AgentSpec},
+    message::ToolDesc,
+    tool::{MCPToolProvider, Tool, ToolFunc, ToolProvider},
+    tool_impl::{make_a2a_tool, make_builtin_tool, make_subagent_tool},
+};
+
+#[derive(Clone)]
+pub struct ToolSet {
+    tools: HashMap<String, (ToolDesc, Arc<ToolFunc>)>,
+}
+
+impl ToolSet {
+    /// Build an empty [`ToolSet`].
+    pub fn new() -> Self {
+        Self {
+            tools: HashMap::new(),
+        }
+    }
+
+    /// Build a [`ToolSet`] from the tool providers declared in `provider` and
+    /// the sub-agents declared in `spec`.
+    pub async fn from_providers(
+        spec: &AgentSpec,
+        provider: &AgentProvider,
+    ) -> anyhow::Result<Self> {
+        let mut this = Self::new();
+
+        // Initialise all provider tools.
+        for tool_provider in &provider.tools {
+            match tool_provider {
+                ToolProvider::Builtin(builtin_tool_provider) => {
+                    let tool_runtime = make_builtin_tool(builtin_tool_provider).await?;
+                    this.tools.insert(
+                        tool_runtime.get_desc().name.clone(),
+                        (tool_runtime.get_desc().clone(), tool_runtime.get_func()),
+                    );
+                }
+                ToolProvider::A2A { url } => {
+                    let tool_runtime = make_a2a_tool(url.clone()).await?;
+                    this.tools.insert(
+                        tool_runtime.get_desc().name.clone(),
+                        (tool_runtime.get_desc().clone(), tool_runtime.get_func()),
+                    );
+                }
+                ToolProvider::MCP(mcptool_provider) => match mcptool_provider {
+                    MCPToolProvider::Stdio { command: _ } => todo!(),
+                    MCPToolProvider::StreamableHTTP { url: _ } => todo!(),
+                },
+            }
+        }
+
+        // Initialise sub-agents using the toolset built above.
+        for sub_spec in &spec.subagents {
+            let card = sub_spec.card.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "SubAgent spec must have a card (name + description) to be \
+                     registered as a tool"
+                )
+            })?;
+            let tool_name = card.name.clone();
+            let sub_agent = Agent::try_with_tools(sub_spec.clone(), provider, &this).await?;
+            let sub_agent = Arc::new(Mutex::new(sub_agent));
+            let tool_runtime = make_subagent_tool(card, sub_agent);
+            this.tools.insert(
+                tool_name,
+                (tool_runtime.get_desc().clone(), tool_runtime.get_func()),
+            );
+        }
+
+        Ok(this)
+    }
+
+    /// Insert a tool by key.
+    ///
+    /// `f` can be a [`ToolFunc`] (wrapped in an `Arc` automatically) or an
+    /// existing `Arc<ToolFunc>` — e.g. one obtained from [`Tool::get_func`].
+    pub fn insert(
+        &mut self,
+        key: impl Into<String>,
+        desc: ToolDesc,
+        f: impl Into<Arc<ToolFunc>>,
+    ) -> Option<(ToolDesc, Arc<ToolFunc>)> {
+        self.tools.insert(key.into(), (desc, f.into()))
+    }
+
+    pub fn remove(&mut self, key: impl AsRef<str>) -> Option<(ToolDesc, Arc<ToolFunc>)> {
+        self.tools.remove(key.as_ref())
+    }
+
+    pub fn make_runtime(&self, key: impl AsRef<str>) -> Option<Tool> {
+        self.tools
+            .get(key.as_ref())
+            .map(|(desc, f)| Tool::new(desc.clone(), Arc::clone(f)))
+    }
+
+    /// Merge another [`ToolSet`] into this one.
+    ///
+    /// Tools from `other` are inserted into `self`. If a key already exists in
+    /// `self`, the entry from `other` overwrites it.
+    pub fn merge(&mut self, other: ToolSet) {
+        self.tools.extend(other.tools);
+    }
+
+    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, String, (ToolDesc, Arc<ToolFunc>)> {
+        self.tools.iter()
+    }
+
+    pub fn iter_mut(
+        &mut self,
+    ) -> std::collections::hash_map::IterMut<'_, String, (ToolDesc, Arc<ToolFunc>)> {
+        self.tools.iter_mut()
+    }
+
+    /// Return the names of all registered tools.
+    pub fn names(&self) -> Vec<String> {
+        self.tools.keys().cloned().collect()
+    }
+}
+
+impl FromIterator<(String, (ToolDesc, Arc<ToolFunc>))> for ToolSet {
+    fn from_iter<I: IntoIterator<Item = (String, (ToolDesc, Arc<ToolFunc>))>>(iter: I) -> Self {
+        Self {
+            tools: iter.into_iter().collect(),
+        }
+    }
+}
+
+impl IntoIterator for ToolSet {
+    type Item = (String, (ToolDesc, Arc<ToolFunc>));
+    type IntoIter = std::collections::hash_map::IntoIter<String, (ToolDesc, Arc<ToolFunc>)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.tools.into_iter()
+    }
+}
+
+impl IntoIterator for &ToolSet {
+    type Item = (ToolDesc, Arc<ToolFunc>);
+    type IntoIter = std::vec::IntoIter<(ToolDesc, Arc<ToolFunc>)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.tools
+            .values()
+            .map(|(desc, f)| (desc.clone(), Arc::clone(f)))
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+}

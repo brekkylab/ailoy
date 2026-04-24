@@ -23,12 +23,13 @@ use crate::{
 ///
 /// # Example
 /// ```rust
+/// # use ailoy::message::PartDeltaFunction;
 /// let delta = PartDeltaFunction::WithStringArgs {
 ///     name: "translate".into(),
 ///     arguments: r#"{"text":"hi"}"#.into(),
 /// };
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PartDeltaFunction {
     Verbatim { text: String },
@@ -46,6 +47,7 @@ pub enum PartDeltaFunction {
 ///
 /// ## Rust
 /// ```rust
+/// # use ailoy::message::{PartDelta, Delta};
 /// let d1 = PartDelta::Text { text: "Hel".into() };
 /// let d2 = PartDelta::Text { text: "lo".into() };
 /// let merged = d1.accumulate(d2).unwrap();
@@ -55,7 +57,7 @@ pub enum PartDeltaFunction {
 /// # Error Handling
 /// Accumulation or finalization may return an error if incompatible deltas
 /// (e.g. mismatched function IDs) are combined or invalid JSON arguments are given.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PartDelta {
     /// Incremental text fragment.
@@ -285,6 +287,7 @@ impl Delta for PartDelta {
             }),
             PartDelta::Function { .. } => {
                 let (id, name, arguments) = self.to_parsed_function().unwrap();
+                let id = id.unwrap_or("fn".into());
                 Ok(Part::Function {
                     id,
                     function: PartFunction { name, arguments },

@@ -24,10 +24,18 @@ pub struct ExecOutput {
 
 impl ExecOutput {
     pub fn ok(stdout: impl Into<String>) -> Self {
-        Self { stdout: stdout.into(), stderr: String::new(), exit_code: 0 }
+        Self {
+            stdout: stdout.into(),
+            stderr: String::new(),
+            exit_code: 0,
+        }
     }
 
     pub fn err(exit_code: i32, stderr: impl Into<String>) -> Self {
-        Self { stdout: String::new(), stderr: stderr.into(), exit_code }
+        Self {
+            stdout: String::new(),
+            stderr: stderr.into(),
+            exit_code,
+        }
     }
 }

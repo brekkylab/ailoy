@@ -6,7 +6,7 @@ use url::Url;
 use crate::datatype::{Bytes, Value};
 
 /// Represents a function call contained within a message part.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PartFunction {
     /// The name of the function
     pub name: String,
@@ -22,14 +22,11 @@ pub struct PartFunction {
 ///
 /// # Example
 /// ```rust
-/// let part = Part::image_binary(640, 480, "rgb", (0..640*480*3).map(|i| (i % 255) as u8)).unwrap();
-///
-/// if let Some(img) = part.as_image() {
-///     assert_eq!(img.height(), 640);
-///     assert_eq!(img.width(), 480);
-/// }
+/// # use ailoy::message::Part;
+/// let part = Part::image_url("https://example.com/image.png".to_string()).unwrap();
+/// assert!(part.is_image());
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum PartImage {
     Embedded { mime_type: String, data: Bytes },
@@ -52,11 +49,12 @@ pub enum PartImage {
 ///
 /// ## Rust
 /// ```rust
+/// # use ailoy::message::Part;
 /// let part = Part::text("Hello, world!");
 /// assert!(part.is_text());
 /// ```
 ///
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Part {
     /// Plain utf-8 encoded text.
@@ -74,15 +72,14 @@ pub enum Part {
     ///
     /// # Examples
     /// ```rust
+    /// # use ailoy::message::PartFunction;
+    /// # use ailoy::to_value;
     /// let f = PartFunction {
     ///     name: "translate".to_string(),
-    ///     arguments: Value::from_json(r#"{"source": "hello", "lang": "cn"}"#).unwrap(),
+    ///     arguments: to_value!({"source": "hello", "lang": "cn"}),
     /// };
     /// ```
-    Function {
-        id: Option<String>,
-        function: PartFunction,
-    },
+    Function { id: String, function: PartFunction },
 
     /// Holds a structured data value, typically considered as a JSON structure.
     Value { value: Value },
@@ -98,23 +95,13 @@ impl Part {
         Self::Text { text: v.into() }
     }
 
-    pub fn function(name: impl Into<String>, arguments: impl Into<Value>) -> Self {
-        Self::Function {
-            id: None,
-            function: PartFunction {
-                name: name.into(),
-                arguments: arguments.into(),
-            },
-        }
-    }
-
-    pub fn function_with_id(
+    pub fn function(
         id: impl Into<String>,
         name: impl Into<String>,
         arguments: impl Into<Value>,
     ) -> Self {
         Self::Function {
-            id: Some(id.into()),
+            id: id.into(),
             function: PartFunction {
                 name: name.into(),
                 arguments: arguments.into(),
@@ -136,6 +123,12 @@ impl Part {
         Ok(Part::Image {
             image: PartImage::Url { url: url.into() },
         })
+    }
+
+    pub fn value(value: impl Into<Value>) -> Self {
+        Part::Value {
+            value: value.into(),
+        }
     }
 
     pub fn is_text(&self) -> bool {
@@ -180,22 +173,22 @@ impl Part {
         }
     }
 
-    pub fn as_function(&self) -> Option<(Option<&str>, &str, &Value)> {
+    pub fn as_function(&self) -> Option<(&str, &str, &Value)> {
         match self {
             Self::Function {
                 id,
                 function: PartFunction { name, arguments },
-            } => Some((id.as_deref(), name.as_str(), arguments)),
+            } => Some((id.as_str(), name.as_str(), arguments)),
             _ => None,
         }
     }
 
-    pub fn as_function_mut(&mut self) -> Option<(Option<&mut String>, &mut String, &mut Value)> {
+    pub fn as_function_mut(&mut self) -> Option<(&mut String, &mut String, &mut Value)> {
         match self {
             Self::Function {
                 id,
                 function: PartFunction { name, arguments },
-            } => Some((id.as_mut(), name, arguments)),
+            } => Some((id, name, arguments)),
             _ => None,
         }
     }
