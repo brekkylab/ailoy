@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 use crate::{
     agent::{Agent, AgentProvider, AgentSpec},
     tool::{MCPToolProvider, Tool, ToolFactory, ToolProvider},
-    tool_impl::{make_a2a_tool_factory, make_builtin_tool, make_subagent_tool_factory},
+    tool_impl::{make_a2a_tool_factory, make_builtin_tool_factory, make_subagent_tool_factory},
 };
 
 /// Agent-independent registry of [`ToolFactory`] instances, keyed by tool name.
@@ -37,7 +37,7 @@ impl ToolSet {
         for tool_provider in &provider.tools {
             match tool_provider {
                 ToolProvider::Builtin(builtin_tool_provider) => {
-                    let factory = make_builtin_tool(builtin_tool_provider).await?;
+                    let factory = make_builtin_tool_factory(builtin_tool_provider).await?;
                     this.tools.insert(factory.get_name().into(), factory);
                 }
                 ToolProvider::A2A { url } => {

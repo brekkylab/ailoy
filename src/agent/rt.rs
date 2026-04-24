@@ -1235,7 +1235,7 @@ To activate a skill, read its SKILL.md using the bash tool \
             lang_model::{LangModel, LangModelProvider},
             message::{Message, Part, Role},
             sandbox::{Sandbox, SandboxConfig},
-            tool_impl::builtins::build_bash_tool,
+            tool::{BuiltinToolProvider, make_builtin_tool},
         };
 
         dotenvy::dotenv().ok();
@@ -1260,7 +1260,7 @@ To activate a skill, read its SKILL.md using the bash tool \
                  use the bash tool to do so (e.g. `echo CONTENT > PATH`). \
                  Confirm once the write succeeded.",
             )
-            .tool(build_bash_tool(true))
+            .tool(make_builtin_tool(&BuiltinToolProvider::Bash {}))
             .sandbox(vm.clone())
             .build()
             .await
@@ -1276,7 +1276,7 @@ To activate a skill, read its SKILL.md using the bash tool \
                  2. After it confirms, use your bash tool to run `cat /workspace/sentinel.txt`. \
                  3. Return the exact output of cat.",
             )
-            .tool(build_bash_tool(true))
+            .tool(make_builtin_tool(&BuiltinToolProvider::Bash {}))
             .sandbox(vm.clone())
             .subagent(
                 AgentCard {

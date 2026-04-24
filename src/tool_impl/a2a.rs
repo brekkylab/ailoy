@@ -1,7 +1,7 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use url::Url;
-
-use std::sync::Arc;
 
 use crate::{
     datatype::Value,

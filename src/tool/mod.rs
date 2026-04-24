@@ -28,11 +28,13 @@
 //!    determines the tool's actual runtime behaviour when [`Tool::call`] is
 //!    invoked by the agent.
 
+mod builder;
 mod func;
 mod provider;
 mod rt;
 mod toolset;
 
+pub use builder::*;
 pub use func::*;
 pub use provider::*;
 pub use rt::*;
