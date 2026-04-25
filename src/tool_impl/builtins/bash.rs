@@ -1,7 +1,7 @@
 use crate::{
     datatype::Value,
     message::ToolDescBuilder,
-    tool::{ToolFactory, ToolFunc},
+    tool::{ToolContext, ToolFactory, ToolFunc},
 };
 
 const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
@@ -25,7 +25,7 @@ pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
         }))
         .build();
 
-    let f_local = ToolFunc::new(|args: Value| async move {
+    let f = ToolFunc::new(|args: Value, ctx: ToolContext| async move {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
@@ -38,79 +38,26 @@ pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
             }
         };
 
-        let out = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(&cmd)
-            .output()
-            .await;
-        match out {
-            Ok(o) => crate::to_value!({
-                "stdout": middle_truncate(String::from_utf8_lossy(&o.stdout).into_owned(), MAX_OUTPUT_CHARS).as_str(),
-                "stderr": middle_truncate(String::from_utf8_lossy(&o.stderr).into_owned(), MAX_OUTPUT_CHARS).as_str(),
-                "exit_code": o.status.code().unwrap_or(-1) as i64,
-                "timed_out": false
-            }),
-            Err(e) => crate::to_value!({
-                "stdout": "",
-                "stderr": format!("execution error: {e}").as_str(),
+        let Ok(out) = ctx
+            .runenv
+            .exec("sh".to_string(), vec!["-c".to_string(), cmd], None)
+            .await
+        else {
+            return crate::to_value!({
+                "stdout": String::new(),
+                "stderr": String::from("Internal error"),
                 "exit_code": -1,
-                "timed_out": false,
-                "phase": "execution"
-            }),
-        }
+                "timed_out": false
+            });
+        };
+        crate::to_value!({
+            "stdout": middle_truncate(out.stdout, MAX_OUTPUT_CHARS).as_str(),
+            "stderr": middle_truncate(out.stderr, MAX_OUTPUT_CHARS).as_str(),
+            "exit_code": out.exit_code as i64,
+            "timed_out": out.timed_out
+        })
     });
-    #[cfg(not(feature = "sandbox"))]
-    {
-        Ok(ToolFactory::simple(desc, f_local))
-    }
-
-    #[cfg(feature = "sandbox")]
-    {
-        let f_sandbox = ToolFunc::new(|args: Value, ctx: crate::tool::ToolContext| async move {
-            let sandbox = ctx
-                .sandbox
-                .expect("sandbox_aware f1 requires sandbox in ToolContext");
-            let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
-                Some(c) => c.to_string(),
-                None => {
-                    return crate::to_value!({
-                        "stdout": "",
-                        "stderr": "missing required parameter: cmd",
-                        "exit_code": -1,
-                        "phase": "validation"
-                    });
-                }
-            };
-            let timeout_secs = args
-                .pointer("/timeout_secs")
-                .and_then(|v| v.as_integer())
-                .unwrap_or(0)
-                .max(0) as u64;
-
-            let result = if timeout_secs > 0 {
-                sandbox.shell_with_timeout(&cmd, timeout_secs).await
-            } else {
-                sandbox.shell(&cmd).await
-            };
-
-            match result {
-                Ok(r) => crate::to_value!({
-                    "stdout": r.stdout.as_str(),
-                    "stderr": r.stderr.as_str(),
-                    "exit_code": r.exit_code as i64,
-                    "timed_out": r.timed_out
-                }),
-                Err(e) => crate::to_value!({
-                    "stdout": "",
-                    "stderr": format!("execution error: {e}").as_str(),
-                    "exit_code": -1,
-                    "timed_out": false,
-                    "phase": "execution"
-                }),
-            }
-        });
-        Ok(ToolFactory::sandbox_aware(desc, f_sandbox, f_local))
-    }
+    Ok(ToolFactory::simple(desc, f))
 }
 
 fn middle_truncate(s: String, max_chars: usize) -> String {
@@ -128,22 +75,28 @@ fn middle_truncate(s: String, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::agent::AgentSpec;
+    use std::sync::Arc;
 
-    fn no_sandbox_spec() -> AgentSpec {
+    use super::*;
+    use crate::{agent::AgentSpec, runenv::Local, to_value, tool::ToolContext};
+
+    fn spec() -> AgentSpec {
         AgentSpec::new("test")
+    }
+
+    fn local_ctx() -> ToolContext {
+        ToolContext::new(String::new(), Arc::new(Local {}))
     }
 
     #[tokio::test]
     async fn test_tool_name_is_bash() {
-        let tool = build_bash_tool().await.unwrap().make(&no_sandbox_spec());
+        let tool = build_bash_tool().await.unwrap().make(&spec());
         assert_eq!(tool.get_desc().name, "bash");
     }
 
     #[tokio::test]
     async fn test_tool_schema_requires_cmd() {
-        let tool = build_bash_tool().await.unwrap().make(&no_sandbox_spec());
+        let tool = build_bash_tool().await.unwrap().make(&spec());
         let required = tool
             .get_desc()
             .parameters
@@ -154,144 +107,87 @@ mod tests {
         assert!(names.contains(&"cmd"));
     }
 
-    #[cfg(feature = "sandbox")]
-    mod sandbox_tests {
-        use std::sync::Arc;
+    #[tokio::test]
+    async fn test_missing_cmd_returns_validation_error() {
+        let tool = build_bash_tool().await.unwrap().make(&spec());
+        let msg = tool.call_next(to_value!({}), local_ctx()).await;
+        let phase = msg.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/phase")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert_eq!(phase, "validation");
+    }
 
-        use super::*;
-        use crate::{
-            sandbox::{Sandbox, SandboxConfig},
-            to_value,
-            tool::ToolContext,
-        };
+    #[tokio::test]
+    async fn test_echo_returns_stdout() {
+        let tool = build_bash_tool().await.unwrap().make(&spec());
+        let msg = tool
+            .call_next(to_value!({ "cmd": "echo ailoy" }), local_ctx())
+            .await;
+        let stdout = msg.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/stdout")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert!(stdout.contains("ailoy"), "stdout: {stdout:?}");
+    }
 
-        async fn make_sandbox() -> Arc<Sandbox> {
-            Arc::new(
-                Sandbox::new(SandboxConfig::default())
-                    .await
-                    .expect("failed to create sandbox"),
+    #[tokio::test]
+    async fn test_exit_code_is_captured() {
+        let tool = build_bash_tool().await.unwrap().make(&spec());
+        let msg = tool
+            .call_next(to_value!({ "cmd": "exit 42" }), local_ctx())
+            .await;
+        let exit_code = msg.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/exit_code")
+            .and_then(|v| v.as_integer())
+            .unwrap();
+        assert_eq!(exit_code, 42);
+    }
+
+    #[tokio::test]
+    async fn test_state_persists_across_calls() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        let tool = build_bash_tool().await.unwrap().make(&spec());
+        let runenv = Arc::new(Local {});
+
+        let r1 = tool
+            .call_next(
+                to_value!({ "cmd": format!("echo persisted > {path}") }),
+                ToolContext::new(String::new(), runenv.clone()),
             )
-        }
-
-        fn sandbox_spec() -> AgentSpec {
-            AgentSpec::new("test").sandbox("test")
-        }
-
-        #[tokio::test]
-        async fn test_missing_cmd_returns_validation_error() {
-            let factory = build_bash_tool().await.unwrap();
-            let tool = factory.make(&sandbox_spec());
-            let args = to_value!({});
-            let msg = tool
-                .call_next(
-                    args,
-                    ToolContext {
-                        id: String::new(),
-                        sandbox: Some(make_sandbox().await),
-                    },
-                )
-                .await;
-            let phase = msg.contents[0]
-                .as_value()
-                .unwrap()
-                .pointer("/phase")
-                .and_then(|v| v.as_str())
-                .unwrap();
-            assert_eq!(phase, "validation");
-        }
-
-        #[tokio::test]
-        async fn test_echo_returns_stdout() {
-            let factory = build_bash_tool().await.unwrap();
-            let tool = factory.make(&sandbox_spec());
-            let args = to_value!({ "cmd": "echo ailoy" });
-            let msg = tool
-                .call_next(
-                    args,
-                    ToolContext {
-                        id: String::new(),
-                        sandbox: Some(make_sandbox().await),
-                    },
-                )
-                .await;
-            let stdout = msg.contents[0]
-                .as_value()
-                .unwrap()
-                .pointer("/stdout")
-                .and_then(|v| v.as_str())
-                .unwrap();
-            assert!(stdout.contains("ailoy"), "stdout: {stdout:?}");
-        }
-
-        #[tokio::test]
-        async fn test_exit_code_is_captured() {
-            let factory = build_bash_tool().await.unwrap();
-            let tool = factory.make(&sandbox_spec());
-            let args = to_value!({ "cmd": "exit 42" });
-            let msg = tool
-                .call_next(
-                    args,
-                    ToolContext {
-                        id: String::new(),
-                        sandbox: Some(make_sandbox().await),
-                    },
-                )
-                .await;
-            let exit_code = msg.contents[0]
+            .await;
+        assert_eq!(
+            r1.contents[0]
                 .as_value()
                 .unwrap()
                 .pointer("/exit_code")
                 .and_then(|v| v.as_integer())
-                .unwrap();
-            assert_eq!(exit_code, 42);
-        }
+                .unwrap_or(-1),
+            0
+        );
 
-        #[tokio::test]
-        async fn test_state_persists_across_calls() {
-            let sandbox = make_sandbox().await;
-            let factory = build_bash_tool().await.unwrap();
-            let tool = factory.make(&sandbox_spec());
-
-            let call1 = to_value!({ "cmd": "echo persisted > /workspace/flag.txt" });
-            let r1 = tool
-                .call_next(
-                    call1,
-                    ToolContext {
-                        id: String::new(),
-                        sandbox: Some(sandbox.clone()),
-                    },
-                )
-                .await;
-            assert_eq!(
-                r1.contents[0]
-                    .as_value()
-                    .unwrap()
-                    .pointer("/exit_code")
-                    .and_then(|v| v.as_integer())
-                    .unwrap_or(-1),
-                0
-            );
-
-            let call2 = to_value!({ "cmd": "cat /workspace/flag.txt" });
-            let r2 = tool
-                .call_next(
-                    call2,
-                    ToolContext {
-                        id: String::new(),
-                        sandbox: Some(sandbox.clone()),
-                    },
-                )
-                .await;
-            let stdout = r2.contents[0]
-                .as_value()
-                .unwrap()
-                .pointer("/stdout")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            assert!(
-                stdout.contains("persisted"),
-                "second call should see file from first call, got: {stdout:?}"
-            );
-        }
+        let r2 = tool
+            .call_next(
+                to_value!({ "cmd": format!("cat {path}") }),
+                ToolContext::new(String::new(), runenv.clone()),
+            )
+            .await;
+        let stdout = r2.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/stdout")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(
+            stdout.contains("persisted"),
+            "second call should see file from first call, got: {stdout:?}"
+        );
     }
 }

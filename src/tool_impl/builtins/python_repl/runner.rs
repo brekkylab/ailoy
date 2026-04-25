@@ -1,128 +1,8 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use tokio::sync::Mutex;
 
-#[cfg(feature = "sandbox")]
-use crate::sandbox::Sandbox;
-
-/// Execution result from a shell command.  Mirrors `crate::sandbox::ExecResult` but is
-/// always compiled so non-sandbox builds don't need the sandbox module.
-#[derive(Debug)]
-pub struct ExecResult {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-    pub timed_out: bool,
-}
-
-struct Handle {
-    #[cfg(feature = "sandbox")]
-    sandbox: Option<Arc<Sandbox>>,
-}
-
-impl Handle {
-    #[cfg(feature = "sandbox")]
-    pub fn with_sandbox(sandbox: Option<Arc<Sandbox>>) -> Self {
-        Self { sandbox }
-    }
-
-    pub fn new() -> Self {
-        Self {
-            #[cfg(feature = "sandbox")]
-            sandbox: None,
-        }
-    }
-
-    #[cfg(feature = "sandbox")]
-    pub async fn run_shell(
-        &self,
-        script: &str,
-        timeout_secs: Option<u64>,
-    ) -> anyhow::Result<ExecResult> {
-        if self.sandbox.is_some() {
-            self.run_shell_sandbox(script, timeout_secs).await
-        } else {
-            self.run_shell_local(script, timeout_secs).await
-        }
-    }
-
-    #[cfg(not(feature = "sandbox"))]
-    pub async fn run_shell(
-        &self,
-        script: &str,
-        timeout_secs: Option<u64>,
-    ) -> anyhow::Result<ExecResult> {
-        self.run_shell_local(script, timeout_secs).await
-    }
-
-    #[cfg(feature = "sandbox")]
-    pub async fn write_file(&self, path: &str, content: &[u8]) -> anyhow::Result<()> {
-        if self.sandbox.is_some() {
-            self.write_file_sandbox(path, content).await
-        } else {
-            self.write_file_local(path, content).await
-        }
-    }
-
-    #[cfg(not(feature = "sandbox"))]
-    pub async fn write_file(&self, path: &str, contents: &[u8]) -> anyhow::Result<()> {
-        self.write_file_local(path, contents).await
-    }
-
-    #[cfg(feature = "sandbox")]
-    async fn run_shell_sandbox(
-        &self,
-        script: &str,
-        timeout_secs: Option<u64>,
-    ) -> anyhow::Result<ExecResult> {
-        let sb = self.sandbox.as_ref().unwrap();
-        let r = if let Some(t) = timeout_secs {
-            sb.shell_with_timeout(script, t)
-                .await
-                .context("sandbox shell error")?
-        } else {
-            sb.shell(script).await.context("sandbox shell error")?
-        };
-        Ok(ExecResult {
-            stdout: r.stdout,
-            stderr: r.stderr,
-            exit_code: r.exit_code,
-            timed_out: r.timed_out,
-        })
-    }
-
-    async fn run_shell_local(
-        &self,
-        script: &str,
-        timeout_secs: Option<u64>,
-    ) -> anyhow::Result<ExecResult> {
-        let _ = timeout_secs;
-        let out = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(script)
-            .output()
-            .await
-            .context("host shell error")?;
-        Ok(ExecResult {
-            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-            exit_code: out.status.code().unwrap_or(-1),
-            timed_out: false,
-        })
-    }
-
-    #[cfg(feature = "sandbox")]
-    async fn write_file_sandbox(&self, path: &str, contents: &[u8]) -> anyhow::Result<()> {
-        let sb = self.sandbox.as_ref().unwrap();
-        sb.write_file(path, contents).await
-    }
-
-    async fn write_file_local(&self, path: &str, contents: &[u8]) -> anyhow::Result<()> {
-        std::fs::write(path, contents).context("failed to write script to host")?;
-        Ok(())
-    }
-}
+use crate::runenv::{ExecResult, RunEnv};
 
 /// All ailoy-managed files live under `$XDG_CACHE_HOME/ailoy` (default `~/.cache/ailoy`):
 ///   - uv binary : `$AILOY_CACHE/bin/uv`  (symlink if system uv exists, else downloaded)
@@ -180,118 +60,95 @@ const AILOY_PYTHON: &str = r#""${XDG_CACHE_HOME:-$HOME/.cache}/ailoy/venv/bin/py
 /// uv pip install targeting the ailoy venv. Both paths resolved by sh at runtime.
 const AILOY_PIP_INSTALL: &str = r#""${XDG_CACHE_HOME:-$HOME/.cache}/ailoy/bin/uv" pip install --python "${XDG_CACHE_HOME:-$HOME/.cache}/ailoy/venv/bin/python3""#;
 
-/// Runs Python scripts in a uv-managed venv, either inside a MicroVM sandbox or
-/// on the host.  On first use, `ensure_ready` installs uv and creates the venv
-/// (~30 s cold; near-instant on subsequent calls since all steps are idempotent).
-pub struct PythonScriptRunner {
-    handle: Handle,
-    initialized: Arc<Mutex<bool>>,
+fn sh(cmd: &str) -> (String, Vec<String>) {
+    ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
 }
 
-impl PythonScriptRunner {
-    pub fn new() -> Self {
-        Self {
-            handle: Handle::new(),
-            initialized: Arc::new(Mutex::new(false)),
-        }
+async fn ensure_ready(runenv: Arc<dyn RunEnv>) -> anyhow::Result<()> {
+    let (prog, args) = sh(SETUP_CMD);
+    let r = runenv
+        .exec(prog, args, Some(SETUP_TIMEOUT_SECS))
+        .await
+        .context("Python runtime setup failed")?;
+    if r.timed_out {
+        anyhow::bail!("Python runtime setup timed out after {SETUP_TIMEOUT_SECS}s");
     }
-
-    #[cfg(feature = "sandbox")]
-    pub fn with_sandbox(sandbox: Option<Arc<Sandbox>>) -> Self {
-        Self {
-            handle: Handle::with_sandbox(sandbox),
-            initialized: Arc::new(Mutex::new(false)),
-        }
+    if r.exit_code != 0 {
+        anyhow::bail!(
+            "Python runtime setup failed (exit {}): {}",
+            r.exit_code,
+            if r.stderr.trim().is_empty() {
+                r.stdout.trim()
+            } else {
+                r.stderr.trim()
+            }
+        );
     }
+    Ok(())
+}
 
-    /// Ensure uv and the ailoy venv are present. Runs at most once per instance.
-    async fn ensure_ready(&self) -> anyhow::Result<()> {
-        let mut guard = self.initialized.lock().await;
-        if *guard {
-            return Ok(());
-        }
-        let r = self
-            .handle
-            .run_shell(SETUP_CMD, Some(SETUP_TIMEOUT_SECS))
-            .await
-            .context("Python runtime setup failed")?;
-        if r.timed_out {
-            anyhow::bail!("Python runtime setup timed out after {SETUP_TIMEOUT_SECS}s");
-        }
-        if r.exit_code != 0 {
-            anyhow::bail!(
-                "Python runtime setup failed (exit {}): {}",
-                r.exit_code,
-                if r.stderr.trim().is_empty() {
-                    r.stdout.trim()
-                } else {
-                    r.stderr.trim()
-                }
-            );
-        }
-        *guard = true;
-        Ok(())
+/// Install pip packages into the ailoy venv via uv.
+pub async fn install_packages(
+    runenv: Arc<dyn RunEnv>,
+    packages: &[&str],
+) -> anyhow::Result<ExecResult> {
+    if packages.is_empty() {
+        return Ok(ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+            timed_out: false,
+        });
     }
+    ensure_ready(runenv.clone()).await?;
+    let quoted: Vec<String> = packages.iter().map(|p| format!("'{p}'")).collect();
+    let cmd = format!("{AILOY_PIP_INSTALL} {}", quoted.join(" "));
+    let (prog, args) = sh(&cmd);
+    runenv.exec(prog, args, None).await
+}
 
-    /// Install pip packages into the ailoy venv via uv.
-    pub async fn install_packages(&self, packages: &[&str]) -> anyhow::Result<ExecResult> {
-        if packages.is_empty() {
-            return Ok(ExecResult {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: 0,
-                timed_out: false,
-            });
-        }
-        self.ensure_ready().await?;
-        let quoted: Vec<String> = packages.iter().map(|p| format!("'{p}'")).collect();
-        let cmd = format!("{AILOY_PIP_INSTALL} {}", quoted.join(" "));
-        self.handle.run_shell(&cmd, None).await
-    }
+/// Execute a Python script with optional env vars.
+pub async fn run(
+    runenv: Arc<dyn RunEnv>,
+    source: &str,
+    env: &[(&str, &str)],
+) -> anyhow::Result<ExecResult> {
+    run_with_timeout(runenv, source, env, 0).await
+}
 
-    /// Execute a Python script with optional env vars.
-    pub async fn run(&self, source: &str, env: &[(&str, &str)]) -> anyhow::Result<ExecResult> {
-        self.run_with_timeout(source, env, 0).await
-    }
+/// Like [`run`] but with a per-execution timeout (`0` = no timeout).
+pub async fn run_with_timeout(
+    runenv: Arc<dyn RunEnv>,
+    source: &str,
+    env: &[(&str, &str)],
+    timeout_secs: u64,
+) -> anyhow::Result<ExecResult> {
+    ensure_ready(runenv.clone()).await?;
 
-    /// Like [`run`] but with a per-execution timeout (`0` = no timeout).
-    pub async fn run_with_timeout(
-        &self,
-        source: &str,
-        env: &[(&str, &str)],
-        timeout_secs: u64,
-    ) -> anyhow::Result<ExecResult> {
-        self.ensure_ready().await?;
+    let script_path = format!("/tmp/__ailoy_{}.py", uuid::Uuid::new_v4());
 
-        let script_path = format!("/tmp/__ailoy_{}.py", uuid::Uuid::new_v4());
+    runenv
+        .write(std::path::Path::new(&script_path), source.as_bytes())
+        .await
+        .context("failed to write script")?;
 
-        // Write script to sandbox or host filesystem.
-        self.handle
-            .write_file(&script_path, source.as_bytes())
-            .await
-            .context("failed to write script")?;
+    let env_prefix = env
+        .iter()
+        .map(|(k, v)| format!("{k}='{v}'"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let cmd = if env_prefix.is_empty() {
+        format!("{AILOY_PYTHON} {script_path}")
+    } else {
+        format!("{env_prefix} {AILOY_PYTHON} {script_path}")
+    };
 
-        // Build the execution command — identical string for both paths.
-        // $HOME is expanded by sh at runtime.
-        let env_prefix = env
-            .iter()
-            .map(|(k, v)| format!("{k}='{v}'"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let cmd = if env_prefix.is_empty() {
-            format!("{AILOY_PYTHON} {script_path}")
-        } else {
-            format!("{env_prefix} {AILOY_PYTHON} {script_path}")
-        };
+    let timeout = (timeout_secs > 0).then_some(timeout_secs);
+    let (prog, args) = sh(&cmd);
+    let result = runenv.exec(prog, args, timeout).await;
 
-        let timeout = (timeout_secs > 0).then_some(timeout_secs);
-        let result = self.handle.run_shell(&cmd, timeout).await;
+    let (cleanup_prog, cleanup_args) = sh(&format!("rm -f {script_path}"));
+    let _ = runenv.exec(cleanup_prog, cleanup_args, None).await;
 
-        let _ = self
-            .handle
-            .run_shell(&format!("rm -f {script_path}"), None)
-            .await;
-
-        result.context("script execution error")
-    }
+    result.context("script execution error")
 }

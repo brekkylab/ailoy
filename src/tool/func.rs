@@ -1,5 +1,4 @@
 use std::future::Future;
-#[cfg(feature = "sandbox")]
 use std::sync::Arc;
 
 use futures::{
@@ -7,8 +6,7 @@ use futures::{
     stream::{self, BoxStream},
 };
 
-#[cfg(feature = "sandbox")]
-use crate::sandbox::Sandbox;
+use crate::runenv::RunEnv;
 use crate::{
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
@@ -21,23 +19,15 @@ use crate::{
 pub struct ToolContext {
     pub id: String,
 
-    #[cfg(feature = "sandbox")]
-    pub sandbox: Option<Arc<Sandbox>>,
+    pub runenv: Arc<dyn RunEnv>,
 }
 
 impl ToolContext {
-    pub(crate) fn new(id: impl Into<String>) -> Self {
+    pub(crate) fn new(id: impl Into<String>, runenv: Arc<dyn RunEnv>) -> Self {
         Self {
             id: id.into(),
-            #[cfg(feature = "sandbox")]
-            sandbox: None,
+            runenv,
         }
-    }
-
-    #[cfg(feature = "sandbox")]
-    pub(crate) fn sandbox(mut self, sandbox: Arc<Sandbox>) -> Self {
-        self.sandbox = Some(sandbox);
-        self
     }
 }
 
@@ -396,13 +386,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runenv::Local;
+
+    fn test_ctx(id: &str) -> ToolContext {
+        ToolContext::new(id, Arc::new(Local {}))
+    }
 
     // ArgValueRetValueFn
     #[tokio::test]
     async fn test_sync_no_ctx() {
         let f = ToolFunc::new(|_args: Value| Value::string("ok"));
         let out = f
-            .call(Value::object_empty(), ToolContext::new("call-1"))
+            .call(Value::object_empty(), test_ctx("call-1"))
             .next()
             .await
             .unwrap();
@@ -418,7 +413,7 @@ mod tests {
     async fn test_sync_with_ctx() {
         let f = ToolFunc::new(|_args: Value, _ctx: ToolContext| Value::string("ok"));
         let out = f
-            .call(Value::object_empty(), ToolContext::new("call-1"))
+            .call(Value::object_empty(), test_ctx("call-1"))
             .next()
             .await
             .unwrap();
@@ -435,7 +430,7 @@ mod tests {
         let f = ToolFunc::new(|args: Value, _ctx: ToolContext| args);
         let input = Value::integer(99);
         let out = f
-            .call(input.clone(), ToolContext::new("call-1"))
+            .call(input.clone(), test_ctx("call-1"))
             .next()
             .await
             .unwrap();
@@ -447,7 +442,7 @@ mod tests {
     async fn test_async_no_ctx() {
         let f = ToolFunc::new(|_args: Value| async move { Value::bool(true) });
         let out = f
-            .call(Value::object_empty(), ToolContext::new("call-1"))
+            .call(Value::object_empty(), test_ctx("call-1"))
             .next()
             .await
             .unwrap();
@@ -459,7 +454,7 @@ mod tests {
     async fn test_async_with_ctx() {
         let f = ToolFunc::new(|_args: Value, _ctx: ToolContext| async move { Value::bool(true) });
         let out = f
-            .call(Value::object_empty(), ToolContext::new("call-1"))
+            .call(Value::object_empty(), test_ctx("call-1"))
             .next()
             .await
             .unwrap();
@@ -477,7 +472,7 @@ mod tests {
             ])
         });
         let outputs: Vec<_> = f
-            .call(Value::object_empty(), ToolContext::new("call-1"))
+            .call(Value::object_empty(), test_ctx("call-1"))
             .collect()
             .await;
         assert_eq!(outputs.len(), 3);
@@ -495,7 +490,7 @@ mod tests {
             stream::iter(vec![Value::bool(false), Value::bool(true)])
         });
         let outputs: Vec<_> = f
-            .call(Value::object_empty(), ToolContext::new("call-1"))
+            .call(Value::object_empty(), test_ctx("call-1"))
             .collect()
             .await;
         assert_eq!(outputs.len(), 2);
