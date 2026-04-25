@@ -15,10 +15,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-//--------------------------------------------------------------------------------------------------
-// Types shared between sandbox and no-sandbox builds
-//--------------------------------------------------------------------------------------------------
-
 /// A volume mount attached to a sandbox at creation time.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
