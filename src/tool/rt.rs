@@ -47,7 +47,7 @@ impl ToolFactory {
         Self::new(
             desc.name.clone(),
             Arc::new(move |spec| {
-                if let Some(_) = spec.sandbox {
+                if let Some(_) = spec.runenv {
                     (desc.clone(), f_sandbox.clone())
                 } else {
                     (desc.clone(), f_no_sandbox.clone())
