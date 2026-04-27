@@ -18,13 +18,13 @@ use crate::{
 #[derive(Clone)]
 pub struct ToolFactory {
     name: String,
-    f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>)>,
+    f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>) + Send + Sync>,
 }
 
 impl ToolFactory {
     pub fn new(
         name: impl Into<String>,
-        f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>)>,
+        f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>) + Send + Sync>,
     ) -> Self {
         Self {
             name: name.into(),
