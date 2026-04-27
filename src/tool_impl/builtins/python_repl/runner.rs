@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::Context as _;
 
@@ -64,91 +67,109 @@ fn sh(cmd: &str) -> (String, Vec<String>) {
     ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
 }
 
-async fn ensure_ready(runenv: Arc<dyn RunEnv>) -> anyhow::Result<()> {
-    let (prog, args) = sh(SETUP_CMD);
-    let r = runenv
-        .exec(prog, args, Some(SETUP_TIMEOUT_SECS))
-        .await
-        .context("Python runtime setup failed")?;
-    if r.timed_out {
-        anyhow::bail!("Python runtime setup timed out after {SETUP_TIMEOUT_SECS}s");
-    }
-    if r.exit_code != 0 {
-        anyhow::bail!(
-            "Python runtime setup failed (exit {}): {}",
-            r.exit_code,
-            if r.stderr.trim().is_empty() {
-                r.stdout.trim()
-            } else {
-                r.stderr.trim()
-            }
-        );
-    }
-    Ok(())
+pub struct PythonReplRunner {
+    initialized: AtomicBool,
 }
 
-/// Install pip packages into the ailoy venv via uv.
-pub async fn install_packages(
-    runenv: Arc<dyn RunEnv>,
-    packages: &[&str],
-) -> anyhow::Result<ExecResult> {
-    if packages.is_empty() {
-        return Ok(ExecResult {
-            stdout: String::new(),
-            stderr: String::new(),
-            exit_code: 0,
-            timed_out: false,
-        });
+impl PythonReplRunner {
+    pub fn new() -> Self {
+        Self { initialized: AtomicBool::new(false) }
     }
-    ensure_ready(runenv.clone()).await?;
-    let quoted: Vec<String> = packages.iter().map(|p| format!("'{p}'")).collect();
-    let cmd = format!("{AILOY_PIP_INSTALL} {}", quoted.join(" "));
-    let (prog, args) = sh(&cmd);
-    runenv.exec(prog, args, None).await
-}
 
-/// Execute a Python script with optional env vars.
-pub async fn run(
-    runenv: Arc<dyn RunEnv>,
-    source: &str,
-    env: &[(&str, &str)],
-) -> anyhow::Result<ExecResult> {
-    run_with_timeout(runenv, source, env, 0).await
-}
+    async fn ensure_ready(&self, runenv: &Arc<dyn RunEnv>) -> anyhow::Result<()> {
+        if self.initialized.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
-/// Like [`run`] but with a per-execution timeout (`0` = no timeout).
-pub async fn run_with_timeout(
-    runenv: Arc<dyn RunEnv>,
-    source: &str,
-    env: &[(&str, &str)],
-    timeout_secs: u64,
-) -> anyhow::Result<ExecResult> {
-    ensure_ready(runenv.clone()).await?;
+        let (prog, args) = sh(SETUP_CMD);
+        let r = runenv
+            .exec(prog, args, Some(SETUP_TIMEOUT_SECS))
+            .await
+            .context("Python runtime setup failed")?;
+        if r.timed_out {
+            anyhow::bail!("Python runtime setup timed out after {SETUP_TIMEOUT_SECS}s");
+        }
+        if r.exit_code != 0 {
+            anyhow::bail!(
+                "Python runtime setup failed (exit {}): {}",
+                r.exit_code,
+                if r.stderr.trim().is_empty() {
+                    r.stdout.trim()
+                } else {
+                    r.stderr.trim()
+                }
+            );
+        }
+        self.initialized.store(true, Ordering::Relaxed);
+        Ok(())
+    }
 
-    let script_path = format!("/tmp/__ailoy_{}.py", uuid::Uuid::new_v4());
+    /// Install pip packages into the ailoy venv via uv.
+    pub async fn install_packages(
+        &self,
+        runenv: &Arc<dyn RunEnv>,
+        packages: &[&str],
+    ) -> anyhow::Result<ExecResult> {
+        if packages.is_empty() {
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+                timed_out: false,
+            });
+        }
+        self.ensure_ready(runenv).await?;
+        let quoted: Vec<String> = packages.iter().map(|p| format!("'{p}'")).collect();
+        let cmd = format!("{AILOY_PIP_INSTALL} {}", quoted.join(" "));
+        let (prog, args) = sh(&cmd);
+        runenv.exec(prog, args, None).await
+    }
 
-    runenv
-        .write(std::path::Path::new(&script_path), source.as_bytes())
-        .await
-        .context("failed to write script")?;
+    /// Execute a Python script with optional env vars.
+    pub async fn run(
+        &self,
+        runenv: &Arc<dyn RunEnv>,
+        source: &str,
+        env: &[(&str, &str)],
+    ) -> anyhow::Result<ExecResult> {
+        self.run_with_timeout(runenv, source, env, 0).await
+    }
 
-    let env_prefix = env
-        .iter()
-        .map(|(k, v)| format!("{k}='{v}'"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let cmd = if env_prefix.is_empty() {
-        format!("{AILOY_PYTHON} {script_path}")
-    } else {
-        format!("{env_prefix} {AILOY_PYTHON} {script_path}")
-    };
+    /// Like [`run`] but with a per-execution timeout (`0` = no timeout).
+    pub async fn run_with_timeout(
+        &self,
+        runenv: &Arc<dyn RunEnv>,
+        source: &str,
+        env: &[(&str, &str)],
+        timeout_secs: u64,
+    ) -> anyhow::Result<ExecResult> {
+        self.ensure_ready(runenv).await?;
 
-    let timeout = (timeout_secs > 0).then_some(timeout_secs);
-    let (prog, args) = sh(&cmd);
-    let result = runenv.exec(prog, args, timeout).await;
+        let script_path = format!("/tmp/__ailoy_{}.py", uuid::Uuid::new_v4());
 
-    let (cleanup_prog, cleanup_args) = sh(&format!("rm -f {script_path}"));
-    let _ = runenv.exec(cleanup_prog, cleanup_args, None).await;
+        runenv
+            .write(std::path::Path::new(&script_path), source.as_bytes())
+            .await
+            .context("failed to write script")?;
 
-    result.context("script execution error")
+        let env_prefix = env
+            .iter()
+            .map(|(k, v)| format!("{k}='{v}'"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let cmd = if env_prefix.is_empty() {
+            format!("{AILOY_PYTHON} {script_path}")
+        } else {
+            format!("{env_prefix} {AILOY_PYTHON} {script_path}")
+        };
+
+        let timeout = (timeout_secs > 0).then_some(timeout_secs);
+        let (prog, args) = sh(&cmd);
+        let result = runenv.exec(prog, args, timeout).await;
+
+        let (cleanup_prog, cleanup_args) = sh(&format!("rm -f {script_path}"));
+        let _ = runenv.exec(cleanup_prog, cleanup_args, None).await;
+
+        result.context("script execution error")
+    }
 }
