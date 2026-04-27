@@ -178,16 +178,23 @@ impl Agent {
         let mut state = AgentState::new().history(history);
         #[cfg(feature = "sandbox")]
         {
-            if let Some(key) = spec.runenv {
-                if key == "default" {
-                } else if let Some(config) = provider.sandboxes.get(&key).cloned() {
-                    let sandbox = Sandbox::new(config)
-                        .await
-                        .expect("Failed to initialize sandbox");
-                    state.runenv = Arc::new(sandbox);
-                } else {
-                    return Err(anyhow::anyhow!("Sandbox '{}' not registered", key));
-                }
+            use crate::agent::RunenvSpec;
+
+            match spec.runenv {
+                Some(RunenvSpec::Sandbox { key }) => {
+                    let key = key.unwrap_or("default".into());
+                    if let Some(config) = provider.sandboxes.get(&key).cloned() {
+                        let sandbox = Sandbox::new(config)
+                            .await
+                            .expect("Failed to initialize sandbox");
+                        state.runenv = Arc::new(sandbox);
+                    } else {
+                        return Err(anyhow::anyhow!("Sandbox '{}' not registered", key));
+                    }
+                },
+                _ => {
+                    state.runenv = Arc::new(Local {});
+                },
             }
         }
         Ok(Self {
