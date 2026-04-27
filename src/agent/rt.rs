@@ -178,8 +178,9 @@ impl Agent {
         let mut state = AgentState::new().history(history);
         #[cfg(feature = "sandbox")]
         {
-            if let Some(key) = spec.sandbox {
-                if let Some(config) = provider.sandboxes.get(&key).cloned() {
+            if let Some(key) = spec.runenv {
+                if key == "default" {
+                } else if let Some(config) = provider.sandboxes.get(&key).cloned() {
                     let sandbox = Sandbox::new(config)
                         .await
                         .expect("Failed to initialize sandbox");
