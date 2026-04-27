@@ -1,9 +1,10 @@
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicU8, Ordering},
 };
 
 use anyhow::Context as _;
+use tokio::sync::Notify;
 
 use crate::runenv::{ExecResult, RunEnv};
 
@@ -67,41 +68,64 @@ fn sh(cmd: &str) -> (String, Vec<String>) {
     ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
 }
 
+async fn run_setup(runenv: &Arc<dyn RunEnv>) -> anyhow::Result<()> {
+    let (prog, args) = sh(SETUP_CMD);
+    let r = runenv
+        .exec(prog, args, Some(SETUP_TIMEOUT_SECS))
+        .await
+        .context("Python runtime setup failed")?;
+    if r.timed_out {
+        anyhow::bail!("Python runtime setup timed out after {SETUP_TIMEOUT_SECS}s");
+    }
+    if r.exit_code != 0 {
+        anyhow::bail!(
+            "Python runtime setup failed (exit {}): {}",
+            r.exit_code,
+            if r.stderr.trim().is_empty() { r.stdout.trim() } else { r.stderr.trim() }
+        );
+    }
+    Ok(())
+}
+
+const UNINITIALIZED: u8 = 0;
+const INITIALIZING: u8 = 1;
+const INITIALIZED: u8 = 2;
+
 pub struct PythonReplRunner {
-    initialized: AtomicBool,
+    state: AtomicU8,
+    notify: Notify,
 }
 
 impl PythonReplRunner {
     pub fn new() -> Self {
-        Self { initialized: AtomicBool::new(false) }
+        Self {
+            state: AtomicU8::new(UNINITIALIZED),
+            notify: Notify::new(),
+        }
     }
 
     async fn ensure_ready(&self, runenv: &Arc<dyn RunEnv>) -> anyhow::Result<()> {
-        if self.initialized.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        let (prog, args) = sh(SETUP_CMD);
-        let r = runenv
-            .exec(prog, args, Some(SETUP_TIMEOUT_SECS))
-            .await
-            .context("Python runtime setup failed")?;
-        if r.timed_out {
-            anyhow::bail!("Python runtime setup timed out after {SETUP_TIMEOUT_SECS}s");
-        }
-        if r.exit_code != 0 {
-            anyhow::bail!(
-                "Python runtime setup failed (exit {}): {}",
-                r.exit_code,
-                if r.stderr.trim().is_empty() {
-                    r.stdout.trim()
-                } else {
-                    r.stderr.trim()
+        loop {
+            // Create notified future before the CAS to avoid missing a wakeup.
+            let notified = self.notify.notified();
+            match self.state.compare_exchange(
+                UNINITIALIZED, INITIALIZING,
+                Ordering::AcqRel, Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    let result = run_setup(runenv).await;
+                    self.state.store(
+                        if result.is_ok() { INITIALIZED } else { UNINITIALIZED },
+                        Ordering::Release,
+                    );
+                    self.notify.notify_waiters();
+                    return result;
                 }
-            );
+                Err(INITIALIZING) => notified.await,
+                Err(INITIALIZED) => return Ok(()),
+                Err(_) => unreachable!(),
+            }
         }
-        self.initialized.store(true, Ordering::Relaxed);
-        Ok(())
     }
 
     /// Install pip packages into the ailoy venv via uv.
