@@ -8,8 +8,8 @@ use std::{
 };
 
 use microsandbox::{
-    Sandbox as MsbSandbox,
-    sandbox::{ExecOptionsBuilder, PullPolicy, SandboxStatus},
+    ExecOutput, MicrosandboxError, Sandbox as MsbSandbox,
+    sandbox::{ExecOptionsBuilder, PullPolicy, SandboxBuilder, SandboxStatus},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -86,9 +86,6 @@ pub struct SandboxConfig {
     /// When `true`, disable all network access. Default: `false`.
     pub disable_network: bool,
 
-    /// Idle shutdown timeout in seconds. Default: `300`.
-    pub idle_timeout_secs: u64,
-
     /// Per-exec timeout in seconds. Default: `60`.
     pub default_timeout_secs: u64,
 
@@ -114,7 +111,6 @@ impl Default for SandboxConfig {
             workdir: "/workspace".to_string(),
             env: HashMap::new(),
             disable_network: false,
-            idle_timeout_secs: 300,
             default_timeout_secs: 60,
             max_output_chars: 30_000,
             persist: false,
@@ -386,26 +382,40 @@ impl Sandbox {
         Ok(result?)
     }
 
-    /// Acquire the mutex and start the VM if it is stopped.
-    /// After the operation, caller must call `guard.stop_and_wait()`.
+    /// Acquire the mutex and start the VM for the next operation.
+    ///
+    /// We always stop the VM after each operation, so `start_detached()` should
+    /// succeed unconditionally here. If the previous `stop_and_wait()` failed
+    /// silently and the VM is still alive, microsandbox returns
+    /// `SandboxStillRunning` — we force-stop and retry once.
+    ///
+    /// Avoids relying on `vm_is_running()` (a DB + PID liveness check) which can
+    /// return a false positive when a dead VM's PID is quickly reused by the OS,
+    /// causing the stale inner handle to be used and all writes/execs to fail.
     async fn ensure_running(&self) -> anyhow::Result<tokio::sync::MutexGuard<'_, MsbSandbox>> {
-        use anyhow::Context as _;
         let mut guard = self.inner.lock().await;
-        if !vm_is_running(&self.name).await {
-            let started = MsbSandbox::start_detached(&self.name)
-                .await
-                .context("sandbox start")?;
-            let _ = started.shell(&format!("mkdir -p {}", self.workdir)).await;
-            *guard = started;
-        }
+
+        let started = match MsbSandbox::start_detached(&self.name).await {
+            Ok(s) => s,
+            Err(MicrosandboxError::SandboxStillRunning(_)) => {
+                // Previous stop_and_wait() failed silently — force-stop and retry.
+                let _ = guard.stop_and_wait().await;
+                MsbSandbox::start_detached(&self.name)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("sandbox start after force-stop: {e}"))?
+            }
+            Err(e) => return Err(anyhow::anyhow!("sandbox start: {e}")),
+        };
+
+        let _ = started.shell(&format!("mkdir -p {}", self.workdir)).await;
+        *guard = started;
         Ok(guard)
     }
 
     fn handle_exec_result_static(
-        result: Result<microsandbox::ExecOutput, microsandbox::MicrosandboxError>,
+        result: Result<ExecOutput, MicrosandboxError>,
         max_output_chars: usize,
     ) -> anyhow::Result<ExecResult> {
-        use microsandbox::MicrosandboxError;
         match result {
             Ok(output) => {
                 let stdout = truncate_output(output.stdout().unwrap_or_default(), max_output_chars);
@@ -499,7 +509,6 @@ async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result
         .image(config.image.as_str())
         .cpus(config.cpus)
         .memory(config.memory_mib)
-        .idle_timeout(config.idle_timeout_secs)
         .pull_policy(PullPolicy::IfMissing);
 
     for (k, v) in &config.env {
@@ -515,10 +524,7 @@ async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result
     Ok(sb)
 }
 
-fn apply_volume_mount(
-    builder: microsandbox::sandbox::SandboxBuilder,
-    mount: &VolumeMount,
-) -> microsandbox::sandbox::SandboxBuilder {
+fn apply_volume_mount(builder: SandboxBuilder, mount: &VolumeMount) -> SandboxBuilder {
     match mount {
         VolumeMount::Bind {
             host,
