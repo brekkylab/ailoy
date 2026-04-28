@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[cfg(feature = "sandbox")]
-use crate::sandbox::{Sandbox, SandboxSource};
+use crate::runenv::{RunEnv, Sandbox, SandboxConfig};
 use crate::{
     agent::{Agent, AgentCard, AgentState},
     lang_model::LangModel,
@@ -14,20 +14,43 @@ use crate::{
 
 /// Spec-free builder for [`Agent`].
 ///
-/// Accepts runtime objects directly — [`LangModel`], [`Tool`], and optionally an
-/// [`Arc<Sandbox>`] or [`SandboxConfig`] — without going through [`AgentSpec`] or
-/// [`AgentProvider`].  This is the preferred construction path when the caller already
-/// holds materialised runtime objects (e.g. from an existing session or an external DI
-/// container).
+/// Accepts runtime objects directly — [`LangModel`], [`Tool`], and optionally a
+/// sandbox — without going through [`AgentSpec`] or [`AgentProvider`].  This is
+/// the preferred construction path when the caller already holds materialised
+/// runtime objects (e.g. from an existing session or an external DI container).
 ///
-/// Use [`crate::agent::Agent::try_with_provider`] / [`Agent::try_new`] when you want the
-/// spec/provider path (YAML-friendly, string-keyed).
+/// Use [`crate::agent::Agent::try_with_provider`] / [`Agent::try_new`] when you
+/// want the spec/provider path (YAML-friendly, string-keyed).
 pub struct AgentBuilder {
     model: LangModel,
     instruction: Option<String>,
     tools: Vec<Tool>,
     #[cfg(feature = "sandbox")]
     sandbox: Option<SandboxSource>,
+}
+
+/// How the sandbox is supplied to an [`AgentBuilder`].
+///
+/// Pass an `Arc<Sandbox>` to share an existing VM across agents, or a
+/// `SandboxConfig` to create a dedicated VM during [`AgentBuilder::build`].
+#[cfg(feature = "sandbox")]
+pub enum SandboxSource {
+    Shared(Arc<dyn RunEnv>),
+    Fresh(SandboxConfig),
+}
+
+#[cfg(feature = "sandbox")]
+impl From<Arc<Sandbox>> for SandboxSource {
+    fn from(arc: Arc<Sandbox>) -> Self {
+        SandboxSource::Shared(arc)
+    }
+}
+
+#[cfg(feature = "sandbox")]
+impl From<SandboxConfig> for SandboxSource {
+    fn from(c: SandboxConfig) -> Self {
+        SandboxSource::Fresh(c)
+    }
 }
 
 impl AgentBuilder {
@@ -62,7 +85,7 @@ impl AgentBuilder {
     /// Register an already-built [`Agent`] as a subagent tool.
     ///
     /// If both parent and subagent should share a sandbox, pass the same
-    /// `Arc<Sandbox>` to each builder via `.with_sandbox(arc.clone())`.
+    /// `Arc<Sandbox>` to each builder via `.sandbox(arc.clone())`.
     pub fn subagent(mut self, card: AgentCard, agent: Agent) -> Self {
         let sub = Arc::new(Mutex::new(agent));
         self.tools.push(make_subagent_tool(card, sub));
@@ -87,19 +110,16 @@ impl AgentBuilder {
             .map(|inst| vec![Message::new(Role::System).with_contents([Part::text(inst)])])
             .unwrap_or_default();
 
+        #[allow(unused_mut)]
+        let mut state = AgentState::new().history(history);
+
         #[cfg(feature = "sandbox")]
-        let state = {
-            let resolved_sandbox: Option<Arc<Sandbox>> = match self.sandbox {
-                Some(SandboxSource::Shared(arc)) => Some(arc),
-                Some(SandboxSource::Fresh(cfg)) => Some(Arc::new(Sandbox::new(cfg).await?)),
-                None => None,
+        if let Some(source) = self.sandbox {
+            state.runenv = match source {
+                SandboxSource::Shared(arc) => arc,
+                SandboxSource::Fresh(cfg) => Arc::new(Sandbox::new(cfg).await?),
             };
-            let mut s = AgentState::with_history(history);
-            s.sandbox = resolved_sandbox;
-            s
-        };
-        #[cfg(not(feature = "sandbox"))]
-        let state = AgentState::with_history(history);
+        }
 
         Ok(Agent::from_parts(self.model, self.tools, state))
     }
@@ -125,9 +145,6 @@ mod tests {
             .await
             .unwrap();
 
-        #[cfg(feature = "sandbox")]
-        assert!(agent.state.sandbox.is_none());
-
         let history = agent.get_history();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].role, Role::System);
@@ -142,11 +159,10 @@ mod tests {
     #[cfg(feature = "sandbox")]
     #[tokio::test]
     async fn test_builder_shared_arc_sandbox() {
-        use crate::sandbox::{Sandbox, SandboxConfig};
+        use crate::runenv::SandboxConfig;
 
         let vm = Arc::new(
             Sandbox::new(SandboxConfig {
-                name: Some(format!("ab-sh-{}", &uuid::Uuid::new_v4().to_string()[..8])),
                 ..Default::default()
             })
             .await
@@ -173,23 +189,32 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
-            Arc::ptr_eq(parent.state.sandbox.as_ref().unwrap(), &vm),
-            "parent sandbox must be the shared Arc"
-        );
+        // Verify shared sandbox: write through vm, read through parent's runenv.
+        vm.write(
+            std::path::Path::new("/workspace/shared_test.txt"),
+            b"shared_ok",
+        )
+        .await
+        .expect("write failed");
 
-        // Cleanup — unwrap the Arc (builder test owns the only strong ref here)
-        if let Some(sb) = parent.state.sandbox {
-            if let Ok(owned) = Arc::try_unwrap(sb) {
-                let _ = owned.shutdown().await;
-            }
-        }
+        let bytes = parent
+            .state
+            .runenv
+            .read(std::path::Path::new("/workspace/shared_test.txt"))
+            .await
+            .expect("read failed");
+
+        assert_eq!(
+            bytes,
+            b"shared_ok",
+            "parent runenv must see file written through shared vm"
+        );
     }
 
     #[cfg(feature = "sandbox")]
     #[tokio::test]
     async fn test_builder_fresh_config_creates_distinct_sandbox() {
-        use crate::sandbox::SandboxConfig;
+        use crate::runenv::SandboxConfig;
 
         let cfg1 = SandboxConfig::default();
         let cfg2 = SandboxConfig::default();
@@ -206,23 +231,38 @@ mod tests {
             .await
             .unwrap();
 
-        let sb1 = agent1.state.sandbox.as_ref().unwrap();
-        let sb2 = agent2.state.sandbox.as_ref().unwrap();
+        // Verify isolation: write through agent1's runenv, confirm agent2 can't see it.
+        agent1
+            .state
+            .runenv
+            .write(
+                std::path::Path::new("/workspace/isolation_test.txt"),
+                b"agent1_only",
+            )
+            .await
+            .expect("write failed");
+
+        let result = agent2
+            .state
+            .runenv
+            .read(std::path::Path::new("/workspace/isolation_test.txt"))
+            .await;
+
         assert!(
-            !Arc::ptr_eq(sb1, sb2),
-            "distinct configs must produce distinct Arc<Sandbox> instances"
+            result.is_err(),
+            "distinct sandbox should not see file from the other sandbox"
         );
     }
 
     /// Parent and subagent built with the same `Arc<Sandbox>` share the VM's
-    /// filesystem: a file written through the parent's sandbox is immediately
-    /// visible when read through the subagent's sandbox.
+    /// filesystem: a file written through the parent's runenv is immediately
+    /// visible when read through the subagent's runenv.
     #[cfg(feature = "sandbox")]
     #[tokio::test]
     async fn test_parent_and_subagent_share_sandbox_filesystem() {
         use std::sync::Arc;
 
-        use crate::sandbox::{Sandbox, SandboxConfig};
+        use crate::runenv::{Sandbox, SandboxConfig};
 
         let vm = Arc::new(
             Sandbox::new(SandboxConfig::default())
@@ -230,17 +270,13 @@ mod tests {
                 .expect("sandbox creation failed"),
         );
 
-        // Build subagent first; clone its sandbox Arc before handing it to the parent.
+        // Build subagent first; clone the runenv Arc before handing it to the parent.
         let sub = AgentBuilder::new(test_model())
             .sandbox(vm.clone())
             .build()
             .await
             .unwrap();
-        let sub_sandbox = sub
-            .state
-            .sandbox
-            .clone()
-            .expect("subagent must have sandbox");
+        let sub_runenv = sub.state.runenv.clone();
 
         let parent = AgentBuilder::new(test_model())
             .sandbox(vm.clone())
@@ -255,37 +291,27 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let parent_sandbox = parent
+
+        // Write a file through the parent's runenv, read it back through the
+        // subagent's runenv clone — both sides must observe the same filesystem state.
+        parent
             .state
-            .sandbox
-            .as_ref()
-            .expect("parent must have sandbox");
-
-        // Both arcs must be the same object.
-        assert!(
-            Arc::ptr_eq(parent_sandbox, &vm),
-            "parent sandbox != shared vm"
-        );
-        assert!(
-            Arc::ptr_eq(&sub_sandbox, &vm),
-            "subagent sandbox != shared vm"
-        );
-
-        // Write a file through the parent's sandbox, read it back through the
-        // subagent's sandbox — both sides must observe the same filesystem state.
-        parent_sandbox
-            .write_file("/workspace/shared.txt", b"shared_ok")
+            .runenv
+            .write(
+                std::path::Path::new("/workspace/shared.txt"),
+                b"shared_ok",
+            )
             .await
-            .expect("write_file failed");
+            .expect("write failed");
 
-        let content = sub_sandbox
-            .read_file("/workspace/shared.txt")
+        let bytes = sub_runenv
+            .read(std::path::Path::new("/workspace/shared.txt"))
             .await
-            .expect("subagent sandbox should see file written by parent");
+            .expect("subagent runenv should see file written by parent");
 
         assert!(
-            content.contains("shared_ok"),
-            "subagent sandbox did not see the file written by parent, got: {content:?}"
+            bytes.starts_with(b"shared_ok"),
+            "subagent runenv did not see the file written by parent, got: {bytes:?}"
         );
     }
 }

@@ -2,19 +2,19 @@
 //! without going through the [`ToolFactory`] / [`crate::tool::ToolSet`] lifecycle.
 //!
 //! Use these when you know the target configuration up-front and don't need
-//! the sandbox-aware factory indirection — for example, in tests or in
-//! one-shot scripts.
+//! the factory lifecycle — for example, in tests or in one-shot scripts.
 
 use url::Url;
 
-use crate::tool::{BuiltinToolProvider, Tool};
+use crate::{
+    agent::AgentSpec,
+    tool::{BuiltinToolProvider, Tool},
+};
 
 /// Build a [`Tool`] for the given [`BuiltinToolProvider`].
-///
-/// Chooses the sandbox-aware variant automatically when the `sandbox` feature
-/// is enabled.
-pub fn make_builtin_tool(provider: &BuiltinToolProvider) -> Tool {
-    crate::tool_impl::make_builtin_tool(provider)
+pub async fn make_builtin_tool(provider: &BuiltinToolProvider) -> anyhow::Result<Tool> {
+    let factory = crate::tool_impl::make_builtin_tool(provider).await?;
+    Ok(factory.make(&AgentSpec::new("")))
 }
 
 /// Build a [`Tool`] that delegates to a remote A2A agent.

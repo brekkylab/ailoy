@@ -51,7 +51,7 @@ pub struct AgentProvider {
     /// always regenerated at runtime and is not serialised.
     #[cfg(feature = "sandbox")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub sandboxes: BTreeMap<String, crate::sandbox::SandboxConfig>,
+    pub sandboxes: BTreeMap<String, crate::runenv::SandboxConfig>,
 }
 
 impl AgentProvider {
@@ -165,7 +165,7 @@ impl AgentProvider {
     pub fn sandbox(
         &mut self,
         key: impl Into<String>,
-        config: crate::sandbox::SandboxConfig,
+        config: crate::runenv::SandboxConfig,
     ) -> &mut Self {
         self.sandboxes.insert(key.into(), config);
         self

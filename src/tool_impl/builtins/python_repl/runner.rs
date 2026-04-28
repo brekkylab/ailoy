@@ -1,9 +1,12 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
+};
 
 use anyhow::Context as _;
-use tokio::sync::Mutex;
+use tokio::sync::Notify;
 
-use crate::sandbox::{ExecResult, Sandbox};
+use crate::runenv::{ExecResult, RunEnv};
 
 /// All ailoy-managed files live under `$XDG_CACHE_HOME/ailoy` (default `~/.cache/ailoy`):
 ///   - uv binary : `$AILOY_CACHE/bin/uv`  (symlink if system uv exists, else downloaded)
@@ -61,52 +64,74 @@ const AILOY_PYTHON: &str = r#""${XDG_CACHE_HOME:-$HOME/.cache}/ailoy/venv/bin/py
 /// uv pip install targeting the ailoy venv. Both paths resolved by sh at runtime.
 const AILOY_PIP_INSTALL: &str = r#""${XDG_CACHE_HOME:-$HOME/.cache}/ailoy/bin/uv" pip install --python "${XDG_CACHE_HOME:-$HOME/.cache}/ailoy/venv/bin/python3""#;
 
-/// Runs Python scripts in a uv-managed venv, either inside a MicroVM sandbox or
-/// on the host.  On first use, `ensure_ready` installs uv and creates the venv
-/// (~30 s cold; near-instant on subsequent calls since all steps are idempotent).
-pub struct PythonScriptRunner {
-    initialized: Arc<Mutex<bool>>,
+fn sh(cmd: &str) -> (String, Vec<String>) {
+    ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
 }
 
-impl PythonScriptRunner {
+async fn run_setup(runenv: &Arc<dyn RunEnv>) -> anyhow::Result<()> {
+    let (prog, args) = sh(SETUP_CMD);
+    let r = runenv
+        .exec(prog, args, Some(SETUP_TIMEOUT_SECS))
+        .await
+        .context("Python runtime setup failed")?;
+    if r.timed_out {
+        anyhow::bail!("Python runtime setup timed out after {SETUP_TIMEOUT_SECS}s");
+    }
+    if r.exit_code != 0 {
+        anyhow::bail!(
+            "Python runtime setup failed (exit {}): {}",
+            r.exit_code,
+            if r.stderr.trim().is_empty() { r.stdout.trim() } else { r.stderr.trim() }
+        );
+    }
+    Ok(())
+}
+
+const UNINITIALIZED: u8 = 0;
+const INITIALIZING: u8 = 1;
+const INITIALIZED: u8 = 2;
+
+pub struct PythonReplRunner {
+    state: AtomicU8,
+    notify: Notify,
+}
+
+impl PythonReplRunner {
     pub fn new() -> Self {
         Self {
-            initialized: Arc::new(Mutex::new(false)),
+            state: AtomicU8::new(UNINITIALIZED),
+            notify: Notify::new(),
         }
     }
 
-    /// Ensure uv and the ailoy venv are present. Runs at most once per instance.
-    async fn ensure_ready(&self, sandbox: Option<&Arc<Sandbox>>) -> anyhow::Result<()> {
-        let mut guard = self.initialized.lock().await;
-        if *guard {
-            return Ok(());
-        }
-        let r = self
-            .run_shell(sandbox, SETUP_CMD, Some(SETUP_TIMEOUT_SECS))
-            .await
-            .context("Python runtime setup failed")?;
-        if r.timed_out {
-            anyhow::bail!("Python runtime setup timed out after {SETUP_TIMEOUT_SECS}s");
-        }
-        if r.exit_code != 0 {
-            anyhow::bail!(
-                "Python runtime setup failed (exit {}): {}",
-                r.exit_code,
-                if r.stderr.trim().is_empty() {
-                    r.stdout.trim()
-                } else {
-                    r.stderr.trim()
+    async fn ensure_ready(&self, runenv: &Arc<dyn RunEnv>) -> anyhow::Result<()> {
+        loop {
+            // Create notified future before the CAS to avoid missing a wakeup.
+            let notified = self.notify.notified();
+            match self.state.compare_exchange(
+                UNINITIALIZED, INITIALIZING,
+                Ordering::AcqRel, Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    let result = run_setup(runenv).await;
+                    self.state.store(
+                        if result.is_ok() { INITIALIZED } else { UNINITIALIZED },
+                        Ordering::Release,
+                    );
+                    self.notify.notify_waiters();
+                    return result;
                 }
-            );
+                Err(INITIALIZING) => notified.await,
+                Err(INITIALIZED) => return Ok(()),
+                Err(_) => unreachable!(),
+            }
         }
-        *guard = true;
-        Ok(())
     }
 
     /// Install pip packages into the ailoy venv via uv.
     pub async fn install_packages(
         &self,
-        sandbox: Option<&Arc<Sandbox>>,
+        runenv: &Arc<dyn RunEnv>,
         packages: &[&str],
     ) -> anyhow::Result<ExecResult> {
         if packages.is_empty() {
@@ -117,46 +142,40 @@ impl PythonScriptRunner {
                 timed_out: false,
             });
         }
-        self.ensure_ready(sandbox).await?;
+        self.ensure_ready(runenv).await?;
         let quoted: Vec<String> = packages.iter().map(|p| format!("'{p}'")).collect();
         let cmd = format!("{AILOY_PIP_INSTALL} {}", quoted.join(" "));
-        self.run_shell(sandbox, &cmd, None).await
+        let (prog, args) = sh(&cmd);
+        runenv.exec(prog, args, None).await
     }
 
     /// Execute a Python script with optional env vars.
     pub async fn run(
         &self,
-        sandbox: Option<&Arc<Sandbox>>,
+        runenv: &Arc<dyn RunEnv>,
         source: &str,
         env: &[(&str, &str)],
     ) -> anyhow::Result<ExecResult> {
-        self.run_with_timeout(sandbox, source, env, 0).await
+        self.run_with_timeout(runenv, source, env, 0).await
     }
 
     /// Like [`run`] but with a per-execution timeout (`0` = no timeout).
     pub async fn run_with_timeout(
         &self,
-        sandbox: Option<&Arc<Sandbox>>,
+        runenv: &Arc<dyn RunEnv>,
         source: &str,
         env: &[(&str, &str)],
         timeout_secs: u64,
     ) -> anyhow::Result<ExecResult> {
-        self.ensure_ready(sandbox).await?;
+        self.ensure_ready(runenv).await?;
 
         let script_path = format!("/tmp/__ailoy_{}.py", uuid::Uuid::new_v4());
 
-        // Write script — only the I/O method differs between host and sandbox.
-        if let Some(sb) = sandbox {
-            sb.write_file(&script_path, source.as_bytes())
-                .await
-                .context("failed to write script to sandbox")?;
-        } else {
-            std::fs::write(&script_path, source.as_bytes())
-                .context("failed to write script to host")?;
-        }
+        runenv
+            .write(std::path::Path::new(&script_path), source.as_bytes())
+            .await
+            .context("failed to write script")?;
 
-        // Build the execution command — identical string for both paths.
-        // $HOME is expanded by sh at runtime.
         let env_prefix = env
             .iter()
             .map(|(k, v)| format!("{k}='{v}'"))
@@ -169,46 +188,12 @@ impl PythonScriptRunner {
         };
 
         let timeout = (timeout_secs > 0).then_some(timeout_secs);
-        let result = self.run_shell(sandbox, &cmd, timeout).await;
+        let (prog, args) = sh(&cmd);
+        let result = runenv.exec(prog, args, timeout).await;
 
-        // Cleanup script file — only the I/O method differs.
-        if let Some(sb) = sandbox {
-            let _ = sb.shell(&format!("rm -f {script_path}")).await;
-        } else {
-            let _ = std::fs::remove_file(&script_path);
-        }
+        let (cleanup_prog, cleanup_args) = sh(&format!("rm -f {script_path}"));
+        let _ = runenv.exec(cleanup_prog, cleanup_args, None).await;
 
         result.context("script execution error")
-    }
-
-    // -------------------------------------------------------------------------
-
-    async fn run_shell(
-        &self,
-        sandbox: Option<&Arc<Sandbox>>,
-        script: &str,
-        timeout_secs: Option<u64>,
-    ) -> anyhow::Result<ExecResult> {
-        if let Some(sb) = sandbox {
-            if let Some(t) = timeout_secs {
-                sb.shell_with_timeout(script, t).await
-            } else {
-                sb.shell(script).await
-            }
-            .context("sandbox shell error")
-        } else {
-            let out = tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(script)
-                .output()
-                .await
-                .context("host shell error")?;
-            Ok(ExecResult {
-                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-                exit_code: out.status.code().unwrap_or(-1),
-                timed_out: false,
-            })
-        }
     }
 }
