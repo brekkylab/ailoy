@@ -1,18 +1,22 @@
-use std::{pin::Pin, sync::Arc};
+use std::pin::Pin;
+use std::sync::Arc;
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
+#[cfg(feature = "sandbox")]
+use crate::runenv::Sandbox;
 use crate::{
     agent::{AgentProvider, AgentSpec, default_provider},
     lang_model::LangModel,
     message::{FinishReason, Message, MessageOutput, Part, Role},
-    sandbox::Sandbox,
+    runenv::{Local, RunEnv},
     tool::{Tool, ToolContext, ToolSet},
 };
 
 pub struct AgentState {
     pub history: Vec<Message>,
-    pub sandbox: Option<Arc<Sandbox>>,
+
+    pub runenv: Arc<dyn RunEnv>,
 }
 
 impl Default for AgentState {
@@ -25,15 +29,19 @@ impl AgentState {
     pub fn new() -> Self {
         Self {
             history: Vec::new(),
-            sandbox: None,
+            runenv: Arc::new(Local {}),
         }
     }
 
-    pub fn with_history(history: Vec<Message>) -> Self {
-        Self {
-            history,
-            sandbox: None,
-        }
+    pub fn history(mut self, history: Vec<Message>) -> Self {
+        self.history = history;
+        self
+    }
+
+    #[cfg(feature = "sandbox")]
+    pub fn sandbox(mut self, sandbox: crate::runenv::Sandbox) -> Self {
+        self.runenv = Arc::new(sandbox);
+        self
     }
 }
 
@@ -167,28 +175,26 @@ impl Agent {
             .unwrap_or_default();
 
         #[allow(unused_mut)]
-        let mut state = AgentState::with_history(history);
+        let mut state = AgentState::new().history(history);
         #[cfg(feature = "sandbox")]
         {
-            use std::sync::Arc;
+            use crate::agent::RunenvSpec;
 
-            use crate::sandbox::Sandbox;
-            if let Some(key) = spec.sandbox {
-                if let Some(config) = provider.sandboxes.get(&key).cloned() {
-                    let sandbox = Arc::new(
-                        Sandbox::new(config)
+            match spec.runenv {
+                Some(RunenvSpec::Sandbox { key }) => {
+                    let key = key.unwrap_or("default".into());
+                    if let Some(config) = provider.sandboxes.get(&key).cloned() {
+                        let sandbox = Sandbox::new(config)
                             .await
-                            .expect("Failed to initialize sandbox"),
-                    );
-                    // Stop immediately after setup — VM only runs during tool execution.
-                    sandbox
-                        .stop()
-                        .await
-                        .expect("Failed to stop sandbox after init");
-                    state.sandbox = Some(sandbox);
-                } else {
-                    return Err(anyhow::anyhow!("Sandbox '{}' not registered", key));
-                }
+                            .expect("Failed to initialize sandbox");
+                        state.runenv = Arc::new(sandbox);
+                    } else {
+                        return Err(anyhow::anyhow!("Sandbox '{}' not registered", key));
+                    }
+                },
+                _ => {
+                    state.runenv = Arc::new(Local {});
+                },
             }
         }
         Ok(Self {
@@ -231,10 +237,7 @@ impl Agent {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
 
-            let mut ctx = ToolContext::new(call_id.clone());
-            if let Some(sandbox) = &self.state.sandbox {
-                ctx = ctx.sandbox(sandbox.clone());
-            }
+            let ctx = ToolContext::new(call_id.clone(), self.state.runenv.clone());
 
             let tx = tx.clone();
 
@@ -339,10 +342,6 @@ impl Agent {
                     }
                 };
 
-                if let Some(sb) = &self.state.sandbox {
-                    sb.start().await?;
-                }
-
                 let mut tool_stream = self.execute_tool_calls(tool_calls)?;
                 while let Some(event) = tool_stream.next().await {
                     match event {
@@ -354,10 +353,6 @@ impl Agent {
                             yield output;
                         }
                     }
-                }
-
-                if let Some(sb) = &self.state.sandbox {
-                    sb.stop().await?;
                 }
             }
         })
@@ -389,7 +384,7 @@ mod tests {
         provider.model_claude(std::env::var("ANTHROPIC_API_KEY").unwrap_or_default());
         #[cfg(feature = "sandbox")]
         {
-            use crate::sandbox::SandboxConfig;
+            use crate::runenv::SandboxConfig;
 
             provider.sandbox("default", SandboxConfig::default());
         }
@@ -884,18 +879,6 @@ mod tests {
 
         let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
-        // ── 1. After creation: sandbox exists but is stopped ───────────────
-        let sb = agent
-            .state
-            .sandbox
-            .as_ref()
-            .expect("sandbox should exist after construction");
-        assert!(
-            !sb.is_running(),
-            "sandbox should be stopped after construction"
-        );
-
-        // ── 2. Run a turn that triggers python_repl ─────────────────────────
         let query = Message::new(Role::User).with_contents([Part::text(
             "Run this Python code and tell me the output: print('ailoy_sandbox_ok')",
         )]);
@@ -906,14 +889,6 @@ mod tests {
             }
         }
 
-        // ── 3. After run(): sandbox stopped ────────────────────────────────
-        let sb = agent.state.sandbox.as_ref().unwrap();
-        assert!(
-            !sb.is_running(),
-            "sandbox should be stopped after run() completes"
-        );
-
-        // ── 2b. Verify python_repl actually ran inside the VM ───────────────
         let tool_result = agent
             .get_history()
             .iter()
@@ -964,16 +939,6 @@ mod tests {
 
         let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
-        // Start the sandbox manually so tool calls can proceed.
-        agent
-            .state
-            .sandbox
-            .as_ref()
-            .unwrap()
-            .start()
-            .await
-            .expect("failed to start sandbox");
-
         let log = "/tmp/agent_serial_test.txt";
         let query = Message::new(Role::User).with_contents([Part::text(format!(
             "Run these two shell commands in a single response using two parallel bash tool calls:\n\
@@ -988,18 +953,16 @@ mod tests {
             }
         }
 
-        // Re-start the sandbox (agent.run() stops it) to read the log.
-        let sb = agent.state.sandbox.as_ref().unwrap();
-        sb.start()
-            .await
-            .expect("failed to restart sandbox for log read");
-        let log_content = sb
-            .shell(&format!("cat {log}"))
+        // Read the log via RunEnv — exec handles start/stop internally.
+        let log_bytes = agent
+            .state
+            .runenv
+            .read(std::path::Path::new(log))
             .await
             .expect("failed to read log");
-        sb.stop().await.ok();
+        let log_content = String::from_utf8_lossy(&log_bytes).into_owned();
 
-        let lines: Vec<&str> = log_content.stdout.lines().collect();
+        let lines: Vec<&str> = log_content.lines().collect();
         assert_eq!(lines.len(), 4, "expected 4 log lines, got: {lines:?}");
 
         // Serial: start_N must be immediately followed by end_N (same N).
@@ -1146,21 +1109,31 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         // Seed the sandbox with the skill file and the test PDF before running the agent.
         let pdf_bytes = minimal_pdf_bytes();
-        let sb = agent.state.sandbox.as_ref().expect("sandbox must exist");
-        sb.start().await.expect("failed to start sandbox for setup");
-        sb.shell("mkdir -p /workspace/skills")
+        // mkdir via exec — start/stop is handled internally by RunEnv.
+        let _ = agent
+            .state
+            .runenv
+            .exec(
+                "sh".to_string(),
+                vec!["-c".to_string(), "mkdir -p /workspace/skills".to_string()],
+                None,
+            )
+            .await;
+        agent
+            .state
+            .runenv
+            .write(
+                std::path::Path::new("/workspace/skills/convert_pdf_to_md.md"),
+                skill_md.as_bytes(),
+            )
             .await
-            .expect("failed to create skills directory");
-        sb.write_file(
-            "/workspace/skills/convert_pdf_to_md.md",
-            skill_md.as_bytes(),
-        )
-        .await
-        .expect("failed to write skill file into sandbox");
-        sb.write_file("/workspace/test.pdf", &pdf_bytes)
+            .expect("failed to write skill file into sandbox");
+        agent
+            .state
+            .runenv
+            .write(std::path::Path::new("/workspace/test.pdf"), &pdf_bytes)
             .await
             .expect("failed to write PDF into sandbox");
-        sb.stop().await.expect("failed to stop sandbox after setup");
 
         // Ask the agent to convert the PDF — it must cat the SKILL.md first.
         let query = Message::new(Role::User).with_contents([Part::text(
@@ -1177,23 +1150,13 @@ To activate a skill, read its SKILL.md using the bash tool \
         }
 
         // Verify the markdown file was written to the sandbox.
-        agent
+        let markdown_bytes = agent
             .state
-            .sandbox
-            .as_ref()
-            .unwrap()
-            .start()
-            .await
-            .expect("failed to start sandbox for verification");
-
-        let markdown = agent
-            .state
-            .sandbox
-            .as_ref()
-            .unwrap()
-            .read_file("/workspace/test.md")
+            .runenv
+            .read(std::path::Path::new("/workspace/test.md"))
             .await
             .expect("agent should have written /workspace/test.md");
+        let markdown = String::from_utf8_lossy(&markdown_bytes).into_owned();
 
         assert!(
             !markdown.trim().is_empty(),

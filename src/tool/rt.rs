@@ -18,13 +18,13 @@ use crate::{
 #[derive(Clone)]
 pub struct ToolFactory {
     name: String,
-    f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>)>,
+    f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>) + Send + Sync>,
 }
 
 impl ToolFactory {
     pub fn new(
         name: impl Into<String>,
-        f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>)>,
+        f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>) + Send + Sync>,
     ) -> Self {
         Self {
             name: name.into(),
@@ -40,18 +40,17 @@ impl ToolFactory {
         )
     }
 
-    // Sandbox-aware, if agent have sandbox: f1, or f2
-    pub fn sandbox_aware(desc: ToolDesc, f_sandbox: ToolFunc, f_no_sandbox: ToolFunc) -> Self {
-        let f_sandbox = Arc::new(f_sandbox);
-        let f_no_sandbox = Arc::new(f_no_sandbox);
+    // Create with initializer
+    pub fn with_initializer(
+        desc: ToolDesc,
+        f: impl Fn(&AgentSpec) -> ToolFunc + Send + Sync + 'static,
+    ) -> Self
+    {
         Self::new(
             desc.name.clone(),
             Arc::new(move |spec| {
-                if let Some(_) = spec.sandbox {
-                    (desc.clone(), f_sandbox.clone())
-                } else {
-                    (desc.clone(), f_no_sandbox.clone())
-                }
+                let f = f(spec);
+                (desc.clone(), Arc::new(f))
             }),
         )
     }

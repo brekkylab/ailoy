@@ -3,6 +3,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::AgentCard;
 
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub enum RunenvSpec {
+    Local,
+    
+    Sandbox{
+        key: Option<String>,
+    }
+}
+
 /// Defines the logical identity of an agent as configured by the user.
 ///
 /// `AgentSpec` captures what makes an agent distinct — the language model it uses,
@@ -40,10 +49,11 @@ pub struct AgentSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub card: Option<AgentCard>,
 
-    /// Sandbox to run
-    /// If specified, it'll run in sandbox environment
+    /// Run environment.
+    /// If not specified, the tools will be run in local machine.
+    /// If specified, it'll use the run environment
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sandbox: Option<String>,
+    pub runenv: Option<RunenvSpec>,
 }
 
 impl AgentSpec {
@@ -54,7 +64,7 @@ impl AgentSpec {
             tools: Vec::new(),
             subagents: Vec::new(),
             card: None,
-            sandbox: None,
+            runenv: None,
         }
     }
 
@@ -89,7 +99,7 @@ impl AgentSpec {
     }
 
     pub fn sandbox(mut self, sandbox: impl Into<String>) -> Self {
-        self.sandbox = Some(sandbox.into());
+        self.runenv = Some(RunenvSpec::Sandbox { key: Some(sandbox.into()) });
         self
     }
 }
