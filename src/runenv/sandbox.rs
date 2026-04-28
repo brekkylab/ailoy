@@ -1,10 +1,10 @@
 //! Thin wrapper around the `microsandbox` crate, exposing an ailoy-internal
 //! `Sandbox` type so the public API is not coupled to the underlying library.
 
-use std::time::Duration;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use microsandbox::{
@@ -206,17 +206,17 @@ impl RunEnv for Sandbox {
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {
         let guest_path = path.to_string_lossy().into_owned();
         let guard = self.ensure_running().await?;
-        let bytes = guard.fs().read(&guest_path).await?.to_vec();
+        let result = guard.fs().read(&guest_path).await.map(|b| b.to_vec());
         let _ = guard.stop_and_wait().await;
-        Ok(bytes)
+        Ok(result?)
     }
 
     async fn write(&self, path: &Path, content: &[u8]) -> anyhow::Result<()> {
         let guest_path = path.to_string_lossy().into_owned();
         let guard = self.ensure_running().await?;
-        guard.fs().write(&guest_path, content).await?;
+        let result = guard.fs().write(&guest_path, content).await;
         let _ = guard.stop_and_wait().await;
-        Ok(())
+        Ok(result?)
     }
 }
 
@@ -345,43 +345,43 @@ impl Sandbox {
         let guest_path = guest_path.to_string();
         let data = data.to_vec();
         let guard = self.ensure_running().await?;
-        guard.fs().write(&guest_path, &data).await?;
+        let result = guard.fs().write(&guest_path, &data).await;
         let _ = guard.stop_and_wait().await;
-        Ok(())
+        Ok(result?)
     }
 
     pub async fn read_file(&self, guest_path: &str) -> anyhow::Result<String> {
         let guest_path = guest_path.to_string();
         let guard = self.ensure_running().await?;
-        let s = guard.fs().read_to_string(&guest_path).await?;
+        let result = guard.fs().read_to_string(&guest_path).await;
         let _ = guard.stop_and_wait().await;
-        Ok(s)
+        Ok(result?)
     }
 
     pub async fn read_file_bytes(&self, guest_path: &str) -> anyhow::Result<Vec<u8>> {
         let guest_path = guest_path.to_string();
         let guard = self.ensure_running().await?;
-        let bytes = guard.fs().read(&guest_path).await?.to_vec();
+        let result = guard.fs().read(&guest_path).await.map(|b| b.to_vec());
         let _ = guard.stop_and_wait().await;
-        Ok(bytes)
+        Ok(result?)
     }
 
     pub async fn copy_from_host(&self, host: &Path, guest: &str) -> anyhow::Result<()> {
         let host = host.to_path_buf();
         let guest = guest.to_string();
         let guard = self.ensure_running().await?;
-        guard.fs().copy_from_host(&host, &guest).await?;
+        let result = guard.fs().copy_from_host(&host, &guest).await;
         let _ = guard.stop_and_wait().await;
-        Ok(())
+        Ok(result?)
     }
 
     pub async fn copy_to_host(&self, guest: &str, host: &Path) -> anyhow::Result<()> {
         let guest = guest.to_string();
         let host = host.to_path_buf();
         let guard = self.ensure_running().await?;
-        guard.fs().copy_to_host(&guest, &host).await?;
+        let result = guard.fs().copy_to_host(&guest, &host).await;
         let _ = guard.stop_and_wait().await;
-        Ok(())
+        Ok(result?)
     }
 
     /// Acquire the mutex and start the VM if it is stopped.

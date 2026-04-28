@@ -1,10 +1,9 @@
 use anyhow::bail;
 use url::Url;
 
-use crate::lang_model::{LangModelAPISchema, LangModelProvider};
 use crate::{
     datatype::Value,
-    lang_model::LangModelRequest,
+    lang_model::{LangModelAPISchema, LangModelProvider, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,

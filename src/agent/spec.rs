@@ -6,10 +6,8 @@ use crate::agent::AgentCard;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub enum RunenvSpec {
     Local,
-    
-    Sandbox{
-        key: Option<String>,
-    }
+
+    Sandbox { key: Option<String> },
 }
 
 /// Defines the logical identity of an agent as configured by the user.
@@ -99,7 +97,9 @@ impl AgentSpec {
     }
 
     pub fn sandbox(mut self, sandbox: impl Into<String>) -> Self {
-        self.runenv = Some(RunenvSpec::Sandbox { key: Some(sandbox.into()) });
+        self.runenv = Some(RunenvSpec::Sandbox {
+            key: Some(sandbox.into()),
+        });
         self
     }
 }

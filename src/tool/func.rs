@@ -1,15 +1,14 @@
-use std::future::Future;
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 use futures::{
     Stream, StreamExt,
     stream::{self, BoxStream},
 };
 
-use crate::runenv::RunEnv;
 use crate::{
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
+    runenv::RunEnv,
 };
 
 /// Runtime context forwarded to every tool call.

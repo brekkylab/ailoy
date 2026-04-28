@@ -44,8 +44,7 @@ impl ToolFactory {
     pub fn with_initializer(
         desc: ToolDesc,
         f: impl Fn(&AgentSpec) -> ToolFunc + Send + Sync + 'static,
-    ) -> Self
-    {
+    ) -> Self {
         Self::new(
             desc.name.clone(),
             Arc::new(move |spec| {

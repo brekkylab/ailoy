@@ -6,8 +6,7 @@ use tokio::sync::Mutex;
 use crate::{
     agent::{Agent, AgentCard},
     datatype::Value,
-    message::{FinishReason, Message, Part, Role, ToolDescBuilder},
-    message::ToolDesc,
+    message::{FinishReason, Message, Part, Role, ToolDesc, ToolDescBuilder},
     tool::{Tool, ToolContext, ToolFactory, ToolFunc},
 };
 

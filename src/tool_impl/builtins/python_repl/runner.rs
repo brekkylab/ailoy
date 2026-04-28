@@ -81,7 +81,11 @@ async fn run_setup(runenv: &Arc<dyn RunEnv>) -> anyhow::Result<()> {
         anyhow::bail!(
             "Python runtime setup failed (exit {}): {}",
             r.exit_code,
-            if r.stderr.trim().is_empty() { r.stdout.trim() } else { r.stderr.trim() }
+            if r.stderr.trim().is_empty() {
+                r.stdout.trim()
+            } else {
+                r.stderr.trim()
+            }
         );
     }
     Ok(())
@@ -109,13 +113,19 @@ impl PythonReplRunner {
             // Create notified future before the CAS to avoid missing a wakeup.
             let notified = self.notify.notified();
             match self.state.compare_exchange(
-                UNINITIALIZED, INITIALIZING,
-                Ordering::AcqRel, Ordering::Acquire,
+                UNINITIALIZED,
+                INITIALIZING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
             ) {
                 Ok(_) => {
                     let result = run_setup(runenv).await;
                     self.state.store(
-                        if result.is_ok() { INITIALIZED } else { UNINITIALIZED },
+                        if result.is_ok() {
+                            INITIALIZED
+                        } else {
+                            UNINITIALIZED
+                        },
                         Ordering::Release,
                     );
                     self.notify.notify_waiters();

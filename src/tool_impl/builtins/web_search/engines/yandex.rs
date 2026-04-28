@@ -128,8 +128,9 @@ impl SearchEngine for Yandex {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use scraper::Html;
+
+    use super::*;
 
     fn make_yandex_html(items: &[(&str, &str, &str)]) -> String {
         let mut list = String::new();

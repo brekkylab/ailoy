@@ -1,5 +1,4 @@
-use std::pin::Pin;
-use std::sync::Arc;
+use std::{pin::Pin, sync::Arc};
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
@@ -191,10 +190,10 @@ impl Agent {
                     } else {
                         return Err(anyhow::anyhow!("Sandbox '{}' not registered", key));
                     }
-                },
+                }
                 _ => {
                     state.runenv = Arc::new(Local {});
-                },
+                }
             }
         }
         Ok(Self {

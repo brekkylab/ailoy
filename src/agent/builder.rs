@@ -205,8 +205,7 @@ mod tests {
             .expect("read failed");
 
         assert_eq!(
-            bytes,
-            b"shared_ok",
+            bytes, b"shared_ok",
             "parent runenv must see file written through shared vm"
         );
     }
@@ -297,10 +296,7 @@ mod tests {
         parent
             .state
             .runenv
-            .write(
-                std::path::Path::new("/workspace/shared.txt"),
-                b"shared_ok",
-            )
+            .write(std::path::Path::new("/workspace/shared.txt"), b"shared_ok")
             .await
             .expect("write failed");
 
