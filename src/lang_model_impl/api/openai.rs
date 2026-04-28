@@ -5,7 +5,7 @@ use crate::{
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
+        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, ToolDesc, Unmarshal,
     },
     to_value,
 };
@@ -324,9 +324,28 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             finish_reason = Some(FinishReason::ToolCall {});
         }
 
+        // Parse usage (OpenAI Responses API: usage.input_tokens / output_tokens)
+        let usage = val
+            .as_object()
+            .and_then(|r| r.get("usage"))
+            .and_then(|u| u.as_object())
+            .map(|u| TokenUsage {
+                input_tokens: u
+                    .get("input_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                output_tokens: u
+                    .get("output_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            });
+
         Ok(MessageDeltaOutput {
             delta,
             finish_reason,
+            usage,
         })
     }
 }

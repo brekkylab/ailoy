@@ -3,7 +3,9 @@ use std::fmt;
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
-use crate::message::{Delta, FinishReason, Message, MessageOutput, PartDelta, Role};
+use crate::message::{
+    Delta, FinishReason, Message, MessageOutput, PartDelta, Role, message::TokenUsage,
+};
 
 /// A streaming, incremental update to a [`Message`].
 ///
@@ -276,6 +278,8 @@ pub struct MessageDeltaOutput {
     pub delta: MessageDelta,
 
     pub finish_reason: Option<FinishReason>,
+
+    pub usage: Option<TokenUsage>,
 }
 
 impl MessageDeltaOutput {
@@ -283,6 +287,7 @@ impl MessageDeltaOutput {
         Self {
             delta: MessageDelta::new(),
             finish_reason: None,
+            usage: None,
         }
     }
 }
@@ -294,9 +299,11 @@ impl Delta for MessageDeltaOutput {
     fn accumulate(self, other: Self) -> anyhow::Result<Self> {
         let delta = self.delta.accumulate(other.delta)?;
         let finish_reason = other.finish_reason.or(self.finish_reason);
+        let usage = other.usage.or(self.usage);
         Ok(Self {
             delta,
             finish_reason,
+            usage,
         })
     }
 
@@ -309,6 +316,7 @@ impl Delta for MessageDeltaOutput {
             depth: None,
             message,
             finish_reason,
+            usage: self.usage,
         })
     }
 }

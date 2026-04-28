@@ -5,7 +5,7 @@ use futures::{FutureExt as _, Stream, StreamExt as _};
 #[cfg(feature = "sandbox")]
 use crate::runenv::Sandbox;
 use crate::{
-    agent::{AgentProvider, AgentSpec, default_provider},
+    agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
     lang_model::LangModel,
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{Local, RunEnv},
@@ -16,6 +16,9 @@ pub struct AgentState {
     pub history: Vec<Message>,
 
     pub runenv: Arc<dyn RunEnv>,
+
+    /// Token count from the most recent model API call; used to decide when to truncate history.
+    pub last_input_tokens: Option<u64>,
 }
 
 impl Default for AgentState {
@@ -29,6 +32,7 @@ impl AgentState {
         Self {
             history: Vec::new(),
             runenv: Arc::new(Local {}),
+            last_input_tokens: None,
         }
     }
 
@@ -57,6 +61,7 @@ pub struct Agent {
     model: LangModel,
     tools: Vec<Tool>,
     pub state: AgentState,
+    context_manager: Option<ContextManager>,
 }
 
 impl Agent {
@@ -196,20 +201,70 @@ impl Agent {
                 }
             }
         }
+
+        // Use default context manager for now
+        let context_manager = ContextManager::default();
+
         Ok(Self {
             model: LangModel::new(model_id, model_provider),
             tools,
             state,
+            context_manager: Some(context_manager),
         })
+    }
+
+    /// Maximum number of characters kept in a single tool-result message before
+    /// middle-truncation is applied.  Mirrors the limit already enforced by the
+    /// built-in bash tool so that *all* tool results stay within a consistent bound.
+    const MAX_TOOL_RESULT_CHARS: usize = 30_000;
+
+    /// Clamp every [`Part`] in a [`Role::Tool`] message so that large payloads
+    /// (e.g. web-search results) do not accumulate unbounded in history and
+    /// trigger 429 rate-limit errors.
+    ///
+    /// * `Part::Value` – serialised to JSON to measure size; if over the limit the
+    ///   truncated string is stored back as a `Part::Value` wrapping a JSON string.
+    /// * `Part::Text`  – measured directly; truncated in-place if needed.
+    fn cap_tool_result(mut msg: Message) -> Message {
+        for part in &mut msg.contents {
+            match part {
+                Part::Value { value } => {
+                    let serialised = serde_json::to_string(value).unwrap_or_default();
+                    if serialised.len() > Self::MAX_TOOL_RESULT_CHARS {
+                        let truncated = crate::util::truncate::middle_truncate(
+                            serialised,
+                            Self::MAX_TOOL_RESULT_CHARS,
+                        );
+                        *value = crate::datatype::Value::string(truncated);
+                    }
+                }
+                Part::Text { text } => {
+                    if text.len() > Self::MAX_TOOL_RESULT_CHARS {
+                        *text = crate::util::truncate::middle_truncate(
+                            std::mem::take(text),
+                            Self::MAX_TOOL_RESULT_CHARS,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        msg
     }
 
     /// Assemble an `Agent` directly from runtime objects without going through
     /// `AgentSpec` or `AgentProvider`.  Used by [`crate::agent::AgentBuilder`].
-    pub(crate) fn from_parts(model: LangModel, tools: Vec<Tool>, state: AgentState) -> Self {
+    pub(crate) fn from_parts(
+        model: LangModel,
+        tools: Vec<Tool>,
+        state: AgentState,
+        context_manager: Option<ContextManager>,
+    ) -> Self {
         Self {
             model,
             tools,
             state,
+            context_manager,
         }
     }
 
@@ -303,6 +358,7 @@ impl Agent {
                             depth: Some(0),
                             message: err_msg,
                             finish_reason: FinishReason::Stop {},
+                            usage: None,
                         }));
                     }
                 }
@@ -335,7 +391,20 @@ impl Agent {
             let tool_descs: Vec<_> = self.tools.iter().map(|t| t.get_desc().clone()).collect();
 
             loop {
+                // Truncation check based on previous call's token usage.
+                if let Some(spec) = &self.context_manager {
+                    if self.state.last_input_tokens.unwrap_or(0) > spec.max_input_tokens {
+                        super::context::truncate_history(&mut self.state.history, spec);
+                    }
+                }
+
                 let mut output = self.model.run(&self.state.history, &tool_descs).await?;
+
+                // Capture token usage for next iteration's truncation check.
+                if let Some(u) = &output.usage {
+                    self.state.last_input_tokens = Some(u.input_tokens);
+                }
+
                 output.depth = Some(0);
                 self.state.history.push(output.message.clone());
 
@@ -355,8 +424,9 @@ impl Agent {
                 while let Some(event) = tool_stream.next().await {
                     match event {
                         Err(e) => Err(e)?,
-                        Ok(output) => {
+                        Ok(mut output) => {
                             if output.message.role == Role::Tool && output.depth == Some(0) {
+                                output.message = Self::cap_tool_result(output.message);
                                 self.state.history.push(output.message.clone());
                             }
                             yield output;
@@ -1309,6 +1379,133 @@ To activate a skill, read its SKILL.md using the bash tool \
             result.stdout.contains("sandbox_shared_ok"),
             "sentinel file written by subagent not visible in parent's sandbox; stdout: {:?}",
             result.stdout,
+        );
+    }
+
+    /// Integration test: SK하이닉스 주가 조회 + 그래프 plotting
+    ///
+    /// agent-k의 build_agent와 동일한 구성으로 에이전트를 만들고,
+    /// 각 LM 호출의 토큰 사용량과 전체 합계를 출력한다.
+    ///
+    /// Run with:
+    ///   ANTHROPIC_API_KEY=sk-... cargo test test_skhynix_token_usage --features sandbox -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    #[cfg(feature = "sandbox")]
+    async fn test_skhynix_token_usage() {
+        use futures::StreamExt as _;
+
+        use crate::{
+            agent::{AgentBuilder, ContextManager},
+            lang_model::{LangModel, LangModelProvider},
+            message::{Message, Part, Role},
+            runenv::{Sandbox, SandboxConfig},
+            tool::{BuiltinToolProvider, make_builtin_tool},
+        };
+
+        dotenvy::dotenv().ok();
+        let api_key = match std::env::var("ANTHROPIC_API_KEY") {
+            Ok(k) => k,
+            Err(_) => {
+                eprintln!("ANTHROPIC_API_KEY not set — skipping");
+                return;
+            }
+        };
+
+        let (bash, python, web_search) = tokio::try_join!(
+            make_builtin_tool(&BuiltinToolProvider::Bash {}),
+            make_builtin_tool(&BuiltinToolProvider::PythonRepl {}),
+            make_builtin_tool(&BuiltinToolProvider::WebSearch {}),
+        )
+        .expect("failed to build builtin tools");
+
+        let model = LangModel::new(
+            "claude-haiku-4-5-20251001".to_string(),
+            LangModelProvider::anthropic(api_key),
+        );
+
+        let sandbox = Arc::new(
+            Sandbox::new(SandboxConfig::default())
+                .await
+                .expect("sandbox creation failed"),
+        );
+
+        let mut agent = AgentBuilder::new(model)
+            .tool(bash)
+            .tool(python)
+            .tool(web_search)
+            .sandbox(sandbox)
+            .context_manager(ContextManager::default())
+            .build()
+            .await
+            .expect("agent build failed");
+
+        let msg = Message::new(Role::User).with_contents([Part::text(
+            "SK하이닉스 최근 주가를 검색하고 그래프로 plotting해줘",
+        )]);
+
+        let mut lm_call = 0u32;
+        let mut total_input = 0u64;
+        let mut total_output = 0u64;
+
+        let mut stream = agent.run(msg);
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(output) => {
+                    if let Some(usage) = &output.usage {
+                        lm_call += 1;
+                        total_input += usage.input_tokens;
+                        total_output += usage.output_tokens;
+                        println!(
+                            "[LM call {:2}] input={:6}  output={:4}  cache_read={:?}",
+                            lm_call,
+                            usage.input_tokens,
+                            usage.output_tokens,
+                            usage.cache_read_input_tokens,
+                        );
+                    }
+                    if output.message.role == Role::Assistant {
+                        for part in &output.message.contents {
+                            if let Part::Text { text } = part {
+                                if !text.trim().is_empty() {
+                                    println!("[Assistant] {}", text.trim());
+                                }
+                            }
+                        }
+                    }
+                    if output.message.role == Role::Tool {
+                        println!(
+                            "[Tool result] depth={:?}  truncated={}",
+                            output.depth,
+                            output.message.contents.iter().any(|p| {
+                                if let Part::Value { value } = p {
+                                    value
+                                        .as_str()
+                                        .map_or(false, |s| s.contains("[context truncated]"))
+                                } else {
+                                    false
+                                }
+                            }),
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[Error] {e}");
+                }
+            }
+        }
+
+        drop(stream);
+
+        // Final summary
+        println!("\n=== Token Usage Summary ===");
+        println!("LM calls     : {lm_call}");
+        println!("Total input  : {total_input}");
+        println!("Total output : {total_output}");
+        println!("Grand total  : {}", total_input + total_output);
+        println!(
+            "last_input_tokens (state): {:?}",
+            agent.state.last_input_tokens
         );
     }
 }

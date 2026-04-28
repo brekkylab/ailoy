@@ -159,6 +159,16 @@ impl fmt::Display for FinishReason {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageOutput {
     /// Nesting level of this message relative to the top-level agent turn.
@@ -185,6 +195,11 @@ pub struct MessageOutput {
     pub message: Message,
 
     pub finish_reason: FinishReason,
+
+    /// Token usage reported by the language model for this response.
+    /// Only populated for top-level LM calls; tool results leave this as `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
 }
 
 impl fmt::Display for MessageOutput {

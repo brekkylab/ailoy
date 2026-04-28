@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 #[cfg(feature = "sandbox")]
 use crate::runenv::{RunEnv, Sandbox, SandboxConfig};
 use crate::{
-    agent::{Agent, AgentCard, AgentState},
+    agent::{Agent, AgentCard, AgentState, ContextManager},
     lang_model::LangModel,
     message::{Message, Part, Role},
     tool::Tool,
@@ -27,6 +27,7 @@ pub struct AgentBuilder {
     tools: Vec<Tool>,
     #[cfg(feature = "sandbox")]
     sandbox: Option<SandboxSource>,
+    context_manager: Option<ContextManager>,
 }
 
 /// How the sandbox is supplied to an [`AgentBuilder`].
@@ -62,7 +63,17 @@ impl AgentBuilder {
             tools: Vec::new(),
             #[cfg(feature = "sandbox")]
             sandbox: None,
+            context_manager: None,
         }
+    }
+
+    /// Set the context window management spec.
+    ///
+    /// When set, the agent will automatically truncate history when the input token count
+    /// exceeds `spec.max_input_tokens`, preserving the most recent turns.
+    pub fn context_manager(mut self, spec: ContextManager) -> Self {
+        self.context_manager = Some(spec);
+        self
     }
 
     pub fn instruction(mut self, inst: impl Into<String>) -> Self {
@@ -121,7 +132,12 @@ impl AgentBuilder {
             };
         }
 
-        Ok(Agent::from_parts(self.model, self.tools, state))
+        Ok(Agent::from_parts(
+            self.model,
+            self.tools,
+            state,
+            self.context_manager,
+        ))
     }
 }
 

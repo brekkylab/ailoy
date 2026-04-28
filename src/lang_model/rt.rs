@@ -99,18 +99,51 @@ impl LangModel {
                     .ok_or(anyhow::anyhow!("No body in marshaled request"))?;
                 let body: serde_json::Value = body.clone().into();
 
-                // Send request
+                // Send request with retry on 429 (rate limit)
                 let client = reqwest::Client::new();
-                let response = client
-                    .post(url)
-                    .headers(header_map)
-                    .json(&body)
-                    .send()
-                    .await?;
+                const MAX_RETRIES: u32 = 3;
+                let (status, response_text) = {
+                    let mut last_status = None;
+                    let mut last_text = None;
+                    for attempt in 0..=MAX_RETRIES {
+                        let response = client
+                            .post(url)
+                            .headers(header_map.clone())
+                            .json(&body)
+                            .send()
+                            .await?;
+                        let s = response.status();
+                        if s.as_u16() == 429 && attempt < MAX_RETRIES {
+                            const MAX_WAIT_SECS: u64 = 10;
+                            let wait_secs = response
+                                .headers()
+                                .get("retry-after")
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .unwrap_or(1u64 << attempt)
+                                .min(MAX_WAIT_SECS);
+                            let text = response.text().await?;
+                            log::warn!(
+                                "Rate limited (429). Retrying after {}s (attempt {}/{}): {}",
+                                wait_secs,
+                                attempt + 1,
+                                MAX_RETRIES,
+                                text
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+                            last_status = Some(s);
+                            last_text = Some(text);
+                            continue;
+                        }
+                        let text = response.text().await?;
+                        last_status = Some(s);
+                        last_text = Some(text);
+                        break;
+                    }
+                    (last_status.unwrap(), last_text.unwrap())
+                };
 
-                // Get request
-                let status = response.status();
-                let response_text = response.text().await?;
+                // Check response status
                 if !status.is_success() {
                     anyhow::bail!("API request failed with status {status}: {response_text}");
                 }
