@@ -7,9 +7,9 @@ use crate::{
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContextManager {
-    /// 직전 API 호출의 input_tokens가 이 값 초과 시 truncation 발동.
+    /// Triggers truncation when input_tokens from the previous API call exceeds this value.
     pub max_input_tokens: u64,
-    /// truncation 후에도 보존할 최근 user turn 수 (system message 별도 보존).
+    /// Number of recent user turns to preserve after truncation (system message is always preserved separately).
     pub preserve_recent_turns: usize,
 }
 
