@@ -58,11 +58,13 @@ pub enum VolumeMount {
 /// Configuration for creating a new sandbox.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SandboxConfig {
-    /// Unique sandbox name.  `None` means "auto-generate at creation time".
-    /// Never serialized — deserialized `None` stays `None` so each restore
-    /// gets a fresh unique name.
-    #[serde(skip)]
-    #[schemars(skip)]
+    /// Unique sandbox name.
+    ///
+    /// - `Some("my-sandbox")` — use this exact name.  Serialized/deserialized
+    ///   correctly, so a named config round-trips and reconnects to the same VM.
+    /// - `None` (default) — auto-generate a UUID-based name at [`Sandbox::new`]
+    ///   time.  Omitted from serialized output; deserialized back as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
     /// OCI container image. Default: `"ubuntu:latest"`.
@@ -577,6 +579,42 @@ mod tests {
                 .await
                 .expect("failed to create sandbox"),
         )
+    }
+
+    /// `SandboxConfig::name` round-trips through JSON: Some is preserved, None is omitted.
+    #[test]
+    fn test_sandbox_config_name_serde_roundtrip() {
+        // Some("my-sandbox") must survive serialize → deserialize.
+        let cfg_named = SandboxConfig {
+            name: Some("my-sandbox".to_string()),
+            persist: true,
+            ..SandboxConfig::default()
+        };
+        let json = serde_json::to_string(&cfg_named).expect("serialize failed");
+        assert!(
+            json.contains("\"name\""),
+            "expected 'name' key in JSON when name is Some, got: {json}"
+        );
+        let back: SandboxConfig = serde_json::from_str(&json).expect("deserialize failed");
+        assert_eq!(
+            back.name,
+            Some("my-sandbox".to_string()),
+            "name must survive round-trip when Some"
+        );
+
+        // None must be omitted from serialized output and stay None on deserialize.
+        let cfg_anon = SandboxConfig::default();
+        let json_anon = serde_json::to_string(&cfg_anon).expect("serialize failed");
+        assert!(
+            !json_anon.contains("\"name\""),
+            "expected 'name' key absent from JSON when name is None, got: {json_anon}"
+        );
+        let back_anon: SandboxConfig =
+            serde_json::from_str(&json_anon).expect("deserialize failed");
+        assert!(
+            back_anon.name.is_none(),
+            "name must stay None after round-trip when originally None"
+        );
     }
 
     /// Names that would exceed the socket path limit are rejected synchronously.

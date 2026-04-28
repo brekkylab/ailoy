@@ -48,7 +48,9 @@ pub struct AgentProvider {
     ///
     /// Controls resources (memory, CPUs) for the MicroVM that runs sandbox tools.
     /// Defaults to [`SandboxConfig::default`] when not set.  The `name` field is
-    /// always regenerated at runtime and is not serialised.
+    /// optional: when set it is preserved across serialise/deserialise so the same
+    /// named VM can be reused across sessions; when omitted a UUID is generated at
+    /// [`Sandbox::new`] time.
     #[cfg(feature = "sandbox")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sandboxes: BTreeMap<String, crate::runenv::SandboxConfig>,
