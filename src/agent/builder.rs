@@ -82,8 +82,10 @@ impl AgentBuilder {
             .map(|inst| vec![Message::new(Role::System).with_contents([Part::text(inst)])])
             .unwrap_or_default();
 
-        #[allow(unused_mut)]
         let mut state = AgentState::new().history(history);
+        if let Some(runenv) = self.runenv {
+            state = state.runenv(runenv);
+        }
 
         Ok(Agent::from_parts(self.model, self.tools, state))
     }
