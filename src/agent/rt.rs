@@ -37,9 +37,8 @@ impl AgentState {
         self
     }
 
-    #[cfg(feature = "sandbox")]
-    pub fn sandbox(mut self, sandbox: crate::runenv::Sandbox) -> Self {
-        self.runenv = Arc::new(sandbox);
+    pub fn runenv(mut self, runenv: Arc<dyn RunEnv>) -> Self {
+        self.runenv = runenv;
         self
     }
 }
@@ -1236,7 +1235,7 @@ To activate a skill, read its SKILL.md using the bash tool \
             )
         };
 
-        let vm = Arc::new(
+        let sandbox = Arc::new(
             Sandbox::new(SandboxConfig::default())
                 .await
                 .expect("sandbox creation failed"),
@@ -1254,7 +1253,7 @@ To activate a skill, read its SKILL.md using the bash tool \
                  Confirm once the write succeeded.",
             )
             .tool(bash_tool)
-            .sandbox(vm.clone())
+            .runenv(sandbox.clone())
             .build()
             .await
             .expect("subagent build failed");
@@ -1274,7 +1273,7 @@ To activate a skill, read its SKILL.md using the bash tool \
                  3. Return the exact output of cat.",
             )
             .tool(bash_tool2)
-            .sandbox(vm.clone())
+            .runenv(sandbox.clone())
             .subagent(
                 AgentCard {
                     name: "file_writer".into(),
@@ -1297,7 +1296,7 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         // The sentinel must be readable directly through the shared vm Arc,
         // confirming the subagent's write landed in the same VM.
-        let result = vm
+        let result = sandbox
             .exec(
                 "sh".to_string(),
                 vec!["-c".to_string(), "cat /workspace/sentinel.txt".to_string()],

@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-#[cfg(feature = "sandbox")]
-use crate::runenv::{RunEnv, Sandbox, SandboxConfig};
 use crate::{
     agent::{Agent, AgentCard, AgentState},
     lang_model::LangModel,
     message::{Message, Part, Role},
+    runenv::RunEnv,
     tool::Tool,
     tool_impl::make_subagent_tool,
 };
@@ -25,32 +24,7 @@ pub struct AgentBuilder {
     model: LangModel,
     instruction: Option<String>,
     tools: Vec<Tool>,
-    #[cfg(feature = "sandbox")]
-    sandbox: Option<SandboxSource>,
-}
-
-/// How the sandbox is supplied to an [`AgentBuilder`].
-///
-/// Pass an `Arc<Sandbox>` to share an existing VM across agents, or a
-/// `SandboxConfig` to create a dedicated VM during [`AgentBuilder::build`].
-#[cfg(feature = "sandbox")]
-pub enum SandboxSource {
-    Shared(Arc<dyn RunEnv>),
-    Fresh(SandboxConfig),
-}
-
-#[cfg(feature = "sandbox")]
-impl From<Arc<Sandbox>> for SandboxSource {
-    fn from(arc: Arc<Sandbox>) -> Self {
-        SandboxSource::Shared(arc)
-    }
-}
-
-#[cfg(feature = "sandbox")]
-impl From<SandboxConfig> for SandboxSource {
-    fn from(c: SandboxConfig) -> Self {
-        SandboxSource::Fresh(c)
-    }
+    runenv: Option<Arc<dyn RunEnv>>,
 }
 
 impl AgentBuilder {
@@ -60,8 +34,7 @@ impl AgentBuilder {
             model,
             instruction: None,
             tools: Vec::new(),
-            #[cfg(feature = "sandbox")]
-            sandbox: None,
+            runenv: None,
         }
     }
 
@@ -96,9 +69,8 @@ impl AgentBuilder {
     ///
     /// Pass an `Arc<Sandbox>` to share an existing VM, or a `SandboxConfig` to
     /// create a dedicated VM during [`build`](Self::build).
-    #[cfg(feature = "sandbox")]
-    pub fn sandbox(mut self, src: impl Into<SandboxSource>) -> Self {
-        self.sandbox = Some(src.into());
+    pub fn runenv(mut self, runenv: Arc<dyn RunEnv>) -> Self {
+        self.runenv = Some(runenv);
         self
     }
 
@@ -112,14 +84,6 @@ impl AgentBuilder {
 
         #[allow(unused_mut)]
         let mut state = AgentState::new().history(history);
-
-        #[cfg(feature = "sandbox")]
-        if let Some(source) = self.sandbox {
-            state.runenv = match source {
-                SandboxSource::Shared(arc) => arc,
-                SandboxSource::Fresh(cfg) => Arc::new(Sandbox::new(cfg).await?),
-            };
-        }
 
         Ok(Agent::from_parts(self.model, self.tools, state))
     }
@@ -159,9 +123,9 @@ mod tests {
     #[cfg(feature = "sandbox")]
     #[tokio::test]
     async fn test_builder_shared_arc_sandbox() {
-        use crate::runenv::SandboxConfig;
+        use crate::runenv::{Sandbox, SandboxConfig};
 
-        let vm = Arc::new(
+        let sandbox = Arc::new(
             Sandbox::new(SandboxConfig {
                 ..Default::default()
             })
@@ -170,13 +134,13 @@ mod tests {
         );
 
         let sub_agent = AgentBuilder::new(test_model())
-            .sandbox(vm.clone())
+            .runenv(sandbox.clone())
             .build()
             .await
             .unwrap();
 
         let parent = AgentBuilder::new(test_model())
-            .sandbox(vm.clone())
+            .runenv(sandbox.clone())
             .subagent(
                 AgentCard {
                     name: "sub".into(),
@@ -190,12 +154,13 @@ mod tests {
             .unwrap();
 
         // Verify shared sandbox: write through vm, read through parent's runenv.
-        vm.write(
-            std::path::Path::new("/workspace/shared_test.txt"),
-            b"shared_ok",
-        )
-        .await
-        .expect("write failed");
+        sandbox
+            .write(
+                std::path::Path::new("/workspace/shared_test.txt"),
+                b"shared_ok",
+            )
+            .await
+            .expect("write failed");
 
         let bytes = parent
             .state
@@ -210,49 +175,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "sandbox")]
-    #[tokio::test]
-    async fn test_builder_fresh_config_creates_distinct_sandbox() {
-        use crate::runenv::SandboxConfig;
-
-        let cfg1 = SandboxConfig::default();
-        let cfg2 = SandboxConfig::default();
-
-        let agent1 = AgentBuilder::new(test_model())
-            .sandbox(cfg1)
-            .build()
-            .await
-            .unwrap();
-
-        let agent2 = AgentBuilder::new(test_model())
-            .sandbox(cfg2)
-            .build()
-            .await
-            .unwrap();
-
-        // Verify isolation: write through agent1's runenv, confirm agent2 can't see it.
-        agent1
-            .state
-            .runenv
-            .write(
-                std::path::Path::new("/workspace/isolation_test.txt"),
-                b"agent1_only",
-            )
-            .await
-            .expect("write failed");
-
-        let result = agent2
-            .state
-            .runenv
-            .read(std::path::Path::new("/workspace/isolation_test.txt"))
-            .await;
-
-        assert!(
-            result.is_err(),
-            "distinct sandbox should not see file from the other sandbox"
-        );
-    }
-
     /// Parent and subagent built with the same `Arc<Sandbox>` share the VM's
     /// filesystem: a file written through the parent's runenv is immediately
     /// visible when read through the subagent's runenv.
@@ -263,7 +185,7 @@ mod tests {
 
         use crate::runenv::{Sandbox, SandboxConfig};
 
-        let vm = Arc::new(
+        let sandbox = Arc::new(
             Sandbox::new(SandboxConfig::default())
                 .await
                 .expect("sandbox creation failed"),
@@ -271,14 +193,14 @@ mod tests {
 
         // Build subagent first; clone the runenv Arc before handing it to the parent.
         let sub = AgentBuilder::new(test_model())
-            .sandbox(vm.clone())
+            .runenv(sandbox.clone())
             .build()
             .await
             .unwrap();
         let sub_runenv = sub.state.runenv.clone();
 
         let parent = AgentBuilder::new(test_model())
-            .sandbox(vm.clone())
+            .runenv(sandbox.clone())
             .subagent(
                 AgentCard {
                     name: "sub".into(),
