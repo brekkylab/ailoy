@@ -58,11 +58,29 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
     };
 
     if msg.role == Role::Tool {
+        let has_image = msg.contents.iter().any(|p| matches!(p, Part::Image { .. }));
+        let output: Value = if has_image {
+            let arr: Vec<Value> = msg.contents.iter().map(|p| match p {
+                Part::Image { image: PartImage::Embedded { mime_type, data } } => to_value!({
+                    "type": "input_image",
+                    "image_url": format!("data:{};base64,{}", mime_type, data.base64())
+                }),
+                Part::Image { image: PartImage::Url { url } } => to_value!({
+                    "type": "input_image",
+                    "image_url": url
+                }),
+                Part::Text { text } => to_value!({"type": "input_text", "text": text}),
+                other => to_value!({"type": "input_text", "text": serde_json::to_string(other).unwrap_or_default()}),
+            }).collect();
+            to_value!(arr)
+        } else {
+            part_to_value(&msg.contents[0])
+        };
         return vec![to_value!(
             {
                 "type": "function_call_output",
                 "call_id": msg.id.clone().expect("Tool call id must exist."),
-                "output": part_to_value(&msg.contents[0])
+                "output": output
             }
         )];
     }
@@ -338,7 +356,7 @@ mod tests {
     use super::*;
     use crate::{
         lang_model::{LangModel, LangModelAPISchema, LangModelProvider},
-        message::{FinishReason, Message, Part, Role, ToolDesc},
+        message::{FinishReason, Message, Part, Role, ToolDesc, ToolDescBuilder},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -404,6 +422,70 @@ mod tests {
         let resp = model.run(&messages, &tools).await.unwrap();
         println!("{}", resp);
         assert_eq!(resp.finish_reason, FinishReason::Length {});
+    }
+
+    /// Verifies that an image embedded in a Role::Tool message is accepted by the OpenAI
+    /// Responses API (output as content array with input_image) and the model can respond.
+    #[test_with::env(OPENAI_API_KEY)]
+    #[tokio::test]
+    async fn test_tool_result_with_image() {
+        use crate::datatype::Bytes;
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("OPENAI_API_KEY").unwrap();
+
+        // Fetch a real JPEG image to use as the tool result
+        let img_bytes = reqwest::get(
+            "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
+        )
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec();
+
+        let model = LangModel::new(
+            "gpt-5.4-mini".to_string(),
+            LangModelProvider::API {
+                schema: LangModelAPISchema::OpenAI,
+                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
+                api_key: Some(api_key),
+                max_tokens: None,
+            },
+        );
+
+        let messages = vec![
+            Message::new(Role::User).with_contents([Part::text(
+                "Describe the image returned by the file_read tool.",
+            )]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "call_test_001",
+                "file_read",
+                crate::to_value!({"path": "/tmp/test.png"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("call_test_001")
+                .with_contents([
+                    Part::image_embedded("image/jpeg", Bytes::from(img_bytes)).unwrap()
+                ]),
+        ];
+        let tools =
+            vec![ToolDescBuilder::new("file_read")
+            .description("Read a file and return its contents. Images are returned inline.")
+            .parameters(crate::to_value!({
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "File path to read"}},
+                "required": ["path"]
+            }))
+            .build()];
+
+        let resp = model.run(&messages, &tools).await.unwrap();
+        assert_eq!(resp.finish_reason, FinishReason::Stop {});
+        assert!(
+            resp.message.contents.iter().any(|p| p.as_text().is_some()),
+            "Expected text response after image tool result"
+        );
     }
 }
 

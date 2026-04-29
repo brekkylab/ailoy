@@ -63,6 +63,14 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     };
 
     if item.role == Role::Tool {
+        // Part::Value must be wrapped as {"type":"text","text":"..."} in tool_result content
+        let to_content_block = |part: &Part| match part {
+            Part::Value { value } => {
+                to_value!({"type": "text", "text": serde_json::to_string(value).unwrap()})
+            }
+            other => part_to_value(other),
+        };
+        let content: Vec<Value> = item.contents.iter().map(to_content_block).collect();
         return to_value!(
             {
                 "role": "user",
@@ -70,7 +78,7 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
                     {
                         "type": "tool_result",
                         "tool_use_id": item.id.clone().expect("Tool call id must exist."),
-                        "content": part_to_value(&item.contents[0])
+                        "content": content
                     }
                 ]
             }
@@ -345,7 +353,7 @@ mod tests {
     use super::*;
     use crate::{
         lang_model::{LangModel, LangModelAPISchema, LangModelProvider},
-        message::{FinishReason, Message, Part, Role, ToolDesc},
+        message::{FinishReason, Message, Part, Role, ToolDesc, ToolDescBuilder},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -412,5 +420,69 @@ mod tests {
 
         let resp = model.run(&messages, &tools).await.unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
+    }
+
+    /// Verifies that an image embedded in a Role::Tool message is accepted by the Anthropic API
+    /// and that the model can respond after seeing the image in a tool result.
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    async fn test_tool_result_with_image() {
+        use crate::datatype::Bytes;
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+
+        // Fetch a real JPEG image to use as the tool result
+        let img_bytes = reqwest::get(
+            "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
+        )
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec();
+
+        let model = LangModel::new(
+            "claude-haiku-4-5".to_string(),
+            LangModelProvider::API {
+                schema: LangModelAPISchema::Anthropic,
+                url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
+                api_key: Some(api_key),
+                max_tokens: None,
+            },
+        );
+
+        let messages = vec![
+            Message::new(Role::User).with_contents([Part::text(
+                "Describe the image returned by the file_read tool.",
+            )]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "toolu_test_001",
+                "file_read",
+                crate::to_value!({"path": "/tmp/test.png"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("toolu_test_001")
+                .with_contents([
+                    Part::image_embedded("image/jpeg", Bytes::from(img_bytes)).unwrap()
+                ]),
+        ];
+        let tools =
+            vec![ToolDescBuilder::new("file_read")
+            .description("Read a file and return its contents. Images are returned inline.")
+            .parameters(crate::to_value!({
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "File path to read"}},
+                "required": ["path"]
+            }))
+            .build()];
+
+        let resp = model.run(&messages, &tools).await.unwrap();
+        assert_eq!(resp.finish_reason, FinishReason::Stop {});
+        assert!(
+            resp.message.contents.iter().any(|p| p.as_text().is_some()),
+            "Expected text response after image tool result"
+        );
     }
 }

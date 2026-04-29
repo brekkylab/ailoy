@@ -5,9 +5,10 @@ use url::Url;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BuiltinToolProvider {
-    WebSearch {},
-    PythonRepl {},
     Bash {},
+    FileRead {},
+    PythonRepl {},
+    WebSearch {},
 }
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
