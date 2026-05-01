@@ -33,6 +33,11 @@ impl Tokenizer {
             .decode(ids, skip_special_tokens)
             .map_err(|e| anyhow!("Tokenizer::decode failed: {}", e))
     }
+
+    /// Resolve a (special or regular) token literal to its id.
+    pub fn token_to_id(&self, token: &str) -> Option<u32> {
+        self.inner.token_to_id(token)
+    }
 }
 
 impl<'this> TryFromCache<'this> for Tokenizer {
