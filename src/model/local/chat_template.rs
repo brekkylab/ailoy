@@ -61,8 +61,25 @@ impl ChatTemplate {
             ThinkEffort::High => "high",
             _ => "",
         };
+        // HuggingFace-style chat templates address message body as `message.content`
+        // (singular), but our Message struct serializes the field as `contents`.
+        // Re-serialize each message into a serde_json::Value so we can also expose
+        // `content` as an alias, otherwise jinja sees `content == undefined` and
+        // emits empty user/system bodies which collapses the model.
+        let messages_for_template: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|m| {
+                let mut v = serde_json::to_value(m).unwrap_or(serde_json::Value::Null);
+                if let Some(obj) = v.as_object_mut() {
+                    if let Some(c) = obj.get("contents").cloned() {
+                        obj.insert("content".to_string(), c);
+                    }
+                }
+                v
+            })
+            .collect();
         let ctx = context!(
-            messages => messages,
+            messages => messages_for_template,
             tools => if !tools.is_empty() { Some(tools) } else { None::<_> },
             documents => if !documents.is_empty() { Some(documents) } else { None::<_> },
             add_generation_prompt => add_generation_prompt,

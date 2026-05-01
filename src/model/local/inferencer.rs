@@ -5,6 +5,8 @@ pub use native::{EmbeddingModelInferencer, LanguageModelInferencer};
 pub use wasm::{EmbeddingModelInferencer, LanguageModelInferencer};
 
 use super::kv_cache::{KVCache, KVCacheConfig, KVCacheOps};
+use super::rnn_state::{RNNState, RNNStateConfig, RNNStateOps};
+use super::KVStateKind;
 use crate::{
     cache::{Cache, CacheClaim, CacheEntry},
     utils::BoxFuture,
@@ -399,6 +401,8 @@ mod native {
         vm: Module,
         params: Array<Tensor>,
         kv_cache: KVCache,
+        rnn_state: Option<RNNState>,
+        kv_state_kind: KVStateKind,
         history: Vec<u32>,
 
         fembed: Function,
@@ -454,9 +458,24 @@ mod native {
             let metadata: serde_json::Value = serde_json::from_str(&metadata)
                 .map_err(|e| anyhow!("Failed to parse metadata json: {:?}", e))?;
 
-            let tensor_cache = TensorCache::from(tensor_cache_path, device)
-                .map_err(|e| anyhow!("Failed to initialize tensor cache: {:?}", e))?;
-            let param_names = metadata
+            // Load params. Two paths:
+            //
+            // 1. New `tensor-cache.json` layout (Qwen3.5 / V2 hybrid models):
+            //    delegate to the runtime's global `vm.builtin.tensor_cache.*`
+            //    so the resulting Tensors share the same in-vm cache instance
+            //    that the compiled `batch_prefill` packed function expects.
+            //    Loading via our own `TensorCache::from` produces ObjectRefs
+            //    that look identical at the dlpack level but cause subtly
+            //    different forward outputs in V2 hybrid because the prefill
+            //    function correlates them with global-cache entries.
+            //
+            // 2. Legacy `ndarray-cache.json` layout (Qwen3 / V1 KvCache,
+            //    BAAI/bge-m3 embedding, …): keep the in-tree TensorCache
+            //    path. The compiled prefill/decode for V1 doesn't tie params
+            //    to the global cache instance, so the simpler local loader
+            //    is sufficient and avoids requiring the new tvm-runtime
+            //    API surface for older artifacts.
+            let param_names_strs: Vec<&str> = metadata
                 .get("params")
                 .ok_or(anyhow!("Failed to get `params` attribute"))?
                 .as_array()
@@ -469,19 +488,94 @@ mod native {
                         .ok_or(anyhow!("Failed to convert `name` to str"))
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let params = tensor_cache.get_params(param_names);
+            let cache_filename = tensor_cache_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            let params: Array<Tensor> = if cache_filename == "tensor-cache.json" {
+                let model_dir_str: tvm_ffi::String = tvm_ffi::String::from(
+                    tensor_cache_path
+                        .parent()
+                        .unwrap_or(tensor_cache_path)
+                        .to_string_lossy()
+                        .as_ref(),
+                );
+                let f_tensor_cache_load = Function::get_global("vm.builtin.tensor_cache.load")
+                    .map_err(|e| {
+                        anyhow!("Failed to get global `vm.builtin.tensor_cache.load`: {:?}", e)
+                    })?;
+                f_tensor_cache_load
+                    .call_tuple((
+                        &model_dir_str,
+                        device.device_type as i32,
+                        device.device_id as i32,
+                    ))
+                    .map_err(|e| {
+                        anyhow!("Failed to call vm.builtin.tensor_cache.load: {:?}", e)
+                    })?;
+                let f_param_array_from_cache_by_name = Function::get_global(
+                    "vm.builtin.param_array_from_cache_by_name",
+                )
+                .map_err(|e| {
+                    anyhow!(
+                        "Failed to get global `vm.builtin.param_array_from_cache_by_name`: {:?}",
+                        e
+                    )
+                })?;
+                let param_names_arr: Array<tvm_ffi::String> = Array::new(
+                    param_names_strs
+                        .iter()
+                        .map(|s| tvm_ffi::String::from(*s))
+                        .collect::<Vec<_>>(),
+                );
+                let result: Array<Tensor> = f_param_array_from_cache_by_name
+                    .call_packed(&[AnyView::from(&param_names_arr)])
+                    .map_err(|e| {
+                        anyhow!("Failed to call param_array_from_cache_by_name: {:?}", e)
+                    })?
+                    .try_into()
+                    .map_err(|e| anyhow!("Failed to convert params to Array<Tensor>: {:?}", e))?;
+                let f_tensor_cache_clear = Function::get_global("vm.builtin.tensor_cache.clear")
+                    .map_err(|e| {
+                        anyhow!("Failed to get global `vm.builtin.tensor_cache.clear`: {:?}", e)
+                    })?;
+                f_tensor_cache_clear.call_tuple(()).map_err(|e| {
+                    anyhow!("Failed to call vm.builtin.tensor_cache.clear: {:?}", e)
+                })?;
+                result
+            } else {
+                let tensor_cache = TensorCache::from(tensor_cache_path, device)
+                    .map_err(|e| anyhow!("Failed to initialize tensor cache: {:?}", e))?;
+                tensor_cache.get_params(param_names_strs)
+            };
+
+            let kv_state_kind = KVStateKind::from_metadata(&metadata);
 
             let kv_cache = KVCache::new(&vm, kv_cache_config)?;
+            let rnn_state = if kv_state_kind.needs_rnn_state() {
+                Some(RNNState::new(&vm, RNNStateConfig::default())?)
+            } else {
+                None
+            };
 
             let fembed = vm
                 .get_function("embed")
                 .map_err(|e| anyhow!("Failed to get `embed` function: {:?}", e))?;
+
+            // Hybrid / RNN state models expose `batch_prefill` / `batch_decode`
+            // with extra arguments (logit_positions + rnn_state). Pure paged-KV
+            // models expose the classic `prefill` / `decode` pair.
+            let (prefill_name, decode_name) = if kv_state_kind.needs_rnn_state() {
+                ("batch_prefill", "batch_decode")
+            } else {
+                ("prefill", "decode")
+            };
             let fprefill = vm
-                .get_function("prefill")
-                .map_err(|e| anyhow!("Failed to get `prefill` function: {:?}", e))?;
+                .get_function(prefill_name)
+                .map_err(|e| anyhow!("Failed to get `{}` function: {:?}", prefill_name, e))?;
             let fdecode = vm
-                .get_function("decode")
-                .map_err(|e| anyhow!("Failed to get `decode` function: {:?}", e))?;
+                .get_function(decode_name)
+                .map_err(|e| anyhow!("Failed to get `{}` function: {:?}", decode_name, e))?;
             let fapply_bitmask_inplace = vm
                 .get_function("apply_bitmask_inplace")
                 .map_err(|e| anyhow!("Failed to get `apply_bitmask_inplace` function: {:?}", e))?;
@@ -498,6 +592,8 @@ mod native {
                 vm,
                 params,
                 kv_cache,
+                rnn_state,
+                kv_state_kind,
                 history: Vec::new(),
 
                 fembed,
@@ -544,11 +640,40 @@ mod native {
 
         pub fn clear(&mut self) -> anyhow::Result<()> {
             self.kv_cache.clear().map_err(|e| anyhow!("{e:?}"))?;
+            if let Some(rnn) = self.rnn_state.as_mut() {
+                rnn.clear().map_err(|e| anyhow!("{e:?}"))?;
+            }
             self.history.clear();
             Ok(())
         }
 
-        pub fn prefill(&mut self, tokens: &[u32]) -> anyhow::Result<()> {
+        /// Build a 1-D int32 tensor on the inference device holding the last
+        /// token position in the prefill chunk. Mirrors mlc-llm's pattern:
+        /// allocate values on CPU, then copy to a device-side buffer of the
+        /// same shape via `Tensor::copy_from`.
+        fn make_logit_positions(&self, last_pos: i64) -> anyhow::Result<Tensor> {
+            use tvm_ffi::{DLDevice, DLDeviceType};
+            let dtype = DLDataType {
+                code: DLDataTypeCode::kDLInt as u8,
+                bits: 32,
+                lanes: 1,
+            };
+            let cpu = DLDevice { device_type: DLDeviceType::kDLCPU, device_id: 0 };
+            let mut host_t = Tensor::empty(&[1i64], dtype, cpu);
+            // Fill via i32 slice on CPU.
+            host_t
+                .data_as_slice_mut::<i32>()
+                .map_err(|e| anyhow!("Failed to get i32 slice on host logit_positions: {:?}", e))?
+                [0] = last_pos as i32;
+            // Copy to device.
+            let mut dev_t = Tensor::empty(&[1i64], dtype, self.device);
+            dev_t.copy_from(&host_t).map_err(|e| {
+                anyhow!("Failed to copy logit_positions host→device: {:?}", e)
+            })?;
+            Ok(dev_t)
+        }
+
+        pub fn prefill(&mut self, tokens: &[u32]) -> anyhow::Result<Option<Tensor>> {
             if tokens.is_empty() {
                 anyhow::bail!("Token must not be empty");
             }
@@ -566,12 +691,28 @@ mod native {
                 .take_while(|(h, t)| h == t)
                 .count();
 
-            // Rewind the head of kv-cache to the LCP
+            // Rewind the head of kv-cache (and rnn state, when hybrid) to the LCP.
+            // RNN state can only roll back at most `max_history` tokens; if the
+            // requested rollback exceeds that, fall back to a full clear and
+            // re-prefill the entire prompt. This costs the LCP-rewind speedup
+            // but preserves correctness for hybrid (Gated DeltaNet) models.
             if lcp_index < self.history.len() {
-                self.kv_cache
-                    .popn(0, (self.history.len() - lcp_index) as i64)
-                    .map_err(|e| anyhow!("{e:?}"))?;
-                self.history.drain(lcp_index..);
+                let n = (self.history.len() - lcp_index) as i64;
+                let rnn_can_pop = self
+                    .rnn_state
+                    .as_ref()
+                    .map(|rnn| n <= rnn.max_history)
+                    .unwrap_or(true);
+                if rnn_can_pop {
+                    self.kv_cache.popn(0, n).map_err(|e| anyhow!("{e:?}"))?;
+                    if let Some(rnn) = self.rnn_state.as_mut() {
+                        rnn.popn(0, n).map_err(|e| anyhow!("{e:?}"))?;
+                    }
+                    self.history.drain(lcp_index..);
+                } else {
+                    // RNN state cannot roll back this far — start over.
+                    self.clear()?;
+                }
             }
 
             // Tokens to be added (without common prefixes)
@@ -594,20 +735,70 @@ mod native {
                 self.kv_cache
                     .begin_forward(0, length as i64)
                     .map_err(|e| anyhow!("{e:?}"))?;
-                self.fprefill
-                    .call_packed(&[
-                        AnyView::from(&embedding),
-                        AnyView::from(self.kv_cache.get_state()),
-                        AnyView::from(&self.params),
-                    ])
-                    .map_err(|e| anyhow!("{e:?}"))?;
+                if let Some(rnn) = self.rnn_state.as_mut() {
+                    rnn.begin_forward(0, length as i64)
+                        .map_err(|e| anyhow!("{e:?}"))?;
+                }
+
+                let output = match (&self.rnn_state, self.kv_state_kind) {
+                    (Some(rnn), KVStateKind::Hybrid) => {
+                        let last_pos = (length as i64) - 1;
+                        let logit_positions = self.make_logit_positions(last_pos)?;
+                        self.fprefill
+                            .call_packed(&[
+                                AnyView::from(&embedding),
+                                AnyView::from(&logit_positions),
+                                AnyView::from(self.kv_cache.get_state()),
+                                AnyView::from(rnn.get_state()),
+                                AnyView::from(&self.params),
+                            ])
+                            .map_err(|e| anyhow!("{e:?}"))?
+                    }
+                    (Some(rnn), KVStateKind::RnnState) => {
+                        let last_pos = (length as i64) - 1;
+                        let logit_positions = self.make_logit_positions(last_pos)?;
+                        self.fprefill
+                            .call_packed(&[
+                                AnyView::from(&embedding),
+                                AnyView::from(&logit_positions),
+                                AnyView::from(rnn.get_state()),
+                                AnyView::from(&self.params),
+                            ])
+                            .map_err(|e| anyhow!("{e:?}"))?
+                    }
+                    _ => {
+                        self.fprefill
+                            .call_packed(&[
+                                AnyView::from(&embedding),
+                                AnyView::from(self.kv_cache.get_state()),
+                                AnyView::from(&self.params),
+                            ])
+                            .map_err(|e| anyhow!("{e:?}"))?
+                    }
+                };
+
+                if let Some(rnn) = self.rnn_state.as_mut() {
+                    rnn.end_forward().map_err(|e| anyhow!("{e:?}"))?;
+                }
                 self.kv_cache.end_forward().map_err(|e| anyhow!("{e:?}"))?;
 
                 // Update history
                 self.history.extend(tokens_sliced.iter().map(|&v| v as u32));
+
+                // On the last chunk, capture logits for the caller so the
+                // prompt's last token is not pushed through KV state twice
+                // (a separate decode pass would extend KV by one extra token
+                // and produce incorrect logits afterwards).
+                if j == new_tokens.len() {
+                    let logits: Tensor = unsafe {
+                        tvm_runtime::get_from_any_array(output, 0)
+                            .map_err(|e| anyhow!("Failed to get prefill logits: {:?}", e))?
+                    };
+                    return Ok(Some(logits));
+                }
             }
 
-            Ok(())
+            Ok(None)
         }
 
         pub fn decode(&mut self, last_token: u32) -> anyhow::Result<Tensor> {
@@ -616,21 +807,56 @@ mod native {
             self.kv_cache
                 .begin_forward(0, 1)
                 .map_err(|e| anyhow!("Failed to begin forward: {:?}", e))?;
-            let output = self
-                .fdecode
-                .call_packed(&[
-                    AnyView::from(&embedding),
-                    AnyView::from(self.kv_cache.get_state()),
-                    AnyView::from(&self.params),
-                ])
-                .map_err(|e| anyhow!("Failed to call `decode`: {:?}", e))?;
+            if let Some(rnn) = self.rnn_state.as_mut() {
+                rnn.begin_forward(0, 1)
+                    .map_err(|e| anyhow!("Failed to begin forward (rnn): {:?}", e))?;
+            }
+
+            let output = match (&self.rnn_state, self.kv_state_kind) {
+                (Some(rnn), KVStateKind::Hybrid) => self
+                    .fdecode
+                    .call_packed(&[
+                        AnyView::from(&embedding),
+                        AnyView::from(self.kv_cache.get_state()),
+                        AnyView::from(rnn.get_state()),
+                        AnyView::from(&self.params),
+                    ])
+                    .map_err(|e| anyhow!("Failed to call `batch_decode`: {:?}", e))?,
+                (Some(rnn), KVStateKind::RnnState) => self
+                    .fdecode
+                    .call_packed(&[
+                        AnyView::from(&embedding),
+                        AnyView::from(rnn.get_state()),
+                        AnyView::from(&self.params),
+                    ])
+                    .map_err(|e| anyhow!("Failed to call `batch_decode`: {:?}", e))?,
+                _ => self
+                    .fdecode
+                    .call_packed(&[
+                        AnyView::from(&embedding),
+                        AnyView::from(self.kv_cache.get_state()),
+                        AnyView::from(&self.params),
+                    ])
+                    .map_err(|e| anyhow!("Failed to call `decode`: {:?}", e))?,
+            };
+
+            if let Some(rnn) = self.rnn_state.as_mut() {
+                rnn.end_forward()
+                    .map_err(|e| anyhow!("Failed to end forward (rnn): {:?}", e))?;
+            }
             self.kv_cache
                 .end_forward()
                 .map_err(|e| anyhow!("Failed to end forward: {:?}", e))?;
 
-            // The output of decode is an Array of 2 items: logits(Tensor) and kv cache.
-            let logits = unsafe {
-                tvm_ffi::collections::array::get_from_any_array(output, 0)
+            // The output is an Array: KVCache mode returns [logits, kv_cache];
+            // hybrid/rnn modes return [logits, kv_cache, rnn_state] (or
+            // [logits, rnn_state] for pure rnn). `logits` is always at index 0.
+            //
+            // The array is heterogeneous (Tensor + state-object), so we cannot
+            // cast the whole thing to Array<Tensor>. Use the Any-level helper
+            // added in tvm-runtime::any_array to extract only index 0.
+            let logits: Tensor = unsafe {
+                tvm_runtime::get_from_any_array(output, 0)
                     .map_err(|e| anyhow!("Failed to get logits from output array: {:?}", e))?
             };
 
@@ -868,6 +1094,8 @@ mod wasm {
         vm: tvmjs::Module,
         device: tvmjs::DLDevice,
         kv_cache: KVCache,
+        rnn_state: Option<RNNState>,
+        kv_state_kind: KVStateKind,
         params: tvmjs::TVMObject,
         history: Vec<u32>,
 
@@ -886,8 +1114,22 @@ mod wasm {
     impl LanguageModelInferencer {
         fn clear(&mut self) -> anyhow::Result<()> {
             self.kv_cache.clear()?;
+            if let Some(rnn) = self.rnn_state.as_mut() {
+                rnn.clear()?;
+            }
             self.history.clear();
             Ok(())
+        }
+
+        /// Build a 1-element int32 tensor on device holding `last_pos`.
+        fn make_logit_positions(&self, last_pos: i64) -> anyhow::Result<tvmjs::Tensor> {
+            let input = self.tvm.empty(
+                u32_slice_to_js(&[1u32]),
+                "int32",
+                self.device.clone().into(),
+            );
+            input.copy_from_i32array(&[last_pos as i32]);
+            Ok(input)
         }
 
         async fn embed(&self, tokens: &[i32]) -> anyhow::Result<tvmjs::Tensor> {
@@ -929,12 +1171,28 @@ mod wasm {
                 .take_while(|(h, t)| h == t)
                 .count();
 
-            // Rewind the head of kv-cache to the LCP
+            // Rewind the head of kv-cache (and rnn state, when hybrid) to the LCP.
+            // RNN state can only roll back at most `max_history` tokens; if the
+            // requested rollback exceeds that, fall back to a full clear and
+            // re-prefill the entire prompt. This costs the LCP-rewind speedup
+            // but preserves correctness for hybrid (Gated DeltaNet) models.
             if lcp_index < self.history.len() {
-                self.kv_cache
-                    .popn(0, (self.history.len() - lcp_index) as i64)
-                    .map_err(|e| anyhow!("{e:?}"))?;
-                self.history.drain(lcp_index..);
+                let n = (self.history.len() - lcp_index) as i64;
+                let rnn_can_pop = self
+                    .rnn_state
+                    .as_ref()
+                    .map(|rnn| n <= rnn.max_history)
+                    .unwrap_or(true);
+                if rnn_can_pop {
+                    self.kv_cache.popn(0, n).map_err(|e| anyhow!("{e:?}"))?;
+                    if let Some(rnn) = self.rnn_state.as_mut() {
+                        rnn.popn(0, n).map_err(|e| anyhow!("{e:?}"))?;
+                    }
+                    self.history.drain(lcp_index..);
+                } else {
+                    // RNN state cannot roll back this far — start over.
+                    self.clear()?;
+                }
             }
 
             // Tokens to be added (without common prefixes)
@@ -957,9 +1215,47 @@ mod wasm {
                 self.kv_cache
                     .begin_forward(0, length as i64)
                     .map_err(|e| anyhow!("{e:?}"))?;
-                self.fprefill
-                    .call3(&embedding, self.kv_cache.get_state(), &self.params)
-                    .map_err(|e| anyhow!("{e:?}"))?;
+                if let Some(rnn) = self.rnn_state.as_mut() {
+                    rnn.begin_forward(0, length as i64)
+                        .map_err(|e| anyhow!("{e:?}"))?;
+                }
+
+                match (&self.rnn_state, self.kv_state_kind) {
+                    (Some(rnn), KVStateKind::Hybrid) => {
+                        let last_pos = (length as i64) - 1;
+                        let logit_positions = self.make_logit_positions(last_pos)?;
+                        self.fprefill
+                            .call5(
+                                &embedding,
+                                &logit_positions,
+                                self.kv_cache.get_state(),
+                                rnn.get_state(),
+                                &self.params,
+                            )
+                            .map_err(|e| anyhow!("{e:?}"))?;
+                    }
+                    (Some(rnn), KVStateKind::RnnState) => {
+                        let last_pos = (length as i64) - 1;
+                        let logit_positions = self.make_logit_positions(last_pos)?;
+                        self.fprefill
+                            .call4(
+                                &embedding,
+                                &logit_positions,
+                                rnn.get_state(),
+                                &self.params,
+                            )
+                            .map_err(|e| anyhow!("{e:?}"))?;
+                    }
+                    _ => {
+                        self.fprefill
+                            .call3(&embedding, self.kv_cache.get_state(), &self.params)
+                            .map_err(|e| anyhow!("{e:?}"))?;
+                    }
+                }
+
+                if let Some(rnn) = self.rnn_state.as_mut() {
+                    rnn.end_forward().map_err(|e| anyhow!("{e:?}"))?;
+                }
                 self.kv_cache.end_forward().map_err(|e| anyhow!("{e:?}"))?;
 
                 // Update history
@@ -984,11 +1280,38 @@ mod wasm {
             self.kv_cache
                 .begin_forward(0, 1)
                 .map_err(|e| anyhow!("Failed to begin forward: {:?}", e))?;
-            let output: tvmjs::TVMArray = self
-                .fdecode
-                .call3(&embedding, self.kv_cache.get_state(), &self.params)
-                .map_err(|e| anyhow!("Failed to call `decode`: {:?}", e))?
-                .into();
+            if let Some(rnn) = self.rnn_state.as_mut() {
+                rnn.begin_forward(0, 1)
+                    .map_err(|e| anyhow!("Failed to begin forward (rnn): {:?}", e))?;
+            }
+
+            let output: tvmjs::TVMArray = match (&self.rnn_state, self.kv_state_kind) {
+                (Some(rnn), KVStateKind::Hybrid) => self
+                    .fdecode
+                    .call4(
+                        &embedding,
+                        self.kv_cache.get_state(),
+                        rnn.get_state(),
+                        &self.params,
+                    )
+                    .map_err(|e| anyhow!("Failed to call `batch_decode`: {:?}", e))?
+                    .into(),
+                (Some(rnn), KVStateKind::RnnState) => self
+                    .fdecode
+                    .call3(&embedding, rnn.get_state(), &self.params)
+                    .map_err(|e| anyhow!("Failed to call `batch_decode`: {:?}", e))?
+                    .into(),
+                _ => self
+                    .fdecode
+                    .call3(&embedding, self.kv_cache.get_state(), &self.params)
+                    .map_err(|e| anyhow!("Failed to call `decode`: {:?}", e))?
+                    .into(),
+            };
+
+            if let Some(rnn) = self.rnn_state.as_mut() {
+                rnn.end_forward()
+                    .map_err(|e| anyhow!("Failed to end forward (rnn): {:?}", e))?;
+            }
             self.kv_cache
                 .end_forward()
                 .map_err(|e| anyhow!("Failed to end forward: {:?}", e))?;
@@ -1046,9 +1369,16 @@ mod wasm {
                 let metadata = get_metadata(&vm)?;
                 let params = initialize_params(&tvm, &device, &metadata, contents).await?;
 
+                let kv_state_kind = KVStateKind::from_metadata(&metadata);
+
                 let fembed: tvmjs::PackedFunc = tvm.detach(vm.get_function("embed"));
-                let fprefill: tvmjs::PackedFunc = tvm.detach(vm.get_function("prefill"));
-                let fdecode: tvmjs::PackedFunc = tvm.detach(vm.get_function("decode"));
+                let (prefill_name, decode_name) = if kv_state_kind.needs_rnn_state() {
+                    ("batch_prefill", "batch_decode")
+                } else {
+                    ("prefill", "decode")
+                };
+                let fprefill: tvmjs::PackedFunc = tvm.detach(vm.get_function(prefill_name));
+                let fdecode: tvmjs::PackedFunc = tvm.detach(vm.get_function(decode_name));
                 let fsample_top_p_from_logits: tvmjs::PackedFunc =
                     tvm.detach(tvm.get_global_func("vm.builtin.sample_top_p_from_logits"));
 
@@ -1061,6 +1391,20 @@ mod wasm {
                 let kv_cache =
                     KVCache::new(tvm.clone().into(), &vm, &metadata, kv_cache_config).unwrap();
 
+                let rnn_state = if kv_state_kind.needs_rnn_state() {
+                    Some(
+                        RNNState::new(
+                            tvm.clone().into(),
+                            &vm,
+                            &metadata,
+                            RNNStateConfig::default(),
+                        )
+                        .unwrap(),
+                    )
+                } else {
+                    None
+                };
+
                 tvm.end_scope();
 
                 Ok(LanguageModelInferencer {
@@ -1068,6 +1412,8 @@ mod wasm {
                     vm,
                     device,
                     kv_cache,
+                    rnn_state,
+                    kv_state_kind,
                     params,
                     history: Vec::new(),
                     fembed,

@@ -29,6 +29,26 @@ fn build_native() {
     if std::env::var_os("CARGO_FEATURE_NODEJS").is_some() {
         napi_build::setup();
     }
+
+    // Link libmlc_llm_module so its TVM_FFI_STATIC_INIT_BLOCKs run at process
+    // load. We deliberately link the *_module variant rather than libmlc_llm:
+    // mlc-llm's Python package loads libmlc_llm_module via tvm.ffi.load_module,
+    // so linking the same dylib keeps a single GlobalFunctionTable in process
+    // when both ailoy and mlc-llm are imported together. Linking libmlc_llm
+    // directly would put two copies of every mlc.json_ffi.* function in the
+    // global registry and the second registration aborts at process load.
+    println!("cargo:rerun-if-env-changed=MLC_LLM_LIB_DIR");
+    if let Ok(mlc_dir) = std::env::var("MLC_LLM_LIB_DIR") {
+        println!("cargo:rustc-link-search=native={}", mlc_dir);
+        println!("cargo:rustc-link-lib=dylib=mlc_llm_module");
+    }
+
+    // Make the resulting cdylib portable: tell the linker to look for runtime
+    // dependencies right next to itself (`@loader_path`). Combined with the
+    // build/install step that copies libmlc_llm_module / libtvm{,_runtime,_ffi
+    // [_testing]} into bindings/python/ailoy/, this gives ailoy a self-
+    // contained dylib closure with no hard-coded venv paths.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
 }
 
 fn build_wasm() {
