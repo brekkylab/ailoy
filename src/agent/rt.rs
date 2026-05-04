@@ -65,39 +65,12 @@ pub struct Agent {
 
 impl Agent {
     /// Create an agent using the process-wide [`default_provider`] and a [`Local`] runenv.
-    ///
-    /// Configure [`default_provider_mut`](crate::agent::default_provider_mut) once at
-    /// startup; all agents built with this method share those models and tool sources
-    /// without passing a provider around.
-    ///
-    /// ```no_run
-    /// # use ailoy::{agent::{Agent, AgentSpec, default_provider_mut}, lang_model::LangModelProvider};
-    /// # #[tokio::main]
-    /// # async fn main() -> anyhow::Result<()> {
-    /// // One-time setup — configure the global provider before creating any agents.
-    /// {
-    ///     let mut provider = default_provider_mut().await;
-    ///     provider.models.insert(
-    ///         "anthropic/claude-haiku-4-5-20251001".into(),
-    ///         LangModelProvider::anthropic(std::env::var("ANTHROPIC_API_KEY")?),
-    ///     );
-    /// }
-    ///
-    /// let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001");
-    /// let agent = Agent::try_new(spec).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
         let provider = default_provider().await;
         Self::try_with_provider(spec, &provider).await
     }
 
     /// Create an agent using the process-wide [`default_provider`] and an explicit [`RunEnv`].
-    ///
-    /// Equivalent to [`Agent::try_new`] but lets the caller swap in a non-default
-    /// runenv (e.g. a [`Sandbox`](crate::runenv::Sandbox)) without registering one
-    /// globally.
     pub async fn try_with_runenv(spec: AgentSpec, runenv: Arc<dyn RunEnv>) -> anyhow::Result<Self> {
         let provider = default_provider().await;
         Self::try_with_provider_and_runenv(spec, &provider, runenv).await
@@ -108,23 +81,6 @@ impl Agent {
     /// Use this for scoped, explicit control over models and tool sources without
     /// touching global state.  The provider is not stored in the agent and can be
     /// reused across multiple agents.
-    ///
-    /// ```no_run
-    /// # use ailoy::{agent::{Agent, AgentProvider, AgentSpec}, lang_model::LangModelProvider, tool::ToolProvider};
-    /// # #[tokio::main]
-    /// # async fn main() -> anyhow::Result<()> {
-    /// let mut provider = AgentProvider::new();
-    /// provider.models.insert(
-    ///     "openai/gpt-4o".into(),
-    ///     LangModelProvider::openai(std::env::var("OPENAI_API_KEY")?),
-    /// );
-    /// provider.tools = ToolProvider::new().web_search();
-    ///
-    /// let spec = AgentSpec::new("openai/gpt-4o").tool("web_search");
-    /// let agent = Agent::try_with_provider(spec, &provider).await?;
-    /// #   Ok(())
-    /// # }
-    /// ```
     pub async fn try_with_provider(
         spec: AgentSpec,
         provider: &AgentProvider,

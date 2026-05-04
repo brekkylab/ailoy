@@ -8,14 +8,34 @@ use crate::{
 
 /// Fluent builder over [`AgentSpec`] for [`Agent`].
 ///
-/// Accumulates a spec and optional [`AgentProvider`] / [`RunEnv`] / seed history,
-/// then dispatches to the matching `Agent::try_*` constructor in [`build`](Self::build).
 /// This is a convenience wrapper around the spec/provider construction path — useful
 /// when you want to assemble an agent inline rather than constructing an [`AgentSpec`]
 /// up front.
 ///
 /// When you already hold a fully-formed [`AgentSpec`], call
 /// [`Agent::try_with_provider`] / [`Agent::try_new`] directly instead.
+///
+/// # Examples
+/// 
+/// ```rust
+/// # use ailoy::{agent::{AgentBuilder, AgentProvider}, lang_model::LangModelProvider, tool::ToolProvider};
+/// # #[tokio::main]
+/// # async fn main() -> anyhow::Result<()> {
+/// let mut provider = AgentProvider::new();
+/// provider.models.insert(
+///     "openai/gpt-4o".into(),
+///     LangModelProvider::openai(std::env::var("OPENAI_API_KEY")?),
+/// );
+/// provider.tools = ToolProvider::new().web_search();
+///
+/// let agent = AgentBuilder::new("openai/gpt-4o")
+///     .provider(provider)
+///     .tool("web_search")
+///     .build()
+///     .await?;
+/// #   Ok(())
+/// # }
+/// ```
 pub struct AgentBuilder {
     spec: AgentSpec,
 
