@@ -2,7 +2,7 @@ use url::Url;
 
 use crate::{
     datatype::Value,
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelRequest},
+    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
@@ -11,8 +11,8 @@ use crate::{
 };
 
 impl LangModelProvider {
-    pub fn openai(api_key: String) -> Self {
-        Self::API {
+    pub fn openai(api_key: String) -> LangModelProviderElem {
+        LangModelProviderElem::API {
             schema: LangModelAPISchema::OpenAI,
             url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
             api_key: Some(api_key),
@@ -337,7 +337,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang_model::{LangModel, LangModelAPISchema, LangModelProvider},
+        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
@@ -388,7 +388,7 @@ mod tests {
 
         let model = LangModel::new(
             "gpt-5.4-mini".to_string(),
-            LangModelProvider::API {
+            LangModelProviderElem::API {
                 schema: LangModelAPISchema::OpenAI,
                 url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
                 api_key: Some(api_key),

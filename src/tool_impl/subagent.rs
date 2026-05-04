@@ -103,23 +103,23 @@ fn make_subagent_parts(card: AgentCard, agent: Arc<Mutex<Agent>>) -> (ToolDesc, 
 /// Create a [`Tool`] that wraps `agent` as a callable sub-agent.
 ///
 /// The tool accepts a single `string` argument (the task for the sub-agent) and:
-/// 1. Streams all [`MessageOutput`] items produced during the sub-agent's turn as
-///    intermediate outputs. The outer agent's [`stream_turn`] assigns these `depth + 1`.
-/// 2. Emits a final `Role::Tool` [`MessageOutput`] whose text content is the sub-agent's
-///    last assistant answer. The outer agent assigns this `depth 0` and pushes it to history.
+/// 1. Streams all [`MessageOutput`](crate::message::MessageOutput) items produced
+///    during the sub-agent's turn as intermediate outputs. The outer agent's
+///    `run` assigns these `depth + 1`.
+/// 2. Emits a final `Role::Tool` message whose value content is the sub-agent's
+///    last assistant answer. The outer agent assigns this `depth 0` and pushes it
+///    to history.
 ///
-/// Use this variant when you already hold a built [`Agent`] and want a [`Tool`] directly
-/// (e.g. from [`crate::agent::AgentBuilder`]).  No [`crate::agent::AgentSpec`] needed.
+/// Used internally by [`Agent::try_with_provider_and_runenv`](crate::agent::Agent::try_with_provider_and_runenv)
+/// to register every spec sub-agent as a callable tool.
 pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
     let (desc, f) = make_subagent_parts(card, agent);
     Tool::new(desc, Arc::new(f))
 }
 
-/// Create a [`ToolFactory`] that wraps `agent` as a callable sub-agent.
-///
-/// This is the spec/provider path — the factory can later be materialized via
-/// [`ToolFactory::make`].  Prefer [`make_subagent_tool`] when you already have a
-/// built [`Agent`] and don't need a factory.
+/// Factory variant of [`make_subagent_tool`] for callers that need a
+/// [`ToolFactory`] (e.g. to plug into a [`ToolProvider::custom`](crate::tool::ToolProvider::custom)
+/// entry).  Materialised later via [`ToolFactory::make`].
 pub fn make_subagent_tool_factory(card: AgentCard, agent: Arc<Mutex<Agent>>) -> ToolFactory {
     let (desc, f) = make_subagent_parts(card, agent);
     ToolFactory::simple(desc, f)
