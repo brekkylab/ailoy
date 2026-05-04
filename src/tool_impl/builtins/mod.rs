@@ -6,12 +6,14 @@ use bash::build_bash_tool;
 use python_repl::build_python_repl_tool;
 use web_search::build_web_search_tool;
 
-use crate::tool::{BuiltinToolProvider, ToolFactory};
+use crate::tool::{BuiltinToolProviderElem, ToolFactory};
 
-pub async fn make_builtin_tool(provider: &BuiltinToolProvider) -> anyhow::Result<ToolFactory> {
+pub async fn make_builtin_tool_factory(
+    provider: &BuiltinToolProviderElem,
+) -> anyhow::Result<ToolFactory> {
     match provider {
-        BuiltinToolProvider::Bash {} => build_bash_tool().await,
-        BuiltinToolProvider::PythonRepl {} => build_python_repl_tool().await,
-        BuiltinToolProvider::WebSearch {} => build_web_search_tool().await,
+        BuiltinToolProviderElem::Bash {} => build_bash_tool().await,
+        BuiltinToolProviderElem::PythonRepl {} => build_python_repl_tool().await,
+        BuiltinToolProviderElem::WebSearch {} => build_web_search_tool().await,
     }
 }

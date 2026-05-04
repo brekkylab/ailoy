@@ -1,8 +1,10 @@
+mod builder;
 mod card;
 mod provider;
 mod rt;
 mod spec;
 
+pub use builder::AgentBuilder;
 pub use card::*;
 pub use provider::*;
 pub use rt::*;

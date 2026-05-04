@@ -186,8 +186,10 @@ mod tests {
     use async_trait::async_trait;
     use reqwest::Client;
 
-    use super::super::engine::{SearchEngine, SearchError, SearchResult};
-    use super::*;
+    use super::{
+        super::engine::{SearchEngine, SearchError, SearchResult},
+        *,
+    };
 
     // --- normalize_url tests ---
 

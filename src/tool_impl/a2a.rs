@@ -9,12 +9,7 @@ use crate::{
 
 // ── Tool constructor ──────────────────────────────────────────────────────────
 
-/// Build a [`Tool`] that delegates to a remote A2A agent.
-///
-/// Eagerly fetches the agent card from `{url}/.well-known/agent-card.json` so
-/// that the tool name and description are known at startup.  Each call sends a
-/// JSON-RPC `message/send` request and returns the agent's text response.
-pub(crate) async fn make_a2a_tool(url: Url) -> anyhow::Result<ToolFactory> {
+async fn a2a_parts(url: Url) -> anyhow::Result<(crate::message::ToolDesc, ToolFunc)> {
     let base_url = url.to_string();
     let card = discover(&base_url).await?;
 
@@ -58,6 +53,12 @@ pub(crate) async fn make_a2a_tool(url: Url) -> anyhow::Result<ToolFactory> {
         }
     });
 
+    Ok((desc, f))
+}
+
+/// Build a [`ToolFactory`] that delegates to a remote A2A agent.
+pub(crate) async fn make_a2a_tool_factory(url: Url) -> anyhow::Result<ToolFactory> {
+    let (desc, f) = a2a_parts(url).await?;
     Ok(ToolFactory::simple(desc, f))
 }
 

@@ -11,14 +11,22 @@ use crate::{
 
 /// Deferred constructor that produces a [`Tool`] tailored to a given [`AgentSpec`].
 ///
-/// Held in a [`super::ToolSet`] until an agent is instantiated.  At that point
-/// [`ToolFactory::make`] is called with the agent's spec to select the right
-/// [`ToolFunc`] implementation (e.g. sandbox vs. no-sandbox) and return a
+/// Each entry in a [`ToolProvider`](super::ToolProvider) resolves to a `ToolFactory`,
+/// which is then called via [`ToolFactory::make`] with the agent's spec to select the
+/// right [`ToolFunc`] implementation (e.g. a sandbox-aware variant) and return a
 /// ready-to-call [`Tool`].
 #[derive(Clone)]
 pub struct ToolFactory {
     name: String,
     f: Arc<dyn Fn(&AgentSpec) -> (ToolDesc, Arc<ToolFunc>) + Send + Sync>,
+}
+
+impl std::fmt::Debug for ToolFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolFactory")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ToolFactory {
@@ -44,8 +52,7 @@ impl ToolFactory {
     pub fn with_initializer(
         desc: ToolDesc,
         f: impl Fn(&AgentSpec) -> ToolFunc + Send + Sync + 'static,
-    ) -> Self
-    {
+    ) -> Self {
         Self::new(
             desc.name.clone(),
             Arc::new(move |spec| {

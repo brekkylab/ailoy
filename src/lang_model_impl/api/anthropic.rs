@@ -1,10 +1,9 @@
 use anyhow::bail;
 use url::Url;
 
-use crate::lang_model::{LangModelAPISchema, LangModelProvider};
 use crate::{
     datatype::Value,
-    lang_model::LangModelRequest,
+    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
@@ -13,8 +12,8 @@ use crate::{
 };
 
 impl LangModelProvider {
-    pub fn anthropic(api_key: String) -> Self {
-        Self::API {
+    pub fn anthropic(api_key: String) -> LangModelProviderElem {
+        LangModelProviderElem::API {
             schema: LangModelAPISchema::Anthropic,
             url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
             api_key: Some(api_key),
@@ -345,7 +344,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang_model::{LangModel, LangModelAPISchema, LangModelProvider},
+        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
@@ -398,7 +397,7 @@ mod tests {
 
         let model = LangModel::new(
             "claude-haiku-4-5".to_string(),
-            LangModelProvider::API {
+            LangModelProviderElem::API {
                 schema: LangModelAPISchema::Anthropic,
                 url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
                 api_key: Some(api_key),
