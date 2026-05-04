@@ -7,7 +7,7 @@ use crate::{
     agent::{Agent, AgentCard},
     datatype::Value,
     message::{FinishReason, Message, Part, Role, ToolDesc, ToolDescBuilder},
-    tool::{Tool, ToolContext, ToolFactory, ToolFunc},
+    tool::{Tool, ToolContext, ToolFunc},
 };
 
 /// Shared desc + func construction for both the factory and direct-Tool paths.
@@ -115,12 +115,4 @@ fn make_subagent_parts(card: AgentCard, agent: Arc<Mutex<Agent>>) -> (ToolDesc, 
 pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
     let (desc, f) = make_subagent_parts(card, agent);
     Tool::new(desc, Arc::new(f))
-}
-
-/// Factory variant of [`make_subagent_tool`] for callers that need a
-/// [`ToolFactory`] (e.g. to plug into a [`ToolProvider::custom`](crate::tool::ToolProvider::custom)
-/// entry).  Materialised later via [`ToolFactory::make`].
-pub fn make_subagent_tool_factory(card: AgentCard, agent: Arc<Mutex<Agent>>) -> ToolFactory {
-    let (desc, f) = make_subagent_parts(card, agent);
-    ToolFactory::simple(desc, f)
 }

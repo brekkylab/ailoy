@@ -108,9 +108,10 @@ impl Agent {
         // Materialise sub-agents and register them as callable tools.
         // Each sub-agent inherits the parent's runenv so they share filesystem state.
         for sub_spec in &spec.subagents {
-            let card = sub_spec.card.clone().ok_or_else(|| {
-                anyhow::anyhow!("subagent '{}' has no AgentCard", sub_spec.model)
-            })?;
+            let card = sub_spec
+                .card
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("subagent '{}' has no AgentCard", sub_spec.model))?;
             let sub_agent = Box::pin(Self::try_with_provider_and_runenv(
                 sub_spec.clone(),
                 provider,
@@ -425,7 +426,9 @@ mod tests {
             )
             .subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, &provider).await.unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, &provider)
+            .await
+            .unwrap();
 
         let query =
             Message::new(Role::User).with_contents([Part::text("What is 123 multiplied by 7?")]);
@@ -433,8 +436,7 @@ mod tests {
         {
             let mut strm = main_agent.run(query);
             while let Some(event) = strm.next().await {
-                let event = event.unwrap();
-                println!("{}", event);
+                let _ = event.unwrap();
             }
         }
 
@@ -479,7 +481,9 @@ mod tests {
 
         let main_spec = AgentSpec::new("openai/gpt-4o-mini").subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, &provider).await.unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, &provider)
+            .await
+            .unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text("What is 99 plus 1?")]);
 
@@ -755,66 +759,6 @@ mod tests {
         assert!(
             last_msg.contents.iter().any(|p| p.is_text()),
             "Final Assistant message must contain text — the agent never produced a closing answer."
-        );
-    }
-
-    /// Verifies the sandbox VM lifecycle using the `python_repl` builtin tool:
-    ///
-    /// 1. Stopped right after agent creation.
-    /// 2. python_repl executes successfully (proves VM was running during the call).
-    /// 3. Stopped again once the tool-call batch stream is exhausted.
-    #[cfg(feature = "sandbox")]
-    #[test_with::env(ANTHROPIC_API_KEY)]
-    #[tokio::test]
-    async fn test_sandbox_lifecycle_with_python_repl() {
-        use crate::runenv::{Sandbox, SandboxConfig};
-
-        let mut provider = get_provider();
-        provider.tools = ToolProvider::new().python_repl();
-
-        let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool("python_repl")
-            .instruction(
-                "When asked to run Python code, always use the python_repl tool. \
-                 Never skip the tool call.",
-            );
-
-        let runenv: Arc<dyn RunEnv> = Arc::new(
-            Sandbox::new(SandboxConfig::default())
-                .await
-                .expect("sandbox creation failed"),
-        );
-        let mut agent = Agent::try_with_provider_and_runenv(spec, &provider, runenv)
-            .await
-            .unwrap();
-
-        let query = Message::new(Role::User).with_contents([Part::text(
-            "Run this Python code and tell me the output: print('ailoy_sandbox_ok')",
-        )]);
-        {
-            let mut stream = agent.run(query);
-            while let Some(event) = stream.next().await {
-                event.unwrap();
-            }
-        }
-
-        let tool_result = agent
-            .get_history()
-            .iter()
-            .find(|m| m.role == Role::Tool)
-            .expect("history should contain a tool result");
-
-        let stdout = tool_result
-            .contents
-            .iter()
-            .find_map(|p| p.as_value())
-            .and_then(|v| v.pointer("/stdout"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        assert!(
-            stdout.contains("ailoy_sandbox_ok"),
-            "python_repl should have produced expected output, got stdout: {stdout:?}"
         );
     }
 

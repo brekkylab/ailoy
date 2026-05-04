@@ -16,7 +16,7 @@ use crate::{
 /// [`Agent::try_with_provider`] / [`Agent::try_new`] directly instead.
 ///
 /// # Examples
-/// 
+///
 /// ```rust
 /// # use ailoy::{agent::{AgentBuilder, AgentProvider}, lang_model::LangModelProvider, tool::ToolProvider};
 /// # #[tokio::main]
@@ -135,9 +135,7 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        agent::AgentCard, lang_model::LangModelProvider, message::Role, runenv::Local,
-    };
+    use crate::{agent::AgentCard, lang_model::LangModelProvider, message::Role, runenv::Local};
 
     const TEST_MODEL: &str = "openai/gpt-4o-mini";
 

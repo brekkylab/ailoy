@@ -57,9 +57,9 @@ pub enum ToolProviderElem {
 impl ToolProviderElem {
     async fn make(&self, spec: &AgentSpec) -> anyhow::Result<Tool> {
         let tool = match self {
-            ToolProviderElem::Builtin(b) => {
-                crate::tool_impl::make_builtin_tool(b).await?.make(spec)
-            }
+            ToolProviderElem::Builtin(b) => crate::tool_impl::make_builtin_tool_factory(b)
+                .await?
+                .make(spec),
             ToolProviderElem::MCP(_) => {
                 todo!("MCP factory construction is not yet implemented")
             }

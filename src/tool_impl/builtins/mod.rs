@@ -8,7 +8,9 @@ use web_search::build_web_search_tool;
 
 use crate::tool::{BuiltinToolProviderElem, ToolFactory};
 
-pub async fn make_builtin_tool(provider: &BuiltinToolProviderElem) -> anyhow::Result<ToolFactory> {
+pub async fn make_builtin_tool_factory(
+    provider: &BuiltinToolProviderElem,
+) -> anyhow::Result<ToolFactory> {
     match provider {
         BuiltinToolProviderElem::Bash {} => build_bash_tool().await,
         BuiltinToolProviderElem::PythonRepl {} => build_python_repl_tool().await,
