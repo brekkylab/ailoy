@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
     datatype::Value,
     message::{Message, Part, Role, ToolDescBuilder},
-    tool::{Tool, ToolContext, ToolFactory, ToolFunc},
+    tool::{ToolContext, ToolFactory, ToolFunc},
 };
 
 // ── Tool constructor ──────────────────────────────────────────────────────────
@@ -56,16 +54,6 @@ async fn a2a_parts(url: Url) -> anyhow::Result<(crate::message::ToolDesc, ToolFu
     });
 
     Ok((desc, f))
-}
-
-/// Build a [`Tool`] that delegates to a remote A2A agent.
-///
-/// Eagerly fetches the agent card from `{url}/.well-known/agent-card.json` so
-/// that the tool name and description are known at startup.  Each call sends a
-/// JSON-RPC `message/send` request and returns the agent's text response.
-pub async fn make_a2a_tool(url: Url) -> anyhow::Result<Tool> {
-    let (desc, f) = a2a_parts(url).await?;
-    Ok(Tool::new(desc, Arc::new(f)))
 }
 
 /// Build a [`ToolFactory`] that delegates to a remote A2A agent.

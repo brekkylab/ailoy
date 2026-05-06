@@ -1,5 +1,5 @@
 //! Convenience constructors for building [`Tool`] instances directly,
-//! without going through the [`ToolFactory`] / [`crate::tool::ToolSet`] lifecycle.
+//! without going through the [`ToolFactory`] / [`ToolProvider`] lifecycle.
 //!
 //! Use these when you know the target configuration up-front and don't need
 //! the factory lifecycle — for example, in tests or in one-shot scripts.
@@ -8,12 +8,12 @@ use url::Url;
 
 use crate::{
     agent::AgentSpec,
-    tool::{BuiltinToolProvider, Tool},
+    tool::{BuiltinToolProviderElem, Tool},
 };
 
-/// Build a [`Tool`] for the given [`BuiltinToolProvider`].
-pub async fn make_builtin_tool(provider: &BuiltinToolProvider) -> anyhow::Result<Tool> {
-    let factory = crate::tool_impl::make_builtin_tool(provider).await?;
+/// Build a [`Tool`] for the given [`BuiltinToolProviderElem`].
+pub async fn make_builtin_tool(provider: &BuiltinToolProviderElem) -> anyhow::Result<Tool> {
+    let factory = crate::tool_impl::make_builtin_tool_factory(provider).await?;
     Ok(factory.make(&AgentSpec::new("")))
 }
 
@@ -22,5 +22,6 @@ pub async fn make_builtin_tool(provider: &BuiltinToolProvider) -> anyhow::Result
 /// Eagerly fetches the agent card from `{url}/.well-known/agent-card.json` so
 /// that the tool name and description are known at construction time.
 pub async fn make_a2a_tool(url: Url) -> anyhow::Result<Tool> {
-    crate::tool_impl::make_a2a_tool(url).await
+    let factory = crate::tool_impl::make_a2a_tool_factory(url).await?;
+    Ok(factory.make(&AgentSpec::new("")))
 }

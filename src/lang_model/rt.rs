@@ -1,7 +1,7 @@
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
-use super::{LangModelAPISchema, LangModelProvider};
+use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
     lang_model_impl::api,
@@ -11,7 +11,7 @@ use crate::{
 /// Runtime
 pub struct LangModel {
     model: String,
-    provider: LangModelProvider,
+    provider: LangModelProviderElem,
 }
 
 pub(crate) struct LangModelRequest<'a> {
@@ -24,8 +24,12 @@ pub(crate) struct LangModelRequest<'a> {
 }
 
 impl LangModel {
-    pub fn new(model: String, provider: LangModelProvider) -> Self {
+    pub fn new(model: String, provider: LangModelProviderElem) -> Self {
         Self { model, provider }
+    }
+
+    pub fn model_id(&self) -> &str {
+        &self.model
     }
 
     pub async fn run(
@@ -34,7 +38,7 @@ impl LangModel {
         tools: &[ToolDesc],
     ) -> anyhow::Result<MessageOutput> {
         match &self.provider {
-            LangModelProvider::API {
+            LangModelProviderElem::API {
                 schema,
                 url,
                 api_key,
@@ -177,6 +181,7 @@ impl LangModel {
 mod tests {
     use super::*;
     use crate::{
+        lang_model::LangModelProvider,
         message::{FinishReason, Part, Role, ToolDescBuilder},
         to_value,
     };

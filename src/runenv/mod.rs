@@ -17,9 +17,20 @@ pub struct ExecResult {
     pub timed_out: bool,
 }
 
+/// Execution environment for tools that touch the filesystem or run subprocesses.
+///
+/// An [`Agent`](crate::agent::Agent) holds an `Arc<dyn RunEnv>` in [`AgentState::runenv`](crate::agent::AgentState::runenv)
+/// and passes it to every tool call via [`ToolContext`](crate::tool::ToolContext).  Sub-agents
+/// declared in [`AgentSpec::subagents`](crate::agent::AgentSpec) inherit the parent's
+/// `RunEnv`, so they share the same filesystem and process namespace.
+///
+/// Built-in implementations:
+/// * [`Local`] — runs commands directly on the host (the default).
+/// * [`Sandbox`] (with the `sandbox` feature) — runs commands inside a microVM.
 #[async_trait::async_trait]
-pub trait RunEnv: Send + Sync {
-    /// timeout: secs
+pub trait RunEnv: Send + Sync + 'static {
+    /// Run `program` with `args`. `timeout` is in seconds; when elapsed the
+    /// resulting [`ExecResult`] has `timed_out = true`.
     async fn exec(
         &self,
         program: String,
