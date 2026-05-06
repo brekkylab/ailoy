@@ -22,53 +22,55 @@ impl Default for ContextManager {
     }
 }
 
-/// Truncate the conversation history to reduce context size.
-///
-/// ## Algorithm
-///
-/// 1. If `history[0]` is `Role::System`, always preserve it (never dropped).
-/// 2. Walk backwards from the end of history, skipping `System` messages, and
-///    count completed user-assistant turns.  Once `preserve_recent_turns` pairs
-///    have been counted, the index of the oldest `User` message in that window
-///    becomes the **preserve boundary** — everything at or after that index is
-///    left untouched.
-/// 3. For each `Role::Tool` message *before* the preserve boundary, replace its
-///    contents with a `"[context truncated]"` placeholder **while keeping the
-///    message's `id` intact**.  Anthropic's API returns HTTP 400 if a tool-use
-///    `id` that appears in an assistant message has no matching tool-result, so
-///    the id must never be discarded.
-///
-/// Note: Full group-level dropping (removing the oldest user + assistant + tool
-/// triplet entirely) is left for a future iteration; it requires a reliable
-/// post-truncation token estimate that is not yet available here.  For now,
-/// placeholder replacement alone is sufficient to keep the context window
-/// manageable for most workloads.
-pub(crate) fn truncate_history(history: &mut Vec<Message>, spec: &ContextManager) {
-    if history.is_empty() {
-        return;
-    }
+impl ContextManager {
+    /// Truncate the conversation history to reduce context size.
+    ///
+    /// ## Algorithm
+    ///
+    /// 1. If `history[0]` is `Role::System`, always preserve it (never dropped).
+    /// 2. Walk backwards from the end of history, skipping `System` messages, and
+    ///    count completed user-assistant turns.  Once `preserve_recent_turns` pairs
+    ///    have been counted, the index of the oldest `User` message in that window
+    ///    becomes the **preserve boundary** — everything at or after that index is
+    ///    left untouched.
+    /// 3. For each `Role::Tool` message *before* the preserve boundary, replace its
+    ///    contents with a `"[context truncated]"` placeholder **while keeping the
+    ///    message's `id` intact**.  Anthropic's API returns HTTP 400 if a tool-use
+    ///    `id` that appears in an assistant message has no matching tool-result, so
+    ///    the id must never be discarded.
+    ///
+    /// Note: Full group-level dropping (removing the oldest user + assistant + tool
+    /// triplet entirely) is left for a future iteration; it requires a reliable
+    /// post-truncation token estimate that is not yet available here.  For now,
+    /// placeholder replacement alone is sufficient to keep the context window
+    /// manageable for most workloads.
+    pub(crate) fn truncate_history(&self, history: &mut Vec<Message>) {
+        if history.is_empty() {
+            return;
+        }
 
-    // ── Locate preserve boundary ───────────────────────────────────────────────
-    let preserve_from = find_preserve_boundary(history, spec.preserve_recent_turns);
+        // ── Locate preserve boundary ───────────────────────────────────────────────
+        let preserve_from = find_preserve_boundary(history, self.preserve_recent_turns);
 
-    let start_idx = if history[0].role == Role::System {
-        1
-    } else {
-        0
-    };
+        let start_idx = if history[0].role == Role::System {
+            1
+        } else {
+            0
+        };
 
-    // ── Replace Tool messages outside the preserve window with placeholders ────
-    for i in start_idx..preserve_from {
-        if history[i].role == Role::Tool {
-            let original_id = history[i].id.clone();
-            let placeholder = Message::new(Role::Tool).with_contents([Part::value(Value::string(
-                "[context truncated]".to_string(),
-            ))]);
-            history[i] = if let Some(id) = original_id {
-                placeholder.with_id(id)
-            } else {
-                placeholder
-            };
+        // ── Replace Tool messages outside the preserve window with placeholders ────
+        for i in start_idx..preserve_from {
+            if history[i].role == Role::Tool {
+                let original_id = history[i].id.clone();
+                let placeholder = Message::new(Role::Tool).with_contents([Part::value(
+                    Value::string("[context truncated]".to_string()),
+                )]);
+                history[i] = if let Some(id) = original_id {
+                    placeholder.with_id(id)
+                } else {
+                    placeholder
+                };
+            }
         }
     }
 }
@@ -167,12 +169,12 @@ mod tests {
     #[test]
     fn test_no_change_when_all_within_preserve_window() {
         let mut history = vec![sys(), user("u1"), asst("a1"), user("u2"), asst("a2")];
-        let spec = ContextManager {
+        let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 10,
         };
         let original_len = history.len();
-        truncate_history(&mut history, &spec);
+        cm.truncate_history(&mut history);
         assert_eq!(history.len(), original_len, "nothing should change");
     }
 
@@ -189,11 +191,11 @@ mod tests {
             user("u2"),
             asst("a2"),
         ];
-        let spec = ContextManager {
+        let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 1,
         };
-        truncate_history(&mut history, &spec);
+        cm.truncate_history(&mut history);
 
         // The Tool message must still be present (as a placeholder, not removed).
         let tool_msg = history.iter().find(|m| m.role == Role::Tool);
@@ -232,11 +234,11 @@ mod tests {
             user("u3"),
             asst("a3"),
         ];
-        let spec = ContextManager {
+        let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 1,
         };
-        truncate_history(&mut history, &spec);
+        cm.truncate_history(&mut history);
         assert_eq!(
             history[0].role,
             Role::System,
@@ -260,11 +262,11 @@ mod tests {
         ];
         // preserve_recent_turns = 1 → boundary is at u2 (index 3).
         // tool_result("call_2") is at index 5 which is >= 3 → preserved.
-        let spec = ContextManager {
+        let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 1,
         };
-        truncate_history(&mut history, &spec);
+        cm.truncate_history(&mut history);
         let tool_msg = history
             .iter()
             .find(|m| m.role == Role::Tool)

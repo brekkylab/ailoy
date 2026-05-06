@@ -61,7 +61,6 @@ pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
     Ok(ToolFactory::simple(desc, f))
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

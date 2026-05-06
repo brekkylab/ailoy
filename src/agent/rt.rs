@@ -314,9 +314,9 @@ impl Agent {
 
             loop {
                 // Truncation check based on previous call's token usage.
-                if let Some(spec) = &self.context_manager {
-                    if self.state.last_input_tokens.unwrap_or(0) > spec.max_input_tokens {
-                        super::context::truncate_history(&mut self.state.history, spec);
+                if let Some(cm) = &self.context_manager {
+                    if self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens {
+                        cm.truncate_history(&mut self.state.history);
                     }
                 }
 
