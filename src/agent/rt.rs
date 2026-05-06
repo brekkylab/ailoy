@@ -137,7 +137,6 @@ impl Agent {
         })
     }
 
-
     /// Execute tool calls in parallel and return a stream of all outputs.
     ///
     /// Synchronously spawns one tokio task per tool call, then returns a stream
