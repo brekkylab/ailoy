@@ -2,7 +2,7 @@ use url::Url;
 
 use crate::{
     datatype::Value,
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelRequest},
+    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
@@ -11,8 +11,8 @@ use crate::{
 };
 
 impl LangModelProvider {
-    pub fn grok(api_key: String) -> Self {
-        Self::API {
+    pub fn grok(api_key: String) -> LangModelProviderElem {
+        LangModelProviderElem::API {
             schema: LangModelAPISchema::ChatCompletion,
             url: Url::parse("https://api.x.ai/v1/chat/completions").unwrap(),
             api_key: Some(api_key),
@@ -20,8 +20,11 @@ impl LangModelProvider {
         }
     }
 
-    pub fn chat_completion(url: &str, api_key: Option<String>) -> anyhow::Result<Self> {
-        Ok(Self::API {
+    pub fn chat_completion(
+        url: &str,
+        api_key: Option<String>,
+    ) -> anyhow::Result<LangModelProviderElem> {
+        Ok(LangModelProviderElem::API {
             schema: LangModelAPISchema::ChatCompletion,
             url: Url::parse(url)?,
             api_key,
@@ -308,7 +311,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang_model::{LangModel, LangModelAPISchema, LangModelProvider},
+        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role, ToolDesc},
     };
 
@@ -367,7 +370,7 @@ mod tests {
 
         let model = LangModel::new(
             "gpt-4.1-mini".to_string(),
-            LangModelProvider::API {
+            LangModelProviderElem::API {
                 schema: LangModelAPISchema::ChatCompletion,
                 url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
                 api_key: Some(api_key),

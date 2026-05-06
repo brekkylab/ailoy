@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{ExecResult, RunEnv};
-use crate::util::truncate::middle_truncate;
 
 fn fresh_sandbox_name() -> String {
     format!("ailoy-{}", Uuid::new_v4())
@@ -419,8 +418,8 @@ impl Sandbox {
     ) -> anyhow::Result<ExecResult> {
         match result {
             Ok(output) => {
-                let stdout = middle_truncate(output.stdout().unwrap_or_default(), max_output_chars);
-                let stderr = middle_truncate(output.stderr().unwrap_or_default(), max_output_chars);
+                let stdout = truncate_output(output.stdout().unwrap_or_default(), max_output_chars);
+                let stderr = truncate_output(output.stderr().unwrap_or_default(), max_output_chars);
                 Ok(ExecResult {
                     stdout,
                     stderr,
@@ -560,6 +559,20 @@ fn apply_volume_mount(builder: SandboxBuilder, mount: &VolumeMount) -> SandboxBu
         }
     }
 }
+
+fn truncate_output(s: String, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        return s;
+    }
+    let head = max_chars / 2;
+    let tail = max_chars - head;
+    let omitted = chars.len() - head - tail;
+    let head_str: String = chars[..head].iter().collect();
+    let tail_str: String = chars[chars.len() - tail..].iter().collect();
+    format!("{head_str}\n\n... [{omitted} characters omitted] ...\n\n{tail_str}")
+}
+
 
 #[cfg(test)]
 mod tests {
