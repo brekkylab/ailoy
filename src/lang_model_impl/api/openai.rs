@@ -447,7 +447,7 @@ mod tests {
 
         let model = LangModel::new(
             "gpt-5.4-mini".to_string(),
-            LangModelProvider::API {
+            LangModelProviderElem::API {
                 schema: LangModelAPISchema::OpenAI,
                 url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
                 api_key: Some(api_key),

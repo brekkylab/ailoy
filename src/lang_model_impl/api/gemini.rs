@@ -508,7 +508,7 @@ mod tests {
 
         let model = LangModel::new(
             "gemini-3-flash-preview".to_string(),
-            LangModelProvider::API {
+            LangModelProviderElem::API {
                 schema: LangModelAPISchema::Gemini,
                 url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
                     .unwrap(),

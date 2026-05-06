@@ -445,7 +445,7 @@ mod tests {
 
         let model = LangModel::new(
             "claude-haiku-4-5".to_string(),
-            LangModelProvider::API {
+            LangModelProviderElem::API {
                 schema: LangModelAPISchema::Anthropic,
                 url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
                 api_key: Some(api_key),
