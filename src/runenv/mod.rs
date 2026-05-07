@@ -22,6 +22,83 @@ pub enum Dirent {
     },
 }
 
+impl Dirent {
+    pub fn name(&self) -> &str {
+        match self {
+            Dirent::Dir { name, .. } | Dirent::File { name, .. } => name,
+        }
+    }
+
+    pub fn permission(&self) -> u8 {
+        match self {
+            Dirent::Dir { permission, .. } | Dirent::File { permission, .. } => *permission,
+        }
+    }
+
+    pub fn is_dir(&self) -> bool {
+        matches!(self, Dirent::Dir { .. })
+    }
+
+    pub fn is_file(&self) -> bool {
+        matches!(self, Dirent::File { .. })
+    }
+
+    pub fn children(&self) -> Option<&[Dirent]> {
+        match self {
+            Dirent::Dir { children, .. } => Some(children),
+            Dirent::File { .. } => None,
+        }
+    }
+
+    pub fn size(&self) -> Option<usize> {
+        match self {
+            Dirent::File { sz, .. } => Some(*sz),
+            Dirent::Dir { .. } => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Dirent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn perm_chars(p: u8) -> [char; 3] {
+            [
+                if p & 0b100 != 0 { 'r' } else { '-' },
+                if p & 0b010 != 0 { 'w' } else { '-' },
+                if p & 0b001 != 0 { 'x' } else { '-' },
+            ]
+        }
+        fn write_entry(
+            d: &Dirent,
+            f: &mut std::fmt::Formatter<'_>,
+            depth: usize,
+            first: &mut bool,
+        ) -> std::fmt::Result {
+            if !*first {
+                writeln!(f)?;
+            }
+            *first = false;
+            for _ in 0..depth {
+                f.write_str("  ")?;
+            }
+            let [r, w, x] = perm_chars(d.permission());
+            match d {
+                Dirent::Dir { name, children, .. } => {
+                    write!(f, "{r}{w}{x} {name}/")?;
+                    for child in children {
+                        write_entry(child, f, depth + 1, first)?;
+                    }
+                    Ok(())
+                }
+                Dirent::File { name, sz, .. } => {
+                    write!(f, "{r}{w}{x} {name} ({sz} bytes)")
+                }
+            }
+        }
+        let mut first = true;
+        write_entry(self, f, 0, &mut first)
+    }
+}
+
 /// Execution result from a shell command.
 #[derive(Debug, Clone)]
 pub struct ExecResult {
