@@ -78,7 +78,9 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
 
     if msg.role == Role::Tool {
         let tool_call_id = msg.id.clone().expect("Tool call id must exist.");
-        let (tool_name, _) = tool_call_id.split_once("/").unwrap();
+        let (tool_name, _) = tool_call_id
+            .split_once('/')
+            .expect("Tool call id must be in \"{name}/call-{id}\" format");
 
         // Split contents: images become sibling inline_data parts alongside functionResponse;
         // non-image parts go into the functionResponse.response object.

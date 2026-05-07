@@ -52,7 +52,7 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
                     }
                     PartImage::Url { url } => url.clone(),
                 };
-                to_value!({"type": "input_image", "image_url": {"url": url}})
+                to_value!({"type": "input_image", "image_url": url})
             }
         }
     };

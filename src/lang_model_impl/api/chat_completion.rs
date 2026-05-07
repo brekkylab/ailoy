@@ -71,22 +71,33 @@ impl Marshal<Message> for ChatCompletionMarshal {
                 .insert("tool_call_id".into(), id.into());
         }
         if !item.contents.is_empty() {
-            let contents: Vec<Value> = item.contents.iter().map(|p| {
-                // ChatCompletion backends don't reliably accept images in tool results;
-                // substitute a text label so the model knows an image was returned.
-                if item.role == Role::Tool {
-                    match p {
-                        Part::Image { image: PartImage::Embedded { mime_type, .. } } => {
-                            return part_to_value(&Part::text(format!("[image: {}]", mime_type)));
+            let contents: Vec<Value> = item
+                .contents
+                .iter()
+                .map(|p| {
+                    // ChatCompletion backends don't reliably accept images in tool results;
+                    // substitute a text label so the model knows an image was returned.
+                    if item.role == Role::Tool {
+                        match p {
+                            Part::Image {
+                                image: PartImage::Embedded { mime_type, .. },
+                            } => {
+                                return part_to_value(&Part::text(format!(
+                                    "[image: {}]",
+                                    mime_type
+                                )));
+                            }
+                            Part::Image {
+                                image: PartImage::Url { url },
+                            } => {
+                                return part_to_value(&Part::text(format!("[image at {}]", url)));
+                            }
+                            _ => {}
                         }
-                        Part::Image { image: PartImage::Url { url } } => {
-                            return part_to_value(&Part::text(format!("[image at {}]", url)));
-                        }
-                        _ => {}
                     }
-                }
-                part_to_value(p)
-            }).collect();
+                    part_to_value(p)
+                })
+                .collect();
             rv.as_object_mut()
                 .unwrap()
                 .insert("content".into(), contents.into());

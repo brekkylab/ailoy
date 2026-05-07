@@ -18,6 +18,9 @@ fn error_message(id: String, msg: impl Into<String>) -> Message {
         .with_id(id)
 }
 
+const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+
 fn apply_char_window(s: String, offset: usize, limit: Option<usize>) -> String {
     if offset == 0 && limit.is_none() {
         return s;
@@ -67,6 +70,10 @@ pub async fn build_file_read_tool() -> anyhow::Result<ToolFactory> {
         };
         let path = Path::new(&path_str);
 
+        if !path.is_absolute() {
+            return error_message(id, "path must be absolute");
+        }
+
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -91,11 +98,31 @@ pub async fn build_file_read_tool() -> anyhow::Result<ToolFactory> {
 
         match kind {
             FileKind::Image(mime) => {
+                if bytes.len() > MAX_IMAGE_BYTES {
+                    return error_message(
+                        id,
+                        format!(
+                            "image too large: {} bytes (limit: {})",
+                            bytes.len(),
+                            MAX_IMAGE_BYTES
+                        ),
+                    );
+                }
                 let part = Part::image_embedded(mime, Bytes::from(bytes))
                     .expect("image_embedded always succeeds");
                 Message::new(Role::Tool).with_contents([part]).with_id(id)
             }
             FileKind::Text => {
+                if bytes.len() > MAX_FILE_BYTES {
+                    return error_message(
+                        id,
+                        format!(
+                            "file too large: {} bytes (limit: {}); use offset/limit to read in chunks",
+                            bytes.len(),
+                            MAX_FILE_BYTES
+                        ),
+                    );
+                }
                 let s = match String::from_utf8(bytes) {
                     Ok(s) => s,
                     Err(_) => {
