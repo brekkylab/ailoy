@@ -7,7 +7,7 @@ use crate::{
 };
 
 const DEFAULT_LIMIT: usize = 2000;
-const MAX_LINE_CHARS: usize = 2000;
+const MAX_LINE_CHARS: usize = 10000;
 
 const DESCRIPTION: &str = "Reads a file from the local filesystem. You can access any file directly by using this tool.
 Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
@@ -17,7 +17,7 @@ Usage:
 - By default, it reads up to 2000 lines starting from the beginning of the file
 - When you already know which part of the file you need, only read that part. This can be important for larger files.
 - Results are returned using cat -n format, with line numbers starting at 1
-- Lines longer than 2000 characters are truncated.";
+- Lines longer than 10000 characters are truncated.";
 
 pub async fn build_read_tool() -> anyhow::Result<ToolFactory> {
     let desc = ToolDescBuilder::new("read")
