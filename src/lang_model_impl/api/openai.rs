@@ -58,11 +58,24 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
     };
 
     if msg.role == Role::Tool {
+        // OpenAI function_call_output.output must be a string.
+        // For simplicity, canonicalize the content always to be a plain string.
+        let output = match &msg.contents[0] {
+            Part::Text { text } => Value::from(text.as_str()),
+            Part::Value { value } => {
+                let s = match value {
+                    Value::String(s) => s.clone(),
+                    other => serde_json::to_string(other).unwrap_or_default(),
+                };
+                Value::from(s)
+            }
+            _ => Value::from("unexpected tool result type"),
+        };
         return vec![to_value!(
             {
                 "type": "function_call_output",
                 "call_id": msg.id.clone().expect("Tool call id must exist."),
-                "output": part_to_value(&msg.contents[0])
+                "output": output
             }
         )];
     }
@@ -379,6 +392,57 @@ mod tests {
         f(&req)
     }
 
+    /// Verifies that function_call_output.output is canonicalized to a plain string.
+    #[test]
+    fn test_tool_result_content_marshaling() {
+        // Part::Text → plain string.
+        let msg_text = Message::new(Role::Tool)
+            .with_id("call_1")
+            .with_contents([Part::text("tool output")]);
+        let items = marshal_message(&msg_text, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_str();
+        assert_eq!(
+            output,
+            Some("tool output"),
+            "Part::Text in function_call_output must marshal as a plain string"
+        );
+
+        // Part::Value(String) → plain string; no double-encoding.
+        let msg_str = Message::new(Role::Tool)
+            .with_id("call_2")
+            .with_contents([Part::value(crate::datatype::Value::string(
+                "ok".to_string(),
+            ))]);
+        let items = marshal_message(&msg_str, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_str();
+        assert_eq!(
+            output,
+            Some("ok"),
+            "Part::Value(String) must not be double-encoded in function_call_output"
+        );
+
+        // Part::Value(Object) → JSON-serialised plain text.
+        let msg_obj = Message::new(Role::Tool)
+            .with_id("call_3")
+            .with_contents([Part::value(crate::to_value!({"temp": 25}))]);
+        let items = marshal_message(&msg_obj, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_str();
+        assert_eq!(
+            output,
+            Some(r#"{"temp":25}"#),
+            "Part::Value(Object) must be JSON-serialised into a plain string in function_call_output"
+        );
+    }
+
     #[test]
     fn test_marshal_max_output_tokens_set() {
         with_req("gpt-5.4-mini", Some(1024), |req| {
@@ -421,7 +485,6 @@ mod tests {
         let tools: Vec<ToolDesc> = vec![];
 
         let resp = model.run(&messages, &tools).await.unwrap();
-        println!("{}", resp);
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }

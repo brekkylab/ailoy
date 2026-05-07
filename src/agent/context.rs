@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    datatype::Value,
-    message::{Message, Part, Role},
-};
+use crate::message::{Message, Part, Role};
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContextManager {
@@ -29,10 +26,11 @@ impl ContextManager {
     ///
     /// 1. If `history[0]` is `Role::System`, always preserve it (never dropped).
     /// 2. Walk backwards from the end of history, skipping `System` messages, and
-    ///    count completed user-assistant turns.  Once `preserve_recent_turns` pairs
-    ///    have been counted, the index of the oldest `User` message in that window
-    ///    becomes the **preserve boundary** — everything at or after that index is
-    ///    left untouched.
+    ///    count `User` messages.  Once `preserve_recent_turns` `User` messages have
+    ///    been counted, the oldest of them becomes the **preserve boundary** —
+    ///    everything at or after that index is left untouched.  Counting `User`
+    ///    messages (not `Assistant` messages) correctly handles tool-use sessions
+    ///    where a single user input may expand into multiple assistant messages.
     /// 3. For each `Role::Tool` message *before* the preserve boundary, replace its
     ///    contents with a `"[context truncated]"` placeholder **while keeping the
     ///    message's `id` intact**.  Anthropic's API returns HTTP 400 if a tool-use
@@ -62,9 +60,8 @@ impl ContextManager {
         for i in start_idx..preserve_from {
             if history[i].role == Role::Tool {
                 let original_id = history[i].id.clone();
-                let placeholder = Message::new(Role::Tool).with_contents([Part::value(
-                    Value::string("[context truncated]".to_string()),
-                )]);
+                let placeholder =
+                    Message::new(Role::Tool).with_contents([Part::text("[context truncated]")]);
                 history[i] = if let Some(id) = original_id {
                     placeholder.with_id(id)
                 } else {
@@ -78,10 +75,13 @@ impl ContextManager {
 /// Find the index from which messages should be preserved.
 ///
 /// Scans backwards through `history`, skipping `System` messages, and counts
-/// `Assistant` messages (each together with its preceding `User` message counts
-/// as one "turn").  Returns the index of the `User` message that begins the
-/// `preserve_recent_turns`-th turn from the end, or `0` when there are fewer
-/// turns than requested (meaning: preserve everything).
+/// `User` messages.  Returns the index of the `User` message that is the
+/// `preserve_recent_turns`-th from the end, or `0` when there are fewer turns
+/// than requested (meaning: preserve everything).
+///
+/// Counting `User` messages (rather than `Assistant` messages) correctly handles
+/// tool-use sessions where one user input may produce multiple assistant messages
+/// (`asst(tool_call) → tool → asst(text)`).
 fn find_preserve_boundary(history: &[Message], preserve_recent_turns: usize) -> usize {
     if preserve_recent_turns == 0 {
         return history.len();
@@ -95,21 +95,10 @@ fn find_preserve_boundary(history: &[Message], preserve_recent_turns: usize) -> 
         if history[i].role == Role::System {
             continue;
         }
-        if history[i].role == Role::Assistant {
+        if history[i].role == Role::User {
             turns_found += 1;
             if turns_found >= preserve_recent_turns {
-                // Walk back to find the User message that opened this turn.
-                let mut j = i;
-                while j > 0 {
-                    j -= 1;
-                    if history[j].role == Role::System {
-                        continue;
-                    }
-                    if history[j].role == Role::User {
-                        return j;
-                    }
-                }
-                return 0;
+                return i;
             }
         }
     }
@@ -121,7 +110,10 @@ fn find_preserve_boundary(history: &[Message], preserve_recent_turns: usize) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::{Message, Part, Role};
+    use crate::{
+        datatype::Value,
+        message::{Message, Part, Role},
+    };
 
     fn sys() -> Message {
         Message::new(Role::System).with_contents([Part::text("system")])
@@ -145,7 +137,7 @@ mod tests {
         Message::new(Role::Assistant).with_tool_calls([Part::function(
             call_id,
             tool_name,
-            crate::datatype::Value::null(),
+            Value::null(),
         )])
     }
 
@@ -214,11 +206,10 @@ mod tests {
             .first()
             .expect("placeholder must have content");
         let val = content
-            .as_value()
+            .as_text()
             .expect("placeholder content must be a Value part");
         assert_eq!(
-            val.as_str(),
-            Some("[context truncated]"),
+            val, "[context truncated]",
             "placeholder content must be '[context truncated]'"
         );
     }
@@ -245,6 +236,31 @@ mod tests {
             "System message must always remain at index 0"
         );
         assert_eq!(history.len(), 7, "no messages should be dropped");
+    }
+
+    #[test]
+    fn test_preserve_counts_user_messages_not_assistant() {
+        // A single user turn may produce multiple assistant messages in tool-use:
+        //   u2 → asst(tool_call) → tool → asst("a2")
+        // preserve_recent_turns = 2 must preserve both u1 and u2's full interactions,
+        // not just u2's (which would happen if assistant messages were counted).
+        //
+        // history: sys(0), u1(1), asst("a1")(2), u2(3), asst(tool_call)(4), tool(5), asst("a2")(6)
+        // Expected boundary: u1 at index 1  (2 user turns preserved)
+        let history = vec![
+            sys(),
+            user("u1"),
+            asst("a1"),
+            user("u2"),
+            tool_call_asst("call_1", "my_tool"),
+            tool_result("call_1"),
+            asst("a2"),
+        ];
+        let boundary = find_preserve_boundary(&history, 2);
+        assert_eq!(
+            boundary, 1,
+            "preserve_recent_turns=2 must keep 2 user turns, landing at u1 (index 1)"
+        );
     }
 
     #[test]

@@ -369,7 +369,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{AgentCard, AgentProvider, AgentSpec},
+        agent::{AgentCard, AgentProvider, AgentSpec, ContextManager},
         datatype::Value,
         lang_model::LangModelProvider,
         message::{Message, Part, Role, ToolDescBuilder},
@@ -382,21 +382,15 @@ mod tests {
         dotenvy::dotenv().ok();
         let mut provider = AgentProvider::new();
         if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-            for model in ["openai/gpt-4o", "openai/gpt-4o-mini"] {
-                provider
-                    .models
-                    .insert(model.into(), LangModelProvider::openai(key.clone()));
-            }
+            provider
+                .models
+                .insert("openai/*".into(), LangModelProvider::openai(key.clone()));
         }
         if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-            for model in [
-                "anthropic/claude-haiku-4-5-20251001",
-                "anthropic/claude-sonnet-4-6",
-            ] {
-                provider
-                    .models
-                    .insert(model.into(), LangModelProvider::anthropic(key.clone()));
-            }
+            provider.models.insert(
+                "anthropic/*".into(),
+                LangModelProvider::anthropic(key.clone()),
+            );
         }
         provider
     }
@@ -827,6 +821,173 @@ mod tests {
         assert!(
             last_msg.contents.iter().any(|p| p.is_text()),
             "Final Assistant message must contain text — the agent never produced a closing answer."
+        );
+    }
+
+    /// Verifies that ContextManager replaces old tool results with "[context truncated]"
+    /// when last_input_tokens exceeds max_input_tokens at the start of a run.
+    ///
+    /// History layout when truncation fires (after run() pushes the new query):
+    ///   [0] sys  [1] u1  [2] a1_tc(old)  [3] tr_old  [4] u2  [5] a2_tc(recent)  [6] tr_recent  [7] u3
+    /// With preserve_recent_turns=1 the boundary lands at index 4 (u2), so tr_old at
+    /// index 3 is outside the preserve window and must become a placeholder.
+    #[test_with::env(OPENAI_API_KEY)]
+    #[tokio::test]
+    async fn test_context_manager_truncates_tool_results_when_threshold_exceeded() {
+        let dummy = ToolFactory::simple(
+            ToolDescBuilder::new("dummy_tool")
+                .description("A no-op testing tool")
+                .parameters(to_value!({ "type": "object", "properties": {} }))
+                .build(),
+            ToolFunc::new(|_: Value, _: ToolContext| Value::string("result".to_string())),
+        );
+        let mut provider = get_provider();
+        provider.tools = ToolProvider::new().custom(dummy);
+
+        let spec = AgentSpec::new("openai/gpt-5.4-mini")
+            .instruction("Reply with exactly 'OK'. Do not call any tools.")
+            .tool("dummy_tool");
+
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
+
+        // Build two complete tool-call turns in history.
+        let old_id = "call_old";
+        let recent_id = "call_recent";
+        for (user_text, call_id) in [("q1", old_id), ("q2", recent_id)] {
+            agent
+                .state
+                .history
+                .push(Message::new(Role::User).with_contents([Part::text(user_text)]));
+            agent.state.history.push(
+                Message::new(Role::Assistant).with_tool_calls([Part::function(
+                    call_id,
+                    "dummy_tool",
+                    to_value!({}),
+                )]),
+            );
+            agent.state.history.push(
+                Message::new(Role::Tool)
+                    .with_id(call_id)
+                    .with_contents([Part::value(Value::string(format!("{call_id}_value")))]),
+            );
+        }
+
+        agent.set_context_manager(Some(ContextManager {
+            max_input_tokens: 1, // always exceeded
+            preserve_recent_turns: 1,
+        }));
+        agent.state.last_input_tokens = Some(9999);
+
+        {
+            let mut strm = agent.run(Message::new(Role::User).with_contents([Part::text("q3")]));
+            while let Some(ev) = strm.next().await {
+                ev.unwrap();
+            }
+        }
+
+        let history = agent.get_history();
+
+        // tr_old is outside the preserve boundary → must be "[context truncated]".
+        let old_tool = history
+            .iter()
+            .find(|m| m.role == Role::Tool && m.id.as_deref() == Some(old_id))
+            .expect("old Tool message must still exist in history");
+        assert_eq!(
+            old_tool.contents.first().and_then(|p| p.as_text()),
+            Some("[context truncated]"),
+            "tool result outside preserve window must become '[context truncated]'"
+        );
+
+        // tr_recent is inside the preserve boundary → original value must be intact.
+        let recent_tool = history
+            .iter()
+            .find(|m| m.role == Role::Tool && m.id.as_deref() == Some(recent_id))
+            .expect("recent Tool message must still exist in history");
+        let recent_val = recent_tool
+            .contents
+            .first()
+            .and_then(|p| p.as_value())
+            .expect("recent tool result must still be a Value part");
+        assert_eq!(
+            recent_val.as_str(),
+            Some("call_recent_value"),
+            "tool result inside preserve window must retain its original content"
+        );
+    }
+
+    /// Verifies that ContextManager does NOT truncate tool results when
+    /// last_input_tokens is below max_input_tokens.
+    #[test_with::env(OPENAI_API_KEY)]
+    #[tokio::test]
+    async fn test_context_manager_no_truncation_when_below_threshold() {
+        let dummy = ToolFactory::simple(
+            ToolDescBuilder::new("dummy_tool")
+                .description("A no-op testing tool")
+                .parameters(to_value!({ "type": "object", "properties": {} }))
+                .build(),
+            ToolFunc::new(|_: Value, _: ToolContext| Value::string("result".to_string())),
+        );
+        let mut provider = get_provider();
+        provider.tools = ToolProvider::new().custom(dummy);
+
+        let spec = AgentSpec::new("openai/gpt-5.4-mini")
+            .instruction("Reply with exactly 'OK'. Do not call any tools.")
+            .tool("dummy_tool");
+
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
+
+        // Same two-turn history shape as the threshold test.
+        let old_id = "call_old_b";
+        let recent_id = "call_recent_b";
+        for (user_text, call_id) in [("q1", old_id), ("q2", recent_id)] {
+            agent
+                .state
+                .history
+                .push(Message::new(Role::User).with_contents([Part::text(user_text)]));
+            agent.state.history.push(
+                Message::new(Role::Assistant).with_tool_calls([Part::function(
+                    call_id,
+                    "dummy_tool",
+                    to_value!({}),
+                )]),
+            );
+            agent.state.history.push(
+                Message::new(Role::Tool)
+                    .with_id(call_id)
+                    .with_contents([Part::value(Value::string(format!("{call_id}_value")))]),
+            );
+        }
+
+        // High threshold — will never be exceeded by the preset last_input_tokens.
+        agent.set_context_manager(Some(ContextManager {
+            max_input_tokens: 1_000_000,
+            preserve_recent_turns: 1,
+        }));
+        agent.state.last_input_tokens = Some(100);
+
+        {
+            let mut strm = agent.run(Message::new(Role::User).with_contents([Part::text("q3")]));
+            while let Some(ev) = strm.next().await {
+                ev.unwrap();
+            }
+        }
+
+        let history = agent.get_history();
+
+        // tr_old must still hold its original value — no truncation should have fired.
+        let old_tool = history
+            .iter()
+            .find(|m| m.role == Role::Tool && m.id.as_deref() == Some(old_id))
+            .expect("old Tool message must still exist in history");
+        let old_val = old_tool
+            .contents
+            .first()
+            .and_then(|p| p.as_value())
+            .expect("tool result must still be a Value part when threshold is not exceeded");
+        assert_eq!(
+            old_val.as_str(),
+            Some("call_old_b_value"),
+            "tool result must not be replaced when last_input_tokens is below max_input_tokens"
         );
     }
 

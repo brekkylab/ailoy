@@ -392,6 +392,55 @@ mod tests {
         f(&req)
     }
 
+    /// Verifies functionResponse.response.result marshaling for all Part variants.
+    ///
+    /// Gemini accepts arbitrary values in `result`, so:
+    /// - Part::Text  → {"text": "..."} object (no double-encoding issue; object is valid)
+    /// - Part::Value(String) → plain string "..." (no double-encoding via value.to_owned())
+    /// - Part::Value(Object) → the object itself passed through
+    #[test]
+    fn test_function_response_result_marshaling() {
+        let get_result = |msg: &Message| -> Value {
+            let v = marshal_message(msg, false);
+            v.pointer("/parts/0/functionResponse/response/result")
+                .expect("result must exist")
+                .to_owned()
+        };
+
+        // Part::Text → {"text": "..."} (truncation placeholder path)
+        let msg_text = Message::new(Role::Tool)
+            .with_id("dummy_tool/call-1")
+            .with_contents([Part::text("[context truncated]")]);
+        let result = get_result(&msg_text);
+        assert_eq!(
+            result.pointer("/text").and_then(|v| v.as_str()),
+            Some("[context truncated]"),
+            "Part::Text must marshal to {{\"text\": \"...\"}} in functionResponse result"
+        );
+
+        // Part::Value(String) → plain string, no double-encoding
+        let msg_str = Message::new(Role::Tool)
+            .with_id("dummy_tool/call-2")
+            .with_contents([Part::value(crate::datatype::Value::string("ok".to_string()))]);
+        let result = get_result(&msg_str);
+        assert_eq!(
+            result.as_str(),
+            Some("ok"),
+            "Part::Value(String) must not be double-encoded in functionResponse result"
+        );
+
+        // Part::Value(Object) → object passed through as-is
+        let msg_obj = Message::new(Role::Tool)
+            .with_id("dummy_tool/call-3")
+            .with_contents([Part::value(crate::to_value!({"temperature": 30}))]);
+        let result = get_result(&msg_obj);
+        assert_eq!(
+            result.pointer("/temperature").and_then(|v| v.as_integer()),
+            Some(30),
+            "Part::Value(Object) must pass through as object in functionResponse result"
+        );
+    }
+
     #[test]
     fn test_marshal_max_output_tokens_set() {
         with_req("gemini-2.5-flash-lite", Some(2048), |req| {
