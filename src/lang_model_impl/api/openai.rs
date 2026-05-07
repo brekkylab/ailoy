@@ -370,7 +370,7 @@ mod tests {
     use super::*;
     use crate::{
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, ToolDesc},
+        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -390,6 +390,28 @@ mod tests {
             max_tokens,
         };
         f(&req)
+    }
+
+    #[test]
+    fn test_unmarshal_usage() {
+        let response = to_value!({
+            "status": "completed",
+            "output": [],
+            "usage": {"input_tokens": 200, "output_tokens": 75}
+        });
+        let usage = OpenAIUnmarshal::default()
+            .unmarshal(response)
+            .unwrap()
+            .usage;
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                input_tokens: 200,
+                output_tokens: 75,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            })
+        );
     }
 
     /// Verifies that function_call_output.output is canonicalized to a plain string.

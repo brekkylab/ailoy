@@ -380,7 +380,7 @@ mod tests {
     use super::*;
     use crate::{
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, ToolDesc},
+        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -421,6 +421,56 @@ mod tests {
             // Falls back to 8192 when not configured
             assert_eq!(max_tokens.as_integer().unwrap(), 8192);
         });
+    }
+
+    #[test]
+    fn test_unmarshal_usage() {
+        // All four fields present, including cache fields.
+        let response = to_value!({
+            "stop_reason": "end_turn",
+            "role": "assistant",
+            "content": [],
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_creation_input_tokens": 20,
+                "cache_read_input_tokens": 10
+            }
+        });
+        let usage = AnthropicUnmarshal::default()
+            .unmarshal(response)
+            .unwrap()
+            .usage;
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_creation_input_tokens: Some(20),
+                cache_read_input_tokens: Some(10),
+            })
+        );
+
+        // Cache fields absent → None.
+        let response = to_value!({
+            "stop_reason": "end_turn",
+            "role": "assistant",
+            "content": [],
+            "usage": {"input_tokens": 30, "output_tokens": 15}
+        });
+        let usage = AnthropicUnmarshal::default()
+            .unmarshal(response)
+            .unwrap()
+            .usage;
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                input_tokens: 30,
+                output_tokens: 15,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            })
+        );
     }
 
     /// Verifies that tool_result content is marshalled correctly per the Anthropic spec

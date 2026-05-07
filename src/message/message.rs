@@ -159,7 +159,7 @@ impl fmt::Display for FinishReason {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,

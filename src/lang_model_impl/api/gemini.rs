@@ -370,7 +370,7 @@ mod tests {
     use super::*;
     use crate::{
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, ToolDesc},
+        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -390,6 +390,33 @@ mod tests {
             max_tokens,
         };
         f(&req)
+    }
+
+    #[test]
+    fn test_unmarshal_usage() {
+        let response = to_value!({
+            "candidates": [{
+                "content": {"role": "model", "parts": []},
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 150,
+                "candidatesTokenCount": 60
+            }
+        });
+        let usage = GeminiUnmarshal::default()
+            .unmarshal(response)
+            .unwrap()
+            .usage;
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                input_tokens: 150,
+                output_tokens: 60,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            })
+        );
     }
 
     /// Verifies functionResponse.response.result marshaling for all Part variants.
@@ -421,7 +448,9 @@ mod tests {
         // Part::Value(String) → plain string, no double-encoding
         let msg_str = Message::new(Role::Tool)
             .with_id("dummy_tool/call-2")
-            .with_contents([Part::value(crate::datatype::Value::string("ok".to_string()))]);
+            .with_contents([Part::value(crate::datatype::Value::string(
+                "ok".to_string(),
+            ))]);
         let result = get_result(&msg_str);
         assert_eq!(
             result.as_str(),
