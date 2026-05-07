@@ -15,7 +15,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{ExecResult, RunEnv};
+use super::{Dirent, ExecResult, RunEnv};
 
 fn fresh_sandbox_name() -> String {
     format!("ailoy-{}", Uuid::new_v4())
@@ -199,6 +199,94 @@ impl RunEnv for Sandbox {
         };
         let _ = guard.stop_and_wait().await;
         result
+    }
+
+    async fn ls(&self, path: &Path) -> anyhow::Result<Vec<Dirent>> {
+        let path_str = path.to_string_lossy().into_owned();
+        let script = format!(
+            r#"cd "{path}" || exit 1
+for entry in * .[!.]* ..?*; do
+  [ -e "$entry" ] || continue
+  if [ -d "$entry" ]; then
+    kind=d
+    size=0
+  else
+    kind=f
+    size=$(wc -c < "$entry" 2>/dev/null | tr -d ' ')
+    [ -z "$size" ] && size=0
+  fi
+  r=0; w=0; x=0
+  [ -r "$entry" ] && r=4
+  [ -w "$entry" ] && w=2
+  [ -x "$entry" ] && x=1
+  perm=$((r + w + x))
+  printf '%s\t%s\t%s\t%s\n' "$kind" "$perm" "$size" "$entry"
+done"#,
+            path = path_str
+        );
+        let result = self
+            .exec("sh".to_string(), vec!["-c".to_string(), script], None)
+            .await?;
+        if result.exit_code != 0 {
+            anyhow::bail!("ls {}: {}", path.display(), result.stderr.trim());
+        }
+        let mut entries = Vec::new();
+        for line in result.stdout.lines() {
+            let parts: Vec<&str> = line.splitn(4, '\t').collect();
+            if parts.len() != 4 {
+                continue;
+            }
+            let permission: u8 = parts[1].parse().unwrap_or(0);
+            let name = parts[3].to_string();
+            match parts[0] {
+                "d" => {
+                    let children = self.ls(&path.join(&name)).await.unwrap_or_default();
+                    entries.push(Dirent::Dir {
+                        name,
+                        permission,
+                        children,
+                    });
+                }
+                "f" => {
+                    let sz: usize = parts[2].parse().unwrap_or(0);
+                    entries.push(Dirent::File {
+                        name,
+                        permission,
+                        sz,
+                    });
+                }
+                _ => {}
+            }
+        }
+        Ok(entries)
+    }
+
+    async fn mkdir(&self, path: &Path) -> anyhow::Result<()> {
+        let result = self
+            .exec(
+                "mkdir".to_string(),
+                vec!["-p".to_string(), path.to_string_lossy().into_owned()],
+                None,
+            )
+            .await?;
+        if result.exit_code != 0 {
+            anyhow::bail!("mkdir {}: {}", path.display(), result.stderr.trim());
+        }
+        Ok(())
+    }
+
+    async fn rmdir(&self, path: &Path) -> anyhow::Result<()> {
+        let result = self
+            .exec(
+                "rmdir".to_string(),
+                vec![path.to_string_lossy().into_owned()],
+                None,
+            )
+            .await?;
+        if result.exit_code != 0 {
+            anyhow::bail!("rmdir {}: {}", path.display(), result.stderr.trim());
+        }
+        Ok(())
     }
 
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {

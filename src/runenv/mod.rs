@@ -8,6 +8,20 @@ pub use local::*;
 #[cfg(feature = "sandbox")]
 pub use sandbox::*;
 
+#[derive(Debug, Clone)]
+pub enum Dirent {
+    Dir {
+        name: String,
+        permission: u8,
+        children: Vec<Dirent>,
+    },
+    File {
+        name: String,
+        permission: u8,
+        sz: usize,
+    },
+}
+
 /// Execution result from a shell command.
 #[derive(Debug, Clone)]
 pub struct ExecResult {
@@ -37,6 +51,12 @@ pub trait RunEnv: Send + Sync + 'static {
         args: Vec<String>,
         timeout: Option<u64>,
     ) -> anyhow::Result<ExecResult>;
+
+    async fn ls(&self, path: &Path) -> anyhow::Result<Vec<Dirent>>;
+
+    async fn mkdir(&self, path: &Path) -> anyhow::Result<()>;
+
+    async fn rmdir(&self, path: &Path) -> anyhow::Result<()>;
 
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>>;
 
