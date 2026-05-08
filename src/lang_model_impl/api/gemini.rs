@@ -483,6 +483,9 @@ mod tests {
     /// - Part::Text  → {"text": "..."} object (no double-encoding issue; object is valid)
     /// - Part::Value(String) → plain string "..." (no double-encoding via value.to_owned())
     /// - Part::Value(Object) → the object itself passed through
+    /// - Part::Image (embedded) → image-only: functionResponse gets a {mimeType, type:"image"}
+    ///   placeholder and the actual bytes appear as a sibling inline_data part; mixed with text:
+    ///   text goes into functionResponse.response.result and image becomes a sibling inline_data part
     #[test]
     fn test_function_response_result_marshaling() {
         let get_result = |msg: &Message| -> Value {
@@ -525,6 +528,54 @@ mod tests {
             result.pointer("/temperature").and_then(|v| v.as_integer()),
             Some(30),
             "Part::Value(Object) must pass through as object in functionResponse result"
+        );
+
+        // Part::Image (embedded, image-only) → functionResponse gets a {mimeType, type:"image"}
+        // placeholder; actual bytes appear as a sibling inline_data part at parts[1].
+        let img_bytes = crate::datatype::Bytes::from(vec![0xFFu8, 0xD8, 0xFF]);
+        let msg_img = Message::new(Role::Tool)
+            .with_id("dummy_tool/call-4")
+            .with_contents([Part::image_embedded("image/jpeg", img_bytes.clone()).unwrap()]);
+        let val = marshal_message(&msg_img, false);
+        let parts = val.pointer("/parts").and_then(|v| v.as_array()).expect("parts must exist");
+        assert_eq!(parts.len(), 2, "image-only tool result must produce functionResponse + inline_data sibling");
+        assert_eq!(
+            parts[0].pointer("/functionResponse/response/result/type").and_then(|v| v.as_str()),
+            Some("image"),
+            "image-only functionResponse result must have type \"image\""
+        );
+        assert_eq!(
+            parts[0].pointer("/functionResponse/response/result/mimeType").and_then(|v| v.as_str()),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            parts[1].pointer("/inline_data/mime_type").and_then(|v| v.as_str()),
+            Some("image/jpeg"),
+            "image bytes must appear as sibling inline_data part"
+        );
+        assert_eq!(
+            parts[1].pointer("/inline_data/data").and_then(|v| v.as_str()),
+            Some(img_bytes.base64().as_str())
+        );
+
+        // Part::Text + Part::Image (embedded) → text in functionResponse result, image as sibling.
+        let msg_mixed = Message::new(Role::Tool)
+            .with_id("dummy_tool/call-5")
+            .with_contents([
+                Part::text("here is the file"),
+                Part::image_embedded("image/png", img_bytes.clone()).unwrap(),
+            ]);
+        let val = marshal_message(&msg_mixed, false);
+        let parts = val.pointer("/parts").and_then(|v| v.as_array()).expect("parts must exist");
+        assert_eq!(parts.len(), 2, "mixed tool result must produce functionResponse + inline_data sibling");
+        assert_eq!(
+            parts[0].pointer("/functionResponse/response/result/text").and_then(|v| v.as_str()),
+            Some("here is the file"),
+            "text part must appear in functionResponse result"
+        );
+        assert_eq!(
+            parts[1].pointer("/inline_data/mime_type").and_then(|v| v.as_str()),
+            Some("image/png")
         );
     }
 
