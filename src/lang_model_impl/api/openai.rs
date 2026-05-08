@@ -433,9 +433,52 @@ mod tests {
             Some("tool output")
         );
 
+        // Part::Image (embedded) → array with a single {"type":"input_image","image_url":"data:..."} block.
+        let img_bytes = crate::datatype::Bytes::from(vec![0xFFu8, 0xD8, 0xFF]);
+        let msg_img = Message::new(Role::Tool)
+            .with_id("call_2")
+            .with_contents([Part::image_embedded("image/jpeg", img_bytes.clone()).unwrap()]);
+        let items = marshal_message(&msg_img, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_array()
+            .expect("output must be an array");
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("input_image")
+        );
+        assert_eq!(
+            output[0].pointer("/image_url").and_then(|v| v.as_str()),
+            Some(format!("data:image/jpeg;base64,{}", img_bytes.base64()).as_str())
+        );
+
+        // Part::Image (url) → array with a single {"type":"input_image","image_url":"https://..."} block.
+        let msg_img_url = Message::new(Role::Tool)
+            .with_id("call_3")
+            .with_contents([
+                Part::image_url("https://example.com/img.png".to_string()).unwrap()
+            ]);
+        let items = marshal_message(&msg_img_url, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_array()
+            .expect("output must be an array");
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("input_image")
+        );
+        assert_eq!(
+            output[0].pointer("/image_url").and_then(|v| v.as_str()),
+            Some("https://example.com/img.png")
+        );
+
         // Part::Value → filtered out (unsupported), output array is empty.
         let msg_val = Message::new(Role::Tool)
-            .with_id("call_2")
+            .with_id("call_4")
             .with_contents([Part::value(crate::to_value!({"temp": 25}))]);
         let items = marshal_message(&msg_val, false);
         let output = items[0]
