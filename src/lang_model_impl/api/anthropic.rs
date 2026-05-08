@@ -66,6 +66,13 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
             .iter()
             .filter_map(|part| match part {
                 Part::Text { .. } | Part::Image { .. } => Some(part_to_value(part)),
+                Part::Value { value } => {
+                    let text = match value {
+                        Value::String(s) => s.clone(),
+                        other => serde_json::to_string(other).unwrap_or_default(),
+                    };
+                    Some(to_value!({"type": "text", "text": text}))
+                }
                 _ => None,
             })
             .collect();
@@ -544,19 +551,46 @@ mod tests {
             Some("https://example.com/img.png")
         );
 
-        // Part::Value → filtered out (unsupported), content array is empty.
-        let msg_val = Message::new(Role::Tool)
+        // Part::Value(String) → {"type":"text","text":"..."} block; no double-encoding.
+        let msg_str = Message::new(Role::Tool)
             .with_id("call_4")
-            .with_contents([Part::value(to_value!({"temp": 25}))]);
-        let val = AnthropicMarshal.marshal(&msg_val);
+            .with_contents([Part::value(Value::string("ok".to_string()))]);
+        let val = AnthropicMarshal.marshal(&msg_str);
         let content = val
             .pointer("/content/0/content")
             .expect("content/0/content must exist")
             .as_array()
             .expect("content must be an array");
-        assert!(
-            content.is_empty(),
-            "Part::Value must be filtered out of tool result content"
+        assert_eq!(content.len(), 1);
+        assert_eq!(
+            content[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("text")
+        );
+        assert_eq!(
+            content[0].pointer("/text").and_then(|v| v.as_str()),
+            Some("ok"),
+            "Part::Value(String) must not be double-encoded"
+        );
+
+        // Part::Value(Object) → JSON-encoded as {"type":"text","text":"{...}"} block.
+        let msg_obj = Message::new(Role::Tool)
+            .with_id("call_5")
+            .with_contents([Part::value(to_value!({"temp": 25}))]);
+        let val = AnthropicMarshal.marshal(&msg_obj);
+        let content = val
+            .pointer("/content/0/content")
+            .expect("content/0/content must exist")
+            .as_array()
+            .expect("content must be an array");
+        assert_eq!(content.len(), 1);
+        assert_eq!(
+            content[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("text")
+        );
+        assert_eq!(
+            content[0].pointer("/text").and_then(|v| v.as_str()),
+            Some(r#"{"temp":25}"#),
+            "Part::Value(Object) must be JSON-encoded into a text block"
         );
     }
 

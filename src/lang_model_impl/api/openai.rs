@@ -63,6 +63,13 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
             .iter()
             .filter_map(|p| match p {
                 Part::Text { .. } | Part::Image { .. } => Some(part_to_value(p)),
+                Part::Value { value } => {
+                    let text = match value {
+                        Value::String(s) => s.clone(),
+                        other => serde_json::to_string(other).unwrap_or_default(),
+                    };
+                    Some(to_value!({"type": "input_text", "text": text}))
+                }
                 _ => None,
             })
             .collect();
@@ -475,19 +482,46 @@ mod tests {
             Some("https://example.com/img.png")
         );
 
-        // Part::Value → filtered out (unsupported), output array is empty.
-        let msg_val = Message::new(Role::Tool)
+        // Part::Value(String) → {"type":"input_text","text":"..."} block; no double-encoding.
+        let msg_str = Message::new(Role::Tool)
             .with_id("call_4")
-            .with_contents([Part::value(to_value!({"temp": 25}))]);
-        let items = marshal_message(&msg_val, false);
+            .with_contents([Part::value(crate::datatype::Value::string("ok".to_string()))]);
+        let items = marshal_message(&msg_str, false);
         let output = items[0]
             .pointer("/output")
             .expect("output must exist")
             .as_array()
             .expect("output must be an array");
-        assert!(
-            output.is_empty(),
-            "Part::Value must be filtered out of function_call_output"
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("input_text")
+        );
+        assert_eq!(
+            output[0].pointer("/text").and_then(|v| v.as_str()),
+            Some("ok"),
+            "Part::Value(String) must not be double-encoded"
+        );
+
+        // Part::Value(Object) → JSON-encoded as {"type":"input_text","text":"{...}"} block.
+        let msg_obj = Message::new(Role::Tool)
+            .with_id("call_5")
+            .with_contents([Part::value(crate::to_value!({"temp": 25}))]);
+        let items = marshal_message(&msg_obj, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_array()
+            .expect("output must be an array");
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("input_text")
+        );
+        assert_eq!(
+            output[0].pointer("/text").and_then(|v| v.as_str()),
+            Some(r#"{"temp":25}"#),
+            "Part::Value(Object) must be JSON-encoded into a text block"
         );
     }
 
