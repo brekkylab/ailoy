@@ -16,10 +16,11 @@
 //!
 //! ## Lifecycle
 //!
-//! 1. **`ToolProvider` is created** — populated with entries via
-//!    [`ToolProvider::insert_func`], [`ToolProvider::insert_func_factory`],
-//!    [`ToolProvider::insert_builtin`], [`ToolProvider::insert_a2a`], or the
-//!    MCP variants.
+//! 1. **`ToolProvider` is created** — [`ToolProvider::new`] starts pre-loaded
+//!    with every built-in tool ([`ToolProvider::empty`] opts out); additional
+//!    entries are added via [`ToolProvider::insert_func`],
+//!    [`ToolProvider::insert_func_factory`], [`ToolProvider::insert_a2a`], or
+//!    the MCP variants.
 //! 2. **`Agent` is instantiated from an `AgentSpec`** — [`ToolProvider::provide`]
 //!    walks `spec.tools`, looks up each [`ToolDesc`] by name, and builds the
 //!    matching [`ToolFunc`] (a fresh one per call for factory-style entries).

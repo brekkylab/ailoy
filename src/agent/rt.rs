@@ -1009,7 +1009,6 @@ mod tests {
 
         let mut provider = get_provider();
         provider.tools = ToolProvider::new();
-        provider.tools.insert_builtin("bash").unwrap();
 
         let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
             .tool(crate::tool_impl::get_bash_tool_desc())
@@ -1183,8 +1182,6 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         let mut provider = get_provider();
         provider.tools = ToolProvider::new();
-        provider.tools.insert_builtin("bash").unwrap();
-        provider.tools.insert_builtin("python_repl").unwrap();
 
         let spec = AgentSpec::new("anthropic/claude-sonnet-4-6")
             .tools([
@@ -1308,7 +1305,6 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         let mut provider = get_provider();
         provider.tools = ToolProvider::new();
-        provider.tools.insert_builtin("bash").unwrap();
 
         let sandbox = Arc::new(
             Sandbox::new(SandboxConfig::default())

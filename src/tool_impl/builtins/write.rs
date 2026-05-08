@@ -1,26 +1,20 @@
 use std::path::Path;
 
 use crate::{
-    datatype::Value,
-    message::ToolDescBuilder,
-    tool::{ToolContext, ToolFactory, ToolFunc},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool_func,
 };
 
-const DESCRIPTION: &str = "Writes a file to the local filesystem.
-
-Usage:
-- This tool will overwrite the existing file if there is one at the provided path.
-- Prefer the Edit tool for modifying existing files — it only sends the diff. Only use this tool to create new files or for complete rewrites.
-- NEVER create documentation files (*.md) or README files unless explicitly requested by the User.
-- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.";
-
-pub async fn build_write_tool() -> anyhow::Result<ToolFactory> {
-    let desc = ToolDescBuilder::new("write")
-        .description(DESCRIPTION)
+pub fn get_write_tool_desc() -> ToolDesc {
+    ToolDescBuilder::new("write")
+        .description(concat!(
+            "Writes a text file to the local filesystem. ",
+            "This tool will overwrite the existing file if there is one at the provided path."
+        ))
         .parameters(crate::to_value!({
             "type": "object",
             "properties": {
-                "file_path": {
+                "path": {
                     "type": "string",
                     "description": "The absolute path to the file to write (must be absolute, not relative)"
                 },
@@ -29,71 +23,68 @@ pub async fn build_write_tool() -> anyhow::Result<ToolFactory> {
                     "description": "The content to write to the file"
                 }
             },
-            "required": ["file_path", "content"]
+            "required": ["path", "content"]
         }))
-        .build();
+        .build()
+}
 
-    let f = ToolFunc::new(|args: Value, ctx: ToolContext| async move {
-        let Some(path) = args.pointer("/file_path").and_then(|v| v.as_str()) else {
+pub fn get_write_tool_func() -> ToolFunc {
+    tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value {
+        let Some(path) = args.pointer("/path").and_then(|v| v.as_str()) else {
             return crate::to_value!({
-                "error": "missing required parameter: file_path",
-                "phase": "validation"
+                "error": "missing required parameter: path",
+                "phase": "validation",
             });
         };
         let Some(content) = args.pointer("/content").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: content",
-                "phase": "validation"
+                "phase": "validation",
             });
         };
 
-        match ctx
-            .runenv
-            .write(Path::new(path), content.as_bytes())
-            .await
-        {
+        match runenv.write(Path::new(path), content.as_bytes()).await {
             Ok(()) => crate::to_value!({
                 "ok": true,
-                "bytes_written": content.len() as i64
+                "bytes_written": content.len() as i64,
             }),
             Err(e) => crate::to_value!({
                 "error": format!("write {path}: {e}"),
-                "phase": "io"
+                "phase": "io",
             }),
         }
-    });
-    Ok(ToolFactory::simple(desc, f))
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use futures::StreamExt;
 
     use super::*;
-    use crate::{agent::AgentSpec, runenv::Local, to_value, tool::ToolContext};
+    use crate::{datatype::Value, message::Message, runenv::Local, to_value, tool::ToolProvider};
 
-    fn spec() -> AgentSpec {
-        AgentSpec::new("test")
+    fn provider() -> ToolProvider {
+        let mut p = ToolProvider::new();
+        p.insert_func("write", get_write_tool_func());
+        p
     }
 
-    fn local_ctx() -> ToolContext {
-        ToolContext::new(String::new(), Arc::new(Local {}))
+    async fn call(args: Value) -> Message {
+        let provider = provider();
+        let funcs = provider.provide(&[get_write_tool_desc()]).unwrap();
+        let f = funcs.get("write").unwrap();
+        f.call(args, "1", &Local {}).next().await.unwrap().message
     }
 
     #[tokio::test]
     async fn test_write_creates_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("hello.txt");
-        let tool = build_write_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(
-                to_value!({
-                    "file_path": path.to_string_lossy().to_string(),
-                    "content": "ailoy",
-                }),
-                local_ctx(),
-            )
-            .await;
+        let msg = call(to_value!({
+            "path": path.to_string_lossy().to_string(),
+            "content": "ailoy",
+        }))
+        .await;
         let ok = msg.contents[0]
             .as_value()
             .unwrap()
@@ -108,24 +99,17 @@ mod tests {
     async fn test_write_overwrites_existing() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), "old").unwrap();
-        let tool = build_write_tool().await.unwrap().make(&spec());
-        tool.call_next(
-            to_value!({
-                "file_path": tmp.path().to_string_lossy().to_string(),
-                "content": "new",
-            }),
-            local_ctx(),
-        )
+        call(to_value!({
+            "path": tmp.path().to_string_lossy().to_string(),
+            "content": "new",
+        }))
         .await;
         assert_eq!(std::fs::read_to_string(tmp.path()).unwrap(), "new");
     }
 
     #[tokio::test]
     async fn test_write_validation_errors() {
-        let tool = build_write_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(to_value!({ "content": "x" }), local_ctx())
-            .await;
+        let msg = call(to_value!({ "content": "x" })).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()

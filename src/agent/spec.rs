@@ -1,7 +1,13 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{agent::AgentCard, tool::ToolDesc};
+use crate::{
+    agent::AgentCard,
+    tool::ToolDesc,
+    tool_impl::{
+        get_apply_patch_tool_desc, get_edit_tool_desc, get_read_tool_desc, get_write_tool_desc,
+    },
+};
 
 /// Defines the logical identity of an agent as configured by the user.
 ///
@@ -73,6 +79,23 @@ impl AgentSpec {
 
     pub fn tools(mut self, tools: impl IntoIterator<Item = ToolDesc>) -> Self {
         self.tools = tools.into_iter().collect();
+        self
+    }
+
+    /// Append the canonical filesystem-editing toolset for the spec's model family.
+    ///
+    /// * `openai/*`: `read`, `apply_patch` (the codex-style patch envelope).
+    /// * others: `read`, `write`, `edit`.
+    pub fn fs_tools(mut self) -> Self {
+        self.tools.extend(if self.model.starts_with("openai/") {
+            vec![get_read_tool_desc(), get_apply_patch_tool_desc()]
+        } else {
+            vec![
+                get_read_tool_desc(),
+                get_write_tool_desc(),
+                get_edit_tool_desc(),
+            ]
+        });
         self
     }
 

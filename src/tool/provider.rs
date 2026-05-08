@@ -5,7 +5,10 @@ use std::{
 
 use url::Url;
 
-use crate::tool::{ToolDesc, ToolFunc};
+use crate::{
+    tool::{ToolDesc, ToolFunc},
+    tool_impl::get_builtin_tool_factories,
+};
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
 #[derive(Clone, Debug)]
@@ -61,39 +64,34 @@ impl ToolProviderElem {
 /// `ToolProvider` is the `tools` field of [`AgentProvider`](crate::agent::AgentProvider).
 /// Each entry is keyed by tool name and contributes a [`ToolFunc`] when an
 /// agent's [`AgentSpec`] requests it (see [`ToolProvider::provide`]).
-#[derive(Default, Clone)]
+///
+/// The default constructor pre-registers every built-in tool under its
+/// canonical name; start from [`ToolProvider::empty`] to opt out.
+#[derive(Clone)]
 pub struct ToolProvider {
     inner: BTreeMap<String, ToolProviderElem>,
 }
 
+impl Default for ToolProvider {
+    fn default() -> Self {
+        let mut inner = BTreeMap::new();
+        for (name, factory) in get_builtin_tool_factories() {
+            inner.insert(name.to_string(), ToolProviderElem::Function(factory));
+        }
+        Self { inner }
+    }
+}
+
 impl ToolProvider {
+    /// Create a provider pre-populated with every built-in tool.
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn insert_builtin(
-        &mut self,
-        name: impl Into<String>,
-    ) -> anyhow::Result<Option<ToolProviderElem>> {
-        let name = name.into();
-        match name.as_str() {
-            "bash" => {
-                let f = crate::tool_impl::get_bash_tool_func();
-                Ok(self.insert_func(name, f))
-            }
-            "python_repl" => {
-                let f = crate::tool_impl::get_python_repl_tool_factory();
-                Ok(self.insert_func_factory(name, f))
-            }
-            "file_read" => {
-                let f = crate::tool_impl::get_file_read_tool_func();
-                Ok(self.insert_func(name, f))
-            }
-            "web_search" => {
-                let f = crate::tool_impl::get_web_search_tool_factory();
-                Ok(self.insert_func_factory(name, f))
-            }
-            _ => Err(anyhow::anyhow!("Unknown name")),
+    /// Create a provider with no entries, including no built-ins.
+    pub fn empty() -> Self {
+        Self {
+            inner: BTreeMap::new(),
         }
     }
 

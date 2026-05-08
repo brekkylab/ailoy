@@ -28,8 +28,9 @@ use crate::{lang_model::LangModelProvider, tool::ToolProvider};
 /// or instruction does.
 ///
 /// Both fields are public — populate them directly, e.g.
-/// `provider.models.insert("openai/gpt-4o".into(), LangModelProvider::openai(key))`
-/// or `provider.tools.insert_builtin("bash")?; provider.tools.insert_builtin("web_search")?;`.
+/// `provider.models.insert("openai/gpt-4o".into(), LangModelProvider::openai(key))`.
+/// [`tools`](AgentProvider::tools) starts pre-loaded with every built-in tool;
+/// use [`ToolProvider::empty`](crate::tool::ToolProvider::empty) to opt out.
 #[derive(Clone)]
 pub struct AgentProvider {
     /// Registry of all available language models, keyed by model identifier

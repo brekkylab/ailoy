@@ -2,38 +2,10 @@ use std::path::Path;
 
 use crate::{
     datatype::Value,
-    message::ToolDescBuilder,
     runenv::RunEnv,
-    tool::{ToolContext, ToolFactory, ToolFunc},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool_func,
 };
-
-const DESCRIPTION: &str = "Apply a patch to the filesystem.
-
-The patch envelope:
-
-    *** Begin Patch
-    <one or more file ops>
-    *** End Patch
-
-File operations:
-
-    *** Add File: <path>
-    +line 1
-    +line 2
-
-    *** Update File: <path>
-    @@ <optional anchor — ignored, used as a hint only>
-     context line (leading single space)
-    -line to remove
-    +line to add
-     context line
-
-    *** Delete File: <path>
-
-Multiple hunks for one file are separated by additional `@@` lines. \
-For Update, the `before` block (context + removed lines, with prefixes \
-stripped) must match exactly once in the target file; otherwise the \
-patch is rejected with no changes applied.";
 
 #[derive(Debug)]
 enum PatchOp {
@@ -90,18 +62,12 @@ fn parse_patch(text: &str) -> anyhow::Result<Vec<PatchOp>> {
             let mut hunks: Vec<Hunk> = Vec::new();
             while i < body.len() && !body[i].starts_with("*** ") {
                 if !body[i].starts_with("@@") {
-                    anyhow::bail!(
-                        "expected '@@' inside Update File hunk, got: {:?}",
-                        body[i]
-                    );
+                    anyhow::bail!("expected '@@' inside Update File hunk, got: {:?}", body[i]);
                 }
                 i += 1; // skip @@ anchor line
                 let mut before_lines: Vec<&str> = Vec::new();
                 let mut after_lines: Vec<&str> = Vec::new();
-                while i < body.len()
-                    && !body[i].starts_with("@@")
-                    && !body[i].starts_with("*** ")
-                {
+                while i < body.len() && !body[i].starts_with("@@") && !body[i].starts_with("*** ") {
                     let l = body[i];
                     if let Some(rest) = l.strip_prefix('+') {
                         after_lines.push(rest);
@@ -182,9 +148,36 @@ async fn apply_op(op: &PatchOp, runenv: &dyn RunEnv) -> anyhow::Result<String> {
     }
 }
 
-pub async fn build_apply_patch_tool() -> anyhow::Result<ToolFactory> {
-    let desc = ToolDescBuilder::new("apply_patch")
-        .description(DESCRIPTION)
+pub fn get_apply_patch_tool_desc() -> ToolDesc {
+    ToolDescBuilder::new("apply_patch")
+        .description(concat!(
+            "Apply a patch to the filesystem.\n",
+            "\n",
+            "The patch envelope:\n",
+            "\n",
+            "    *** Begin Patch\n",
+            "    <one or more file ops>\n",
+            "    *** End Patch\n",
+            "\n",
+            "File operations:\n",
+            "\n",
+            "    *** Add File: <path>\n",
+            "    +line 1\n",
+            "    +line 2\n",
+            "\n",
+            "    *** Update File: <path>\n",
+            "    @@ <optional anchor — ignored, used as a hint only>\n",
+            "     context line (leading single space)\n",
+            "    -line to remove\n",
+            "    +line to add\n",
+            "     context line\n",
+            "\n",
+            "    *** Delete File: <path>\n",
+            "\n",
+            "Multiple hunks for one file are separated by additional `@@` lines. ",
+            "For Update, the `before` block (context + removed lines, with prefixes stripped) ",
+            "must match exactly once in the target file; otherwise the patch is rejected with no changes applied.",
+        ))
         .parameters(crate::to_value!({
             "type": "object",
             "properties": {
@@ -195,13 +188,15 @@ pub async fn build_apply_patch_tool() -> anyhow::Result<ToolFactory> {
             },
             "required": ["patch"]
         }))
-        .build();
+        .build()
+}
 
-    let f = ToolFunc::new(|args: Value, ctx: ToolContext| async move {
+pub fn get_apply_patch_tool_func() -> ToolFunc {
+    tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value {
         let Some(patch_text) = args.pointer("/patch").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: patch",
-                "phase": "validation"
+                "phase": "validation",
             });
         };
 
@@ -210,45 +205,49 @@ pub async fn build_apply_patch_tool() -> anyhow::Result<ToolFactory> {
             Err(e) => {
                 return crate::to_value!({
                     "error": format!("parse: {e}"),
-                    "phase": "parse"
+                    "phase": "parse",
                 });
             }
         };
 
         let mut summary: Vec<Value> = Vec::new();
         for op in &ops {
-            match apply_op(op, ctx.runenv.as_ref()).await {
+            match apply_op(op, runenv).await {
                 Ok(msg) => summary.push(Value::from(msg)),
                 Err(e) => {
                     return crate::to_value!({
                         "error": format!("{e}"),
                         "applied": Value::Array(summary),
-                        "phase": "apply"
+                        "phase": "apply",
                     });
                 }
             }
         }
         crate::to_value!({
             "ok": true,
-            "applied": Value::Array(summary)
+            "applied": Value::Array(summary),
         })
-    });
-    Ok(ToolFactory::simple(desc, f))
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use futures::StreamExt;
 
     use super::*;
-    use crate::{agent::AgentSpec, runenv::Local, to_value, tool::ToolContext};
+    use crate::{message::Message, runenv::Local, to_value, tool::ToolProvider};
 
-    fn spec() -> AgentSpec {
-        AgentSpec::new("test")
+    fn provider() -> ToolProvider {
+        let mut p = ToolProvider::new();
+        p.insert_func("apply_patch", get_apply_patch_tool_func());
+        p
     }
 
-    fn local_ctx() -> ToolContext {
-        ToolContext::new(String::new(), Arc::new(Local {}))
+    async fn call(args: Value) -> Message {
+        let provider = provider();
+        let funcs = provider.provide(&[get_apply_patch_tool_desc()]).unwrap();
+        let f = funcs.get("apply_patch").unwrap();
+        f.call(args, "1", &Local {}).next().await.unwrap().message
     }
 
     #[tokio::test]
@@ -259,10 +258,7 @@ mod tests {
             "*** Begin Patch\n*** Add File: {}\n+hello\n+world\n*** End Patch",
             path.display()
         );
-        let tool = build_apply_patch_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(to_value!({ "patch": patch }), local_ctx())
-            .await;
+        let msg = call(to_value!({ "patch": patch })).await;
         assert!(
             msg.contents[0]
                 .as_value()
@@ -284,10 +280,7 @@ mod tests {
             "*** Begin Patch\n*** Update File: {}\n@@\n alpha\n-beta\n+BETA\n gamma\n*** End Patch",
             tmp.path().display()
         );
-        let tool = build_apply_patch_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(to_value!({ "patch": patch }), local_ctx())
-            .await;
+        let msg = call(to_value!({ "patch": patch })).await;
         assert!(
             msg.contents[0]
                 .as_value()
@@ -310,10 +303,7 @@ mod tests {
         std::fs::write(tmp.path(), "doomed").unwrap();
         let path_str = tmp.path().to_string_lossy().to_string();
         let patch = format!("*** Begin Patch\n*** Delete File: {path_str}\n*** End Patch");
-        let tool = build_apply_patch_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(to_value!({ "patch": patch }), local_ctx())
-            .await;
+        let msg = call(to_value!({ "patch": patch })).await;
         assert!(
             msg.contents[0]
                 .as_value()
@@ -327,10 +317,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_patch_missing_envelope() {
-        let tool = build_apply_patch_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(to_value!({ "patch": "*** Add File: foo\n+x" }), local_ctx())
-            .await;
+        let msg = call(to_value!({ "patch": "*** Add File: foo\n+x" })).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -348,10 +335,7 @@ mod tests {
             "*** Begin Patch\n*** Update File: {}\n@@\n nonexistent\n-beta\n+BETA\n*** End Patch",
             tmp.path().display()
         );
-        let tool = build_apply_patch_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(to_value!({ "patch": patch }), local_ctx())
-            .await;
+        let msg = call(to_value!({ "patch": patch })).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -374,10 +358,7 @@ mod tests {
             "*** Begin Patch\n*** Update File: {}\n@@\n-a\n+A\n@@\n-d\n+D\n*** End Patch",
             tmp.path().display()
         );
-        let tool = build_apply_patch_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(to_value!({ "patch": patch }), local_ctx())
-            .await;
+        let msg = call(to_value!({ "patch": patch })).await;
         assert!(
             msg.contents[0]
                 .as_value()

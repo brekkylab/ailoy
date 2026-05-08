@@ -32,7 +32,6 @@ use crate::{
 ///     "openai/gpt-4o".into(),
 ///     LangModelProvider::openai(std::env::var("OPENAI_API_KEY")?),
 /// );
-/// provider.tools.insert_builtin("web_search")?;;
 ///
 /// let agent = AgentBuilder::new("openai/gpt-4o")
 ///     .provider(provider)
@@ -92,6 +91,13 @@ impl AgentBuilder {
     pub fn tools(mut self, desc: impl IntoIterator<Item = ToolDesc>) -> Self {
         let mut desc = desc.into_iter().collect();
         self.spec.tools.append(&mut desc);
+        self
+    }
+
+    /// Append the canonical filesystem-editing toolset for the spec's model family.
+    /// See [`AgentSpec::fs_tools`] for the per-family tool selection.
+    pub fn fs_tools(mut self) -> Self {
+        self.spec = self.spec.fs_tools();
         self
     }
 
