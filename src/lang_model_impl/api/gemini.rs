@@ -35,7 +35,16 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
                 function: PartFunction { name, arguments },
                 ..
             } => {
-                to_value!({"functionCall": {"name": name, "args": arguments.clone()}})
+                let mut part_obj =
+                    to_value!({"functionCall": {"name": name, "args": arguments.clone()}});
+                // thoughtSignature is a sibling of functionCall at the part level
+                if let Some(sig) = &msg.signature {
+                    part_obj
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("thoughtSignature".into(), sig.into());
+                }
+                part_obj
             }
             Part::Image { image } => {
                 let (mime_type, b64) = match image {
@@ -69,22 +78,60 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
 
     if msg.role == Role::Tool {
         let tool_call_id = msg.id.clone().expect("Tool call id must exist.");
-        let (tool_name, _) = tool_call_id.split_once("/").unwrap();
-        return to_value!(
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "functionResponse": {
-                            "name": tool_name,
-                            "response": {
-                                "result": part_to_value(&msg.contents[0])
-                            }
-                        }
-                    }
-                ]
+        let (tool_name, _) = tool_call_id
+            .split_once('/')
+            .expect("Tool call id must be in \"{name}/call-{id}\" format");
+
+        // Split contents: images become sibling inline_data parts alongside functionResponse;
+        // non-image parts go into the functionResponse.response object.
+        // The Gemini REST API FunctionResponse proto has no "parts" field — multimodal data
+        // must live as separate parts in the outer parts array.
+        let mut response_value: Option<Value> = None;
+        let mut inline_data_parts: Vec<Value> = Vec::new();
+        for part in msg.contents.iter() {
+            match part {
+                Part::Image {
+                    image: PartImage::Embedded { mime_type, data },
+                } => {
+                    inline_data_parts.push(to_value!({
+                        "inline_data": { "mime_type": mime_type, "data": data.base64() }
+                    }));
+                }
+                other => {
+                    response_value = Some(part_to_value(other));
+                }
             }
-        );
+        }
+
+        let response_body = if let Some(rv) = response_value {
+            to_value!({"result": rv})
+        } else if !inline_data_parts.is_empty() {
+            // Image-only result: provide a text description in response; actual bytes go
+            // as sibling inline_data parts in the outer parts array.
+            let mime = inline_data_parts
+                .iter()
+                .find_map(|p| p.pointer("/inline_data/mime_type").and_then(|v| v.as_str()))
+                .unwrap_or("image/*");
+            to_value!({"result": {"mimeType": mime, "type": "image"}})
+        } else {
+            to_value!({"result": {}})
+        };
+
+        let function_response_part = to_value!({
+            "functionResponse": {
+                "name": tool_name,
+                "response": response_body
+            }
+        });
+
+        // Combine functionResponse and any inline_data blobs as sibling parts
+        let mut parts = vec![function_response_part];
+        parts.extend(inline_data_parts);
+
+        return to_value!({
+            "role": "user",
+            "parts": parts
+        });
     }
 
     // Role
@@ -102,7 +149,14 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         && !thinking.is_empty()
         && include_thinking
     {
-        parts.push(to_value!({"text": thinking, "thought": true}));
+        let mut thought_part = to_value!({"text": thinking, "thought": true});
+        if let Some(sig) = &msg.signature {
+            thought_part
+                .as_object_mut()
+                .unwrap()
+                .insert("thoughtSignature".into(), sig.into());
+        }
+        parts.push(thought_part);
     }
     parts.extend(msg.contents.iter().map(part_to_value));
     parts.extend(
@@ -118,15 +172,12 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
 }
 
 fn marshal_messages(msgs: &[Message]) -> Value {
-    let last_user_index = msgs
-        .iter()
-        .rposition(|m| m.role == Role::User || m.role == Role::Tool)
-        .unwrap_or_else(|| msgs.len());
+    // For Gemini, always include thinking/thoughtSignature for model turns — the signature must
+    // be replayed verbatim so Gemini can verify continuity across tool-use turns.
     Value::Array(
         msgs.iter()
-            .enumerate()
-            .filter(|(_, m)| m.role != Role::System)
-            .map(|(i, msg)| marshal_message(msg, i > last_user_index))
+            .filter(|m| m.role != Role::System)
+            .map(|msg| marshal_message(msg, true))
             .collect::<Vec<_>>(),
     )
 }
@@ -325,6 +376,9 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
                     };
                     if thought {
                         rv.thinking = Some(text.into());
+                        if let Some(sig) = part.get("thoughtSignature").and_then(|v| v.as_str()) {
+                            rv.signature = Some(sig.to_owned());
+                        }
                     } else {
                         rv.contents.push(PartDelta::Text { text: text.into() });
                     }
@@ -341,6 +395,10 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
                         Some(args) => args.to_owned(),
                         None => Value::Null,
                     };
+                    // thoughtSignature is at the part level (sibling of functionCall)
+                    if let Some(sig) = part.get("thoughtSignature").and_then(|v| v.as_str()) {
+                        rv.signature = Some(sig.to_owned());
+                    }
                     rv.tool_calls.push(PartDelta::Function {
                         // Generate tool call id with a form of "{tool_name}/{random_id}",
                         // and use {tool_name} part only on Marshal.
@@ -369,8 +427,9 @@ mod tests {
 
     use super::*;
     use crate::{
+        datatype::{Bytes, Value},
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc},
+        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc, ToolDescBuilder},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -425,6 +484,9 @@ mod tests {
     /// - Part::Text  → {"text": "..."} object (no double-encoding issue; object is valid)
     /// - Part::Value(String) → plain string "..." (no double-encoding via value.to_owned())
     /// - Part::Value(Object) → the object itself passed through
+    /// - Part::Image (embedded) → image-only: functionResponse gets a {mimeType, type:"image"}
+    ///   placeholder and the actual bytes appear as a sibling inline_data part; mixed with text:
+    ///   text goes into functionResponse.response.result and image becomes a sibling inline_data part
     #[test]
     fn test_function_response_result_marshaling() {
         let get_result = |msg: &Message| -> Value {
@@ -448,9 +510,7 @@ mod tests {
         // Part::Value(String) → plain string, no double-encoding
         let msg_str = Message::new(Role::Tool)
             .with_id("dummy_tool/call-2")
-            .with_contents([Part::value(crate::datatype::Value::string(
-                "ok".to_string(),
-            ))]);
+            .with_contents([Part::value(Value::string("ok".to_string()))]);
         let result = get_result(&msg_str);
         assert_eq!(
             result.as_str(),
@@ -461,12 +521,86 @@ mod tests {
         // Part::Value(Object) → object passed through as-is
         let msg_obj = Message::new(Role::Tool)
             .with_id("dummy_tool/call-3")
-            .with_contents([Part::value(crate::to_value!({"temperature": 30}))]);
+            .with_contents([Part::value(to_value!({"temperature": 30}))]);
         let result = get_result(&msg_obj);
         assert_eq!(
             result.pointer("/temperature").and_then(|v| v.as_integer()),
             Some(30),
             "Part::Value(Object) must pass through as object in functionResponse result"
+        );
+
+        // Part::Image (embedded, image-only) → functionResponse gets a {mimeType, type:"image"}
+        // placeholder; actual bytes appear as a sibling inline_data part at parts[1].
+        let img_bytes = Bytes::from(vec![0xFFu8, 0xD8, 0xFF]);
+        let msg_img = Message::new(Role::Tool)
+            .with_id("dummy_tool/call-4")
+            .with_contents([Part::image_embedded("image/jpeg", img_bytes.clone()).unwrap()]);
+        let val = marshal_message(&msg_img, false);
+        let parts = val
+            .pointer("/parts")
+            .and_then(|v| v.as_array())
+            .expect("parts must exist");
+        assert_eq!(
+            parts.len(),
+            2,
+            "image-only tool result must produce functionResponse + inline_data sibling"
+        );
+        assert_eq!(
+            parts[0]
+                .pointer("/functionResponse/response/result/type")
+                .and_then(|v| v.as_str()),
+            Some("image"),
+            "image-only functionResponse result must have type \"image\""
+        );
+        assert_eq!(
+            parts[0]
+                .pointer("/functionResponse/response/result/mimeType")
+                .and_then(|v| v.as_str()),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            parts[1]
+                .pointer("/inline_data/mime_type")
+                .and_then(|v| v.as_str()),
+            Some("image/jpeg"),
+            "image bytes must appear as sibling inline_data part"
+        );
+        assert_eq!(
+            parts[1]
+                .pointer("/inline_data/data")
+                .and_then(|v| v.as_str()),
+            Some(img_bytes.base64().as_str())
+        );
+
+        // Part::Text + Part::Image (embedded) → text in functionResponse result, image as sibling.
+        let msg_mixed = Message::new(Role::Tool)
+            .with_id("dummy_tool/call-5")
+            .with_contents([
+                Part::text("here is the file"),
+                Part::image_embedded("image/png", img_bytes.clone()).unwrap(),
+            ]);
+        let val = marshal_message(&msg_mixed, false);
+        let parts = val
+            .pointer("/parts")
+            .and_then(|v| v.as_array())
+            .expect("parts must exist");
+        assert_eq!(
+            parts.len(),
+            2,
+            "mixed tool result must produce functionResponse + inline_data sibling"
+        );
+        assert_eq!(
+            parts[0]
+                .pointer("/functionResponse/response/result/text")
+                .and_then(|v| v.as_str()),
+            Some("here is the file"),
+            "text part must appear in functionResponse result"
+        );
+        assert_eq!(
+            parts[1]
+                .pointer("/inline_data/mime_type")
+                .and_then(|v| v.as_str()),
+            Some("image/png")
         );
     }
 
@@ -519,6 +653,101 @@ mod tests {
 
         let resp = model.run(&messages, &tools).await.unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
+    }
+
+    /// Verifies that an image embedded in a Role::Tool message is accepted by the Gemini API
+    /// via functionResponse.parts[].inlineData and that the model can respond after seeing it.
+    ///
+    /// Uses a 2-turn interaction so the model's own functionCall (with thoughtSignature) is used
+    /// in the conversation history — required by Gemini 3 thinking models.
+    #[tokio::test]
+    async fn test_tool_result_with_image() {
+        dotenvy::dotenv().ok();
+        let api_key = match std::env::var("GEMINI_API_KEY") {
+            Ok(k) => k,
+            Err(_) => return,
+        };
+
+        // Fetch a real JPEG image to use as the tool result
+        let img_bytes = reqwest::get(
+            "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
+        )
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec();
+
+        let model = LangModel::new(
+            "gemini-3-flash-preview".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::Gemini,
+                url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
+                    .unwrap(),
+                api_key: Some(api_key),
+                max_tokens: None,
+            },
+        );
+
+        let tools =
+            vec![ToolDescBuilder::new("file_read")
+            .description("Read a file and return its contents. Images are returned inline.")
+            .parameters(to_value!({
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "File path to read"}},
+                "required": ["path"]
+            }))
+            .build()];
+
+        // Turn 1: ask the model to use the file_read tool. The model will respond with a
+        // functionCall that includes a thoughtSignature (captured by the unmarshal).
+        let user_messages = vec![Message::new(Role::User).with_contents([Part::text(
+            "Use the file_read tool to read /tmp/photo.jpg, then describe who you see.",
+        )])];
+        let step1 = model.run(&user_messages, &tools).await.unwrap();
+        assert_eq!(
+            step1.finish_reason,
+            FinishReason::ToolCall {},
+            "Expected model to call file_read"
+        );
+        assert!(
+            step1.message.signature.is_some(),
+            "Expected thoughtSignature from gemini-3-flash-preview"
+        );
+
+        // Extract the tool call ID from the model's response so we can link the tool result.
+        let tool_call_id = step1
+            .message
+            .tool_calls
+            .as_ref()
+            .and_then(|calls| calls.first())
+            .and_then(|p| {
+                if let Part::Function { id, .. } = p {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .expect("Expected a function call with an id");
+
+        // Turn 2: replay the model's functionCall (with thoughtSignature) + our tool result.
+        let mut messages = user_messages;
+        messages.push(step1.message);
+        messages.push(
+            Message::new(Role::Tool)
+                .with_id(tool_call_id)
+                .with_contents([
+                    Part::image_embedded("image/jpeg", Bytes::from(img_bytes)).unwrap()
+                ]),
+        );
+
+        let step2 = model.run(&messages, &tools).await.unwrap();
+        assert_eq!(step2.finish_reason, FinishReason::Stop {});
+        assert!(
+            step2.message.contents.iter().any(|p| p.as_text().is_some()),
+            "Expected text response after image tool result"
+        );
     }
 }
 

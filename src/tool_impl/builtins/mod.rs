@@ -1,8 +1,10 @@
 mod bash;
+mod file_read;
 mod python_repl;
 mod web_search;
 
 use bash::build_bash_tool;
+use file_read::build_file_read_tool;
 use python_repl::build_python_repl_tool;
 use web_search::build_web_search_tool;
 
@@ -13,6 +15,7 @@ pub async fn make_builtin_tool_factory(
 ) -> anyhow::Result<ToolFactory> {
     match provider {
         BuiltinToolProviderElem::Bash {} => build_bash_tool().await,
+        BuiltinToolProviderElem::FileRead {} => build_file_read_tool().await,
         BuiltinToolProviderElem::PythonRepl {} => build_python_repl_tool().await,
         BuiltinToolProviderElem::WebSearch {} => build_web_search_tool().await,
     }

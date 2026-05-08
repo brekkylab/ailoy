@@ -71,14 +71,36 @@ impl Marshal<Message> for ChatCompletionMarshal {
                 .insert("tool_call_id".into(), id.into());
         }
         if !item.contents.is_empty() {
-            rv.as_object_mut().unwrap().insert(
-                "content".into(),
-                item.contents
-                    .iter()
-                    .map(part_to_value)
-                    .collect::<Vec<_>>()
-                    .into(),
-            );
+            let contents: Vec<Value> = item
+                .contents
+                .iter()
+                .map(|p| {
+                    // ChatCompletion backends don't reliably accept images in tool results;
+                    // substitute a text label so the model knows an image was returned.
+                    if item.role == Role::Tool {
+                        match p {
+                            Part::Image {
+                                image: PartImage::Embedded { mime_type, .. },
+                            } => {
+                                return part_to_value(&Part::text(format!(
+                                    "[image: {}]",
+                                    mime_type
+                                )));
+                            }
+                            Part::Image {
+                                image: PartImage::Url { url },
+                            } => {
+                                return part_to_value(&Part::text(format!("[image at {}]", url)));
+                            }
+                            _ => {}
+                        }
+                    }
+                    part_to_value(p)
+                })
+                .collect();
+            rv.as_object_mut()
+                .unwrap()
+                .insert("content".into(), contents.into());
         }
         if let Some(tool_calls) = &item.tool_calls
             && !tool_calls.is_empty()

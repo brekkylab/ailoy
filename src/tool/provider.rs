@@ -15,6 +15,7 @@ pub enum BuiltinToolProviderElem {
     WebSearch {},
     PythonRepl {},
     Bash {},
+    FileRead {},
 }
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
@@ -107,6 +108,13 @@ impl ToolProvider {
     pub fn bash(mut self) -> Self {
         self.inner
             .push(ToolProviderElem::Builtin(BuiltinToolProviderElem::Bash {}));
+        self
+    }
+
+    pub fn file_read(mut self) -> Self {
+        self.inner.push(ToolProviderElem::Builtin(
+            BuiltinToolProviderElem::FileRead {},
+        ));
         self
     }
 
