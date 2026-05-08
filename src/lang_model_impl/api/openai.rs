@@ -58,21 +58,14 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
     };
 
     if msg.role == Role::Tool {
-        let output: Value = {
-            let arr: Vec<Value> = msg.contents.iter().filter_map(|p| match p {
-                Part::Text { text } => Some(to_value!({"type": "input_text", "text": text})),
-                Part::Image { image: PartImage::Embedded { mime_type, data } } => Some(to_value!({
-                    "type": "input_image",
-                    "image_url": format!("data:{};base64,{}", mime_type, data.base64())
-                })),
-                Part::Image { image: PartImage::Url { url } } => Some(to_value!({
-                    "type": "input_image",
-                    "image_url": url
-                })),
+        let output: Vec<Value> = msg
+            .contents
+            .iter()
+            .filter_map(|p| match p {
+                Part::Text { .. } | Part::Image { .. } => Some(part_to_value(p)),
                 _ => None,
-            }).collect();
-            to_value!(arr)
-        };
+            })
+            .collect();
         return vec![to_value!(
             {
                 "type": "function_call_output",
@@ -416,10 +409,11 @@ mod tests {
         );
     }
 
-    /// Verifies that function_call_output.output is canonicalized to a plain string.
+    /// Verifies that function_call_output.output is an array of text/image blocks.
+    /// Unsupported part types (e.g. Part::Value) are filtered out.
     #[test]
     fn test_tool_result_content_marshaling() {
-        // Part::Text → plain string.
+        // Part::Text → array with a single {"type":"input_text","text":"..."} block.
         let msg_text = Message::new(Role::Tool)
             .with_id("call_1")
             .with_contents([Part::text("tool output")]);
@@ -427,43 +421,31 @@ mod tests {
         let output = items[0]
             .pointer("/output")
             .expect("output must exist")
-            .as_str();
+            .as_array()
+            .expect("output must be an array");
+        assert_eq!(output.len(), 1);
         assert_eq!(
-            output,
-            Some("tool output"),
-            "Part::Text in function_call_output must marshal as a plain string"
+            output[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("input_text")
+        );
+        assert_eq!(
+            output[0].pointer("/text").and_then(|v| v.as_str()),
+            Some("tool output")
         );
 
-        // Part::Value(String) → plain string; no double-encoding.
-        let msg_str = Message::new(Role::Tool)
+        // Part::Value → filtered out (unsupported), output array is empty.
+        let msg_val = Message::new(Role::Tool)
             .with_id("call_2")
-            .with_contents([Part::value(crate::datatype::Value::string(
-                "ok".to_string(),
-            ))]);
-        let items = marshal_message(&msg_str, false);
-        let output = items[0]
-            .pointer("/output")
-            .expect("output must exist")
-            .as_str();
-        assert_eq!(
-            output,
-            Some("ok"),
-            "Part::Value(String) must not be double-encoded in function_call_output"
-        );
-
-        // Part::Value(Object) → JSON-serialised plain text.
-        let msg_obj = Message::new(Role::Tool)
-            .with_id("call_3")
             .with_contents([Part::value(crate::to_value!({"temp": 25}))]);
-        let items = marshal_message(&msg_obj, false);
+        let items = marshal_message(&msg_val, false);
         let output = items[0]
             .pointer("/output")
             .expect("output must exist")
-            .as_str();
-        assert_eq!(
-            output,
-            Some(r#"{"temp":25}"#),
-            "Part::Value(Object) must be JSON-serialised into a plain string in function_call_output"
+            .as_array()
+            .expect("output must be an array");
+        assert!(
+            output.is_empty(),
+            "Part::Value must be filtered out of function_call_output"
         );
     }
 

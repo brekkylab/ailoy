@@ -61,11 +61,14 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     };
 
     if item.role == Role::Tool {
-        let content: Vec<Value> = item.contents.iter().filter_map(|part| match part {
-            Part::Text { text } => Some(to_value!({"type": "text", "text": text})),
-            Part::Image { .. } => Some(part_to_value(part)),
-            _ => None,
-        }).collect();
+        let content: Vec<Value> = item
+            .contents
+            .iter()
+            .filter_map(|part| match part {
+                Part::Text { .. } | Part::Image { .. } => Some(part_to_value(part)),
+                _ => None,
+            })
+            .collect();
         return to_value!(
             {
                 "role": "user",
@@ -465,10 +468,11 @@ mod tests {
         );
     }
 
-    /// Verifies that tool_result content is marshalled correctly per the Anthropic spec
+    /// Verifies that tool_result content is an array of text/image blocks per the Anthropic spec.
+    /// Unsupported part types (e.g. Part::Value) are filtered out.
     #[test]
     fn test_tool_result_content_marshaling() {
-        // Part::Text → plain string.
+        // Part::Text → array with a single {"type":"text","text":"..."} block.
         let msg_text = Message::new(Role::Tool)
             .with_id("call_1")
             .with_contents([Part::text("tool output")]);
@@ -476,41 +480,31 @@ mod tests {
         let content = val
             .pointer("/content/0/content")
             .expect("content/0/content must exist")
-            .as_str();
+            .as_array()
+            .expect("content must be an array");
+        assert_eq!(content.len(), 1);
         assert_eq!(
-            content,
-            Some("tool output"),
-            "Part::Text in tool result must marshal as a plain string"
+            content[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("text")
+        );
+        assert_eq!(
+            content[0].pointer("/text").and_then(|v| v.as_str()),
+            Some("tool output")
         );
 
-        // Part::Value(String) → plain string; no double-encoding.
-        let msg_str = Message::new(Role::Tool)
+        // Part::Value → filtered out (unsupported), content array is empty.
+        let msg_val = Message::new(Role::Tool)
             .with_id("call_2")
-            .with_contents([Part::value("ok")]);
-        let val = AnthropicMarshal.marshal(&msg_str);
+            .with_contents([Part::value(to_value!({"temp": 25}))]);
+        let val = AnthropicMarshal.marshal(&msg_val);
         let content = val
             .pointer("/content/0/content")
             .expect("content/0/content must exist")
-            .as_str();
-        assert_eq!(
-            content,
-            Some("ok"),
-            "Part::Value(String) must not be double-encoded"
-        );
-
-        // Part::Value(Object) → array with JSON-serialised text block.
-        let msg_obj = Message::new(Role::Tool)
-            .with_id("call_3")
-            .with_contents([Part::value(to_value!({"temp": 25}))]);
-        let val = AnthropicMarshal.marshal(&msg_obj);
-        let text = val
-            .pointer("/content/0/content")
-            .expect("content/0/content must exist")
-            .as_str();
-        assert_eq!(
-            text,
-            Some(r#"{"temp":25}"#),
-            "Part::Value(Object) must be JSON-serialised into a plain text"
+            .as_array()
+            .expect("content must be an array");
+        assert!(
+            content.is_empty(),
+            "Part::Value must be filtered out of tool result content"
         );
     }
 
