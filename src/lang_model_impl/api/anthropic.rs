@@ -6,7 +6,7 @@ use crate::{
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
+        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, ToolDesc, Unmarshal,
     },
     to_value,
 };
@@ -35,9 +35,7 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
             } => {
                 to_value!({"type": "tool_use", "id": id, "name": name, "input": arguments.clone()})
             }
-            Part::Value { value } => {
-                to_value!(serde_json::to_string(&value).unwrap())
-            }
+            Part::Value { value } => value.to_owned(),
             Part::Image { image } => match image {
                 PartImage::Embedded { mime_type, data } => {
                     to_value!({
@@ -63,6 +61,19 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     };
 
     if item.role == Role::Tool {
+        // Anthropic tool_result.content accepts a string or an array of content blocks.
+        // For simplicity, canonicalize the content always to be a plain string.
+        let content = match &item.contents[0] {
+            Part::Text { text } => text.clone(),
+            Part::Value { value } => {
+                let text = match value {
+                    Value::String(s) => s.clone(),
+                    other => serde_json::to_string(other).unwrap_or_default(),
+                };
+                text
+            }
+            _ => "unexpected tool result type".into(),
+        };
         return to_value!(
             {
                 "role": "user",
@@ -70,7 +81,7 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
                     {
                         "type": "tool_result",
                         "tool_use_id": item.id.clone().expect("Tool call id must exist."),
-                        "content": part_to_value(&item.contents[0])
+                        "content": content
                     }
                 ]
             }
@@ -331,9 +342,33 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             }
         }
 
+        // Parse usage
+        let usage = root
+            .get("usage")
+            .and_then(|u| u.as_object())
+            .map(|u| TokenUsage {
+                input_tokens: u
+                    .get("input_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                output_tokens: u
+                    .get("output_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                cache_creation_input_tokens: u
+                    .get("cache_creation_input_tokens")
+                    .and_then(|v| v.as_integer())
+                    .map(|v| v as u64),
+                cache_read_input_tokens: u
+                    .get("cache_read_input_tokens")
+                    .and_then(|v| v.as_integer())
+                    .map(|v| v as u64),
+            });
+
         Ok(MessageDeltaOutput {
             delta,
             finish_reason,
+            usage,
         })
     }
 }
@@ -345,7 +380,7 @@ mod tests {
     use super::*;
     use crate::{
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, ToolDesc},
+        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -386,6 +421,105 @@ mod tests {
             // Falls back to 8192 when not configured
             assert_eq!(max_tokens.as_integer().unwrap(), 8192);
         });
+    }
+
+    #[test]
+    fn test_unmarshal_usage() {
+        // All four fields present, including cache fields.
+        let response = to_value!({
+            "stop_reason": "end_turn",
+            "role": "assistant",
+            "content": [],
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_creation_input_tokens": 20,
+                "cache_read_input_tokens": 10
+            }
+        });
+        let usage = AnthropicUnmarshal::default()
+            .unmarshal(response)
+            .unwrap()
+            .usage;
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_creation_input_tokens: Some(20),
+                cache_read_input_tokens: Some(10),
+            })
+        );
+
+        // Cache fields absent → None.
+        let response = to_value!({
+            "stop_reason": "end_turn",
+            "role": "assistant",
+            "content": [],
+            "usage": {"input_tokens": 30, "output_tokens": 15}
+        });
+        let usage = AnthropicUnmarshal::default()
+            .unmarshal(response)
+            .unwrap()
+            .usage;
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                input_tokens: 30,
+                output_tokens: 15,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            })
+        );
+    }
+
+    /// Verifies that tool_result content is marshalled correctly per the Anthropic spec
+    #[test]
+    fn test_tool_result_content_marshaling() {
+        // Part::Text → plain string.
+        let msg_text = Message::new(Role::Tool)
+            .with_id("call_1")
+            .with_contents([Part::text("tool output")]);
+        let val = AnthropicMarshal.marshal(&msg_text);
+        let content = val
+            .pointer("/content/0/content")
+            .expect("content/0/content must exist")
+            .as_str();
+        assert_eq!(
+            content,
+            Some("tool output"),
+            "Part::Text in tool result must marshal as a plain string"
+        );
+
+        // Part::Value(String) → plain string; no double-encoding.
+        let msg_str = Message::new(Role::Tool)
+            .with_id("call_2")
+            .with_contents([Part::value("ok")]);
+        let val = AnthropicMarshal.marshal(&msg_str);
+        let content = val
+            .pointer("/content/0/content")
+            .expect("content/0/content must exist")
+            .as_str();
+        assert_eq!(
+            content,
+            Some("ok"),
+            "Part::Value(String) must not be double-encoded"
+        );
+
+        // Part::Value(Object) → array with JSON-serialised text block.
+        let msg_obj = Message::new(Role::Tool)
+            .with_id("call_3")
+            .with_contents([Part::value(to_value!({"temp": 25}))]);
+        let val = AnthropicMarshal.marshal(&msg_obj);
+        let text = val
+            .pointer("/content/0/content")
+            .expect("content/0/content must exist")
+            .as_str();
+        assert_eq!(
+            text,
+            Some(r#"{"temp":25}"#),
+            "Part::Value(Object) must be JSON-serialised into a plain text"
+        );
     }
 
     /// Verifies that max_tokens is respected by the Anthropic API (stop_reason: max_tokens).

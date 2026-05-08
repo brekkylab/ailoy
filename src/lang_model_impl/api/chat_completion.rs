@@ -5,7 +5,7 @@ use crate::{
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
+        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, ToolDesc, Unmarshal,
     },
     to_value,
 };
@@ -254,6 +254,7 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             return Ok(MessageDeltaOutput {
                 delta: MessageDelta::new().with_role(Role::Assistant),
                 finish_reason: Some(FinishReason::Refusal { reason }),
+                usage: None,
             });
         }
 
@@ -287,9 +288,28 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             delta = delta.with_tool_calls(tool_calls);
         }
 
+        // Parse usage (Chat Completion: usage.prompt_tokens / completion_tokens)
+        let usage = val
+            .as_object()
+            .and_then(|r| r.get("usage"))
+            .and_then(|u| u.as_object())
+            .map(|u| TokenUsage {
+                input_tokens: u
+                    .get("prompt_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                output_tokens: u
+                    .get("completion_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            });
+
         Ok(MessageDeltaOutput {
             delta,
             finish_reason,
+            usage,
         })
     }
 }
