@@ -1,7 +1,8 @@
-use std::{future::Future, sync::Arc};
+use std::sync::Arc;
 
 use futures::{
-    Stream, StreamExt,
+    StreamExt,
+    future::BoxFuture,
     stream::{self, BoxStream},
 };
 
@@ -11,387 +12,368 @@ use crate::{
     runenv::RunEnv,
 };
 
-/// Runtime context forwarded to every tool call.
-///
-/// Tools that don't need the context simply ignore it.  Constructed by the
-/// caller (typically the agent) and passed through [`ToolFunc::call`].
-pub struct ToolContext {
-    pub id: String,
-
-    pub runenv: Arc<dyn RunEnv>,
-}
-
-impl ToolContext {
-    pub(crate) fn new(id: impl Into<String>, runenv: Arc<dyn RunEnv>) -> Self {
-        Self {
-            id: id.into(),
-            runenv,
-        }
-    }
-}
-
+#[derive(Clone)]
 pub struct ToolFunc {
-    inner: Box<dyn Fn(Value, ToolContext) -> BoxStream<'static, MessageOutput> + Send + Sync>,
+    // HRTB (`for<'a>`) is required: an async tool that borrows `&'a dyn RunEnv`
+    // produces a future whose lifetime is `'a`, so the resulting stream is
+    // `BoxStream<'a, _>`. Pinning the inner closure to a single concrete
+    // lifetime (e.g. `'static`) would forbid those tools — borrowed `runenv`
+    // could not survive across `.await` points. The HRTB lets the same
+    // `ToolFunc` accept any caller lifetime and propagate it into the stream.
+    inner: Arc<
+        dyn for<'a> Fn(Value, String, &'a dyn RunEnv) -> BoxStream<'a, MessageOutput> + Send + Sync,
+    >,
 }
 
 impl ToolFunc {
-    /// Construct a [`ToolFunc`] from any value that implements [`IntoToolFunc`].
+    /// Construct a [`ToolFunc`] from a closure of the canonical inner shape.
     ///
-    /// The `Marker` type parameter is inferred from the closure's return type —
-    /// callers never need to name it.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use ailoy::tool::{ToolFunc, ToolContext};
-    /// # use ailoy::datatype::Value;
-    /// // sync
-    /// let f = ToolFunc::new(|_args: Value, _ctx: ToolContext| Value::string("ok"));
-    ///
-    /// // async
-    /// let f = ToolFunc::new(|_args: Value, _ctx: ToolContext| async move { Value::string("ok") });
-    /// ```
-    pub fn new<M>(f: impl IntoToolFunc<M>) -> Self {
-        f.into_tool_func()
+    /// We recommend using the [`crate::tool_func!`] macro instead. Use `new`
+    /// only for advanced usage that the macro does not cover.
+    pub fn new<F>(f: F) -> Self
+    where
+        F: for<'a> Fn(Value, String, &'a dyn RunEnv) -> BoxStream<'a, MessageOutput>
+            + Send
+            + Sync
+            + 'static,
+    {
+        Self { inner: Arc::new(f) }
     }
 
-    pub fn call(&self, args: Value, ctx: ToolContext) -> BoxStream<'static, MessageOutput> {
-        (self.inner)(args, ctx)
+    pub fn call<'a>(
+        &self,
+        args: Value,
+        id: impl Into<String>,
+        runenv: &'a dyn RunEnv,
+    ) -> BoxStream<'a, MessageOutput> {
+        (self.inner)(args, id.into(), runenv)
     }
 }
 
-/// Marker types used to disambiguate `IntoToolFunc` impls by function signature.
-/// These are never constructed — they exist only as type-level tags.
-mod marker {
-    /// `Fn(Value) -> Value`
-    pub struct ArgValueRetValueFn;
-
-    /// `Fn(Value, ToolContext) -> Value`
-    pub struct ArgValueContextRetValueFn;
-
-    /// `Fn(Value) -> Message`
-    pub struct ArgValueRetMessageFn;
-
-    /// `Fn(Value, ToolContext) -> Message`
-    pub struct ArgValueContextRetMessageFn;
-
-    /// `Fn(Value) -> Future<Output = Value>`
-    pub struct ArgValueRetValueAsyncFn;
-
-    /// `Fn(Value, ToolContext) -> Future<Output = Value>`
-    pub struct ArgValueContextRetValueAsyncFn;
-
-    /// `Fn(Value) -> Future<Output = Message>`
-    pub struct ArgValueRetMessageAsyncFn;
-
-    /// `Fn(Value, ToolContext) -> Future<Output = Message>`
-    pub struct ArgValueContextRetMessageAsyncFn;
-
-    /// `Fn(Value) -> Stream<Item = Value>`
-    pub struct ArgValueRetValueStreamFn;
-
-    /// `Fn(Value, ToolContext) -> Stream<Item = Value>`
-    pub struct ArgValueContextRetValueStreamFn;
-
-    /// `Fn(Value) -> Stream<Item = Message>`
-    pub struct ArgValueRetMessageStreamFn;
-
-    /// `Fn(Value, ToolContext) -> Stream<Item = Message>`
-    pub struct ArgValueContextRetMessageStreamFn;
-}
-
-/// Converts a function into a [`ToolFunc`].
+/// Wrapping helpers used by the [`crate::tool_func!`] macro to turn user output
+/// (a [`Value`]/[`Message`], an async future of one, or a stream of them) into
+/// the canonical `BoxStream<'a, MessageOutput>` shape.
 ///
-/// The `Marker` type parameter is used only to avoid coherence conflicts —
-/// callers never need to name or specify it.
-pub trait IntoToolFunc<Marker> {
-    fn into_tool_func(self) -> ToolFunc;
-}
+/// Not part of the public API.
+#[doc(hidden)]
+pub mod __private {
+    use super::*;
 
-// Fn(Value) -> Value
-impl<F> IntoToolFunc<marker::ArgValueRetValueFn> for F
-where
-    F: Fn(Value) -> Value + Send + Sync + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, ctx| {
-                let id = ctx.id.clone();
-                let value = self(args);
-                stream::once(std::future::ready(MessageOutput {
-                    depth: None,
-                    message: Message::new(Role::Tool)
-                        .with_contents([Part::value(value)])
-                        .with_id(id),
-                    finish_reason: FinishReason::Stop {},
-                    usage: None,
-                }))
-                .boxed()
-            }),
-        }
+    pub fn value_to_stream(id: String, value: Value) -> BoxStream<'static, MessageOutput> {
+        stream::once(std::future::ready(MessageOutput {
+            depth: None,
+            message: Message::new(Role::Tool)
+                .with_contents([Part::value(value)])
+                .with_id(id),
+            finish_reason: FinishReason::Stop {},
+            usage: None,
+        }))
+        .boxed()
+    }
+
+    pub fn message_to_stream(message: Message) -> BoxStream<'static, MessageOutput> {
+        stream::once(std::future::ready(MessageOutput {
+            depth: None,
+            message,
+            finish_reason: FinishReason::Stop {},
+            usage: None,
+        }))
+        .boxed()
+    }
+
+    pub fn value_fut_to_stream<'a>(
+        id: String,
+        fut: BoxFuture<'a, Value>,
+    ) -> BoxStream<'a, MessageOutput> {
+        stream::once(Box::pin(async move {
+            MessageOutput {
+                depth: None,
+                message: Message::new(Role::Tool)
+                    .with_contents([Part::value(fut.await)])
+                    .with_id(id),
+                finish_reason: FinishReason::Stop {},
+                usage: None,
+            }
+        }))
+        .boxed()
+    }
+
+    pub fn message_fut_to_stream<'a>(fut: BoxFuture<'a, Message>) -> BoxStream<'a, MessageOutput> {
+        stream::once(Box::pin(async move {
+            MessageOutput {
+                depth: None,
+                message: fut.await,
+                finish_reason: FinishReason::Stop {},
+                usage: None,
+            }
+        }))
+        .boxed()
+    }
+
+    pub fn value_stream_to_msg_stream<'a>(
+        id: String,
+        s: BoxStream<'a, Value>,
+    ) -> BoxStream<'a, MessageOutput> {
+        s.map(move |value| MessageOutput {
+            depth: None,
+            message: Message::new(Role::Tool)
+                .with_contents([Part::value(value)])
+                .with_id(id.clone()),
+            finish_reason: FinishReason::Stop {},
+            usage: None,
+        })
+        .boxed()
+    }
+
+    pub fn message_stream_to_msg_stream<'a>(
+        s: BoxStream<'a, Message>,
+    ) -> BoxStream<'a, MessageOutput> {
+        s.map(|message| MessageOutput {
+            depth: None,
+            message,
+            finish_reason: FinishReason::Stop {},
+            usage: None,
+        })
+        .boxed()
     }
 }
 
-// Fn(Value, ToolContext) -> Value
-impl<F> IntoToolFunc<marker::ArgValueContextRetValueFn> for F
-where
-    F: Fn(Value, ToolContext) -> Value + Send + Sync + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, ctx| {
-                let id = ctx.id.clone();
-                let value = self(args, ctx);
-                stream::once(std::future::ready(MessageOutput {
-                    depth: None,
-                    message: Message::new(Role::Tool)
-                        .with_contents([Part::value(value)])
-                        .with_id(id),
-                    finish_reason: FinishReason::Stop {},
-                    usage: None,
-                }))
-                .boxed()
-            }),
-        }
-    }
-}
+/// Build a [`ToolFunc`] from a closure without writing the canonical
+/// `for<'a> Fn(Value, String, &'a dyn RunEnv) -> BoxStream<'a, MessageOutput>`
+/// shape or its `BoxFuture`/`BoxStream`/`Box::pin` boilerplate by hand.
+///
+/// # Forms
+///
+/// Sync — closure body returns a value/message directly:
+///
+/// ```ignore
+/// tool_func!(|args: Value| -> Value { … })
+/// tool_func!(|args: Value, runenv: &dyn RunEnv| -> Value { … })
+/// tool_func!(|args: Value, id: String| -> Message { … })
+/// tool_func!(|args: Value, id: String, runenv: &dyn RunEnv| -> Message { … })
+/// ```
+///
+/// Async — closure body is `async`-awaitable:
+///
+/// ```ignore
+/// tool_func!(async |args: Value| -> Value { … })
+/// tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value { … })
+/// tool_func!(async |args: Value, id: String| -> Message { … })
+/// tool_func!(async |args: Value, id: String, runenv: &dyn RunEnv| -> Message { … })
+/// ```
+///
+/// Stream — closure body produces a `Stream`/`BoxStream`:
+///
+/// ```ignore
+/// tool_func!(stream |args: Value| -> Value { … })
+/// tool_func!(stream |args: Value, runenv: &dyn RunEnv| -> Value { … })
+/// tool_func!(stream |args: Value, id: String| -> Message { … })
+/// tool_func!(stream |args: Value, id: String, runenv: &dyn RunEnv| -> Message { … })
+/// ```
+#[macro_export]
+macro_rules! tool_func {
+    // ─── sync ──────────────────────────────────────────────────────────────
+    (|$args:ident : Value| -> Value $body:block) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  id: ::std::string::String,
+                  _runenv: &dyn $crate::runenv::RunEnv| {
+                let value: $crate::datatype::Value = $body;
+                $crate::tool::__private::value_to_stream(id, value)
+            },
+        )
+    };
 
-// Fn(Value) -> Message
-impl<F> IntoToolFunc<marker::ArgValueRetMessageFn> for F
-where
-    F: Fn(Value) -> Message + Send + Sync + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, _ctx| {
-                let message = self(args);
-                stream::once(std::future::ready(MessageOutput {
-                    depth: None,
-                    message,
-                    finish_reason: FinishReason::Stop {},
-                    usage: None,
-                }))
-                .boxed()
-            }),
-        }
-    }
-}
+    (|$args:ident : Value, $runenv:ident : &dyn RunEnv| -> Value $body:block) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  id: ::std::string::String,
+                  $runenv: &dyn $crate::runenv::RunEnv| {
+                let value: $crate::datatype::Value = $body;
+                $crate::tool::__private::value_to_stream(id, value)
+            },
+        )
+    };
 
-// Fn(Value, ToolContext) -> Message
-impl<F> IntoToolFunc<marker::ArgValueContextRetMessageFn> for F
-where
-    F: Fn(Value, ToolContext) -> Message + Send + Sync + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, ctx| {
-                let message = self(args, ctx);
-                stream::once(std::future::ready(MessageOutput {
-                    depth: None,
-                    message,
-                    finish_reason: FinishReason::Stop {},
-                    usage: None,
-                }))
-                .boxed()
-            }),
-        }
-    }
-}
+    (|$args:ident : Value, $id:ident : String| -> Message $body:block) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  $id: ::std::string::String,
+                  _runenv: &dyn $crate::runenv::RunEnv| {
+                let message: $crate::message::Message = $body;
+                $crate::tool::__private::message_to_stream(message)
+            },
+        )
+    };
 
-// Fn(Value) -> Future<Output = Value>
-impl<F, Fut> IntoToolFunc<marker::ArgValueRetValueAsyncFn> for F
-where
-    F: Fn(Value) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Value> + Send + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, ctx| {
-                let id = ctx.id.clone();
-                let fut = self(args);
-                stream::once(Box::pin(async move {
-                    MessageOutput {
-                        depth: None,
-                        message: Message::new(Role::Tool)
-                            .with_contents([Part::value(fut.await)])
-                            .with_id(id),
-                        finish_reason: FinishReason::Stop {},
-                        usage: None,
-                    }
-                }))
-                .boxed()
-            }),
-        }
-    }
-}
+    (
+        |$args:ident : Value, $id:ident : String, $runenv:ident : &dyn RunEnv| -> Message
+            $body:block
+    ) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  $id: ::std::string::String,
+                  $runenv: &dyn $crate::runenv::RunEnv| {
+                let message: $crate::message::Message = $body;
+                $crate::tool::__private::message_to_stream(message)
+            },
+        )
+    };
 
-// Fn(Value, ToolContext) -> Future<Output = Value>
-impl<F, Fut> IntoToolFunc<marker::ArgValueContextRetValueAsyncFn> for F
-where
-    F: Fn(Value, ToolContext) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Value> + Send + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, ctx| {
-                let id = ctx.id.clone();
-                let fut = self(args, ctx);
-                stream::once(Box::pin(async move {
-                    MessageOutput {
-                        depth: None,
-                        message: Message::new(Role::Tool)
-                            .with_contents([Part::value(fut.await)])
-                            .with_id(id),
-                        finish_reason: FinishReason::Stop {},
-                        usage: None,
-                    }
-                }))
-                .boxed()
-            }),
-        }
-    }
-}
+    // ─── async ─────────────────────────────────────────────────────────────
+    //
+    // Note: async arms wrap the body in `async move { ... }`, which captures
+    // outer variables by move. If the body needs to clone an `Arc`/`String`/etc.
+    // captured from the surrounding scope per call, that clone must happen
+    // *outside* the `async move` (otherwise the surrounding `Fn` closure tries
+    // to move the same outer variable on every call). Use the optional
+    // `with [name = expr, ...]` clause to lift those clones up:
+    //
+    // ```ignore
+    // tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value
+    //     with [runner = runner.clone()]
+    //     {
+    //         // body sees local `runner` (the per-call clone)
+    //     }
+    // )
+    // ```
+    (async |$args:ident : Value| -> Value $body:block) => {
+        $crate::tool_func!(async |$args: Value| -> Value with [] $body)
+    };
 
-// Fn(Value) -> Future<Output = Message>
-impl<F, Fut> IntoToolFunc<marker::ArgValueRetMessageAsyncFn> for F
-where
-    F: Fn(Value) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Message> + Send + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, _ctx| {
-                let fut = self(args);
-                stream::once(Box::pin(async move {
-                    MessageOutput {
-                        depth: None,
-                        message: fut.await,
-                        finish_reason: FinishReason::Stop {},
-                        usage: None,
-                    }
-                }))
-                .boxed()
-            }),
-        }
-    }
-}
+    (async |$args:ident : Value| -> Value with [$($cap:ident = $expr:expr),* $(,)?] $body:block) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  id: ::std::string::String,
+                  _runenv: &dyn $crate::runenv::RunEnv| {
+                $(let $cap = $expr;)*
+                let fut: ::futures::future::BoxFuture<'static, $crate::datatype::Value> =
+                    ::std::boxed::Box::pin(async move $body);
+                $crate::tool::__private::value_fut_to_stream(id, fut)
+            },
+        )
+    };
 
-// Fn(Value, ToolContext) -> Future<Output = Message>
-impl<F, Fut> IntoToolFunc<marker::ArgValueContextRetMessageAsyncFn> for F
-where
-    F: Fn(Value, ToolContext) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Message> + Send + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, ctx| {
-                let fut = self(args, ctx);
-                stream::once(Box::pin(async move {
-                    MessageOutput {
-                        depth: None,
-                        message: fut.await,
-                        finish_reason: FinishReason::Stop {},
-                        usage: None,
-                    }
-                }))
-                .boxed()
-            }),
-        }
-    }
-}
+    (async |$args:ident : Value, $runenv:ident : &dyn RunEnv| -> Value $body:block) => {
+        $crate::tool_func!(
+            async |$args: Value, $runenv: &dyn RunEnv| -> Value with [] $body
+        )
+    };
 
-// Fn(Value) -> Stream<Item = Value>
-impl<F, S> IntoToolFunc<marker::ArgValueRetValueStreamFn> for F
-where
-    F: Fn(Value) -> S + Send + Sync + 'static,
-    S: Stream<Item = Value> + Send + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, ctx| {
-                let id = ctx.id.clone();
-                self(args)
-                    .map(move |value| MessageOutput {
-                        depth: None,
-                        message: Message::new(Role::Tool)
-                            .with_contents([Part::value(value)])
-                            .with_id(id.clone()),
-                        finish_reason: FinishReason::Stop {},
-                        usage: None,
-                    })
-                    .boxed()
-            }),
-        }
-    }
-}
+    (
+        async |$args:ident : Value, $runenv:ident : &dyn RunEnv| -> Value
+            with [$($cap:ident = $expr:expr),* $(,)?] $body:block
+    ) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  id: ::std::string::String,
+                  $runenv: &dyn $crate::runenv::RunEnv| {
+                $(let $cap = $expr;)*
+                let fut: ::futures::future::BoxFuture<'_, $crate::datatype::Value> =
+                    ::std::boxed::Box::pin(async move $body);
+                $crate::tool::__private::value_fut_to_stream(id, fut)
+            },
+        )
+    };
 
-// Fn(Value, ToolContext) -> Stream<Item = Value>
-impl<F, S> IntoToolFunc<marker::ArgValueContextRetValueStreamFn> for F
-where
-    F: Fn(Value, ToolContext) -> S + Send + Sync + 'static,
-    S: Stream<Item = Value> + Send + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, ctx| {
-                let id = ctx.id.clone();
-                self(args, ctx)
-                    .map(move |value| MessageOutput {
-                        depth: None,
-                        message: Message::new(Role::Tool)
-                            .with_contents([Part::value(value)])
-                            .with_id(id.clone()),
-                        finish_reason: FinishReason::Stop {},
-                        usage: None,
-                    })
-                    .boxed()
-            }),
-        }
-    }
-}
+    (async |$args:ident : Value, $id:ident : String| -> Message $body:block) => {
+        $crate::tool_func!(
+            async |$args: Value, $id: String| -> Message with [] $body
+        )
+    };
 
-// Fn(Value) -> Stream<Item = Message>
-impl<F, S> IntoToolFunc<marker::ArgValueRetMessageStreamFn> for F
-where
-    F: Fn(Value) -> S + Send + Sync + 'static,
-    S: Stream<Item = Message> + Send + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, _ctx| {
-                self(args)
-                    .map(|message| MessageOutput {
-                        depth: None,
-                        message,
-                        finish_reason: FinishReason::Stop {},
-                        usage: None,
-                    })
-                    .boxed()
-            }),
-        }
-    }
-}
+    (
+        async |$args:ident : Value, $id:ident : String| -> Message
+            with [$($cap:ident = $expr:expr),* $(,)?] $body:block
+    ) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  $id: ::std::string::String,
+                  _runenv: &dyn $crate::runenv::RunEnv| {
+                $(let $cap = $expr;)*
+                let fut: ::futures::future::BoxFuture<'static, $crate::message::Message> =
+                    ::std::boxed::Box::pin(async move $body);
+                $crate::tool::__private::message_fut_to_stream(fut)
+            },
+        )
+    };
 
-// Fn(Value, ToolContext) -> Stream<Item = Message>
-impl<F, S> IntoToolFunc<marker::ArgValueContextRetMessageStreamFn> for F
-where
-    F: Fn(Value, ToolContext) -> S + Send + Sync + 'static,
-    S: Stream<Item = Message> + Send + 'static,
-{
-    fn into_tool_func(self) -> ToolFunc {
-        ToolFunc {
-            inner: Box::new(move |args, ctx| {
-                self(args, ctx)
-                    .map(|message| MessageOutput {
-                        depth: None,
-                        message,
-                        finish_reason: FinishReason::Stop {},
-                        usage: None,
-                    })
-                    .boxed()
-            }),
-        }
-    }
+    (
+        async |$args:ident : Value, $id:ident : String, $runenv:ident : &dyn RunEnv|
+            -> Message $body:block
+    ) => {
+        $crate::tool_func!(
+            async |$args: Value, $id: String, $runenv: &dyn RunEnv| -> Message with [] $body
+        )
+    };
+
+    (
+        async |$args:ident : Value, $id:ident : String, $runenv:ident : &dyn RunEnv|
+            -> Message with [$($cap:ident = $expr:expr),* $(,)?] $body:block
+    ) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  $id: ::std::string::String,
+                  $runenv: &dyn $crate::runenv::RunEnv| {
+                $(let $cap = $expr;)*
+                let fut: ::futures::future::BoxFuture<'_, $crate::message::Message> =
+                    ::std::boxed::Box::pin(async move $body);
+                $crate::tool::__private::message_fut_to_stream(fut)
+            },
+        )
+    };
+
+    // ─── stream ────────────────────────────────────────────────────────────
+    (stream |$args:ident : Value| -> Value $body:block) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  id: ::std::string::String,
+                  _runenv: &dyn $crate::runenv::RunEnv| {
+                let s: ::futures::stream::BoxStream<'static, $crate::datatype::Value> =
+                    ::futures::StreamExt::boxed($body);
+                $crate::tool::__private::value_stream_to_msg_stream(id, s)
+            },
+        )
+    };
+
+    (stream |$args:ident : Value, $runenv:ident : &dyn RunEnv| -> Value $body:block) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  id: ::std::string::String,
+                  $runenv: &dyn $crate::runenv::RunEnv| {
+                let s: ::futures::stream::BoxStream<'_, $crate::datatype::Value> =
+                    ::futures::StreamExt::boxed($body);
+                $crate::tool::__private::value_stream_to_msg_stream(id, s)
+            },
+        )
+    };
+
+    (stream |$args:ident : Value, $id:ident : String| -> Message $body:block) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  $id: ::std::string::String,
+                  _runenv: &dyn $crate::runenv::RunEnv| {
+                let s: ::futures::stream::BoxStream<'static, $crate::message::Message> =
+                    ::futures::StreamExt::boxed($body);
+                $crate::tool::__private::message_stream_to_msg_stream(s)
+            },
+        )
+    };
+
+    (
+        stream |$args:ident : Value, $id:ident : String, $runenv:ident : &dyn RunEnv|
+            -> Message $body:block
+    ) => {
+        $crate::tool::ToolFunc::new(
+            move |$args: $crate::datatype::Value,
+                  $id: ::std::string::String,
+                  $runenv: &dyn $crate::runenv::RunEnv| {
+                let s: ::futures::stream::BoxStream<'_, $crate::message::Message> =
+                    ::futures::StreamExt::boxed($body);
+                $crate::tool::__private::message_stream_to_msg_stream(s)
+            },
+        )
+    };
 }
 
 #[cfg(test)]
@@ -399,16 +381,12 @@ mod tests {
     use super::*;
     use crate::runenv::Local;
 
-    fn test_ctx(id: &str) -> ToolContext {
-        ToolContext::new(id, Arc::new(Local {}))
-    }
-
-    // ArgValueRetValueFn
     #[tokio::test]
-    async fn test_sync_no_ctx() {
-        let f = ToolFunc::new(|_args: Value| Value::string("ok"));
+    async fn test_sync_value() {
+        let runenv = Local {};
+        let f = tool_func!(|_args: Value| -> Value { Value::string("ok") });
         let out = f
-            .call(Value::object_empty(), test_ctx("call-1"))
+            .call(Value::object_empty(), "call-1", &runenv)
             .next()
             .await
             .unwrap();
@@ -419,12 +397,12 @@ mod tests {
         assert_eq!(out.message.id.as_deref(), Some("call-1"));
     }
 
-    // ArgValueContextRetValueFn
     #[tokio::test]
-    async fn test_sync_with_ctx() {
-        let f = ToolFunc::new(|_args: Value, _ctx: ToolContext| Value::string("ok"));
+    async fn test_sync_value_with_runenv() {
+        let runenv = Local {};
+        let f = tool_func!(|_args: Value, _runenv: &dyn RunEnv| -> Value { Value::string("ok") });
         let out = f
-            .call(Value::object_empty(), test_ctx("call-1"))
+            .call(Value::object_empty(), "call-1", &runenv)
             .next()
             .await
             .unwrap();
@@ -432,58 +410,41 @@ mod tests {
             out.message.contents[0].as_value(),
             Some(&Value::string("ok"))
         );
-        assert_eq!(out.message.id.as_deref(), Some("call-1"));
     }
 
-    // ArgValueContextRetValueFn — echoes args
     #[tokio::test]
-    async fn test_sync_echoes_args() {
-        let f = ToolFunc::new(|args: Value, _ctx: ToolContext| args);
-        let input = Value::integer(99);
+    async fn test_async_value() {
+        let runenv = Local {};
+        let f = tool_func!(async |_args: Value| -> Value { Value::bool(true) });
         let out = f
-            .call(input.clone(), test_ctx("call-1"))
-            .next()
-            .await
-            .unwrap();
-        assert_eq!(out.message.contents[0].as_value(), Some(&input));
-    }
-
-    // ArgValueRetValueAsyncFn
-    #[tokio::test]
-    async fn test_async_no_ctx() {
-        let f = ToolFunc::new(|_args: Value| async move { Value::bool(true) });
-        let out = f
-            .call(Value::object_empty(), test_ctx("call-1"))
+            .call(Value::object_empty(), "call-1", &runenv)
             .next()
             .await
             .unwrap();
         assert_eq!(out.message.contents[0].as_value(), Some(&Value::bool(true)));
     }
 
-    // ArgValueContextRetValueAsyncFn
     #[tokio::test]
-    async fn test_async_with_ctx() {
-        let f = ToolFunc::new(|_args: Value, _ctx: ToolContext| async move { Value::bool(true) });
+    async fn test_async_value_with_runenv() {
+        let runenv = Local {};
+        let f =
+            tool_func!(async |_args: Value, _runenv: &dyn RunEnv| -> Value { Value::bool(true) });
         let out = f
-            .call(Value::object_empty(), test_ctx("call-1"))
+            .call(Value::object_empty(), "call-1", &runenv)
             .next()
             .await
             .unwrap();
         assert_eq!(out.message.contents[0].as_value(), Some(&Value::bool(true)));
     }
 
-    // ArgValueRetValueStreamFn
     #[tokio::test]
-    async fn test_stream_value_no_ctx() {
-        let f = ToolFunc::new(|_args: Value| {
-            stream::iter(vec![
-                Value::integer(1),
-                Value::integer(2),
-                Value::integer(3),
-            ])
+    async fn test_stream_value() {
+        let runenv = Local {};
+        let f = tool_func!(stream |_args: Value| -> Value {
+            stream::iter(vec![Value::integer(1), Value::integer(2), Value::integer(3)])
         });
         let outputs: Vec<_> = f
-            .call(Value::object_empty(), test_ctx("call-1"))
+            .call(Value::object_empty(), "call-1", &runenv)
             .collect()
             .await;
         assert_eq!(outputs.len(), 3);
@@ -491,20 +452,5 @@ mod tests {
             outputs[2].message.contents[0].as_value(),
             Some(&Value::integer(3))
         );
-        assert_eq!(outputs[0].message.id.as_deref(), Some("call-1"));
-    }
-
-    // ArgValueContextRetValueStreamFn
-    #[tokio::test]
-    async fn test_stream_value_with_ctx() {
-        let f = ToolFunc::new(|_args: Value, _ctx: ToolContext| {
-            stream::iter(vec![Value::bool(false), Value::bool(true)])
-        });
-        let outputs: Vec<_> = f
-            .call(Value::object_empty(), test_ctx("call-1"))
-            .collect()
-            .await;
-        assert_eq!(outputs.len(), 2);
-        assert_eq!(outputs[0].message.id.as_deref(), Some("call-1"));
     }
 }

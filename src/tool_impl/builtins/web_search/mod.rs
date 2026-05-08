@@ -8,18 +8,11 @@ use aggregator::MetaSearcher;
 
 use crate::{
     datatype::Value,
-    message::{ToolDesc, ToolDescBuilder},
-    tool::{ToolFactory, ToolFunc},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool_func,
 };
 
-pub async fn build_web_search_tool() -> anyhow::Result<ToolFactory> {
-    Ok(ToolFactory::simple(
-        make_web_search_tool_desc(),
-        make_web_search_func(),
-    ))
-}
-
-fn make_web_search_tool_desc() -> ToolDesc {
+pub fn get_web_search_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("web_search")
         .description(
             "Search the web using multiple search engines simultaneously. \
@@ -45,12 +38,12 @@ fn make_web_search_tool_desc() -> ToolDesc {
         .build()
 }
 
-fn make_web_search_func() -> ToolFunc {
-    let searcher = Arc::new(MetaSearcher::new());
-
-    ToolFunc::new(move |args: Value| {
-        let searcher = searcher.clone();
-        async move {
+pub fn get_web_search_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
+    |_| {
+        let searcher = Arc::new(MetaSearcher::new());
+        tool_func!(async |args: Value| -> Value
+            with [searcher = searcher.clone()]
+            {
             let query = args
                 .pointer("/query")
                 .and_then(|v| v.as_str())
@@ -86,8 +79,8 @@ fn make_web_search_func() -> ToolFunc {
                 "results": Value::array(result_values),
                 "total": total as u64
             })
-        }
-    })
+        })
+    }
 }
 
 #[cfg(test)]
@@ -96,14 +89,14 @@ mod tests {
 
     #[test]
     fn test_tool_descriptor() {
-        let desc = make_web_search_tool_desc();
+        let desc = get_web_search_tool_desc();
         assert_eq!(desc.name, "web_search");
         assert!(desc.description.is_some());
     }
 
     #[test]
     fn test_tool_schema_requires_query() {
-        let desc = make_web_search_tool_desc();
+        let desc = get_web_search_tool_desc();
         let required = desc
             .parameters
             .pointer("/required")

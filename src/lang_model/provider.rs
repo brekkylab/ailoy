@@ -118,7 +118,7 @@ impl LangModelProvider {
     /// Looks up `spec_model` (with glob fallback), strips any `provider/` prefix
     /// to recover the API-side model id (e.g. `"openai/gpt-4o"` → `"gpt-4o"`),
     /// and hands the resolved endpoint to [`LangModel::new`].
-    pub fn make_runtime(&self, spec_model: impl AsRef<str>) -> anyhow::Result<LangModel> {
+    pub fn provide(&self, spec_model: impl AsRef<str>) -> anyhow::Result<LangModel> {
         let spec_model = spec_model.as_ref();
         let elem = self
             .get(spec_model)
@@ -201,7 +201,7 @@ mod tests {
     fn make_runtime_strips_prefix() {
         let mut p = LangModelProvider::new();
         p.insert("openai/*".into(), dummy());
-        let m = p.make_runtime("openai/gpt-4o").unwrap();
+        let m = p.provide("openai/gpt-4o").unwrap();
         assert_eq!(m.model_id(), "gpt-4o");
     }
 }

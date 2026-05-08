@@ -2,7 +2,7 @@ mod a2a;
 mod builtins;
 mod subagent;
 
-// Crate-internal API — used by ToolSet and tests
-pub(crate) use a2a::make_a2a_tool_factory;
-pub(crate) use builtins::make_builtin_tool_factory;
-pub(crate) use subagent::make_subagent_tool;
+// Crate-internal API — used by ToolProvider and tests
+pub(crate) use a2a::{get_a2a_tool_desc, get_a2a_tool_func};
+pub(crate) use builtins::*;
+pub(crate) use subagent::{get_subagent_tool_desc, get_subagent_tool_func};

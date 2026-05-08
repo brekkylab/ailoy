@@ -3,14 +3,12 @@ mod runner;
 use std::sync::Arc;
 
 use crate::{
-    agent::AgentSpec,
-    datatype::Value,
-    message::ToolDescBuilder,
-    tool::{ToolContext, ToolFactory, ToolFunc},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool_func,
 };
 
-pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
-    let desc = ToolDescBuilder::new("python_repl")
+pub fn get_python_repl_tool_desc() -> ToolDesc {
+    ToolDescBuilder::new("python_repl")
         .description(
             "Execute a Python script and return stdout/stderr.
              Use `pip_install` to install packages before execution.",
@@ -30,114 +28,113 @@ pub async fn build_python_repl_tool() -> anyhow::Result<ToolFactory> {
             },
             "required": ["code"]
         }))
-        .build();
+        .build()
+}
 
-    let f = |_spec: &AgentSpec| {
+pub fn get_python_repl_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
+    |_| {
         let runner = Arc::new(runner::PythonReplRunner::new());
+        tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value
+            with[runner = runner.clone()]
+            {
+            let code = match args.pointer("/code").and_then(|v| v.as_str()) {
+                Some(c) => c.to_string(),
+                None => {
+                    return crate::to_value!({
+                        "stdout": "",
+                        "stderr": "missing required parameter: code",
+                        "exit_code": -1,
+                        "phase": "validation"
+                    });
+                }
+            };
 
-        ToolFunc::new(move |args: Value, ctx: ToolContext| {
-            let runner = runner.clone();
-            let runenv = ctx.runenv.clone();
-            async move {
-                let code = match args.pointer("/code").and_then(|v| v.as_str()) {
-                    Some(c) => c.to_string(),
-                    None => {
+            let pip_packages: Vec<String> = args
+                .pointer("/pip_install")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if !pip_packages.is_empty() {
+                let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
+                match runner.install_packages(runenv, &pkg_refs).await {
+                    Ok(r) if r.exit_code != 0 => {
                         return crate::to_value!({
                             "stdout": "",
-                            "stderr": "missing required parameter: code",
-                            "exit_code": -1,
-                            "phase": "validation"
+                            "stderr": r.stderr.as_str(),
+                            "exit_code": r.exit_code as i64,
+                            "phase": "pip_install"
                         });
                     }
-                };
-
-                let pip_packages: Vec<String> = args
-                    .pointer("/pip_install")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(str::to_string))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                if !pip_packages.is_empty() {
-                    let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
-                    match runner.install_packages(&runenv, &pkg_refs).await {
-                        Ok(r) if r.exit_code != 0 => {
-                            return crate::to_value!({
-                                "stdout": "",
-                                "stderr": r.stderr.as_str(),
-                                "exit_code": r.exit_code as i64,
-                                "phase": "pip_install"
-                            });
-                        }
-                        Err(e) => {
-                            return crate::to_value!({
-                                "stdout": "",
-                                "stderr": format!("pip install error: {e}").as_str(),
-                                "exit_code": 1,
-                                "phase": "pip_install"
-                            });
-                        }
-                        Ok(_) => {}
+                    Err(e) => {
+                        return crate::to_value!({
+                            "stdout": "",
+                            "stderr": format!("pip install error: {e}").as_str(),
+                            "exit_code": 1,
+                            "phase": "pip_install"
+                        });
                     }
-                }
-
-                match runner.run(&runenv, &code, &[]).await {
-                    Ok(r) => crate::to_value!({
-                        "stdout": r.stdout.as_str(),
-                        "stderr": r.stderr.as_str(),
-                        "exit_code": r.exit_code as i64,
-                        "timed_out": r.timed_out
-                    }),
-                    Err(e) => crate::to_value!({
-                        "stdout": "",
-                        "stderr": format!("execution error: {e}").as_str(),
-                        "exit_code": -1,
-                        "timed_out": false,
-                        "phase": "execution"
-                    }),
+                    Ok(_) => {}
                 }
             }
-        })
-    };
 
-    Ok(ToolFactory::with_initializer(desc, f))
+            match runner.run(runenv, &code, &[]).await {
+                Ok(r) => crate::to_value!({
+                    "stdout": r.stdout.as_str(),
+                    "stderr": r.stderr.as_str(),
+                    "exit_code": r.exit_code as i64,
+                    "timed_out": r.timed_out
+                }),
+                Err(e) => crate::to_value!({
+                    "stdout": "",
+                    "stderr": format!("execution error: {e}").as_str(),
+                    "exit_code": -1,
+                    "timed_out": false,
+                    "phase": "execution"
+                }),
+            }
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use futures::StreamExt;
 
     use super::*;
-    use crate::{agent::AgentSpec, runenv::Local, tool::ToolContext};
+    use crate::{datatype::Value, message::Message, runenv::Local, tool::ToolProvider};
 
-    fn spec() -> AgentSpec {
-        AgentSpec::new("test")
+    fn provider() -> ToolProvider {
+        let mut provider = ToolProvider::new();
+        provider.insert_func_factory("python_repl", get_python_repl_tool_factory());
+        provider
     }
 
-    fn ctx() -> ToolContext {
-        ToolContext::new("1", Arc::new(Local {}))
+    async fn call(args: Value) -> Message {
+        let provider = provider();
+        let funcs = provider.provide(&[get_python_repl_tool_desc()]).unwrap();
+        let f = funcs.get("python_repl").unwrap();
+        f.call(args, "1", &Local {}).next().await.unwrap().message
     }
 
-    #[tokio::test]
-    async fn test_tool_name_is_python_repl() {
-        let tool = build_python_repl_tool().await.unwrap().make(&spec());
-        assert_eq!(tool.get_desc().name, "python_repl");
+    #[test]
+    fn test_tool_name_is_python_repl() {
+        assert_eq!(get_python_repl_tool_desc().name, "python_repl");
     }
 
-    #[tokio::test]
-    async fn test_tool_has_description() {
-        let tool = build_python_repl_tool().await.unwrap().make(&spec());
-        assert!(tool.get_desc().description.is_some());
+    #[test]
+    fn test_tool_has_description() {
+        assert!(get_python_repl_tool_desc().description.is_some());
     }
 
-    #[tokio::test]
-    async fn test_tool_schema_requires_code() {
-        let tool = build_python_repl_tool().await.unwrap().make(&spec());
-        let required = tool
-            .get_desc()
+    #[test]
+    fn test_tool_schema_requires_code() {
+        let desc = get_python_repl_tool_desc();
+        let required = desc
             .parameters
             .pointer("/required")
             .and_then(|v| v.as_array())
@@ -146,11 +143,10 @@ mod tests {
         assert!(names.contains(&"code"));
     }
 
-    #[tokio::test]
-    async fn test_tool_schema_pip_install_is_array_of_strings() {
-        let tool = build_python_repl_tool().await.unwrap().make(&spec());
-        let item_type = tool
-            .get_desc()
+    #[test]
+    fn test_tool_schema_pip_install_is_array_of_strings() {
+        let desc = get_python_repl_tool_desc();
+        let item_type = desc
             .parameters
             .pointer("/properties/pip_install/items/type")
             .and_then(|v| v.as_str())
@@ -160,9 +156,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_code_param_returns_validation_error() {
-        let tool = build_python_repl_tool().await.unwrap().make(&spec());
-        let args = crate::to_value!({});
-        let msg = tool.call_next(args, ctx()).await;
+        let msg = call(crate::to_value!({})).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -174,9 +168,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_print_returns_stdout() {
-        let tool = build_python_repl_tool().await.unwrap().make(&spec());
-        let args = crate::to_value!({ "code": "print('ailoy')" });
-        let msg = tool.call_next(args, ctx()).await;
+        let msg = call(crate::to_value!({ "code": "print('ailoy')" })).await;
         let result = msg.contents[0].as_value().unwrap();
         let stdout = result
             .pointer("/stdout")
@@ -187,9 +179,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exit_code_nonzero_on_error() {
-        let tool = build_python_repl_tool().await.unwrap().make(&spec());
-        let args = crate::to_value!({ "code": "raise SystemExit(42)" });
-        let msg = tool.call_next(args, ctx()).await;
+        let msg = call(crate::to_value!({ "code": "raise SystemExit(42)" })).await;
         let exit_code = msg.contents[0]
             .as_value()
             .unwrap()
@@ -201,12 +191,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_pip_install_failure_returns_phase_pip_install() {
-        let tool = build_python_repl_tool().await.unwrap().make(&spec());
-        let args = crate::to_value!({
+        let msg = call(crate::to_value!({
             "code": "import xyzzy_nonexistent",
             "pip_install": ["xyzzy-nonexistent-pkg-12345"]
-        });
-        let msg = tool.call_next(args, ctx()).await;
+        }))
+        .await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -218,9 +207,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_stderr_captured_on_script_error() {
-        let tool = build_python_repl_tool().await.unwrap().make(&spec());
-        let args = crate::to_value!({ "code": "import sys; print('err', file=sys.stderr); raise SystemExit(1)" });
-        let msg = tool.call_next(args, ctx()).await;
+        let msg = call(crate::to_value!({
+            "code": "import sys; print('err', file=sys.stderr); raise SystemExit(1)"
+        }))
+        .await;
         let result = msg.contents[0].as_value().unwrap();
         let stderr = result
             .pointer("/stderr")
@@ -231,10 +221,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_pip_install_and_plot_image() {
-        let tool = build_python_repl_tool().await.unwrap().make(&spec());
         let plot_path = std::env::temp_dir().join("ailoy_test_plot.png");
         let plot_path_str = plot_path.to_string_lossy();
-        let args = crate::to_value!({
+        let msg = call(crate::to_value!({
             "code": format!(
                 "import matplotlib\nmatplotlib.use('Agg')\n\
                  import matplotlib.pyplot as plt\nimport numpy as np\n\
@@ -243,8 +232,8 @@ mod tests {
                  plt.savefig('{plot_path_str}')\nprint('saved')"
             ),
             "pip_install": ["numpy", "matplotlib"]
-        });
-        let msg = tool.call_next(args, ctx()).await;
+        }))
+        .await;
         let result = msg.contents[0].as_value().unwrap();
         let exit_code = result
             .pointer("/exit_code")

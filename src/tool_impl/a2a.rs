@@ -2,14 +2,17 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    datatype::Value,
-    message::{Message, Part, Role, ToolDescBuilder},
-    tool::{ToolContext, ToolFactory, ToolFunc},
+    message::{Message, Part, Role},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool_func,
 };
 
 // ── Tool constructor ──────────────────────────────────────────────────────────
 
-async fn a2a_parts(url: Url) -> anyhow::Result<(crate::message::ToolDesc, ToolFunc)> {
+/// Discover the remote A2A agent at `url` and build its [`ToolDesc`].
+///
+/// Performs a network fetch of the agent card.
+pub(crate) async fn get_a2a_tool_desc(url: &Url) -> anyhow::Result<ToolDesc> {
     let base_url = url.to_string();
     let card = discover(&base_url).await?;
 
@@ -25,41 +28,35 @@ async fn a2a_parts(url: Url) -> anyhow::Result<(crate::message::ToolDesc, ToolFu
         format!("{}\n\n# Skills\n\n{}", card.description, skills)
     };
 
-    let desc = ToolDescBuilder::new(&card.name)
+    Ok(ToolDescBuilder::new(&card.name)
         .description(description)
         .parameters(crate::to_value!({"type": "string"}))
-        .build();
-
-    let f = ToolFunc::new(move |args: Value, ctx: ToolContext| {
-        let url = base_url.clone();
-        async move {
-            let id = ctx.id;
-            let task = match args.as_str() {
-                Some(v) => v.to_string(),
-                None => {
-                    return Message::new(Role::Tool)
-                        .with_contents([Part::text("Error: expected string argument")])
-                        .with_id(id);
-                }
-            };
-            match message_send(&url, &task).await {
-                Ok(text) => Message::new(Role::Tool)
-                    .with_contents([Part::text(text)])
-                    .with_id(id),
-                Err(e) => Message::new(Role::Tool)
-                    .with_contents([Part::text(format!("Error: {e}"))])
-                    .with_id(id),
-            }
-        }
-    });
-
-    Ok((desc, f))
+        .build())
 }
 
-/// Build a [`ToolFactory`] that delegates to a remote A2A agent.
-pub(crate) async fn make_a2a_tool_factory(url: Url) -> anyhow::Result<ToolFactory> {
-    let (desc, f) = a2a_parts(url).await?;
-    Ok(ToolFactory::simple(desc, f))
+/// Build a [`ToolFunc`] that forwards a string task to the A2A agent at `url`.
+pub(crate) fn get_a2a_tool_func(url: &Url) -> ToolFunc {
+    let base_url = url.to_string();
+    tool_func!(async |args: Value, id: String| -> Message
+        with [url = base_url.clone()]
+        {
+        let task = match args.as_str() {
+            Some(v) => v.to_string(),
+            None => {
+                return Message::new(Role::Tool)
+                    .with_contents([Part::text("Error: expected string argument")])
+                    .with_id(id);
+            }
+        };
+        match message_send(&url, &task).await {
+            Ok(text) => Message::new(Role::Tool)
+                .with_contents([Part::text(text)])
+                .with_id(id),
+            Err(e) => Message::new(Role::Tool)
+                .with_contents([Part::text(format!("Error: {e}"))])
+                .with_id(id),
+        }
+    })
 }
 
 // ── Agent Discovery ──────────────────────────────────────────────────────────

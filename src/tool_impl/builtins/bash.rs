@@ -1,14 +1,13 @@
 use crate::{
-    datatype::Value,
-    message::ToolDescBuilder,
-    tool::{ToolContext, ToolFactory, ToolFunc},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool_func,
     util::truncate::middle_truncate,
 };
 
 const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
 
-pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
-    let desc = ToolDescBuilder::new("bash")
+pub fn get_bash_tool_desc() -> ToolDesc {
+    ToolDescBuilder::new("bash")
         .description("Execute a shell command and return stdout/stderr/exit_code.")
         .parameters(crate::to_value!({
             "type": "object",
@@ -24,9 +23,11 @@ pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
             },
             "required": ["cmd"]
         }))
-        .build();
+        .build()
+}
 
-    let f = ToolFunc::new(|args: Value, ctx: ToolContext| async move {
+pub fn get_bash_tool_func() -> ToolFunc {
+    tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
@@ -39,8 +40,7 @@ pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
             }
         };
 
-        let Ok(out) = ctx
-            .runenv
+        let Ok(out) = runenv
             .exec("sh".to_string(), vec!["-c".to_string(), cmd], None)
             .await
         else {
@@ -57,48 +57,34 @@ pub async fn build_bash_tool() -> anyhow::Result<ToolFactory> {
             "exit_code": out.exit_code as i64,
             "timed_out": out.timed_out
         })
-    });
-    Ok(ToolFactory::simple(desc, f))
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use futures::StreamExt;
 
     use super::*;
-    use crate::{agent::AgentSpec, runenv::Local, to_value, tool::ToolContext};
+    use crate::{runenv::Local, to_value, tool::ToolProvider};
 
-    fn spec() -> AgentSpec {
-        AgentSpec::new("test")
-    }
-
-    fn local_ctx() -> ToolContext {
-        ToolContext::new(String::new(), Arc::new(Local {}))
-    }
-
-    #[tokio::test]
-    async fn test_tool_name_is_bash() {
-        let tool = build_bash_tool().await.unwrap().make(&spec());
-        assert_eq!(tool.get_desc().name, "bash");
-    }
-
-    #[tokio::test]
-    async fn test_tool_schema_requires_cmd() {
-        let tool = build_bash_tool().await.unwrap().make(&spec());
-        let required = tool
-            .get_desc()
-            .parameters
-            .pointer("/required")
-            .and_then(|v| v.as_array())
-            .unwrap();
-        let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
-        assert!(names.contains(&"cmd"));
+    async fn provider() -> ToolProvider {
+        let mut provider = ToolProvider::new();
+        provider.insert_func("bash", get_bash_tool_func());
+        provider
     }
 
     #[tokio::test]
     async fn test_missing_cmd_returns_validation_error() {
-        let tool = build_bash_tool().await.unwrap().make(&spec());
-        let msg = tool.call_next(to_value!({}), local_ctx()).await;
+        let provider = provider().await;
+        let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
+        let f = funcs.get("bash").unwrap();
+        let runenv = Local {};
+        let msg = f
+            .call(to_value!({}), "", &runenv)
+            .next()
+            .await
+            .unwrap()
+            .message;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -110,10 +96,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_echo_returns_stdout() {
-        let tool = build_bash_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(to_value!({ "cmd": "echo ailoy" }), local_ctx())
-            .await;
+        let provider = provider().await;
+        let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
+        let f = funcs.get("bash").unwrap();
+        let runenv = Local {};
+        let msg = f
+            .call(to_value!({ "cmd": "echo ailoy" }), "", &runenv)
+            .next()
+            .await
+            .unwrap()
+            .message;
         let stdout = msg.contents[0]
             .as_value()
             .unwrap()
@@ -125,10 +117,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_exit_code_is_captured() {
-        let tool = build_bash_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(to_value!({ "cmd": "exit 42" }), local_ctx())
-            .await;
+        let provider = provider().await;
+        let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
+        let f = funcs.get("bash").unwrap();
+        let runenv = Local {};
+        let msg = f
+            .call(to_value!({ "cmd": "exit 42" }), "", &runenv)
+            .next()
+            .await
+            .unwrap()
+            .message;
         let exit_code = msg.contents[0]
             .as_value()
             .unwrap()
@@ -142,15 +140,21 @@ mod tests {
     async fn test_state_persists_across_calls() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_string_lossy().to_string();
-        let tool = build_bash_tool().await.unwrap().make(&spec());
-        let runenv = Arc::new(Local {});
+        let provider = provider().await;
+        let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
+        let f = funcs.get("bash").unwrap();
+        let runenv = Local {};
 
-        let r1 = tool
-            .call_next(
+        let r1 = f
+            .call(
                 to_value!({ "cmd": format!("echo persisted > {path}") }),
-                ToolContext::new(String::new(), runenv.clone()),
+                "",
+                &runenv,
             )
-            .await;
+            .next()
+            .await
+            .unwrap()
+            .message;
         assert_eq!(
             r1.contents[0]
                 .as_value()
@@ -161,12 +165,12 @@ mod tests {
             0
         );
 
-        let r2 = tool
-            .call_next(
-                to_value!({ "cmd": format!("cat {path}") }),
-                ToolContext::new(String::new(), runenv.clone()),
-            )
-            .await;
+        let r2 = f
+            .call(to_value!({ "cmd": format!("cat {path}") }), "", &runenv)
+            .next()
+            .await
+            .unwrap()
+            .message;
         let stdout = r2.contents[0]
             .as_value()
             .unwrap()

@@ -1,10 +1,11 @@
 use std::path::Path;
 
 use crate::{
-    datatype::{Bytes, Value},
-    message::{Message, Part, Role, ToolDescBuilder},
+    datatype::Bytes,
+    message::{Message, Part, Role},
     to_value,
-    tool::{ToolContext, ToolFactory, ToolFunc},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool_func,
 };
 
 enum FileKind {
@@ -34,8 +35,8 @@ fn apply_char_window(s: String, offset: usize, limit: Option<usize>) -> String {
     chars[start..end].iter().collect()
 }
 
-pub async fn build_file_read_tool() -> anyhow::Result<ToolFactory> {
-    let desc = ToolDescBuilder::new("file_read")
+pub fn get_file_read_tool_desc() -> ToolDesc {
+    ToolDescBuilder::new("file_read")
         .description(
             "Reads a file from the filesystem. Supports text files (returned as plain text) \
              and image files (PNG/JPEG/GIF/WEBP, returned as an image the model can see). \
@@ -59,118 +60,122 @@ pub async fn build_file_read_tool() -> anyhow::Result<ToolFactory> {
             },
             "required": ["path"]
         }))
-        .build();
+        .build()
+}
 
-    let f = ToolFunc::new(|args: Value, ctx: ToolContext| async move {
-        let id = ctx.id.clone();
+pub fn get_file_read_tool_func() -> ToolFunc {
+    tool_func!(
+        async |args: Value, id: String, runenv: &dyn RunEnv| -> Message {
+            let path_str = match args.pointer("/path").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => return error_message(id, "missing required parameter: path"),
+            };
+            let path = Path::new(&path_str);
 
-        let path_str = match args.pointer("/path").and_then(|v| v.as_str()) {
-            Some(p) => p.to_string(),
-            None => return error_message(id, "missing required parameter: path"),
-        };
-        let path = Path::new(&path_str);
-
-        if !path.is_absolute() {
-            return error_message(id, "path must be absolute");
-        }
-
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|s| s.to_lowercase());
-
-        let kind = match ext.as_deref() {
-            Some("png") => FileKind::Image("image/png"),
-            Some("jpg") | Some("jpeg") => FileKind::Image("image/jpeg"),
-            Some("gif") => FileKind::Image("image/gif"),
-            Some("webp") => FileKind::Image("image/webp"),
-            Some(
-                e @ ("pdf" | "ipynb" | "zip" | "tar" | "gz" | "exe" | "bin" | "so" | "dylib"
-                | "wasm"),
-            ) => return error_message(id, format!("unsupported file type: .{e}")),
-            _ => FileKind::Text,
-        };
-
-        let bytes = match ctx.runenv.read(path).await {
-            Ok(b) => b,
-            Err(e) => return error_message(id, format!("read failed: {e}")),
-        };
-
-        match kind {
-            FileKind::Image(mime) => {
-                if bytes.len() > MAX_IMAGE_BYTES {
-                    return error_message(
-                        id,
-                        format!(
-                            "image too large: {} bytes (limit: {})",
-                            bytes.len(),
-                            MAX_IMAGE_BYTES
-                        ),
-                    );
-                }
-                let part = Part::image_embedded(mime, Bytes::from(bytes))
-                    .expect("image_embedded always succeeds");
-                Message::new(Role::Tool).with_contents([part]).with_id(id)
+            if !path.is_absolute() {
+                return error_message(id, "path must be absolute");
             }
-            FileKind::Text => {
-                if bytes.len() > MAX_FILE_BYTES {
-                    return error_message(
-                        id,
-                        format!(
-                            "file too large: {} bytes (limit: {}); use offset/limit to read in chunks",
-                            bytes.len(),
-                            MAX_FILE_BYTES
-                        ),
-                    );
-                }
-                let s = match String::from_utf8(bytes) {
-                    Ok(s) => s,
-                    Err(_) => {
+
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_lowercase());
+
+            let kind = match ext.as_deref() {
+                Some("png") => FileKind::Image("image/png"),
+                Some("jpg") | Some("jpeg") => FileKind::Image("image/jpeg"),
+                Some("gif") => FileKind::Image("image/gif"),
+                Some("webp") => FileKind::Image("image/webp"),
+                Some(
+                    e @ ("pdf" | "ipynb" | "zip" | "tar" | "gz" | "exe" | "bin" | "so" | "dylib"
+                    | "wasm"),
+                ) => return error_message(id, format!("unsupported file type: .{e}")),
+                _ => FileKind::Text,
+            };
+
+            let bytes = match runenv.read(path).await {
+                Ok(b) => b,
+                Err(e) => return error_message(id, format!("read failed: {e}")),
+            };
+
+            match kind {
+                FileKind::Image(mime) => {
+                    if bytes.len() > MAX_IMAGE_BYTES {
                         return error_message(
                             id,
-                            "file is not valid UTF-8; use bash to inspect binary files",
+                            format!(
+                                "image too large: {} bytes (limit: {})",
+                                bytes.len(),
+                                MAX_IMAGE_BYTES
+                            ),
                         );
                     }
-                };
-                let offset = args
-                    .pointer("/offset")
-                    .and_then(|v| v.as_integer())
-                    .unwrap_or(0)
-                    .max(0) as usize;
-                let limit = args
-                    .pointer("/limit")
-                    .and_then(|v| v.as_integer())
-                    .map(|n| n.max(0) as usize);
-                let content = apply_char_window(s, offset, limit);
-                Message::new(Role::Tool)
-                    .with_contents([Part::text(content)])
-                    .with_id(id)
+                    let part = Part::image_embedded(mime, Bytes::from(bytes))
+                        .expect("image_embedded always succeeds");
+                    Message::new(Role::Tool).with_contents([part]).with_id(id)
+                }
+                FileKind::Text => {
+                    if bytes.len() > MAX_FILE_BYTES {
+                        return error_message(
+                            id,
+                            format!(
+                                "file too large: {} bytes (limit: {}); use offset/limit to read in chunks",
+                                bytes.len(),
+                                MAX_FILE_BYTES
+                            ),
+                        );
+                    }
+                    let s = match String::from_utf8(bytes) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            return error_message(
+                                id,
+                                "file is not valid UTF-8; use bash to inspect binary files",
+                            );
+                        }
+                    };
+                    let offset = args
+                        .pointer("/offset")
+                        .and_then(|v| v.as_integer())
+                        .unwrap_or(0)
+                        .max(0) as usize;
+                    let limit = args
+                        .pointer("/limit")
+                        .and_then(|v| v.as_integer())
+                        .map(|n| n.max(0) as usize);
+                    let content = apply_char_window(s, offset, limit);
+                    Message::new(Role::Tool)
+                        .with_contents([Part::text(content)])
+                        .with_id(id)
+                }
             }
         }
-    });
-
-    Ok(ToolFactory::simple(desc, f))
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use futures::StreamExt;
 
     use super::*;
-    use crate::{agent::AgentSpec, runenv::Local, to_value, tool::ToolContext};
+    use crate::{runenv::Local, to_value, tool::ToolProvider};
 
-    fn spec() -> AgentSpec {
-        AgentSpec::new("test")
+    async fn provider() -> ToolProvider {
+        let mut provider = ToolProvider::new();
+        provider.insert_func("file_read", get_file_read_tool_func());
+        provider
     }
 
-    fn local_ctx() -> ToolContext {
-        ToolContext::new(String::new(), Arc::new(Local {}))
+    async fn call(args: crate::datatype::Value) -> Message {
+        let provider = provider().await;
+        let funcs = provider.provide(&[get_file_read_tool_desc()]).unwrap();
+        let f = funcs.get("file_read").unwrap();
+        f.call(args, "", &Local {}).next().await.unwrap().message
     }
 
     #[tokio::test]
     async fn test_missing_path_arg() {
-        let tool = build_file_read_tool().await.unwrap().make(&spec());
-        let msg = tool.call_next(to_value!({}), local_ctx()).await;
+        let msg = call(to_value!({})).await;
         let err = msg.contents[0]
             .as_value()
             .unwrap()
@@ -185,13 +190,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nonexistent_path() {
-        let tool = build_file_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(
-                to_value!({"path": "/tmp/ailoy_nonexistent_file_xyz.txt"}),
-                local_ctx(),
-            )
-            .await;
+        let msg = call(to_value!({"path": "/tmp/ailoy_nonexistent_file_xyz.txt"})).await;
         let err = msg.contents[0]
             .as_value()
             .unwrap()
@@ -206,10 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unsupported_extension() {
-        let tool = build_file_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(to_value!({"path": "/tmp/test.pdf"}), local_ctx())
-            .await;
+        let msg = call(to_value!({"path": "/tmp/test.pdf"})).await;
         let err = msg.contents[0]
             .as_value()
             .unwrap()
@@ -227,13 +223,7 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), "hello\nworld").unwrap();
 
-        let tool = build_file_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(
-                to_value!({"path": tmp.path().to_str().unwrap()}),
-                local_ctx(),
-            )
-            .await;
+        let msg = call(to_value!({"path": tmp.path().to_str().unwrap()})).await;
         let text = msg.contents[0].as_text().unwrap();
         assert_eq!(text, "hello\nworld");
     }
@@ -243,13 +233,8 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), "abcdefghij").unwrap();
 
-        let tool = build_file_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(
-                to_value!({"path": tmp.path().to_str().unwrap(), "offset": 2, "limit": 4}),
-                local_ctx(),
-            )
-            .await;
+        let msg =
+            call(to_value!({"path": tmp.path().to_str().unwrap(), "offset": 2, "limit": 4})).await;
         let text = msg.contents[0].as_text().unwrap();
         assert_eq!(text, "cdef");
     }
@@ -272,13 +257,7 @@ mod tests {
         let tmp = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
         std::fs::write(tmp.path(), png).unwrap();
 
-        let tool = build_file_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(
-                to_value!({"path": tmp.path().to_str().unwrap()}),
-                local_ctx(),
-            )
-            .await;
+        let msg = call(to_value!({"path": tmp.path().to_str().unwrap()})).await;
         assert!(msg.contents[0].is_image(), "expected image part");
     }
 
@@ -287,13 +266,7 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), &[0xFF, 0xFE, 0x00]).unwrap();
 
-        let tool = build_file_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(
-                to_value!({"path": tmp.path().to_str().unwrap()}),
-                local_ctx(),
-            )
-            .await;
+        let msg = call(to_value!({"path": tmp.path().to_str().unwrap()})).await;
         let err = msg.contents[0]
             .as_value()
             .unwrap()

@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::agent::AgentCard;
+use crate::{agent::AgentCard, tool::ToolDesc};
 
 /// Defines the logical identity of an agent as configured by the user.
 ///
@@ -25,17 +25,21 @@ use crate::agent::AgentCard;
 /// will call.  Top-level agents typically don't need one.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSpec {
-    /// Identifier of the language model (e.g. `"claude-sonnet-4-6"`)
+    /// Identifier of the language model (e.g. `"anthropic/claude-sonnet-4-6"`)
     pub model: String,
 
     /// System prompt that shapes how the model works.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instruction: Option<String>,
 
-    /// Names of tools available to the agent
-    pub tools: Vec<String>,
+    /// Tool descriptions exposed to the model. Each [`ToolDesc::name`] must match
+    /// an entry registered in the [`AgentProvider`](crate::agent::AgentProvider)'s
+    /// [`ToolProvider`](crate::tool::ToolProvider).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolDesc>,
 
     /// Sub-agents available to the agent (each registered as a callable tool)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub subagents: Vec<AgentSpec>,
 
     /// Public self-introduction exposed to a calling agent or orchestrator.
@@ -62,13 +66,13 @@ impl AgentSpec {
         self
     }
 
-    pub fn tool(mut self, tool: impl Into<String>) -> Self {
-        self.tools.push(tool.into());
+    pub fn tool(mut self, tool: ToolDesc) -> Self {
+        self.tools.push(tool);
         self
     }
 
-    pub fn tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.tools = tools.into_iter().map(|v| v.into()).collect();
+    pub fn tools(mut self, tools: impl IntoIterator<Item = ToolDesc>) -> Self {
+        self.tools = tools.into_iter().collect();
         self
     }
 

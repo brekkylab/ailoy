@@ -1,15 +1,14 @@
-use std::{pin::Pin, sync::Arc};
+use std::{collections::HashMap, pin::Pin, sync::Arc};
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
-use tokio::sync::Mutex;
 
 use crate::{
     agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
     lang_model::LangModel,
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{Local, RunEnv},
-    tool::{Tool, ToolContext},
-    tool_impl::make_subagent_tool,
+    tool::{ToolDesc, ToolFunc},
+    tool_impl::get_subagent_tool_desc,
 };
 
 pub struct AgentState {
@@ -63,8 +62,15 @@ impl AgentState {
 /// [`Agent::try_with_runenv`], and [`Agent::try_with_provider_and_runenv`].
 pub struct Agent {
     model: LangModel,
-    tools: Vec<Tool>,
+
+    tool_descs: Vec<ToolDesc>,
+
+    tools: HashMap<String, ToolFunc>,
+
+    subagents: Vec<AgentSpec>,
+
     pub state: AgentState,
+
     context_manager: Option<ContextManager>,
 }
 
@@ -105,26 +111,22 @@ impl Agent {
         runenv: Arc<dyn RunEnv>,
     ) -> anyhow::Result<Self> {
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
-        let model = provider.models.make_runtime(&spec.model)?;
+        let model = provider.models.provide(&spec.model)?;
 
         // Collect tools required by the spec; error if any tool is missing
-        let mut tools = provider.tools.make_runtime(&spec).await?;
+        let tools = provider.tools.provide(&spec.tools)?;
 
-        // Materialise sub-agents and register them as callable tools.
-        // Each sub-agent inherits the parent's runenv so they share filesystem state.
-        for sub_spec in &spec.subagents {
-            let card = sub_spec
-                .card
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("subagent '{}' has no AgentCard", sub_spec.model))?;
-            let sub_agent = Box::pin(Self::try_with_provider_and_runenv(
-                sub_spec.clone(),
-                provider,
-                runenv.clone(),
-            ))
-            .await?;
-            tools.push(make_subagent_tool(card, Arc::new(Mutex::new(sub_agent))));
-        }
+        // Collect sub-agents
+        let subagents = spec.subagents;
+
+        // Wrap up all tool descriptions
+        let mut tool_descs = spec.tools;
+        tool_descs.append(
+            &mut subagents
+                .iter()
+                .map(|v| get_subagent_tool_desc(v.card.as_ref().unwrap()))
+                .collect(),
+        );
 
         // Initialize history with system instruction if present
         let history = spec
@@ -138,6 +140,8 @@ impl Agent {
         Ok(Self {
             model,
             tools,
+            tool_descs,
+            subagents,
             state,
             context_manager: None,
         })
@@ -212,15 +216,19 @@ impl Agent {
                 call_args.to_owned(),
             );
 
-            let tool = self
-                .tools
+            let tool = if let Some(t) = self.tools.get(&tool_name).cloned() {
+                t
+            } else if self
+                .subagents
                 .iter()
-                .find(|t| t.get_desc().name == tool_name)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
+                .any(|s| s.card.as_ref().is_some_and(|c| c.name == tool_name))
+            {
+                todo!("subagent dispatch for '{}' not yet wired up", tool_name)
+            } else {
+                return Err(anyhow::anyhow!("No tool found for '{}'", tool_name));
+            };
 
-            let ctx = ToolContext::new(call_id.clone(), self.state.runenv.clone());
-
+            let runenv = self.state.runenv.clone();
             let tx = tx.clone();
 
             tokio::spawn(async move {
@@ -228,10 +236,11 @@ impl Agent {
                 // during a panic unwind. tx stays alive for the fallback send.
                 let tx_inner = tx.clone();
                 let tool_name_inner = tool_name.clone();
+                let call_id_for_call = call_id.clone();
 
                 let outcome: Result<anyhow::Result<bool>, _> =
                     std::panic::AssertUnwindSafe(async move {
-                        let mut stream = tool.call(call_args, ctx);
+                        let mut stream = tool.call(call_args, call_id_for_call, &*runenv);
                         let mut last: Option<MessageOutput> = None;
 
                         while let Some(item) = stream.next().await {
@@ -310,7 +319,6 @@ impl Agent {
     ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageOutput>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
             self.state.history.push(query);
-            let tool_descs: Vec<_> = self.tools.iter().map(|t| t.get_desc().clone()).collect();
 
             loop {
                 // Truncation check based on previous call's token usage.
@@ -320,7 +328,7 @@ impl Agent {
                     }
                 }
 
-                let mut output = self.model.run(&self.state.history, &tool_descs).await?;
+                let mut output = self.model.run(&self.state.history, &self.tool_descs).await?;
 
                 // Capture token usage for next iteration's truncation check.
                 if let Some(u) = &output.usage {
@@ -372,9 +380,10 @@ mod tests {
         agent::{AgentCard, AgentProvider, AgentSpec, ContextManager},
         datatype::Value,
         lang_model::LangModelProvider,
-        message::{Message, Part, Role, ToolDescBuilder},
+        message::{Message, Part, Role},
         suppress_panics, to_value,
-        tool::{ToolContext, ToolFactory, ToolFunc, ToolProvider},
+        tool::{ToolDescBuilder, ToolProvider},
+        tool_func,
     };
 
     // ── helpers ───────────────────────────────────────────────────────────────
@@ -401,26 +410,25 @@ mod tests {
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_simple_tool_call() {
-        let temperature = ToolFactory::simple(
-            ToolDescBuilder::new("temperature")
-                .description("Get the current temperature for a given city")
-                .parameters(to_value!({
-                    "type": "object",
-                    "properties": {
-                        "location": {
-                            "type": "string",
-                            "description": "The city name"
-                        }
-                    },
-                    "required": ["location"]
-                }))
-                .build(),
-            ToolFunc::new(|_args: Value, _ctx: ToolContext| Value::unsigned(25)),
-        );
+        let temperature_desc = ToolDescBuilder::new("temperature")
+            .description("Get the current temperature for a given city")
+            .parameters(to_value!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The city name"
+                    }
+                },
+                "required": ["location"]
+            }))
+            .build();
+        let temperature_fn = tool_func!(|_args: Value| -> Value { Value::unsigned(25) });
         let mut provider = get_provider();
-        provider.tools = ToolProvider::new().custom(temperature);
+        provider.tools = ToolProvider::new();
+        provider.tools.insert_func("temperature", temperature_fn);
 
-        let spec = AgentSpec::new("openai/gpt-4o-mini").tool("temperature");
+        let spec = AgentSpec::new("openai/gpt-4o-mini").tool(temperature_desc);
         let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let query = Message::new(Role::User)
@@ -599,14 +607,14 @@ mod tests {
                 "required": ["location"]
             }))
             .build();
-        let fast_fn = ToolFunc::new(move |_args: Value, _ctx: ToolContext| {
-            let order = order_fast.clone();
-            async move {
+        let fast_fn = tool_func!(async |_args: Value| -> Value
+            with [order = order_fast.clone()]
+            {
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                 order.lock().unwrap().push("fast");
                 to_value!(15u64)
             }
-        });
+        );
 
         let order_slow = completion_order.clone();
         let slow_desc = ToolDescBuilder::new("temperature_slow")
@@ -617,22 +625,22 @@ mod tests {
                 "required": ["location"]
             }))
             .build();
-        let slow_fn = ToolFunc::new(move |_args: Value, _ctx: ToolContext| {
-            let order = order_slow.clone();
-            async move {
+        let slow_fn = tool_func!(async |_args: Value| -> Value
+            with [order = order_slow.clone()]
+            {
                 tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
                 order.lock().unwrap().push("slow");
                 to_value!(25u64)
             }
-        });
+        );
 
         let mut provider = get_provider();
-        provider.tools = ToolProvider::new()
-            .custom(ToolFactory::simple(fast_desc, fast_fn))
-            .custom(ToolFactory::simple(slow_desc, slow_fn));
+        provider.tools = ToolProvider::new();
+        provider.tools.insert_func("temperature_fast", fast_fn);
+        provider.tools.insert_func("temperature_slow", slow_fn);
 
         let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tools(["temperature_fast", "temperature_slow"])
+            .tools([fast_desc, slow_desc])
             .instruction(
                 "When asked for temperatures in multiple cities, always call \
                  temperature_fast and temperature_slow in a single response."
@@ -722,7 +730,7 @@ mod tests {
                 "required": ["city"]
             }))
             .build();
-        let good_fn = ToolFunc::new(|_args: Value, _ctx: ToolContext| async move {
+        let good_fn = tool_func!(async |_args: Value| -> Value {
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
             to_value!("sunny, 25 degrees")
         });
@@ -735,19 +743,19 @@ mod tests {
                 "required": ["city"]
             }))
             .build();
-        let bad_fn = ToolFunc::new(|_args: Value, _ctx: ToolContext| async move {
+        let bad_fn = tool_func!(async |_args: Value| -> Value {
             panic!("simulated tool crash");
             #[allow(unreachable_code)]
             Value::null()
         });
 
         let mut provider = get_provider();
-        provider.tools = ToolProvider::new()
-            .custom(ToolFactory::simple(good_desc, good_fn))
-            .custom(ToolFactory::simple(bad_desc, bad_fn));
+        provider.tools = ToolProvider::new();
+        provider.tools.insert_func("get_weather", good_fn);
+        provider.tools.insert_func("get_traffic", bad_fn);
 
         let spec = AgentSpec::new("openai/gpt-4o-mini")
-            .tools(["get_weather", "get_traffic"])
+            .tools([good_desc, bad_desc])
             .instruction(
                 "When asked about a city, ALWAYS call both get_weather AND \
                  get_traffic tools in a single response. Never call just one."
@@ -834,19 +842,18 @@ mod tests {
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_context_manager_truncates_tool_results_when_threshold_exceeded() {
-        let dummy = ToolFactory::simple(
-            ToolDescBuilder::new("dummy_tool")
-                .description("A no-op testing tool")
-                .parameters(to_value!({ "type": "object", "properties": {} }))
-                .build(),
-            ToolFunc::new(|_: Value, _: ToolContext| Value::string("result".to_string())),
-        );
+        let dummy_desc = ToolDescBuilder::new("dummy_tool")
+            .description("A no-op testing tool")
+            .parameters(to_value!({ "type": "object", "properties": {} }))
+            .build();
+        let dummy_fn = tool_func!(|_args: Value| -> Value { Value::string("result".to_string()) });
         let mut provider = get_provider();
-        provider.tools = ToolProvider::new().custom(dummy);
+        provider.tools = ToolProvider::new();
+        provider.tools.insert_func("dummy_tool", dummy_fn);
 
         let spec = AgentSpec::new("openai/gpt-5.4-mini")
             .instruction("Reply with exactly 'OK'. Do not call any tools.")
-            .tool("dummy_tool");
+            .tool(dummy_desc);
 
         let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
@@ -920,19 +927,18 @@ mod tests {
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_context_manager_no_truncation_when_below_threshold() {
-        let dummy = ToolFactory::simple(
-            ToolDescBuilder::new("dummy_tool")
-                .description("A no-op testing tool")
-                .parameters(to_value!({ "type": "object", "properties": {} }))
-                .build(),
-            ToolFunc::new(|_: Value, _: ToolContext| Value::string("result".to_string())),
-        );
+        let dummy_desc = ToolDescBuilder::new("dummy_tool")
+            .description("A no-op testing tool")
+            .parameters(to_value!({ "type": "object", "properties": {} }))
+            .build();
+        let dummy_fn = tool_func!(|_args: Value| -> Value { Value::string("result".to_string()) });
         let mut provider = get_provider();
-        provider.tools = ToolProvider::new().custom(dummy);
+        provider.tools = ToolProvider::new();
+        provider.tools.insert_func("dummy_tool", dummy_fn);
 
         let spec = AgentSpec::new("openai/gpt-5.4-mini")
             .instruction("Reply with exactly 'OK'. Do not call any tools.")
-            .tool("dummy_tool");
+            .tool(dummy_desc);
 
         let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
@@ -1002,10 +1008,11 @@ mod tests {
         use crate::runenv::{Sandbox, SandboxConfig};
 
         let mut provider = get_provider();
-        provider.tools = ToolProvider::new().bash();
+        provider.tools = ToolProvider::new();
+        provider.tools.insert_builtin("bash").unwrap();
 
         let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool("bash")
+            .tool(crate::tool_impl::get_bash_tool_desc())
             .instruction(
                 "You have a bash tool. When asked to run two commands, always call bash \
                  TWICE in a SINGLE response (parallel tool calls). Never run them sequentially \
@@ -1175,10 +1182,15 @@ To activate a skill, read its SKILL.md using the bash tool \
 ";
 
         let mut provider = get_provider();
-        provider.tools = ToolProvider::new().bash().python_repl();
+        provider.tools = ToolProvider::new();
+        provider.tools.insert_builtin("bash").unwrap();
+        provider.tools.insert_builtin("python_repl").unwrap();
 
         let spec = AgentSpec::new("anthropic/claude-sonnet-4-6")
-            .tools(["bash", "python_repl"])
+            .tools([
+                crate::tool_impl::get_bash_tool_desc(),
+                crate::tool_impl::get_python_repl_tool_desc(),
+            ])
             .instruction(instruction);
 
         let runenv: Arc<dyn RunEnv> = Arc::new(
@@ -1295,7 +1307,8 @@ To activate a skill, read its SKILL.md using the bash tool \
         use crate::runenv::{Sandbox, SandboxConfig};
 
         let mut provider = get_provider();
-        provider.tools = ToolProvider::new().bash();
+        provider.tools = ToolProvider::new();
+        provider.tools.insert_builtin("bash").unwrap();
 
         let sandbox = Arc::new(
             Sandbox::new(SandboxConfig::default())
@@ -1305,7 +1318,7 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         // Subagent: writes a file when asked, has bash tool + shared sandbox.
         let sub_spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool("bash")
+            .tool(crate::tool_impl::get_bash_tool_desc())
             .instruction(
                 "You are a file-writer agent. When asked to write content to a path, \
                  use the bash tool to do so (e.g. `echo CONTENT > PATH`). \
@@ -1319,7 +1332,7 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         // Parent: delegates writing to the subagent, then reads back with bash.
         let main_spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool("bash")
+            .tool(crate::tool_impl::get_bash_tool_desc())
             .instruction(
                 "You are an orchestrator. You have a 'file_writer' subagent and a bash tool. \
                  When asked to verify shared sandbox state: \

@@ -4,6 +4,7 @@ use crate::{
     agent::{Agent, AgentProvider, AgentSpec, ContextManager},
     message::Message,
     runenv::RunEnv,
+    tool::ToolDesc,
 };
 
 /// Fluent builder over [`AgentSpec`] for [`Agent`].
@@ -18,7 +19,12 @@ use crate::{
 /// # Examples
 ///
 /// ```rust
-/// # use ailoy::{agent::{AgentBuilder, AgentProvider}, lang_model::LangModelProvider, tool::ToolProvider};
+/// # use ailoy::{
+/// #     agent::{AgentBuilder, AgentProvider},
+/// #     lang_model::LangModelProvider,
+/// #     tool::ToolDescBuilder,
+/// #     to_value,
+/// # };
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
 /// let mut provider = AgentProvider::new();
@@ -26,11 +32,15 @@ use crate::{
 ///     "openai/gpt-4o".into(),
 ///     LangModelProvider::openai(std::env::var("OPENAI_API_KEY")?),
 /// );
-/// provider.tools = ToolProvider::new().web_search();
+/// provider.tools.insert_builtin("web_search")?;;
 ///
 /// let agent = AgentBuilder::new("openai/gpt-4o")
 ///     .provider(provider)
-///     .tool("web_search")
+///     .tool(ToolDescBuilder::new("web_search")
+///         .description("Search the web.")
+///         .parameters(to_value!({ "type": "object", "properties": {} }))
+///         .build()
+///     )
 ///     .build()
 ///     .await?;
 /// #   Ok(())
@@ -74,14 +84,14 @@ impl AgentBuilder {
         self
     }
 
-    pub fn tool(mut self, key: impl Into<String>) -> Self {
-        self.spec.tools.push(key.into());
+    pub fn tool(mut self, desc: ToolDesc) -> Self {
+        self.spec.tools.push(desc);
         self
     }
 
-    pub fn tools(mut self, keys: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        let mut keys = keys.into_iter().map(|k| k.into()).collect::<Vec<_>>();
-        self.spec.tools.append(&mut keys);
+    pub fn tools(mut self, desc: impl IntoIterator<Item = ToolDesc>) -> Self {
+        let mut desc = desc.into_iter().collect();
+        self.spec.tools.append(&mut desc);
         self
     }
 

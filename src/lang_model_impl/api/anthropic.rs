@@ -6,9 +6,10 @@ use crate::{
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, ToolDesc, Unmarshal,
+        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
     },
     to_value,
+    tool::ToolDesc,
 };
 
 impl LangModelProvider {
@@ -383,7 +384,8 @@ mod tests {
     use crate::{
         datatype::Bytes,
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc, ToolDescBuilder},
+        message::{FinishReason, Message, Part, Role, TokenUsage},
+        tool::{ToolDesc, ToolDescBuilder},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -595,6 +597,7 @@ mod tests {
     }
 
     /// Verifies that max_tokens is respected by the Anthropic API (stop_reason: max_tokens).
+    #[test_with::env(ANTHROPIC_API_KEY)]
     #[tokio::test]
     async fn test_run_max_tokens() {
         dotenvy::dotenv().ok();

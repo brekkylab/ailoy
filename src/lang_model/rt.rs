@@ -5,7 +5,8 @@ use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
     lang_model_impl::api,
-    message::{Delta as _, Marshaled, Message, MessageOutput, ToolDesc, Unmarshal as _},
+    message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
+    tool::ToolDesc,
 };
 
 /// Runtime
@@ -182,8 +183,9 @@ mod tests {
     use super::*;
     use crate::{
         lang_model::LangModelProvider,
-        message::{FinishReason, Part, Role, ToolDescBuilder},
+        message::{FinishReason, Part, Role},
         to_value,
+        tool::{ToolDesc, ToolDescBuilder},
     };
 
     fn openai_chat_completion(model: &str, api_key: String) -> LangModel {

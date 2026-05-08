@@ -1,41 +1,33 @@
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use url::Url;
-
-use crate::{
-    agent::AgentSpec,
-    tool::{Tool, ToolFactory},
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
 };
 
-/// One built-in tool that ships with the runtime.  Each variant maps to a
-/// specific factory in `tool_impl/builtins`.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum BuiltinToolProviderElem {
-    WebSearch {},
-    PythonRepl {},
-    Bash {},
-    FileRead {},
-}
+use url::Url;
+
+use crate::tool::{ToolDesc, ToolFunc};
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[derive(Clone, Debug)]
 pub enum MCPToolProviderElem {
-    /// Spawns a child process and communicates over its stdio
+    /// Spawns a child process and communicates over its stdio.
     Stdio { command: String },
 
-    /// Connects to a remote MCP server over HTTP streaming
+    /// Connects to a remote MCP server over HTTP streaming.
     StreamableHTTP { url: Url },
 }
 
 /// One entry in a [`ToolProvider`] — describes where a tool's implementation
-/// comes from.  Resolved into a runtime [`Tool`] at agent startup.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "lowercase")]
+/// comes from. Resolved into a [`ToolFunc`] by [`ToolProvider::provide`] at
+/// agent startup.
+#[derive(Clone)]
 pub enum ToolProviderElem {
-    /// A tool baked into the agent runtime (e.g. `bash`, `python_repl`).
-    Builtin(BuiltinToolProviderElem),
+    /// A function-backed tool. The closure receives the [`ToolDesc`] requested
+    /// by the [`AgentSpec`] and returns the [`ToolFunc`] to bind to it. This
+    /// lets the function specialise behaviour to the requested description
+    /// (e.g. by inspecting parameters), or simply ignore the argument and
+    /// return a fixed [`ToolFunc`].
+    Function(Arc<dyn Fn(&ToolDesc) -> ToolFunc + Send + Sync + 'static>),
 
     /// A tool served by an external MCP server.
     MCP(MCPToolProviderElem),
@@ -47,43 +39,31 @@ pub enum ToolProviderElem {
     /// then exposes it as a tool that the orchestrating agent can call with a
     /// plain-text task string.
     A2A { url: Url },
-
-    /// A pre-built [`ToolFactory`] supplied by the host application.
-    /// Skipped during serialisation.
-    #[serde(skip)]
-    #[schemars(skip)]
-    Custom(ToolFactory),
 }
 
 impl ToolProviderElem {
-    async fn make(&self, spec: &AgentSpec) -> anyhow::Result<Tool> {
-        let tool = match self {
-            ToolProviderElem::Builtin(b) => crate::tool_impl::make_builtin_tool_factory(b)
-                .await?
-                .make(spec),
+    /// Materialise this entry into a [`ToolFunc`] bound to `desc`.
+    fn provide(&self, desc: &ToolDesc) -> anyhow::Result<ToolFunc> {
+        match self {
+            ToolProviderElem::Function(factory) => Ok(factory(desc)),
             ToolProviderElem::MCP(_) => {
                 todo!("MCP factory construction is not yet implemented")
             }
-            ToolProviderElem::A2A { url } => crate::tool_impl::make_a2a_tool_factory(url.clone())
-                .await?
-                .make(spec),
-            ToolProviderElem::Custom(factory) => factory.make(spec),
-        };
-        Ok(tool)
+            ToolProviderElem::A2A { url: _ } => {
+                todo!("A2A factory construction is not yet implemented")
+            }
+        }
     }
 }
 
-/// Ordered list of tool sources that an agent should expose at startup.
+/// Registry of tool sources that an agent can draw from at startup.
 ///
 /// `ToolProvider` is the `tools` field of [`AgentProvider`](crate::agent::AgentProvider).
-/// Each [`ToolProviderElem`] inside contributes one runtime [`Tool`] when the agent is
-/// constructed (see [`ToolProvider::make_runtime`]).  Use the chained builder methods
-/// below to assemble it, or push entries directly via serde / `inner` access.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(transparent)]
-#[schemars(transparent)]
+/// Each entry is keyed by tool name and contributes a [`ToolFunc`] when an
+/// agent's [`AgentSpec`] requests it (see [`ToolProvider::provide`]).
+#[derive(Default, Clone)]
 pub struct ToolProvider {
-    inner: Vec<ToolProviderElem>,
+    inner: BTreeMap<String, ToolProviderElem>,
 }
 
 impl ToolProvider {
@@ -91,71 +71,111 @@ impl ToolProvider {
         Self::default()
     }
 
-    pub fn web_search(mut self) -> Self {
-        self.inner.push(ToolProviderElem::Builtin(
-            BuiltinToolProviderElem::WebSearch {},
-        ));
-        self
+    pub fn insert_builtin(
+        &mut self,
+        name: impl Into<String>,
+    ) -> anyhow::Result<Option<ToolProviderElem>> {
+        let name = name.into();
+        match name.as_str() {
+            "bash" => {
+                let f = crate::tool_impl::get_bash_tool_func();
+                Ok(self.insert_func(name, f))
+            }
+            "python_repl" => {
+                let f = crate::tool_impl::get_python_repl_tool_factory();
+                Ok(self.insert_func_factory(name, f))
+            }
+            "file_read" => {
+                let f = crate::tool_impl::get_file_read_tool_func();
+                Ok(self.insert_func(name, f))
+            }
+            "web_search" => {
+                let f = crate::tool_impl::get_web_search_tool_factory();
+                Ok(self.insert_func_factory(name, f))
+            }
+            _ => Err(anyhow::anyhow!("Unknown name")),
+        }
     }
 
-    pub fn python_repl(mut self) -> Self {
-        self.inner.push(ToolProviderElem::Builtin(
-            BuiltinToolProviderElem::PythonRepl {},
-        ));
-        self
+    /// Register a tool whose behaviour is a fixed [`ToolFunc`], regardless of
+    /// the [`ToolDesc`] the spec requests.
+    pub fn insert_func(
+        &mut self,
+        name: impl Into<String>,
+        f: ToolFunc,
+    ) -> Option<ToolProviderElem> {
+        self.inner.insert(
+            name.into(),
+            ToolProviderElem::Function(Arc::new(move |_| f.clone())),
+        )
     }
 
-    pub fn bash(mut self) -> Self {
+    /// Register a tool whose [`ToolFunc`] is constructed lazily from the
+    /// [`ToolDesc`] the spec requests. Useful when the function needs to
+    /// inspect the parameters schema or other metadata supplied by the spec.
+    pub fn insert_func_factory(
+        &mut self,
+        name: impl Into<String>,
+        f: impl Fn(&ToolDesc) -> ToolFunc + Send + Sync + 'static,
+    ) -> Option<ToolProviderElem> {
         self.inner
-            .push(ToolProviderElem::Builtin(BuiltinToolProviderElem::Bash {}));
-        self
+            .insert(name.into(), ToolProviderElem::Function(Arc::new(f)))
     }
 
-    pub fn file_read(mut self) -> Self {
-        self.inner.push(ToolProviderElem::Builtin(
-            BuiltinToolProviderElem::FileRead {},
-        ));
-        self
-    }
-
-    pub fn mcp_stdio(mut self, command: impl Into<String>) -> Self {
+    /// Register a remote A2A agent under `name`. The actual tool description
+    /// is discovered from the agent's card at resolve time.
+    pub fn insert_a2a(
+        &mut self,
+        name: impl Into<String>,
+        url: impl Into<Url>,
+    ) -> Option<ToolProviderElem> {
         self.inner
-            .push(ToolProviderElem::MCP(MCPToolProviderElem::Stdio {
-                command: command.into(),
-            }));
-        self
+            .insert(name.into(), ToolProviderElem::A2A { url: url.into() })
     }
 
-    pub fn mcp_streamable_http(mut self, url: impl Into<Url>) -> Self {
-        self.inner
-            .push(ToolProviderElem::MCP(MCPToolProviderElem::StreamableHTTP {
-                url: url.into(),
-            }));
-        self
+    /// Register an MCP server reachable via stdio. Not yet implemented.
+    pub fn insert_mcp_stdio(
+        &mut self,
+        _name: impl Into<String>,
+        _command: impl Into<String>,
+    ) -> Option<ToolProviderElem> {
+        todo!("MCP stdio registration is not yet implemented")
     }
 
-    pub fn a2a(mut self, url: impl Into<Url>) -> Self {
-        self.inner.push(ToolProviderElem::A2A { url: url.into() });
-        self
+    /// Register an MCP server reachable over streamable HTTP. Not yet implemented.
+    pub fn insert_mcp_streamable_http(
+        &mut self,
+        _name: impl Into<String>,
+        _url: impl Into<Url>,
+    ) -> Option<ToolProviderElem> {
+        todo!("MCP streamable HTTP registration is not yet implemented")
     }
 
-    pub fn custom(mut self, factory: ToolFactory) -> Self {
-        self.inner.push(ToolProviderElem::Custom(factory));
-        self
+    /// Look up a registered entry by name.
+    pub fn get(&self, name: &str) -> Option<&ToolProviderElem> {
+        self.inner.get(name)
     }
 
-    pub fn iter(&self) -> std::slice::Iter<'_, ToolProviderElem> {
+    /// Iterate over all registered `(name, entry)` pairs.
+    pub fn iter(&self) -> std::collections::btree_map::Iter<'_, String, ToolProviderElem> {
         self.inner.iter()
     }
 
-    /// Resolve every [`ToolProviderElem`] in registration order to a runtime [`Tool`]
-    /// bound to `spec`.  Called by [`Agent::try_with_provider_and_runenv`](crate::agent::Agent::try_with_provider_and_runenv)
+    /// Resolve every [`ToolDesc`] listed in `spec.tools` to a [`ToolFunc`]
+    /// by looking up the matching entry in this provider. The returned vector
+    /// matches `spec.tools` element-for-element. Returns an error if any
+    /// requested tool name is not registered.
+    ///
+    /// Called by [`Agent::try_with_provider_and_runenv`](crate::agent::Agent::try_with_provider_and_runenv)
     /// during agent construction.
-    pub async fn make_runtime(&self, spec: &AgentSpec) -> anyhow::Result<Vec<Tool>> {
-        let mut tools = Vec::with_capacity(self.inner.len());
-        for elem in &self.inner {
-            tools.push(elem.make(spec).await?);
+    pub fn provide(&self, spec: &[ToolDesc]) -> anyhow::Result<HashMap<String, ToolFunc>> {
+        let mut funcs = HashMap::with_capacity(spec.len());
+        for desc in spec {
+            let elem = self.inner.get(&desc.name).ok_or_else(|| {
+                anyhow::anyhow!("tool '{}' not registered in ToolProvider", desc.name)
+            })?;
+            funcs.insert(desc.name.clone(), elem.provide(desc)?);
         }
-        Ok(tools)
+        Ok(funcs)
     }
 }
