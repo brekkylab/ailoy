@@ -427,8 +427,9 @@ mod tests {
 
     use super::*;
     use crate::{
+        datatype::{Bytes, Value},
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc},
+        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc, ToolDescBuilder},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -509,9 +510,7 @@ mod tests {
         // Part::Value(String) → plain string, no double-encoding
         let msg_str = Message::new(Role::Tool)
             .with_id("dummy_tool/call-2")
-            .with_contents([Part::value(crate::datatype::Value::string(
-                "ok".to_string(),
-            ))]);
+            .with_contents([Part::value(Value::string("ok".to_string()))]);
         let result = get_result(&msg_str);
         assert_eq!(
             result.as_str(),
@@ -522,7 +521,7 @@ mod tests {
         // Part::Value(Object) → object passed through as-is
         let msg_obj = Message::new(Role::Tool)
             .with_id("dummy_tool/call-3")
-            .with_contents([Part::value(crate::to_value!({"temperature": 30}))]);
+            .with_contents([Part::value(to_value!({"temperature": 30}))]);
         let result = get_result(&msg_obj);
         assert_eq!(
             result.pointer("/temperature").and_then(|v| v.as_integer()),
@@ -532,29 +531,44 @@ mod tests {
 
         // Part::Image (embedded, image-only) → functionResponse gets a {mimeType, type:"image"}
         // placeholder; actual bytes appear as a sibling inline_data part at parts[1].
-        let img_bytes = crate::datatype::Bytes::from(vec![0xFFu8, 0xD8, 0xFF]);
+        let img_bytes = Bytes::from(vec![0xFFu8, 0xD8, 0xFF]);
         let msg_img = Message::new(Role::Tool)
             .with_id("dummy_tool/call-4")
             .with_contents([Part::image_embedded("image/jpeg", img_bytes.clone()).unwrap()]);
         let val = marshal_message(&msg_img, false);
-        let parts = val.pointer("/parts").and_then(|v| v.as_array()).expect("parts must exist");
-        assert_eq!(parts.len(), 2, "image-only tool result must produce functionResponse + inline_data sibling");
+        let parts = val
+            .pointer("/parts")
+            .and_then(|v| v.as_array())
+            .expect("parts must exist");
         assert_eq!(
-            parts[0].pointer("/functionResponse/response/result/type").and_then(|v| v.as_str()),
+            parts.len(),
+            2,
+            "image-only tool result must produce functionResponse + inline_data sibling"
+        );
+        assert_eq!(
+            parts[0]
+                .pointer("/functionResponse/response/result/type")
+                .and_then(|v| v.as_str()),
             Some("image"),
             "image-only functionResponse result must have type \"image\""
         );
         assert_eq!(
-            parts[0].pointer("/functionResponse/response/result/mimeType").and_then(|v| v.as_str()),
+            parts[0]
+                .pointer("/functionResponse/response/result/mimeType")
+                .and_then(|v| v.as_str()),
             Some("image/jpeg")
         );
         assert_eq!(
-            parts[1].pointer("/inline_data/mime_type").and_then(|v| v.as_str()),
+            parts[1]
+                .pointer("/inline_data/mime_type")
+                .and_then(|v| v.as_str()),
             Some("image/jpeg"),
             "image bytes must appear as sibling inline_data part"
         );
         assert_eq!(
-            parts[1].pointer("/inline_data/data").and_then(|v| v.as_str()),
+            parts[1]
+                .pointer("/inline_data/data")
+                .and_then(|v| v.as_str()),
             Some(img_bytes.base64().as_str())
         );
 
@@ -566,15 +580,26 @@ mod tests {
                 Part::image_embedded("image/png", img_bytes.clone()).unwrap(),
             ]);
         let val = marshal_message(&msg_mixed, false);
-        let parts = val.pointer("/parts").and_then(|v| v.as_array()).expect("parts must exist");
-        assert_eq!(parts.len(), 2, "mixed tool result must produce functionResponse + inline_data sibling");
+        let parts = val
+            .pointer("/parts")
+            .and_then(|v| v.as_array())
+            .expect("parts must exist");
         assert_eq!(
-            parts[0].pointer("/functionResponse/response/result/text").and_then(|v| v.as_str()),
+            parts.len(),
+            2,
+            "mixed tool result must produce functionResponse + inline_data sibling"
+        );
+        assert_eq!(
+            parts[0]
+                .pointer("/functionResponse/response/result/text")
+                .and_then(|v| v.as_str()),
             Some("here is the file"),
             "text part must appear in functionResponse result"
         );
         assert_eq!(
-            parts[1].pointer("/inline_data/mime_type").and_then(|v| v.as_str()),
+            parts[1]
+                .pointer("/inline_data/mime_type")
+                .and_then(|v| v.as_str()),
             Some("image/png")
         );
     }
@@ -637,8 +662,6 @@ mod tests {
     /// in the conversation history — required by Gemini 3 thinking models.
     #[tokio::test]
     async fn test_tool_result_with_image() {
-        use crate::{datatype::Bytes, message::ToolDescBuilder};
-
         dotenvy::dotenv().ok();
         let api_key = match std::env::var("GEMINI_API_KEY") {
             Ok(k) => k,
@@ -670,7 +693,7 @@ mod tests {
         let tools =
             vec![ToolDescBuilder::new("file_read")
             .description("Read a file and return its contents. Images are returned inline.")
-            .parameters(crate::to_value!({
+            .parameters(to_value!({
                 "type": "object",
                 "properties": {"path": {"type": "string", "description": "File path to read"}},
                 "required": ["path"]

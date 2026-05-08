@@ -364,6 +364,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        datatype::Bytes,
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc, ToolDescBuilder},
     };
@@ -457,9 +458,7 @@ mod tests {
         // Part::Image (url) → array with a single {"type":"input_image","image_url":"https://..."} block.
         let msg_img_url = Message::new(Role::Tool)
             .with_id("call_3")
-            .with_contents([
-                Part::image_url("https://example.com/img.png".to_string()).unwrap()
-            ]);
+            .with_contents([Part::image_url("https://example.com/img.png".to_string()).unwrap()]);
         let items = marshal_message(&msg_img_url, false);
         let output = items[0]
             .pointer("/output")
@@ -479,7 +478,7 @@ mod tests {
         // Part::Value → filtered out (unsupported), output array is empty.
         let msg_val = Message::new(Role::Tool)
             .with_id("call_4")
-            .with_contents([Part::value(crate::to_value!({"temp": 25}))]);
+            .with_contents([Part::value(to_value!({"temp": 25}))]);
         let items = marshal_message(&msg_val, false);
         let output = items[0]
             .pointer("/output")
@@ -542,8 +541,6 @@ mod tests {
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_tool_result_with_image() {
-        use crate::datatype::Bytes;
-
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").unwrap();
 
@@ -575,7 +572,7 @@ mod tests {
             Message::new(Role::Assistant).with_tool_calls([Part::function(
                 "call_test_001",
                 "file_read",
-                crate::to_value!({"path": "/tmp/test.png"}),
+                to_value!({"path": "/tmp/test.png"}),
             )]),
             Message::new(Role::Tool)
                 .with_id("call_test_001")
@@ -586,7 +583,7 @@ mod tests {
         let tools =
             vec![ToolDescBuilder::new("file_read")
             .description("Read a file and return its contents. Images are returned inline.")
-            .parameters(crate::to_value!({
+            .parameters(to_value!({
                 "type": "object",
                 "properties": {"path": {"type": "string", "description": "File path to read"}},
                 "required": ["path"]
