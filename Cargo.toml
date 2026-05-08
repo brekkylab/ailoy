@@ -34,6 +34,7 @@ async-trait = "0.1"
 base64 = "0.22"
 dedent = "0.1.1"
 derive_builder = "0.20.2"
+dotenvy = "0.15"
 fancy-regex = "0.16"
 futures = "0.3"
 getrandom = "0.3"
@@ -74,6 +75,5 @@ wreq-util = "2.2.6"
 
 [dev-dependencies]
 axum = "0.8"
-dotenvy = "0.15"
 test-with = { version = "0.16.1", default-features = false, features = ["executable"] }
 tokio = { version = "1.0", features = ["net"] }
