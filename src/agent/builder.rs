@@ -94,7 +94,7 @@ impl AgentBuilder {
         self
     }
 
-    /// Append the canonical filesystem-editing toolset for the spec's model family.
+    /// Append filesystem-editing toolset(read / write).
     /// See [`AgentSpec::fs_tools`] for the per-family tool selection.
     pub fn fs_tools(mut self) -> Self {
         self.spec = self.spec.fs_tools();
