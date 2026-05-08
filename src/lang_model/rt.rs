@@ -103,18 +103,51 @@ impl LangModel {
                     .ok_or(anyhow::anyhow!("No body in marshaled request"))?;
                 let body: serde_json::Value = body.clone().into();
 
-                // Send request
+                // Send request with retry on 429 (rate limit)
                 let client = reqwest::Client::new();
-                let response = client
-                    .post(url)
-                    .headers(header_map)
-                    .json(&body)
-                    .send()
-                    .await?;
+                const MAX_RETRIES: u32 = 3;
+                let (status, response_text) = {
+                    let mut last_status = None;
+                    let mut last_text = None;
+                    for attempt in 0..=MAX_RETRIES {
+                        let response = client
+                            .post(url)
+                            .headers(header_map.clone())
+                            .json(&body)
+                            .send()
+                            .await?;
+                        let s = response.status();
+                        if s.as_u16() == 429 && attempt < MAX_RETRIES {
+                            const MAX_WAIT_SECS: u64 = 10;
+                            let wait_secs = response
+                                .headers()
+                                .get("retry-after")
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .unwrap_or(1u64 << attempt)
+                                .min(MAX_WAIT_SECS);
+                            let text = response.text().await?;
+                            log::warn!(
+                                "Rate limited (429). Retrying after {}s (attempt {}/{}): {}",
+                                wait_secs,
+                                attempt + 1,
+                                MAX_RETRIES,
+                                text
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+                            last_status = Some(s);
+                            last_text = Some(text);
+                            continue;
+                        }
+                        let text = response.text().await?;
+                        last_status = Some(s);
+                        last_text = Some(text);
+                        break;
+                    }
+                    (last_status.unwrap(), last_text.unwrap())
+                };
 
-                // Get request
-                let status = response.status();
-                let response_text = response.text().await?;
+                // Check response status
                 if !status.is_success() {
                     anyhow::bail!("API request failed with status {status}: {response_text}");
                 }
@@ -236,5 +269,82 @@ mod tests {
             arguments.pointer("/location").is_some(),
             "Expected 'location' argument in tool call"
         );
+    }
+
+    /// Verifies that token usage is populated in the response from the real API.
+    #[tokio::test]
+    async fn test_run_returns_usage() {
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
+        let model = openai_chat_completion("gpt-5.4-mini", api_key);
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("Hi")])];
+
+        let resp = model.run(&messages, &[]).await.unwrap();
+        let usage = resp
+            .usage
+            .expect("usage must be present in real API response");
+        assert!(usage.input_tokens > 0, "input_tokens must be > 0");
+        assert!(usage.output_tokens > 0, "output_tokens must be > 0");
+    }
+
+    /// Verifies that the runtime retries on 429 and succeeds when the server recovers.
+    /// Uses an axum mock server that returns 429 for the first two requests, then 200.
+    #[tokio::test]
+    async fn test_run_retries_on_429() {
+        use std::sync::{Arc, Mutex};
+
+        use axum::{Router, body::Body, response::Response, routing::post};
+
+        let call_count = Arc::new(Mutex::new(0u32));
+
+        let count = call_count.clone();
+        let app = Router::new().route(
+            "/",
+            post(move || {
+                let count = count.clone();
+                async move {
+                    let mut n = count.lock().unwrap();
+                    *n += 1;
+                    let current = *n;
+                    drop(n);
+
+                    if current <= 2 {
+                        // Return 429 with retry-after: 0 so the sleep is instant.
+                        Response::builder()
+                            .status(429)
+                            .header("retry-after", "0")
+                            .body(Body::from(r#"{"error":"rate limited"}"#))
+                            .unwrap()
+                    } else {
+                        Response::builder()
+                            .status(200)
+                            .header("content-type", "application/json")
+                            .body(Body::from(r#"{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#))
+                            .unwrap()
+                    }
+                }
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let model = LangModel::new(
+            "test-model".to_string(),
+            LangModelProvider::chat_completion(&format!("http://{}/", addr), None).unwrap(),
+        );
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+
+        let resp = model.run(&messages, &[]).await.unwrap();
+
+        assert_eq!(
+            *call_count.lock().unwrap(),
+            3,
+            "should have made 3 total attempts (2x 429 retried + 1 success)"
+        );
+        assert!(!resp.message.contents.is_empty());
     }
 }

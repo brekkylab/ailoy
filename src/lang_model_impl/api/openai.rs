@@ -5,7 +5,7 @@ use crate::{
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
+        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, ToolDesc, Unmarshal,
     },
     to_value,
 };
@@ -58,23 +58,20 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
     };
 
     if msg.role == Role::Tool {
-        let has_image = msg.contents.iter().any(|p| matches!(p, Part::Image { .. }));
-        let output: Value = if has_image {
-            let arr: Vec<Value> = msg.contents.iter().map(|p| match p {
-                Part::Image { image: PartImage::Embedded { mime_type, data } } => to_value!({
+        let output: Value = {
+            let arr: Vec<Value> = msg.contents.iter().filter_map(|p| match p {
+                Part::Text { text } => Some(to_value!({"type": "input_text", "text": text})),
+                Part::Image { image: PartImage::Embedded { mime_type, data } } => Some(to_value!({
                     "type": "input_image",
                     "image_url": format!("data:{};base64,{}", mime_type, data.base64())
-                }),
-                Part::Image { image: PartImage::Url { url } } => to_value!({
+                })),
+                Part::Image { image: PartImage::Url { url } } => Some(to_value!({
                     "type": "input_image",
                     "image_url": url
-                }),
-                Part::Text { text } => to_value!({"type": "input_text", "text": text}),
-                other => to_value!({"type": "input_text", "text": serde_json::to_string(other).unwrap_or_default()}),
+                })),
+                _ => None,
             }).collect();
             to_value!(arr)
-        } else {
-            part_to_value(&msg.contents[0])
         };
         return vec![to_value!(
             {
@@ -342,9 +339,28 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             finish_reason = Some(FinishReason::ToolCall {});
         }
 
+        // Parse usage (OpenAI Responses API: usage.input_tokens / output_tokens)
+        let usage = val
+            .as_object()
+            .and_then(|r| r.get("usage"))
+            .and_then(|u| u.as_object())
+            .map(|u| TokenUsage {
+                input_tokens: u
+                    .get("input_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                output_tokens: u
+                    .get("output_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            });
+
         Ok(MessageDeltaOutput {
             delta,
             finish_reason,
+            usage,
         })
     }
 }
@@ -356,7 +372,7 @@ mod tests {
     use super::*;
     use crate::{
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, ToolDesc, ToolDescBuilder},
+        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc, ToolDescBuilder},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -376,6 +392,79 @@ mod tests {
             max_tokens,
         };
         f(&req)
+    }
+
+    #[test]
+    fn test_unmarshal_usage() {
+        let response = to_value!({
+            "status": "completed",
+            "output": [],
+            "usage": {"input_tokens": 200, "output_tokens": 75}
+        });
+        let usage = OpenAIUnmarshal::default()
+            .unmarshal(response)
+            .unwrap()
+            .usage;
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                input_tokens: 200,
+                output_tokens: 75,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            })
+        );
+    }
+
+    /// Verifies that function_call_output.output is canonicalized to a plain string.
+    #[test]
+    fn test_tool_result_content_marshaling() {
+        // Part::Text → plain string.
+        let msg_text = Message::new(Role::Tool)
+            .with_id("call_1")
+            .with_contents([Part::text("tool output")]);
+        let items = marshal_message(&msg_text, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_str();
+        assert_eq!(
+            output,
+            Some("tool output"),
+            "Part::Text in function_call_output must marshal as a plain string"
+        );
+
+        // Part::Value(String) → plain string; no double-encoding.
+        let msg_str = Message::new(Role::Tool)
+            .with_id("call_2")
+            .with_contents([Part::value(crate::datatype::Value::string(
+                "ok".to_string(),
+            ))]);
+        let items = marshal_message(&msg_str, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_str();
+        assert_eq!(
+            output,
+            Some("ok"),
+            "Part::Value(String) must not be double-encoded in function_call_output"
+        );
+
+        // Part::Value(Object) → JSON-serialised plain text.
+        let msg_obj = Message::new(Role::Tool)
+            .with_id("call_3")
+            .with_contents([Part::value(crate::to_value!({"temp": 25}))]);
+        let items = marshal_message(&msg_obj, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_str();
+        assert_eq!(
+            output,
+            Some(r#"{"temp":25}"#),
+            "Part::Value(Object) must be JSON-serialised into a plain string in function_call_output"
+        );
     }
 
     #[test]
@@ -420,7 +509,6 @@ mod tests {
         let tools: Vec<ToolDesc> = vec![];
 
         let resp = model.run(&messages, &tools).await.unwrap();
-        println!("{}", resp);
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 

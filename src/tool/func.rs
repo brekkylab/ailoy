@@ -124,6 +124,7 @@ where
                         .with_contents([Part::value(value)])
                         .with_id(id),
                     finish_reason: FinishReason::Stop {},
+                    usage: None,
                 }))
                 .boxed()
             }),
@@ -147,6 +148,7 @@ where
                         .with_contents([Part::value(value)])
                         .with_id(id),
                     finish_reason: FinishReason::Stop {},
+                    usage: None,
                 }))
                 .boxed()
             }),
@@ -167,6 +169,7 @@ where
                     depth: None,
                     message,
                     finish_reason: FinishReason::Stop {},
+                    usage: None,
                 }))
                 .boxed()
             }),
@@ -187,6 +190,7 @@ where
                     depth: None,
                     message,
                     finish_reason: FinishReason::Stop {},
+                    usage: None,
                 }))
                 .boxed()
             }),
@@ -212,6 +216,7 @@ where
                             .with_contents([Part::value(fut.await)])
                             .with_id(id),
                         finish_reason: FinishReason::Stop {},
+                        usage: None,
                     }
                 }))
                 .boxed()
@@ -238,6 +243,7 @@ where
                             .with_contents([Part::value(fut.await)])
                             .with_id(id),
                         finish_reason: FinishReason::Stop {},
+                        usage: None,
                     }
                 }))
                 .boxed()
@@ -261,6 +267,7 @@ where
                         depth: None,
                         message: fut.await,
                         finish_reason: FinishReason::Stop {},
+                        usage: None,
                     }
                 }))
                 .boxed()
@@ -284,6 +291,7 @@ where
                         depth: None,
                         message: fut.await,
                         finish_reason: FinishReason::Stop {},
+                        usage: None,
                     }
                 }))
                 .boxed()
@@ -309,6 +317,7 @@ where
                             .with_contents([Part::value(value)])
                             .with_id(id.clone()),
                         finish_reason: FinishReason::Stop {},
+                        usage: None,
                     })
                     .boxed()
             }),
@@ -333,6 +342,7 @@ where
                             .with_contents([Part::value(value)])
                             .with_id(id.clone()),
                         finish_reason: FinishReason::Stop {},
+                        usage: None,
                     })
                     .boxed()
             }),
@@ -354,6 +364,7 @@ where
                         depth: None,
                         message,
                         finish_reason: FinishReason::Stop {},
+                        usage: None,
                     })
                     .boxed()
             }),
@@ -375,6 +386,7 @@ where
                         depth: None,
                         message,
                         finish_reason: FinishReason::Stop {},
+                        usage: None,
                     })
                     .boxed()
             }),

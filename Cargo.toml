@@ -62,7 +62,7 @@ which = "7"
 zip = "2"
 strum_macros = "0.27"
 thiserror = "2.0.15"
-tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
 unicode-segmentation = "1.12.0"
 url = { version = "2.5", features = ["serde"] }
 urlencoding = "2.1"
