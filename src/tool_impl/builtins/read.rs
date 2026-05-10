@@ -67,7 +67,6 @@ pub fn get_read_tool_desc() -> ToolDesc {
             concat!(
                 "Reads a file from the local filesystem. ",
                 "It can read text files or images(PNG/JPEG/GIF/WEBP). ",
-                "Trust paths provided by the user without pre-validation. If the file does not exist, an error will be returned.",
                 "When you already know which part of the file you need, only read that part. This can be important for larger files. ",
                 "For text files, results are returned using cat -n format, with line numbers starting at 1. ",
                 "Lines longer than 10000 characters are truncated. ",
@@ -79,7 +78,7 @@ pub fn get_read_tool_desc() -> ToolDesc {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "The absolute path to the file to read"
+                    "description": "The path to the file to read"
                 },
                 "offset": {
                     "type": "integer",
