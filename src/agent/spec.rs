@@ -5,8 +5,8 @@ use crate::{
     agent::AgentCard,
     tool::ToolDesc,
     tool_impl::{
-        get_apply_patch_tool_desc, get_bash_tool_desc, get_edit_tool_desc, get_read_tool_desc,
-        get_web_search_tool_desc, get_write_tool_desc,
+        get_apply_patch_tool_desc, get_bash_tool_desc, get_edit_tool_desc, get_find_tool_desc,
+        get_grep_tool_desc, get_read_tool_desc, get_web_search_tool_desc, get_write_tool_desc,
     },
 };
 
@@ -107,6 +107,16 @@ impl AgentSpec {
 
     pub fn bash_tool(mut self) -> Self {
         self.tools.push(get_bash_tool_desc());
+        self
+    }
+
+    pub fn find_tool(mut self) -> Self {
+        self.tools.push(get_find_tool_desc());
+        self
+    }
+
+    pub fn grep_tool(mut self) -> Self {
+        self.tools.push(get_grep_tool_desc());
         self
     }
 
