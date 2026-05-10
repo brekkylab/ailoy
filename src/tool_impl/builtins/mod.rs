@@ -1,7 +1,7 @@
 mod apply_patch;
 mod bash;
 mod edit;
-mod find;
+mod glob;
 mod grep;
 mod python_repl;
 mod read;
@@ -11,7 +11,7 @@ mod write;
 pub use apply_patch::*;
 pub use bash::*;
 pub use edit::*;
-pub use find::*;
+pub use glob::*;
 pub use grep::*;
 pub use python_repl::*;
 pub use read::*;
@@ -33,7 +33,7 @@ pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
     let write = get_write_tool_func();
     let edit = get_edit_tool_func();
     let apply_patch = get_apply_patch_tool_func();
-    let find = get_find_tool_func();
+    let glob = get_glob_tool_func();
     let grep = get_grep_tool_func();
 
     vec![
@@ -43,7 +43,7 @@ pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
         ("write", Arc::new(move |_| write.clone())),
         ("edit", Arc::new(move |_| edit.clone())),
         ("apply_patch", Arc::new(move |_| apply_patch.clone())),
-        ("find", Arc::new(move |_| find.clone())),
+        ("glob", Arc::new(move |_| glob.clone())),
         ("grep", Arc::new(move |_| grep.clone())),
         ("web_search", Arc::new(get_web_search_tool_factory())),
     ]

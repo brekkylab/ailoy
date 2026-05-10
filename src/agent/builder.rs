@@ -94,20 +94,15 @@ impl AgentBuilder {
         self
     }
 
-    /// Append filesystem-editing toolset(read / write).
-    /// See [`AgentSpec::fs_tools`] for the per-family tool selection.
-    pub fn fs_tools(mut self) -> Self {
-        self.spec = self.spec.fs_tools();
+    /// Append the canonical local-execution toolset.
+    /// See [`AgentSpec::system_tools`] for the per-family tool selection.
+    pub fn system_tools(mut self) -> Self {
+        self.spec = self.spec.system_tools();
         self
     }
 
     pub fn web_search_tool(mut self) -> Self {
         self.spec = self.spec.web_search_tool();
-        self
-    }
-
-    pub fn bash_tool(mut self) -> Self {
-        self.spec = self.spec.bash_tool();
         self
     }
 

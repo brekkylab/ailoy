@@ -5,7 +5,7 @@ use crate::{
     agent::AgentCard,
     tool::ToolDesc,
     tool_impl::{
-        get_apply_patch_tool_desc, get_bash_tool_desc, get_edit_tool_desc, get_find_tool_desc,
+        get_apply_patch_tool_desc, get_bash_tool_desc, get_edit_tool_desc, get_glob_tool_desc,
         get_grep_tool_desc, get_read_tool_desc, get_web_search_tool_desc, get_write_tool_desc,
     },
 };
@@ -83,18 +83,26 @@ impl AgentSpec {
         self
     }
 
-    /// Append the canonical filesystem-editing toolset for the spec's model family.
+    /// Append the canonical local-execution toolset for the spec's model family.
     ///
-    /// * `openai/*`: `read`, `apply_patch` (the codex-style patch envelope).
-    /// * others: `read`, `write`, `edit`.
-    pub fn fs_tools(mut self) -> Self {
+    /// * `openai/*`: `bash`, `read`, `apply_patch`. Shell-first — `bash` is preferred
+    ///   over dedicated `glob`/`grep`, and `apply_patch` is preferred over `write`+`edit`.
+    /// * others: `bash`, `read`, `write`, `edit`, `glob`, `grep`.
+    pub fn system_tools(mut self) -> Self {
         self.tools.extend(if self.model.starts_with("openai/") {
-            vec![get_read_tool_desc(), get_apply_patch_tool_desc()]
+            vec![
+                get_bash_tool_desc(),
+                get_read_tool_desc(),
+                get_apply_patch_tool_desc(),
+            ]
         } else {
             vec![
+                get_bash_tool_desc(),
                 get_read_tool_desc(),
                 get_write_tool_desc(),
                 get_edit_tool_desc(),
+                get_glob_tool_desc(),
+                get_grep_tool_desc(),
             ]
         });
         self
@@ -102,21 +110,6 @@ impl AgentSpec {
 
     pub fn web_search_tool(mut self) -> Self {
         self.tools.push(get_web_search_tool_desc());
-        self
-    }
-
-    pub fn bash_tool(mut self) -> Self {
-        self.tools.push(get_bash_tool_desc());
-        self
-    }
-
-    pub fn find_tool(mut self) -> Self {
-        self.tools.push(get_find_tool_desc());
-        self
-    }
-
-    pub fn grep_tool(mut self) -> Self {
-        self.tools.push(get_grep_tool_desc());
         self
     }
 

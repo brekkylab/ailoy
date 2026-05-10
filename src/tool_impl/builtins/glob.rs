@@ -10,15 +10,32 @@ use crate::{
 
 const DEFAULT_LIMIT: usize = 1000;
 
-/// Convert a shell-style glob (matched against a path basename) into a regex
-/// anchored at both ends. Supports `*`, `?`, and character classes via `[..]`.
+/// Convert a path glob into a regex anchored at both ends. The glob is matched
+/// against a path relative to the search root. Supports:
+///
+/// * `*`  — any run of characters except `/`
+/// * `?`  — a single character except `/`
+/// * `**` — any number of path segments (use `**/x` to also match `x` at root)
+/// * `[..]` — character classes
 fn glob_to_regex(glob: &str) -> Result<Regex, String> {
     let mut pat = String::from("^");
     let mut chars = glob.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '*' => pat.push_str(".*"),
-            '?' => pat.push('.'),
+            '*' => {
+                if chars.peek() == Some(&'*') {
+                    chars.next();
+                    if chars.peek() == Some(&'/') {
+                        chars.next();
+                        pat.push_str("(?:.*/)?");
+                    } else {
+                        pat.push_str(".*");
+                    }
+                } else {
+                    pat.push_str("[^/]*");
+                }
+            }
+            '?' => pat.push_str("[^/]"),
             '[' => {
                 pat.push('[');
                 while let Some(&nc) = chars.peek() {
@@ -40,15 +57,13 @@ fn glob_to_regex(glob: &str) -> Result<Regex, String> {
     Regex::new(&pat).map_err(|e| format!("invalid glob {glob:?}: {e}"))
 }
 
-/// Walk the dirent tree rooted at `root_path`, collecting paths that satisfy
-/// `keep`. Stops once `limit` matches have been gathered.
+/// Walk the dirent tree rooted at `base`, collecting file paths whose path
+/// relative to `base` matches `pat_re`. Stops once `limit` matches are gathered.
 fn walk(
-    root_path: &Path,
+    base: &Path,
+    rel_prefix: &str,
     entries: &[Dirent],
-    type_filter: Option<char>,
-    name_re: Option<&Regex>,
-    max_depth: Option<usize>,
-    depth: usize,
+    pat_re: &Regex,
     out: &mut Vec<String>,
     limit: usize,
 ) {
@@ -56,63 +71,38 @@ fn walk(
         if out.len() >= limit {
             return;
         }
-        let entry_path = root_path.join(entry.name());
-        let matches_type = match type_filter {
-            Some('f') => entry.is_file(),
-            Some('d') => entry.is_dir(),
-            _ => true,
+        let rel = if rel_prefix.is_empty() {
+            entry.name().to_string()
+        } else {
+            format!("{}/{}", rel_prefix, entry.name())
         };
-        let matches_name = name_re
-            .map(|re| re.is_match(entry.name()).unwrap_or(false))
-            .unwrap_or(true);
-        if matches_type && matches_name {
-            out.push(entry_path.to_string_lossy().into_owned());
+        if entry.is_file() && pat_re.is_match(&rel).unwrap_or(false) {
+            out.push(base.join(&rel).to_string_lossy().into_owned());
         }
         if let Some(children) = entry.children() {
-            let next_depth = depth + 1;
-            if max_depth.is_none_or(|m| next_depth <= m) {
-                walk(
-                    &entry_path,
-                    children,
-                    type_filter,
-                    name_re,
-                    max_depth,
-                    next_depth,
-                    out,
-                    limit,
-                );
-            }
+            walk(base, &rel, children, pat_re, out, limit);
         }
     }
 }
 
-pub fn get_find_tool_desc() -> ToolDesc {
-    ToolDescBuilder::new("find")
+pub fn get_glob_tool_desc() -> ToolDesc {
+    ToolDescBuilder::new("glob")
         .description(concat!(
-            "Recursively find files and directories under a base path. ",
-            "Filters by glob pattern on the basename and/or by entry type. ",
-            "Returns paths sorted by depth then name. ",
+            "Fast file pattern matching against a directory tree. ",
+            "Returns file paths whose path (relative to `path`) matches `pattern`. ",
+            "Supports `*`, `?`, character classes `[..]`, and `**` for any-depth segments ",
+            "(e.g. `**/*.rs`, `src/**/*.ts`). ",
         ))
         .parameters(crate::to_value!({
             "type": "object",
             "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Glob pattern matched against paths relative to `path` (e.g. '**/*.rs', 'src/**/*.ts')."
+                },
                 "path": {
                     "type": "string",
                     "description": "Absolute base directory to search in"
-                },
-                "name": {
-                    "type": "string",
-                    "description": "Glob pattern matched against the basename (e.g. '*.rs', 'test_*'). Matches all entries when omitted."
-                },
-                "type": {
-                    "type": "string",
-                    "description": "Restrict results to 'f' (regular files) or 'd' (directories). Matches both when omitted.",
-                    "enum": ["f", "d"]
-                },
-                "max_depth": {
-                    "type": "integer",
-                    "description": "Maximum recursion depth (1 = direct children only). Unlimited when omitted.",
-                    "minimum": 1
                 },
                 "limit": {
                     "type": "integer",
@@ -121,13 +111,19 @@ pub fn get_find_tool_desc() -> ToolDesc {
                     "default": 1000
                 }
             },
-            "required": ["path"]
+            "required": ["pattern", "path"]
         }))
         .build()
 }
 
-pub fn get_find_tool_func() -> ToolFunc {
+pub fn get_glob_tool_func() -> ToolFunc {
     tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value {
+        let Some(pattern_str) = args.pointer("/pattern").and_then(|v| v.as_str()) else {
+            return crate::to_value!({
+                "error": "missing required parameter: pattern",
+                "phase": "validation",
+            });
+        };
         let Some(path_str) = args.pointer("/path").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: path",
@@ -142,35 +138,15 @@ pub fn get_find_tool_func() -> ToolFunc {
             });
         }
 
-        let name_re = match args.pointer("/name").and_then(|v| v.as_str()) {
-            Some(g) => match glob_to_regex(g) {
-                Ok(re) => Some(re),
-                Err(e) => {
-                    return crate::to_value!({
-                        "error": e,
-                        "phase": "validation",
-                    });
-                }
-            },
-            None => None,
-        };
-
-        let type_filter = match args.pointer("/type").and_then(|v| v.as_str()) {
-            Some("f") => Some('f'),
-            Some("d") => Some('d'),
-            Some(other) => {
+        let pat_re = match glob_to_regex(pattern_str) {
+            Ok(re) => re,
+            Err(e) => {
                 return crate::to_value!({
-                    "error": format!("invalid type {other:?}; expected 'f' or 'd'"),
+                    "error": e,
                     "phase": "validation",
                 });
             }
-            None => None,
         };
-
-        let max_depth = args
-            .pointer("/max_depth")
-            .and_then(|v| v.as_integer())
-            .map(|n| n.max(1) as usize);
 
         let limit = args
             .pointer("/limit")
@@ -191,11 +167,9 @@ pub fn get_find_tool_func() -> ToolFunc {
         let mut paths: Vec<String> = Vec::new();
         walk(
             &PathBuf::from(path_str),
+            "",
             &entries,
-            type_filter,
-            name_re.as_ref(),
-            max_depth,
-            1,
+            &pat_re,
             &mut paths,
             limit + 1,
         );
@@ -223,14 +197,14 @@ mod tests {
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
-        p.insert_func("find", get_find_tool_func());
+        p.insert_func("glob", get_glob_tool_func());
         p
     }
 
     async fn call(args: Value) -> Message {
         let provider = provider();
-        let funcs = provider.provide(&[get_find_tool_desc()]).unwrap();
-        let f = funcs.get("find").unwrap();
+        let funcs = provider.provide(&[get_glob_tool_desc()]).unwrap();
+        let f = funcs.get("glob").unwrap();
         f.call(args, "1", &Local {}).next().await.unwrap().message
     }
 
@@ -247,82 +221,89 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_lists_recursively() {
+    async fn test_glob_globstar_matches_any_depth() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         std::fs::write(root.join("a.rs"), "").unwrap();
         std::fs::create_dir(root.join("sub")).unwrap();
         std::fs::write(root.join("sub/b.rs"), "").unwrap();
         std::fs::write(root.join("sub/c.txt"), "").unwrap();
-
-        let msg = call(to_value!({ "path": root.to_string_lossy().to_string() })).await;
-        let p = paths(&msg);
-        assert!(p.iter().any(|x| x.ends_with("a.rs")));
-        assert!(p.iter().any(|x| x.ends_with("sub/b.rs")));
-        assert!(p.iter().any(|x| x.ends_with("sub/c.txt")));
-        assert!(p.iter().any(|x| x.ends_with("sub")));
-    }
-
-    #[tokio::test]
-    async fn test_find_name_filter() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        std::fs::write(root.join("a.rs"), "").unwrap();
-        std::fs::write(root.join("b.txt"), "").unwrap();
-        std::fs::create_dir(root.join("sub")).unwrap();
-        std::fs::write(root.join("sub/c.rs"), "").unwrap();
+        std::fs::create_dir(root.join("sub/deep")).unwrap();
+        std::fs::write(root.join("sub/deep/d.rs"), "").unwrap();
 
         let msg = call(to_value!({
             "path": root.to_string_lossy().to_string(),
-            "name": "*.rs",
+            "pattern": "**/*.rs",
         }))
         .await;
         let p = paths(&msg);
-        assert!(p.iter().any(|x| x.ends_with("a.rs")));
-        assert!(p.iter().any(|x| x.ends_with("c.rs")));
-        assert!(!p.iter().any(|x| x.ends_with("b.txt")));
+        assert!(p.iter().any(|x| x.ends_with("/a.rs")));
+        assert!(p.iter().any(|x| x.ends_with("/sub/b.rs")));
+        assert!(p.iter().any(|x| x.ends_with("/sub/deep/d.rs")));
+        assert!(!p.iter().any(|x| x.ends_with(".txt")));
     }
 
     #[tokio::test]
-    async fn test_find_type_filter() {
+    async fn test_glob_single_star_does_not_cross_slashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("a.rs"), "").unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/b.rs"), "").unwrap();
+
+        let msg = call(to_value!({
+            "path": root.to_string_lossy().to_string(),
+            "pattern": "*.rs",
+        }))
+        .await;
+        let p = paths(&msg);
+        assert!(p.iter().any(|x| x.ends_with("/a.rs")));
+        assert!(!p.iter().any(|x| x.ends_with("/sub/b.rs")));
+    }
+
+    #[tokio::test]
+    async fn test_glob_prefixed_globstar() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.ts"), "").unwrap();
+        std::fs::create_dir(root.join("src/inner")).unwrap();
+        std::fs::write(root.join("src/inner/b.ts"), "").unwrap();
+        std::fs::create_dir(root.join("other")).unwrap();
+        std::fs::write(root.join("other/c.ts"), "").unwrap();
+
+        let msg = call(to_value!({
+            "path": root.to_string_lossy().to_string(),
+            "pattern": "src/**/*.ts",
+        }))
+        .await;
+        let p = paths(&msg);
+        assert!(p.iter().any(|x| x.ends_with("/src/a.ts")));
+        assert!(p.iter().any(|x| x.ends_with("/src/inner/b.ts")));
+        assert!(!p.iter().any(|x| x.ends_with("/other/c.ts")));
+    }
+
+    #[tokio::test]
+    async fn test_glob_returns_files_only() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         std::fs::write(root.join("a"), "").unwrap();
         std::fs::create_dir(root.join("d")).unwrap();
+        std::fs::write(root.join("d/b"), "").unwrap();
 
         let msg = call(to_value!({
             "path": root.to_string_lossy().to_string(),
-            "type": "d",
+            "pattern": "**/*",
         }))
         .await;
         let p = paths(&msg);
-        assert!(p.iter().any(|x| x.ends_with("/d")));
-        assert!(!p.iter().any(|x| x.ends_with("/a")));
-    }
-
-    #[tokio::test]
-    async fn test_find_max_depth() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        std::fs::create_dir_all(root.join("a/b")).unwrap();
-        std::fs::write(root.join("top"), "").unwrap();
-        std::fs::write(root.join("a/mid"), "").unwrap();
-        std::fs::write(root.join("a/b/deep"), "").unwrap();
-
-        let msg = call(to_value!({
-            "path": root.to_string_lossy().to_string(),
-            "max_depth": 1,
-        }))
-        .await;
-        let p = paths(&msg);
-        assert!(p.iter().any(|x| x.ends_with("/top")));
         assert!(p.iter().any(|x| x.ends_with("/a")));
-        assert!(!p.iter().any(|x| x.ends_with("/mid")));
-        assert!(!p.iter().any(|x| x.ends_with("/deep")));
+        assert!(p.iter().any(|x| x.ends_with("/d/b")));
+        assert!(!p.iter().any(|x| x.ends_with("/d")));
     }
 
     #[tokio::test]
-    async fn test_find_limit_marks_truncated() {
+    async fn test_glob_limit_marks_truncated() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         for i in 0..5 {
@@ -330,17 +311,21 @@ mod tests {
         }
         let msg = call(to_value!({
             "path": root.to_string_lossy().to_string(),
+            "pattern": "*",
             "limit": 2,
         }))
         .await;
         let val = msg.contents[0].as_value().unwrap();
-        assert_eq!(val.pointer("/count").and_then(|v| v.as_integer()).unwrap(), 2);
+        assert_eq!(
+            val.pointer("/count").and_then(|v| v.as_integer()).unwrap(),
+            2
+        );
         assert!(val.pointer("/truncated").and_then(|v| v.as_bool()).unwrap());
     }
 
     #[tokio::test]
-    async fn test_find_relative_path_rejected() {
-        let msg = call(to_value!({ "path": "rel/path" })).await;
+    async fn test_glob_relative_path_rejected() {
+        let msg = call(to_value!({ "path": "rel/path", "pattern": "*" })).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
