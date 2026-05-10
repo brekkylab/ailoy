@@ -1,6 +1,4 @@
-use std::sync::LazyLock;
-
-use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{lang_model::LangModelProvider, tool::ToolProvider};
 
@@ -63,10 +61,20 @@ impl Default for AgentProvider {
 static DEFAULT_PROVIDER: LazyLock<RwLock<AgentProvider>> =
     LazyLock::new(|| RwLock::new(AgentProvider::new()));
 
-pub async fn default_provider() -> RwLockReadGuard<'static, AgentProvider> {
-    DEFAULT_PROVIDER.read().await
+/// Borrow the process-wide default [`AgentProvider`] for reading.
+///
+/// Holds a [`std::sync::RwLockReadGuard`]; drop it before performing long
+/// operations to avoid blocking writers.  Use [`default_provider_owned`]
+/// when you need to release the lock immediately.
+pub fn default_provider() -> RwLockReadGuard<'static, AgentProvider> {
+    DEFAULT_PROVIDER
+        .read()
+        .expect("default_provider lock poisoned")
 }
 
-pub async fn default_provider_mut() -> RwLockWriteGuard<'static, AgentProvider> {
-    DEFAULT_PROVIDER.write().await
+/// Borrow the process-wide default [`AgentProvider`] for writing.
+pub fn default_provider_mut() -> RwLockWriteGuard<'static, AgentProvider> {
+    DEFAULT_PROVIDER
+        .write()
+        .expect("default_provider lock poisoned")
 }

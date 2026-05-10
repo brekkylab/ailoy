@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use futures::StreamExt as _;
-use tokio::sync::Mutex;
 
 use crate::{
-    agent::{Agent, AgentCard},
+    agent::{Agent, AgentCard, AgentProvider, AgentSpec},
     datatype::Value,
     message::{FinishReason, Message, Part, Role},
+    runenv::RunEnv,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
@@ -40,16 +40,29 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
         .build()
 }
 
-/// Build a [`ToolFunc`] that runs a sub-agent turn for the supplied agent.
+/// Build a one-shot [`ToolFunc`] that materialises a fresh sub-agent from the
+/// supplied [`AgentSpec`] every time the tool is invoked, runs it for one turn,
+/// then drops it.
+///
+/// The closure captures `spec`, `provider`, and `runenv` by clone, so the
+/// produced [`ToolFunc`] is independent of any parent [`Agent`]: the parent
+/// keeps it in its `tools` map alongside ordinary tools, with no special
+/// dispatch needed.
 ///
 /// The returned function:
 /// 1. Streams every [`MessageOutput`](crate::message::MessageOutput) produced by
 ///    the sub-agent during its turn.
 /// 2. Emits a final `Role::Tool` message whose value content is the sub-agent's
 ///    last assistant answer.
-pub fn get_subagent_tool_func(agent: Arc<Mutex<Agent>>) -> ToolFunc {
+pub fn get_subagent_tool_func(
+    spec: AgentSpec,
+    provider: AgentProvider,
+    runenv: Arc<dyn RunEnv>,
+) -> ToolFunc {
     tool_func!(stream |args: Value, id: String| -> Message {
-        let agent = agent.clone();
+        let spec = spec.clone();
+        let provider = provider.clone();
+        let runenv = runenv.clone();
         let id = id.clone();
         async_stream::stream! {
             let task = match args
@@ -66,12 +79,21 @@ pub fn get_subagent_tool_func(agent: Arc<Mutex<Agent>>) -> ToolFunc {
                 }
             };
 
+            let mut agent = match Agent::try_with_provider_and_runenv(spec, &provider, runenv) {
+                Ok(a) => a,
+                Err(e) => {
+                    yield Message::new(Role::Tool)
+                        .with_contents([Part::value(Value::string(format!("Error building subagent: {e}")))])
+                        .with_id(id);
+                    return;
+                }
+            };
+
             let query = Message::new(Role::User).with_contents([Part::text(task)]);
             let mut last_answer = String::new();
 
             {
-                let mut agent_guard = agent.lock().await;
-                let mut strm = agent_guard.run(query);
+                let mut strm = agent.run(query);
                 while let Some(result) = strm.next().await {
                     match result {
                         Ok(output) => {
