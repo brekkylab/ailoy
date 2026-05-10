@@ -6,7 +6,7 @@ use crate::{
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
+        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, ToolDesc, Unmarshal,
     },
     to_value,
 };
@@ -35,9 +35,7 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
             } => {
                 to_value!({"type": "tool_use", "id": id, "name": name, "input": arguments.clone()})
             }
-            Part::Value { value } => {
-                to_value!(serde_json::to_string(&value).unwrap())
-            }
+            Part::Value { value } => value.to_owned(),
             Part::Image { image } => match image {
                 PartImage::Embedded { mime_type, data } => {
                     to_value!({
@@ -63,6 +61,21 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     };
 
     if item.role == Role::Tool {
+        let content: Vec<Value> = item
+            .contents
+            .iter()
+            .filter_map(|part| match part {
+                Part::Text { .. } | Part::Image { .. } => Some(part_to_value(part)),
+                Part::Value { value } => {
+                    let text = match value {
+                        Value::String(s) => s.clone(),
+                        other => serde_json::to_string(other).unwrap_or_default(),
+                    };
+                    Some(to_value!({"type": "text", "text": text}))
+                }
+                _ => None,
+            })
+            .collect();
         return to_value!(
             {
                 "role": "user",
@@ -70,7 +83,7 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
                     {
                         "type": "tool_result",
                         "tool_use_id": item.id.clone().expect("Tool call id must exist."),
-                        "content": part_to_value(&item.contents[0])
+                        "content": content
                     }
                 ]
             }
@@ -331,9 +344,33 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             }
         }
 
+        // Parse usage
+        let usage = root
+            .get("usage")
+            .and_then(|u| u.as_object())
+            .map(|u| TokenUsage {
+                input_tokens: u
+                    .get("input_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                output_tokens: u
+                    .get("output_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                cache_creation_input_tokens: u
+                    .get("cache_creation_input_tokens")
+                    .and_then(|v| v.as_integer())
+                    .map(|v| v as u64),
+                cache_read_input_tokens: u
+                    .get("cache_read_input_tokens")
+                    .and_then(|v| v.as_integer())
+                    .map(|v| v as u64),
+            });
+
         Ok(MessageDeltaOutput {
             delta,
             finish_reason,
+            usage,
         })
     }
 }
@@ -344,8 +381,9 @@ mod tests {
 
     use super::*;
     use crate::{
+        datatype::Bytes,
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, ToolDesc},
+        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc, ToolDescBuilder},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -388,6 +426,174 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_unmarshal_usage() {
+        // All four fields present, including cache fields.
+        let response = to_value!({
+            "stop_reason": "end_turn",
+            "role": "assistant",
+            "content": [],
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_creation_input_tokens": 20,
+                "cache_read_input_tokens": 10
+            }
+        });
+        let usage = AnthropicUnmarshal::default()
+            .unmarshal(response)
+            .unwrap()
+            .usage;
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_creation_input_tokens: Some(20),
+                cache_read_input_tokens: Some(10),
+            })
+        );
+
+        // Cache fields absent → None.
+        let response = to_value!({
+            "stop_reason": "end_turn",
+            "role": "assistant",
+            "content": [],
+            "usage": {"input_tokens": 30, "output_tokens": 15}
+        });
+        let usage = AnthropicUnmarshal::default()
+            .unmarshal(response)
+            .unwrap()
+            .usage;
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                input_tokens: 30,
+                output_tokens: 15,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            })
+        );
+    }
+
+    /// Verifies that tool_result content is an array of text/image blocks per the Anthropic spec.
+    /// Unsupported part types (e.g. Part::Value) are filtered out.
+    #[test]
+    fn test_tool_result_content_marshaling() {
+        // Part::Text → array with a single {"type":"text","text":"..."} block.
+        let msg_text = Message::new(Role::Tool)
+            .with_id("call_1")
+            .with_contents([Part::text("tool output")]);
+        let val = AnthropicMarshal.marshal(&msg_text);
+        let content = val
+            .pointer("/content/0/content")
+            .expect("content/0/content must exist")
+            .as_array()
+            .expect("content must be an array");
+        assert_eq!(content.len(), 1);
+        assert_eq!(
+            content[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("text")
+        );
+        assert_eq!(
+            content[0].pointer("/text").and_then(|v| v.as_str()),
+            Some("tool output")
+        );
+
+        // Part::Image (embedded) → array with a single {"type":"image","source":{"type":"base64",...}} block.
+        let img_bytes = Bytes::from(vec![0xFFu8, 0xD8, 0xFF]);
+        let msg_img = Message::new(Role::Tool)
+            .with_id("call_2")
+            .with_contents([Part::image_embedded("image/jpeg", img_bytes.clone()).unwrap()]);
+        let val = AnthropicMarshal.marshal(&msg_img);
+        let content = val
+            .pointer("/content/0/content")
+            .expect("content/0/content must exist")
+            .as_array()
+            .expect("content must be an array");
+        assert_eq!(content.len(), 1);
+        assert_eq!(
+            content[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("image")
+        );
+        assert_eq!(
+            content[0].pointer("/source/type").and_then(|v| v.as_str()),
+            Some("base64")
+        );
+        assert_eq!(
+            content[0]
+                .pointer("/source/media_type")
+                .and_then(|v| v.as_str()),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            content[0].pointer("/source/data").and_then(|v| v.as_str()),
+            Some(img_bytes.base64().as_str())
+        );
+
+        // Part::Image (url) → array with a single {"type":"image","source":{"type":"url",...}} block.
+        let msg_img_url = Message::new(Role::Tool)
+            .with_id("call_3")
+            .with_contents([Part::image_url("https://example.com/img.png".to_string()).unwrap()]);
+        let val = AnthropicMarshal.marshal(&msg_img_url);
+        let content = val
+            .pointer("/content/0/content")
+            .expect("content/0/content must exist")
+            .as_array()
+            .expect("content must be an array");
+        assert_eq!(content.len(), 1);
+        assert_eq!(
+            content[0].pointer("/source/type").and_then(|v| v.as_str()),
+            Some("url")
+        );
+        assert_eq!(
+            content[0].pointer("/source/url").and_then(|v| v.as_str()),
+            Some("https://example.com/img.png")
+        );
+
+        // Part::Value(String) → {"type":"text","text":"..."} block; no double-encoding.
+        let msg_str = Message::new(Role::Tool)
+            .with_id("call_4")
+            .with_contents([Part::value(Value::string("ok".to_string()))]);
+        let val = AnthropicMarshal.marshal(&msg_str);
+        let content = val
+            .pointer("/content/0/content")
+            .expect("content/0/content must exist")
+            .as_array()
+            .expect("content must be an array");
+        assert_eq!(content.len(), 1);
+        assert_eq!(
+            content[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("text")
+        );
+        assert_eq!(
+            content[0].pointer("/text").and_then(|v| v.as_str()),
+            Some("ok"),
+            "Part::Value(String) must not be double-encoded"
+        );
+
+        // Part::Value(Object) → JSON-encoded as {"type":"text","text":"{...}"} block.
+        let msg_obj = Message::new(Role::Tool)
+            .with_id("call_5")
+            .with_contents([Part::value(to_value!({"temp": 25}))]);
+        let val = AnthropicMarshal.marshal(&msg_obj);
+        let content = val
+            .pointer("/content/0/content")
+            .expect("content/0/content must exist")
+            .as_array()
+            .expect("content must be an array");
+        assert_eq!(content.len(), 1);
+        assert_eq!(
+            content[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("text")
+        );
+        assert_eq!(
+            content[0].pointer("/text").and_then(|v| v.as_str()),
+            Some(r#"{"temp":25}"#),
+            "Part::Value(Object) must be JSON-encoded into a text block"
+        );
+    }
+
     /// Verifies that max_tokens is respected by the Anthropic API (stop_reason: max_tokens).
     #[tokio::test]
     async fn test_run_max_tokens() {
@@ -412,5 +618,67 @@ mod tests {
 
         let resp = model.run(&messages, &tools).await.unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
+    }
+
+    /// Verifies that an image embedded in a Role::Tool message is accepted by the Anthropic API
+    /// and that the model can respond after seeing the image in a tool result.
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    async fn test_tool_result_with_image() {
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
+
+        // Fetch a real JPEG image to use as the tool result
+        let img_bytes = reqwest::get(
+            "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
+        )
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec();
+
+        let model = LangModel::new(
+            "claude-haiku-4-5".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::Anthropic,
+                url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
+                api_key: Some(api_key),
+                max_tokens: None,
+            },
+        );
+
+        let messages = vec![
+            Message::new(Role::User).with_contents([Part::text(
+                "Describe the image returned by the file_read tool.",
+            )]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "toolu_test_001",
+                "file_read",
+                to_value!({"path": "/tmp/test.png"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("toolu_test_001")
+                .with_contents([
+                    Part::image_embedded("image/jpeg", Bytes::from(img_bytes)).unwrap()
+                ]),
+        ];
+        let tools =
+            vec![ToolDescBuilder::new("file_read")
+            .description("Read a file and return its contents. Images are returned inline.")
+            .parameters(to_value!({
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "File path to read"}},
+                "required": ["path"]
+            }))
+            .build()];
+
+        let resp = model.run(&messages, &tools).await.unwrap();
+        assert_eq!(resp.finish_reason, FinishReason::Stop {});
+        assert!(
+            resp.message.contents.iter().any(|p| p.as_text().is_some()),
+            "Expected text response after image tool result"
+        );
     }
 }

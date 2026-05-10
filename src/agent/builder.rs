@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    agent::{Agent, AgentProvider, AgentSpec},
+    agent::{Agent, AgentProvider, AgentSpec, ContextManager},
     message::Message,
     runenv::RunEnv,
 };
@@ -44,6 +44,8 @@ pub struct AgentBuilder {
     history: Vec<Message>,
 
     runenv: Option<Arc<dyn RunEnv>>,
+
+    context_manager: Option<ContextManager>,
 }
 
 impl AgentBuilder {
@@ -56,6 +58,7 @@ impl AgentBuilder {
             provider: None,
             history: Vec::new(),
             runenv: None,
+            context_manager: None,
         }
     }
 
@@ -106,6 +109,15 @@ impl AgentBuilder {
         self
     }
 
+    /// Set the context window management spec.
+    ///
+    /// When set, the agent will automatically truncate history when the input token count
+    /// exceeds `spec.max_input_tokens`, preserving the most recent turns.
+    pub fn context_manager(mut self, spec: ContextManager) -> Self {
+        self.context_manager = Some(spec);
+        self
+    }
+
     /// Materialise the agent by dispatching to the appropriate `Agent::try_*` constructor
     /// based on which optional fields were supplied.
     pub async fn build(self) -> anyhow::Result<Agent> {
@@ -114,6 +126,7 @@ impl AgentBuilder {
             provider,
             history,
             runenv,
+            context_manager,
         } = self;
         let mut agent = match (provider, runenv) {
             (None, None) => Agent::try_new(spec).await?,
@@ -127,6 +140,9 @@ impl AgentBuilder {
         // when the caller explicitly supplied one — e.g. for session resumption.
         if !history.is_empty() {
             agent.state.history = history;
+        }
+        if context_manager.is_some() {
+            agent.set_context_manager(context_manager);
         }
         Ok(agent)
     }
@@ -320,5 +336,20 @@ mod tests {
             bytes.starts_with(b"shared_ok"),
             "subagent runenv did not see the file written by parent, got: {bytes:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_builder_context_manager_is_applied() {
+        let cm = ContextManager {
+            max_input_tokens: 10_000,
+            preserve_recent_turns: 2,
+        };
+        let agent = AgentBuilder::new(TEST_MODEL)
+            .provider(dummy_provider())
+            .context_manager(cm)
+            .build()
+            .await
+            .unwrap();
+        assert!(agent.get_context_manager().is_some());
     }
 }

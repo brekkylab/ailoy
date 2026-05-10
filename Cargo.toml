@@ -40,6 +40,7 @@ getrandom = "0.3"
 hex = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
+infer = "0.16"
 log = "0.4"
 microsandbox = { version = "0.3", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
@@ -56,13 +57,14 @@ strum = { version = "0.27", features = ["derive"] }
 shellexpand = "3"
 tempfile = "3"
 dirs = "6"
+encoding_rs = "0.8"
 flate2 = "1"
 tar = "0.4"
 which = "7"
 zip = "2"
 strum_macros = "0.27"
 thiserror = "2.0.15"
-tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
 unicode-segmentation = "1.12.0"
 url = { version = "2.5", features = ["serde"] }
 urlencoding = "2.1"

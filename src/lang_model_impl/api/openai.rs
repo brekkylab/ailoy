@@ -5,7 +5,7 @@ use crate::{
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
+        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, ToolDesc, Unmarshal,
     },
     to_value,
 };
@@ -52,17 +52,32 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
                     }
                     PartImage::Url { url } => url.clone(),
                 };
-                to_value!({"type": "input_image", "image_url": {"url": url}})
+                to_value!({"type": "input_image", "image_url": url})
             }
         }
     };
 
     if msg.role == Role::Tool {
+        let output: Vec<Value> = msg
+            .contents
+            .iter()
+            .filter_map(|p| match p {
+                Part::Text { .. } | Part::Image { .. } => Some(part_to_value(p)),
+                Part::Value { value } => {
+                    let text = match value {
+                        Value::String(s) => s.clone(),
+                        other => serde_json::to_string(other).unwrap_or_default(),
+                    };
+                    Some(to_value!({"type": "input_text", "text": text}))
+                }
+                _ => None,
+            })
+            .collect();
         return vec![to_value!(
             {
                 "type": "function_call_output",
                 "call_id": msg.id.clone().expect("Tool call id must exist."),
-                "output": part_to_value(&msg.contents[0])
+                "output": output
             }
         )];
     }
@@ -324,9 +339,28 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             finish_reason = Some(FinishReason::ToolCall {});
         }
 
+        // Parse usage (OpenAI Responses API: usage.input_tokens / output_tokens)
+        let usage = val
+            .as_object()
+            .and_then(|r| r.get("usage"))
+            .and_then(|u| u.as_object())
+            .map(|u| TokenUsage {
+                input_tokens: u
+                    .get("input_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                output_tokens: u
+                    .get("output_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            });
+
         Ok(MessageDeltaOutput {
             delta,
             finish_reason,
+            usage,
         })
     }
 }
@@ -337,8 +371,9 @@ mod tests {
 
     use super::*;
     use crate::{
+        datatype::Bytes,
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, ToolDesc},
+        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc, ToolDescBuilder},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -358,6 +393,136 @@ mod tests {
             max_tokens,
         };
         f(&req)
+    }
+
+    #[test]
+    fn test_unmarshal_usage() {
+        let response = to_value!({
+            "status": "completed",
+            "output": [],
+            "usage": {"input_tokens": 200, "output_tokens": 75}
+        });
+        let usage = OpenAIUnmarshal::default()
+            .unmarshal(response)
+            .unwrap()
+            .usage;
+        assert_eq!(
+            usage,
+            Some(TokenUsage {
+                input_tokens: 200,
+                output_tokens: 75,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            })
+        );
+    }
+
+    /// Verifies that function_call_output.output is an array of text/image blocks.
+    /// Unsupported part types (e.g. Part::Value) are filtered out.
+    #[test]
+    fn test_tool_result_content_marshaling() {
+        // Part::Text → array with a single {"type":"input_text","text":"..."} block.
+        let msg_text = Message::new(Role::Tool)
+            .with_id("call_1")
+            .with_contents([Part::text("tool output")]);
+        let items = marshal_message(&msg_text, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_array()
+            .expect("output must be an array");
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("input_text")
+        );
+        assert_eq!(
+            output[0].pointer("/text").and_then(|v| v.as_str()),
+            Some("tool output")
+        );
+
+        // Part::Image (embedded) → array with a single {"type":"input_image","image_url":"data:..."} block.
+        let img_bytes = crate::datatype::Bytes::from(vec![0xFFu8, 0xD8, 0xFF]);
+        let msg_img = Message::new(Role::Tool)
+            .with_id("call_2")
+            .with_contents([Part::image_embedded("image/jpeg", img_bytes.clone()).unwrap()]);
+        let items = marshal_message(&msg_img, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_array()
+            .expect("output must be an array");
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("input_image")
+        );
+        assert_eq!(
+            output[0].pointer("/image_url").and_then(|v| v.as_str()),
+            Some(format!("data:image/jpeg;base64,{}", img_bytes.base64()).as_str())
+        );
+
+        // Part::Image (url) → array with a single {"type":"input_image","image_url":"https://..."} block.
+        let msg_img_url = Message::new(Role::Tool)
+            .with_id("call_3")
+            .with_contents([Part::image_url("https://example.com/img.png".to_string()).unwrap()]);
+        let items = marshal_message(&msg_img_url, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_array()
+            .expect("output must be an array");
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("input_image")
+        );
+        assert_eq!(
+            output[0].pointer("/image_url").and_then(|v| v.as_str()),
+            Some("https://example.com/img.png")
+        );
+
+        // Part::Value(String) → {"type":"input_text","text":"..."} block; no double-encoding.
+        let msg_str = Message::new(Role::Tool)
+            .with_id("call_4")
+            .with_contents([Part::value(crate::datatype::Value::string("ok".to_string()))]);
+        let items = marshal_message(&msg_str, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_array()
+            .expect("output must be an array");
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("input_text")
+        );
+        assert_eq!(
+            output[0].pointer("/text").and_then(|v| v.as_str()),
+            Some("ok"),
+            "Part::Value(String) must not be double-encoded"
+        );
+
+        // Part::Value(Object) → JSON-encoded as {"type":"input_text","text":"{...}"} block.
+        let msg_obj = Message::new(Role::Tool)
+            .with_id("call_5")
+            .with_contents([Part::value(crate::to_value!({"temp": 25}))]);
+        let items = marshal_message(&msg_obj, false);
+        let output = items[0]
+            .pointer("/output")
+            .expect("output must exist")
+            .as_array()
+            .expect("output must be an array");
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output[0].pointer("/type").and_then(|v| v.as_str()),
+            Some("input_text")
+        );
+        assert_eq!(
+            output[0].pointer("/text").and_then(|v| v.as_str()),
+            Some(r#"{"temp":25}"#),
+            "Part::Value(Object) must be JSON-encoded into a text block"
+        );
     }
 
     #[test]
@@ -402,8 +567,69 @@ mod tests {
         let tools: Vec<ToolDesc> = vec![];
 
         let resp = model.run(&messages, &tools).await.unwrap();
-        println!("{}", resp);
         assert_eq!(resp.finish_reason, FinishReason::Length {});
+    }
+
+    /// Verifies that an image embedded in a Role::Tool message is accepted by the OpenAI
+    /// Responses API (output as content array with input_image) and the model can respond.
+    #[test_with::env(OPENAI_API_KEY)]
+    #[tokio::test]
+    async fn test_tool_result_with_image() {
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("OPENAI_API_KEY").unwrap();
+
+        // Fetch a real JPEG image to use as the tool result
+        let img_bytes = reqwest::get(
+            "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
+        )
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec();
+
+        let model = LangModel::new(
+            "gpt-5.4-mini".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::OpenAI,
+                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
+                api_key: Some(api_key),
+                max_tokens: None,
+            },
+        );
+
+        let messages = vec![
+            Message::new(Role::User).with_contents([Part::text(
+                "Describe the image returned by the file_read tool.",
+            )]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "call_test_001",
+                "file_read",
+                to_value!({"path": "/tmp/test.png"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("call_test_001")
+                .with_contents([
+                    Part::image_embedded("image/jpeg", Bytes::from(img_bytes)).unwrap()
+                ]),
+        ];
+        let tools =
+            vec![ToolDescBuilder::new("file_read")
+            .description("Read a file and return its contents. Images are returned inline.")
+            .parameters(to_value!({
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "File path to read"}},
+                "required": ["path"]
+            }))
+            .build()];
+
+        let resp = model.run(&messages, &tools).await.unwrap();
+        assert_eq!(resp.finish_reason, FinishReason::Stop {});
+        assert!(
+            resp.message.contents.iter().any(|p| p.as_text().is_some()),
+            "Expected text response after image tool result"
+        );
     }
 }
 

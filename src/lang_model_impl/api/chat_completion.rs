@@ -5,7 +5,7 @@ use crate::{
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, PartImage, Role, ToolDesc, Unmarshal,
+        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, ToolDesc, Unmarshal,
     },
     to_value,
 };
@@ -71,14 +71,36 @@ impl Marshal<Message> for ChatCompletionMarshal {
                 .insert("tool_call_id".into(), id.into());
         }
         if !item.contents.is_empty() {
-            rv.as_object_mut().unwrap().insert(
-                "content".into(),
-                item.contents
-                    .iter()
-                    .map(part_to_value)
-                    .collect::<Vec<_>>()
-                    .into(),
-            );
+            let contents: Vec<Value> = item
+                .contents
+                .iter()
+                .map(|p| {
+                    // ChatCompletion backends don't reliably accept images in tool results;
+                    // substitute a text label so the model knows an image was returned.
+                    if item.role == Role::Tool {
+                        match p {
+                            Part::Image {
+                                image: PartImage::Embedded { mime_type, .. },
+                            } => {
+                                return part_to_value(&Part::text(format!(
+                                    "[image: {}]",
+                                    mime_type
+                                )));
+                            }
+                            Part::Image {
+                                image: PartImage::Url { url },
+                            } => {
+                                return part_to_value(&Part::text(format!("[image at {}]", url)));
+                            }
+                            _ => {}
+                        }
+                    }
+                    part_to_value(p)
+                })
+                .collect();
+            rv.as_object_mut()
+                .unwrap()
+                .insert("content".into(), contents.into());
         }
         if let Some(tool_calls) = &item.tool_calls
             && !tool_calls.is_empty()
@@ -254,6 +276,7 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             return Ok(MessageDeltaOutput {
                 delta: MessageDelta::new().with_role(Role::Assistant),
                 finish_reason: Some(FinishReason::Refusal { reason }),
+                usage: None,
             });
         }
 
@@ -287,9 +310,28 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             delta = delta.with_tool_calls(tool_calls);
         }
 
+        // Parse usage (Chat Completion: usage.prompt_tokens / completion_tokens)
+        let usage = val
+            .as_object()
+            .and_then(|r| r.get("usage"))
+            .and_then(|u| u.as_object())
+            .map(|u| TokenUsage {
+                input_tokens: u
+                    .get("prompt_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                output_tokens: u
+                    .get("completion_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            });
+
         Ok(MessageDeltaOutput {
             delta,
             finish_reason,
+            usage,
         })
     }
 }
