@@ -1,9 +1,11 @@
 use std::path::Path;
 
+mod file_entry;
 mod local;
 #[cfg(feature = "sandbox")]
 mod sandbox;
 
+pub use file_entry::*;
 pub use local::*;
 #[cfg(feature = "sandbox")]
 pub use sandbox::*;
