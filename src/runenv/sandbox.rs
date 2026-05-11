@@ -9,7 +9,7 @@ use std::{
 
 use microsandbox::{
     ExecOutput, MicrosandboxError, Sandbox as MsbSandbox,
-    sandbox::{ExecOptionsBuilder, PullPolicy, SandboxBuilder, SandboxStatus},
+    sandbox::{ExecOptionsBuilder, FsEntryKind, PullPolicy, SandboxBuilder, SandboxStatus},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -203,91 +203,36 @@ impl RunEnv for Sandbox {
     }
 
     async fn ls(&self, path: &Path) -> anyhow::Result<Vec<Dirent>> {
-        let path_str = path.to_string_lossy().into_owned();
-        let script = format!(
-            r#"cd "{path}" || exit 1
-for entry in * .[!.]* ..?*; do
-  [ -e "$entry" ] || continue
-  if [ -d "$entry" ]; then
-    kind=d
-    size=0
-  else
-    kind=f
-    size=$(wc -c < "$entry" 2>/dev/null | tr -d ' ')
-    [ -z "$size" ] && size=0
-  fi
-  r=0; w=0; x=0
-  [ -r "$entry" ] && r=4
-  [ -w "$entry" ] && w=2
-  [ -x "$entry" ] && x=1
-  perm=$((r + w + x))
-  printf '%s\t%s\t%s\t%s\n' "$kind" "$perm" "$size" "$entry"
-done"#,
-            path = path_str
-        );
-        let result = self
-            .exec("sh".to_string(), vec!["-c".to_string(), script], None)
-            .await?;
-        if result.exit_code != 0 {
-            anyhow::bail!("ls {}: {}", path.display(), result.stderr.trim());
-        }
-        let mut entries = Vec::new();
-        for line in result.stdout.lines() {
-            let parts: Vec<&str> = line.splitn(4, '\t').collect();
-            if parts.len() != 4 {
-                continue;
-            }
-            let permission: u8 = parts[1].parse().unwrap_or(0);
-            let name = parts[3].to_string();
-            match parts[0] {
-                "d" => {
-                    let children = self.ls(&path.join(&name)).await.unwrap_or_default();
-                    entries.push(Dirent::Dir {
-                        name,
-                        permission,
-                        children,
-                    });
-                }
-                "f" => {
-                    let sz: usize = parts[2].parse().unwrap_or(0);
-                    entries.push(Dirent::File {
-                        name,
-                        permission,
-                        sz,
-                    });
-                }
-                _ => {}
-            }
-        }
-        Ok(entries)
+        let guard = self.ensure_running().await?;
+        let result = ls_recursive(&guard, path.to_path_buf()).await;
+        let _ = guard.stop_and_wait().await;
+        result
     }
 
     async fn mkdir(&self, path: &Path) -> anyhow::Result<()> {
-        let result = self
-            .exec(
-                "mkdir".to_string(),
-                vec!["-p".to_string(), path.to_string_lossy().into_owned()],
-                None,
-            )
-            .await?;
-        if result.exit_code != 0 {
-            anyhow::bail!("mkdir {}: {}", path.display(), result.stderr.trim());
-        }
-        Ok(())
+        let path_str = path.to_string_lossy().into_owned();
+        let guard = self.ensure_running().await?;
+        let result = guard.fs().mkdir(&path_str).await;
+        let _ = guard.stop_and_wait().await;
+        Ok(result?)
     }
 
+    /// Non-recursive: fails if the directory is non-empty, matching
+    /// [`Local::rmdir`](super::Local) and the POSIX `rmdir(2)` contract.
     async fn rmdir(&self, path: &Path) -> anyhow::Result<()> {
-        let result = self
-            .exec(
-                "rmdir".to_string(),
-                vec![path.to_string_lossy().into_owned()],
-                None,
-            )
-            .await?;
-        if result.exit_code != 0 {
-            anyhow::bail!("rmdir {}: {}", path.display(), result.stderr.trim());
+        let path_str = path.to_string_lossy().into_owned();
+        let guard = self.ensure_running().await?;
+        let result = async {
+            let entries = guard.fs().list(&path_str).await?;
+            if !entries.is_empty() {
+                anyhow::bail!("rmdir {}: directory not empty", path.display());
+            }
+            guard.fs().remove_dir(&path_str).await?;
+            Ok(())
         }
-        Ok(())
+        .await;
+        let _ = guard.stop_and_wait().await;
+        result
     }
 
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {
@@ -611,6 +556,50 @@ async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result
     }
     let sb = builder.create_detached().await?;
     Ok(sb)
+}
+
+/// Recursively walk a directory using the native filesystem API.
+///
+/// Takes `&MsbSandbox` (rather than `&Sandbox`) so the caller holds the
+/// mutex guard once at the top level — recursive calls cannot re-acquire it.
+fn ls_recursive(
+    sb: &MsbSandbox,
+    path: PathBuf,
+) -> futures::future::BoxFuture<'_, anyhow::Result<Vec<Dirent>>> {
+    Box::pin(async move {
+        let path_str = path.to_string_lossy().into_owned();
+        let entries = sb.fs().list(&path_str).await?;
+        let mut out = Vec::with_capacity(entries.len());
+        for entry in entries {
+            // `entry.path` may be a basename or full path depending on the
+            // microsandbox version; extract the basename either way.
+            let name = Path::new(&entry.path)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| entry.path.clone());
+            let permission = ((entry.mode >> 6) & 0o7) as u8;
+            match entry.kind {
+                FsEntryKind::Directory => {
+                    let children = ls_recursive(sb, path.join(&name))
+                        .await
+                        .unwrap_or_default();
+                    out.push(Dirent::Dir {
+                        name,
+                        permission,
+                        children,
+                    });
+                }
+                _ => {
+                    out.push(Dirent::File {
+                        name,
+                        permission,
+                        sz: entry.size as usize,
+                    });
+                }
+            }
+        }
+        Ok(out)
+    })
 }
 
 fn apply_volume_mount(builder: SandboxBuilder, mount: &VolumeMount) -> SandboxBuilder {
