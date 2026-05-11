@@ -1,8 +1,19 @@
 use std::path::Path;
 
-use crate::runenv::{ExecResult, RunEnv};
+use crate::runenv::{Dirent, ExecResult, RunEnv};
 
 pub struct Local {}
+
+#[cfg(unix)]
+fn owner_permission(meta: &std::fs::Metadata) -> u8 {
+    use std::os::unix::fs::PermissionsExt;
+    ((meta.permissions().mode() >> 6) & 0o7) as u8
+}
+
+#[cfg(not(unix))]
+fn owner_permission(meta: &std::fs::Metadata) -> u8 {
+    if meta.permissions().readonly() { 4 } else { 6 }
+}
 
 #[async_trait::async_trait]
 impl RunEnv for Local {
@@ -39,6 +50,40 @@ impl RunEnv for Local {
                 timed_out: true,
             }),
         }
+    }
+
+    async fn ls(&self, path: &Path) -> anyhow::Result<Vec<Dirent>> {
+        let mut entries = Vec::new();
+        let mut dir = tokio::fs::read_dir(path).await?;
+        while let Some(entry) = dir.next_entry().await? {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let meta = entry.metadata().await?;
+            let permission = owner_permission(&meta);
+            if meta.is_dir() {
+                let child_path = entry.path();
+                let children = self.ls(&child_path).await.unwrap_or_default();
+                entries.push(Dirent::Dir {
+                    name,
+                    permission,
+                    children,
+                });
+            } else {
+                entries.push(Dirent::File {
+                    name,
+                    permission,
+                    sz: meta.len() as usize,
+                });
+            }
+        }
+        Ok(entries)
+    }
+
+    async fn mkdir(&self, path: &Path) -> anyhow::Result<()> {
+        tokio::fs::create_dir_all(path).await.map_err(Into::into)
+    }
+
+    async fn rmdir(&self, path: &Path) -> anyhow::Result<()> {
+        tokio::fs::remove_dir(path).await.map_err(Into::into)
     }
 
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {

@@ -9,13 +9,13 @@ use std::{
 
 use microsandbox::{
     ExecOutput, MicrosandboxError, Sandbox as MsbSandbox,
-    sandbox::{ExecOptionsBuilder, PullPolicy, SandboxBuilder, SandboxStatus},
+    sandbox::{ExecOptionsBuilder, FsEntryKind, PullPolicy, SandboxBuilder, SandboxStatus},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{ExecResult, RunEnv};
+use super::{Dirent, ExecResult, RunEnv};
 use crate::util::truncate::middle_truncate;
 
 fn fresh_sandbox_name() -> String {
@@ -198,6 +198,39 @@ impl RunEnv for Sandbox {
                 .await;
             Self::handle_exec_result_static(raw, max_output_chars)
         };
+        let _ = guard.stop_and_wait().await;
+        result
+    }
+
+    async fn ls(&self, path: &Path) -> anyhow::Result<Vec<Dirent>> {
+        let guard = self.ensure_running().await?;
+        let result = ls_recursive(&guard, path.to_path_buf()).await;
+        let _ = guard.stop_and_wait().await;
+        result
+    }
+
+    async fn mkdir(&self, path: &Path) -> anyhow::Result<()> {
+        let path_str = path.to_string_lossy().into_owned();
+        let guard = self.ensure_running().await?;
+        let result = guard.fs().mkdir(&path_str).await;
+        let _ = guard.stop_and_wait().await;
+        Ok(result?)
+    }
+
+    /// Non-recursive: fails if the directory is non-empty, matching
+    /// [`Local::rmdir`](super::Local) and the POSIX `rmdir(2)` contract.
+    async fn rmdir(&self, path: &Path) -> anyhow::Result<()> {
+        let path_str = path.to_string_lossy().into_owned();
+        let guard = self.ensure_running().await?;
+        let result = async {
+            let entries = guard.fs().list(&path_str).await?;
+            if !entries.is_empty() {
+                anyhow::bail!("rmdir {}: directory not empty", path.display());
+            }
+            guard.fs().remove_dir(&path_str).await?;
+            Ok(())
+        }
+        .await;
         let _ = guard.stop_and_wait().await;
         result
     }
@@ -523,6 +556,50 @@ async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result
     }
     let sb = builder.create_detached().await?;
     Ok(sb)
+}
+
+/// Recursively walk a directory using the native filesystem API.
+///
+/// Takes `&MsbSandbox` (rather than `&Sandbox`) so the caller holds the
+/// mutex guard once at the top level — recursive calls cannot re-acquire it.
+fn ls_recursive(
+    sb: &MsbSandbox,
+    path: PathBuf,
+) -> futures::future::BoxFuture<'_, anyhow::Result<Vec<Dirent>>> {
+    Box::pin(async move {
+        let path_str = path.to_string_lossy().into_owned();
+        let entries = sb.fs().list(&path_str).await?;
+        let mut out = Vec::with_capacity(entries.len());
+        for entry in entries {
+            // `entry.path` may be a basename or full path depending on the
+            // microsandbox version; extract the basename either way.
+            let name = Path::new(&entry.path)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| entry.path.clone());
+            let permission = ((entry.mode >> 6) & 0o7) as u8;
+            match entry.kind {
+                FsEntryKind::Directory => {
+                    let children = ls_recursive(sb, path.join(&name))
+                        .await
+                        .unwrap_or_default();
+                    out.push(Dirent::Dir {
+                        name,
+                        permission,
+                        children,
+                    });
+                }
+                _ => {
+                    out.push(Dirent::File {
+                        name,
+                        permission,
+                        sz: entry.size as usize,
+                    });
+                }
+            }
+        }
+        Ok(out)
+    })
 }
 
 fn apply_volume_mount(builder: SandboxBuilder, mount: &VolumeMount) -> SandboxBuilder {

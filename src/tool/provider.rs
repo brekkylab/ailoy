@@ -15,7 +15,10 @@ pub enum BuiltinToolProviderElem {
     WebSearch {},
     PythonRepl {},
     Bash {},
-    FileRead {},
+    Read {},
+    Write {},
+    Edit {},
+    ApplyPatch {},
 }
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
@@ -111,9 +114,27 @@ impl ToolProvider {
         self
     }
 
-    pub fn file_read(mut self) -> Self {
+    pub fn read(mut self) -> Self {
+        self.inner
+            .push(ToolProviderElem::Builtin(BuiltinToolProviderElem::Read {}));
+        self
+    }
+
+    pub fn write(mut self) -> Self {
+        self.inner
+            .push(ToolProviderElem::Builtin(BuiltinToolProviderElem::Write {}));
+        self
+    }
+
+    pub fn edit(mut self) -> Self {
+        self.inner
+            .push(ToolProviderElem::Builtin(BuiltinToolProviderElem::Edit {}));
+        self
+    }
+
+    pub fn apply_patch(mut self) -> Self {
         self.inner.push(ToolProviderElem::Builtin(
-            BuiltinToolProviderElem::FileRead {},
+            BuiltinToolProviderElem::ApplyPatch {},
         ));
         self
     }
