@@ -40,6 +40,13 @@ pub async fn build_write_tool() -> anyhow::Result<ToolFactory> {
                 "phase": "validation"
             });
         };
+        let path = Path::new(path_str);
+        if !path.is_absolute() {
+            return crate::to_value!({
+                "error": "file_path must be absolute",
+                "phase": "validation"
+            });
+        }
         let Some(content) = args.pointer("/content").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: content",
