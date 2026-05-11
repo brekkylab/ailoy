@@ -40,8 +40,7 @@ pub async fn build_write_tool() -> anyhow::Result<ToolFactory> {
                 "phase": "validation"
             });
         };
-        let path = Path::new(path_str);
-        if !path.is_absolute() {
+        if !Path::new(path).is_absolute() {
             return crate::to_value!({
                 "error": "file_path must be absolute",
                 "phase": "validation"
