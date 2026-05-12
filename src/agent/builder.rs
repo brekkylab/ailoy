@@ -100,6 +100,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn python_repl_tool(mut self) -> Self {
+        self.spec = self.spec.python_repl_tool();
+        self
+    }
+
     pub fn web_search_tool(mut self) -> Self {
         self.spec = self.spec.web_search_tool();
         self
