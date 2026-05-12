@@ -16,7 +16,7 @@ pub fn get_write_tool_desc() -> ToolDesc {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "The absolute path to the file to write (must be absolute, not relative)"
+                    "description": "The path to the file to write"
                 },
                 "content": {
                     "type": "string",

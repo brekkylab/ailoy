@@ -20,7 +20,7 @@ pub fn get_edit_tool_desc() -> ToolDesc {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "The absolute path to the file to modify"
+                    "description": "The path to the file to modify"
                 },
                 "old_string": {
                     "type": "string",
