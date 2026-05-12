@@ -70,101 +70,135 @@ fn unquote(s: &str) -> &str {
 }
 
 /// Render the "Available Skills" block for an agent's system instruction.
-/// Returns `None` when `skills` is empty.
-pub fn render_skills_table(skills: &[SkillMeta], skill_root: &Path) -> Option<String> {
-    if skills.is_empty() {
+/// Returns `None` when both `skills` is empty and `skill_root` is `None` —
+/// in that case the agent has no skill machinery and the block adds noise.
+///
+/// When `skill_root` is `Some`, the block tells the model that any new
+/// skills it creates **must** live under that path so snapshot's auto-
+/// discovery picks them up.  When `None`, no creation instructions are
+/// rendered — the agent is told what skills exist and nothing else.  Any
+/// snapshot-persistence limitations are an internal concern.
+pub fn render_skills_table(skills: &[SkillMeta], skill_root: Option<&Path>) -> Option<String> {
+    if skills.is_empty() && skill_root.is_none() {
         return None;
     }
-    let mut out = format!(
+    let mut out = String::from(
         "## Available Skills\n\
-         Your skills live under `{}/<name>/`. Each skill is one directory \
-         containing `SKILL.md` (with `name:` and `description:` frontmatter) \
-         plus any supporting files (other markdown, scripts, etc.). Read the \
-         `SKILL.md` with `cat <path>` before following its steps. To add a new \
-         skill at runtime, create `<your_skill_root>/<name>/SKILL.md` and any \
-         supporting files alongside it.\n\n\
-         | Name | Description | SKILL.md |\n|------|-------------|----------|\n",
-        skill_root.display()
+         Each skill is a directory containing `SKILL.md` (with `name:` and \
+         `description:` frontmatter) plus any supporting files (other \
+         markdown, scripts, etc.). Read the `SKILL.md` with `cat <path>` \
+         before following its steps.\n\n",
     );
-    for s in skills {
+    if !skills.is_empty() {
+        out.push_str("| Name | Description | SKILL.md |\n|------|-------------|----------|\n");
+        for s in skills {
+            out.push_str(&format!(
+                "| {} | {} | {} |\n",
+                s.name,
+                s.description,
+                s.skill_md_path().display()
+            ));
+        }
+        out.push('\n');
+    }
+    if let Some(root) = skill_root {
         out.push_str(&format!(
-            "| {} | {} | {} |\n",
-            s.name,
-            s.description,
-            s.skill_md_path().display()
+            "**Creating new skills at runtime:** new skills MUST be created \
+             under `{}/<skill_name>/`, with a `SKILL.md` carrying `name:` \
+             and `description:` frontmatter (plus any supporting files).\n",
+            root.display()
         ));
     }
     Some(out)
 }
 
-/// Scan `skill_root` for subdirectories containing `SKILL.md`.  Always
-/// re-scans (no cache); silently skips dirs without `SKILL.md` or with
-/// malformed frontmatter.
+/// Read each declared skill directory's `SKILL.md` from the runenv and
+/// return the parsed metadata.  Silently skips entries whose `SKILL.md` is
+/// missing or malformed — the skill name (last path segment) is used as-is.
 pub async fn discover_skills(
     runenv: &dyn RunEnv,
-    skill_root: &Path,
+    skill_dirs: &[PathBuf],
 ) -> anyhow::Result<Vec<SkillMeta>> {
+    let mut out = Vec::new();
+    for dir in skill_dirs {
+        let Some(meta) = read_skill_meta(runenv, dir).await else {
+            continue;
+        };
+        out.push(meta);
+    }
+    Ok(out)
+}
+
+/// Scan a single fixed directory for `<child>/SKILL.md` entries that are
+/// not already declared.  Used by [`Agent::snapshot`](crate::agent::Agent::snapshot)
+/// to round-trip skills the agent created at runtime under the spec's
+/// `skill_root`.  Single `ls` call — O(children of `skill_root`).
+pub async fn discover_new_skills(
+    runenv: &dyn RunEnv,
+    skill_root: &Path,
+    declared: &[PathBuf],
+) -> anyhow::Result<Vec<PathBuf>> {
     let entries = match runenv.ls(skill_root).await {
         Ok(es) => es,
         Err(_) => return Ok(Vec::new()),
     };
-
+    let declared_set: std::collections::HashSet<&PathBuf> = declared.iter().collect();
     let mut out = Vec::new();
     for entry in entries {
         let Dirent::Dir { name, .. } = entry else {
             continue;
         };
-        let dir = skill_root.join(&name);
-        let skill_md = dir.join(SKILL_FILE);
-        let bytes = match runenv.read(&skill_md).await {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-        let raw = match String::from_utf8(bytes) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let (_n, description, _body) = match parse_skill_frontmatter(&raw) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        // Skill name comes from the directory, not the frontmatter, so it
-        // tracks the on-disk layout.
-        out.push(SkillMeta {
-            name,
-            description,
-            dir,
-        });
+        let candidate = skill_root.join(&name);
+        if declared_set.contains(&candidate) {
+            continue;
+        }
+        if runenv.read(&candidate.join(SKILL_FILE)).await.is_ok() {
+            out.push(candidate);
+        }
     }
     Ok(out)
 }
 
-/// Pick out `<skill_root>/<name>/SKILL.md` entries from an in-memory
-/// [`FileEntry`] slice — used at build time before materialisation.
-pub fn scan_declared_skills(files: &[FileEntry], skill_root: &Path) -> Vec<SkillMeta> {
-    let mut out = Vec::new();
-    for f in files {
-        let Some(rel) = f.path.strip_prefix(skill_root).ok() else {
-            continue;
-        };
-        let parts: Vec<_> = rel.iter().collect();
-        if parts.len() != 2 || parts[1] != std::ffi::OsStr::new(SKILL_FILE) {
-            continue;
-        }
-        let name = parts[0].to_string_lossy().into_owned();
+async fn read_skill_meta(runenv: &dyn RunEnv, dir: &Path) -> Option<SkillMeta> {
+    let bytes = runenv.read(&dir.join(SKILL_FILE)).await.ok()?;
+    let raw = String::from_utf8(bytes).ok()?;
+    let (_n, description, _body) = parse_skill_frontmatter(&raw).ok()?;
+    let name = dir
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Some(SkillMeta {
+        name,
+        description,
+        dir: dir.to_path_buf(),
+    })
+}
 
-        let raw = match std::str::from_utf8(f.content.as_ref()) {
-            Ok(s) => s,
-            Err(_) => continue,
+/// Build [`SkillMeta`] entries for each declared skill dir using the
+/// in-memory [`FileEntry`] list as the content source.  Used at build time
+/// before any IO has happened, so the system instruction can list the
+/// agent's skills before the runenv is touched.
+pub fn scan_declared_skills(files: &[FileEntry], skill_dirs: &[PathBuf]) -> Vec<SkillMeta> {
+    let mut out = Vec::new();
+    for dir in skill_dirs {
+        let skill_md = dir.join(SKILL_FILE);
+        let Some(file) = files.iter().find(|f| f.path == skill_md) else {
+            continue;
         };
-        let (_n, description, _body) = match parse_skill_frontmatter(raw) {
-            Ok(t) => t,
-            Err(_) => continue,
+        let Ok(raw) = std::str::from_utf8(file.content.as_ref()) else {
+            continue;
         };
+        let Ok((_n, description, _body)) = parse_skill_frontmatter(raw) else {
+            continue;
+        };
+        let name = dir
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
         out.push(SkillMeta {
             name,
             description,
-            dir: skill_root.join(parts[0]),
+            dir: dir.clone(),
         });
     }
     out
@@ -212,24 +246,62 @@ mod tests {
     }
 
     #[test]
-    fn test_render_skills_table_empty() {
-        assert!(render_skills_table(&[], Path::new("/workspace/skills")).is_none());
+    fn test_render_skills_table_empty_and_no_root_returns_none() {
+        // No skills and no skill_root → block adds no value, omit it.
+        assert!(render_skills_table(&[], None).is_none());
     }
 
     #[test]
-    fn test_render_skills_table_basic() {
+    fn test_render_skills_table_empty_skills_but_root_set() {
+        // Empty list but skill_root set → still render so the model knows
+        // it MAY create skills (and where).
+        let out =
+            render_skills_table(&[], Some(Path::new("/workspace/skills"))).unwrap();
+        assert!(out.contains("Available Skills"));
+        assert!(out.contains("Creating new skills at runtime"));
+        assert!(out.contains("/workspace/skills"));
+        // No table rows since skills is empty.
+        assert!(!out.contains("| Name |"));
+    }
+
+    #[test]
+    fn test_render_skills_table_basic_with_root() {
         let metas = vec![SkillMeta {
             name: "foo".into(),
             description: "do foo".into(),
             dir: PathBuf::from("/workspace/skills/foo"),
         }];
-        let out = render_skills_table(&metas, Path::new("/workspace/skills")).unwrap();
+        let out =
+            render_skills_table(&metas, Some(Path::new("/workspace/skills"))).unwrap();
         assert!(out.contains("Available Skills"));
         assert!(out.contains("| foo | do foo | /workspace/skills/foo/SKILL.md |"));
+        // Crucially: the block points at skill_root for new skill creation.
+        assert!(
+            out.contains("/workspace/skills/<skill_name>/"),
+            "block must direct the model to skill_root for new skills: {out}"
+        );
+        assert!(out.contains("MUST"));
     }
 
     #[test]
-    fn test_scan_declared_skills_picks_skill_md_only() {
+    fn test_render_skills_table_without_root_omits_creation_block() {
+        let metas = vec![SkillMeta {
+            name: "foo".into(),
+            description: "do foo".into(),
+            dir: PathBuf::from("/workspace/skills/foo"),
+        }];
+        let out = render_skills_table(&metas, None).unwrap();
+        assert!(out.contains("Available Skills"));
+        assert!(out.contains("| foo | do foo |"));
+        // No creation instructions and no internal warnings — the agent
+        // only learns what skills exist.
+        assert!(!out.contains("Creating new skills at runtime"));
+        assert!(!out.contains("skill_root"));
+    }
+
+    #[test]
+    fn test_scan_declared_skills_matches_skill_md_by_path() {
+        let greet_dir = PathBuf::from("/workspace/skills/greet");
         let files = vec![
             FileEntry::new(
                 "/workspace/skills/greet/SKILL.md",
@@ -239,45 +311,39 @@ mod tests {
                 "/workspace/skills/greet/helper.py",
                 b"# supporting script\n".to_vec(),
             ),
-            FileEntry::new(
-                "/workspace/data/foo.txt",
-                b"unrelated\n".to_vec(),
-            ),
         ];
-        let metas = scan_declared_skills(&files, Path::new("/workspace/skills"));
+        let metas = scan_declared_skills(&files, &[greet_dir.clone()]);
         assert_eq!(metas.len(), 1);
         assert_eq!(metas[0].name, "greet");
         assert_eq!(metas[0].description, "say hello");
-        assert_eq!(metas[0].dir, PathBuf::from("/workspace/skills/greet"));
+        assert_eq!(metas[0].dir, greet_dir);
+    }
+
+    #[test]
+    fn test_scan_declared_skills_skips_missing_skill_md() {
+        // Declared skill but no FileEntry providing the SKILL.md → silently
+        // skipped from the rendered table (model can still cat it at
+        // runtime if it exists on disk).
+        let dir = PathBuf::from("/workspace/skills/orphan");
+        assert!(scan_declared_skills(&[], &[dir]).is_empty());
     }
 
     #[test]
     fn test_scan_declared_skills_skips_malformed_frontmatter() {
+        let bad_dir = PathBuf::from("/workspace/skills/bad");
         let files = vec![FileEntry::new(
             "/workspace/skills/bad/SKILL.md",
             b"no frontmatter at all\n".to_vec(),
         )];
-        assert!(scan_declared_skills(&files, Path::new("/workspace/skills")).is_empty());
-    }
-
-    #[test]
-    fn test_scan_declared_skills_ignores_nested_dirs() {
-        // Files three levels deep don't count as a top-level skill.
-        let files = vec![FileEntry::new(
-            "/workspace/skills/parent/child/SKILL.md",
-            b"---\nname: c\ndescription: d\n---\nbody\n".to_vec(),
-        )];
-        assert!(scan_declared_skills(&files, Path::new("/workspace/skills")).is_empty());
+        assert!(scan_declared_skills(&files, &[bad_dir]).is_empty());
     }
 
     #[tokio::test]
-    async fn test_discover_skills_finds_directory_with_skill_md() {
+    async fn test_discover_skills_reads_each_declared_dir() {
         let dir = tempfile::tempdir().unwrap();
-        let skill_dir = dir.path().join("skills");
         let runenv = local_runenv();
 
-        // Lay out: <skill_dir>/greet/SKILL.md  + supporting file
-        let greet_dir = skill_dir.join("greet");
+        let greet_dir = dir.path().join("skills/greet");
         runenv.mkdir(&greet_dir).await.unwrap();
         runenv
             .write(
@@ -291,7 +357,9 @@ mod tests {
             .await
             .unwrap();
 
-        let metas = discover_skills(&*runenv, &skill_dir).await.unwrap();
+        let metas = discover_skills(&*runenv, &[greet_dir.clone()])
+            .await
+            .unwrap();
         assert_eq!(metas.len(), 1);
         assert_eq!(metas[0].name, "greet");
         assert_eq!(metas[0].description, "say hello");
@@ -299,30 +367,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_discover_skills_missing_root_returns_empty() {
+    async fn test_discover_skills_missing_dir_is_skipped() {
         let dir = tempfile::tempdir().unwrap();
         let runenv = local_runenv();
-        let metas = discover_skills(&*runenv, &dir.path().join("does_not_exist"))
+        let metas = discover_skills(&*runenv, &[dir.path().join("does_not_exist")])
             .await
             .unwrap();
         assert!(metas.is_empty());
     }
 
     #[tokio::test]
-    async fn test_discover_skills_ignores_dirs_without_skill_md() {
+    async fn test_discover_new_skills_finds_sibling_with_skill_md() {
         let dir = tempfile::tempdir().unwrap();
-        let skill_dir = dir.path().join("skills");
         let runenv = local_runenv();
+        let root = dir.path().join("skills");
+        let declared = root.join("declared");
+        let runtime = root.join("runtime");
 
-        let noskill = skill_dir.join("noskill");
+        runenv.mkdir(&declared).await.unwrap();
+        runenv
+            .write(&declared.join("SKILL.md"), b"---\nname: declared\ndescription: d\n---\nb\n")
+            .await
+            .unwrap();
+        runenv.mkdir(&runtime).await.unwrap();
+        runenv
+            .write(&runtime.join("SKILL.md"), b"---\nname: runtime\ndescription: r\n---\nb\n")
+            .await
+            .unwrap();
+
+        let news = discover_new_skills(&*runenv, &root, &[declared.clone()])
+            .await
+            .unwrap();
+        assert_eq!(news, vec![runtime]);
+    }
+
+    #[tokio::test]
+    async fn test_discover_new_skills_skips_dirs_without_skill_md() {
+        let dir = tempfile::tempdir().unwrap();
+        let runenv = local_runenv();
+        let root = dir.path().join("skills");
+
+        let noskill = root.join("noskill");
         runenv.mkdir(&noskill).await.unwrap();
         runenv
             .write(&noskill.join("notes.md"), b"# nothing special\n")
             .await
             .unwrap();
 
-        let metas = discover_skills(&*runenv, &skill_dir).await.unwrap();
-        assert!(metas.is_empty());
+        let news = discover_new_skills(&*runenv, &root, &[]).await.unwrap();
+        assert!(news.is_empty());
     }
 
     /// End-to-end verification of the new file-based skill API:
@@ -435,8 +528,8 @@ After the script exits with code 0, the Markdown file is written next to the PDF
 "#;
 
         // Slim system instruction — the Available Skills table is appended
-        // automatically by [`AgentBuilder`] from `spec.files` matching the
-        // `<skill_dir>/<name>/SKILL.md` pattern.  No manual table.
+        // automatically by [`AgentBuilder`] from `spec.skills` matched
+        // against each declared dir's `SKILL.md` FileEntry.  No manual table.
         let instruction = "You are a helpful assistant with access to skills. \
              To activate a skill, read its SKILL.md using the bash tool \
              (`cat <path>`), then follow the instructions inside.";
@@ -456,9 +549,10 @@ After the script exits with code 0, the Markdown file is written next to the PDF
         .await
         .expect("sandbox creation failed");
 
-        // Build the agent via the new file API: the SKILL.md is declared as a
-        // FileEntry on the spec.  Lazy materialise (on first run) writes it to
-        // the sandbox at the canonical directory path.
+        // Build the agent via the new skill API: the skill is declared by
+        // its directory; its SKILL.md is provided as a FileEntry.  Lazy
+        // materialise (on first run) writes it to the sandbox.
+        let skill_dir = PathBuf::from("/workspace/skills/convert_pdf_to_md");
         let mut agent = AgentBuilder::new("anthropic/claude-sonnet-4-6")
             .provider(provider)
             .runenv(sandbox)
@@ -467,8 +561,10 @@ After the script exits with code 0, the Markdown file is written next to the PDF
                 crate::tool::r#impl::get_python_repl_tool_desc(),
             ])
             .instruction(instruction)
+            .skill_root("/workspace/skills")
+            .skill(&skill_dir)
             .file(FileEntry::new(
-                "/workspace/skills/convert_pdf_to_md/SKILL.md",
+                skill_dir.join("SKILL.md"),
                 skill_md.as_bytes().to_vec(),
             ))
             .build()

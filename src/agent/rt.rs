@@ -7,15 +7,14 @@ use crate::{
     lang_model::LangModel,
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{Dirent, FileEntry, Local, RunEnv},
-    skill::{SkillMeta, discover_skills, render_skills_table, scan_declared_skills},
+    skill::{
+        SkillMeta, discover_new_skills, discover_skills, render_skills_table, scan_declared_skills,
+    },
     tool::{
         ToolDesc, ToolFunc,
         r#impl::{get_subagent_tool_desc, get_subagent_tool_func},
     },
 };
-
-/// Root directory where agent skill files are materialised inside the runenv.
-const SKILLS_ROOT: &str = "/workspace/skills";
 
 /// Walk the spec tree and write every declared file (this agent's plus the
 /// subtree's) to the runenv with **write-once** semantics: if a file already
@@ -131,8 +130,8 @@ pub struct Agent {
     context_manager: Option<ContextManager>,
 
     /// The spec this agent was built from.  Carries the agent's identity,
-    /// declared files, and its [`AgentSpec::skill_dir`] — the root for skill
-    /// materialisation and discovery.  Used by [`Agent::snapshot`] as the
+    /// declared files, declared [`AgentSpec::skills`], and the optional
+    /// [`AgentSpec::skill_root`].  Used by [`Agent::snapshot`] as the
     /// template for non-skill fields (model, instruction, tools, card,
     /// subagents).
     spec: AgentSpec,
@@ -173,35 +172,16 @@ impl Agent {
     /// and is also cloned into every sub-agent declared in [`AgentSpec::subagents`], so
     /// the parent and its sub-agents observe the same filesystem and process state.
     ///
-    /// Each agent's skill files (declared in [`AgentSpec::files`]) are materialised
-    /// lazily on first [`Self::run`] / [`Self::snapshot`] under
-    /// [`AgentSpec::skill_dir`] (defaults to `/workspace/skills`).  Sub-agents'
-    /// skill directories are re-rooted at `<skill_dir>/<card.name>` here, so any
-    /// `skill_dir` value declared on a sub-spec is overwritten with the nested
-    /// layout.
+    /// Skill files declared in [`AgentSpec::files`] are materialised lazily on
+    /// first [`Self::run`] / [`Self::snapshot`].  Each path in
+    /// [`AgentSpec::skills`] is an absolute directory containing a `SKILL.md`;
+    /// the spec is taken as-is — sub-spec skill paths are **not** rewritten,
+    /// so sub-agent skills round-trip portably under the assumption that
+    /// sub-agents themselves don't mutate skills at runtime.
     pub fn try_with_provider_and_runenv(
         spec: AgentSpec,
         provider: &AgentProvider,
         runenv: Arc<dyn RunEnv>,
-    ) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_runenv_and_skill_dir(
-            spec,
-            provider,
-            runenv,
-            PathBuf::from(SKILLS_ROOT),
-        )
-    }
-
-    /// Internal constructor that takes the per-agent `skill_dir`.  Sub-agents
-    /// register a [`ToolFunc`] that builds a fresh `Agent` per call with their
-    /// own nested skill directory; there is no cascade.  Exposed to
-    /// `crate::tool_impl` so sub-agent ToolFuncs can construct with the right
-    /// skill directory.
-    pub(crate) fn try_with_provider_and_runenv_and_skill_dir(
-        spec: AgentSpec,
-        provider: &AgentProvider,
-        runenv: Arc<dyn RunEnv>,
-        skill_dir: PathBuf,
     ) -> anyhow::Result<Self> {
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
         let model = provider.models.provide(&spec.model)?;
@@ -214,12 +194,10 @@ impl Agent {
 
         // Sub-agents become regular tool entries: each is a one-shot ToolFunc
         // that materialises a fresh Agent on call and shares the parent's
-        // runenv so filesystem state is shared.  Each sub-agent's own files
-        // live under a nested directory keyed by its card name; the cloned
-        // sub-spec's `skill_dir` is overwritten with that nested path so the
-        // ToolFunc's Agent picks it up via the canonical constructor.  Files
-        // themselves are *not* written to disk here — they're materialised
-        // lazily on first run/snapshot via [`Self::ensure_files_materialised`].
+        // runenv so filesystem state is shared.  Sub-specs are taken as-is —
+        // no path rewriting — so sub-agent skills are portable across
+        // parents.  Files are materialised lazily on first run/snapshot via
+        // [`Self::ensure_files_materialised`].
         for sub_spec in &spec.subagents {
             let card = sub_spec
                 .card
@@ -227,18 +205,18 @@ impl Agent {
                 .ok_or_else(|| anyhow::anyhow!("subagent must declare an AgentCard"))?;
             let desc = get_subagent_tool_desc(card);
             let name = card.name.clone();
-            let mut nested_spec = sub_spec.clone();
-            nested_spec.skill_dir = spec.skill_dir.join(&card.name);
-            let func = get_subagent_tool_func(nested_spec, provider.clone(), runenv.clone());
+            let func = get_subagent_tool_func(sub_spec.clone(), provider.clone(), runenv.clone());
             tool_descs.push(desc);
             tools.insert(name, func);
         }
 
         // Build the system message: instruction + (optionally) the skills table.
-        // The table is rendered from declared `spec.files` filtered to the
-        // `<skill_dir>/<name>/SKILL.md` pattern.
-        let declared_skills = scan_declared_skills(&spec.files, &spec.skill_dir);
-        let skills_block = render_skills_table(&declared_skills, &spec.skill_dir);
+        // The table is rendered from declared `spec.skills` by matching each
+        // entry against an in-memory `SKILL.md` FileEntry.  Passing
+        // `spec.skill_root` lets the rendered block tell the model exactly
+        // where new skills must live (the same dir snapshot auto-discovers).
+        let declared_skills = scan_declared_skills(&spec.files, &spec.skills);
+        let skills_block = render_skills_table(&declared_skills, spec.skill_root.as_deref());
         let system_text = match (spec.instruction.as_deref(), skills_block) {
             (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
             (Some(inst), None) => Some(inst.to_string()),
@@ -318,51 +296,69 @@ impl Agent {
         Ok(())
     }
 
-    /// Scan the runenv for skills owned by this agent.  Always re-scans
-    /// (no in-process cache).  Triggers the materialise gate first, so a
+    /// Read the metadata for each declared skill from the runenv.  Does IO
+    /// (parses each declared dir's `SKILL.md` frontmatter).  Always re-scans
+    /// (no in-process cache).  Triggers the materialise gate first so a
     /// freshly built agent reports its declared skill set.
-    pub async fn skills(&mut self) -> anyhow::Result<Vec<SkillMeta>> {
+    pub async fn discover_skills(&mut self) -> anyhow::Result<Vec<SkillMeta>> {
         self.ensure_files_materialised().await?;
-        discover_skills(&*self.state.runenv, &self.spec.skill_dir).await
+        discover_skills(&*self.state.runenv, &self.spec.skills).await
     }
 
     /// Capture the agent's *current* runtime state back into a serialisable
     /// [`AgentSpec`].
     ///
-    /// Scope (combined):
-    /// * The whole `skill_dir` subtree is walked and every file is captured
-    ///   as a [`FileEntry`].  This picks up runtime modifications,
-    ///   additions, and deletions inside the skill area.
-    /// * Any *declared* [`AgentSpec::files`] whose path lives *outside* the
-    ///   `skill_dir` subtree is re-read from disk (if still present) and
-    ///   included as well.  Paths already covered by the subtree scan are
-    ///   not duplicated.
+    /// Scope:
+    /// * Each directory in [`AgentSpec::skills`] is walked; every file is
+    ///   captured as a [`FileEntry`].  Picks up runtime modifications to
+    ///   declared skill contents.
+    /// * If [`AgentSpec::skill_root`] is set, it is `ls`-ed once for new
+    ///   `<child>/SKILL.md` entries; matches not already in `skills` are
+    ///   added to the returned spec's `skills` list and walked the same way.
+    /// * Any *declared* [`AgentSpec::files`] whose path lives *outside* every
+    ///   skill subtree is re-read from disk (if still present) and included.
     ///
     /// Sub-agents are kept as their **declared** specs (no recursion):
     /// upstream sub-agents are stateless ToolFunc closures with no
-    /// persistent handle, so their runtime state isn't separately
-    /// observable from the parent.
+    /// persistent handle, and under the no-runtime-update assumption their
+    /// state is fully captured by their declared spec.
     pub async fn snapshot(&mut self) -> anyhow::Result<AgentSpec> {
         self.ensure_files_materialised().await?;
 
-        let mut files = scan_files_recursive(&*self.state.runenv, &self.spec.skill_dir).await?;
-        let covered: std::collections::HashSet<PathBuf> =
-            files.iter().map(|f| f.path.clone()).collect();
+        // 1. Build the full skill list: declared + newly discovered under skill_root.
+        let mut skills = self.spec.skills.clone();
+        if let Some(root) = &self.spec.skill_root {
+            let new_skills = discover_new_skills(&*self.state.runenv, root, &skills).await?;
+            skills.extend(new_skills);
+        }
 
+        // 2. Walk every skill dir and collect its files.
+        let mut files = Vec::new();
+        let mut covered = std::collections::HashSet::<PathBuf>::new();
+        for skill_dir in &skills {
+            let walked = scan_files_recursive(&*self.state.runenv, skill_dir).await?;
+            for fe in walked {
+                if covered.insert(fe.path.clone()) {
+                    files.push(fe);
+                }
+            }
+        }
+
+        // 3. Re-read declared files that live outside every skill subtree.
         for declared in &self.spec.files {
             if covered.contains(&declared.path) {
-                continue; // already captured by the subtree walk
+                continue;
             }
-            if declared.path.starts_with(&self.spec.skill_dir) {
-                continue; // would have been in the subtree if it still existed
+            if skills.iter().any(|s| declared.path.starts_with(s)) {
+                continue; // would have been captured by the subtree walk
             }
             if let Ok(fe) = FileEntry::read_from(&*self.state.runenv, declared.path.clone()).await {
                 files.push(fe);
             }
-            // Silently drop declared files that have been deleted on disk.
         }
 
         let mut out = self.spec.clone();
+        out.skills = skills;
         out.files = files;
         Ok(out)
     }
@@ -372,11 +368,15 @@ impl Agent {
         &self.spec
     }
 
-    /// Read-only path to the agent's skill directory inside the runenv.
-    /// Sourced from [`AgentSpec::skill_dir`] on the spec this agent was built
-    /// from.
-    pub fn skill_dir(&self) -> &std::path::Path {
-        &self.spec.skill_dir
+    /// Read-only view of the agent's declared skill directories.
+    pub fn skills(&self) -> &[PathBuf] {
+        &self.spec.skills
+    }
+
+    /// Read-only view of the fixed root where new skills land at runtime,
+    /// if set.
+    pub fn skill_root(&self) -> Option<&std::path::Path> {
+        self.spec.skill_root.as_deref()
     }
 
     /// Execute tool calls in parallel and return a stream of all outputs.

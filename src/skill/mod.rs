@@ -1,10 +1,13 @@
 //! File-based skill abstractions: portable markdown playbooks materialised
-//! into a [`RunEnv`] from per-agent specs.
+//! into a [`RunEnv`](crate::runenv::RunEnv) from per-agent specs.
 //!
-//! See [`Skill`] for the data structure that lives on
-//! [`AgentSpec`](crate::agent::AgentSpec). Each agent owns a directory inside
-//! the runenv at which its declared skills are written and from which runtime
-//! changes can be read back via [`Agent::snapshot`](crate::agent::Agent::snapshot).
+//! Each agent declares a list of skill directories in
+//! [`AgentSpec::skills`](crate::agent::AgentSpec::skills) and, optionally, a
+//! single [`AgentSpec::skill_root`](crate::agent::AgentSpec::skill_root)
+//! under which it may create new skills at runtime.  Declared skills are
+//! re-read on every [`Agent::snapshot`](crate::agent::Agent::snapshot); new
+//! sibling skills appearing in `skill_root` are appended to the snapshot's
+//! `skills` list.
 
 mod skill;
 

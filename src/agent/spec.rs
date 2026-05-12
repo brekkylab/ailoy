@@ -16,13 +16,6 @@ use crate::{
     },
 };
 
-/// Default location inside the runenv where this agent's skill files live.
-/// Sub-agent skill dirs are derived by nesting under the parent's `skill_dir`
-/// at build time (see [`Agent::try_with_provider_and_runenv`]).
-pub fn default_skill_dir() -> PathBuf {
-    PathBuf::from("/workspace/skills")
-}
-
 /// Defines the logical identity of an agent as configured by the user.
 ///
 /// `AgentSpec` captures what makes an agent distinct — the language model it uses,
@@ -75,13 +68,21 @@ pub struct AgentSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<FileEntry>,
 
-    /// Directory inside the runenv where this agent's skill files live.
-    /// Files in [`AgentSpec::files`] whose path matches
-    /// `<skill_dir>/<name>/SKILL.md` are surfaced as skills.  Sub-agent skill
-    /// dirs are re-rooted under the parent's `skill_dir` at build time, so a
-    /// sub-spec's declared value is overwritten with the nested layout.
-    #[serde(default = "default_skill_dir")]
-    pub skill_dir: PathBuf,
+    /// Skill directories owned by this agent.  Each entry is the absolute
+    /// path of a directory containing a `SKILL.md` file (plus any supporting
+    /// files).  The skill's identifier is the final path segment.  Entries
+    /// can live anywhere on the runenv — they do not need to share a parent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<PathBuf>,
+
+    /// Single fixed directory where the agent creates new skills at runtime.
+    /// At [`Agent::snapshot`](crate::agent::Agent::snapshot) time this dir
+    /// is scanned once for `<child>/SKILL.md` entries not already in
+    /// [`Self::skills`]; new ones are merged into the returned spec.  When
+    /// `None`, snapshot does no auto-discovery — only the declared list
+    /// round-trips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_root: Option<PathBuf>,
 }
 
 impl AgentSpec {
@@ -93,7 +94,8 @@ impl AgentSpec {
             subagents: Vec::new(),
             card: None,
             files: Vec::new(),
-            skill_dir: default_skill_dir(),
+            skills: Vec::new(),
+            skill_root: None,
         }
     }
 
@@ -172,12 +174,25 @@ impl AgentSpec {
         self
     }
 
-    /// Override the directory inside the runenv where this agent's skill
-    /// files live (defaults to `/workspace/skills`).  When this spec is used
-    /// as a sub-agent, the parent's build step overwrites this value with the
-    /// nested layout `<parent.skill_dir>/<card.name>`.
-    pub fn skill_dir(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.skill_dir = dir.into();
+    /// Declare a skill by the absolute path of the directory containing its
+    /// `SKILL.md`.  The directory's last path segment becomes the skill name.
+    pub fn skill(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.skills.push(dir.into());
+        self
+    }
+
+    /// Declare multiple skills at once — same semantics as [`Self::skill`].
+    pub fn skills(mut self, dirs: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.skills = dirs.into_iter().collect();
+        self
+    }
+
+    /// Set the fixed directory where the agent creates new skills at
+    /// runtime.  At snapshot time this dir is scanned once for new
+    /// `<child>/SKILL.md` entries; matches not already in [`Self::skills`]
+    /// are added to the round-tripped spec.
+    pub fn skill_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.skill_root = Some(root.into());
         self
     }
 }
@@ -220,26 +235,38 @@ mod tests {
     }
 
     #[test]
-    fn test_default_skill_dir() {
+    fn test_default_skills_empty() {
         let spec = AgentSpec::new("openai/gpt-4o-mini");
-        assert_eq!(spec.skill_dir, std::path::PathBuf::from("/workspace/skills"));
+        assert!(spec.skills.is_empty());
     }
 
     #[test]
-    fn test_skill_dir_roundtrip() {
-        let spec = AgentSpec::new("openai/gpt-4o-mini").skill_dir("/tmp/custom/skills");
+    fn test_default_skills_omitted_from_serialisation() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini");
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(
+            !json.contains("\"skills\""),
+            "serialised spec should omit empty skills: {json}"
+        );
+    }
+
+    #[test]
+    fn test_skills_roundtrip() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini")
+            .skill("/workspace/skills/greet")
+            .skill("/workspace/skills/farewell");
         let json = serde_json::to_string(&spec).unwrap();
         let back: AgentSpec = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.skill_dir, std::path::PathBuf::from("/tmp/custom/skills"));
+        assert_eq!(back.skills.len(), 2);
+        assert_eq!(back.skills[0], std::path::PathBuf::from("/workspace/skills/greet"));
+        assert_eq!(back.skills[1], std::path::PathBuf::from("/workspace/skills/farewell"));
     }
 
     #[test]
-    fn test_skill_dir_missing_in_payload_falls_back_to_default() {
-        // Older spec payloads written before `skill_dir` existed should still
-        // deserialise — `#[serde(default)]` fills in the canonical location.
+    fn test_skills_missing_in_payload_falls_back_to_empty() {
         let json = r#"{"model":"openai/gpt-4o-mini"}"#;
         let back: AgentSpec = serde_json::from_str(json).unwrap();
-        assert_eq!(back.skill_dir, std::path::PathBuf::from("/workspace/skills"));
+        assert!(back.skills.is_empty());
     }
 
     #[test]
