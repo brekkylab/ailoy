@@ -229,6 +229,11 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .unwrap()
                 .insert("temperature".to_owned(), temperature.into());
         }
+        if let Some(top_p) = req.top_p {
+            body.as_object_mut()
+                .unwrap()
+                .insert("top_p".to_owned(), top_p.into());
+        }
         if let Some(top_k) = req.top_k {
             body.as_object_mut()
                 .unwrap()
@@ -414,6 +419,7 @@ mod tests {
             api_key: &api_key,
             max_tokens,
             temperature: None,
+            top_p: None,
             top_k: None,
         };
         f(&req)

@@ -112,6 +112,7 @@ impl Agent {
 
         let lm_options = LangModelOptions {
             temperature: spec.temperature,
+            top_p: spec.top_p,
             top_k: spec.top_k,
         };
 

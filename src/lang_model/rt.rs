@@ -23,6 +23,7 @@ pub(crate) struct LangModelRequest<'a> {
     pub api_key: &'a Option<String>,
     pub max_tokens: Option<u64>,
     pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
     pub top_k: Option<u64>,
 }
 
@@ -31,6 +32,7 @@ pub(crate) struct LangModelRequest<'a> {
 #[derive(Clone, Debug, Default)]
 pub struct LangModelOptions {
     pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
     pub top_k: Option<u64>,
 }
 
@@ -65,6 +67,7 @@ impl LangModel {
                     api_key,
                     max_tokens: *max_tokens,
                     temperature: options.temperature,
+                    top_p: options.top_p,
                     top_k: options.top_k,
                 };
 

@@ -205,6 +205,11 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 .unwrap()
                 .insert("temperature".into(), temperature.into());
         }
+        if let Some(top_p) = req.top_p {
+            body.as_object_mut()
+                .unwrap()
+                .insert("top_p".into(), top_p.into());
+        }
         // top_k is not part of the OpenAI Responses spec; intentionally ignored.
 
         to_value!({
@@ -400,6 +405,7 @@ mod tests {
             api_key: &api_key,
             max_tokens,
             temperature: None,
+            top_p: None,
             top_k: None,
         };
         f(&req)

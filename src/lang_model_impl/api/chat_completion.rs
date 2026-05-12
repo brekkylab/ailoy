@@ -187,6 +187,11 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 .unwrap()
                 .insert("temperature".to_owned(), temperature.into());
         }
+        if let Some(top_p) = req.top_p {
+            body.as_object_mut()
+                .unwrap()
+                .insert("top_p".to_owned(), top_p.into());
+        }
         // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
         body.as_object_mut()
             .unwrap()
@@ -370,6 +375,7 @@ mod tests {
             api_key: &api_key,
             max_tokens,
             temperature: None,
+            top_p: None,
             top_k: None,
         };
         f(&req)
