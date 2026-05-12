@@ -151,8 +151,8 @@ pub fn get_read_tool_func() -> ToolFunc {
                     let offset = args
                         .pointer("/offset")
                         .and_then(|v| v.as_integer())
-                        .map(|n| n.max(1) as usize)
-                        .unwrap_or(1);
+                        .map(|n| n.max(0) as usize)
+                        .unwrap_or(0);
                     let limit = args
                         .pointer("/limit")
                         .and_then(|v| v.as_integer())
