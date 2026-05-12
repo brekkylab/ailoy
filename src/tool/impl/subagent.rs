@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use futures::StreamExt as _;
 
@@ -44,12 +44,12 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 /// supplied [`AgentSpec`] every time the tool is invoked, runs it for one turn,
 /// then drops it.
 ///
-/// The closure captures `spec`, `provider`, `runenv`, and `skill_dir` by clone,
-/// so the produced [`ToolFunc`] is independent of any parent [`Agent`]: the
-/// parent keeps it in its `tools` map alongside ordinary tools, with no special
-/// dispatch needed.  The `skill_dir` is the nested directory at which the sub-
-/// agent's [`crate::skill::Skill`]s are materialised (typically
-/// `<parent skill_dir>/<card name>/`).
+/// The closure captures `spec`, `provider`, and `runenv` by clone, so the
+/// produced [`ToolFunc`] is independent of any parent [`Agent`]: the parent
+/// keeps it in its `tools` map alongside ordinary tools, with no special
+/// dispatch needed.  The caller is responsible for setting the spec's
+/// [`AgentSpec::skill_dir`] to the nested path
+/// (`<parent skill_dir>/<card name>/`) before constructing the func.
 ///
 /// The returned function:
 /// 1. Streams every [`MessageOutput`](crate::message::MessageOutput) produced by
@@ -60,13 +60,11 @@ pub fn get_subagent_tool_func(
     spec: AgentSpec,
     provider: AgentProvider,
     runenv: Arc<dyn RunEnv>,
-    skill_dir: PathBuf,
 ) -> ToolFunc {
     tool_func!(stream |args: Value, id: String| -> Message {
         let spec = spec.clone();
         let provider = provider.clone();
         let runenv = runenv.clone();
-        let skill_dir = skill_dir.clone();
         let id = id.clone();
         async_stream::stream! {
             let task = match args
@@ -83,7 +81,7 @@ pub fn get_subagent_tool_func(
                 }
             };
 
-            let mut agent = match Agent::try_with_provider_and_runenv_and_skill_dir(spec, &provider, runenv, skill_dir) {
+            let mut agent = match Agent::try_with_provider_and_runenv(spec, &provider, runenv) {
                 Ok(a) => a,
                 Err(e) => {
                     yield Message::new(Role::Tool)

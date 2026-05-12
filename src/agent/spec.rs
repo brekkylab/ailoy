@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +15,13 @@ use crate::{
         },
     },
 };
+
+/// Default location inside the runenv where this agent's skill files live.
+/// Sub-agent skill dirs are derived by nesting under the parent's `skill_dir`
+/// at build time (see [`Agent::try_with_provider_and_runenv`]).
+pub fn default_skill_dir() -> PathBuf {
+    PathBuf::from("/workspace/skills")
+}
 
 /// Defines the logical identity of an agent as configured by the user.
 ///
@@ -65,6 +74,14 @@ pub struct AgentSpec {
     /// reproduces the same runenv layout elsewhere.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<FileEntry>,
+
+    /// Directory inside the runenv where this agent's skill files live.
+    /// Files in [`AgentSpec::files`] whose path matches
+    /// `<skill_dir>/<name>/SKILL.md` are surfaced as skills.  Sub-agent skill
+    /// dirs are re-rooted under the parent's `skill_dir` at build time, so a
+    /// sub-spec's declared value is overwritten with the nested layout.
+    #[serde(default = "default_skill_dir")]
+    pub skill_dir: PathBuf,
 }
 
 impl AgentSpec {
@@ -76,6 +93,7 @@ impl AgentSpec {
             subagents: Vec::new(),
             card: None,
             files: Vec::new(),
+            skill_dir: default_skill_dir(),
         }
     }
 
@@ -153,6 +171,15 @@ impl AgentSpec {
         self.files = files.into_iter().collect();
         self
     }
+
+    /// Override the directory inside the runenv where this agent's skill
+    /// files live (defaults to `/workspace/skills`).  When this spec is used
+    /// as a sub-agent, the parent's build step overwrites this value with the
+    /// nested layout `<parent.skill_dir>/<card.name>`.
+    pub fn skill_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.skill_dir = dir.into();
+        self
+    }
 }
 
 #[cfg(test)]
@@ -190,6 +217,29 @@ mod tests {
             std::path::PathBuf::from("/workspace/skills/greet/SKILL.md")
         );
         assert_eq!(back.files[1].content.as_ref(), b"unrelated\n");
+    }
+
+    #[test]
+    fn test_default_skill_dir() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini");
+        assert_eq!(spec.skill_dir, std::path::PathBuf::from("/workspace/skills"));
+    }
+
+    #[test]
+    fn test_skill_dir_roundtrip() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini").skill_dir("/tmp/custom/skills");
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: AgentSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.skill_dir, std::path::PathBuf::from("/tmp/custom/skills"));
+    }
+
+    #[test]
+    fn test_skill_dir_missing_in_payload_falls_back_to_default() {
+        // Older spec payloads written before `skill_dir` existed should still
+        // deserialise — `#[serde(default)]` fills in the canonical location.
+        let json = r#"{"model":"openai/gpt-4o-mini"}"#;
+        let back: AgentSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(back.skill_dir, std::path::PathBuf::from("/workspace/skills"));
     }
 
     #[test]

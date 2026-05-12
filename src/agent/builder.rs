@@ -1,9 +1,9 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crate::{
-    agent::{Agent, AgentProvider, AgentSpec, ContextManager, default_provider},
+    agent::{Agent, AgentProvider, AgentSpec, ContextManager},
     message::Message,
-    runenv::{FileEntry, Local, RunEnv},
+    runenv::{FileEntry, RunEnv},
     tool::ToolDesc,
 };
 
@@ -54,11 +54,6 @@ pub struct AgentBuilder {
     runenv: Option<Arc<dyn RunEnv>>,
 
     context_manager: Option<ContextManager>,
-
-    /// Override for the agent's root skill directory inside the runenv.
-    /// When `None`, [`Agent::try_with_provider_and_runenv`] uses the default
-    /// `/workspace/skills/` convention.
-    skill_dir: Option<PathBuf>,
 }
 
 impl AgentBuilder {
@@ -72,7 +67,6 @@ impl AgentBuilder {
             history: Vec::new(),
             runenv: None,
             context_manager: None,
-            skill_dir: None,
         }
     }
 
@@ -163,11 +157,13 @@ impl AgentBuilder {
     }
 
     /// Override the agent's root skill directory inside the runenv.  When
-    /// unset, the default `/workspace/skills/` convention is used.  Useful
+    /// unset, [`AgentSpec`]'s default (`/workspace/skills`) is used.  Useful
     /// for tests (point at a host tempdir) or for hosting multiple agents
-    /// with disjoint skill layouts in a shared runenv.
+    /// with disjoint skill layouts in a shared runenv.  Writes through to
+    /// [`AgentSpec::skill_dir`], so a snapshot of this agent will faithfully
+    /// reproduce the directory on rebuild.
     pub fn skill_dir(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.skill_dir = Some(dir.into());
+        self.spec = self.spec.skill_dir(dir);
         self
     }
 
@@ -180,26 +176,14 @@ impl AgentBuilder {
             history,
             runenv,
             context_manager,
-            skill_dir,
         } = self;
 
-        let mut agent = if let Some(skill_dir) = skill_dir {
-            // Custom skill_dir requires the explicit internal constructor.
-            // Materialise the provider/runenv defaults to feed it.
-            let provider = match provider {
-                Some(p) => p,
-                None => default_provider().clone(),
-            };
-            let runenv = runenv.unwrap_or_else(|| Arc::new(Local {}));
-            Agent::try_with_provider_and_runenv_and_skill_dir(spec, &provider, runenv, skill_dir)?
-        } else {
-            match (provider, runenv) {
-                (None, None) => Agent::try_new(spec)?,
-                (None, Some(runenv)) => Agent::try_with_runenv(spec, runenv)?,
-                (Some(provider), None) => Agent::try_with_provider(spec, &provider)?,
-                (Some(provider), Some(runenv)) => {
-                    Agent::try_with_provider_and_runenv(spec, &provider, runenv)?
-                }
+        let mut agent = match (provider, runenv) {
+            (None, None) => Agent::try_new(spec)?,
+            (None, Some(runenv)) => Agent::try_with_runenv(spec, runenv)?,
+            (Some(provider), None) => Agent::try_with_provider(spec, &provider)?,
+            (Some(provider), Some(runenv)) => {
+                Agent::try_with_provider_and_runenv(spec, &provider, runenv)?
             }
         };
         // Only override the spec-derived history (which seeds the system instruction)
