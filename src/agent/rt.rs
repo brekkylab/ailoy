@@ -4,7 +4,7 @@ use futures::{FutureExt as _, Stream, StreamExt as _};
 
 use crate::{
     agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
-    lang_model::LangModel,
+    lang_model::{LangModel, LangModelOptions},
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{Local, RunEnv},
     tool::{ToolDesc, ToolFunc},
@@ -63,6 +63,8 @@ impl AgentState {
 pub struct Agent {
     model: LangModel,
 
+    lm_options: LangModelOptions,
+
     tool_descs: Vec<ToolDesc>,
 
     tools: HashMap<String, ToolFunc>,
@@ -108,6 +110,11 @@ impl Agent {
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
         let model = provider.models.provide(&spec.model)?;
 
+        let lm_options = LangModelOptions {
+            temperature: spec.temperature,
+            top_k: spec.top_k,
+        };
+
         // Collect tools required by the spec; error if any tool is missing
         let mut tools = provider.tools.provide(&spec.tools)?;
         let mut tool_descs = spec.tools;
@@ -138,6 +145,7 @@ impl Agent {
 
         Ok(Self {
             model,
+            lm_options,
             tools,
             tool_descs,
             state,
@@ -320,7 +328,10 @@ impl Agent {
                     }
                 }
 
-                let mut output = self.model.run(&self.state.history, &self.tool_descs).await?;
+                let mut output = self
+                    .model
+                    .run(&self.state.history, &self.tool_descs, &self.lm_options)
+                    .await?;
 
                 // Capture token usage for next iteration's truncation check.
                 if let Some(u) = &output.usage {

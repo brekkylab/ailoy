@@ -258,11 +258,29 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
         if !tools.is_null() {
             body.as_object_mut().unwrap().insert("tools".into(), tools);
         }
+        let mut generation_config = to_value!({});
         if let Some(max_tokens) = req.max_tokens {
-            body.as_object_mut().unwrap().insert(
-                "generationConfig".into(),
-                to_value!({"maxOutputTokens": max_tokens as i64}),
-            );
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("maxOutputTokens".into(), (max_tokens as i64).into());
+        }
+        if let Some(temperature) = req.temperature {
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("temperature".into(), temperature.into());
+        }
+        if let Some(top_k) = req.top_k {
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("topK".into(), (top_k as i64).into());
+        }
+        if !generation_config.as_object().unwrap().is_empty() {
+            body.as_object_mut()
+                .unwrap()
+                .insert("generationConfig".into(), generation_config);
         }
 
         to_value!({
@@ -429,7 +447,7 @@ mod tests {
     use super::*;
     use crate::{
         datatype::{Bytes, Value},
-        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
@@ -449,6 +467,8 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            temperature: None,
+            top_k: None,
         };
         f(&req)
     }
@@ -653,7 +673,10 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 
@@ -707,7 +730,10 @@ mod tests {
         let user_messages = vec![Message::new(Role::User).with_contents([Part::text(
             "Use the file_read tool to read /tmp/photo.jpg, then describe who you see.",
         )])];
-        let step1 = model.run(&user_messages, &tools).await.unwrap();
+        let step1 = model
+            .run(&user_messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(
             step1.finish_reason,
             FinishReason::ToolCall {},
@@ -744,7 +770,10 @@ mod tests {
                 ]),
         );
 
-        let step2 = model.run(&messages, &tools).await.unwrap();
+        let step2 = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(step2.finish_reason, FinishReason::Stop {});
         assert!(
             step2.message.contents.iter().any(|p| p.as_text().is_some()),

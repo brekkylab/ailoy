@@ -56,6 +56,19 @@ pub struct AgentSpec {
     /// `None` for top-level agents.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub card: Option<AgentCard>,
+
+    /// Sampling temperature passed to the language model on every call.
+    /// `None` leaves the provider default in place. Not every provider
+    /// supports the same range; values outside the provider's accepted
+    /// range will surface as API errors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+
+    /// Top-k sampling parameter passed to the language model on every call.
+    /// Only honoured by providers that support it (e.g. Anthropic, Gemini);
+    /// silently ignored by providers that do not (e.g. OpenAI).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u64>,
 }
 
 impl AgentSpec {
@@ -66,6 +79,8 @@ impl AgentSpec {
             tools: Vec::new(),
             subagents: Vec::new(),
             card: None,
+            temperature: None,
+            top_k: None,
         }
     }
 
@@ -131,6 +146,16 @@ impl AgentSpec {
 
     pub fn card(mut self, card: AgentCard) -> Self {
         self.card = Some(card);
+        self
+    }
+
+    pub fn temperature(mut self, temperature: f64) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
+    pub fn top_k(mut self, top_k: u64) -> Self {
+        self.top_k = Some(top_k);
         self
     }
 }

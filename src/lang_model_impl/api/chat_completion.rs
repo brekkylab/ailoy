@@ -182,6 +182,12 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 (max_tokens as i64).into(),
             );
         }
+        if let Some(temperature) = req.temperature {
+            body.as_object_mut()
+                .unwrap()
+                .insert("temperature".to_owned(), temperature.into());
+        }
+        // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
         body.as_object_mut()
             .unwrap()
             .retain(|_key, value| !value.is_null());
@@ -343,7 +349,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role},
         tool::ToolDesc,
     };
@@ -363,6 +369,8 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            temperature: None,
+            top_k: None,
         };
         f(&req)
     }
@@ -416,7 +424,10 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }

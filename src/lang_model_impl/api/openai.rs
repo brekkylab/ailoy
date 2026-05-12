@@ -200,6 +200,12 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 .unwrap()
                 .insert("max_output_tokens".into(), (max_tokens as i64).into());
         }
+        if let Some(temperature) = req.temperature {
+            body.as_object_mut()
+                .unwrap()
+                .insert("temperature".into(), temperature.into());
+        }
+        // top_k is not part of the OpenAI Responses spec; intentionally ignored.
 
         to_value!({
             "url": url,
@@ -373,7 +379,7 @@ mod tests {
     use super::*;
     use crate::{
         datatype::Bytes,
-        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
@@ -393,6 +399,8 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            temperature: None,
+            top_k: None,
         };
         f(&req)
     }
@@ -570,7 +578,10 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 
@@ -628,7 +639,10 @@ mod tests {
             }))
             .build()];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Stop {});
         assert!(
             resp.message.contents.iter().any(|p| p.as_text().is_some()),

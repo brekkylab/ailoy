@@ -224,6 +224,16 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .unwrap()
                 .insert("tools".to_owned(), tools);
         }
+        if let Some(temperature) = req.temperature {
+            body.as_object_mut()
+                .unwrap()
+                .insert("temperature".to_owned(), temperature.into());
+        }
+        if let Some(top_k) = req.top_k {
+            body.as_object_mut()
+                .unwrap()
+                .insert("top_k".to_owned(), (top_k as i64).into());
+        }
 
         to_value!({
             "url": url,
@@ -383,7 +393,7 @@ mod tests {
     use super::*;
     use crate::{
         datatype::Bytes,
-        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
@@ -403,6 +413,8 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            temperature: None,
+            top_k: None,
         };
         f(&req)
     }
@@ -619,7 +631,10 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 
@@ -677,7 +692,10 @@ mod tests {
             }))
             .build()];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Stop {});
         assert!(
             resp.message.contents.iter().any(|p| p.as_text().is_some()),
