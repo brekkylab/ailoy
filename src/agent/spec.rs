@@ -59,6 +59,12 @@ pub struct AgentSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub card: Option<AgentCard>,
 
+    /// Maximum number of tokens the model may generate in a single response.
+    /// When `None`, provider-specific defaults apply (e.g. Anthropic defaults
+    /// to 8192). Set explicitly to cap output length per call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
+
     /// Sampling temperature passed to the language model on every call.
     /// `None` leaves the provider default in place. Not every provider
     /// supports the same range; values outside the provider's accepted
@@ -94,6 +100,7 @@ impl AgentSpec {
             tools: Vec::new(),
             subagents: Vec::new(),
             card: None,
+            max_tokens: None,
             temperature: None,
             top_p: None,
             top_k: None,
@@ -162,6 +169,11 @@ impl AgentSpec {
 
     pub fn card(mut self, card: AgentCard) -> Self {
         self.card = Some(card);
+        self
+    }
+
+    pub fn max_tokens(mut self, max_tokens: u64) -> Self {
+        self.max_tokens = Some(max_tokens);
         self
     }
 

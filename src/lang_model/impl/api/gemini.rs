@@ -18,7 +18,6 @@ impl LangModelProvider {
             schema: LangModelAPISchema::Gemini,
             url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap(),
             api_key: Some(api_key),
-            max_tokens: None,
         }
     }
 }
@@ -671,7 +670,6 @@ mod tests {
                 url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
                     .unwrap(),
                 api_key: Some(api_key),
-                max_tokens: Some(5),
             },
         );
         let messages = vec![
@@ -681,7 +679,14 @@ mod tests {
         let tools: Vec<ToolDesc> = vec![];
 
         let resp = model
-            .run(&messages, &tools, &LangModelOptions::default())
+            .run(
+                &messages,
+                &tools,
+                &LangModelOptions {
+                    max_tokens: Some(5),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
@@ -718,7 +723,6 @@ mod tests {
                 url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
                     .unwrap(),
                 api_key: Some(api_key),
-                max_tokens: None,
             },
         );
 

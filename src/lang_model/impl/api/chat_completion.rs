@@ -17,7 +17,6 @@ impl LangModelProvider {
             schema: LangModelAPISchema::ChatCompletion,
             url: Url::parse("https://api.x.ai/v1/chat/completions").unwrap(),
             api_key: Some(api_key),
-            max_tokens: None,
         }
     }
 
@@ -29,7 +28,6 @@ impl LangModelProvider {
             schema: LangModelAPISchema::ChatCompletion,
             url: Url::parse(url)?,
             api_key,
-            max_tokens: None,
         })
     }
 }
@@ -421,7 +419,6 @@ mod tests {
                 schema: LangModelAPISchema::ChatCompletion,
                 url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: Some(32),
             },
         );
         let messages = vec![
@@ -431,7 +428,14 @@ mod tests {
         let tools: Vec<ToolDesc> = vec![];
 
         let resp = model
-            .run(&messages, &tools, &LangModelOptions::default())
+            .run(
+                &messages,
+                &tools,
+                &LangModelOptions {
+                    max_tokens: Some(32),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});

@@ -113,6 +113,7 @@ impl Agent {
         let model = provider.models.provide(&spec.model)?;
 
         let model_options = LangModelOptions {
+            max_tokens: spec.max_tokens,
             temperature: spec.temperature,
             top_p: spec.top_p,
             top_k: spec.top_k,

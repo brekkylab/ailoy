@@ -18,7 +18,6 @@ impl LangModelProvider {
             schema: LangModelAPISchema::Anthropic,
             url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
             api_key: Some(api_key),
-            max_tokens: None,
         }
     }
 }
@@ -628,7 +627,6 @@ mod tests {
                 schema: LangModelAPISchema::Anthropic,
                 url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: Some(5),
             },
         );
         let messages = vec![
@@ -638,7 +636,14 @@ mod tests {
         let tools: Vec<ToolDesc> = vec![];
 
         let resp = model
-            .run(&messages, &tools, &LangModelOptions::default())
+            .run(
+                &messages,
+                &tools,
+                &LangModelOptions {
+                    max_tokens: Some(5),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
@@ -669,7 +674,6 @@ mod tests {
                 schema: LangModelAPISchema::Anthropic,
                 url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: None,
             },
         );
 

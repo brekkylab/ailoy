@@ -31,6 +31,9 @@ pub(crate) struct LangModelRequest<'a> {
 /// [`LangModelProviderElem`] configuration.
 #[derive(Clone, Debug, Default)]
 pub struct LangModelOptions {
+    /// Maximum number of tokens the model may generate in a single response.
+    /// When `None`, provider-specific defaults apply (e.g. Anthropic defaults to 8192).
+    pub max_tokens: Option<u64>,
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
     pub top_k: Option<u64>,
@@ -56,7 +59,6 @@ impl LangModel {
                 schema,
                 url,
                 api_key,
-                max_tokens,
             } => {
                 // Create request
                 let req = LangModelRequest {
@@ -65,7 +67,7 @@ impl LangModel {
                     tools,
                     url,
                     api_key,
-                    max_tokens: *max_tokens,
+                    max_tokens: options.max_tokens,
                     temperature: options.temperature,
                     top_p: options.top_p,
                     top_k: options.top_k,

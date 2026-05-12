@@ -17,7 +17,6 @@ impl LangModelProvider {
             schema: LangModelAPISchema::OpenAI,
             url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
             api_key: Some(api_key),
-            max_tokens: None,
         }
     }
 }
@@ -575,7 +574,6 @@ mod tests {
                 schema: LangModelAPISchema::OpenAI,
                 url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: Some(16),
             },
         );
         let messages = vec![
@@ -585,7 +583,14 @@ mod tests {
         let tools: Vec<ToolDesc> = vec![];
 
         let resp = model
-            .run(&messages, &tools, &LangModelOptions::default())
+            .run(
+                &messages,
+                &tools,
+                &LangModelOptions {
+                    max_tokens: Some(16),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
@@ -616,7 +621,6 @@ mod tests {
                 schema: LangModelAPISchema::OpenAI,
                 url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: None,
             },
         );
 
