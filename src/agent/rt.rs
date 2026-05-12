@@ -7,8 +7,7 @@ use crate::{
     lang_model::LangModel,
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{Local, RunEnv},
-    tool::{ToolDesc, ToolFunc},
-    tool_impl::{get_subagent_tool_desc, get_subagent_tool_func},
+    tool::{ToolDesc, ToolFunc, get_subagent_tool_desc, get_subagent_tool_func},
 };
 
 pub struct AgentState {
@@ -999,7 +998,7 @@ mod tests {
         provider.tools = ToolProvider::new();
 
         let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool(crate::tool_impl::get_bash_tool_desc())
+            .tool(crate::tool::get_bash_tool_desc())
             .instruction(
                 "You have a bash tool. When asked to run two commands, always call bash \
                  TWICE in a SINGLE response (parallel tool calls). Never run them sequentially \
@@ -1171,8 +1170,8 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         let spec = AgentSpec::new("anthropic/claude-sonnet-4-6")
             .tools([
-                crate::tool_impl::get_bash_tool_desc(),
-                crate::tool_impl::get_python_repl_tool_desc(),
+                crate::tool::get_bash_tool_desc(),
+                crate::tool::get_python_repl_tool_desc(),
             ])
             .instruction(instruction);
 
@@ -1298,7 +1297,7 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         // Subagent: writes a file when asked, has bash tool + shared sandbox.
         let sub_spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool(crate::tool_impl::get_bash_tool_desc())
+            .tool(crate::tool::get_bash_tool_desc())
             .instruction(
                 "You are a file-writer agent. When asked to write content to a path, \
                  use the bash tool to do so (e.g. `echo CONTENT > PATH`). \
@@ -1312,7 +1311,7 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         // Parent: delegates writing to the subagent, then reads back with bash.
         let main_spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool(crate::tool_impl::get_bash_tool_desc())
+            .tool(crate::tool::get_bash_tool_desc())
             .instruction(
                 "You are an orchestrator. You have a 'file_writer' subagent and a bash tool. \
                  When asked to verify shared sandbox state: \

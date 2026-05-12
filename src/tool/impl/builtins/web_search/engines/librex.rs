@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use scraper::Html;
 
-use crate::tool_impl::builtins::web_search::engine::{
+use crate::tool::r#impl::builtins::web_search::engine::{
     SearchEngine, SearchError, SearchResult, SearchResultParser, USER_AGENT,
 };
 

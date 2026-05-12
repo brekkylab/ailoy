@@ -3,10 +3,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agent::AgentCard,
-    tool::ToolDesc,
-    tool_impl::{
-        get_apply_patch_tool_desc, get_bash_tool_desc, get_edit_tool_desc, get_glob_tool_desc,
-        get_grep_tool_desc, get_python_repl_tool_desc, get_read_tool_desc,
+    tool::{
+        ToolDesc, get_apply_patch_tool_desc, get_bash_tool_desc, get_edit_tool_desc,
+        get_glob_tool_desc, get_grep_tool_desc, get_python_repl_tool_desc, get_read_tool_desc,
         get_web_search_tool_desc, get_write_tool_desc,
     },
 };

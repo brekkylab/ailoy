@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use reqwest::Client;
 
-use crate::tool_impl::builtins::web_search::engine::{
+use crate::tool::r#impl::builtins::web_search::engine::{
     SearchEngine, SearchError, SearchResult, USER_AGENT,
 };
 

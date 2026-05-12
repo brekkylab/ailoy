@@ -2,31 +2,47 @@ use async_trait::async_trait;
 use reqwest::Client;
 use scraper::Html;
 
-use crate::tool_impl::builtins::web_search::engine::{
+use crate::tool::r#impl::builtins::web_search::engine::{
     SearchEngine, SearchError, SearchResult, SearchResultParser, USER_AGENT,
 };
 
-pub struct Mojeek {
+pub struct Yahoo {
     parser: SearchResultParser,
 }
 
-impl Mojeek {
+impl Yahoo {
     pub fn new() -> Result<Self, SearchError> {
+        // Yahoo wraps <h3 class="title"> inside <a>, so "h3 a" finds nothing.
+        // The anchor (.compTitle a) is the parent of <h3>, not a child.
         let parser = SearchResultParser::new(
             ".no-results",
-            "ul.results-standard li",
-            "h2 a",
-            "h2 a",
-            "p.s",
+            ".algo",
+            "h3.title",
+            ".compTitle a",
+            ".compText p",
         )?;
         Ok(Self { parser })
+    }
+
+    /// Extract the actual destination URL from Yahoo's redirect wrapper.
+    /// Yahoo wraps URLs as: /RU=<encoded_url>/RK=...
+    pub fn extract_redirect_url(href: &str) -> String {
+        if let Some(ru_start) = href.find("/RU=") {
+            let after_ru = &href[ru_start + 4..];
+            let end = after_ru.find('/').unwrap_or(after_ru.len());
+            let encoded_url = &after_ru[..end];
+            return urlencoding::decode(encoded_url)
+                .map(|s| s.into_owned())
+                .unwrap_or_else(|_| href.to_string());
+        }
+        href.to_string()
     }
 }
 
 #[async_trait]
-impl SearchEngine for Mojeek {
+impl SearchEngine for Yahoo {
     fn name(&self) -> &'static str {
-        "Mojeek"
+        "Yahoo"
     }
 
     async fn search(
@@ -36,7 +52,7 @@ impl SearchEngine for Mojeek {
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
         let url = format!(
-            "https://www.mojeek.com/search?q={}",
+            "https://search.yahoo.com/search?p={}&ei=UTF-8",
             urlencoding::encode(query)
         );
 
@@ -48,7 +64,7 @@ impl SearchEngine for Mojeek {
             .send()
             .await?;
 
-        if response.status() == 429 || response.status() == 403 {
+        if response.status() == 429 {
             return Err(SearchError::Blocked);
         }
 
@@ -63,7 +79,7 @@ impl SearchEngine for Mojeek {
             el.select(&self.parser.result_url)
                 .next()
                 .and_then(|a| a.value().attr("href"))
-                .map(String::from)
+                .map(|href| Self::extract_redirect_url(href))
                 .filter(|url| !url.is_empty())
         });
 
@@ -79,16 +95,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mojeek_parser_extracts_results() {
-        let engine = Mojeek::new().expect("Failed to create Mojeek engine");
+    fn test_yahoo_extract_redirect_url() {
+        assert_eq!(
+            Yahoo::extract_redirect_url("/RU=https%3A%2F%2Fexample.com/RK=2"),
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn test_yahoo_extract_direct_url() {
+        assert_eq!(
+            Yahoo::extract_redirect_url("https://example.com"),
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn test_yahoo_parser_extracts_results() {
+        let engine = Yahoo::new().expect("Failed to create Yahoo engine");
+        // Structure matches current Yahoo HTML: <a> wraps <h3>, not the other way around
         let html = r#"
             <html><body>
-              <ul class="results-standard">
-                <li>
-                  <h2><a href="https://example.com">Mojeek Result</a></h2>
-                  <p class="s">Mojeek desc</p>
-                </li>
-              </ul>
+              <div class="algo">
+                <div class="compTitle">
+                  <a href="/RU=https%3A%2F%2Fexample.com/RK=2">
+                    <h3 class="title">Yahoo Result</h3>
+                  </a>
+                </div>
+                <div class="compText"><p>Yahoo desc</p></div>
+              </div>
             </body></html>
         "#;
         let document = Html::parse_document(html);
@@ -96,20 +131,20 @@ mod tests {
             el.select(&engine.parser.result_url)
                 .next()
                 .and_then(|a| a.value().attr("href"))
-                .map(String::from)
+                .map(|href| Yahoo::extract_redirect_url(href))
                 .filter(|url| !url.is_empty())
         });
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title, "Mojeek Result");
+        assert_eq!(results[0].title, "Yahoo Result");
         assert_eq!(results[0].url, "https://example.com");
-        assert_eq!(results[0].description, "Mojeek desc");
-        assert_eq!(results[0].engine, "Mojeek");
+        assert_eq!(results[0].description, "Yahoo desc");
+        assert_eq!(results[0].engine, "Yahoo");
     }
 
     #[test]
-    fn test_mojeek_parser_handles_no_results() {
-        let engine = Mojeek::new().expect("Failed to create Mojeek engine");
+    fn test_yahoo_parser_handles_no_results() {
+        let engine = Yahoo::new().expect("Failed to create Yahoo engine");
         let html = r#"<html><body><div class="no-results">No results found</div></body></html>"#;
         let document = Html::parse_document(html);
         assert!(engine.parser.has_no_results(&document));
@@ -118,7 +153,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires network"]
     async fn test_search_returns_results() {
-        let engine = Mojeek::new().expect("Failed to create Mojeek engine");
+        let engine = Yahoo::new().expect("Failed to create Yahoo engine");
         let client = Client::new();
         match engine.search(&client, "ailoy", 5).await {
             Ok(results) => {
@@ -131,11 +166,11 @@ mod tests {
                         "url must start with http: {}",
                         r.url
                     );
-                    assert_eq!(r.engine, "Mojeek");
+                    assert_eq!(r.engine, "Yahoo");
                 }
             }
             Err(SearchError::Blocked) => {
-                eprintln!("Mojeek is blocking requests — skipping assertions")
+                eprintln!("Yahoo is blocking requests — skipping assertions")
             }
             Err(e) => panic!("Unexpected error: {e}"),
         }
