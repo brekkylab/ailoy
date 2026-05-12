@@ -29,11 +29,10 @@
 
 mod desc;
 mod func;
-mod r#impl;
+pub(crate) mod r#impl;
 mod provider;
 
 pub use desc::*;
 pub use func::*;
-pub(crate) use r#impl::*;
 pub use provider::*;
 // pub use r#impl::builtin::{};
