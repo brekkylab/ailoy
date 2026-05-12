@@ -8,7 +8,7 @@ use std::{
 };
 
 use microsandbox::{
-    ExecOutput, MicrosandboxError, Sandbox as MsbSandbox,
+    ExecOutput, MicrosandboxError, Sandbox as MsbSandbox, Snapshot,
     sandbox::{ExecOptionsBuilder, FsEntryKind, PullPolicy, SandboxBuilder, SandboxStatus},
 };
 use schemars::JsonSchema;
@@ -198,6 +198,7 @@ impl RunEnv for Sandbox {
                 .await;
             Self::handle_exec_result_static(raw, max_output_chars)
         };
+        let _ = guard.shell("sync").await;
         let _ = guard.stop_and_wait().await;
         result
     }
@@ -213,6 +214,7 @@ impl RunEnv for Sandbox {
         let path_str = path.to_string_lossy().into_owned();
         let guard = self.ensure_running().await?;
         let result = guard.fs().mkdir(&path_str).await;
+        let _ = guard.shell("sync").await;
         let _ = guard.stop_and_wait().await;
         Ok(result?)
     }
@@ -231,6 +233,7 @@ impl RunEnv for Sandbox {
             Ok(())
         }
         .await;
+        let _ = guard.shell("sync").await;
         let _ = guard.stop_and_wait().await;
         result
     }
@@ -247,6 +250,7 @@ impl RunEnv for Sandbox {
         let guest_path = path.to_string_lossy().into_owned();
         let guard = self.ensure_running().await?;
         let result = guard.fs().write(&guest_path, content).await;
+        let _ = guard.shell("sync").await;
         let _ = guard.stop_and_wait().await;
         Ok(result?)
     }
@@ -293,6 +297,11 @@ impl Sandbox {
         };
         // Ensure workdir exists, then stop — VM will be started again on first op.
         let _ = inner.shell(&format!("mkdir -p {workdir}")).await;
+        // In 0.4 the writable layer is an ext4 block device (upper.ext4).
+        // Dirty pages live in the guest kernel's page cache and are only
+        // guaranteed to reach the block device on a graceful kernel shutdown.
+        // Running `sync` first makes the flush explicit and deterministic.
+        let _ = inner.shell("sync").await;
         inner.stop_and_wait().await?;
 
         Ok(Self {
@@ -348,6 +357,7 @@ impl Sandbox {
             let raw = guard.shell(&script).await;
             Self::handle_exec_result_static(raw, max_output_chars)
         };
+        let _ = guard.shell("sync").await;
         let _ = guard.stop_and_wait().await;
         result
     }
@@ -369,6 +379,7 @@ impl Sandbox {
                 .await;
             Self::handle_exec_result_static(raw, max_output_chars)
         };
+        let _ = guard.shell("sync").await;
         let _ = guard.stop_and_wait().await;
         result
     }
@@ -378,6 +389,7 @@ impl Sandbox {
         let data = data.to_vec();
         let guard = self.ensure_running().await?;
         let result = guard.fs().write(&guest_path, &data).await;
+        let _ = guard.shell("sync").await;
         let _ = guard.stop_and_wait().await;
         Ok(result?)
     }
@@ -403,6 +415,7 @@ impl Sandbox {
         let guest = guest.to_string();
         let guard = self.ensure_running().await?;
         let result = guard.fs().copy_from_host(&host, &guest).await;
+        let _ = guard.shell("sync").await;
         let _ = guard.stop_and_wait().await;
         Ok(result?)
     }
@@ -414,6 +427,62 @@ impl Sandbox {
         let result = guard.fs().copy_to_host(&guest, &host).await;
         let _ = guard.stop_and_wait().await;
         Ok(result?)
+    }
+
+    /// Copy this sandbox's full disk state into a new sandbox.
+    ///
+    /// The source must be stopped. Internally uses microsandbox's snapshot API
+    /// (`upper.ext4` capture + `from_snapshot` boot) so that all filesystem
+    /// changes — including system paths modified by `apt install` — are
+    /// included. The snapshot artifact is removed after the fork completes,
+    /// whether the fork succeeded or failed.
+    pub async fn fork(&self, new_cfg: SandboxConfig) -> anyhow::Result<Sandbox> {
+        // Hold the mutex for the duration to prevent concurrent ops on the source.
+        let _lock = self.inner.lock().await;
+
+        if vm_is_running(&self.name).await {
+            anyhow::bail!("cannot fork running sandbox '{}'; stop it first", self.name);
+        }
+
+        let new_name = new_cfg.name.clone().unwrap_or_else(fresh_sandbox_name);
+        validate_sandbox_name(&new_name)?;
+        let snap_name = format!("fork-{new_name}");
+
+        let handle = MsbSandbox::get(&self.name)
+            .await
+            .map_err(|e| anyhow::anyhow!("fork: source sandbox not found in DB: {e}"))?;
+
+        handle
+            .snapshot(&snap_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("fork: snapshot failed: {e}"))?;
+
+        let result = create_from_snapshot(&new_name, &snap_name, &new_cfg).await;
+
+        // Always clean up the snapshot artifact, regardless of outcome.
+        if let Err(e) = Snapshot::remove(&snap_name, true).await {
+            log::warn!("fork: failed to clean up snapshot '{snap_name}': {e}");
+        }
+
+        let new_inner = result.map_err(|e| {
+            // Best-effort removal of any partially-created sandbox.
+            let nn = new_name.clone();
+            tokio::spawn(async move {
+                if let Ok(h) = MsbSandbox::get(&nn).await {
+                    let _ = h.remove().await;
+                }
+            });
+            e
+        })?;
+
+        Ok(Sandbox {
+            inner: tokio::sync::Mutex::new(new_inner),
+            name: new_name,
+            workdir: new_cfg.workdir,
+            persist: new_cfg.persist,
+            default_timeout_secs: new_cfg.default_timeout_secs,
+            max_output_chars: new_cfg.max_output_chars,
+        })
     }
 
     /// Acquire the mutex and start the VM for the next operation.
@@ -555,6 +624,42 @@ async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result
         builder = apply_volume_mount(builder, mount);
     }
     let sb = builder.create_detached().await?;
+    Ok(sb)
+}
+
+/// Create and start a new sandbox from a snapshot, returning the stopped handle.
+async fn create_from_snapshot(
+    new_name: &str,
+    snap_name: &str,
+    config: &SandboxConfig,
+) -> anyhow::Result<MsbSandbox> {
+    let mut builder = MsbSandbox::builder(new_name)
+        .from_snapshot(snap_name)
+        .cpus(config.cpus)
+        .memory(config.memory_mib);
+
+    for (k, v) in &config.env {
+        builder = builder.env(k.as_str(), v.as_str());
+    }
+    if config.disable_network {
+        builder = builder.disable_network();
+    }
+    for mount in &config.volumes {
+        builder = apply_volume_mount(builder, mount);
+    }
+
+    let sb = builder
+        .create_detached()
+        .await
+        .map_err(|e| anyhow::anyhow!("fork: create from snapshot: {e}"))?;
+
+    // Workdir already exists from the snapshot, but ensure it is present.
+    let _ = sb.shell(&format!("mkdir -p {}", config.workdir)).await;
+    let _ = sb.shell("sync").await;
+    sb.stop_and_wait()
+        .await
+        .map_err(|e| anyhow::anyhow!("fork: stop new sandbox after creation: {e}"))?;
+
     Ok(sb)
 }
 
@@ -960,6 +1065,173 @@ mod tests {
             "stdout: {:?}",
             result.stdout
         );
+    }
+
+    // ── fork tests ──────────────────────────────────────────────────────────
+
+    fn short_id() -> String {
+        Uuid::new_v4().to_string()[..8].to_string()
+    }
+
+    #[tokio::test]
+    async fn test_fork_running_returns_error() {
+        let src_name = format!("sf-run-{}", short_id());
+        let src = Arc::new(
+            Sandbox::new(SandboxConfig {
+                name: Some(src_name.clone()),
+                persist: true,
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("create source sandbox"),
+        );
+
+        src.start().await.expect("start");
+        assert!(src.is_running().await, "should be running before fork");
+
+        let result = src
+            .fork(SandboxConfig {
+                name: Some(format!("sf-ch-{}", short_id())),
+                persist: false,
+                ..SandboxConfig::default()
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "fork() on a running sandbox must return Err, got Ok"
+        );
+
+        remove_persisted(&src_name).await.ok();
+    }
+
+    #[tokio::test]
+    async fn test_fork_copies_workspace_file() {
+        let src_name = format!("sf-ws-{}", short_id());
+        let child_name = format!("sf-ch-{}", short_id());
+
+        let src = Arc::new(
+            Sandbox::new(SandboxConfig {
+                name: Some(src_name.clone()),
+                persist: true,
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("create source"),
+        );
+
+        src.shell("echo fork_content > /workspace/note.txt")
+            .await
+            .expect("write note");
+
+        let child = src
+            .fork(SandboxConfig {
+                name: Some(child_name.clone()),
+                persist: true,
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("fork");
+
+        let content = child
+            .read_file("/workspace/note.txt")
+            .await
+            .expect("read from child");
+
+        assert!(
+            content.contains("fork_content"),
+            "child should have note from source, got: {content:?}"
+        );
+
+        remove_persisted(&src_name).await.ok();
+        remove_persisted(&child_name).await.ok();
+    }
+
+    #[tokio::test]
+    async fn test_fork_is_isolated() {
+        let src_name = format!("sf-iso-a-{}", short_id());
+        let child_name = format!("sf-iso-b-{}", short_id());
+
+        let src = Arc::new(
+            Sandbox::new(SandboxConfig {
+                name: Some(src_name.clone()),
+                persist: true,
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("create source"),
+        );
+
+        src.shell("echo original > /workspace/data.txt")
+            .await
+            .expect("write original");
+
+        let child = src
+            .fork(SandboxConfig {
+                name: Some(child_name.clone()),
+                persist: true,
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("fork");
+
+        child
+            .shell("echo mutated > /workspace/data.txt")
+            .await
+            .expect("mutate child");
+
+        let src_content = src
+            .read_file("/workspace/data.txt")
+            .await
+            .expect("read source after child mutation");
+
+        assert!(
+            src_content.contains("original") && !src_content.contains("mutated"),
+            "source must not be affected by child write, got: {src_content:?}"
+        );
+
+        remove_persisted(&src_name).await.ok();
+        remove_persisted(&child_name).await.ok();
+    }
+
+    #[tokio::test]
+    async fn test_fork_snapshot_cleaned_up() {
+        let src_name = format!("sf-snap-{}", short_id());
+        let child_name = format!("sf-ch-{}", short_id());
+        let snap_name = format!("fork-{child_name}");
+
+        let src = Arc::new(
+            Sandbox::new(SandboxConfig {
+                name: Some(src_name.clone()),
+                persist: true,
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("create source"),
+        );
+
+        let _child = src
+            .fork(SandboxConfig {
+                name: Some(child_name.clone()),
+                persist: true,
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("fork");
+
+        let snap_dir = dirs::home_dir()
+            .expect("home dir")
+            .join(".microsandbox")
+            .join("snapshots")
+            .join(&snap_name);
+
+        assert!(
+            !snap_dir.exists(),
+            "snapshot should be deleted after fork, still found at {snap_dir:?}"
+        );
+
+        remove_persisted(&src_name).await.ok();
+        remove_persisted(&child_name).await.ok();
     }
 
     #[tokio::test]
