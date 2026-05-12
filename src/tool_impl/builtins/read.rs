@@ -103,9 +103,6 @@ pub fn get_read_tool_func() -> ToolFunc {
                 return error_message(id, "missing required parameter: path", "validation");
             };
             let path = Path::new(path_str);
-            if !path.is_absolute() {
-                return error_message(id, "path must be absolute", "validation");
-            }
 
             let bytes = match runenv.read(path).await {
                 Ok(b) => b,
