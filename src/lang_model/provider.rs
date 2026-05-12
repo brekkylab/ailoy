@@ -58,9 +58,9 @@ pub enum LangModelProviderElem {
 /// [`make_runtime`](Self::make_runtime) to build a [`LangModel`].
 ///
 /// [`Default::default`] (and therefore [`AgentProvider::new`]) returns a
-/// registry pre-populated from the environment: it loads `.env` via
-/// [`dotenvy`] and registers `openai/*`, `anthropic/*`, and/or `gemini/*` for
-/// every `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` that is set.
+/// registry pre-populated from the environment:  registers `openai/*`,
+/// `anthropic/*`, and/or `gemini/*` for every `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
+/// / `GEMINI_API_KEY` that is set.
 /// Use [`new`](Self::new) for an empty registry.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
@@ -71,7 +71,6 @@ pub struct LangModelProvider {
 
 impl Default for LangModelProvider {
     fn default() -> Self {
-        dotenvy::dotenv().ok();
         let mut p = Self::new();
         if let Ok(key) = std::env::var("OPENAI_API_KEY") {
             p.insert("openai/*".into(), Self::openai(key));

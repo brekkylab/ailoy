@@ -79,7 +79,7 @@ impl AgentSpec {
     }
 
     pub fn tools(mut self, tools: impl IntoIterator<Item = ToolDesc>) -> Self {
-        self.tools = tools.into_iter().collect();
+        self.tools.append(&mut tools.into_iter().collect());
         self
     }
 

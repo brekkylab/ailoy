@@ -21,7 +21,7 @@ use crate::datatype::Value;
 ///
 /// # Example
 /// ```rust
-/// # use ailoy::message::ToolDescBuilder;
+/// # use ailoy::tool::ToolDescBuilder;
 /// # use ailoy::to_value;
 ///
 /// let desc = ToolDescBuilder::new("temperature")
@@ -97,7 +97,7 @@ impl fmt::Display for ToolDesc {
 ///
 /// # Example
 /// ```rust
-/// # use ailoy::message::ToolDescBuilder;
+/// # use ailoy::tool::ToolDescBuilder;
 /// # use ailoy::datatype::Value;
 ///
 /// let tool = ToolDescBuilder::new("weather")

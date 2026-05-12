@@ -18,7 +18,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,no_run
 /// # use ailoy::{
 /// #     agent::{AgentBuilder, AgentProvider},
 /// #     lang_model::LangModelProvider,
@@ -40,8 +40,7 @@ use crate::{
 ///         .parameters(to_value!({ "type": "object", "properties": {} }))
 ///         .build()
 ///     )
-///     .build()
-///     .await?;
+///     .build()?;
 /// #   Ok(())
 /// # }
 /// ```
