@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use fancy_regex::{Regex, RegexBuilder};
 
+use super::glob::glob_to_regex;
 use crate::{
     runenv::Dirent,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
@@ -10,35 +11,6 @@ use crate::{
 
 const DEFAULT_LIMIT: usize = 1000;
 const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
-
-/// Convert a basename glob (`*.rs`, `test_*`) into an anchored regex.
-fn glob_to_regex(glob: &str) -> Result<Regex, String> {
-    let mut pat = String::from("^");
-    let mut chars = glob.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '*' => pat.push_str(".*"),
-            '?' => pat.push('.'),
-            '[' => {
-                pat.push('[');
-                while let Some(&nc) = chars.peek() {
-                    chars.next();
-                    pat.push(nc);
-                    if nc == ']' {
-                        break;
-                    }
-                }
-            }
-            '.' | '+' | '(' | ')' | '{' | '}' | '|' | '^' | '$' | '\\' => {
-                pat.push('\\');
-                pat.push(c);
-            }
-            _ => pat.push(c),
-        }
-    }
-    pat.push('$');
-    Regex::new(&pat).map_err(|e| format!("invalid glob {glob:?}: {e}"))
-}
 
 /// Treat a file as binary if its first chunk contains a NUL byte (matches what
 /// GNU grep does by default with `-I`).
@@ -338,6 +310,8 @@ pub fn get_grep_tool_func() -> ToolFunc {
                         break;
                     }
                 }
+                // Count mode returns only aggregate numbers, so `limit` does not apply.
+                // stopping early would just produce an undercount.
                 OutputMode::Count => {}
             }
         }

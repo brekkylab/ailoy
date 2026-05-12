@@ -17,7 +17,7 @@ const DEFAULT_LIMIT: usize = 1000;
 /// * `?`  — a single character except `/`
 /// * `**` — any number of path segments (use `**/x` to also match `x` at root)
 /// * `[..]` — character classes
-fn glob_to_regex(glob: &str) -> Result<Regex, String> {
+pub(super) fn glob_to_regex(glob: &str) -> Result<Regex, String> {
     let mut pat = String::from("^");
     let mut chars = glob.chars().peekable();
     while let Some(c) = chars.next() {
