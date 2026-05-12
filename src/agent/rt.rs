@@ -65,7 +65,7 @@ impl AgentState {
 pub struct Agent {
     model: LangModel,
 
-    lm_options: LangModelOptions,
+    model_options: LangModelOptions,
 
     tool_descs: Vec<ToolDesc>,
 
@@ -112,7 +112,7 @@ impl Agent {
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
         let model = provider.models.provide(&spec.model)?;
 
-        let lm_options = LangModelOptions {
+        let model_options = LangModelOptions {
             temperature: spec.temperature,
             top_p: spec.top_p,
             top_k: spec.top_k,
@@ -148,7 +148,7 @@ impl Agent {
 
         Ok(Self {
             model,
-            lm_options,
+            model_options,
             tools,
             tool_descs,
             state,
@@ -333,7 +333,7 @@ impl Agent {
 
                 let mut output = self
                     .model
-                    .run(&self.state.history, &self.tool_descs, &self.lm_options)
+                    .run(&self.state.history, &self.tool_descs, &self.model_options)
                     .await?;
 
                 // Capture token usage for next iteration's truncation check.
