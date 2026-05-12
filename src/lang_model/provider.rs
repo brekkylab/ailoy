@@ -56,16 +56,41 @@ pub enum LangModelProviderElem {
 /// [`LangModelProviderElem`] values, then [`insert`](Self::insert) them under
 /// the chosen pattern. At agent construction the registry is consulted via
 /// [`make_runtime`](Self::make_runtime) to build a [`LangModel`].
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+///
+/// [`Default::default`] (and therefore [`AgentProvider::new`]) returns a
+/// registry pre-populated from the environment:  registers `openai/*`,
+/// `anthropic/*`, and/or `gemini/*` for every `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
+/// / `GEMINI_API_KEY` that is set.
+/// Use [`new`](Self::new) for an empty registry.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 #[schemars(transparent)]
 pub struct LangModelProvider {
     inner: BTreeMap<String, LangModelProviderElem>,
 }
 
+impl Default for LangModelProvider {
+    fn default() -> Self {
+        let mut p = Self::new();
+        if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+            p.insert("openai/*".into(), Self::openai(key));
+        }
+        if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+            p.insert("anthropic/*".into(), Self::anthropic(key));
+        }
+        if let Ok(key) = std::env::var("GEMINI_API_KEY") {
+            p.insert("gemini/*".into(), Self::gemini(key));
+        }
+        p
+    }
+}
+
 impl LangModelProvider {
+    /// Construct an empty registry.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            inner: BTreeMap::new(),
+        }
     }
 
     /// Register an endpoint under a name or glob pattern (`*`, `?`).
@@ -118,7 +143,7 @@ impl LangModelProvider {
     /// Looks up `spec_model` (with glob fallback), strips any `provider/` prefix
     /// to recover the API-side model id (e.g. `"openai/gpt-4o"` → `"gpt-4o"`),
     /// and hands the resolved endpoint to [`LangModel::new`].
-    pub fn make_runtime(&self, spec_model: impl AsRef<str>) -> anyhow::Result<LangModel> {
+    pub fn provide(&self, spec_model: impl AsRef<str>) -> anyhow::Result<LangModel> {
         let spec_model = spec_model.as_ref();
         let elem = self
             .get(spec_model)
@@ -201,7 +226,7 @@ mod tests {
     fn make_runtime_strips_prefix() {
         let mut p = LangModelProvider::new();
         p.insert("openai/*".into(), dummy());
-        let m = p.make_runtime("openai/gpt-4o").unwrap();
+        let m = p.provide("openai/gpt-4o").unwrap();
         assert_eq!(m.model_id(), "gpt-4o");
     }
 }

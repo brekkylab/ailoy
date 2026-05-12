@@ -4,6 +4,7 @@ use crate::{
     agent::{Agent, AgentProvider, AgentSpec, ContextManager},
     message::Message,
     runenv::RunEnv,
+    tool::ToolDesc,
 };
 
 /// Fluent builder over [`AgentSpec`] for [`Agent`].
@@ -17,8 +18,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust
-/// # use ailoy::{agent::{AgentBuilder, AgentProvider}, lang_model::LangModelProvider, tool::ToolProvider};
+/// ```rust,no_run
+/// # use ailoy::{
+/// #     agent::{AgentBuilder, AgentProvider},
+/// #     lang_model::LangModelProvider,
+/// #     tool::ToolDescBuilder,
+/// #     to_value,
+/// # };
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
 /// let mut provider = AgentProvider::new();
@@ -26,13 +32,15 @@ use crate::{
 ///     "openai/gpt-4o".into(),
 ///     LangModelProvider::openai(std::env::var("OPENAI_API_KEY")?),
 /// );
-/// provider.tools = ToolProvider::new().web_search();
 ///
 /// let agent = AgentBuilder::new("openai/gpt-4o")
 ///     .provider(provider)
-///     .tool("web_search")
-///     .build()
-///     .await?;
+///     .tool(ToolDescBuilder::new("web_search")
+///         .description("Search the web.")
+///         .parameters(to_value!({ "type": "object", "properties": {} }))
+///         .build()
+///     )
+///     .build()?;
 /// #   Ok(())
 /// # }
 /// ```
@@ -74,14 +82,31 @@ impl AgentBuilder {
         self
     }
 
-    pub fn tool(mut self, key: impl Into<String>) -> Self {
-        self.spec.tools.push(key.into());
+    pub fn tool(mut self, desc: ToolDesc) -> Self {
+        self.spec.tools.push(desc);
         self
     }
 
-    pub fn tools(mut self, keys: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        let mut keys = keys.into_iter().map(|k| k.into()).collect::<Vec<_>>();
-        self.spec.tools.append(&mut keys);
+    pub fn tools(mut self, desc: impl IntoIterator<Item = ToolDesc>) -> Self {
+        let mut desc = desc.into_iter().collect();
+        self.spec.tools.append(&mut desc);
+        self
+    }
+
+    /// Append the canonical local-execution toolset.
+    /// See [`AgentSpec::system_tools`] for the per-family tool selection.
+    pub fn system_tools(mut self) -> Self {
+        self.spec = self.spec.system_tools();
+        self
+    }
+
+    pub fn python_repl_tool(mut self) -> Self {
+        self.spec = self.spec.python_repl_tool();
+        self
+    }
+
+    pub fn web_search_tool(mut self) -> Self {
+        self.spec = self.spec.web_search_tool();
         self
     }
 
@@ -120,7 +145,7 @@ impl AgentBuilder {
 
     /// Materialise the agent by dispatching to the appropriate `Agent::try_*` constructor
     /// based on which optional fields were supplied.
-    pub async fn build(self) -> anyhow::Result<Agent> {
+    pub fn build(self) -> anyhow::Result<Agent> {
         let Self {
             spec,
             provider,
@@ -129,11 +154,11 @@ impl AgentBuilder {
             context_manager,
         } = self;
         let mut agent = match (provider, runenv) {
-            (None, None) => Agent::try_new(spec).await?,
-            (None, Some(runenv)) => Agent::try_with_runenv(spec, runenv).await?,
-            (Some(provider), None) => Agent::try_with_provider(spec, &provider).await?,
+            (None, None) => Agent::try_new(spec)?,
+            (None, Some(runenv)) => Agent::try_with_runenv(spec, runenv)?,
+            (Some(provider), None) => Agent::try_with_provider(spec, &provider)?,
             (Some(provider), Some(runenv)) => {
-                Agent::try_with_provider_and_runenv(spec, &provider, runenv).await?
+                Agent::try_with_provider_and_runenv(spec, &provider, runenv)?
             }
         };
         // Only override the spec-derived history (which seeds the system instruction)
@@ -169,7 +194,6 @@ mod tests {
             .provider(dummy_provider())
             .instruction("You are a test agent.")
             .build()
-            .await
             .unwrap();
 
         let history = agent.get_history();
@@ -182,7 +206,6 @@ mod tests {
         let agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .build()
-            .await
             .unwrap();
         assert!(agent.get_history().is_empty());
     }
@@ -194,7 +217,6 @@ mod tests {
             .provider(dummy_provider())
             .runenv(Local {})
             .build()
-            .await
             .unwrap();
         // Smoke check: runenv is plugged in and usable.
         let result = agent
@@ -222,7 +244,6 @@ mod tests {
             .provider(dummy_provider())
             .subagent(sub_spec)
             .build()
-            .await
             .unwrap();
     }
 
@@ -286,14 +307,12 @@ mod tests {
             .provider(dummy_provider())
             .runenv(shared.clone())
             .build()
-            .await
             .unwrap();
 
         let parent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .runenv(shared.clone())
             .build()
-            .await
             .unwrap();
 
         // Write through the underlying VM, read back through parent's runenv.
@@ -348,7 +367,6 @@ mod tests {
             .provider(dummy_provider())
             .context_manager(cm)
             .build()
-            .await
             .unwrap();
         assert!(agent.get_context_manager().is_some());
     }

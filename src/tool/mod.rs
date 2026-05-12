@@ -1,37 +1,36 @@
 //! Tool abstractions and their relationships.
 //!
-//! A [`ToolProvider`] holds an ordered list of [`ToolProviderElem`] entries — each
-//! describes a tool source (built-in, MCP server, A2A agent, or custom factory).
-//! When an [`crate::agent::Agent`] is instantiated from an [`crate::agent::AgentSpec`],
-//! each entry is resolved to a [`ToolFactory`] and then to a concrete [`Tool`] bound
-//! to that spec.  The [`ToolFunc`] selected during that step decides the tool's
-//! actual runtime behaviour.
+//! A [`ToolProvider`] is a name-keyed registry of [`ToolProviderElem`] entries —
+//! each describes a tool source (function, MCP server, or A2A agent). An
+//! [`crate::agent::AgentSpec`] lists the [`ToolDesc`]s it wants exposed to the
+//! model; at agent construction the provider is asked to resolve each desc to
+//! a concrete [`ToolFunc`] that drives the tool's runtime behaviour.
 //!
 //! ```text
-//! ToolProvider (ordered list of sources)
-//!   └─ ToolProviderElem ──► ToolFactory ──► Tool (runtime)
-//!                                            └─ ToolDesc (description)
-//!                                            └─ ToolFunc (behaviour)
+//! ToolProvider (name → ToolProviderElem)
+//!     │
+//!     │  ToolProvider::provide(&[ToolDesc])
+//!     ▼
+//! HashMap<String, ToolFunc>   ← bound to the agent's spec
 //! ```
 //!
 //! ## Lifecycle
 //!
-//! 1. **`ToolProvider` is created** — populated with [`ToolProviderElem`] entries
-//!    via builder methods (`.bash()`, `.web_search()`, `.mcp_stdio(...)`,
-//!    `.custom(factory)`, …) or by serde.
-//! 2. **`Agent` is instantiated from an `AgentSpec`** — [`ToolProvider::make_runtime`]
-//!    walks every element, asks it to build a [`ToolFactory`], and immediately calls
-//!    [`ToolFactory::make`] with the spec, producing a concrete [`Tool`] for the agent.
-//! 3. **`ToolFunc` drives execution** — the [`ToolFunc`] chosen during step 2
-//!    determines the tool's actual runtime behaviour when [`Tool::call`] is invoked
-//!    by the agent.
+//! 1. **`ToolProvider` is created** — [`ToolProvider::new`] starts pre-loaded
+//!    with every built-in tool ([`ToolProvider::empty`] opts out); additional
+//!    entries are added via [`ToolProvider::insert_func`],
+//!    [`ToolProvider::insert_func_factory`], [`ToolProvider::insert_a2a`], or
+//!    the MCP variants.
+//! 2. **`Agent` is instantiated from an `AgentSpec`** — [`ToolProvider::provide`]
+//!    walks `spec.tools`, looks up each [`ToolDesc`] by name, and builds the
+//!    matching [`ToolFunc`] (a fresh one per call for factory-style entries).
+//! 3. **`ToolFunc` drives execution** — when the model issues a tool call, the
+//!    agent invokes the resolved [`ToolFunc`] to produce the result stream.
 
-mod builder;
+mod desc;
 mod func;
 mod provider;
-mod rt;
 
-pub use builder::*;
+pub use desc::*;
 pub use func::*;
 pub use provider::*;
-pub use rt::*;

@@ -1,24 +1,16 @@
 use std::path::Path;
 
 use crate::{
-    datatype::{Bytes, Value},
-    message::{Message, Part, Role, ToolDescBuilder},
-    to_value,
-    tool::{ToolContext, ToolFactory, ToolFunc},
+    datatype::Bytes,
+    message::{Message, Part, Role},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool_func,
 };
 
 const DEFAULT_LIMIT: usize = 2000;
 const MAX_LINE_CHARS: usize = 10000;
 const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
-
-const DESCRIPTION: &str = "Reads a file from the local filesystem. \
-It can read text files or images (PNG/JPEG/GIF/WEBP). \
-When you already know which part of the file you need, only read that part. This can be important for larger files. \
-For text files, results are returned using cat -n format, with line numbers starting at 1. \
-Lines longer than 10000 characters are truncated. \
-Binary or unsupported file types return an error. \
-Paths must be absolute.";
 
 enum FileKind {
     Image(&'static str),
@@ -41,7 +33,7 @@ fn classify(bytes: &[u8]) -> Result<FileKind, String> {
 
 fn error_message(id: String, msg: impl Into<String>, phase: &str) -> Message {
     Message::new(Role::Tool)
-        .with_contents([Part::value(to_value!({
+        .with_contents([Part::value(crate::to_value!({
             "error": msg.into(),
             "phase": phase,
         }))])
@@ -69,20 +61,29 @@ fn format_text(text: &str, offset: usize, limit: usize) -> (String, usize) {
     (out, total)
 }
 
-pub async fn build_read_tool() -> anyhow::Result<ToolFactory> {
-    let desc = ToolDescBuilder::new("read")
-        .description(DESCRIPTION)
-        .parameters(to_value!({
+pub fn get_read_tool_desc() -> ToolDesc {
+    ToolDescBuilder::new("read")
+        .description(
+            concat!(
+                "Reads a file from the local filesystem. ",
+                "It can read text files or images(PNG/JPEG/GIF/WEBP). ",
+                "When you already know which part of the file you need, only read that part. This can be important for larger files. ",
+                "For text files, results are returned using cat -n format, with line numbers starting at 1. ",
+                "Lines longer than 10000 characters are truncated. ",
+                "Binary or unsupported file types return an error. ",
+            )
+        )
+        .parameters(crate::to_value!({
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "The absolute path to the file to read"
+                    "description": "The path to the file to read"
                 },
                 "offset": {
                     "type": "integer",
                     "description": "The line number to start reading from. Only provide if the file is too large to read at once. Ignored for images.",
-                    "default": 1,
+                    "default": 0,
                 },
                 "limit": {
                     "type": "integer",
@@ -92,121 +93,113 @@ pub async fn build_read_tool() -> anyhow::Result<ToolFactory> {
             },
             "required": ["path"]
         }))
-        .build();
+        .build()
+}
 
-    let f = ToolFunc::new(|args: Value, ctx: ToolContext| async move {
-        let id = ctx.id.clone();
+pub fn get_read_tool_func() -> ToolFunc {
+    tool_func!(
+        async |args: Value, id: String, runenv: &dyn RunEnv| -> Message {
+            let Some(path_str) = args.pointer("/path").and_then(|v| v.as_str()) else {
+                return error_message(id, "missing required parameter: path", "validation");
+            };
+            let path = Path::new(path_str);
 
-        let Some(path_str) = args.pointer("/path").and_then(|v| v.as_str()) else {
-            return error_message(id, "missing required parameter: path", "validation");
-        };
-        let path = Path::new(path_str);
-        if !path.is_absolute() {
-            return error_message(id, "path must be absolute", "validation");
-        }
+            let bytes = match runenv.read(path).await {
+                Ok(b) => b,
+                Err(e) => return error_message(id, format!("read {path_str}: {e}"), "io"),
+            };
 
-        let bytes = match ctx.runenv.read(path).await {
-            Ok(b) => b,
-            Err(e) => return error_message(id, format!("read {path_str}: {e}"), "io"),
-        };
+            let kind = match classify(&bytes) {
+                Ok(k) => k,
+                Err(e) => return error_message(id, e, "validation"),
+            };
 
-        let kind = match classify(&bytes) {
-            Ok(k) => k,
-            Err(e) => return error_message(id, e, "validation"),
-        };
-
-        match kind {
-            FileKind::Image(mime) => {
-                if bytes.len() > MAX_IMAGE_BYTES {
-                    return error_message(
-                        id,
-                        format!(
-                            "image too large: {} bytes (limit: {})",
-                            bytes.len(),
-                            MAX_IMAGE_BYTES
-                        ),
-                        "validation",
-                    );
+            match kind {
+                FileKind::Image(mime) => {
+                    if bytes.len() > MAX_IMAGE_BYTES {
+                        return error_message(
+                            id,
+                            format!(
+                                "image too large: {} bytes (limit: {})",
+                                bytes.len(),
+                                MAX_IMAGE_BYTES
+                            ),
+                            "validation",
+                        );
+                    }
+                    let part = Part::image_embedded(mime, Bytes::from(bytes))
+                        .expect("image_embedded always succeeds");
+                    Message::new(Role::Tool).with_contents([part]).with_id(id)
                 }
-                let part = Part::image_embedded(mime, Bytes::from(bytes))
-                    .expect("image_embedded always succeeds");
-                Message::new(Role::Tool).with_contents([part]).with_id(id)
-            }
-            FileKind::Text => {
-                if bytes.len() > MAX_FILE_BYTES {
-                    return error_message(
-                        id,
-                        format!(
-                            "file too large: {} bytes (limit: {}); use offset/limit to read in chunks",
-                            bytes.len(),
-                            MAX_FILE_BYTES
-                        ),
-                        "validation",
-                    );
+                FileKind::Text => {
+                    if bytes.len() > MAX_FILE_BYTES {
+                        return error_message(
+                            id,
+                            format!(
+                                "file too large: {} bytes (limit: {}); use offset/limit to read in chunks",
+                                bytes.len(),
+                                MAX_FILE_BYTES
+                            ),
+                            "validation",
+                        );
+                    }
+                    let (cow, _, _) = encoding_rs::UTF_8.decode(&bytes);
+                    let text = cow.into_owned();
+                    let offset = args
+                        .pointer("/offset")
+                        .and_then(|v| v.as_integer())
+                        .map(|n| n.max(0) as usize)
+                        .unwrap_or(0);
+                    let limit = args
+                        .pointer("/limit")
+                        .and_then(|v| v.as_integer())
+                        .map(|n| n.max(0) as usize)
+                        .unwrap_or(DEFAULT_LIMIT);
+                    let (content, total) = format_text(&text, offset, limit);
+                    Message::new(Role::Tool)
+                        .with_contents([Part::value(crate::to_value!({
+                            "content": content.as_str(),
+                            "total_lines": total as i64,
+                        }))])
+                        .with_id(id)
                 }
-                let (cow, _, _) = encoding_rs::UTF_8.decode(&bytes);
-                let text = cow.into_owned();
-                let offset = args
-                    .pointer("/offset")
-                    .and_then(|v| v.as_integer())
-                    .map(|n| n.max(1) as usize)
-                    .unwrap_or(1);
-                let limit = args
-                    .pointer("/limit")
-                    .and_then(|v| v.as_integer())
-                    .map(|n| n.max(0) as usize)
-                    .unwrap_or(DEFAULT_LIMIT);
-                let (content, total) = format_text(&text, offset, limit);
-                Message::new(Role::Tool)
-                    .with_contents([Part::value(to_value!({
-                        "content": content.as_str(),
-                        "total_lines": total as i64,
-                    }))])
-                    .with_id(id)
             }
         }
-    });
-
-    Ok(ToolFactory::simple(desc, f))
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use futures::StreamExt;
 
     use super::*;
-    use crate::{agent::AgentSpec, runenv::Local, to_value, tool::ToolContext};
+    use crate::{datatype::Value, runenv::Local, to_value, tool::ToolProvider};
 
-    fn spec() -> AgentSpec {
-        AgentSpec::new("test")
+    fn provider() -> ToolProvider {
+        let mut p = ToolProvider::new();
+        p.insert_func("read", get_read_tool_func());
+        p
     }
 
-    fn local_ctx() -> ToolContext {
-        ToolContext::new(String::new(), Arc::new(Local {}))
-    }
-
-    fn read_content(msg: &Message) -> String {
-        msg.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/content")
-            .and_then(|v| v.as_str())
-            .unwrap()
-            .to_string()
+    async fn call(args: Value) -> Message {
+        let provider = provider();
+        let funcs = provider.provide(&[get_read_tool_desc()]).unwrap();
+        let f = funcs.get("read").unwrap();
+        f.call(args, "1", &Local {}).next().await.unwrap().message
     }
 
     #[tokio::test]
     async fn test_read_returns_numbered_lines() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), "alpha\nbeta\ngamma\n").unwrap();
-        let tool = build_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(
-                to_value!({ "path": tmp.path().to_string_lossy().to_string() }),
-                local_ctx(),
-            )
-            .await;
-        let content = read_content(&msg);
+        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
+        let content = msg.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/content")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
         assert!(content.contains("\talpha"), "got: {content}");
         assert!(content.contains("\tbeta"), "got: {content}");
         assert!(content.contains("\tgamma"), "got: {content}");
@@ -224,18 +217,19 @@ mod tests {
     async fn test_read_offset_and_limit() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), "a\nb\nc\nd\ne\n").unwrap();
-        let tool = build_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(
-                to_value!({
-                    "path": tmp.path().to_string_lossy().to_string(),
-                    "offset": 2,
-                    "limit": 2,
-                }),
-                local_ctx(),
-            )
-            .await;
-        let content = read_content(&msg);
+        let msg = call(to_value!({
+            "path": tmp.path().to_string_lossy().to_string(),
+            "offset": 2,
+            "limit": 2,
+        }))
+        .await;
+        let content = msg.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/content")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
         assert!(content.contains("\tb"));
         assert!(content.contains("\tc"));
         assert!(!content.contains("\ta"), "should skip first line");
@@ -244,8 +238,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_missing_path() {
-        let tool = build_read_tool().await.unwrap().make(&spec());
-        let msg = tool.call_next(to_value!({}), local_ctx()).await;
+        let msg = call(to_value!({})).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -257,10 +250,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_relative_path_rejected() {
-        let tool = build_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(to_value!({ "path": "relative/path.txt" }), local_ctx())
-            .await;
+        let msg = call(to_value!({ "path": "relative/path.txt" })).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -272,13 +262,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_nonexistent_returns_io_error() {
-        let tool = build_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(
-                to_value!({ "path": "/this/path/does/not/exist/xyz" }),
-                local_ctx(),
-            )
-            .await;
+        let msg = call(to_value!({ "path": "/this/path/does/not/exist/xyz" })).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -294,13 +278,7 @@ mod tests {
         let pdf: &[u8] = b"%PDF-1.4\n%\xC7\xEC\x8F\xA2\n1 0 obj\n<<>>\nendobj\n";
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), pdf).unwrap();
-        let tool = build_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(
-                to_value!({ "path": tmp.path().to_string_lossy().to_string() }),
-                local_ctx(),
-            )
-            .await;
+        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
         let err = msg.contents[0]
             .as_value()
             .unwrap()
@@ -311,6 +289,39 @@ mod tests {
             err.contains("unsupported"),
             "expected unsupported error, got: {err}"
         );
+    }
+
+    fn read_content(msg: &Message) -> String {
+        msg.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/content")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn test_read_utf8_bom_stripped() {
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice("hello\n".as_bytes());
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), &bytes).unwrap();
+        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
+        let content = read_content(&msg);
+        assert!(content.contains("\thello"), "got: {content}");
+        assert!(!content.contains('\u{FEFF}'), "BOM should be stripped");
+    }
+
+    #[tokio::test]
+    async fn test_read_utf16_le() {
+        // UTF-16 LE BOM + "hi\n"
+        let bytes: &[u8] = &[0xFF, 0xFE, 0x68, 0x00, 0x69, 0x00, 0x0A, 0x00];
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), bytes).unwrap();
+        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
+        let content = read_content(&msg);
+        assert!(content.contains("\thi"), "got: {content}");
     }
 
     #[tokio::test]
@@ -325,13 +336,7 @@ mod tests {
         ];
         let tmp = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
         std::fs::write(tmp.path(), png).unwrap();
-        let tool = build_read_tool().await.unwrap().make(&spec());
-        let msg = tool
-            .call_next(
-                to_value!({ "path": tmp.path().to_string_lossy().to_string() }),
-                local_ctx(),
-            )
-            .await;
+        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
         assert!(msg.contents[0].is_image(), "expected image part");
     }
 }

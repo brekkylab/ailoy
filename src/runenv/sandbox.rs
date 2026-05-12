@@ -580,9 +580,7 @@ fn ls_recursive(
             let permission = ((entry.mode >> 6) & 0o7) as u8;
             match entry.kind {
                 FsEntryKind::Directory => {
-                    let children = ls_recursive(sb, path.join(&name))
-                        .await
-                        .unwrap_or_default();
+                    let children = ls_recursive(sb, path.join(&name)).await.unwrap_or_default();
                     out.push(Dirent::Dir {
                         name,
                         permission,

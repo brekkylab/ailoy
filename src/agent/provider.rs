@@ -1,8 +1,4 @@
-use std::sync::LazyLock;
-
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{lang_model::LangModelProvider, tool::ToolProvider};
 
@@ -17,10 +13,12 @@ use crate::{lang_model::LangModelProvider, tool::ToolProvider};
 ///   [`AgentSpec::model`](crate::agent::AgentSpec::model) here at construction.
 ///
 /// * **How do I initialise a tool?** — [`tools`](AgentProvider::tools) is a
-///   [`ToolProvider`] that describes the tool sources to materialise (built-ins,
-///   MCP servers, remote A2A agents, or custom factories).  Every entry is built
-///   into a runtime [`Tool`](crate::tool::Tool) at agent startup and added to the
-///   agent's tool list.
+///   [`ToolProvider`] keyed by tool name (built-ins, MCP servers, remote A2A
+///   agents, or custom function tools).  When an agent is constructed, the
+///   [`ToolDesc`](crate::tool::ToolDesc)s listed in its
+///   [`AgentSpec::tools`](crate::agent::AgentSpec::tools) are resolved against
+///   this registry to produce the [`ToolFunc`](crate::tool::ToolFunc)s that
+///   actually run.
 ///
 /// `AgentProvider` is separate from [`AgentSpec`](crate::agent::AgentSpec) because
 /// these settings describe *how* to run an agent, not *what* the agent is.  Swapping
@@ -28,17 +26,20 @@ use crate::{lang_model::LangModelProvider, tool::ToolProvider};
 /// or instruction does.
 ///
 /// Both fields are public — populate them directly, e.g.
-/// `provider.models.insert("openai/gpt-4o".into(), LangModelProvider::openai(key))`
-/// or `provider.tools = ToolProvider::new().bash().web_search()`.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+/// `provider.models.insert("openai/gpt-4o".into(), LangModelProvider::openai(key))`.
+/// [`tools`](AgentProvider::tools) starts pre-loaded with every built-in tool;
+/// use [`ToolProvider::empty`](crate::tool::ToolProvider::empty) to opt out.
+#[derive(Clone)]
 pub struct AgentProvider {
     /// Registry of all available language models, keyed by model identifier
     /// (e.g. `"openai/gpt-4o"` or `"anthropic/claude-sonnet-4-6"`). Lookups
     /// are by exact match against [`AgentSpec::model`](crate::agent::AgentSpec::model).
     pub models: LangModelProvider,
 
-    /// Tool sources to materialise at agent startup.  Each [`ToolProviderElem`](crate::tool::ToolProviderElem)
-    /// in the underlying list contributes exactly one runtime [`Tool`](crate::tool::Tool).
+    /// Registry of tool sources, keyed by tool name. Each
+    /// [`ToolProviderElem`](crate::tool::ToolProviderElem) is resolved to a
+    /// [`ToolFunc`](crate::tool::ToolFunc) when an
+    /// [`AgentSpec`](crate::agent::AgentSpec) requests a matching name.
     pub tools: ToolProvider,
 }
 
@@ -60,10 +61,20 @@ impl Default for AgentProvider {
 static DEFAULT_PROVIDER: LazyLock<RwLock<AgentProvider>> =
     LazyLock::new(|| RwLock::new(AgentProvider::new()));
 
-pub async fn default_provider() -> RwLockReadGuard<'static, AgentProvider> {
-    DEFAULT_PROVIDER.read().await
+/// Borrow the process-wide default [`AgentProvider`] for reading.
+///
+/// Holds a [`std::sync::RwLockReadGuard`]; drop it before performing long
+/// operations to avoid blocking writers.  Use [`default_provider_owned`]
+/// when you need to release the lock immediately.
+pub fn default_provider() -> RwLockReadGuard<'static, AgentProvider> {
+    DEFAULT_PROVIDER
+        .read()
+        .expect("default_provider lock poisoned")
 }
 
-pub async fn default_provider_mut() -> RwLockWriteGuard<'static, AgentProvider> {
-    DEFAULT_PROVIDER.write().await
+/// Borrow the process-wide default [`AgentProvider`] for writing.
+pub fn default_provider_mut() -> RwLockWriteGuard<'static, AgentProvider> {
+    DEFAULT_PROVIDER
+        .write()
+        .expect("default_provider lock poisoned")
 }

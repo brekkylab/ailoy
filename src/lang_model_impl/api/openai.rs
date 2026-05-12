@@ -5,9 +5,10 @@ use crate::{
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
-        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, ToolDesc, Unmarshal,
+        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
     },
     to_value,
+    tool::ToolDesc,
 };
 
 impl LangModelProvider {
@@ -373,7 +374,8 @@ mod tests {
     use crate::{
         datatype::Bytes,
         lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, TokenUsage, ToolDesc, ToolDescBuilder},
+        message::{FinishReason, Message, Part, Role, TokenUsage},
+        tool::{ToolDesc, ToolDescBuilder},
     };
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
@@ -485,7 +487,9 @@ mod tests {
         // Part::Value(String) → {"type":"input_text","text":"..."} block; no double-encoding.
         let msg_str = Message::new(Role::Tool)
             .with_id("call_4")
-            .with_contents([Part::value(crate::datatype::Value::string("ok".to_string()))]);
+            .with_contents([Part::value(crate::datatype::Value::string(
+                "ok".to_string(),
+            ))]);
         let items = marshal_message(&msg_str, false);
         let output = items[0]
             .pointer("/output")

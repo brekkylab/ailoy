@@ -9,5 +9,5 @@ pub(crate) mod macros;
 pub mod message;
 pub mod runenv;
 pub mod tool;
-pub(crate) mod tool_impl;
+pub mod tool_impl;
 pub(crate) mod util;

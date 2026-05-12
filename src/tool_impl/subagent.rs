@@ -1,19 +1,20 @@
 use std::sync::Arc;
 
 use futures::StreamExt as _;
-use tokio::sync::Mutex;
 
 use crate::{
-    agent::{Agent, AgentCard},
+    agent::{Agent, AgentCard, AgentProvider, AgentSpec},
     datatype::Value,
-    message::{FinishReason, Message, Part, Role, ToolDesc, ToolDescBuilder},
-    tool::{Tool, ToolContext, ToolFunc},
+    message::{FinishReason, Message, Part, Role},
+    runenv::RunEnv,
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool_func,
 };
 
-/// Shared desc + func construction for both the factory and direct-Tool paths.
-fn make_subagent_parts(card: AgentCard, agent: Arc<Mutex<Agent>>) -> (ToolDesc, ToolFunc) {
+/// Build the [`ToolDesc`] for a sub-agent from its agent card.
+pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
     let description = if card.skills.is_empty() {
-        card.description
+        card.description.clone()
     } else {
         let skills = card
             .skills
@@ -24,7 +25,7 @@ fn make_subagent_parts(card: AgentCard, agent: Arc<Mutex<Agent>>) -> (ToolDesc, 
         format!("{}\n\n# Skills\n\n{}", card.description, skills)
     };
 
-    let desc = ToolDescBuilder::new(&card.name)
+    ToolDescBuilder::new(&card.name)
         .description(description)
         .parameters(crate::to_value!({
             "type": "object",
@@ -36,12 +37,34 @@ fn make_subagent_parts(card: AgentCard, agent: Arc<Mutex<Agent>>) -> (ToolDesc, 
             },
             "required": ["task"]
         }))
-        .build();
+        .build()
+}
 
-    let f = ToolFunc::new(Box::new(move |args: Value, ctx: ToolContext| {
-        let id = ctx.id;
-        let agent = agent.clone();
-        Box::pin(async_stream::stream! {
+/// Build a one-shot [`ToolFunc`] that materialises a fresh sub-agent from the
+/// supplied [`AgentSpec`] every time the tool is invoked, runs it for one turn,
+/// then drops it.
+///
+/// The closure captures `spec`, `provider`, and `runenv` by clone, so the
+/// produced [`ToolFunc`] is independent of any parent [`Agent`]: the parent
+/// keeps it in its `tools` map alongside ordinary tools, with no special
+/// dispatch needed.
+///
+/// The returned function:
+/// 1. Streams every [`MessageOutput`](crate::message::MessageOutput) produced by
+///    the sub-agent during its turn.
+/// 2. Emits a final `Role::Tool` message whose value content is the sub-agent's
+///    last assistant answer.
+pub fn get_subagent_tool_func(
+    spec: AgentSpec,
+    provider: AgentProvider,
+    runenv: Arc<dyn RunEnv>,
+) -> ToolFunc {
+    tool_func!(stream |args: Value, id: String| -> Message {
+        let spec = spec.clone();
+        let provider = provider.clone();
+        let runenv = runenv.clone();
+        let id = id.clone();
+        async_stream::stream! {
             let task = match args
                 .as_object()
                 .and_then(|o| o.get("task"))
@@ -56,16 +79,24 @@ fn make_subagent_parts(card: AgentCard, agent: Arc<Mutex<Agent>>) -> (ToolDesc, 
                 }
             };
 
+            let mut agent = match Agent::try_with_provider_and_runenv(spec, &provider, runenv) {
+                Ok(a) => a,
+                Err(e) => {
+                    yield Message::new(Role::Tool)
+                        .with_contents([Part::value(Value::string(format!("Error building subagent: {e}")))])
+                        .with_id(id);
+                    return;
+                }
+            };
+
             let query = Message::new(Role::User).with_contents([Part::text(task)]);
             let mut last_answer = String::new();
 
             {
-                let mut agent_guard = agent.lock().await;
-                let mut strm = agent_guard.run(query);
+                let mut strm = agent.run(query);
                 while let Some(result) = strm.next().await {
                     match result {
                         Ok(output) => {
-                            // Track the final assistant text to use as the tool result.
                             if output.message.role == Role::Assistant
                                 && matches!(output.finish_reason, FinishReason::Stop {})
                             {
@@ -87,32 +118,11 @@ fn make_subagent_parts(card: AgentCard, agent: Arc<Mutex<Agent>>) -> (ToolDesc, 
                         }
                     }
                 }
-            } // drop strm and agent_guard
+            }
 
-            // Emit the final tool response — the outer agent assigns this depth 0.
-            // Use Part::value so provider codecs marshal it as a plain string output.
             yield Message::new(Role::Tool)
                 .with_contents([Part::value(Value::string(last_answer))])
                 .with_id(id);
-        }) as futures::stream::BoxStream<'static, Message>
-    }));
-
-    (desc, f)
-}
-
-/// Create a [`Tool`] that wraps `agent` as a callable sub-agent.
-///
-/// The tool accepts a single `string` argument (the task for the sub-agent) and:
-/// 1. Streams all [`MessageOutput`](crate::message::MessageOutput) items produced
-///    during the sub-agent's turn as intermediate outputs. The outer agent's
-///    `run` assigns these `depth + 1`.
-/// 2. Emits a final `Role::Tool` message whose value content is the sub-agent's
-///    last assistant answer. The outer agent assigns this `depth 0` and pushes it
-///    to history.
-///
-/// Used internally by [`Agent::try_with_provider_and_runenv`](crate::agent::Agent::try_with_provider_and_runenv)
-/// to register every spec sub-agent as a callable tool.
-pub fn make_subagent_tool(card: AgentCard, agent: Arc<Mutex<Agent>>) -> Tool {
-    let (desc, f) = make_subagent_parts(card, agent);
-    Tool::new(desc, Arc::new(f))
+        }
+    })
 }
