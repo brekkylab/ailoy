@@ -679,7 +679,8 @@ mod tests {
                 "country": {"type": "string"},
                 "capital": {"type": "string"}
             },
-            "required": ["country", "capital"]
+            "required": ["country", "capital"],
+            "additionalProperties": false
         });
 
         let model = LangModel::new(
