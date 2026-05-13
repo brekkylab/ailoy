@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::runenv::{ExecResult, RunEnv};
 
@@ -61,6 +61,10 @@ impl RunEnv for Local {
             tokio::fs::create_dir_all(parent).await?;
         }
         tokio::fs::write(path, content).await.map_err(Into::into)
+    }
+
+    async fn get_cwd(&self) -> anyhow::Result<PathBuf> {
+        Ok(std::env::current_dir()?)
     }
 }
 

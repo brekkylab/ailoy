@@ -221,6 +221,10 @@ impl RunEnv for Sandbox {
         let _ = guard.stop_and_wait().await;
         Ok(result?)
     }
+
+    async fn get_cwd(&self) -> anyhow::Result<PathBuf> {
+        Ok(PathBuf::from(&self.workdir))
+    }
 }
 
 impl Sandbox {

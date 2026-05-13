@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
@@ -145,5 +145,23 @@ pub trait RunEnv: Send + Sync + 'static {
             );
         }
         Ok(())
+    }
+
+    /// Current working directory inside the environment.
+    async fn get_cwd(&self) -> anyhow::Result<PathBuf> {
+        let script = match self.get_os() {
+            "linux" | "macos" => "pwd",
+            "windows" => "(Get-Location).Path",
+            other => anyhow::bail!("get_cwd: unsupported OS '{other}'"),
+        };
+        let result = self.exec_shell(script.to_string(), None).await?;
+        if result.exit_code != 0 {
+            anyhow::bail!(
+                "get_cwd failed (exit {}): {}",
+                result.exit_code,
+                result.stderr.trim(),
+            );
+        }
+        Ok(PathBuf::from(result.stdout.trim_end_matches(['\r', '\n'])))
     }
 }
