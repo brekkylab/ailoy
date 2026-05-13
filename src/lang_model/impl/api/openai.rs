@@ -2,7 +2,10 @@ use url::Url;
 
 use crate::{
     datatype::Value,
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
+    lang_model::{
+        LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
+        ResponseFormat,
+    },
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
@@ -210,6 +213,18 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 .insert("top_p".into(), top_p.into());
         }
         // top_k is not part of the OpenAI Responses spec; intentionally ignored.
+        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+            body.as_object_mut().unwrap().insert(
+                "text".into(),
+                to_value!({
+                    "format": {
+                        "type": "json_schema",
+                        "strict": true,
+                        "schema": schema.clone()
+                    }
+                }),
+            );
+        }
 
         to_value!({
             "url": url,
@@ -409,6 +424,62 @@ mod tests {
             response_format: None,
         };
         f(&req)
+    }
+
+    #[test]
+    fn test_marshal_response_format_absent() {
+        with_req("gpt-4o", None, |req| {
+            let val = OpenAIMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            assert!(
+                body.as_object().unwrap().get("text").is_none(),
+                "text must not appear when response_format is None"
+            );
+        });
+    }
+
+    #[test]
+    fn test_marshal_response_format_json_schema() {
+        let schema = to_value!({
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+            "additionalProperties": false
+        });
+        let fmt = ResponseFormat::json_schema(schema).unwrap();
+
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://api.openai.com/v1/responses").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model: "gpt-4o",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: Some(&fmt),
+        };
+
+        let val = OpenAIMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+
+        assert_eq!(
+            body.pointer("/text/format/type").and_then(|v| v.as_str()),
+            Some("json_schema")
+        );
+        assert_eq!(
+            body.pointer("/text/format/strict").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(
+            body.pointer("/text/format/schema").is_some(),
+            "schema must be present in text.format"
+        );
     }
 
     #[test]
