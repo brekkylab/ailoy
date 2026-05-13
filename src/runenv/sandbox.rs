@@ -36,7 +36,9 @@ pub enum VolumeMount {
         #[serde(default)]
         readonly: bool,
     },
-    /// Mount a microsandbox named volume (`~/.microsandbox/volumes/<name>/`).
+    /// Mount a microsandbox named volume, stored under the resolved
+    /// microsandbox home directory (e.g. `~/.microsandbox/volumes/<name>/`
+    /// or `$MSB_HOME/volumes/<name>/`).
     /// The volume persists across sandbox restarts and can be shared between sandboxes.
     Named {
         /// Name of the pre-existing microsandbox volume.
@@ -100,6 +102,13 @@ pub struct SandboxConfig {
     /// Volume mounts attached at sandbox creation time.
     #[serde(default)]
     pub volumes: Vec<VolumeMount>,
+
+    /// Override microsandbox home (binaries, db, snapshots, per-sandbox state).
+    /// Equivalent to setting `MSB_HOME`. Takes effect on the first
+    /// `Sandbox::new` only; later calls with a different value return an
+    /// error. Defaults to `$MSB_HOME` or `~/.microsandbox`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<PathBuf>,
 }
 
 impl Default for SandboxConfig {
@@ -116,6 +125,7 @@ impl Default for SandboxConfig {
             max_output_chars: 30_000,
             persist: false,
             volumes: Vec::new(),
+            home: None,
         }
     }
 }
@@ -262,10 +272,16 @@ impl Sandbox {
     pub async fn new(config: SandboxConfig) -> anyhow::Result<Self> {
         use anyhow::Context as _;
 
+        if let Some(home) = &config.home {
+            check_home_conflict(home, std::env::var_os("MSB_HOME").as_deref())?;
+            unsafe { std::env::set_var("MSB_HOME", home); }
+        }
+
         if !microsandbox::setup::is_installed() {
             log::warn!(
-                "microsandbox runtime not found — downloading to ~/.microsandbox, \
-                 this may take a moment"
+                "microsandbox runtime not found — downloading to {}, \
+                 this may take a moment",
+                microsandbox::config::config().home().display(),
             );
             microsandbox::setup::install()
                 .await
@@ -563,6 +579,22 @@ pub async fn remove_persisted(name: &str) -> anyhow::Result<()> {
     }
 }
 
+/// Return `Err` if `requested` disagrees with an already-set `MSB_HOME`.
+/// Microsandbox caches the resolved home in a `OnceLock`, so changing it
+/// mid-process is silently ignored. Surface the mismatch instead.
+fn check_home_conflict(requested: &Path, current: Option<&std::ffi::OsStr>) -> anyhow::Result<()> {
+    if let Some(prev) = current
+        && prev != requested.as_os_str()
+    {
+        anyhow::bail!(
+            "MSB_HOME already set to {:?}; cannot change to {:?} in the same process",
+            prev,
+            requested.display(),
+        );
+    }
+    Ok(())
+}
+
 /// Validate that `name` won't produce a socket path that exceeds the OS limit.
 fn validate_sandbox_name(name: &str) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
@@ -570,20 +602,24 @@ fn validate_sandbox_name(name: &str) -> anyhow::Result<()> {
     #[cfg(not(target_os = "macos"))]
     const SUN_PATH_MAX: usize = 108;
 
-    let home =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    let home = microsandbox::config::config().home();
     let home_str = home
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("home directory path is not valid UTF-8"))?;
 
+    const SANDBOXES_PREFIX: &str = "/sandboxes/";
+    const RUNTIME_SUFFIX: &str = "/runtime/agent.sock";
+
     let socket_path_len = home_str.len()
-        + "/.microsandbox/sandboxes/".len()
+        + SANDBOXES_PREFIX.len()
         + name.len()
-        + "/runtime/agent.sock".len()
+        + RUNTIME_SUFFIX.len()
         + 1; // null terminator
 
     if socket_path_len > SUN_PATH_MAX {
-        let max_name = SUN_PATH_MAX.saturating_sub(home_str.len() + 25 + 19 + 1);
+        let max_name = SUN_PATH_MAX.saturating_sub(
+            home_str.len() + SANDBOXES_PREFIX.len() + RUNTIME_SUFFIX.len() + 1,
+        );
         anyhow::bail!(
             "sandbox name '{}' is too long ({} chars); the resulting socket path \
              would be {} bytes but the OS limit (SUN_PATH_MAX) is {}. \
@@ -788,6 +824,46 @@ mod tests {
         assert!(
             back_anon.name.is_none(),
             "name must stay None after round-trip when originally None"
+        );
+    }
+
+    /// `check_home_conflict` accepts unset env, matching env, and rejects a mismatch.
+    #[test]
+    fn test_check_home_conflict() {
+        let requested = Path::new("/tmp/msb-a");
+        assert!(check_home_conflict(requested, None).is_ok());
+        assert!(check_home_conflict(requested, Some(requested.as_os_str())).is_ok());
+
+        let other = std::ffi::OsString::from("/tmp/msb-b");
+        let err = check_home_conflict(requested, Some(&other))
+            .expect_err("mismatched MSB_HOME must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("MSB_HOME already set"),
+            "error should mention MSB_HOME conflict, got: {msg}"
+        );
+    }
+
+    /// `home` field round-trips through serde when set, and is omitted when `None`.
+    #[test]
+    fn test_sandbox_config_home_serde_roundtrip() {
+        let cfg_with = SandboxConfig {
+            home: Some(PathBuf::from("/tmp/example")),
+            ..SandboxConfig::default()
+        };
+        let json = serde_json::to_string(&cfg_with).expect("serialize");
+        assert!(
+            json.contains("\"home\":\"/tmp/example\""),
+            "expected home field in JSON, got: {json}"
+        );
+        let back: SandboxConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.home.as_deref(), Some(Path::new("/tmp/example")));
+
+        let cfg_default = SandboxConfig::default();
+        let json_default = serde_json::to_string(&cfg_default).expect("serialize default");
+        assert!(
+            !json_default.contains("\"home\""),
+            "home must be omitted when None, got: {json_default}"
         );
     }
 
@@ -1219,9 +1295,8 @@ mod tests {
             .await
             .expect("fork");
 
-        let snap_dir = dirs::home_dir()
-            .expect("home dir")
-            .join(".microsandbox")
+        let snap_dir = microsandbox::config::config()
+            .home()
             .join("snapshots")
             .join(&snap_name);
 
