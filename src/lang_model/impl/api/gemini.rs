@@ -1,5 +1,4 @@
 use anyhow::bail;
-use indexmap::IndexMap;
 use url::Url;
 
 use crate::{
@@ -209,29 +208,6 @@ impl Marshal<ToolDesc> for GeminiMarshal {
     }
 }
 
-/// Strip JSON Schema keywords that Gemini's responseSchema field does not support.
-///
-/// Gemini uses a restricted OpenAPI 3.0 schema subset.  Fields like
-/// `additionalProperties`, `$schema`, and `$defs` are not recognised and cause
-/// a 400 INVALID_ARGUMENT.  This function clones the schema and removes them
-/// recursively so the rest of the structure is preserved.
-fn to_gemini_schema(schema: &Value) -> Value {
-    const UNSUPPORTED: &[&str] = &["additionalProperties", "$schema", "$defs", "definitions"];
-    match schema {
-        Value::Object(obj) => {
-            let mut out = IndexMap::new();
-            for (k, v) in obj.iter() {
-                if UNSUPPORTED.contains(&k.as_str()) {
-                    continue;
-                }
-                out.insert(k.clone(), to_gemini_schema(v));
-            }
-            Value::Object(out)
-        }
-        Value::Array(arr) => Value::Array(arr.iter().map(to_gemini_schema).collect()),
-        other => other.clone(),
-    }
-}
 
 impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
     fn marshal(&mut self, req: &LangModelRequest<'_>) -> Value {
@@ -318,7 +294,7 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
             generation_config
                 .as_object_mut()
                 .unwrap()
-                .insert("responseSchema".into(), to_gemini_schema(schema));
+                .insert("responseSchema".into(), super::schema_adapt::for_gemini(schema));
         }
         if !generation_config.as_object().unwrap().is_empty() {
             body.as_object_mut()

@@ -195,13 +195,14 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
         }
         // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
         if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+            let wire_schema = super::schema_adapt::for_strict_providers(schema);
             body.as_object_mut().unwrap().insert(
                 "response_format".into(),
                 to_value!({
                     "type": "json_schema",
                     "json_schema": {
                         "name": "response",
-                        "schema": schema.clone(),
+                        "schema": wire_schema,
                         "strict": true
                     }
                 }),

@@ -242,9 +242,10 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .insert("top_k".to_owned(), (top_k as i64).into());
         }
         if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+            let wire_schema = super::schema_adapt::for_strict_providers(schema);
             body.as_object_mut().unwrap().insert(
                 "output_config".into(),
-                to_value!({"format": {"type": "json_schema", "schema": schema.clone()}}),
+                to_value!({"format": {"type": "json_schema", "schema": wire_schema}}),
             );
         }
 

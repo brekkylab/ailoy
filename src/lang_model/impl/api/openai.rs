@@ -214,6 +214,7 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
         }
         // top_k is not part of the OpenAI Responses spec; intentionally ignored.
         if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+            let wire_schema = super::schema_adapt::for_strict_providers(schema);
             body.as_object_mut().unwrap().insert(
                 "text".into(),
                 to_value!({
@@ -221,7 +222,7 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                         "type": "json_schema",
                         "name": "response",
                         "strict": true,
-                        "schema": schema.clone()
+                        "schema": wire_schema
                     }
                 }),
             );
