@@ -673,14 +673,14 @@ mod tests {
         let api_key =
             std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
 
+        // Intentionally omit additionalProperties to verify normalize_schema adds it.
         let schema = to_value!({
             "type": "object",
             "properties": {
                 "country": {"type": "string"},
                 "capital": {"type": "string"}
             },
-            "required": ["country", "capital"],
-            "additionalProperties": false
+            "required": ["country", "capital"]
         });
 
         let model = LangModel::new(
