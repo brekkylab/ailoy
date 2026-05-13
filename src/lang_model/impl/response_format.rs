@@ -1,5 +1,6 @@
-use crate::datatype::Value;
 use indexmap::IndexMap;
+
+use crate::datatype::Value;
 
 /// Adapts a JSON schema for a specific provider's wire format requirements.
 ///
