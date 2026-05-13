@@ -3,7 +3,10 @@ use url::Url;
 
 use crate::{
     datatype::Value,
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
+    lang_model::{
+        LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
+        ResponseFormat,
+    },
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
@@ -281,6 +284,16 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
                 .as_object_mut()
                 .unwrap()
                 .insert("topK".into(), (top_k as i64).into());
+        }
+        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("responseMimeType".into(), "application/json".into());
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("responseSchema".into(), schema.clone());
         }
         if !generation_config.as_object().unwrap().is_empty() {
             body.as_object_mut()
@@ -655,6 +668,49 @@ mod tests {
             let body = val.as_object().unwrap().get("body").unwrap();
             assert!(body.as_object().unwrap().get("generationConfig").is_none());
         });
+    }
+
+    #[test]
+    fn test_marshal_response_format_absent() {
+        with_req("gemini-2.5-flash-lite", None, |req| {
+            let val = GeminiMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            assert!(body.as_object().unwrap().get("generationConfig").is_none());
+        });
+    }
+
+    #[test]
+    fn test_marshal_response_format_json_schema() {
+        use crate::lang_model::ResponseFormat;
+        let schema = to_value!({"type": "object", "properties": {"city": {"type": "string"}}});
+        let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model: "gemini-2.5-flash-lite",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: Some(&fmt),
+        };
+        let val = GeminiMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        let gen_cfg = body.as_object().unwrap().get("generationConfig").unwrap();
+        assert_eq!(
+            gen_cfg.pointer("/responseMimeType").and_then(|v| v.as_str()),
+            Some("application/json")
+        );
+        assert_eq!(
+            gen_cfg.pointer("/responseSchema/type").and_then(|v| v.as_str()),
+            Some("object")
+        );
     }
 
     /// Verifies that max_tokens is respected by the Gemini API (finishReason: MAX_TOKENS).
