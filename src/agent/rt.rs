@@ -117,6 +117,7 @@ impl Agent {
             temperature: spec.temperature,
             top_p: spec.top_p,
             top_k: spec.top_k,
+            response_format: spec.response_format,
         };
 
         // Collect tools required by the spec; error if any tool is missing

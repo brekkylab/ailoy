@@ -475,6 +475,7 @@ mod tests {
             temperature: None,
             top_p: None,
             top_k: None,
+            response_format: None,
         };
         f(&req)
     }

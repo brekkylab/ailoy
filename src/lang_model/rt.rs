@@ -9,6 +9,29 @@ use crate::{
     tool::ToolDesc,
 };
 
+/// Constrains the model's response to a specific JSON format.
+///
+/// Constructed via [`ResponseFormat::json_schema`], which validates the schema
+/// against JSON Schema Draft 7 before storing it. The stored schema is
+/// provider-agnostic; each marshal converts it to the wire format expected by
+/// its API.
+#[derive(Clone, Debug)]
+pub enum ResponseFormat {
+    JsonSchema(Value),
+}
+
+impl ResponseFormat {
+    /// Validate `schema` against the JSON Schema Draft 7 meta-schema, then wrap it.
+    ///
+    /// Returns `Err` if the schema is structurally invalid (e.g. `"type": 123`).
+    pub fn json_schema(schema: Value) -> anyhow::Result<Self> {
+        let serde_schema: serde_json::Value = schema.clone().into();
+        jsonschema::validator_for(&serde_schema)
+            .map_err(|e| anyhow::anyhow!("Invalid JSON schema: {}", e))?;
+        Ok(Self::JsonSchema(schema))
+    }
+}
+
 /// Runtime
 pub struct LangModel {
     model: String,
@@ -25,6 +48,7 @@ pub(crate) struct LangModelRequest<'a> {
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
     pub top_k: Option<u64>,
+    pub response_format: Option<&'a ResponseFormat>,
 }
 
 /// Per-call sampling parameters supplied by the agent on top of the static
@@ -37,6 +61,8 @@ pub struct LangModelOptions {
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
     pub top_k: Option<u64>,
+    /// Constrains the model's output to a JSON schema validated at construction time.
+    pub response_format: Option<ResponseFormat>,
 }
 
 impl LangModel {
@@ -71,6 +97,7 @@ impl LangModel {
                     temperature: options.temperature,
                     top_p: options.top_p,
                     top_k: options.top_k,
+                    response_format: options.response_format.as_ref(),
                 };
 
                 let req = match schema {
@@ -205,6 +232,32 @@ mod tests {
         to_value,
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    #[test]
+    fn test_response_format_valid_schema_accepted() {
+        let schema = to_value!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "age": {"type": "integer"}
+            },
+            "required": ["name"],
+            "additionalProperties": false
+        });
+        assert!(ResponseFormat::json_schema(schema).is_ok());
+    }
+
+    #[test]
+    fn test_response_format_invalid_schema_rejected() {
+        let bad_schema = to_value!({"type": 123});
+        assert!(ResponseFormat::json_schema(bad_schema).is_err());
+    }
+
+    #[test]
+    fn test_response_format_non_object_rejected() {
+        let bad_schema = to_value!("not an object");
+        assert!(ResponseFormat::json_schema(bad_schema).is_err());
+    }
 
     fn openai_chat_completion(model: &str, api_key: String) -> LangModel {
         LangModel::new(

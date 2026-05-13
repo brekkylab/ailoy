@@ -90,6 +90,12 @@ pub struct AgentSpec {
     /// silently ignored by providers that do not (e.g. OpenAI).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<u64>,
+
+    /// Constrains the model's output to a JSON schema validated at construction time.
+    /// Set via [`AgentSpec::response_format`]. Not serialised — configure programmatically.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub response_format: Option<crate::lang_model::ResponseFormat>,
 }
 
 impl AgentSpec {
@@ -104,6 +110,7 @@ impl AgentSpec {
             temperature: None,
             top_p: None,
             top_k: None,
+            response_format: None,
         }
     }
 
@@ -189,6 +196,11 @@ impl AgentSpec {
 
     pub fn top_k(mut self, top_k: u64) -> Self {
         self.top_k = Some(top_k);
+        self
+    }
+
+    pub fn response_format(mut self, fmt: crate::lang_model::ResponseFormat) -> Self {
+        self.response_format = Some(fmt);
         self
     }
 }
