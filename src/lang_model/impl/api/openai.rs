@@ -535,7 +535,7 @@ mod tests {
         );
 
         // Part::Image (embedded) → array with a single {"type":"input_image","image_url":"data:..."} block.
-        let img_bytes = crate::datatype::Bytes::from(vec![0xFFu8, 0xD8, 0xFF]);
+        let img_bytes = Bytes::from(vec![0xFFu8, 0xD8, 0xFF]);
         let msg_img = Message::new(Role::Tool)
             .with_id("call_2")
             .with_contents([Part::image_embedded("image/jpeg", img_bytes.clone()).unwrap()]);
@@ -578,9 +578,7 @@ mod tests {
         // Part::Value(String) → {"type":"input_text","text":"..."} block; no double-encoding.
         let msg_str = Message::new(Role::Tool)
             .with_id("call_4")
-            .with_contents([Part::value(crate::datatype::Value::string(
-                "ok".to_string(),
-            ))]);
+            .with_contents([Part::value(Value::string("ok".to_string()))]);
         let items = marshal_message(&msg_str, false);
         let output = items[0]
             .pointer("/output")
@@ -601,7 +599,7 @@ mod tests {
         // Part::Value(Object) → JSON-encoded as {"type":"input_text","text":"{...}"} block.
         let msg_obj = Message::new(Role::Tool)
             .with_id("call_5")
-            .with_contents([Part::value(crate::to_value!({"temp": 25}))]);
+            .with_contents([Part::value(to_value!({"temp": 25}))]);
         let items = marshal_message(&msg_obj, false);
         let output = items[0]
             .pointer("/output")
@@ -698,20 +696,16 @@ mod tests {
                 api_key: Some(api_key),
             },
         );
-        let messages = vec![
-            Message::new(Role::User).with_contents([Part::text(
-                "Return France's country name and capital city in the requested format.",
-            )]),
-        ];
+        let messages = vec![Message::new(Role::User).with_contents([Part::text(
+            "Return France's country name and capital city in the requested format.",
+        )])];
 
         let resp = model
             .run(
                 &messages,
                 &[],
                 &LangModelOptions {
-                    response_format: Some(
-                        crate::lang_model::ResponseFormat::json_schema(schema).unwrap(),
-                    ),
+                    response_format: Some(ResponseFormat::json_schema(schema).unwrap()),
                     ..Default::default()
                 },
             )
@@ -725,7 +719,8 @@ mod tests {
             .iter()
             .find_map(|p| p.as_text())
             .expect("Expected text content");
-        let parsed: serde_json::Value = serde_json::from_str(text).expect("Response must be valid JSON");
+        let parsed: serde_json::Value =
+            serde_json::from_str(text).expect("Response must be valid JSON");
         assert_eq!(parsed["capital"].as_str().unwrap().to_lowercase(), "paris");
     }
 

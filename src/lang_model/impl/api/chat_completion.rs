@@ -435,7 +435,6 @@ mod tests {
 
     #[test]
     fn test_marshal_response_format_json_schema() {
-        use crate::lang_model::ResponseFormat;
         let schema = to_value!({"type": "object", "properties": {"score": {"type": "integer"}}});
         let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
         let messages: Vec<Message> = vec![];
@@ -500,20 +499,16 @@ mod tests {
                 api_key: Some(api_key),
             },
         );
-        let messages = vec![
-            Message::new(Role::User).with_contents([Part::text(
-                "Return France's country name and capital city in the requested format.",
-            )]),
-        ];
+        let messages = vec![Message::new(Role::User).with_contents([Part::text(
+            "Return France's country name and capital city in the requested format.",
+        )])];
 
         let resp = model
             .run(
                 &messages,
                 &[],
                 &LangModelOptions {
-                    response_format: Some(
-                        crate::lang_model::ResponseFormat::json_schema(schema).unwrap(),
-                    ),
+                    response_format: Some(ResponseFormat::json_schema(schema).unwrap()),
                     ..Default::default()
                 },
             )
@@ -527,7 +522,8 @@ mod tests {
             .iter()
             .find_map(|p| p.as_text())
             .expect("Expected text content");
-        let parsed: serde_json::Value = serde_json::from_str(text).expect("Response must be valid JSON");
+        let parsed: serde_json::Value =
+            serde_json::from_str(text).expect("Response must be valid JSON");
         assert_eq!(parsed["capital"].as_str().unwrap().to_lowercase(), "paris");
     }
 

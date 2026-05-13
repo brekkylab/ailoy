@@ -303,7 +303,10 @@ mod tests {
             )
             .unwrap(),
         );
-        assert_eq!(s.pointer("/additionalProperties").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            s.pointer("/additionalProperties").and_then(|v| v.as_bool()),
+            Some(false)
+        );
     }
 
     #[test]
@@ -323,7 +326,8 @@ mod tests {
             "top level"
         );
         assert_eq!(
-            s.pointer("/properties/addr/additionalProperties").and_then(|v| v.as_bool()),
+            s.pointer("/properties/addr/additionalProperties")
+                .and_then(|v| v.as_bool()),
             Some(false),
             "nested object"
         );
@@ -356,7 +360,8 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(
-            s.pointer("/items/additionalProperties").and_then(|v| v.as_bool()),
+            s.pointer("/items/additionalProperties")
+                .and_then(|v| v.as_bool()),
             Some(false)
         );
     }
@@ -373,7 +378,8 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(
-            s.pointer("/anyOf/0/additionalProperties").and_then(|v| v.as_bool()),
+            s.pointer("/anyOf/0/additionalProperties")
+                .and_then(|v| v.as_bool()),
             Some(false),
             "object in anyOf must be normalised"
         );
@@ -396,16 +402,15 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(
-            s.pointer("/$defs/Item/additionalProperties").and_then(|v| v.as_bool()),
+            s.pointer("/$defs/Item/additionalProperties")
+                .and_then(|v| v.as_bool()),
             Some(false)
         );
     }
 
     #[test]
     fn test_normalize_non_object_schema_unchanged() {
-        let s = stored_schema(
-            ResponseFormat::json_schema(to_value!({"type": "string"})).unwrap(),
-        );
+        let s = stored_schema(ResponseFormat::json_schema(to_value!({"type": "string"})).unwrap());
         assert!(s.pointer("/additionalProperties").is_none());
     }
 
