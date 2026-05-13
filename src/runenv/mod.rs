@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+
 mod local;
 #[cfg(feature = "sandbox")]
 mod sandbox;
@@ -56,7 +58,92 @@ pub trait RunEnv: Send + Sync + 'static {
         self.exec(program, args, timeout).await
     }
 
-    async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>>;
+    /// Read a file's bytes.
+    async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {
+        let path_s = path.to_string_lossy();
+        // shell out via base64 so any runenv with only `exec` can serve reads. Native impls override to skip the round-trip.
+        let script = match self.get_os() {
+            "linux" | "macos" => {
+                format!("base64 < '{}'", path_s.replace('\'', "'\\''"))
+            }
+            "windows" => format!(
+                "[Convert]::ToBase64String([IO.File]::ReadAllBytes('{}'))",
+                path_s.replace('\'', "''")
+            ),
+            other => anyhow::bail!("read: unsupported OS '{other}'"),
+        };
 
-    async fn write(&self, path: &Path, content: &[u8]) -> anyhow::Result<()>;
+        let result = self.exec_shell(script, None).await?;
+        if result.exit_code != 0 {
+            anyhow::bail!(
+                "read {} failed (exit {}): {}",
+                path.display(),
+                result.exit_code,
+                result.stderr.trim(),
+            );
+        }
+
+        // base64(1) wraps at ~76 cols; PowerShell emits a single line plus a
+        // trailing newline. Strip all ASCII whitespace before decoding so both
+        // shapes work with the strict STANDARD engine.
+        let cleaned: String = result
+            .stdout
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        STANDARD
+            .decode(cleaned.as_bytes())
+            .map_err(|e| anyhow::anyhow!("read {}: base64 decode failed: {e}", path.display()))
+    }
+
+    /// Write `content` to `path`, creating parent directories.
+    async fn write(&self, path: &Path, content: &[u8]) -> anyhow::Result<()> {
+        // base64 in-process and pipe through the shell so any runenv with only `exec` can serve writes.
+        let b64 = STANDARD.encode(content);
+        let path_s = path.to_string_lossy();
+        let parent_s = path.parent().map(|p| p.to_string_lossy().into_owned());
+
+        let script = match self.get_os() {
+            "linux" | "macos" => {
+                // Here-doc keeps the (potentially large) base64 payload off the
+                // command line, avoiding ARG_MAX limits. The delimiter is
+                // single-quoted so the body is literal — no parameter expansion.
+                let path_q = path_s.replace('\'', "'\\''");
+                let mkdir = match &parent_s {
+                    Some(p) if !p.is_empty() => {
+                        format!("mkdir -p '{}' && ", p.replace('\'', "'\\''"))
+                    }
+                    _ => String::new(),
+                };
+                format!("{mkdir}base64 -d > '{path_q}' <<'AILOY_B64_EOF'\n{b64}\nAILOY_B64_EOF\n")
+            }
+            "windows" => {
+                // PowerShell here-string `@'…'@` plays the same role as the
+                // shell here-doc: literal, no interpolation.
+                let path_q = path_s.replace('\'', "''");
+                let mkdir = match &parent_s {
+                    Some(p) if !p.is_empty() => format!(
+                        "New-Item -ItemType Directory -Force -Path '{}' | Out-Null; ",
+                        p.replace('\'', "''")
+                    ),
+                    _ => String::new(),
+                };
+                format!(
+                    "{mkdir}$b64 = @'\n{b64}\n'@\n[IO.File]::WriteAllBytes('{path_q}', [Convert]::FromBase64String($b64))",
+                )
+            }
+            other => anyhow::bail!("write: unsupported OS '{other}'"),
+        };
+
+        let result = self.exec_shell(script, None).await?;
+        if result.exit_code != 0 {
+            anyhow::bail!(
+                "write {} failed (exit {}): {}",
+                path.display(),
+                result.exit_code,
+                result.stderr.trim(),
+            );
+        }
+        Ok(())
+    }
 }
