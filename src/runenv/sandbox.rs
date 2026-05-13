@@ -218,7 +218,10 @@ impl RunEnv for Sandbox {
             // microsandbox's stat returns `created` separately; fall back to mtime
             // when the underlying filesystem doesn't expose a birth time.
             let created_at = meta.created.map(SystemTime::from).unwrap_or(updated_at);
-            let permission = ((meta.mode >> 6) & 0o7) as u8;
+            let bits = ((meta.mode >> 6) & 0o7) as u8;
+            let readable = bits & 0b100 != 0;
+            let writable = bits & 0b010 != 0;
+            let executable = bits & 0b001 != 0;
             match meta.kind {
                 FsEntryKind::Directory => {
                     let entries = guard.fs().list(&path_str).await?;
@@ -233,12 +236,16 @@ impl RunEnv for Sandbox {
                         .collect();
                     Ok::<_, MicrosandboxError>(FSEntry::Dir {
                         children,
+                        readable,
+                        writable,
                         created_at,
                         updated_at,
                     })
                 }
                 _ => Ok(FSEntry::File {
-                    permission,
+                    readable,
+                    writable,
+                    executable,
                     sz: meta.size as usize,
                     created_at,
                     updated_at,

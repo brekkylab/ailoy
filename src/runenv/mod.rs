@@ -15,11 +15,15 @@ pub use sandbox::*;
 pub enum FSEntry {
     Dir {
         children: Vec<String>,
+        readable: bool,
+        writable: bool,
         created_at: SystemTime,
         updated_at: SystemTime,
     },
     File {
-        permission: u8,
+        readable: bool,
+        writable: bool,
+        executable: bool,
         sz: usize,
         created_at: SystemTime,
         updated_at: SystemTime,
@@ -29,11 +33,26 @@ pub enum FSEntry {
 impl std::fmt::Display for FSEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FSEntry::Dir { children, .. } => write!(f, "dir ({} entries)", children.len()),
-            FSEntry::File { permission, sz, .. } => {
-                let r = if permission & 0b100 != 0 { 'r' } else { '-' };
-                let w = if permission & 0b010 != 0 { 'w' } else { '-' };
-                let x = if permission & 0b001 != 0 { 'x' } else { '-' };
+            FSEntry::Dir {
+                children,
+                readable,
+                writable,
+                ..
+            } => {
+                let r = if *readable { 'r' } else { '-' };
+                let w = if *writable { 'w' } else { '-' };
+                write!(f, "dir [{r}{w}-, {} entries]", children.len())
+            }
+            FSEntry::File {
+                readable,
+                writable,
+                executable,
+                sz,
+                ..
+            } => {
+                let r = if *readable { 'r' } else { '-' };
+                let w = if *writable { 'w' } else { '-' };
+                let x = if *executable { 'x' } else { '-' };
                 write!(f, "{r}{w}{x} ({sz} bytes)")
             }
         }
@@ -73,29 +92,66 @@ pub trait RunEnv: Send + Sync + 'static {
         timeout: Option<u64>,
     ) -> anyhow::Result<ExecResult>;
 
+    /// Run `script` through the system shell
+    ///
+    /// `bash -c` on Linux/macOS, `powershell -Command` on Windows.
+    async fn exec_shell(&self, script: String, timeout: Option<u64>) -> anyhow::Result<ExecResult> {
+        let (program, args) = match self.get_os() {
+            "linux" | "macos" => ("bash".to_string(), vec!["-c".to_string(), script]),
+            "windows" => (
+                "powershell".to_string(),
+                vec!["-Command".to_string(), script],
+            ),
+            other => anyhow::bail!("exec_shell: unsupported OS '{other}'"),
+        };
+        self.exec(program, args, timeout).await
+    }
+
     /// Inspect the entry in path, and returns metadata.
     async fn stat(&self, path: &Path) -> anyhow::Result<FSEntry> {
         let path_str = path.to_string_lossy().into_owned();
-        // Single-quote the path for POSIX `sh -c`, escaping any inner single quotes.
-        let quoted_path = format!("'{}'", path_str.replace('\'', "'\\''"));
 
         // First line: kind \t mode \t size \t mtime \t btime
-        // Then (if directory): one child basename per line via `ls -1A`.
+        // Then (if directory): one child basename per line.
         let script = match self.get_os() {
-            "linux" => format!(
-                "stat -c '%F\\t%a\\t%s\\t%Y\\t%W' {quoted_path} && \
-                 if [ -d {quoted_path} ]; then ls -1A {quoted_path}; fi",
-            ),
-            "macos" => format!(
-                "stat -f '%HT\\t%Lp\\t%z\\t%m\\t%B' {quoted_path} && \
-                 if [ -d {quoted_path} ]; then ls -1A {quoted_path}; fi",
-            ),
+            "linux" => {
+                // Single-quote the path for POSIX shells, escaping any inner single quotes.
+                let q = format!("'{}'", path_str.replace('\'', "'\\''"));
+                format!(
+                    "stat -c '%F\\t%a\\t%s\\t%Y\\t%W' {q} && \
+                     if [ -d {q} ]; then ls -1A {q}; fi",
+                )
+            }
+            "macos" => {
+                let q = format!("'{}'", path_str.replace('\'', "'\\''"));
+                format!(
+                    "stat -f '%HT\\t%Lp\\t%z\\t%m\\t%B' {q} && \
+                     if [ -d {q} ]; then ls -1A {q}; fi",
+                )
+            }
+            // Windows has no POSIX mode, so emit just the owner octal digit
+            // (`4` = r--, `6` = rw-). `kind` is lowercase to share the
+            // `is_dir` check with linux.
+            "windows" => {
+                // PowerShell single-quoted strings escape `'` as `''`.
+                let q = format!("'{}'", path_str.replace('\'', "''"));
+                format!(
+                    "$ErrorActionPreference='Stop'; \
+                     $i=Get-Item -LiteralPath {q} -Force; \
+                     $d=$i.PSIsContainer; \
+                     $k=if($d){{'directory'}}else{{'file'}}; \
+                     $s=if($d){{0}}else{{$i.Length}}; \
+                     $m=if($i.IsReadOnly){{'4'}}else{{'6'}}; \
+                     $u=([DateTimeOffset]$i.LastWriteTimeUtc).ToUnixTimeSeconds(); \
+                     $b=([DateTimeOffset]$i.CreationTimeUtc).ToUnixTimeSeconds(); \
+                     \"$k`t$m`t$s`t$u`t$b\"; \
+                     if($d){{ Get-ChildItem -LiteralPath {q} -Force -Name }}",
+                )
+            }
             other => anyhow::bail!("inspect: blanket impl does not support OS '{other}'"),
         };
 
-        let result = self
-            .exec("sh".into(), vec!["-c".into(), script], None)
-            .await?;
+        let result = self.exec_shell(script, None).await?;
         if result.exit_code != 0 {
             anyhow::bail!(
                 "inspect {} failed (exit {}): {}",
@@ -118,12 +174,14 @@ pub trait RunEnv: Send + Sync + 'static {
         }
         let (kind, mode, size, mtime, btime) = (parts[0], parts[1], parts[2], parts[3], parts[4]);
 
-        // Owner permission bits: take the top of the user nibble from the
-        // trailing octal triple of `mode` (e.g. "0644"/"755" → 6/7).
-        let permission: u8 = {
+        // Owner permission bits: take the user nibble from the trailing octal
+        // triple of `mode` (e.g. "0644"/"755" → 6/7), then split into the
+        // readable (0b100), writable (0b010), and executable (0b001) bits.
+        let (readable, writable, executable) = {
             let trailing3 = mode.chars().rev().take(3).collect::<Vec<_>>();
             let first = trailing3.last().and_then(|c| c.to_digit(8)).unwrap_or(0);
-            (first & 0o7) as u8
+            let bits = (first & 0o7) as u8;
+            (bits & 0b100 != 0, bits & 0b010 != 0, bits & 0b001 != 0)
         };
 
         // `stat -c '%Y'` / `stat -f '%m'` emit Unix epoch seconds; reject NaN/negative.
@@ -142,7 +200,7 @@ pub trait RunEnv: Send + Sync + 'static {
         let created_at = parse_epoch(btime);
 
         let is_dir = match self.get_os() {
-            "linux" => kind == "directory",
+            "linux" | "windows" => kind == "directory",
             "macos" => kind == "Directory",
             _ => false,
         };
@@ -151,13 +209,17 @@ pub trait RunEnv: Send + Sync + 'static {
             let children = lines.map(|s| s.to_string()).collect();
             Ok(FSEntry::Dir {
                 children,
+                readable,
+                writable,
                 created_at,
                 updated_at,
             })
         } else {
             let sz: usize = size.parse().unwrap_or(0);
             Ok(FSEntry::File {
-                permission,
+                readable,
+                writable,
+                executable,
                 sz,
                 created_at,
                 updated_at,

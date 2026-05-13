@@ -5,14 +5,18 @@ use crate::runenv::{ExecResult, FSEntry, RunEnv};
 pub struct Local {}
 
 #[cfg(unix)]
-fn owner_permission(meta: &std::fs::Metadata) -> u8 {
+fn owner_rwx(meta: &std::fs::Metadata) -> (bool, bool, bool) {
     use std::os::unix::fs::PermissionsExt;
-    ((meta.permissions().mode() >> 6) & 0o7) as u8
+    let bits = (meta.permissions().mode() >> 6) & 0o7;
+    (bits & 0b100 != 0, bits & 0b010 != 0, bits & 0b001 != 0)
 }
 
+/// Windows: `std::fs::Metadata` only surfaces a readonly flag — if we can
+/// stat the entry we assume it's readable, and there is no executable bit
+/// exposed by std, so `executable = false`.
 #[cfg(not(unix))]
-fn owner_permission(meta: &std::fs::Metadata) -> u8 {
-    if meta.permissions().readonly() { 4 } else { 6 }
+fn owner_rwx(meta: &std::fs::Metadata) -> (bool, bool, bool) {
+    (true, !meta.permissions().readonly(), false)
 }
 
 /// Best-effort creation time: `created()` is unsupported on some filesystems
@@ -67,6 +71,7 @@ impl RunEnv for Local {
     async fn stat(&self, path: &Path) -> anyhow::Result<FSEntry> {
         let meta = tokio::fs::metadata(path).await?;
         let (created_at, updated_at) = entry_times(&meta);
+        let (readable, writable, executable) = owner_rwx(&meta);
         if meta.is_dir() {
             let mut children = Vec::new();
             let mut dir = tokio::fs::read_dir(path).await?;
@@ -75,12 +80,16 @@ impl RunEnv for Local {
             }
             Ok(FSEntry::Dir {
                 children,
+                readable,
+                writable,
                 created_at,
                 updated_at,
             })
         } else {
             Ok(FSEntry::File {
-                permission: owner_permission(&meta),
+                readable,
+                writable,
+                executable,
                 sz: meta.len() as usize,
                 created_at,
                 updated_at,
