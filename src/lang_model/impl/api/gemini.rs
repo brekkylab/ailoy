@@ -742,6 +742,7 @@ mod tests {
     }
 
     /// Verifies structured output via response_format: the model returns valid JSON matching the schema.
+    #[test_with::env(GEMINI_API_KEY)]
     #[tokio::test]
     async fn test_run_response_format_json_schema() {
         dotenvy::dotenv().ok();

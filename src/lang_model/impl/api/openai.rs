@@ -639,6 +639,7 @@ mod tests {
 
     /// Verifies that max_tokens is respected by the OpenAI Responses API (incomplete: max_output_tokens).
     /// Note: OpenAI Responses API enforces a minimum of 16 for max_output_tokens.
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_run_max_tokens() {
         dotenvy::dotenv().ok();
@@ -673,6 +674,7 @@ mod tests {
     }
 
     /// Verifies structured output via response_format: the model returns valid JSON matching the schema.
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_run_response_format_json_schema() {
         dotenvy::dotenv().ok();
