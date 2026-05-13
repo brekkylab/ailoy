@@ -258,6 +258,10 @@ mod tests {
     #[cfg(feature = "sandbox")]
     #[async_trait::async_trait]
     impl RunEnv for SharedSandbox {
+        fn get_os(&self) -> &str {
+            "linux"
+        }
+
         async fn exec(
             &self,
             program: String,
@@ -265,18 +269,6 @@ mod tests {
             timeout: Option<u64>,
         ) -> anyhow::Result<crate::runenv::ExecResult> {
             self.0.exec(program, args, timeout).await
-        }
-
-        async fn ls(&self, path: &std::path::Path) -> anyhow::Result<Vec<crate::runenv::Dirent>> {
-            self.0.ls(path).await
-        }
-
-        async fn mkdir(&self, path: &std::path::Path) -> anyhow::Result<()> {
-            self.0.mkdir(path).await
-        }
-
-        async fn rmdir(&self, path: &std::path::Path) -> anyhow::Result<()> {
-            self.0.rmdir(path).await
         }
 
         async fn read(&self, path: &std::path::Path) -> anyhow::Result<Vec<u8>> {

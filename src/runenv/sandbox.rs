@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use microsandbox::{
@@ -15,7 +15,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{Dirent, ExecResult, RunEnv};
+use super::{ExecResult, FSEntry, RunEnv};
 use crate::util::truncate::middle_truncate;
 
 fn fresh_sandbox_name() -> String {
@@ -180,6 +180,10 @@ impl Drop for Sandbox {
 
 #[async_trait::async_trait]
 impl RunEnv for Sandbox {
+    fn get_os(&self) -> &str {
+        "linux"
+    }
+
     async fn exec(
         &self,
         program: String,
@@ -202,37 +206,48 @@ impl RunEnv for Sandbox {
         result
     }
 
-    async fn ls(&self, path: &Path) -> anyhow::Result<Vec<Dirent>> {
-        let guard = self.ensure_running().await?;
-        let result = ls_recursive(&guard, path.to_path_buf()).await;
-        let _ = guard.stop_and_wait().await;
-        result
-    }
-
-    async fn mkdir(&self, path: &Path) -> anyhow::Result<()> {
-        let path_str = path.to_string_lossy().into_owned();
-        let guard = self.ensure_running().await?;
-        let result = guard.fs().mkdir(&path_str).await;
-        let _ = guard.stop_and_wait().await;
-        Ok(result?)
-    }
-
-    /// Non-recursive: fails if the directory is non-empty, matching
-    /// [`Local::rmdir`](super::Local) and the POSIX `rmdir(2)` contract.
-    async fn rmdir(&self, path: &Path) -> anyhow::Result<()> {
+    async fn stat(&self, path: &Path) -> anyhow::Result<FSEntry> {
         let path_str = path.to_string_lossy().into_owned();
         let guard = self.ensure_running().await?;
         let result = async {
-            let entries = guard.fs().list(&path_str).await?;
-            if !entries.is_empty() {
-                anyhow::bail!("rmdir {}: directory not empty", path.display());
+            let meta = guard.fs().stat(&path_str).await?;
+            let updated_at = meta
+                .modified
+                .map(SystemTime::from)
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            // microsandbox's stat returns `created` separately; fall back to mtime
+            // when the underlying filesystem doesn't expose a birth time.
+            let created_at = meta.created.map(SystemTime::from).unwrap_or(updated_at);
+            let permission = ((meta.mode >> 6) & 0o7) as u8;
+            match meta.kind {
+                FsEntryKind::Directory => {
+                    let entries = guard.fs().list(&path_str).await?;
+                    let children = entries
+                        .into_iter()
+                        .map(|e| {
+                            Path::new(&e.path)
+                                .file_name()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or(e.path)
+                        })
+                        .collect();
+                    Ok::<_, MicrosandboxError>(FSEntry::Dir {
+                        children,
+                        created_at,
+                        updated_at,
+                    })
+                }
+                _ => Ok(FSEntry::File {
+                    permission,
+                    sz: meta.size as usize,
+                    created_at,
+                    updated_at,
+                }),
             }
-            guard.fs().remove_dir(&path_str).await?;
-            Ok(())
         }
         .await;
         let _ = guard.stop_and_wait().await;
-        result
+        Ok(result?)
     }
 
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {
@@ -556,48 +571,6 @@ async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result
     }
     let sb = builder.create_detached().await?;
     Ok(sb)
-}
-
-/// Recursively walk a directory using the native filesystem API.
-///
-/// Takes `&MsbSandbox` (rather than `&Sandbox`) so the caller holds the
-/// mutex guard once at the top level — recursive calls cannot re-acquire it.
-fn ls_recursive(
-    sb: &MsbSandbox,
-    path: PathBuf,
-) -> futures::future::BoxFuture<'_, anyhow::Result<Vec<Dirent>>> {
-    Box::pin(async move {
-        let path_str = path.to_string_lossy().into_owned();
-        let entries = sb.fs().list(&path_str).await?;
-        let mut out = Vec::with_capacity(entries.len());
-        for entry in entries {
-            // `entry.path` may be a basename or full path depending on the
-            // microsandbox version; extract the basename either way.
-            let name = Path::new(&entry.path)
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| entry.path.clone());
-            let permission = ((entry.mode >> 6) & 0o7) as u8;
-            match entry.kind {
-                FsEntryKind::Directory => {
-                    let children = ls_recursive(sb, path.join(&name)).await.unwrap_or_default();
-                    out.push(Dirent::Dir {
-                        name,
-                        permission,
-                        children,
-                    });
-                }
-                _ => {
-                    out.push(Dirent::File {
-                        name,
-                        permission,
-                        sz: entry.size as usize,
-                    });
-                }
-            }
-        }
-        Ok(out)
-    })
 }
 
 fn apply_volume_mount(builder: SandboxBuilder, mount: &VolumeMount) -> SandboxBuilder {

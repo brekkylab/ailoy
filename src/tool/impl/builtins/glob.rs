@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use fancy_regex::Regex;
 
 use crate::{
-    runenv::Dirent,
+    runenv::{FSEntry, RunEnv},
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
@@ -57,32 +57,47 @@ pub(super) fn glob_to_regex(glob: &str) -> Result<Regex, String> {
     Regex::new(&pat).map_err(|e| format!("invalid glob {glob:?}: {e}"))
 }
 
-/// Walk the dirent tree rooted at `base`, collecting file paths whose path
-/// relative to `base` matches `pat_re`. Stops once `limit` matches are gathered.
-fn walk(
-    base: &Path,
-    rel_prefix: &str,
-    entries: &[Dirent],
-    pat_re: &Regex,
-    out: &mut Vec<String>,
-    limit: usize,
-) {
-    for entry in entries {
+/// Iterative DFS walk via `runenv.inspect`, collecting file paths whose path
+/// relative to `base` matches `pat_re`.  Stops once `limit` matches are gathered.
+///
+/// `inspect` on a directory returns only child names, so each child requires a
+/// second `inspect` call to learn whether it is a file or a directory.
+async fn walk(runenv: &dyn RunEnv, base: &Path, pat_re: &Regex, limit: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    // (absolute dir path, relative prefix from `base`)
+    let mut stack: Vec<(PathBuf, String)> = vec![(base.to_path_buf(), String::new())];
+    while let Some((dir, rel_prefix)) = stack.pop() {
         if out.len() >= limit {
-            return;
+            break;
         }
-        let rel = if rel_prefix.is_empty() {
-            entry.name().to_string()
-        } else {
-            format!("{}/{}", rel_prefix, entry.name())
+        let children = match runenv.stat(&dir).await {
+            Ok(FSEntry::Dir { children, .. }) => children,
+            _ => continue,
         };
-        if entry.is_file() && pat_re.is_match(&rel).unwrap_or(false) {
-            out.push(base.join(&rel).to_string_lossy().into_owned());
-        }
-        if let Some(children) = entry.children() {
-            walk(base, &rel, children, pat_re, out, limit);
+        for name in children {
+            if out.len() >= limit {
+                break;
+            }
+            let rel = if rel_prefix.is_empty() {
+                name
+            } else {
+                format!("{}/{}", rel_prefix, name)
+            };
+            let child_path = base.join(&rel);
+            match runenv.stat(&child_path).await {
+                Ok(FSEntry::File { .. }) => {
+                    if pat_re.is_match(&rel).unwrap_or(false) {
+                        out.push(child_path.to_string_lossy().into_owned());
+                    }
+                }
+                Ok(FSEntry::Dir { .. }) => {
+                    stack.push((child_path, rel));
+                }
+                Err(_) => continue,
+            }
         }
     }
+    out
 }
 
 pub fn get_glob_tool_desc() -> ToolDesc {
@@ -154,25 +169,24 @@ pub fn get_glob_tool_func() -> ToolFunc {
             .map(|n| n.max(1) as usize)
             .unwrap_or(DEFAULT_LIMIT);
 
-        let entries = match runenv.ls(path).await {
-            Ok(e) => e,
-            Err(e) => {
+        // Pre-flight `inspect` so we can return a clean `io` error for a bad root.
+        match runenv.stat(path).await {
+            Ok(FSEntry::Dir { .. }) => {}
+            Ok(_) => {
                 return crate::to_value!({
-                    "error": format!("ls {path_str}: {e}"),
+                    "error": format!("path is not a directory: {path_str}"),
                     "phase": "io",
                 });
             }
-        };
+            Err(e) => {
+                return crate::to_value!({
+                    "error": format!("inspect {path_str}: {e}"),
+                    "phase": "io",
+                });
+            }
+        }
 
-        let mut paths: Vec<String> = Vec::new();
-        walk(
-            &PathBuf::from(path_str),
-            "",
-            &entries,
-            &pat_re,
-            &mut paths,
-            limit + 1,
-        );
+        let mut paths = walk(runenv, path, &pat_re, limit + 1).await;
         let truncated = paths.len() > limit;
         if truncated {
             paths.truncate(limit);

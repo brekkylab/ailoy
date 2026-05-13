@@ -1,6 +1,6 @@
-use std::path::Path;
+use std::{path::Path, time::SystemTime};
 
-use crate::runenv::{Dirent, ExecResult, RunEnv};
+use crate::runenv::{ExecResult, FSEntry, RunEnv};
 
 pub struct Local {}
 
@@ -15,8 +15,20 @@ fn owner_permission(meta: &std::fs::Metadata) -> u8 {
     if meta.permissions().readonly() { 4 } else { 6 }
 }
 
+/// Best-effort creation time: `created()` is unsupported on some filesystems
+/// (notably ext4 without statx birth-time) — fall back to mtime there.
+fn entry_times(meta: &std::fs::Metadata) -> (SystemTime, SystemTime) {
+    let updated = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let created = meta.created().ok().unwrap_or(updated);
+    (created, updated)
+}
+
 #[async_trait::async_trait]
 impl RunEnv for Local {
+    fn get_os(&self) -> &str {
+        std::env::consts::OS
+    }
+
     async fn exec(
         &self,
         program: String,
@@ -52,38 +64,28 @@ impl RunEnv for Local {
         }
     }
 
-    async fn ls(&self, path: &Path) -> anyhow::Result<Vec<Dirent>> {
-        let mut entries = Vec::new();
-        let mut dir = tokio::fs::read_dir(path).await?;
-        while let Some(entry) = dir.next_entry().await? {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let meta = entry.metadata().await?;
-            let permission = owner_permission(&meta);
-            if meta.is_dir() {
-                let child_path = entry.path();
-                let children = self.ls(&child_path).await.unwrap_or_default();
-                entries.push(Dirent::Dir {
-                    name,
-                    permission,
-                    children,
-                });
-            } else {
-                entries.push(Dirent::File {
-                    name,
-                    permission,
-                    sz: meta.len() as usize,
-                });
+    async fn stat(&self, path: &Path) -> anyhow::Result<FSEntry> {
+        let meta = tokio::fs::metadata(path).await?;
+        let (created_at, updated_at) = entry_times(&meta);
+        if meta.is_dir() {
+            let mut children = Vec::new();
+            let mut dir = tokio::fs::read_dir(path).await?;
+            while let Some(entry) = dir.next_entry().await? {
+                children.push(entry.file_name().to_string_lossy().into_owned());
             }
+            Ok(FSEntry::Dir {
+                children,
+                created_at,
+                updated_at,
+            })
+        } else {
+            Ok(FSEntry::File {
+                permission: owner_permission(&meta),
+                sz: meta.len() as usize,
+                created_at,
+                updated_at,
+            })
         }
-        Ok(entries)
-    }
-
-    async fn mkdir(&self, path: &Path) -> anyhow::Result<()> {
-        tokio::fs::create_dir_all(path).await.map_err(Into::into)
-    }
-
-    async fn rmdir(&self, path: &Path) -> anyhow::Result<()> {
-        tokio::fs::remove_dir(path).await.map_err(Into::into)
     }
 
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {

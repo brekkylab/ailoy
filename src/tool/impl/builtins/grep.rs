@@ -4,7 +4,7 @@ use fancy_regex::{Regex, RegexBuilder};
 
 use super::glob::glob_to_regex;
 use crate::{
-    runenv::Dirent,
+    runenv::{FSEntry, RunEnv},
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
@@ -19,28 +19,42 @@ fn is_binary(bytes: &[u8]) -> bool {
     bytes[..probe_len].contains(&0)
 }
 
-fn collect_files(
+/// Iterative BFS walk over `root` via `runenv.inspect`, collecting file paths
+/// whose basename matches `include_re` (or all files when `include_re` is `None`).
+///
+/// `inspect` on a directory returns only child names; each child requires a
+/// second `inspect` to distinguish file from subdirectory.
+async fn collect_files(
+    runenv: &dyn RunEnv,
     root: &Path,
-    entries: &[Dirent],
     include_re: Option<&Regex>,
-    out: &mut Vec<PathBuf>,
-) {
-    for entry in entries {
-        let entry_path = root.join(entry.name());
-        match entry {
-            Dirent::File { name, .. } => {
-                let matches = include_re
-                    .map(|re| re.is_match(name).unwrap_or(false))
-                    .unwrap_or(true);
-                if matches {
-                    out.push(entry_path);
+) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let children = match runenv.stat(&dir).await {
+            Ok(FSEntry::Dir { children, .. }) => children,
+            _ => continue,
+        };
+        for name in children {
+            let entry_path = dir.join(&name);
+            match runenv.stat(&entry_path).await {
+                Ok(FSEntry::File { .. }) => {
+                    let matches = include_re
+                        .map(|re| re.is_match(&name).unwrap_or(false))
+                        .unwrap_or(true);
+                    if matches {
+                        out.push(entry_path);
+                    }
                 }
-            }
-            Dirent::Dir { children, .. } => {
-                collect_files(&entry_path, children, include_re, out);
+                Ok(FSEntry::Dir { .. }) => {
+                    stack.push(entry_path);
+                }
+                Err(_) => continue,
             }
         }
     }
+    out
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -247,20 +261,12 @@ pub fn get_grep_tool_func() -> ToolFunc {
             .map(|n| n.max(1) as usize)
             .unwrap_or(DEFAULT_LIMIT);
 
-        // Build the candidate file list.
-        let candidate_files: Vec<PathBuf> = match runenv.ls(path).await {
-            Ok(entries) => {
-                let mut files = Vec::new();
-                collect_files(
-                    &PathBuf::from(path_str),
-                    &entries,
-                    include_re.as_ref(),
-                    &mut files,
-                );
-                files
-            }
-            // ls failed — maybe `path` is a regular file. Fall back to a single-file search.
-            Err(_) => vec![PathBuf::from(path_str)],
+        // Build the candidate file list. A regular file becomes a single-file
+        // search; anything else (including an `inspect` failure) falls back to a
+        // single-file read attempt that will simply yield no matches.
+        let candidate_files: Vec<PathBuf> = match runenv.stat(path).await {
+            Ok(FSEntry::Dir { .. }) => collect_files(runenv, path, include_re.as_ref()).await,
+            _ => vec![PathBuf::from(path_str)],
         };
 
         let mut hits: Vec<LineHit> = Vec::new();
