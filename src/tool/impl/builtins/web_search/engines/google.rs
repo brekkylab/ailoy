@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use scraper::{ElementRef, Html, Selector};
 
-use crate::tool_impl::builtins::web_search::engine::{SearchEngine, SearchError, SearchResult};
+use crate::tool::r#impl::builtins::web_search::engine::{SearchEngine, SearchError, SearchResult};
 
 /// Android Chrome Mobile UAs.
 ///

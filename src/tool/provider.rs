@@ -5,10 +5,7 @@ use std::{
 
 use url::Url;
 
-use crate::{
-    tool::{ToolDesc, ToolFunc},
-    tool_impl::get_builtin_tool_factories,
-};
+use crate::tool::{ToolDesc, ToolFunc, r#impl::get_builtin_tool_factories};
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
 #[derive(Clone, Debug)]
