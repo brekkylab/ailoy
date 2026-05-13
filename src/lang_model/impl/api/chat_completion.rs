@@ -2,7 +2,10 @@ use url::Url;
 
 use crate::{
     datatype::Value,
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
+    lang_model::{
+        LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
+        ResponseFormat,
+    },
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
@@ -191,6 +194,19 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 .insert("top_p".to_owned(), top_p.into());
         }
         // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
+        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+            body.as_object_mut().unwrap().insert(
+                "response_format".into(),
+                to_value!({
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "response",
+                        "schema": schema.clone(),
+                        "strict": true
+                    }
+                }),
+            );
+        }
         body.as_object_mut()
             .unwrap()
             .retain(|_key, value| !value.is_null());
@@ -406,6 +422,54 @@ mod tests {
                     .is_none()
             );
         });
+    }
+
+    #[test]
+    fn test_marshal_response_format_absent() {
+        with_req("gpt-4.1-mini", None, |req| {
+            let val = ChatCompletionMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            assert!(body.as_object().unwrap().get("response_format").is_none());
+        });
+    }
+
+    #[test]
+    fn test_marshal_response_format_json_schema() {
+        use crate::lang_model::ResponseFormat;
+        let schema = to_value!({"type": "object", "properties": {"score": {"type": "integer"}}});
+        let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model: "gpt-4.1-mini",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: Some(&fmt),
+        };
+        let val = ChatCompletionMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        let rf = body.as_object().unwrap().get("response_format").unwrap();
+        assert_eq!(rf.pointer("/type").and_then(|v| v.as_str()), Some("json_schema"));
+        assert_eq!(
+            rf.pointer("/json_schema/name").and_then(|v| v.as_str()),
+            Some("response")
+        );
+        assert_eq!(
+            rf.pointer("/json_schema/strict").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            rf.pointer("/json_schema/schema/type").and_then(|v| v.as_str()),
+            Some("object")
+        );
     }
 
     /// Verifies that max_tokens is respected by the ChatCompletion API (finish_reason: length).
