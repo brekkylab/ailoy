@@ -9,58 +9,12 @@ use crate::{
     tool::ToolDesc,
 };
 
-/// Recursively fills in defaults that provider-side structured-output APIs require
-/// but JSON Schema does not mandate.
-///
-/// Applied rules:
-/// - Every object schema (a node with `"type": "object"` or a `"properties"` key) that
-///   does not already carry `"additionalProperties"` gets `"additionalProperties": false`.
-///   Both Anthropic and OpenAI reject object schemas that omit this field.
-///
-/// Traversal covers: `properties` values, `items`, `anyOf`/`oneOf`/`allOf` entries,
-/// and `$defs`/`definitions` values.
-fn normalize_schema(schema: &mut Value) {
-    let Value::Object(obj) = schema else {
-        return;
-    };
-
-    let is_object = obj.get("type").and_then(|t| t.as_str()) == Some("object");
-    let has_properties = obj.contains_key("properties");
-    if (is_object || has_properties) && !obj.contains_key("additionalProperties") {
-        obj.insert("additionalProperties".into(), Value::Bool(false));
-    }
-
-    if let Some(Value::Object(props)) = obj.get_mut("properties") {
-        for sub in props.values_mut() {
-            normalize_schema(sub);
-        }
-    }
-    if let Some(items) = obj.get_mut("items") {
-        normalize_schema(items);
-    }
-    for key in ["anyOf", "oneOf", "allOf"] {
-        if let Some(Value::Array(arr)) = obj.get_mut(key) {
-            for sub in arr.iter_mut() {
-                normalize_schema(sub);
-            }
-        }
-    }
-    for key in ["$defs", "definitions"] {
-        if let Some(Value::Object(defs)) = obj.get_mut(key) {
-            for sub in defs.values_mut() {
-                normalize_schema(sub);
-            }
-        }
-    }
-}
-
 /// Constrains the model's response to a specific JSON format.
 ///
 /// Constructed via [`ResponseFormat::json_schema`], which validates the schema
 /// against JSON Schema Draft 7 before storing it, then normalises it to satisfy
-/// provider-specific requirements (see [`normalize_schema`]).  The stored schema
-/// is provider-agnostic; each marshal converts it to the wire format expected by
-/// its API.
+/// provider-specific requirements.  The stored schema is provider-agnostic;
+/// each marshal converts it to the wire format expected by its API.
 #[derive(Clone, Debug)]
 pub enum ResponseFormat {
     JsonSchema(Value),
@@ -76,8 +30,52 @@ impl ResponseFormat {
         jsonschema::validator_for(&serde_schema)
             .map_err(|e| anyhow::anyhow!("Invalid JSON schema: {}", e))?;
         let mut schema = schema;
-        normalize_schema(&mut schema);
+        Self::normalize(&mut schema);
         Ok(Self::JsonSchema(schema))
+    }
+
+    /// Recursively fill in defaults that provider APIs require but JSON Schema does not mandate.
+    ///
+    /// Rules applied:
+    /// - Object schemas (`"type": "object"` or a `"properties"` key) without
+    ///   `"additionalProperties"` get `"additionalProperties": false`.
+    ///   Anthropic and OpenAI both reject object schemas that omit this field.
+    ///
+    /// Traversal covers: `properties` values, `items`, `anyOf`/`oneOf`/`allOf` entries,
+    /// and `$defs`/`definitions` values.
+    fn normalize(schema: &mut Value) {
+        let Value::Object(obj) = schema else {
+            return;
+        };
+
+        let is_object = obj.get("type").and_then(|t| t.as_str()) == Some("object");
+        let has_properties = obj.contains_key("properties");
+        if (is_object || has_properties) && !obj.contains_key("additionalProperties") {
+            obj.insert("additionalProperties".into(), Value::Bool(false));
+        }
+
+        if let Some(Value::Object(props)) = obj.get_mut("properties") {
+            for sub in props.values_mut() {
+                Self::normalize(sub);
+            }
+        }
+        if let Some(items) = obj.get_mut("items") {
+            Self::normalize(items);
+        }
+        for key in ["anyOf", "oneOf", "allOf"] {
+            if let Some(Value::Array(arr)) = obj.get_mut(key) {
+                for sub in arr.iter_mut() {
+                    Self::normalize(sub);
+                }
+            }
+        }
+        for key in ["$defs", "definitions"] {
+            if let Some(Value::Object(defs)) = obj.get_mut(key) {
+                for sub in defs.values_mut() {
+                    Self::normalize(sub);
+                }
+            }
+        }
     }
 }
 
@@ -282,150 +280,133 @@ mod tests {
         tool::{ToolDesc, ToolDescBuilder},
     };
 
-    // --- normalize_schema unit tests ---
+    fn stored_schema(fmt: ResponseFormat) -> Value {
+        let ResponseFormat::JsonSchema(s) = fmt;
+        s
+    }
+
+    #[test]
+    fn test_response_format_invalid_schema_rejected() {
+        assert!(ResponseFormat::json_schema(to_value!({"type": 123})).is_err());
+    }
+
+    #[test]
+    fn test_response_format_non_object_rejected() {
+        assert!(ResponseFormat::json_schema(to_value!("not an object")).is_err());
+    }
 
     #[test]
     fn test_normalize_adds_additional_properties_to_flat_object() {
-        let mut schema = to_value!({"type": "object", "properties": {"x": {"type": "string"}}});
-        normalize_schema(&mut schema);
-        assert_eq!(
-            schema.pointer("/additionalProperties").and_then(|v| v.as_bool()),
-            Some(false)
+        let s = stored_schema(
+            ResponseFormat::json_schema(
+                to_value!({"type": "object", "properties": {"x": {"type": "string"}}}),
+            )
+            .unwrap(),
         );
+        assert_eq!(s.pointer("/additionalProperties").and_then(|v| v.as_bool()), Some(false));
     }
 
     #[test]
     fn test_normalize_recursive_nested_objects() {
-        let mut schema = to_value!({
-            "type": "object",
-            "properties": {
-                "addr": {
-                    "type": "object",
-                    "properties": {"city": {"type": "string"}}
+        let s = stored_schema(
+            ResponseFormat::json_schema(to_value!({
+                "type": "object",
+                "properties": {
+                    "addr": {"type": "object", "properties": {"city": {"type": "string"}}}
                 }
-            }
-        });
-        normalize_schema(&mut schema);
-        assert_eq!(
-            schema.pointer("/additionalProperties").and_then(|v| v.as_bool()),
-            Some(false),
-            "top level must get additionalProperties: false"
+            }))
+            .unwrap(),
         );
         assert_eq!(
-            schema.pointer("/properties/addr/additionalProperties").and_then(|v| v.as_bool()),
+            s.pointer("/additionalProperties").and_then(|v| v.as_bool()),
             Some(false),
-            "nested object must also get additionalProperties: false"
+            "top level"
+        );
+        assert_eq!(
+            s.pointer("/properties/addr/additionalProperties").and_then(|v| v.as_bool()),
+            Some(false),
+            "nested object"
         );
     }
 
     #[test]
     fn test_normalize_preserves_existing_additional_properties() {
-        let mut schema = to_value!({
-            "type": "object",
-            "properties": {"x": {"type": "string"}},
-            "additionalProperties": true
-        });
-        normalize_schema(&mut schema);
+        let s = stored_schema(
+            ResponseFormat::json_schema(to_value!({
+                "type": "object",
+                "properties": {"x": {"type": "string"}},
+                "additionalProperties": true
+            }))
+            .unwrap(),
+        );
         assert_eq!(
-            schema.pointer("/additionalProperties").and_then(|v| v.as_bool()),
+            s.pointer("/additionalProperties").and_then(|v| v.as_bool()),
             Some(true),
-            "existing additionalProperties must not be overwritten"
+            "must not overwrite existing value"
         );
     }
 
     #[test]
     fn test_normalize_array_items() {
-        let mut schema = to_value!({
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"name": {"type": "string"}}
-            }
-        });
-        normalize_schema(&mut schema);
+        let s = stored_schema(
+            ResponseFormat::json_schema(to_value!({
+                "type": "array",
+                "items": {"type": "object", "properties": {"name": {"type": "string"}}}
+            }))
+            .unwrap(),
+        );
         assert_eq!(
-            schema.pointer("/items/additionalProperties").and_then(|v| v.as_bool()),
-            Some(false),
-            "object inside items must get additionalProperties: false"
+            s.pointer("/items/additionalProperties").and_then(|v| v.as_bool()),
+            Some(false)
         );
     }
 
     #[test]
     fn test_normalize_anyof_entries() {
-        let mut schema = to_value!({
-            "anyOf": [
-                {"type": "object", "properties": {"a": {"type": "string"}}},
-                {"type": "string"}
-            ]
-        });
-        normalize_schema(&mut schema);
+        let s = stored_schema(
+            ResponseFormat::json_schema(to_value!({
+                "anyOf": [
+                    {"type": "object", "properties": {"a": {"type": "string"}}},
+                    {"type": "string"}
+                ]
+            }))
+            .unwrap(),
+        );
         assert_eq!(
-            schema.pointer("/anyOf/0/additionalProperties").and_then(|v| v.as_bool()),
+            s.pointer("/anyOf/0/additionalProperties").and_then(|v| v.as_bool()),
             Some(false),
-            "object inside anyOf must get additionalProperties: false"
+            "object in anyOf must be normalised"
         );
         assert!(
-            schema.pointer("/anyOf/1/additionalProperties").is_none(),
+            s.pointer("/anyOf/1/additionalProperties").is_none(),
             "non-object in anyOf must not be touched"
         );
     }
 
     #[test]
     fn test_normalize_defs() {
-        let mut schema = to_value!({
-            "type": "object",
-            "properties": {"item": {"$ref": "#/$defs/Item"}},
-            "$defs": {
-                "Item": {
-                    "type": "object",
-                    "properties": {"id": {"type": "integer"}}
+        let s = stored_schema(
+            ResponseFormat::json_schema(to_value!({
+                "type": "object",
+                "properties": {"item": {"$ref": "#/$defs/Item"}},
+                "$defs": {
+                    "Item": {"type": "object", "properties": {"id": {"type": "integer"}}}
                 }
-            }
-        });
-        normalize_schema(&mut schema);
+            }))
+            .unwrap(),
+        );
         assert_eq!(
-            schema.pointer("/$defs/Item/additionalProperties").and_then(|v| v.as_bool()),
-            Some(false),
-            "object inside $defs must get additionalProperties: false"
+            s.pointer("/$defs/Item/additionalProperties").and_then(|v| v.as_bool()),
+            Some(false)
         );
     }
 
     #[test]
     fn test_normalize_non_object_schema_unchanged() {
-        let mut schema = to_value!({"type": "string"});
-        normalize_schema(&mut schema);
-        assert!(
-            schema.pointer("/additionalProperties").is_none(),
-            "non-object schema must not gain additionalProperties"
+        let s = stored_schema(
+            ResponseFormat::json_schema(to_value!({"type": "string"})).unwrap(),
         );
-    }
-
-    // --- ResponseFormat construction tests ---
-
-    #[test]
-    fn test_response_format_valid_schema_accepted() {
-        let schema = to_value!({
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"},
-                "age": {"type": "integer"}
-            },
-            "required": ["name"],
-            "additionalProperties": false
-        });
-        assert!(ResponseFormat::json_schema(schema).is_ok());
-    }
-
-    #[test]
-    fn test_response_format_invalid_schema_rejected() {
-        let bad_schema = to_value!({"type": 123});
-        assert!(ResponseFormat::json_schema(bad_schema).is_err());
-    }
-
-    #[test]
-    fn test_response_format_non_object_rejected() {
-        let bad_schema = to_value!("not an object");
-        assert!(ResponseFormat::json_schema(bad_schema).is_err());
+        assert!(s.pointer("/additionalProperties").is_none());
     }
 
     fn openai_chat_completion(model: &str, api_key: String) -> LangModel {
