@@ -1,7 +1,7 @@
 use anyhow::bail;
 use url::Url;
 
-use super::schema_adapt::SchemaAdapter as _;
+use super::super::response_format::ResponseSchemaMarshal;
 use crate::{
     datatype::Value,
     lang_model::{
@@ -29,9 +29,22 @@ impl LangModelProvider {
 #[derive(Clone, Debug, Default)]
 pub struct GeminiMarshal;
 
-impl super::schema_adapt::SchemaAdapter for GeminiMarshal {
-    fn adapt_schema(&self, schema: &crate::datatype::Value) -> crate::datatype::Value {
-        super::schema_adapt::for_gemini(schema)
+impl ResponseSchemaMarshal for GeminiMarshal {
+    fn marshal_response_schema(&self, schema: &Value) -> Value {
+        const STRIP: &[&str] = &["additionalProperties", "$schema", "$defs", "definitions"];
+        fn strip(schema: &Value) -> Value {
+            match schema {
+                Value::Object(obj) => Value::Object(
+                    obj.iter()
+                        .filter(|(k, _)| !STRIP.contains(&k.as_str()))
+                        .map(|(k, v)| (k.clone(), strip(v)))
+                        .collect(),
+                ),
+                Value::Array(arr) => Value::Array(arr.iter().map(strip).collect()),
+                other => other.clone(),
+            }
+        }
+        strip(schema)
     }
 }
 
@@ -215,7 +228,6 @@ impl Marshal<ToolDesc> for GeminiMarshal {
     }
 }
 
-
 impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
     fn marshal(&mut self, req: &LangModelRequest<'_>) -> Value {
         // Extract system instruction from system message if present
@@ -298,10 +310,10 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
                 .as_object_mut()
                 .unwrap()
                 .insert("responseMimeType".into(), "application/json".into());
-            generation_config
-                .as_object_mut()
-                .unwrap()
-                .insert("responseSchema".into(), self.adapt_schema(schema));
+            generation_config.as_object_mut().unwrap().insert(
+                "responseSchema".into(),
+                self.marshal_response_schema(schema),
+            );
         }
         if !generation_config.as_object().unwrap().is_empty() {
             body.as_object_mut()

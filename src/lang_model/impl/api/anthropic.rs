@@ -1,7 +1,7 @@
 use anyhow::bail;
 use url::Url;
 
-use super::schema_adapt::SchemaAdapter as _;
+use super::super::response_format::ResponseSchemaMarshal;
 use crate::{
     datatype::Value,
     lang_model::{
@@ -29,11 +29,7 @@ impl LangModelProvider {
 #[derive(Clone, Debug, Default)]
 pub struct AnthropicMarshal;
 
-impl super::schema_adapt::SchemaAdapter for AnthropicMarshal {
-    fn adapt_schema(&self, schema: &crate::datatype::Value) -> crate::datatype::Value {
-        super::schema_adapt::for_strict_providers(schema)
-    }
-}
+impl ResponseSchemaMarshal for AnthropicMarshal {}
 
 fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     let part_to_value = |part: &Part| -> Value {
@@ -249,7 +245,7 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .insert("top_k".to_owned(), (top_k as i64).into());
         }
         if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
-            let wire_schema = self.adapt_schema(schema);
+            let wire_schema = self.marshal_response_schema(schema);
             body.as_object_mut().unwrap().insert(
                 "output_config".into(),
                 to_value!({"format": {"type": "json_schema", "schema": wire_schema}}),

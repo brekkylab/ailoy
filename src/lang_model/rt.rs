@@ -25,7 +25,7 @@ impl ResponseFormat {
     /// Validate `schema` against JSON Schema Draft 7.  Returns `Err` if the
     /// schema is structurally invalid (e.g. `"type": 123`).  The stored schema
     /// is the user's original; provider-specific transformations happen in each
-    /// marshal via `schema_adapt`.
+    /// marshal via [`ResponseSchemaMarshal::marshal_response_schema`].
     pub fn json_schema(schema: Value) -> anyhow::Result<Self> {
         let serde_schema: serde_json::Value = schema.clone().into();
         jsonschema::validator_for(&serde_schema)
