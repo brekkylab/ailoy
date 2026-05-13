@@ -15,67 +15,22 @@ use crate::{
 /// against JSON Schema Draft 7 before storing it, then normalises it to satisfy
 /// provider-specific requirements.  The stored schema is provider-agnostic;
 /// each marshal converts it to the wire format expected by its API.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", content = "schema", rename_all = "snake_case")]
 pub enum ResponseFormat {
     JsonSchema(Value),
 }
 
 impl ResponseFormat {
-    /// Validate `schema` against the JSON Schema Draft 7 meta-schema, normalise it
-    /// to satisfy provider requirements, then wrap it.
-    ///
-    /// Returns `Err` if the schema is structurally invalid (e.g. `"type": 123`).
+    /// Validate `schema` against JSON Schema Draft 7.  Returns `Err` if the
+    /// schema is structurally invalid (e.g. `"type": 123`).  The stored schema
+    /// is the user's original; provider-specific transformations happen in each
+    /// marshal via `schema_adapt`.
     pub fn json_schema(schema: Value) -> anyhow::Result<Self> {
         let serde_schema: serde_json::Value = schema.clone().into();
         jsonschema::validator_for(&serde_schema)
             .map_err(|e| anyhow::anyhow!("Invalid JSON schema: {}", e))?;
-        let mut schema = schema;
-        Self::normalize(&mut schema);
         Ok(Self::JsonSchema(schema))
-    }
-
-    /// Recursively fill in defaults that provider APIs require but JSON Schema does not mandate.
-    ///
-    /// Rules applied:
-    /// - Object schemas (`"type": "object"` or a `"properties"` key) without
-    ///   `"additionalProperties"` get `"additionalProperties": false`.
-    ///   Anthropic and OpenAI both reject object schemas that omit this field.
-    ///
-    /// Traversal covers: `properties` values, `items`, `anyOf`/`oneOf`/`allOf` entries,
-    /// and `$defs`/`definitions` values.
-    fn normalize(schema: &mut Value) {
-        let Value::Object(obj) = schema else {
-            return;
-        };
-
-        let is_object = obj.get("type").and_then(|t| t.as_str()) == Some("object");
-        let has_properties = obj.contains_key("properties");
-        if (is_object || has_properties) && !obj.contains_key("additionalProperties") {
-            obj.insert("additionalProperties".into(), Value::Bool(false));
-        }
-
-        if let Some(Value::Object(props)) = obj.get_mut("properties") {
-            for sub in props.values_mut() {
-                Self::normalize(sub);
-            }
-        }
-        if let Some(items) = obj.get_mut("items") {
-            Self::normalize(items);
-        }
-        for key in ["anyOf", "oneOf", "allOf"] {
-            if let Some(Value::Array(arr)) = obj.get_mut(key) {
-                for sub in arr.iter_mut() {
-                    Self::normalize(sub);
-                }
-            }
-        }
-        for key in ["$defs", "definitions"] {
-            if let Some(Value::Object(defs)) = obj.get_mut(key) {
-                for sub in defs.values_mut() {
-                    Self::normalize(sub);
-                }
-            }
-        }
     }
 }
 
@@ -297,122 +252,24 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_adds_additional_properties_to_flat_object() {
-        let s = stored_schema(
-            ResponseFormat::json_schema(
-                to_value!({"type": "object", "properties": {"x": {"type": "string"}}}),
-            )
-            .unwrap(),
-        );
-        assert_eq!(
-            s.pointer("/additionalProperties").and_then(|v| v.as_bool()),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn test_normalize_recursive_nested_objects() {
-        let s = stored_schema(
-            ResponseFormat::json_schema(to_value!({
-                "type": "object",
-                "properties": {
-                    "addr": {"type": "object", "properties": {"city": {"type": "string"}}}
-                }
-            }))
-            .unwrap(),
-        );
-        assert_eq!(
-            s.pointer("/additionalProperties").and_then(|v| v.as_bool()),
-            Some(false),
-            "top level"
-        );
-        assert_eq!(
-            s.pointer("/properties/addr/additionalProperties")
-                .and_then(|v| v.as_bool()),
-            Some(false),
-            "nested object"
-        );
-    }
-
-    #[test]
-    fn test_normalize_preserves_existing_additional_properties() {
-        let s = stored_schema(
-            ResponseFormat::json_schema(to_value!({
-                "type": "object",
-                "properties": {"x": {"type": "string"}},
-                "additionalProperties": true
-            }))
-            .unwrap(),
-        );
-        assert_eq!(
-            s.pointer("/additionalProperties").and_then(|v| v.as_bool()),
-            Some(true),
-            "must not overwrite existing value"
-        );
-    }
-
-    #[test]
-    fn test_normalize_array_items() {
-        let s = stored_schema(
-            ResponseFormat::json_schema(to_value!({
-                "type": "array",
-                "items": {"type": "object", "properties": {"name": {"type": "string"}}}
-            }))
-            .unwrap(),
-        );
-        assert_eq!(
-            s.pointer("/items/additionalProperties")
-                .and_then(|v| v.as_bool()),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn test_normalize_anyof_entries() {
-        let s = stored_schema(
-            ResponseFormat::json_schema(to_value!({
-                "anyOf": [
-                    {"type": "object", "properties": {"a": {"type": "string"}}},
-                    {"type": "string"}
-                ]
-            }))
-            .unwrap(),
-        );
-        assert_eq!(
-            s.pointer("/anyOf/0/additionalProperties")
-                .and_then(|v| v.as_bool()),
-            Some(false),
-            "object in anyOf must be normalised"
-        );
+    fn test_response_format_stores_raw_schema() {
+        let schema = to_value!({"type": "object", "properties": {"x": {"type": "string"}}});
+        let fmt = ResponseFormat::json_schema(schema.clone()).unwrap();
+        let stored = stored_schema(fmt);
+        assert_eq!(stored, schema, "stored schema must equal input");
         assert!(
-            s.pointer("/anyOf/1/additionalProperties").is_none(),
-            "non-object in anyOf must not be touched"
+            stored.pointer("/additionalProperties").is_none(),
+            "ResponseFormat must not mutate the schema at construction time"
         );
     }
 
     #[test]
-    fn test_normalize_defs() {
-        let s = stored_schema(
-            ResponseFormat::json_schema(to_value!({
-                "type": "object",
-                "properties": {"item": {"$ref": "#/$defs/Item"}},
-                "$defs": {
-                    "Item": {"type": "object", "properties": {"id": {"type": "integer"}}}
-                }
-            }))
-            .unwrap(),
-        );
-        assert_eq!(
-            s.pointer("/$defs/Item/additionalProperties")
-                .and_then(|v| v.as_bool()),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn test_normalize_non_object_schema_unchanged() {
-        let s = stored_schema(ResponseFormat::json_schema(to_value!({"type": "string"})).unwrap());
-        assert!(s.pointer("/additionalProperties").is_none());
+    fn test_response_format_serde_round_trip() {
+        let schema = to_value!({"type": "object", "properties": {"name": {"type": "string"}}});
+        let original = ResponseFormat::json_schema(schema).unwrap();
+        let json = serde_json::to_string(&original).expect("should serialize");
+        let restored: ResponseFormat = serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(original, restored);
     }
 
     fn openai_chat_completion(model: &str, api_key: String) -> LangModel {

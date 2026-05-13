@@ -92,8 +92,8 @@ pub struct AgentSpec {
     pub top_k: Option<u64>,
 
     /// Constrains the model's output to a JSON schema validated at construction time.
-    /// Set via [`AgentSpec::response_format`]. Not serialised — configure programmatically.
-    #[serde(skip)]
+    /// Set via [`AgentSpec::response_format`].
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip)]
     pub response_format: Option<crate::lang_model::ResponseFormat>,
 }
