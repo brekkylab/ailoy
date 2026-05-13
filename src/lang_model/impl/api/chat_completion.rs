@@ -182,6 +182,26 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 (max_tokens as i64).into(),
             );
         }
+        if let Some(rf) = req.response_format {
+            // OpenAI Chat Completions: response_format.json_schema.{name,schema,strict}
+            let crate::lang_model::ResponseFormat::JsonSchema {
+                name,
+                schema,
+                strict,
+            } = rf;
+            let rf_val: Value = serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": name,
+                    "schema": schema,
+                    "strict": strict,
+                }
+            })
+            .into();
+            body.as_object_mut()
+                .unwrap()
+                .insert("response_format".to_owned(), rf_val);
+        }
         body.as_object_mut()
             .unwrap()
             .retain(|_key, value| !value.is_null());
@@ -363,6 +383,7 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            response_format: None,
         };
         f(&req)
     }

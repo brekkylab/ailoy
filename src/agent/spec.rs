@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agent::AgentCard,
+    lang_model::ResponseFormat,
     tool::{
         ToolDesc,
         r#impl::{
@@ -58,6 +59,13 @@ pub struct AgentSpec {
     /// `None` for top-level agents.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub card: Option<AgentCard>,
+
+    /// Opt-in structured-output enforcement. `None` (default) leaves the
+    /// request body unchanged; `Some` is translated by each adapter into the
+    /// provider's schema-enforcement field.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub response_format: Option<ResponseFormat>,
 }
 
 impl AgentSpec {
@@ -68,7 +76,14 @@ impl AgentSpec {
             tools: Vec::new(),
             subagents: Vec::new(),
             card: None,
+            response_format: None,
         }
+    }
+
+    /// Set the structured-output constraint. See [`ResponseFormat`].
+    pub fn response_format(mut self, rf: ResponseFormat) -> Self {
+        self.response_format = Some(rf);
+        self
     }
 
     pub fn instruction(mut self, inst: impl Into<String>) -> Self {

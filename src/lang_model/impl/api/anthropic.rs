@@ -224,6 +224,27 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .unwrap()
                 .insert("tools".to_owned(), tools);
         }
+        if let Some(rf) = req.response_format {
+            // Anthropic Messages: response_format.json_schema.{name,schema,strict}.
+            // Newer models accept this field directly; older models return 400.
+            let crate::lang_model::ResponseFormat::JsonSchema {
+                name,
+                schema,
+                strict,
+            } = rf;
+            let rf_val: Value = serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": name,
+                    "schema": schema,
+                    "strict": strict,
+                }
+            })
+            .into();
+            body.as_object_mut()
+                .unwrap()
+                .insert("response_format".to_owned(), rf_val);
+        }
 
         to_value!({
             "url": url,
@@ -403,6 +424,7 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            response_format: None,
         };
         f(&req)
     }

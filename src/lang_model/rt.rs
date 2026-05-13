@@ -15,6 +15,21 @@ pub struct LangModel {
     provider: LangModelProviderElem,
 }
 
+/// Opt-in structured-output enforcement. Each adapter translates this into
+/// its provider's schema-enforcement field (OpenAI `response_format` /
+/// `text.format`, Anthropic `response_format`, Gemini
+/// `generationConfig.responseSchema`).
+#[derive(Clone, Debug)]
+pub enum ResponseFormat {
+    /// `schema` is the raw JSON Schema value (e.g. `schemars::schema_for!(T)`).
+    /// `strict = true` requests strict conformance where the provider supports it.
+    JsonSchema {
+        name: String,
+        schema: serde_json::Value,
+        strict: bool,
+    },
+}
+
 pub(crate) struct LangModelRequest<'a> {
     pub model: &'a str,
     pub messages: &'a [Message],
@@ -22,6 +37,9 @@ pub(crate) struct LangModelRequest<'a> {
     pub url: &'a Url,
     pub api_key: &'a Option<String>,
     pub max_tokens: Option<u64>,
+    /// Structured-output enforcement, if any. `None` keeps the request
+    /// shape identical to before this field existed (backward-compatible).
+    pub response_format: Option<&'a ResponseFormat>,
 }
 
 impl LangModel {
@@ -38,6 +56,21 @@ impl LangModel {
         messages: &[Message],
         tools: &[ToolDesc],
     ) -> anyhow::Result<MessageOutput> {
+        self.run_with_response_format(messages, tools, None).await
+    }
+
+    /// Like [`run`](Self::run), but optionally enforces a JSON-schema-shaped
+    /// response via the provider's structured-outputs API. Each adapter
+    /// translates `response_format` into its provider-specific body field
+    /// (OpenAI `response_format`, Anthropic `response_format`, Gemini
+    /// `generationConfig.responseSchema`). When `None`, the request body
+    /// is unchanged from before this method existed.
+    pub async fn run_with_response_format(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDesc],
+        response_format: Option<&ResponseFormat>,
+    ) -> anyhow::Result<MessageOutput> {
         match &self.provider {
             LangModelProviderElem::API {
                 schema,
@@ -53,6 +86,7 @@ impl LangModel {
                     url,
                     api_key,
                     max_tokens: *max_tokens,
+                    response_format,
                 };
 
                 let req = match schema {

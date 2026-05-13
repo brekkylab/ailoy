@@ -258,10 +258,28 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
         if !tools.is_null() {
             body.as_object_mut().unwrap().insert("tools".into(), tools);
         }
+        // maxOutputTokens, responseSchema, responseMimeType all live under
+        // the same `generationConfig` object.
+        let mut generation_config = serde_json::Map::new();
         if let Some(max_tokens) = req.max_tokens {
+            generation_config.insert(
+                "maxOutputTokens".to_owned(),
+                serde_json::Value::from(max_tokens as i64),
+            );
+        }
+        if let Some(rf) = req.response_format {
+            // Gemini: generationConfig.responseMimeType + responseSchema
+            let crate::lang_model::ResponseFormat::JsonSchema { schema, .. } = rf;
+            generation_config.insert(
+                "responseMimeType".to_owned(),
+                serde_json::Value::String("application/json".to_owned()),
+            );
+            generation_config.insert("responseSchema".to_owned(), schema.clone());
+        }
+        if !generation_config.is_empty() {
             body.as_object_mut().unwrap().insert(
                 "generationConfig".into(),
-                to_value!({"maxOutputTokens": max_tokens as i64}),
+                serde_json::Value::Object(generation_config).into(),
             );
         }
 
@@ -449,6 +467,7 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            response_format: None,
         };
         f(&req)
     }

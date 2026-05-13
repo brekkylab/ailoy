@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     agent::{Agent, AgentProvider, AgentSpec, ContextManager},
+    lang_model::ResponseFormat,
     message::Message,
     runenv::RunEnv,
     tool::ToolDesc,
@@ -140,6 +141,18 @@ impl AgentBuilder {
     /// exceeds `spec.max_input_tokens`, preserving the most recent turns.
     pub fn context_manager(mut self, spec: ContextManager) -> Self {
         self.context_manager = Some(spec);
+        self
+    }
+
+    /// Constrain the model's output to a JSON schema (opt-in, strict).
+    /// `schema` is the raw JSON Schema value (e.g. `schemars::schema_for!(T)`).
+    /// When not called, the request body is unchanged.
+    pub fn response_format(mut self, name: impl Into<String>, schema: serde_json::Value) -> Self {
+        self.spec.response_format = Some(ResponseFormat::JsonSchema {
+            name: name.into(),
+            schema,
+            strict: true,
+        });
         self
     }
 

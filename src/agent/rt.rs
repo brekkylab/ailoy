@@ -72,6 +72,10 @@ pub struct Agent {
     pub state: AgentState,
 
     context_manager: Option<ContextManager>,
+
+    /// Carried from [`AgentSpec::response_format`]; passed to every
+    /// `LangModel::run_with_response_format` call. `None` = unconstrained.
+    response_format: Option<crate::lang_model::ResponseFormat>,
 }
 
 impl Agent {
@@ -144,6 +148,7 @@ impl Agent {
             tool_descs,
             state,
             context_manager: None,
+            response_format: spec.response_format,
         })
     }
 
@@ -322,7 +327,14 @@ impl Agent {
                     }
                 }
 
-                let mut output = self.model.run(&self.state.history, &self.tool_descs).await?;
+                let mut output = self
+                    .model
+                    .run_with_response_format(
+                        &self.state.history,
+                        &self.tool_descs,
+                        self.response_format.as_ref(),
+                    )
+                    .await?;
 
                 // Capture token usage for next iteration's truncation check.
                 if let Some(u) = &output.usage {
@@ -1351,6 +1363,71 @@ To activate a skill, read its SKILL.md using the bash tool \
             result.stdout.contains("sandbox_shared_ok"),
             "sentinel file written by subagent not visible in parent's sandbox; stdout: {:?}",
             result.stdout,
+        );
+    }
+
+    /// `.response_format(...)` keeps the `agent` field inside the enum even
+    /// on an adversarial Korean meta/identity-shaped prompt that, under
+    /// instruction-only constraints, sometimes produces out-of-enum values.
+    #[test_with::env(OPENAI_API_KEY)]
+    #[tokio::test]
+    async fn test_response_format_enforces_enum() {
+        use crate::agent::AgentBuilder;
+        use serde::Deserialize;
+
+        #[derive(Debug, Deserialize)]
+        struct Decision {
+            agent: String,
+        }
+
+        // Minimal schema: one enum field over three literals.
+        let schema: serde_json::Value = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "type": "string",
+                    "enum": ["speedwagon", "vegapunk", "minerva"]
+                }
+            },
+            "required": ["agent"],
+            "additionalProperties": false
+        });
+
+        let instruction = "You are a router. Respond with a JSON object choosing one of: speedwagon, vegapunk, minerva. Do not invent other values.";
+
+        let provider = get_provider();
+        let mut agent = AgentBuilder::new("openai/gpt-4o-mini")
+            .provider(provider)
+            .instruction(instruction)
+            .response_format("Decision", schema)
+            .build()
+            .expect("agent build failed");
+
+        // Korean meta/identity-shaped prompt — the pattern that triggers
+        // enum escape under instruction-only constraints.
+        let query =
+            Message::new(Role::User).with_contents([Part::text("너 무슨 모델이야?")]);
+        let mut stream = agent.run(query);
+        let mut text = String::new();
+        while let Some(event) = stream.next().await {
+            let event = event.expect("agent stream error");
+            if event.message.role == Role::Assistant {
+                for p in &event.message.contents {
+                    if let Some(t) = p.as_text() {
+                        text.push_str(t);
+                    }
+                }
+            }
+        }
+        assert!(!text.is_empty(), "expected an assistant text response");
+
+        // Must parse and the agent must be one of the three literals.
+        let decision: Decision = serde_json::from_str(text.trim())
+            .unwrap_or_else(|e| panic!("response was not a valid Decision JSON: {e}\nraw: {text}"));
+        assert!(
+            matches!(decision.agent.as_str(), "speedwagon" | "vegapunk" | "minerva"),
+            "agent field violated the enum: got {:?}",
+            decision.agent
         );
     }
 }
