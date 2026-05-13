@@ -3,7 +3,10 @@ use url::Url;
 
 use crate::{
     datatype::Value,
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
+    lang_model::{
+        LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
+        ResponseFormat,
+    },
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
@@ -237,6 +240,12 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
             body.as_object_mut()
                 .unwrap()
                 .insert("top_k".to_owned(), (top_k as i64).into());
+        }
+        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+            body.as_object_mut().unwrap().insert(
+                "output_config".into(),
+                to_value!({"format": {"type": "json_schema", "schema": schema.clone()}}),
+            );
         }
 
         to_value!({
@@ -612,6 +621,46 @@ mod tests {
             Some(r#"{"temp":25}"#),
             "Part::Value(Object) must be JSON-encoded into a text block"
         );
+    }
+
+    #[test]
+    fn test_marshal_response_format_absent() {
+        with_req("claude-haiku-4-5", None, |req| {
+            let val = AnthropicMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            assert!(body.as_object().unwrap().get("output_config").is_none());
+        });
+    }
+
+    #[test]
+    fn test_marshal_response_format_json_schema() {
+        use crate::lang_model::ResponseFormat;
+        let schema = to_value!({"type": "object", "properties": {"name": {"type": "string"}}});
+        let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model: "claude-haiku-4-5",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: Some(&fmt),
+        };
+        let val = AnthropicMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        let fmt_type = body
+            .pointer("/output_config/format/type")
+            .and_then(|v| v.as_str());
+        assert_eq!(fmt_type, Some("json_schema"));
+        let fmt_schema = body.pointer("/output_config/format/schema").unwrap();
+        assert_eq!(fmt_schema.pointer("/type").and_then(|v| v.as_str()), Some("object"));
     }
 
     /// Verifies that max_tokens is respected by the Anthropic API (stop_reason: max_tokens).
