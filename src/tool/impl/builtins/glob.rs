@@ -1,101 +1,32 @@
-use std::path::{Path, PathBuf};
-
-use fancy_regex::Regex;
+use std::path::Path;
 
 use crate::{
-    runenv::{FSEntry, RunEnv},
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
 
 const DEFAULT_LIMIT: usize = 1000;
 
-/// Convert a path glob into a regex anchored at both ends. The glob is matched
-/// against a path relative to the search root. Supports:
-///
-/// * `*`  — any run of characters except `/`
-/// * `?`  — a single character except `/`
-/// * `**` — any number of path segments (use `**/x` to also match `x` at root)
-/// * `[..]` — character classes
-pub(super) fn glob_to_regex(glob: &str) -> Result<Regex, String> {
-    let mut pat = String::from("^");
-    let mut chars = glob.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '*' => {
-                if chars.peek() == Some(&'*') {
-                    chars.next();
-                    if chars.peek() == Some(&'/') {
-                        chars.next();
-                        pat.push_str("(?:.*/)?");
-                    } else {
-                        pat.push_str(".*");
-                    }
-                } else {
-                    pat.push_str("[^/]*");
-                }
-            }
-            '?' => pat.push_str("[^/]"),
-            '[' => {
-                pat.push('[');
-                while let Some(&nc) = chars.peek() {
-                    chars.next();
-                    pat.push(nc);
-                    if nc == ']' {
-                        break;
-                    }
-                }
-            }
-            '.' | '+' | '(' | ')' | '{' | '}' | '|' | '^' | '$' | '\\' => {
-                pat.push('\\');
-                pat.push(c);
-            }
-            _ => pat.push(c),
-        }
-    }
-    pat.push('$');
-    Regex::new(&pat).map_err(|e| format!("invalid glob {glob:?}: {e}"))
+/// POSIX single-quote escaping for embedding `s` between `'…'` in a script.
+fn sh_single_quote_inner(s: &str) -> String {
+    s.replace('\'', "'\\''")
 }
 
-/// Iterative DFS walk via `runenv.inspect`, collecting file paths whose path
-/// relative to `base` matches `pat_re`.  Stops once `limit` matches are gathered.
-///
-/// `inspect` on a directory returns only child names, so each child requires a
-/// second `inspect` call to learn whether it is a file or a directory.
-async fn walk(runenv: &dyn RunEnv, base: &Path, pat_re: &Regex, limit: usize) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    // (absolute dir path, relative prefix from `base`)
-    let mut stack: Vec<(PathBuf, String)> = vec![(base.to_path_buf(), String::new())];
-    while let Some((dir, rel_prefix)) = stack.pop() {
-        if out.len() >= limit {
-            break;
+/// Make `s` safe to use unquoted in a bash glob context: pass glob metacharacters
+/// (`*`, `?`, `[`, `]`, `{`, `}`, `,`), path/word chars (`/`, `.`, `-`, `_`,
+/// alphanumerics) through unchanged, and backslash-escape everything else so the
+/// shell can't interpret it (`$`, `` ` ``, `;`, whitespace, etc.).
+fn glob_escape_unquoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        let preserve = matches!(
+            c,
+            '*' | '?' | '[' | ']' | '{' | '}' | ',' | '/' | '.' | '-' | '_'
+        ) || c.is_alphanumeric();
+        if !preserve {
+            out.push('\\');
         }
-        let children = match runenv.stat(&dir).await {
-            Ok(FSEntry::Dir { children, .. }) => children,
-            _ => continue,
-        };
-        for name in children {
-            if out.len() >= limit {
-                break;
-            }
-            let rel = if rel_prefix.is_empty() {
-                name
-            } else {
-                format!("{}/{}", rel_prefix, name)
-            };
-            let child_path = base.join(&rel);
-            match runenv.stat(&child_path).await {
-                Ok(FSEntry::File { .. }) => {
-                    if pat_re.is_match(&rel).unwrap_or(false) {
-                        out.push(child_path.to_string_lossy().into_owned());
-                    }
-                }
-                Ok(FSEntry::Dir { .. }) => {
-                    stack.push((child_path, rel));
-                }
-                Err(_) => continue,
-            }
-        }
+        out.push(c);
     }
     out
 }
@@ -153,45 +84,64 @@ pub fn get_glob_tool_func() -> ToolFunc {
             });
         }
 
-        let pat_re = match glob_to_regex(pattern_str) {
-            Ok(re) => re,
-            Err(e) => {
-                return crate::to_value!({
-                    "error": e,
-                    "phase": "validation",
-                });
-            }
-        };
-
         let limit = args
             .pointer("/limit")
             .and_then(|v| v.as_integer())
             .map(|n| n.max(1) as usize)
             .unwrap_or(DEFAULT_LIMIT);
 
-        // Pre-flight `inspect` so we can return a clean `io` error for a bad root.
-        match runenv.stat(path).await {
-            Ok(FSEntry::Dir { .. }) => {}
-            Ok(_) => {
-                return crate::to_value!({
-                    "error": format!("path is not a directory: {path_str}"),
-                    "phase": "io",
-                });
-            }
-            Err(e) => {
-                return crate::to_value!({
-                    "error": format!("inspect {path_str}: {e}"),
-                    "phase": "io",
-                });
-            }
+        let os = runenv.get_os();
+        if os != "linux" && os != "macos" {
+            return crate::to_value!({
+                "error": format!("glob: unsupported OS '{os}'"),
+                "phase": "io",
+            });
         }
 
-        let mut paths = walk(runenv, path, &pat_re, limit + 1).await;
+        let base_q = sh_single_quote_inner(path_str);
+        let pat_e = glob_escape_unquoted(pattern_str);
+
+        // Use zsh: macOS ships bash 3.2 without `shopt -s globstar`, so `**`
+        // would silently degrade to single-`*` there. zsh supports `**` for
+        // any-depth segments out of the box. `nullglob` makes a non-matching
+        // pattern expand to nothing; `dotglob` lets `*` match hidden entries.
+        let script = format!(
+            r#"setopt nullglob dotglob
+cd '{base_q}' || exit 1
+for f in {pat_e}; do
+  [ -f "$f" ] && printf '%s\n' "$PWD/$f"
+done"#,
+        );
+
+        let result = match runenv
+            .exec("zsh".to_string(), vec!["-c".to_string(), script], None)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return crate::to_value!({
+                    "error": format!("exec failed: {e}"),
+                    "phase": "io",
+                });
+            }
+        };
+        if result.exit_code != 0 {
+            return crate::to_value!({
+                "error": format!("glob failed (exit {}): {}", result.exit_code, result.stderr),
+                "phase": "io",
+            });
+        }
+
+        let mut paths: Vec<String> = result
+            .stdout
+            .lines()
+            .take(limit + 1)
+            .map(|s| s.to_string())
+            .collect();
         let truncated = paths.len() > limit;
         if truncated {
             paths.truncate(limit);
         }
-
         let count = paths.len() as i64;
         let paths_v = crate::datatype::Value::array(paths);
         crate::to_value!({

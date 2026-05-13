@@ -4,18 +4,18 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 
 use microsandbox::{
     ExecOutput, MicrosandboxError, Sandbox as MsbSandbox,
-    sandbox::{ExecOptionsBuilder, FsEntryKind, PullPolicy, SandboxBuilder, SandboxStatus},
+    sandbox::{ExecOptionsBuilder, PullPolicy, SandboxBuilder, SandboxStatus},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{ExecResult, FSEntry, RunEnv};
+use super::{ExecResult, RunEnv};
 use crate::util::truncate::middle_truncate;
 
 fn fresh_sandbox_name() -> String {
@@ -204,57 +204,6 @@ impl RunEnv for Sandbox {
         };
         let _ = guard.stop_and_wait().await;
         result
-    }
-
-    async fn stat(&self, path: &Path) -> anyhow::Result<FSEntry> {
-        let path_str = path.to_string_lossy().into_owned();
-        let guard = self.ensure_running().await?;
-        let result = async {
-            let meta = guard.fs().stat(&path_str).await?;
-            let updated_at = meta
-                .modified
-                .map(SystemTime::from)
-                .unwrap_or(SystemTime::UNIX_EPOCH);
-            // microsandbox's stat returns `created` separately; fall back to mtime
-            // when the underlying filesystem doesn't expose a birth time.
-            let created_at = meta.created.map(SystemTime::from).unwrap_or(updated_at);
-            let bits = ((meta.mode >> 6) & 0o7) as u8;
-            let readable = bits & 0b100 != 0;
-            let writable = bits & 0b010 != 0;
-            let executable = bits & 0b001 != 0;
-            match meta.kind {
-                FsEntryKind::Directory => {
-                    let entries = guard.fs().list(&path_str).await?;
-                    let children = entries
-                        .into_iter()
-                        .map(|e| {
-                            Path::new(&e.path)
-                                .file_name()
-                                .map(|s| s.to_string_lossy().into_owned())
-                                .unwrap_or(e.path)
-                        })
-                        .collect();
-                    Ok::<_, MicrosandboxError>(FSEntry::Dir {
-                        children,
-                        readable,
-                        writable,
-                        created_at,
-                        updated_at,
-                    })
-                }
-                _ => Ok(FSEntry::File {
-                    readable,
-                    writable,
-                    executable,
-                    sz: meta.size as usize,
-                    created_at,
-                    updated_at,
-                }),
-            }
-        }
-        .await;
-        let _ = guard.stop_and_wait().await;
-        Ok(result?)
     }
 
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {

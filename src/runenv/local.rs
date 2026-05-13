@@ -1,30 +1,14 @@
-use std::{path::Path, time::SystemTime};
+use std::path::Path;
 
-use crate::runenv::{ExecResult, FSEntry, RunEnv};
+use crate::runenv::{ExecResult, RunEnv};
 
+#[derive(Debug, Clone, Default)]
 pub struct Local {}
 
-#[cfg(unix)]
-fn owner_rwx(meta: &std::fs::Metadata) -> (bool, bool, bool) {
-    use std::os::unix::fs::PermissionsExt;
-    let bits = (meta.permissions().mode() >> 6) & 0o7;
-    (bits & 0b100 != 0, bits & 0b010 != 0, bits & 0b001 != 0)
-}
-
-/// Windows: `std::fs::Metadata` only surfaces a readonly flag — if we can
-/// stat the entry we assume it's readable, and there is no executable bit
-/// exposed by std, so `executable = false`.
-#[cfg(not(unix))]
-fn owner_rwx(meta: &std::fs::Metadata) -> (bool, bool, bool) {
-    (true, !meta.permissions().readonly(), false)
-}
-
-/// Best-effort creation time: `created()` is unsupported on some filesystems
-/// (notably ext4 without statx birth-time) — fall back to mtime there.
-fn entry_times(meta: &std::fs::Metadata) -> (SystemTime, SystemTime) {
-    let updated = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-    let created = meta.created().ok().unwrap_or(updated);
-    (created, updated)
+impl Local {
+    pub fn new() -> Self {
+        Self {}
+    }
 }
 
 #[async_trait::async_trait]
@@ -65,35 +49,6 @@ impl RunEnv for Local {
                 exit_code: -1,
                 timed_out: true,
             }),
-        }
-    }
-
-    async fn stat(&self, path: &Path) -> anyhow::Result<FSEntry> {
-        let meta = tokio::fs::metadata(path).await?;
-        let (created_at, updated_at) = entry_times(&meta);
-        let (readable, writable, executable) = owner_rwx(&meta);
-        if meta.is_dir() {
-            let mut children = Vec::new();
-            let mut dir = tokio::fs::read_dir(path).await?;
-            while let Some(entry) = dir.next_entry().await? {
-                children.push(entry.file_name().to_string_lossy().into_owned());
-            }
-            Ok(FSEntry::Dir {
-                children,
-                readable,
-                writable,
-                created_at,
-                updated_at,
-            })
-        } else {
-            Ok(FSEntry::File {
-                readable,
-                writable,
-                executable,
-                sz: meta.len() as usize,
-                created_at,
-                updated_at,
-            })
         }
     }
 
