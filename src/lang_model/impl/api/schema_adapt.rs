@@ -1,6 +1,18 @@
 use crate::datatype::Value;
 use indexmap::IndexMap;
 
+/// Transforms a JSON schema into a form compatible with a specific provider's API.
+///
+/// The default implementation returns the schema unchanged.  Marshal types that
+/// require provider-specific transformations (e.g. strict-mode providers that
+/// require `additionalProperties`, or Gemini which rejects certain keywords)
+/// override [`adapt_schema`].
+pub trait SchemaAdapter {
+    fn adapt_schema(&self, schema: &Value) -> Value {
+        schema.clone()
+    }
+}
+
 /// Recursively add `"additionalProperties": false` to object sub-schemas that
 /// omit it.  Required by Anthropic and OpenAI strict mode.  Returns a new owned
 /// Value; the input is never mutated.

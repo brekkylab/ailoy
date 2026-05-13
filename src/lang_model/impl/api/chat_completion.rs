@@ -1,5 +1,6 @@
 use url::Url;
 
+use super::schema_adapt::SchemaAdapter as _;
 use crate::{
     datatype::Value,
     lang_model::{
@@ -37,6 +38,12 @@ impl LangModelProvider {
 
 #[derive(Clone, Debug, Default)]
 pub struct ChatCompletionMarshal;
+
+impl super::schema_adapt::SchemaAdapter for ChatCompletionMarshal {
+    fn adapt_schema(&self, schema: &crate::datatype::Value) -> crate::datatype::Value {
+        super::schema_adapt::for_strict_providers(schema)
+    }
+}
 
 impl Marshal<Message> for ChatCompletionMarshal {
     fn marshal(&mut self, item: &Message) -> Value {
@@ -195,7 +202,7 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
         }
         // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
         if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
-            let wire_schema = super::schema_adapt::for_strict_providers(schema);
+            let wire_schema = self.adapt_schema(schema);
             body.as_object_mut().unwrap().insert(
                 "response_format".into(),
                 to_value!({

@@ -1,6 +1,7 @@
 use anyhow::bail;
 use url::Url;
 
+use super::schema_adapt::SchemaAdapter as _;
 use crate::{
     datatype::Value,
     lang_model::{
@@ -27,6 +28,12 @@ impl LangModelProvider {
 
 #[derive(Clone, Debug, Default)]
 pub struct GeminiMarshal;
+
+impl super::schema_adapt::SchemaAdapter for GeminiMarshal {
+    fn adapt_schema(&self, schema: &crate::datatype::Value) -> crate::datatype::Value {
+        super::schema_adapt::for_gemini(schema)
+    }
+}
 
 fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
     let part_to_value = |part: &Part| -> Value {
@@ -294,7 +301,7 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
             generation_config
                 .as_object_mut()
                 .unwrap()
-                .insert("responseSchema".into(), super::schema_adapt::for_gemini(schema));
+                .insert("responseSchema".into(), self.adapt_schema(schema));
         }
         if !generation_config.as_object().unwrap().is_empty() {
             body.as_object_mut()
