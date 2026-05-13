@@ -255,8 +255,7 @@ mod tests {
     fn test_render_skills_table_empty_skills_but_root_set() {
         // Empty list but skill_root set → still render so the model knows
         // it MAY create skills (and where).
-        let out =
-            render_skills_table(&[], Some(Path::new("/workspace/skills"))).unwrap();
+        let out = render_skills_table(&[], Some(Path::new("/workspace/skills"))).unwrap();
         assert!(out.contains("Available Skills"));
         assert!(out.contains("Creating new skills at runtime"));
         assert!(out.contains("/workspace/skills"));
@@ -271,8 +270,7 @@ mod tests {
             description: "do foo".into(),
             dir: PathBuf::from("/workspace/skills/foo"),
         }];
-        let out =
-            render_skills_table(&metas, Some(Path::new("/workspace/skills"))).unwrap();
+        let out = render_skills_table(&metas, Some(Path::new("/workspace/skills"))).unwrap();
         assert!(out.contains("Available Skills"));
         assert!(out.contains("| foo | do foo | /workspace/skills/foo/SKILL.md |"));
         // Crucially: the block points at skill_root for new skill creation.
@@ -386,12 +384,18 @@ mod tests {
 
         runenv.mkdir(&declared).await.unwrap();
         runenv
-            .write(&declared.join("SKILL.md"), b"---\nname: declared\ndescription: d\n---\nb\n")
+            .write(
+                &declared.join("SKILL.md"),
+                b"---\nname: declared\ndescription: d\n---\nb\n",
+            )
             .await
             .unwrap();
         runenv.mkdir(&runtime).await.unwrap();
         runenv
-            .write(&runtime.join("SKILL.md"), b"---\nname: runtime\ndescription: r\n---\nb\n")
+            .write(
+                &runtime.join("SKILL.md"),
+                b"---\nname: runtime\ndescription: r\n---\nb\n",
+            )
             .await
             .unwrap();
 
@@ -657,5 +661,266 @@ After the script exits with code 0, the Markdown file is written next to the PDF
             .as_bytes(),
         );
         pdf
+    }
+
+    /// End-to-end verification with a small, fast-running skill: a Python
+    /// micro-benchmark helper.  Compared to `test_convert_pdf_to_md_skill`
+    /// this avoids the multi-minute Docling install and only requires
+    /// `python3` inside the sandbox.
+    ///
+    /// Flow:
+    /// 1. `AgentBuilder` declares `benchmark_python_snippet` at
+    ///    `/workspace/skills/benchmark_python_snippet/` and seeds its
+    ///    SKILL.md (with a YAML frontmatter naming the skill).
+    /// 2. The auto-rendered "Available Skills" table in the system
+    ///    instruction surfaces the skill to the model.
+    /// 3. The user asks to compare two Python expressions — this query
+    ///    matches the skill's `description` so the model should `cat` the
+    ///    SKILL.md, follow its `python -m timeit -v` protocol once per
+    ///    expression, and emit a comparison table in the documented
+    ///    format.
+    ///
+    /// Requires `ANTHROPIC_API_KEY` and the `sandbox` feature.  Marked
+    /// `#[ignore]` because it still spawns a real sandbox and calls the
+    /// Anthropic API.
+    #[cfg(feature = "sandbox")]
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    #[ignore = "slow: spawns a real sandbox and calls the Anthropic API"]
+    async fn test_benchmark_python_snippet_skill() {
+        use futures::StreamExt as _;
+
+        use crate::{
+            agent::{AgentBuilder, AgentProvider},
+            lang_model::LangModelProvider,
+            message::{FinishReason, Message, Part, Role},
+            runenv::{Sandbox, SandboxConfig},
+            tool::ToolProvider,
+        };
+
+        let skill_md = r#"---
+name: benchmark_python_snippet
+description: Benchmark a small Python expression or statement using `python -m timeit` with a fixed `-n` / `-r` protocol, then summarise the run as a markdown table. Use when the user asks "how fast is …", "benchmark this Python snippet", or compares two Python expressions.
+---
+# Skill: Benchmark Python Snippet
+
+A short, **reproducible** playbook for timing a small piece of Python
+inside the sandbox.  Use only `python -m timeit` with the exact flags
+listed below — do *not* roll your own `time.time()` loop, and do *not*
+fall back to `timeit.timeit()` in a REPL (those drop the per-loop
+calibration and produce noisier numbers).
+
+## When to use
+
+- The user names a Python expression or `stmt` they want timed.
+- The user asks to compare two expressions head-to-head — run this
+  skill once per expression and emit a single combined table.
+
+## Inputs
+
+| Name      | Required | Notes                                                                 |
+|-----------|----------|-----------------------------------------------------------------------|
+| `stmt`    | yes      | The statement to time — quoted exactly as the user wrote it.          |
+| `setup`   | no       | Setup code that runs once per *run* (not per call). Default: `pass`.  |
+| `number`  | no       | Per-run loop count `-n N`. Default: let `timeit` autocalibrate (omit `-n`). |
+| `repeat`  | no       | Number of runs `-r R`. Default: `5`.                                  |
+
+If the user did not specify `number`/`repeat`, take the defaults and
+say so in the output (`**Per-run loops:** auto (default)`,
+`**Runs:** 5 (default)`).
+
+## Steps
+
+### 1. Make sure Python is available
+
+```bash
+python3 --version >/dev/null 2>&1 \
+    || { echo "no python3 in sandbox" 1>&2; exit 2; }
+```
+
+If this fails, **stop** and emit only the `## Errors` section of the
+template (see "Rules").
+
+### 2. Run the benchmark
+
+Build the command from the inputs.  `python -m timeit` already runs
+`R` independent timings of `N` iterations each and prints one line
+per run when `-v` is set.
+
+```bash
+# Substitute SETUP / STMT / FLAGS.  Quote with single quotes — never
+# interpolate the user's text directly into a double-quoted string.
+python3 -m timeit -v -r "$REPEAT" -s "$SETUP" $NUMBER_FLAG -- "$STMT"
+```
+
+- `NUMBER_FLAG` is `-n $NUMBER` when the user gave a `number`, else
+  the empty string (so `timeit` auto-picks).
+- `--` separates flags from the statement so a leading `-` in `STMT`
+  is not mistaken for a flag.
+
+### 3. Parse the output
+
+`timeit -v` emits one calibration line, several "raw times" lines,
+then a final "best of R" line.  Extract three things:
+
+| Field        | grep pattern                                          |
+|--------------|-------------------------------------------------------|
+| `loops`      | `^([0-9]+) loops, best of`                            |
+| `best_str`   | last `best of [0-9]+: (.*) per loop$`                 |
+| `raw_times`  | line after `raw times:` — space-separated quantities. |
+
+Normalise every quantity (`raw_times` *and* `best_str`) to **microseconds
+per loop**:
+
+| Suffix in timeit output | Multiplier to µs |
+|-------------------------|------------------|
+| `nsec`                  | `× 0.001`        |
+| `usec`                  | `× 1`            |
+| `msec`                  | `× 1000`         |
+| `sec`                   | `× 1_000_000`    |
+
+Compute `min`, `max`, and `mean` from the normalised `raw_times`.
+
+### 4. Output template
+
+Reply with exactly this markdown.  Do **not** add introductory or
+closing prose.
+
+```
+# Benchmark — `<one-line of STMT>`
+
+**Setup:** `<SETUP>`{ " (default)" if user did not override }
+**Per-run loops:** <loops>{ " (default)" if user did not override `number` }
+**Runs:** <repeat>{ " (default)" if user did not override `repeat` }
+
+| Metric | Value (µs / loop) |
+|--------|--------------------|
+| min    | <min>              |
+| mean   | <mean>             |
+| max    | <max>              |
+| best   | <best>             |
+
+Raw runs (µs / loop): <r1>, <r2>, …, <rR>
+```
+
+Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
+`1230`).  Use the same precision in every cell — no `1e-7` exponents.
+
+## Rules
+
+- Never use `time.time()`, `time.perf_counter()`, or
+  `timeit.timeit(...)` in a REPL — they bypass timeit's per-loop
+  calibration and we treat their numbers as invalid.
+- Never report numbers in mixed units (e.g. "best 12 µs, worst 4 ms").
+  Always convert to a single unit (µs / loop) before formatting.
+- Never drop the `--` separator — a snippet that starts with `-`
+  would otherwise be parsed as a flag.
+- Never re-run with different `--repeat` to "smooth out" the result;
+  report the actual numbers from one run of the protocol.
+- On any error from step 1 or 2, emit only this block and stop:
+
+  ```
+  # Benchmark — <one-line of STMT>
+
+  ## Errors
+
+  ```
+  <stderr verbatim>
+  ```
+  ```
+"#;
+
+        let instruction = "You are a helpful assistant with access to skills. \
+             To activate a skill, read its SKILL.md using the bash tool \
+             (`cat <path>`), then follow the instructions inside.";
+
+        let mut provider = AgentProvider::new();
+        provider.models.insert(
+            "anthropic/*".into(),
+            LangModelProvider::anthropic(std::env::var("ANTHROPIC_API_KEY").unwrap()),
+        );
+        provider.tools = ToolProvider::new();
+
+        let sandbox = Sandbox::new(SandboxConfig {
+            image: "python:3.12-slim".into(),
+            ..SandboxConfig::default()
+        })
+        .await
+        .expect("sandbox creation failed");
+
+        let skill_dir = PathBuf::from("/workspace/skills/benchmark_python_snippet");
+        let mut agent = AgentBuilder::new("anthropic/claude-sonnet-4-6")
+            .provider(provider)
+            .runenv(sandbox)
+            .tools([
+                crate::tool::r#impl::get_bash_tool_desc(),
+                crate::tool::r#impl::get_python_repl_tool_desc(),
+            ])
+            .instruction(instruction)
+            .skill_root("/workspace/skills")
+            .skill(&skill_dir)
+            .file(FileEntry::new(
+                skill_dir.join("SKILL.md"),
+                skill_md.as_bytes().to_vec(),
+            ))
+            .build()
+            .unwrap();
+
+        let query = Message::new(Role::User).with_contents([Part::text(
+            "Compare sum(range(10000)) vs sum(i for i in range(10000)).",
+        )]);
+
+        // Capture the agent's final assistant turn.
+        let mut final_text = String::new();
+        {
+            let mut stream = agent.run(query);
+            while let Some(event) = stream.next().await {
+                let output = event.expect("agent stream error");
+                if output.message.role == Role::Assistant
+                    && matches!(output.finish_reason, FinishReason::Stop {})
+                {
+                    final_text = output
+                        .message
+                        .contents
+                        .iter()
+                        .filter_map(|p| p.as_text())
+                        .collect::<Vec<_>>()
+                        .join("");
+                }
+            }
+        }
+
+        // Sanity: the SKILL.md was materialised into the sandbox.
+        let skill_md_on_disk = agent
+            .state
+            .runenv
+            .read(&skill_dir.join("SKILL.md"))
+            .await
+            .expect("SKILL.md should have been materialised");
+        let head = std::str::from_utf8(&skill_md_on_disk[..50]).unwrap_or("");
+        assert!(
+            head.starts_with("---\nname: benchmark_python_snippet"),
+            "SKILL.md frontmatter should be preserved, got prefix: {head:?}"
+        );
+
+        // The final assistant text should contain the documented benchmark
+        // template — at minimum the per-loop unit column and both
+        // expressions naming.  This is a soft check: it allows the model
+        // some leeway in formatting but enforces that it (a) actually
+        // followed the skill's output template and (b) benchmarked both
+        // requested expressions.
+        assert!(
+            final_text.contains("µs / loop") || final_text.contains("us / loop"),
+            "expected the benchmark template's per-loop unit column in the \
+             final answer:\n{final_text}"
+        );
+        assert!(
+            final_text.contains("sum(range(10000))"),
+            "expected first expression to appear in result:\n{final_text}"
+        );
+        assert!(
+            final_text.contains("sum(i for i in range(10000))"),
+            "expected second expression to appear in result:\n{final_text}"
+        );
     }
 }
