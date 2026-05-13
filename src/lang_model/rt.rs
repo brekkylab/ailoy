@@ -15,7 +15,7 @@ use crate::{
 /// against JSON Schema Draft 7 before storing it, then normalises it to satisfy
 /// provider-specific requirements.  The stored schema is provider-agnostic;
 /// each marshal converts it to the wire format expected by its API.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ResponseFormat {
     JsonSchema(Value),
 }
@@ -281,8 +281,9 @@ mod tests {
     };
 
     fn stored_schema(fmt: ResponseFormat) -> Value {
-        let ResponseFormat::JsonSchema(s) = fmt;
-        s
+        match fmt {
+            ResponseFormat::JsonSchema(s) => s,
+        }
     }
 
     #[test]
