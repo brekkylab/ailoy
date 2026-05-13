@@ -4,7 +4,7 @@ use url::Url;
 use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
-    lang_model_impl::api,
+    lang_model::r#impl::api,
     message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
     tool::ToolDesc,
 };
