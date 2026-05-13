@@ -704,13 +704,72 @@ mod tests {
         let body = val.as_object().unwrap().get("body").unwrap();
         let gen_cfg = body.as_object().unwrap().get("generationConfig").unwrap();
         assert_eq!(
-            gen_cfg.pointer("/responseMimeType").and_then(|v| v.as_str()),
+            gen_cfg
+                .pointer("/responseMimeType")
+                .and_then(|v| v.as_str()),
             Some("application/json")
         );
         assert_eq!(
-            gen_cfg.pointer("/responseSchema/type").and_then(|v| v.as_str()),
+            gen_cfg
+                .pointer("/responseSchema/type")
+                .and_then(|v| v.as_str()),
             Some("object")
         );
+    }
+
+    /// Verifies structured output via response_format: the model returns valid JSON matching the schema.
+    #[tokio::test]
+    async fn test_run_response_format_json_schema() {
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set in .env");
+
+        let schema = to_value!({
+            "type": "object",
+            "properties": {
+                "country": {"type": "string"},
+                "capital": {"type": "string"}
+            },
+            "required": ["country", "capital"]
+        });
+
+        let model = LangModel::new(
+            "gemini-2.5-flash-lite".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::Gemini,
+                url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
+                    .unwrap(),
+                api_key: Some(api_key),
+            },
+        );
+        let messages = vec![
+            Message::new(Role::User).with_contents([Part::text(
+                "Return France's country name and capital city in the requested format.",
+            )]),
+        ];
+
+        let resp = model
+            .run(
+                &messages,
+                &[],
+                &LangModelOptions {
+                    response_format: Some(
+                        crate::lang_model::ResponseFormat::json_schema(schema).unwrap(),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.finish_reason, FinishReason::Stop {});
+        let text = resp
+            .message
+            .contents
+            .iter()
+            .find_map(|p| p.as_text())
+            .expect("Expected text content");
+        let parsed: serde_json::Value = serde_json::from_str(text).expect("Response must be valid JSON");
+        assert_eq!(parsed["capital"].as_str().unwrap().to_lowercase(), "paris");
     }
 
     /// Verifies that max_tokens is respected by the Gemini API (finishReason: MAX_TOKENS).

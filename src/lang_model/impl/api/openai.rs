@@ -219,6 +219,7 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 to_value!({
                     "format": {
                         "type": "json_schema",
+                        "name": "response",
                         "strict": true,
                         "schema": schema.clone()
                     }
@@ -473,7 +474,12 @@ mod tests {
             Some("json_schema")
         );
         assert_eq!(
-            body.pointer("/text/format/strict").and_then(|v| v.as_bool()),
+            body.pointer("/text/format/name").and_then(|v| v.as_str()),
+            Some("response")
+        );
+        assert_eq!(
+            body.pointer("/text/format/strict")
+                .and_then(|v| v.as_bool()),
             Some(true)
         );
         assert!(
@@ -666,6 +672,61 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
+    }
+
+    /// Verifies structured output via response_format: the model returns valid JSON matching the schema.
+    #[tokio::test]
+    async fn test_run_response_format_json_schema() {
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
+
+        let schema = to_value!({
+            "type": "object",
+            "properties": {
+                "country": {"type": "string"},
+                "capital": {"type": "string"}
+            },
+            "required": ["country", "capital"],
+            "additionalProperties": false
+        });
+
+        let model = LangModel::new(
+            "gpt-4.1-mini".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::OpenAI,
+                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
+                api_key: Some(api_key),
+            },
+        );
+        let messages = vec![
+            Message::new(Role::User).with_contents([Part::text(
+                "Return France's country name and capital city in the requested format.",
+            )]),
+        ];
+
+        let resp = model
+            .run(
+                &messages,
+                &[],
+                &LangModelOptions {
+                    response_format: Some(
+                        crate::lang_model::ResponseFormat::json_schema(schema).unwrap(),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.finish_reason, FinishReason::Stop {});
+        let text = resp
+            .message
+            .contents
+            .iter()
+            .find_map(|p| p.as_text())
+            .expect("Expected text content");
+        let parsed: serde_json::Value = serde_json::from_str(text).expect("Response must be valid JSON");
+        assert_eq!(parsed["capital"].as_str().unwrap().to_lowercase(), "paris");
     }
 
     /// Verifies that an image embedded in a Role::Tool message is accepted by the OpenAI
