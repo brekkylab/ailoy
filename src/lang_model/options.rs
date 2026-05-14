@@ -37,7 +37,6 @@ pub struct LangModelOptions {
 
     /// Constrains the model's output to a JSON schema validated at construction time.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(skip)]
     pub response_format: Option<super::ResponseFormat>,
 }
 

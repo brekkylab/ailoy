@@ -34,6 +34,25 @@ impl ResponseFormat {
     }
 }
 
+impl schemars::JsonSchema for ResponseFormat {
+    fn schema_name() -> String {
+        "ResponseFormat".into()
+    }
+
+    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        use schemars::schema::{InstanceType, ObjectValidation, SchemaObject, SingleOrVec};
+        SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(ObjectValidation {
+                required: ["type".to_owned()].into(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+        .into()
+    }
+}
+
 /// Runtime
 pub struct LangModel {
     model: String,
