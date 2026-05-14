@@ -42,7 +42,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.16"
 log = "0.4"
-microsandbox = { version = "0.3", optional = true }
+microsandbox = { version = "0.4", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"

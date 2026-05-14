@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agent::AgentCard,
+    lang_model::LangModelOptions,
     tool::{
         ToolDesc,
         r#impl::{
@@ -52,50 +53,15 @@ pub struct AgentSpec {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub subagents: Vec<AgentSpec>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_options: Option<LangModelOptions>,
+
     /// Public self-introduction exposed to a calling agent or orchestrator.
     ///
     /// Only relevant when this agent acts as a sub-agent.
     /// `None` for top-level agents.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub card: Option<AgentCard>,
-
-    /// Maximum number of tokens the model may generate in a single response.
-    /// When `None`, provider-specific defaults apply (e.g. Anthropic defaults
-    /// to 8192). Set explicitly to cap output length per call.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u64>,
-
-    /// Sampling temperature passed to the language model on every call.
-    /// `None` leaves the provider default in place. Not every provider
-    /// supports the same range; values outside the provider's accepted
-    /// range will surface as API errors.
-    ///
-    /// In practice `temperature` is the only sampling knob most callers ever
-    /// need to touch — [`top_p`](Self::top_p) and [`top_k`](Self::top_k) are
-    /// rarely used and are exposed mainly for parity with provider APIs.
-    /// Prefer adjusting `temperature` alone unless you have a specific reason
-    /// to combine it with nucleus or top-k sampling.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f64>,
-
-    /// Nucleus (top-p) sampling parameter passed to the language model on every
-    /// call. Rarely needed in practice — see [`temperature`](Self::temperature).
-    /// Honoured by all supported providers (Anthropic, Gemini, OpenAI).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub top_p: Option<f64>,
-
-    /// Top-k sampling parameter passed to the language model on every call.
-    /// Rarely needed in practice — see [`temperature`](Self::temperature).
-    /// Only honoured by providers that support it (e.g. Anthropic, Gemini);
-    /// silently ignored by providers that do not (e.g. OpenAI).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub top_k: Option<u64>,
-
-    /// Constrains the model's output to a JSON schema validated at construction time.
-    /// Set via [`AgentSpec::response_format`].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(skip)]
-    pub response_format: Option<crate::lang_model::ResponseFormat>,
 }
 
 impl AgentSpec {
@@ -106,11 +72,7 @@ impl AgentSpec {
             tools: Vec::new(),
             subagents: Vec::new(),
             card: None,
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            response_format: None,
+            model_options: None,
         }
     }
 
@@ -180,27 +142,37 @@ impl AgentSpec {
     }
 
     pub fn max_tokens(mut self, max_tokens: u64) -> Self {
-        self.max_tokens = Some(max_tokens);
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .max_tokens = Some(max_tokens);
         self
     }
 
     pub fn temperature(mut self, temperature: f64) -> Self {
-        self.temperature = Some(temperature);
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .temperature = Some(temperature);
         self
     }
 
     pub fn top_p(mut self, top_p: f64) -> Self {
-        self.top_p = Some(top_p);
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .top_p = Some(top_p);
         self
     }
 
     pub fn top_k(mut self, top_k: u64) -> Self {
-        self.top_k = Some(top_k);
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .top_k = Some(top_k);
         self
     }
 
     pub fn response_format(mut self, fmt: crate::lang_model::ResponseFormat) -> Self {
-        self.response_format = Some(fmt);
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .response_format = Some(fmt);
         self
     }
 }

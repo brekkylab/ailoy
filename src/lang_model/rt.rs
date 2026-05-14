@@ -4,7 +4,7 @@ use url::Url;
 use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
-    lang_model::r#impl::api,
+    lang_model::{LangModelOptions, r#impl::api},
     message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
     tool::ToolDesc,
 };
@@ -51,20 +51,6 @@ pub(crate) struct LangModelRequest<'a> {
     pub top_p: Option<f64>,
     pub top_k: Option<u64>,
     pub response_format: Option<&'a ResponseFormat>,
-}
-
-/// Per-call sampling parameters supplied by the agent on top of the static
-/// [`LangModelProviderElem`] configuration.
-#[derive(Clone, Debug, Default)]
-pub struct LangModelOptions {
-    /// Maximum number of tokens the model may generate in a single response.
-    /// When `None`, provider-specific defaults apply (e.g. Anthropic defaults to 8192).
-    pub max_tokens: Option<u64>,
-    pub temperature: Option<f64>,
-    pub top_p: Option<f64>,
-    pub top_k: Option<u64>,
-    /// Constrains the model's output to a JSON schema validated at construction time.
-    pub response_format: Option<ResponseFormat>,
 }
 
 impl LangModel {

@@ -112,13 +112,7 @@ impl Agent {
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
         let model = provider.models.provide(&spec.model)?;
 
-        let model_options = LangModelOptions {
-            max_tokens: spec.max_tokens,
-            temperature: spec.temperature,
-            top_p: spec.top_p,
-            top_k: spec.top_k,
-            response_format: spec.response_format,
-        };
+        let model_options = spec.model_options.clone().unwrap_or_default();
 
         // Collect tools required by the spec; error if any tool is missing
         let mut tools = provider.tools.provide(&spec.tools)?;
