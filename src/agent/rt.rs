@@ -1,4 +1,4 @@
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
@@ -7,11 +7,35 @@ use crate::{
     lang_model::{LangModel, LangModelOptions},
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{Local, RunEnv},
+    skill::{render_skills_table, scan_declared_skills},
     tool::{
         ToolDesc, ToolFunc,
         r#impl::{get_subagent_tool_desc, get_subagent_tool_func},
     },
 };
+
+/// Walk the spec tree and write every declared file (this agent's plus the
+/// subtree's) to the runenv with **write-once** semantics: if a file already
+/// exists at the target path, the existing content is left untouched so that
+/// runtime modifications survive subsequent invocations.
+fn materialise_files_recursive<'a>(
+    spec: &'a AgentSpec,
+    runenv: &'a dyn RunEnv,
+) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        for f in &spec.files {
+            // Write-once: skip if the file already exists.
+            if runenv.read(&f.path).await.is_ok() {
+                continue;
+            }
+            f.write_to(runenv).await?;
+        }
+        for sub in &spec.subagents {
+            materialise_files_recursive(sub, runenv).await?;
+        }
+        Ok(())
+    })
+}
 
 pub struct AgentState {
     pub history: Vec<Message>,
@@ -74,6 +98,17 @@ pub struct Agent {
     pub state: AgentState,
 
     context_manager: Option<ContextManager>,
+
+    /// The spec this agent was built from.  Carries the agent's identity:
+    /// model, instruction, tools, sub-agents, card, declared files, and
+    /// declared [`AgentSpec::skills`].
+    spec: AgentSpec,
+
+    /// Lazy gate: whether the declared [`FileEntry`](crate::runenv::FileEntry)
+    /// list for this agent (and its declared sub-spec subtree) has been
+    /// written to the runenv.  Toggled by `ensure_files_materialised` on
+    /// the first [`Self::run`].
+    files_materialised: bool,
 }
 
 impl Agent {
@@ -104,6 +139,12 @@ impl Agent {
     /// The full constructor.  The supplied `runenv` is stored in [`AgentState::runenv`]
     /// and is also cloned into every sub-agent declared in [`AgentSpec::subagents`], so
     /// the parent and its sub-agents observe the same filesystem and process state.
+    ///
+    /// Files declared in [`AgentSpec::files`] are materialised lazily on the
+    /// first [`Self::run`].  Each path in [`AgentSpec::skills`] is an absolute
+    /// directory containing a `SKILL.md`; the spec is taken as-is — sub-spec
+    /// skill paths are **not** rewritten, so sub-agent skills are portable
+    /// across parents.
     pub fn try_with_provider_and_runenv(
         spec: AgentSpec,
         provider: &AgentProvider,
@@ -116,28 +157,39 @@ impl Agent {
 
         // Collect tools required by the spec; error if any tool is missing
         let mut tools = provider.tools.provide(&spec.tools)?;
-        let mut tool_descs = spec.tools;
+        let mut tool_descs = spec.tools.clone();
 
         // Sub-agents become regular tool entries: each is a one-shot ToolFunc
         // that materialises a fresh Agent on call and shares the parent's
-        // runenv so filesystem state is shared.
-        for sub_spec in spec.subagents {
+        // runenv so filesystem state is shared.  Sub-specs are taken as-is —
+        // no path rewriting — so sub-agent skills are portable across
+        // parents.  Files are materialised lazily on the first run via
+        // [`Self::ensure_files_materialised`].
+        for sub_spec in &spec.subagents {
             let card = sub_spec
                 .card
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("subagent must declare an AgentCard"))?;
             let desc = get_subagent_tool_desc(card);
             let name = card.name.clone();
-            let func = get_subagent_tool_func(sub_spec, provider.clone(), runenv.clone());
+            let func = get_subagent_tool_func(sub_spec.clone(), provider.clone(), runenv.clone());
             tool_descs.push(desc);
             tools.insert(name, func);
         }
 
-        // Initialize history with system instruction if present
-        let history = spec
-            .instruction
-            .as_ref()
-            .map(|inst| vec![Message::new(Role::System).with_contents([Part::text(inst)])])
+        // Build the system message: instruction + (optionally) the skills table.
+        // The table is rendered from declared `spec.skills` by matching
+        // each entry against an in-memory `SKILL.md` FileEntry.
+        let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
+        let skills_block = render_skills_table(&declared_skills);
+        let system_text = match (spec.instruction.as_deref(), skills_block) {
+            (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
+            (Some(inst), None) => Some(inst.to_string()),
+            (None, Some(block)) => Some(block),
+            (None, None) => None,
+        };
+        let history = system_text
+            .map(|t| vec![Message::new(Role::System).with_contents([Part::text(t)])])
             .unwrap_or_default();
 
         let state = AgentState::new().history(history).runenv(runenv);
@@ -149,6 +201,8 @@ impl Agent {
             tool_descs,
             state,
             context_manager: None,
+            spec,
+            files_materialised: false,
         })
     }
 
@@ -193,6 +247,29 @@ impl Agent {
 
     pub(crate) fn set_context_manager(&mut self, cm: Option<ContextManager>) {
         self.context_manager = cm;
+    }
+
+    /// Lazy gate: materialise this agent's declared files (and the entire
+    /// declared sub-spec subtree) into the runenv on first call.  Uses
+    /// write-once semantics — files that already exist are left untouched —
+    /// so any runtime modifications survive subsequent invocations.
+    async fn ensure_files_materialised(&mut self) -> anyhow::Result<()> {
+        if self.files_materialised {
+            return Ok(());
+        }
+        materialise_files_recursive(&self.spec, &*self.state.runenv).await?;
+        self.files_materialised = true;
+        Ok(())
+    }
+
+    /// Read-only view of the spec this agent was built from.
+    pub fn spec(&self) -> &AgentSpec {
+        &self.spec
+    }
+
+    /// Read-only view of the agent's declared skill directories.
+    pub fn skills(&self) -> &[PathBuf] {
+        &self.spec.skills
     }
 
     /// Execute tool calls in parallel and return a stream of all outputs.
@@ -317,6 +394,11 @@ impl Agent {
         query: Message,
     ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageOutput>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
+            // Lazy gate: write declared files (this agent + sub-spec subtree)
+            // to the runenv on first call.  Write-once semantics preserve any
+            // runtime modifications across subsequent runs.
+            self.ensure_files_materialised().await?;
+
             self.state.history.push(query);
 
             loop {

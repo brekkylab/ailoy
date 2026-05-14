@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::{
     agent::{Agent, AgentProvider, AgentSpec, ContextManager},
     message::Message,
-    runenv::RunEnv,
+    runenv::{FileEntry, RunEnv},
     tool::ToolDesc,
 };
 
@@ -164,6 +164,30 @@ impl AgentBuilder {
         self
     }
 
+    /// Append a single pre-fill [`FileEntry`] to `spec.files`.  The file is
+    /// written into the runenv on the agent's first `run`.
+    pub fn file(mut self, entry: FileEntry) -> Self {
+        self.spec.files.push(entry);
+        self
+    }
+
+    /// Append several [`FileEntry`]s to `spec.files`.
+    pub fn files(mut self, entries: impl IntoIterator<Item = FileEntry>) -> Self {
+        self.spec.files.extend(entries);
+        self
+    }
+
+    /// Declare a skill at `dir` together with its pre-fill content.
+    /// Writes through to [`AgentSpec::skill`].
+    pub fn skill(
+        mut self,
+        dir: impl Into<PathBuf>,
+        entries: impl IntoIterator<Item = FileEntry>,
+    ) -> Self {
+        self.spec = self.spec.skill(dir, entries);
+        self
+    }
+
     /// Materialise the agent by dispatching to the appropriate `Agent::try_*` constructor
     /// based on which optional fields were supplied.
     pub fn build(self) -> anyhow::Result<Agent> {
@@ -174,6 +198,7 @@ impl AgentBuilder {
             runenv,
             context_manager,
         } = self;
+
         let mut agent = match (provider, runenv) {
             (None, None) => Agent::try_new(spec)?,
             (None, Some(runenv)) => Agent::try_with_runenv(spec, runenv)?,
@@ -197,7 +222,12 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{agent::AgentCard, lang_model::LangModelProvider, message::Role, runenv::Local};
+    use crate::{
+        agent::AgentCard,
+        lang_model::LangModelProvider,
+        message::Role,
+        runenv::Local,
+    };
 
     const TEST_MODEL: &str = "openai/gpt-4o-mini";
 
@@ -207,6 +237,15 @@ mod tests {
             .models
             .insert(TEST_MODEL.into(), LangModelProvider::openai("dummy".into()));
         provider
+    }
+
+    fn system_text(agent: &Agent) -> Option<String> {
+        let history = agent.get_history();
+        let m = history.first()?;
+        if m.role != Role::System {
+            return None;
+        }
+        m.contents.iter().find_map(|p| p.as_text()).map(str::to_string)
     }
 
     #[tokio::test]
@@ -247,6 +286,165 @@ mod tests {
             .await
             .expect("exec failed");
         assert!(result.stdout.contains("ok"));
+    }
+
+    /// Helper: build a SKILL.md body with the given name/description/body.
+    fn skill_md(name: &str, desc: &str, body: &str) -> Vec<u8> {
+        format!("---\nname: {name}\ndescription: {desc}\n---\n{body}").into_bytes()
+    }
+
+    /// `.skill(dir, [SKILL.md])` declares a skill and seeds its content in
+    /// one call; the spec carries both pieces and the system instruction
+    /// lists the skill.
+    #[tokio::test]
+    async fn test_file_skill_seeds_spec() {
+        let dir = tempfile::tempdir().unwrap();
+        let greet_dir = dir.path().join("skills/greet");
+        let skill_path = greet_dir.join("SKILL.md");
+        let agent = AgentBuilder::new(TEST_MODEL)
+            .provider(dummy_provider())
+            .runenv(Local {})
+            .skill(
+                &greet_dir,
+                [FileEntry::new(
+                    &skill_path,
+                    skill_md("greet", "Say hello.", "# greet\nbody\n"),
+                )],
+            )
+            .build()
+            .unwrap();
+
+        assert_eq!(agent.spec().files.len(), 1);
+        assert_eq!(agent.spec().files[0].path, skill_path);
+        assert_eq!(agent.spec().skills, vec![greet_dir.clone()]);
+
+        let sys = system_text(&agent).expect("expected system message");
+        assert!(sys.contains("Available Skills"));
+        assert!(sys.contains("greet"));
+    }
+
+    /// With no skills declared, the Available Skills block is omitted
+    /// entirely (no noise in the system message).
+    #[tokio::test]
+    async fn test_no_skill_block_when_nothing_declared() {
+        let agent = AgentBuilder::new(TEST_MODEL)
+            .provider(dummy_provider())
+            .build()
+            .unwrap();
+        // No instruction, no skills → no system message at all.
+        assert!(agent.get_history().is_empty());
+    }
+
+    /// Per-agent skill isolation: parent and sub each declare their own
+    /// skill dir explicitly (no nesting convention).  Parent's system
+    /// instruction lists only its own skill.
+    #[tokio::test]
+    async fn test_per_agent_skill_isolation() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent_skill_dir = dir.path().join("parent_skills/a_skill");
+        let parent_skill_path = parent_skill_dir.join("SKILL.md");
+        let sub_skill_dir = dir.path().join("sub_skills/b_skill");
+        let sub_skill_path = sub_skill_dir.join("SKILL.md");
+
+        let sub_spec = AgentSpec::new(TEST_MODEL)
+            .card(AgentCard {
+                name: "child".into(),
+                description: "child agent".into(),
+                skills: vec![],
+            })
+            .skill(
+                &sub_skill_dir,
+                [FileEntry::new(
+                    &sub_skill_path,
+                    skill_md("b_skill", "child only", "child body\n"),
+                )],
+            );
+
+        let parent = AgentBuilder::new(TEST_MODEL)
+            .provider(dummy_provider())
+            .runenv(Local {})
+            .skill(
+                &parent_skill_dir,
+                [FileEntry::new(
+                    &parent_skill_path,
+                    skill_md("a_skill", "parent only", "parent body\n"),
+                )],
+            )
+            .subagent(sub_spec)
+            .build()
+            .unwrap();
+
+        // Parent's system message references only its own skill, not the sub's.
+        let sys = system_text(&parent).expect("parent system message");
+        assert!(sys.contains("a_skill"), "parent should advertise a_skill");
+        assert!(
+            !sys.contains("b_skill"),
+            "parent must NOT see child's skill in its instruction: {sys}"
+        );
+    }
+
+    /// Same-named skills (last path segment "foo") declared on parent and
+    /// sub at explicit, disjoint paths carry different content without
+    /// conflict — the new design relies on the user picking distinct paths,
+    /// no automatic nesting.
+    #[tokio::test]
+    async fn test_same_skill_name_across_levels_no_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent_foo_dir = dir.path().join("parent/foo");
+        let child_foo_dir = dir.path().join("child/foo");
+        let parent_foo = parent_foo_dir.join("SKILL.md");
+        let child_foo = child_foo_dir.join("SKILL.md");
+
+        let sub_spec = AgentSpec::new(TEST_MODEL)
+            .card(AgentCard {
+                name: "child".into(),
+                description: "child agent".into(),
+                skills: vec![],
+            })
+            .skill(
+                &child_foo_dir,
+                [FileEntry::new(
+                    &child_foo,
+                    skill_md("foo", "child foo", "CHILD\n"),
+                )],
+            );
+
+        let parent = AgentBuilder::new(TEST_MODEL)
+            .provider(dummy_provider())
+            .runenv(Local {})
+            .skill(
+                &parent_foo_dir,
+                [FileEntry::new(
+                    &parent_foo,
+                    skill_md("foo", "parent foo", "PARENT\n"),
+                )],
+            )
+            .subagent(sub_spec)
+            .build()
+            .unwrap();
+
+        // Parent + sub specs hold distinct files at distinct paths.
+        let parent_entry = parent
+            .spec()
+            .files
+            .iter()
+            .find(|f| f.path == parent_foo)
+            .expect("parent file");
+        let child_entry = parent.spec().subagents[0]
+            .files
+            .iter()
+            .find(|f| f.path == child_foo)
+            .expect("child file");
+        assert!(
+            std::str::from_utf8(parent_entry.content.as_ref())
+                .unwrap()
+                .contains("description: parent foo")
+        );
+        assert!(
+            std::str::from_utf8(child_entry.content.as_ref())
+                .unwrap()
+                .contains("description: child foo")
+        );
     }
 
     /// Subagents declared in the spec are accepted by `build()` (full delegation
@@ -391,4 +589,5 @@ mod tests {
             .unwrap();
         assert!(agent.get_context_manager().is_some());
     }
+
 }

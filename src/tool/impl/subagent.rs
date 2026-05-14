@@ -47,7 +47,9 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 /// The closure captures `spec`, `provider`, and `runenv` by clone, so the
 /// produced [`ToolFunc`] is independent of any parent [`Agent`]: the parent
 /// keeps it in its `tools` map alongside ordinary tools, with no special
-/// dispatch needed.
+/// dispatch needed.  The sub-spec is taken as-is — its
+/// [`AgentSpec::skills`] paths are respected verbatim, so a sub-spec is
+/// portable across parents.
 ///
 /// The returned function:
 /// 1. Streams every [`MessageOutput`](crate::message::MessageOutput) produced by

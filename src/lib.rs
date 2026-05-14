@@ -7,5 +7,6 @@ pub mod lang_model;
 pub(crate) mod macros;
 pub mod message;
 pub mod runenv;
+pub mod skill;
 pub mod tool;
 pub(crate) mod util;
