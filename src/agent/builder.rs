@@ -143,6 +143,27 @@ impl AgentBuilder {
         self
     }
 
+    /// Sampling temperature forwarded to the language model on every call.
+    /// See [`AgentSpec::temperature`].
+    pub fn temperature(mut self, temperature: f64) -> Self {
+        self.spec = self.spec.temperature(temperature);
+        self
+    }
+
+    /// Top-p (nucleus) sampling parameter forwarded to the language model on
+    /// every call. See [`AgentSpec::top_p`].
+    pub fn top_p(mut self, top_p: f64) -> Self {
+        self.spec = self.spec.top_p(top_p);
+        self
+    }
+
+    /// Top-k sampling parameter forwarded to the language model on every call.
+    /// See [`AgentSpec::top_k`].
+    pub fn top_k(mut self, top_k: u64) -> Self {
+        self.spec = self.spec.top_k(top_k);
+        self
+    }
+
     /// Materialise the agent by dispatching to the appropriate `Agent::try_*` constructor
     /// based on which optional fields were supplied.
     pub fn build(self) -> anyhow::Result<Agent> {

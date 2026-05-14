@@ -1,5 +1,6 @@
 use url::Url;
 
+use super::openai::is_openai_reasoning_model;
 use crate::{
     datatype::Value,
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
@@ -17,7 +18,6 @@ impl LangModelProvider {
             schema: LangModelAPISchema::ChatCompletion,
             url: Url::parse("https://api.x.ai/v1/chat/completions").unwrap(),
             api_key: Some(api_key),
-            max_tokens: None,
         }
     }
 
@@ -29,7 +29,6 @@ impl LangModelProvider {
             schema: LangModelAPISchema::ChatCompletion,
             url: Url::parse(url)?,
             api_key,
-            max_tokens: None,
         })
     }
 }
@@ -182,6 +181,22 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 (max_tokens as i64).into(),
             );
         }
+        // OpenAI reasoning models (o-series, gpt-5) reject temperature/top_p; drop them silently.
+        if let Some(temperature) = req.temperature
+            && !is_openai_reasoning_model(req.model)
+        {
+            body.as_object_mut()
+                .unwrap()
+                .insert("temperature".to_owned(), temperature.into());
+        }
+        if let Some(top_p) = req.top_p
+            && !is_openai_reasoning_model(req.model)
+        {
+            body.as_object_mut()
+                .unwrap()
+                .insert("top_p".to_owned(), top_p.into());
+        }
+        // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
         body.as_object_mut()
             .unwrap()
             .retain(|_key, value| !value.is_null());
@@ -343,7 +358,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role},
         tool::ToolDesc,
     };
@@ -363,6 +378,9 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            temperature: None,
+            top_p: None,
+            top_k: None,
         };
         f(&req)
     }
@@ -407,7 +425,6 @@ mod tests {
                 schema: LangModelAPISchema::ChatCompletion,
                 url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: Some(32),
             },
         );
         let messages = vec![
@@ -416,7 +433,17 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(
+                &messages,
+                &tools,
+                &LangModelOptions {
+                    max_tokens: Some(32),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }

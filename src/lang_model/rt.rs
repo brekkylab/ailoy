@@ -4,7 +4,7 @@ use url::Url;
 use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
-    lang_model::r#impl::api,
+    lang_model::{LangModelOptions, r#impl::api},
     message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
     tool::ToolDesc,
 };
@@ -22,6 +22,9 @@ pub(crate) struct LangModelRequest<'a> {
     pub url: &'a Url,
     pub api_key: &'a Option<String>,
     pub max_tokens: Option<u64>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub top_k: Option<u64>,
 }
 
 impl LangModel {
@@ -37,13 +40,13 @@ impl LangModel {
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
+        config: &LangModelOptions,
     ) -> anyhow::Result<MessageOutput> {
         match &self.provider {
             LangModelProviderElem::API {
                 schema,
                 url,
                 api_key,
-                max_tokens,
             } => {
                 // Create request
                 let req = LangModelRequest {
@@ -52,7 +55,10 @@ impl LangModel {
                     tools,
                     url,
                     api_key,
-                    max_tokens: *max_tokens,
+                    max_tokens: config.max_tokens,
+                    temperature: config.temperature,
+                    top_p: config.top_p,
+                    top_k: config.top_k,
                 };
 
                 let req = match schema {
@@ -209,7 +215,10 @@ mod tests {
         let messages = vec![Message::new(Role::User).with_contents([Part::text("Hi")])];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert!(
             !resp.message.contents.is_empty(),
             "Expected at least one message content"
@@ -252,7 +261,10 @@ mod tests {
                 .build(),
         ];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
 
         // The model should respond with a tool call
         assert_eq!(resp.finish_reason, FinishReason::ToolCall {});
@@ -281,7 +293,10 @@ mod tests {
         let model = openai_chat_completion("gpt-5.4-mini", api_key);
         let messages = vec![Message::new(Role::User).with_contents([Part::text("Hi")])];
 
-        let resp = model.run(&messages, &[]).await.unwrap();
+        let resp = model
+            .run(&messages, &[], &LangModelOptions::default())
+            .await
+            .unwrap();
         let usage = resp
             .usage
             .expect("usage must be present in real API response");
@@ -340,7 +355,10 @@ mod tests {
         );
         let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
 
-        let resp = model.run(&messages, &[]).await.unwrap();
+        let resp = model
+            .run(&messages, &[], &LangModelOptions::default())
+            .await
+            .unwrap();
 
         assert_eq!(
             *call_count.lock().unwrap(),

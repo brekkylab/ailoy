@@ -17,9 +17,20 @@ impl LangModelProvider {
             schema: LangModelAPISchema::OpenAI,
             url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
             api_key: Some(api_key),
-            max_tokens: None,
         }
     }
+}
+
+/// Returns whether `model` is an OpenAI reasoning model that does not accept
+/// the `temperature` / `top_p` / `top_k` sampling parameters.
+pub(super) fn is_openai_reasoning_model(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    if m.starts_with("gpt-5") {
+        return true;
+    }
+    // OpenAI reasoning families share an `o<digit>` prefix: o1, o3, o4, ...
+    let bytes = m.as_bytes();
+    bytes.len() >= 2 && bytes[0] == b'o' && bytes[1].is_ascii_digit()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -200,6 +211,22 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 .unwrap()
                 .insert("max_output_tokens".into(), (max_tokens as i64).into());
         }
+        // OpenAI reasoning models (o-series, gpt-5) reject temperature/top_p; drop them silently.
+        if let Some(temperature) = req.temperature
+            && !is_openai_reasoning_model(req.model)
+        {
+            body.as_object_mut()
+                .unwrap()
+                .insert("temperature".into(), temperature.into());
+        }
+        if let Some(top_p) = req.top_p
+            && !is_openai_reasoning_model(req.model)
+        {
+            body.as_object_mut()
+                .unwrap()
+                .insert("top_p".into(), top_p.into());
+        }
+        // top_k is not part of the OpenAI Responses spec; intentionally ignored.
 
         to_value!({
             "url": url,
@@ -373,7 +400,7 @@ mod tests {
     use super::*;
     use crate::{
         datatype::Bytes,
-        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
@@ -393,6 +420,9 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            temperature: None,
+            top_p: None,
+            top_k: None,
         };
         f(&req)
     }
@@ -561,7 +591,6 @@ mod tests {
                 schema: LangModelAPISchema::OpenAI,
                 url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: Some(16),
             },
         );
         let messages = vec![
@@ -570,7 +599,17 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(
+                &messages,
+                &tools,
+                &LangModelOptions {
+                    max_tokens: Some(16),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 
@@ -599,7 +638,6 @@ mod tests {
                 schema: LangModelAPISchema::OpenAI,
                 url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: None,
             },
         );
 
@@ -628,7 +666,10 @@ mod tests {
             }))
             .build()];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Stop {});
         assert!(
             resp.message.contents.iter().any(|p| p.as_text().is_some()),
