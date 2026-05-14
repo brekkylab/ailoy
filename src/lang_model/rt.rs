@@ -4,7 +4,7 @@ use url::Url;
 use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
-    lang_model::r#impl::api,
+    lang_model::{LangModelOptions, r#impl::api},
     message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
     tool::ToolDesc,
 };
@@ -27,18 +27,6 @@ pub(crate) struct LangModelRequest<'a> {
     pub top_k: Option<u64>,
 }
 
-/// Per-call sampling parameters supplied by the agent on top of the static
-/// [`LangModelProviderElem`] configuration.
-#[derive(Clone, Debug, Default)]
-pub struct LangModelOptions {
-    /// Maximum number of tokens the model may generate in a single response.
-    /// When `None`, provider-specific defaults apply (e.g. Anthropic defaults to 8192).
-    pub max_tokens: Option<u64>,
-    pub temperature: Option<f64>,
-    pub top_p: Option<f64>,
-    pub top_k: Option<u64>,
-}
-
 impl LangModel {
     pub fn new(model: String, provider: LangModelProviderElem) -> Self {
         Self { model, provider }
@@ -52,7 +40,7 @@ impl LangModel {
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
-        options: &LangModelOptions,
+        config: &LangModelOptions,
     ) -> anyhow::Result<MessageOutput> {
         match &self.provider {
             LangModelProviderElem::API {
@@ -67,10 +55,10 @@ impl LangModel {
                     tools,
                     url,
                     api_key,
-                    max_tokens: options.max_tokens,
-                    temperature: options.temperature,
-                    top_p: options.top_p,
-                    top_k: options.top_k,
+                    max_tokens: config.max_tokens,
+                    temperature: config.temperature,
+                    top_p: config.top_p,
+                    top_k: config.top_k,
                 };
 
                 let req = match schema {
