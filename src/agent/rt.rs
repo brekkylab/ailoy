@@ -215,7 +215,7 @@ impl Agent {
         // entry against an in-memory `SKILL.md` FileEntry.  Passing
         // `spec.skill_root` lets the rendered block tell the model exactly
         // where new skills must live (the same dir snapshot auto-discovers).
-        let declared_skills = scan_declared_skills(&spec.files, &spec.skills);
+        let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
         let skills_block = render_skills_table(&declared_skills, spec.skill_root.as_deref());
         let system_text = match (spec.instruction.as_deref(), skills_block) {
             (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),

@@ -174,34 +174,30 @@ async fn read_skill_meta(runenv: &dyn RunEnv, dir: &Path) -> Option<SkillMeta> {
     })
 }
 
-/// Build [`SkillMeta`] entries for each declared skill dir using the
-/// in-memory [`FileEntry`] list as the content source.  Used at build time
-/// before any IO has happened, so the system instruction can list the
-/// agent's skills before the runenv is touched.
-pub fn scan_declared_skills(files: &[FileEntry], skill_dirs: &[PathBuf]) -> Vec<SkillMeta> {
+/// Parse declared skills' `SKILL.md` from the in-memory file list.
+/// Missing files are skipped; malformed frontmatter is an error.
+pub fn scan_declared_skills(
+    files: &[FileEntry],
+    skill_dirs: &[PathBuf],
+) -> anyhow::Result<Vec<SkillMeta>> {
     let mut out = Vec::new();
     for dir in skill_dirs {
         let skill_md = dir.join(SKILL_FILE);
         let Some(file) = files.iter().find(|f| f.path == skill_md) else {
             continue;
         };
-        let Ok(raw) = std::str::from_utf8(file.content.as_ref()) else {
-            continue;
-        };
-        let Ok((_n, description, _body)) = parse_skill_frontmatter(raw) else {
-            continue;
-        };
-        let name = dir
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let raw = std::str::from_utf8(file.content.as_ref()).map_err(|e| {
+            anyhow::anyhow!("SKILL.md at {} is not valid UTF-8: {e}", skill_md.display())
+        })?;
+        let (name, description, _body) = parse_skill_frontmatter(raw)
+            .map_err(|e| anyhow::anyhow!("SKILL.md at {}: {e}", skill_md.display()))?;
         out.push(SkillMeta {
             name,
             description,
             dir: dir.clone(),
         });
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -298,42 +294,48 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_declared_skills_matches_skill_md_by_path() {
-        let greet_dir = PathBuf::from("/workspace/skills/greet");
-        let files = vec![
-            FileEntry::new(
-                "/workspace/skills/greet/SKILL.md",
-                b"---\nname: greet\ndescription: say hello\n---\nbody\n".to_vec(),
-            ),
-            FileEntry::new(
-                "/workspace/skills/greet/helper.py",
-                b"# supporting script\n".to_vec(),
-            ),
-        ];
-        let metas = scan_declared_skills(&files, &[greet_dir.clone()]);
+    fn test_scan_declared_skills_uses_frontmatter_name() {
+        // Crucially: skill `name` comes from frontmatter, NOT the dir's
+        // last segment.  Here dir says "greet_dir_name" but frontmatter
+        // says "greet" — frontmatter wins.
+        let dir = PathBuf::from("/workspace/skills/greet_dir_name");
+        let files = vec![FileEntry::new(
+            "/workspace/skills/greet_dir_name/SKILL.md",
+            b"---\nname: greet\ndescription: say hello\n---\nbody\n".to_vec(),
+        )];
+        let metas = scan_declared_skills(&files, &[dir.clone()]).unwrap();
         assert_eq!(metas.len(), 1);
         assert_eq!(metas[0].name, "greet");
         assert_eq!(metas[0].description, "say hello");
-        assert_eq!(metas[0].dir, greet_dir);
+        assert_eq!(metas[0].dir, dir);
     }
 
     #[test]
     fn test_scan_declared_skills_skips_missing_skill_md() {
         // Declared skill but no FileEntry providing the SKILL.md → silently
-        // skipped from the rendered table (model can still cat it at
-        // runtime if it exists on disk).
+        // skipped from the rendered table.
         let dir = PathBuf::from("/workspace/skills/orphan");
-        assert!(scan_declared_skills(&[], &[dir]).is_empty());
+        assert!(scan_declared_skills(&[], &[dir]).unwrap().is_empty());
     }
 
     #[test]
-    fn test_scan_declared_skills_skips_malformed_frontmatter() {
+    fn test_scan_declared_skills_errors_on_malformed_frontmatter() {
         let bad_dir = PathBuf::from("/workspace/skills/bad");
         let files = vec![FileEntry::new(
             "/workspace/skills/bad/SKILL.md",
             b"no frontmatter at all\n".to_vec(),
         )];
-        assert!(scan_declared_skills(&files, &[bad_dir]).is_empty());
+        assert!(scan_declared_skills(&files, &[bad_dir]).is_err());
+    }
+
+    #[test]
+    fn test_scan_declared_skills_errors_on_missing_name() {
+        let dir = PathBuf::from("/workspace/skills/anon");
+        let files = vec![FileEntry::new(
+            "/workspace/skills/anon/SKILL.md",
+            b"---\ndescription: no name field\n---\nbody\n".to_vec(),
+        )];
+        assert!(scan_declared_skills(&files, &[dir]).is_err());
     }
 
     #[tokio::test]
