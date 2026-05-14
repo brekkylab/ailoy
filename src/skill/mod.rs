@@ -2,12 +2,11 @@
 //! into a [`RunEnv`](crate::runenv::RunEnv) from per-agent specs.
 //!
 //! Each agent declares a list of skill directories in
-//! [`AgentSpec::skills`](crate::agent::AgentSpec::skills) and, optionally, a
-//! single [`AgentSpec::skill_root`](crate::agent::AgentSpec::skill_root)
-//! under which it may create new skills at runtime.  Declared skills are
-//! re-read on every [`Agent::snapshot`](crate::agent::Agent::snapshot); new
-//! sibling skills appearing in `skill_root` are appended to the snapshot's
-//! `skills` list.
+//! [`AgentSpec::skills`](crate::agent::AgentSpec::skills) with their
+//! pre-fill content carried in [`AgentSpec::files`](crate::agent::AgentSpec::files).
+//! On the first [`Agent::run`](crate::agent::Agent::run) those files are
+//! written into the runenv with write-once semantics; the system instruction
+//! lists the declared skills via [`scan_declared_skills`].
 
 mod skill;
 

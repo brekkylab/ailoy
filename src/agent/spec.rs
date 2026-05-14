@@ -75,14 +75,6 @@ pub struct AgentSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<PathBuf>,
 
-    /// Single fixed directory where the agent creates new skills at runtime.
-    /// At [`Agent::snapshot`](crate::agent::Agent::snapshot) time this dir
-    /// is scanned once for `<child>/SKILL.md` entries not already in
-    /// [`Self::skills`]; new ones are merged into the returned spec.  When
-    /// `None`, snapshot does no auto-discovery — only the declared list
-    /// round-trips.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skill_root: Option<PathBuf>,
 }
 
 impl AgentSpec {
@@ -95,7 +87,6 @@ impl AgentSpec {
             card: None,
             files: Vec::new(),
             skills: Vec::new(),
-            skill_root: None,
         }
     }
 
@@ -199,14 +190,6 @@ impl AgentSpec {
         self
     }
 
-    /// Set the fixed directory where the agent creates new skills at
-    /// runtime.  At snapshot time this dir is scanned once for new
-    /// `<child>/SKILL.md` entries; matches not already in [`Self::skills`]
-    /// are added to the round-tripped spec.
-    pub fn skill_root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.skill_root = Some(root.into());
-        self
-    }
 }
 
 #[cfg(test)]

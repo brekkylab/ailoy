@@ -144,7 +144,7 @@ impl AgentBuilder {
     }
 
     /// Append a single pre-fill [`FileEntry`] to `spec.files`.  The file is
-    /// written into the runenv at the agent's first run/snapshot.
+    /// written into the runenv on the agent's first `run`.
     pub fn file(mut self, entry: FileEntry) -> Self {
         self.spec.files.push(entry);
         self
@@ -164,15 +164,6 @@ impl AgentBuilder {
         entries: impl IntoIterator<Item = FileEntry>,
     ) -> Self {
         self.spec = self.spec.skill(dir, entries);
-        self
-    }
-
-    /// Set the fixed directory where the agent creates new skills at
-    /// runtime.  At snapshot time this dir is scanned once and any
-    /// `<child>/SKILL.md` not already in the declared list is appended to
-    /// the round-tripped spec.  Writes through to [`AgentSpec::skill_root`].
-    pub fn skill_root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.spec = self.spec.skill_root(root);
         self
     }
 
@@ -282,14 +273,14 @@ mod tests {
     }
 
     /// `.skill(dir, [SKILL.md])` declares a skill and seeds its content in
-    /// one call.  On first `snapshot()` the materialise gate fires and the
-    /// file appears in the runenv.
+    /// one call; the spec carries both pieces and the system instruction
+    /// lists the skill.
     #[tokio::test]
-    async fn test_file_skill_seeds_spec_and_runenv() {
+    async fn test_file_skill_seeds_spec() {
         let dir = tempfile::tempdir().unwrap();
         let greet_dir = dir.path().join("skills/greet");
         let skill_path = greet_dir.join("SKILL.md");
-        let mut agent = AgentBuilder::new(TEST_MODEL)
+        let agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .runenv(Local {})
             .skill(
@@ -302,65 +293,29 @@ mod tests {
             .build()
             .unwrap();
 
-        // Spec carries the file and the skill declaration.
         assert_eq!(agent.spec().files.len(), 1);
         assert_eq!(agent.spec().files[0].path, skill_path);
         assert_eq!(agent.spec().skills, vec![greet_dir.clone()]);
 
-        // The system instruction lists the skill (rendered at build, no IO).
         let sys = system_text(&agent).expect("expected system message");
         assert!(sys.contains("Available Skills"));
         assert!(sys.contains("greet"));
-
-        // Snapshot triggers the lazy materialise gate; afterwards the file
-        // exists on disk with frontmatter + body.
-        let _ = agent.snapshot().await.unwrap();
-        let bytes = tokio::fs::read(&skill_path).await.unwrap();
-        let text = String::from_utf8(bytes).unwrap();
-        assert!(text.starts_with("---\nname: greet\ndescription: Say hello.\n---\n"));
-        assert!(text.ends_with("# greet\nbody\n"));
     }
 
-    /// When `skill_root` is set the agent's system instruction points the
-    /// model at that exact path for creating new skills.  Critical so that
-    /// runtime-created skills land where snapshot's auto-discovery will
-    /// find them.
-    #[tokio::test]
-    async fn test_skill_root_advertised_in_system_instruction() {
-        let dir = tempfile::tempdir().unwrap();
-        let skill_root = dir.path().join("skills");
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
-            .runenv(Local {})
-            .skill_root(&skill_root)
-            .build()
-            .unwrap();
-
-        let sys = system_text(&agent).expect("system message expected when skill_root is set");
-        assert!(sys.contains("Available Skills"));
-        assert!(
-            sys.contains(&format!("{}/<skill_name>/", skill_root.display())),
-            "system message must direct the model to skill_root for new skills: {sys}"
-        );
-        assert!(sys.contains("MUST"), "directive must be emphasised: {sys}");
-    }
-
-    /// When `skill_root` is unset and no skills are declared, the Available
-    /// Skills block is omitted entirely (no noise in the system message).
+    /// With no skills declared, the Available Skills block is omitted
+    /// entirely (no noise in the system message).
     #[tokio::test]
     async fn test_no_skill_block_when_nothing_declared() {
         let agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .build()
             .unwrap();
-        // No instruction, no skills, no skill_root → no system message at all.
+        // No instruction, no skills → no system message at all.
         assert!(agent.get_history().is_empty());
     }
 
     /// Per-agent skill isolation: parent and sub each declare their own
-    /// skill dir explicitly (no nesting convention).  Both files get
-    /// materialised on first `snapshot()` because materialise walks the
-    /// declared `spec.files` of the whole sub-spec tree.  Parent's system
+    /// skill dir explicitly (no nesting convention).  Parent's system
     /// instruction lists only its own skill.
     #[tokio::test]
     async fn test_per_agent_skill_isolation() {
@@ -384,7 +339,7 @@ mod tests {
                 )],
             );
 
-        let mut parent = AgentBuilder::new(TEST_MODEL)
+        let parent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .runenv(Local {})
             .skill(
@@ -397,19 +352,6 @@ mod tests {
             .subagent(sub_spec)
             .build()
             .unwrap();
-
-        // Trigger lazy materialise — walks parent's spec tree recursively.
-        let _ = parent.snapshot().await.unwrap();
-
-        // Both files exist at their declared locations.
-        assert!(
-            tokio::fs::metadata(&parent_skill_path).await.is_ok(),
-            "parent skill file should exist"
-        );
-        assert!(
-            tokio::fs::metadata(&sub_skill_path).await.is_ok(),
-            "sub skill file should exist at its own dir"
-        );
 
         // Parent's system message references only its own skill, not the sub's.
         let sys = system_text(&parent).expect("parent system message");
@@ -446,7 +388,7 @@ mod tests {
                 )],
             );
 
-        let mut parent = AgentBuilder::new(TEST_MODEL)
+        let parent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .runenv(Local {})
             .skill(
@@ -460,155 +402,28 @@ mod tests {
             .build()
             .unwrap();
 
-        // Snapshot triggers recursive materialise.
-        let _ = parent.snapshot().await.unwrap();
-
-        let parent_text = tokio::fs::read_to_string(&parent_foo).await.unwrap();
-        let child_text = tokio::fs::read_to_string(&child_foo).await.unwrap();
-        assert!(parent_text.ends_with("PARENT\n"));
-        assert!(child_text.ends_with("CHILD\n"));
-        assert!(parent_text.contains("description: parent foo"));
-        assert!(child_text.contains("description: child foo"));
-    }
-
-    /// Snapshot picks up a runtime-added skill: with `skill_root` set, the
-    /// agent creates a brand-new skill dir inside that root at runtime,
-    /// and snapshot discovers it on a single `ls`.
-    #[tokio::test]
-    async fn test_snapshot_picks_up_runtime_added_skill() {
-        let dir = tempfile::tempdir().unwrap();
-        let skill_root = dir.path().join("skills");
-        let declared_dir = skill_root.join("declared");
-        let runtime_dir = skill_root.join("runtime");
-        let declared_path = declared_dir.join("SKILL.md");
-        let runtime_path = runtime_dir.join("SKILL.md");
-
-        let runenv: Arc<dyn RunEnv> = Arc::new(Local {});
-        let mut agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
-            .runenv(Local {})
-            .skill_root(&skill_root)
-            .skill(
-                &declared_dir,
-                [FileEntry::new(
-                    &declared_path,
-                    skill_md("declared", "stays", "BODY\n"),
-                )],
-            )
-            .build()
-            .unwrap();
-
-        // First snapshot triggers materialise (writes declared SKILL.md).
-        let _ = agent.snapshot().await.unwrap();
-
-        // Pretend the agent ran some bash and authored a brand-new skill.
-        runenv.mkdir(&runtime_dir).await.unwrap();
-        runenv
-            .write(
-                &runtime_path,
-                &skill_md("runtime", "created at runtime", "live body\n"),
-            )
-            .await
-            .unwrap();
-
-        // Snapshot scans `skill_root` once and appends the new skill.
-        let snap = agent.snapshot().await.unwrap();
-        assert!(
-            snap.skills.contains(&declared_dir),
-            "declared skill must persist in spec.skills"
-        );
-        assert!(
-            snap.skills.contains(&runtime_dir),
-            "runtime-added skill must be discovered under skill_root"
-        );
-
-        let paths: Vec<_> = snap.files.iter().map(|f| f.path.clone()).collect();
-        assert!(paths.contains(&declared_path));
-        assert!(paths.contains(&runtime_path));
-    }
-
-    /// Snapshot reflects a runtime overwrite: the file system wins over the
-    /// originally declared content.  Write-once materialise ensures the
-    /// second snapshot doesn't clobber the runtime overwrite.
-    #[tokio::test]
-    async fn test_snapshot_reflects_runtime_overwrite() {
-        let dir = tempfile::tempdir().unwrap();
-        let evolving_dir = dir.path().join("skills/evolving");
-        let evolving_path = evolving_dir.join("SKILL.md");
-
-        let runenv: Arc<dyn RunEnv> = Arc::new(Local {});
-        let mut agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
-            .runenv(Local {})
-            .skill(
-                &evolving_dir,
-                [FileEntry::new(
-                    &evolving_path,
-                    skill_md("evolving", "v1", "ORIGINAL\n"),
-                )],
-            )
-            .build()
-            .unwrap();
-
-        // Bootstrap: first snapshot fires the materialise gate, writing v1.
-        let _ = agent.snapshot().await.unwrap();
-
-        // Overwrite the on-disk file with a v2 body.
-        runenv
-            .write(&evolving_path, &skill_md("evolving", "v2", "UPDATED\n"))
-            .await
-            .unwrap();
-
-        // Second snapshot: gate already tripped, write-once preserves v2.
-        let snap = agent.snapshot().await.unwrap();
-        let evolving = snap
+        // Parent + sub specs hold distinct files at distinct paths.
+        let parent_entry = parent
+            .spec()
             .files
             .iter()
-            .find(|f| f.path == evolving_path)
-            .expect("evolving SKILL.md present in snapshot");
-        let text = std::str::from_utf8(evolving.content.as_ref()).unwrap();
-        assert!(text.contains("description: v2"));
-        assert!(text.ends_with("UPDATED\n"));
-    }
-
-    /// Snapshot drops the *files* of a skill the agent has deleted at
-    /// runtime.  The declared `spec.skills` entry is preserved (user-
-    /// declared intent), but the disk-backed content is gone, so no
-    /// `FileEntry` is emitted for it.
-    #[tokio::test]
-    async fn test_snapshot_drops_runtime_deleted_skill() {
-        let dir = tempfile::tempdir().unwrap();
-        let doomed_dir = dir.path().join("skills/doomed");
-        let doomed_path = doomed_dir.join("SKILL.md");
-
-        let mut agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
-            .runenv(Local {})
-            .skill(
-                &doomed_dir,
-                [FileEntry::new(
-                    &doomed_path,
-                    skill_md("doomed", "to be removed", "...\n"),
-                )],
-            )
-            .build()
-            .unwrap();
-
-        // Bootstrap: fire materialise to write the declared file.
-        let _ = agent.snapshot().await.unwrap();
-
-        // Delete the file (and its parent dir) on host.
-        tokio::fs::remove_dir_all(&doomed_dir).await.unwrap();
-
-        // Second snapshot: gate already tripped, no rewrite — the file is gone.
-        let snap = agent.snapshot().await.unwrap();
+            .find(|f| f.path == parent_foo)
+            .expect("parent file");
+        let child_entry = parent.spec().subagents[0]
+            .files
+            .iter()
+            .find(|f| f.path == child_foo)
+            .expect("child file");
         assert!(
-            snap.files.iter().all(|f| f.path != doomed_path),
-            "deleted skill should not be in snapshot.files: {:?}",
-            snap.files.iter().map(|f| &f.path).collect::<Vec<_>>()
+            std::str::from_utf8(parent_entry.content.as_ref())
+                .unwrap()
+                .contains("description: parent foo")
         );
-        // The declared skill path stays in spec.skills as a record of intent.
-        assert!(snap.skills.contains(&doomed_dir));
+        assert!(
+            std::str::from_utf8(child_entry.content.as_ref())
+                .unwrap()
+                .contains("description: child foo")
+        );
     }
 
     /// Subagents declared in the spec are accepted by `build()` (full delegation

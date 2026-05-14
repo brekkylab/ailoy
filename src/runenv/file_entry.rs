@@ -24,13 +24,6 @@ impl FileEntry {
     pub async fn write_to(&self, runenv: &dyn RunEnv) -> anyhow::Result<()> {
         runenv.write(&self.path, self.content.as_ref()).await
     }
-
-    /// Read a [`FileEntry`] back from `runenv` at the given path.
-    pub async fn read_from(runenv: &dyn RunEnv, path: impl Into<PathBuf>) -> anyhow::Result<Self> {
-        let path = path.into();
-        let bytes = runenv.read(&path).await?;
-        Ok(Self::new(path, bytes))
-    }
 }
 
 #[cfg(test)]

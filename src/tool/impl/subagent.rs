@@ -48,8 +48,8 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 /// produced [`ToolFunc`] is independent of any parent [`Agent`]: the parent
 /// keeps it in its `tools` map alongside ordinary tools, with no special
 /// dispatch needed.  The sub-spec is taken as-is — its
-/// [`AgentSpec::skills`] and [`AgentSpec::skill_root`] are respected
-/// verbatim, so a sub-spec is portable across parents.
+/// [`AgentSpec::skills`] paths are respected verbatim, so a sub-spec is
+/// portable across parents.
 ///
 /// The returned function:
 /// 1. Streams every [`MessageOutput`](crate::message::MessageOutput) produced by
