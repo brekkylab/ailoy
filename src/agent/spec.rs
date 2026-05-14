@@ -168,4 +168,11 @@ impl AgentSpec {
             .top_k = Some(top_k);
         self
     }
+
+    pub fn response_format(mut self, fmt: crate::lang_model::ResponseFormat) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .response_format = Some(fmt);
+        self
+    }
 }

@@ -34,6 +34,10 @@ pub struct LangModelOptions {
     /// silently ignored by providers that do not (e.g. OpenAI).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<u64>,
+
+    /// Constrains the model's output to a JSON schema validated at construction time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<super::ResponseFormat>,
 }
 
 impl LangModelOptions {
