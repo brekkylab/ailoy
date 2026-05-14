@@ -1,5 +1,6 @@
 use url::Url;
 
+use super::chat_completion::is_openai_reasoning_model;
 use crate::{
     datatype::Value,
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
@@ -199,12 +200,17 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 .unwrap()
                 .insert("max_output_tokens".into(), (max_tokens as i64).into());
         }
-        if let Some(temperature) = req.temperature {
+        // OpenAI reasoning models (o-series, gpt-5) reject temperature/top_p; drop them silently.
+        if let Some(temperature) = req.temperature
+            && !is_openai_reasoning_model(req.model)
+        {
             body.as_object_mut()
                 .unwrap()
                 .insert("temperature".into(), temperature.into());
         }
-        if let Some(top_p) = req.top_p {
+        if let Some(top_p) = req.top_p
+            && !is_openai_reasoning_model(req.model)
+        {
             body.as_object_mut()
                 .unwrap()
                 .insert("top_p".into(), top_p.into());

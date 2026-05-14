@@ -32,6 +32,18 @@ impl LangModelProvider {
     }
 }
 
+/// Returns whether `model` is an OpenAI reasoning model that does not accept
+/// the `temperature` / `top_p` / `top_k` sampling parameters.
+pub(super) fn is_openai_reasoning_model(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    if m.starts_with("gpt-5") {
+        return true;
+    }
+    // OpenAI reasoning families share an `o<digit>` prefix: o1, o3, o4, ...
+    let bytes = m.as_bytes();
+    bytes.len() >= 2 && bytes[0] == b'o' && bytes[1].is_ascii_digit()
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ChatCompletionMarshal;
 
@@ -180,12 +192,17 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 (max_tokens as i64).into(),
             );
         }
-        if let Some(temperature) = req.temperature {
+        // OpenAI reasoning models (o-series, gpt-5) reject temperature/top_p; drop them silently.
+        if let Some(temperature) = req.temperature
+            && !is_openai_reasoning_model(req.model)
+        {
             body.as_object_mut()
                 .unwrap()
                 .insert("temperature".to_owned(), temperature.into());
         }
-        if let Some(top_p) = req.top_p {
+        if let Some(top_p) = req.top_p
+            && !is_openai_reasoning_model(req.model)
+        {
             body.as_object_mut()
                 .unwrap()
                 .insert("top_p".to_owned(), top_p.into());
