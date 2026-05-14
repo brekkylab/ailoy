@@ -1,5 +1,6 @@
 use url::Url;
 
+use super::openai::is_openai_reasoning_model;
 use crate::{
     datatype::Value,
     lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
@@ -30,18 +31,6 @@ impl LangModelProvider {
             api_key,
         })
     }
-}
-
-/// Returns whether `model` is an OpenAI reasoning model that does not accept
-/// the `temperature` / `top_p` / `top_k` sampling parameters.
-pub(super) fn is_openai_reasoning_model(model: &str) -> bool {
-    let m = model.to_ascii_lowercase();
-    if m.starts_with("gpt-5") {
-        return true;
-    }
-    // OpenAI reasoning families share an `o<digit>` prefix: o1, o3, o4, ...
-    let bytes = m.as_bytes();
-    bytes.len() >= 2 && bytes[0] == b'o' && bytes[1].is_ascii_digit()
 }
 
 #[derive(Clone, Debug, Default)]
