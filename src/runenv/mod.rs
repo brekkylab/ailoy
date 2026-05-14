@@ -147,6 +147,33 @@ pub trait RunEnv: Send + Sync + 'static {
         Ok(())
     }
 
+    /// Read an environment variable from inside the environment.
+    ///
+    /// Returns `Err` if the variable is not set.
+    async fn get_env(&self, key: &str) -> anyhow::Result<String> {
+        let result = match self.get_os() {
+            "linux" | "macos" => {
+                // Pass key as argv to avoid shell-escaping concerns. `printenv`
+                // exits 1 if the variable is not set.
+                self.exec("printenv".to_string(), vec![key.to_string()], None)
+                    .await?
+            }
+            "windows" => {
+                let key_q = key.replace('\'', "''");
+                let script = format!(
+                    "$v = [Environment]::GetEnvironmentVariable('{key_q}'); \
+                     if ($null -eq $v) {{ exit 1 }} else {{ Write-Output $v }}"
+                );
+                self.exec_shell(script, None).await?
+            }
+            other => anyhow::bail!("get_env: unsupported OS '{other}'"),
+        };
+        if result.exit_code != 0 {
+            anyhow::bail!("get_env: '{key}' is not set");
+        }
+        Ok(result.stdout.trim_end_matches(['\r', '\n']).to_string())
+    }
+
     /// Current working directory inside the environment.
     async fn get_cwd(&self) -> anyhow::Result<PathBuf> {
         let script = match self.get_os() {

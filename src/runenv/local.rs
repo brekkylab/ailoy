@@ -66,6 +66,10 @@ impl RunEnv for Local {
     async fn get_cwd(&self) -> anyhow::Result<PathBuf> {
         Ok(std::env::current_dir()?)
     }
+
+    async fn get_env(&self, key: &str) -> anyhow::Result<String> {
+        std::env::var(key).map_err(|e| anyhow::anyhow!("get_env '{key}': {e}"))
+    }
 }
 
 #[cfg(test)]
