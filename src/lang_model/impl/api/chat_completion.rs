@@ -1,8 +1,12 @@
 use url::Url;
 
+use super::{super::response_format::ResponseSchemaMarshal, openai::is_openai_reasoning_model};
 use crate::{
     datatype::Value,
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
+    lang_model::{
+        LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
+        ResponseFormat,
+    },
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
@@ -17,7 +21,6 @@ impl LangModelProvider {
             schema: LangModelAPISchema::ChatCompletion,
             url: Url::parse("https://api.x.ai/v1/chat/completions").unwrap(),
             api_key: Some(api_key),
-            max_tokens: None,
         }
     }
 
@@ -29,13 +32,14 @@ impl LangModelProvider {
             schema: LangModelAPISchema::ChatCompletion,
             url: Url::parse(url)?,
             api_key,
-            max_tokens: None,
         })
     }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ChatCompletionMarshal;
+
+impl ResponseSchemaMarshal for ChatCompletionMarshal {}
 
 impl Marshal<Message> for ChatCompletionMarshal {
     fn marshal(&mut self, item: &Message) -> Value {
@@ -180,6 +184,36 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
             body.as_object_mut().unwrap().insert(
                 "max_completion_tokens".to_owned(),
                 (max_tokens as i64).into(),
+            );
+        }
+        // OpenAI reasoning models (o-series, gpt-5) reject temperature/top_p; drop them silently.
+        if let Some(temperature) = req.temperature
+            && !is_openai_reasoning_model(req.model)
+        {
+            body.as_object_mut()
+                .unwrap()
+                .insert("temperature".to_owned(), temperature.into());
+        }
+        if let Some(top_p) = req.top_p
+            && !is_openai_reasoning_model(req.model)
+        {
+            body.as_object_mut()
+                .unwrap()
+                .insert("top_p".to_owned(), top_p.into());
+        }
+        // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
+        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+            let wire_schema = self.marshal_response_schema(schema);
+            body.as_object_mut().unwrap().insert(
+                "response_format".into(),
+                to_value!({
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "response",
+                        "schema": wire_schema,
+                        "strict": true
+                    }
+                }),
             );
         }
         body.as_object_mut()
@@ -343,7 +377,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role},
         tool::ToolDesc,
     };
@@ -363,6 +397,10 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: None,
         };
         f(&req)
     }
@@ -395,7 +433,112 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_marshal_response_format_absent() {
+        with_req("gpt-4.1-mini", None, |req| {
+            let val = ChatCompletionMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            assert!(body.as_object().unwrap().get("response_format").is_none());
+        });
+    }
+
+    #[test]
+    fn test_marshal_response_format_json_schema() {
+        let schema = to_value!({"type": "object", "properties": {"score": {"type": "integer"}}});
+        let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model: "gpt-4.1-mini",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: Some(&fmt),
+        };
+        let val = ChatCompletionMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        let rf = body.as_object().unwrap().get("response_format").unwrap();
+        assert_eq!(
+            rf.pointer("/type").and_then(|v| v.as_str()),
+            Some("json_schema")
+        );
+        assert_eq!(
+            rf.pointer("/json_schema/name").and_then(|v| v.as_str()),
+            Some("response")
+        );
+        assert_eq!(
+            rf.pointer("/json_schema/strict").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            rf.pointer("/json_schema/schema/type")
+                .and_then(|v| v.as_str()),
+            Some("object")
+        );
+    }
+
+    /// Verifies structured output via response_format: the model returns valid JSON matching the schema.
+    #[test_with::env(OPENAI_API_KEY)]
+    #[tokio::test]
+    async fn test_run_response_format_json_schema() {
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
+
+        let schema = to_value!({
+            "type": "object",
+            "properties": {
+                "country": {"type": "string"},
+                "capital": {"type": "string"}
+            },
+            "required": ["country", "capital"],
+            "additionalProperties": false
+        });
+
+        let model = LangModel::new(
+            "gpt-4.1-mini".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::ChatCompletion,
+                url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
+                api_key: Some(api_key),
+            },
+        );
+        let messages = vec![Message::new(Role::User).with_contents([Part::text(
+            "Return France's country name and capital city in the requested format.",
+        )])];
+
+        let resp = model
+            .run(
+                &messages,
+                &[],
+                &LangModelOptions {
+                    response_format: Some(ResponseFormat::json_schema(schema).unwrap()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.finish_reason, FinishReason::Stop {});
+        let text = resp
+            .message
+            .contents
+            .iter()
+            .find_map(|p| p.as_text())
+            .expect("Expected text content");
+        let parsed: serde_json::Value =
+            serde_json::from_str(text).expect("Response must be valid JSON");
+        assert_eq!(parsed["capital"].as_str().unwrap().to_lowercase(), "paris");
+    }
+
     /// Verifies that max_tokens is respected by the ChatCompletion API (finish_reason: length).
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_run_max_tokens() {
         dotenvy::dotenv().ok();
@@ -407,7 +550,6 @@ mod tests {
                 schema: LangModelAPISchema::ChatCompletion,
                 url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: Some(32),
             },
         );
         let messages = vec![
@@ -416,7 +558,17 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(
+                &messages,
+                &tools,
+                &LangModelOptions {
+                    max_tokens: Some(32),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 }

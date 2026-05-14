@@ -4,7 +4,7 @@ use futures::{FutureExt as _, Stream, StreamExt as _};
 
 use crate::{
     agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
-    lang_model::LangModel,
+    lang_model::{LangModel, LangModelOptions},
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{Local, RunEnv},
     skill::{render_skills_table, scan_declared_skills},
@@ -89,6 +89,8 @@ impl AgentState {
 pub struct Agent {
     model: LangModel,
 
+    model_options: LangModelOptions,
+
     tool_descs: Vec<ToolDesc>,
 
     tools: HashMap<String, ToolFunc>,
@@ -151,11 +153,11 @@ impl Agent {
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
         let model = provider.models.provide(&spec.model)?;
 
-        // Collect tools required by the spec; error if any tool is missing.
-        // `spec.tools` is cloned (rather than moved) so the full `spec` can be
-        // retained on `self.spec` for snapshot + `.spec()` access.
+        let model_options = spec.model_options.clone().unwrap_or_default();
+
+        // Collect tools required by the spec; error if any tool is missing
         let mut tools = provider.tools.provide(&spec.tools)?;
-        let mut tool_descs = spec.tools;
+        let mut tool_descs = spec.tools.clone();
 
         // Sub-agents become regular tool entries: each is a one-shot ToolFunc
         // that materialises a fresh Agent on call and shares the parent's
@@ -194,6 +196,7 @@ impl Agent {
 
         Ok(Self {
             model,
+            model_options,
             tools,
             tool_descs,
             state,
@@ -406,7 +409,10 @@ impl Agent {
                     }
                 }
 
-                let mut output = self.model.run(&self.state.history, &self.tool_descs).await?;
+                let mut output = self
+                    .model
+                    .run(&self.state.history, &self.tool_descs, &self.model_options)
+                    .await?;
 
                 // Capture token usage for next iteration's truncation check.
                 if let Some(u) = &output.usage {

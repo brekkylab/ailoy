@@ -35,11 +35,6 @@ pub enum LangModelProviderElem {
         url: Url,
 
         api_key: Option<String>,
-
-        /// Maximum number of tokens the model may generate in a single response.
-        /// When `None`, provider-specific defaults apply (e.g. Anthropic defaults to 8192).
-        #[serde(default)]
-        max_tokens: Option<u64>,
     },
 }
 
@@ -107,7 +102,6 @@ impl LangModelProvider {
         schema: LangModelAPISchema,
         url: Url,
         api_key: Option<String>,
-        max_tokens: Option<u64>,
     ) {
         self.inner.insert(
             pattern,
@@ -115,7 +109,6 @@ impl LangModelProvider {
                 schema,
                 url,
                 api_key,
-                max_tokens,
             },
         );
     }
@@ -188,7 +181,6 @@ mod tests {
             schema: LangModelAPISchema::OpenAI,
             url: Url::parse("https://example.com").unwrap(),
             api_key: None,
-            max_tokens: None,
         }
     }
 

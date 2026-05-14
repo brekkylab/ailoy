@@ -1,8 +1,12 @@
 use url::Url;
 
+use super::super::response_format::ResponseSchemaMarshal;
 use crate::{
     datatype::Value,
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
+    lang_model::{
+        LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
+        ResponseFormat,
+    },
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
@@ -17,13 +21,26 @@ impl LangModelProvider {
             schema: LangModelAPISchema::OpenAI,
             url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
             api_key: Some(api_key),
-            max_tokens: None,
         }
     }
 }
 
+/// Returns whether `model` is an OpenAI reasoning model that does not accept
+/// the `temperature` / `top_p` / `top_k` sampling parameters.
+pub(super) fn is_openai_reasoning_model(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    if m.starts_with("gpt-5") {
+        return true;
+    }
+    // OpenAI reasoning families share an `o<digit>` prefix: o1, o3, o4, ...
+    let bytes = m.as_bytes();
+    bytes.len() >= 2 && bytes[0] == b'o' && bytes[1].is_ascii_digit()
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct OpenAIMarshal;
+
+impl ResponseSchemaMarshal for OpenAIMarshal {}
 
 fn marshal_message(msg: &Message, include_thinking: bool) -> Vec<Value> {
     let part_to_value = |part: &Part| -> Value {
@@ -200,6 +217,36 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 .unwrap()
                 .insert("max_output_tokens".into(), (max_tokens as i64).into());
         }
+        // OpenAI reasoning models (o-series, gpt-5) reject temperature/top_p; drop them silently.
+        if let Some(temperature) = req.temperature
+            && !is_openai_reasoning_model(req.model)
+        {
+            body.as_object_mut()
+                .unwrap()
+                .insert("temperature".into(), temperature.into());
+        }
+        if let Some(top_p) = req.top_p
+            && !is_openai_reasoning_model(req.model)
+        {
+            body.as_object_mut()
+                .unwrap()
+                .insert("top_p".into(), top_p.into());
+        }
+        // top_k is not part of the OpenAI Responses spec; intentionally ignored.
+        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+            let wire_schema = self.marshal_response_schema(schema);
+            body.as_object_mut().unwrap().insert(
+                "text".into(),
+                to_value!({
+                    "format": {
+                        "type": "json_schema",
+                        "name": "response",
+                        "strict": true,
+                        "schema": wire_schema
+                    }
+                }),
+            );
+        }
 
         to_value!({
             "url": url,
@@ -373,7 +420,7 @@ mod tests {
     use super::*;
     use crate::{
         datatype::Bytes,
-        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
@@ -393,8 +440,73 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: None,
         };
         f(&req)
+    }
+
+    #[test]
+    fn test_marshal_response_format_absent() {
+        with_req("gpt-4o", None, |req| {
+            let val = OpenAIMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            assert!(
+                body.as_object().unwrap().get("text").is_none(),
+                "text must not appear when response_format is None"
+            );
+        });
+    }
+
+    #[test]
+    fn test_marshal_response_format_json_schema() {
+        let schema = to_value!({
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+            "additionalProperties": false
+        });
+        let fmt = ResponseFormat::json_schema(schema).unwrap();
+
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://api.openai.com/v1/responses").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model: "gpt-4o",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: Some(&fmt),
+        };
+
+        let val = OpenAIMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+
+        assert_eq!(
+            body.pointer("/text/format/type").and_then(|v| v.as_str()),
+            Some("json_schema")
+        );
+        assert_eq!(
+            body.pointer("/text/format/name").and_then(|v| v.as_str()),
+            Some("response")
+        );
+        assert_eq!(
+            body.pointer("/text/format/strict")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(
+            body.pointer("/text/format/schema").is_some(),
+            "schema must be present in text.format"
+        );
     }
 
     #[test]
@@ -444,7 +556,7 @@ mod tests {
         );
 
         // Part::Image (embedded) → array with a single {"type":"input_image","image_url":"data:..."} block.
-        let img_bytes = crate::datatype::Bytes::from(vec![0xFFu8, 0xD8, 0xFF]);
+        let img_bytes = Bytes::from(vec![0xFFu8, 0xD8, 0xFF]);
         let msg_img = Message::new(Role::Tool)
             .with_id("call_2")
             .with_contents([Part::image_embedded("image/jpeg", img_bytes.clone()).unwrap()]);
@@ -487,9 +599,7 @@ mod tests {
         // Part::Value(String) → {"type":"input_text","text":"..."} block; no double-encoding.
         let msg_str = Message::new(Role::Tool)
             .with_id("call_4")
-            .with_contents([Part::value(crate::datatype::Value::string(
-                "ok".to_string(),
-            ))]);
+            .with_contents([Part::value(Value::string("ok".to_string()))]);
         let items = marshal_message(&msg_str, false);
         let output = items[0]
             .pointer("/output")
@@ -510,7 +620,7 @@ mod tests {
         // Part::Value(Object) → JSON-encoded as {"type":"input_text","text":"{...}"} block.
         let msg_obj = Message::new(Role::Tool)
             .with_id("call_5")
-            .with_contents([Part::value(crate::to_value!({"temp": 25}))]);
+            .with_contents([Part::value(to_value!({"temp": 25}))]);
         let items = marshal_message(&msg_obj, false);
         let output = items[0]
             .pointer("/output")
@@ -550,6 +660,7 @@ mod tests {
 
     /// Verifies that max_tokens is respected by the OpenAI Responses API (incomplete: max_output_tokens).
     /// Note: OpenAI Responses API enforces a minimum of 16 for max_output_tokens.
+    #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_run_max_tokens() {
         dotenvy::dotenv().ok();
@@ -561,7 +672,6 @@ mod tests {
                 schema: LangModelAPISchema::OpenAI,
                 url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: Some(16),
             },
         );
         let messages = vec![
@@ -570,8 +680,71 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(
+                &messages,
+                &tools,
+                &LangModelOptions {
+                    max_tokens: Some(16),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
+    }
+
+    /// Verifies structured output via response_format: the model returns valid JSON matching the schema.
+    #[test_with::env(OPENAI_API_KEY)]
+    #[tokio::test]
+    async fn test_run_response_format_json_schema() {
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
+
+        let schema = to_value!({
+            "type": "object",
+            "properties": {
+                "country": {"type": "string"},
+                "capital": {"type": "string"}
+            },
+            "required": ["country", "capital"],
+            "additionalProperties": false
+        });
+
+        let model = LangModel::new(
+            "gpt-4.1-mini".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::OpenAI,
+                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
+                api_key: Some(api_key),
+            },
+        );
+        let messages = vec![Message::new(Role::User).with_contents([Part::text(
+            "Return France's country name and capital city in the requested format.",
+        )])];
+
+        let resp = model
+            .run(
+                &messages,
+                &[],
+                &LangModelOptions {
+                    response_format: Some(ResponseFormat::json_schema(schema).unwrap()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.finish_reason, FinishReason::Stop {});
+        let text = resp
+            .message
+            .contents
+            .iter()
+            .find_map(|p| p.as_text())
+            .expect("Expected text content");
+        let parsed: serde_json::Value =
+            serde_json::from_str(text).expect("Response must be valid JSON");
+        assert_eq!(parsed["capital"].as_str().unwrap().to_lowercase(), "paris");
     }
 
     /// Verifies that an image embedded in a Role::Tool message is accepted by the OpenAI
@@ -599,7 +772,6 @@ mod tests {
                 schema: LangModelAPISchema::OpenAI,
                 url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: None,
             },
         );
 
@@ -628,7 +800,10 @@ mod tests {
             }))
             .build()];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Stop {});
         assert!(
             resp.message.contents.iter().any(|p| p.as_text().is_some()),

@@ -8,6 +8,8 @@ mod read;
 mod web_search;
 mod write;
 
+use std::sync::Arc;
+
 pub use apply_patch::*;
 pub use bash::*;
 pub use edit::*;
@@ -17,8 +19,6 @@ pub use python_repl::*;
 pub use read::*;
 pub use web_search::*;
 pub use write::*;
-
-use std::sync::Arc;
 
 use crate::tool::{ToolDesc, ToolFunc};
 

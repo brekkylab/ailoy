@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agent::AgentCard,
+    lang_model::LangModelOptions,
     runenv::FileEntry,
     tool::{
         ToolDesc,
@@ -55,6 +56,9 @@ pub struct AgentSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subagents: Vec<AgentSpec>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_options: Option<LangModelOptions>,
+
     /// Public self-introduction exposed to a calling agent or orchestrator.
     ///
     /// Only relevant when this agent acts as a sub-agent.
@@ -87,6 +91,7 @@ impl AgentSpec {
             card: None,
             files: Vec::new(),
             skills: Vec::new(),
+            model_options: None,
         }
     }
 
@@ -155,6 +160,41 @@ impl AgentSpec {
         self
     }
 
+    pub fn max_tokens(mut self, max_tokens: u64) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .max_tokens = Some(max_tokens);
+        self
+    }
+
+    pub fn temperature(mut self, temperature: f64) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .temperature = Some(temperature);
+        self
+    }
+
+    pub fn top_p(mut self, top_p: f64) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .top_p = Some(top_p);
+        self
+    }
+
+    pub fn top_k(mut self, top_k: u64) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .top_k = Some(top_k);
+        self
+    }
+
+    pub fn response_format(mut self, fmt: crate::lang_model::ResponseFormat) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .response_format = Some(fmt);
+        self
+    }
+
     pub fn file(mut self, file: FileEntry) -> Self {
         self.files.push(file);
         self
@@ -189,7 +229,6 @@ impl AgentSpec {
         self.files.extend(entries);
         self
     }
-
 }
 
 #[cfg(test)]
