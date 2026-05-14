@@ -174,16 +174,28 @@ impl AgentSpec {
         self
     }
 
-    /// Declare a skill by the absolute path of the directory containing its
-    /// `SKILL.md`.  The directory's last path segment becomes the skill name.
-    pub fn skill(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.skills.push(dir.into());
-        self
-    }
-
-    /// Declare multiple skills at once — same semantics as [`Self::skill`].
-    pub fn skills(mut self, dirs: impl IntoIterator<Item = PathBuf>) -> Self {
-        self.skills = dirs.into_iter().collect();
+    /// Declare a skill at `dir` together with its pre-fill content.
+    /// `dir` is appended to [`Self::skills`]; `entries` are appended to
+    /// [`Self::files`].  Every entry's path must be under `dir` — panics
+    /// otherwise — so a skill's declared territory and its seeded content
+    /// stay aligned.
+    pub fn skill(
+        mut self,
+        dir: impl Into<PathBuf>,
+        entries: impl IntoIterator<Item = FileEntry>,
+    ) -> Self {
+        let dir = dir.into();
+        let entries: Vec<FileEntry> = entries.into_iter().collect();
+        for e in &entries {
+            assert!(
+                e.path.starts_with(&dir),
+                "skill entry path {:?} must live under skill dir {:?}",
+                e.path,
+                dir,
+            );
+        }
+        self.skills.push(dir);
+        self.files.extend(entries);
         self
     }
 
@@ -251,10 +263,32 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "must live under skill dir")]
+    fn test_skill_panics_on_entry_outside_dir() {
+        let _ = AgentSpec::new("openai/gpt-4o-mini").skill(
+            "/workspace/skills/greet",
+            [FileEntry::new("/workspace/elsewhere/SKILL.md", b"x".to_vec())],
+        );
+    }
+
+    #[test]
+    fn test_skill_accepts_entries_under_dir() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini").skill(
+            "/workspace/skills/greet",
+            [
+                FileEntry::new("/workspace/skills/greet/SKILL.md", b"a".to_vec()),
+                FileEntry::new("/workspace/skills/greet/helper.py", b"b".to_vec()),
+            ],
+        );
+        assert_eq!(spec.skills.len(), 1);
+        assert_eq!(spec.files.len(), 2);
+    }
+
+    #[test]
     fn test_skills_roundtrip() {
         let spec = AgentSpec::new("openai/gpt-4o-mini")
-            .skill("/workspace/skills/greet")
-            .skill("/workspace/skills/farewell");
+            .skill("/workspace/skills/greet", [])
+            .skill("/workspace/skills/farewell", []);
         let json = serde_json::to_string(&spec).unwrap();
         let back: AgentSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(back.skills.len(), 2);

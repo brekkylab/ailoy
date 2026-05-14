@@ -617,11 +617,13 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
             ])
             .instruction(instruction)
             .skill_root("/workspace/skills")
-            .skill(&skill_dir)
-            .file(FileEntry::new(
-                skill_dir.join("SKILL.md"),
-                skill_md.as_bytes().to_vec(),
-            ))
+            .skill(
+                &skill_dir,
+                [FileEntry::new(
+                    skill_dir.join("SKILL.md"),
+                    skill_md.as_bytes().to_vec(),
+                )],
+            )
             .build()
             .unwrap();
 

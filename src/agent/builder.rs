@@ -156,16 +156,14 @@ impl AgentBuilder {
         self
     }
 
-    /// Declare a skill by the absolute path of the directory containing its
-    /// `SKILL.md`.  Writes through to [`AgentSpec::skills`].
-    pub fn skill(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.spec = self.spec.skill(dir);
-        self
-    }
-
-    /// Declare multiple skill directories at once.
-    pub fn skills(mut self, dirs: impl IntoIterator<Item = PathBuf>) -> Self {
-        self.spec = self.spec.skills(dirs);
+    /// Declare a skill at `dir` together with its pre-fill content.
+    /// Writes through to [`AgentSpec::skill`].
+    pub fn skill(
+        mut self,
+        dir: impl Into<PathBuf>,
+        entries: impl IntoIterator<Item = FileEntry>,
+    ) -> Self {
+        self.spec = self.spec.skill(dir, entries);
         self
     }
 
@@ -283,8 +281,8 @@ mod tests {
         format!("---\nname: {name}\ndescription: {desc}\n---\n{body}").into_bytes()
     }
 
-    /// `.skill(dir) + .file(SKILL.md)` declares a skill and seeds its
-    /// content.  On first `snapshot()` the materialise gate fires and the
+    /// `.skill(dir, [SKILL.md])` declares a skill and seeds its content in
+    /// one call.  On first `snapshot()` the materialise gate fires and the
     /// file appears in the runenv.
     #[tokio::test]
     async fn test_file_skill_seeds_spec_and_runenv() {
@@ -294,11 +292,13 @@ mod tests {
         let mut agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .runenv(Local {})
-            .skill(&greet_dir)
-            .file(FileEntry::new(
-                &skill_path,
-                skill_md("greet", "Say hello.", "# greet\nbody\n"),
-            ))
+            .skill(
+                &greet_dir,
+                [FileEntry::new(
+                    &skill_path,
+                    skill_md("greet", "Say hello.", "# greet\nbody\n"),
+                )],
+            )
             .build()
             .unwrap();
 
@@ -376,20 +376,24 @@ mod tests {
                 description: "child agent".into(),
                 skills: vec![],
             })
-            .skill(&sub_skill_dir)
-            .file(FileEntry::new(
-                &sub_skill_path,
-                skill_md("b_skill", "child only", "child body\n"),
-            ));
+            .skill(
+                &sub_skill_dir,
+                [FileEntry::new(
+                    &sub_skill_path,
+                    skill_md("b_skill", "child only", "child body\n"),
+                )],
+            );
 
         let mut parent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .runenv(Local {})
-            .skill(&parent_skill_dir)
-            .file(FileEntry::new(
-                &parent_skill_path,
-                skill_md("a_skill", "parent only", "parent body\n"),
-            ))
+            .skill(
+                &parent_skill_dir,
+                [FileEntry::new(
+                    &parent_skill_path,
+                    skill_md("a_skill", "parent only", "parent body\n"),
+                )],
+            )
             .subagent(sub_spec)
             .build()
             .unwrap();
@@ -434,20 +438,24 @@ mod tests {
                 description: "child agent".into(),
                 skills: vec![],
             })
-            .skill(&child_foo_dir)
-            .file(FileEntry::new(
-                &child_foo,
-                skill_md("foo", "child foo", "CHILD\n"),
-            ));
+            .skill(
+                &child_foo_dir,
+                [FileEntry::new(
+                    &child_foo,
+                    skill_md("foo", "child foo", "CHILD\n"),
+                )],
+            );
 
         let mut parent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .runenv(Local {})
-            .skill(&parent_foo_dir)
-            .file(FileEntry::new(
-                &parent_foo,
-                skill_md("foo", "parent foo", "PARENT\n"),
-            ))
+            .skill(
+                &parent_foo_dir,
+                [FileEntry::new(
+                    &parent_foo,
+                    skill_md("foo", "parent foo", "PARENT\n"),
+                )],
+            )
             .subagent(sub_spec)
             .build()
             .unwrap();
@@ -480,11 +488,13 @@ mod tests {
             .provider(dummy_provider())
             .runenv(Local {})
             .skill_root(&skill_root)
-            .skill(&declared_dir)
-            .file(FileEntry::new(
-                &declared_path,
-                skill_md("declared", "stays", "BODY\n"),
-            ))
+            .skill(
+                &declared_dir,
+                [FileEntry::new(
+                    &declared_path,
+                    skill_md("declared", "stays", "BODY\n"),
+                )],
+            )
             .build()
             .unwrap();
 
@@ -530,11 +540,13 @@ mod tests {
         let mut agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .runenv(Local {})
-            .skill(&evolving_dir)
-            .file(FileEntry::new(
-                &evolving_path,
-                skill_md("evolving", "v1", "ORIGINAL\n"),
-            ))
+            .skill(
+                &evolving_dir,
+                [FileEntry::new(
+                    &evolving_path,
+                    skill_md("evolving", "v1", "ORIGINAL\n"),
+                )],
+            )
             .build()
             .unwrap();
 
@@ -572,11 +584,13 @@ mod tests {
         let mut agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .runenv(Local {})
-            .skill(&doomed_dir)
-            .file(FileEntry::new(
-                &doomed_path,
-                skill_md("doomed", "to be removed", "...\n"),
-            ))
+            .skill(
+                &doomed_dir,
+                [FileEntry::new(
+                    &doomed_path,
+                    skill_md("doomed", "to be removed", "...\n"),
+                )],
+            )
             .build()
             .unwrap();
 
