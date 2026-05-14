@@ -1,7 +1,6 @@
 use url::Url;
 
-use super::super::response_format::ResponseSchemaMarshal;
-use super::openai::is_openai_reasoning_model;
+use super::{super::response_format::ResponseSchemaMarshal, openai::is_openai_reasoning_model};
 use crate::{
     datatype::Value,
     lang_model::{
