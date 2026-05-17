@@ -40,10 +40,7 @@ pub fn get_bash_tool_func() -> ToolFunc {
             }
         };
 
-        let Ok(out) = runenv
-            .exec("sh".to_string(), vec!["-c".to_string(), cmd], None)
-            .await
-        else {
+        let Ok(out) = runenv.exec_shell(cmd, None).await else {
             return crate::to_value!({
                 "stdout": String::new(),
                 "stderr": String::from("Internal error"),
