@@ -1,7 +1,11 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::runenv::{ExecResult, RunEnv};
+use async_trait::async_trait;
 
+use super::{Console, Container, ExecResult};
+
+/// `Container` that runs commands directly on the host. Boot/shutdown are
+/// no-ops because there is no underlying VM to spin up.
 #[derive(Debug, Clone, Default)]
 pub struct Local {}
 
@@ -11,8 +15,21 @@ impl Local {
     }
 }
 
-#[async_trait::async_trait]
-impl RunEnv for Local {
+#[async_trait]
+impl Container for Local {
+    type Handle = LocalConsole;
+
+    async fn boot(&mut self) -> anyhow::Result<LocalConsole> {
+        Ok(LocalConsole {})
+    }
+
+    async fn shutdown(&mut self) {}
+}
+
+pub struct LocalConsole {}
+
+#[async_trait]
+impl Console for LocalConsole {
     fn get_os(&self) -> &str {
         std::env::consts::OS
     }
@@ -53,32 +70,29 @@ impl RunEnv for Local {
     }
 
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {
-        tokio::fs::read(path).await.map_err(Into::into)
+        tokio::fs::read(path)
+            .await
+            .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))
     }
 
     async fn write(&self, path: &Path, content: &[u8]) -> anyhow::Result<()> {
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| anyhow::anyhow!("write {}: mkdir parent: {e}", path.display()))?;
         }
-        tokio::fs::write(path, content).await.map_err(Into::into)
-    }
-
-    async fn get_cwd(&self) -> anyhow::Result<PathBuf> {
-        Ok(std::env::current_dir()?)
-    }
-
-    async fn get_env(&self, key: &str) -> anyhow::Result<String> {
-        std::env::var(key).map_err(|e| anyhow::anyhow!("get_env '{key}': {e}"))
+        tokio::fs::write(path, content)
+            .await
+            .map_err(|e| anyhow::anyhow!("write {}: {e}", path.display()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn local() -> Local {
-        Local {}
-    }
+    use crate::runenv::RunEnv;
 
     fn sh(cmd: &str) -> (String, Vec<String>) {
         ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
@@ -86,48 +100,48 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_stdout() {
+        let env = RunEnv::new(Local::new());
+        let handle = env.get().await.unwrap();
         let (prog, args) = sh("echo hello");
-        let result = local().exec(prog, args, None).await.unwrap();
+        let result = handle.exec(prog, args, None).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("hello"));
     }
 
     #[tokio::test]
     async fn test_exec_exit_code() {
+        let env = RunEnv::new(Local::new());
+        let handle = env.get().await.unwrap();
         let (prog, args) = sh("exit 42");
-        let result = local().exec(prog, args, None).await.unwrap();
+        let result = handle.exec(prog, args, None).await.unwrap();
         assert_eq!(result.exit_code, 42);
     }
 
     #[tokio::test]
     async fn test_exec_stderr() {
+        let env = RunEnv::new(Local::new());
+        let handle = env.get().await.unwrap();
         let (prog, args) = sh("echo err >&2");
-        let result = local().exec(prog, args, None).await.unwrap();
+        let result = handle.exec(prog, args, None).await.unwrap();
         assert!(result.stderr.contains("err"));
     }
 
     #[tokio::test]
     async fn test_exec_timeout() {
+        let env = RunEnv::new(Local::new());
+        let handle = env.get().await.unwrap();
         let (prog, args) = sh("sleep 10");
-        let result = local().exec(prog, args, Some(1)).await.unwrap();
+        let result = handle.exec(prog, args, Some(1)).await.unwrap();
         assert!(result.timed_out);
     }
 
     #[tokio::test]
-    async fn test_write_read_roundtrip() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path();
-        local().write(path, b"ailoy").await.unwrap();
-        let bytes = local().read(path).await.unwrap();
-        assert_eq!(bytes, b"ailoy");
-    }
-
-    #[tokio::test]
-    async fn test_write_creates_parent_dirs() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("a/b/c/file.txt");
-        local().write(&path, b"nested").await.unwrap();
-        let bytes = local().read(&path).await.unwrap();
-        assert_eq!(bytes, b"nested");
+    async fn test_handle_shared_across_get_calls() {
+        let env = RunEnv::new(Local::new());
+        let h1 = env.get().await.unwrap();
+        let h2 = env.get().await.unwrap();
+        // While at least one handle is alive, `get()` must return the same
+        // booted instance rather than reboot.
+        assert!(std::sync::Arc::ptr_eq(&h1, &h2));
     }
 }

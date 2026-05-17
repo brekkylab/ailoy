@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use anyhow::Context as _;
 use tokio::sync::Notify;
 
-use crate::runenv::{ExecResult, RunEnv};
+use crate::runenv::{ExecResult, RunEnvHandle};
 
 /// All ailoy-managed files live under `$XDG_CACHE_HOME/ailoy` (default `~/.cache/ailoy`):
 ///   - uv binary : `$AILOY_CACHE/bin/uv`  (symlink if system uv exists, else downloaded)
@@ -65,7 +65,7 @@ fn sh(cmd: &str) -> (String, Vec<String>) {
     ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
 }
 
-async fn run_setup(runenv: &dyn RunEnv) -> anyhow::Result<()> {
+async fn run_setup(runenv: &RunEnvHandle) -> anyhow::Result<()> {
     let (prog, args) = sh(SETUP_CMD);
     let r = runenv
         .exec(prog, args, Some(SETUP_TIMEOUT_SECS))
@@ -105,7 +105,7 @@ impl PythonReplRunner {
         }
     }
 
-    async fn ensure_ready(&self, runenv: &dyn RunEnv) -> anyhow::Result<()> {
+    async fn ensure_ready(&self, runenv: &RunEnvHandle) -> anyhow::Result<()> {
         loop {
             // Create notified future before the CAS to avoid missing a wakeup.
             let notified = self.notify.notified();
@@ -138,7 +138,7 @@ impl PythonReplRunner {
     /// Install pip packages into the ailoy venv via uv.
     pub async fn install_packages(
         &self,
-        runenv: &dyn RunEnv,
+        runenv: &RunEnvHandle,
         packages: &[&str],
     ) -> anyhow::Result<ExecResult> {
         if packages.is_empty() {
@@ -159,7 +159,7 @@ impl PythonReplRunner {
     /// Execute a Python script with optional env vars.
     pub async fn run(
         &self,
-        runenv: &dyn RunEnv,
+        runenv: &RunEnvHandle,
         source: &str,
         env: &[(&str, &str)],
     ) -> anyhow::Result<ExecResult> {
@@ -169,7 +169,7 @@ impl PythonReplRunner {
     /// Like [`run`] but with a per-execution timeout (`0` = no timeout).
     pub async fn run_with_timeout(
         &self,
-        runenv: &dyn RunEnv,
+        runenv: &RunEnvHandle,
         source: &str,
         env: &[(&str, &str)],
         timeout_secs: u64,

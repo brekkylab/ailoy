@@ -1,4 +1,4 @@
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{collections::HashMap, pin::Pin};
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
@@ -6,7 +6,7 @@ use crate::{
     agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
     lang_model::LangModel,
     message::{FinishReason, Message, MessageOutput, Part, Role},
-    runenv::{Local, RunEnv},
+    runenv::RunEnv,
     tool::{
         ToolDesc, ToolFunc,
         r#impl::{get_subagent_tool_desc, get_subagent_tool_func},
@@ -16,7 +16,7 @@ use crate::{
 pub struct AgentState {
     pub history: Vec<Message>,
 
-    pub runenv: Arc<dyn RunEnv>,
+    pub runenv: RunEnv,
 
     /// Token count from the most recent model API call; used to decide when to truncate history.
     pub last_input_tokens: Option<u64>,
@@ -32,7 +32,7 @@ impl AgentState {
     pub fn new() -> Self {
         Self {
             history: Vec::new(),
-            runenv: Arc::new(Local {}),
+            runenv: RunEnv::local(),
             last_input_tokens: None,
         }
     }
@@ -42,7 +42,7 @@ impl AgentState {
         self
     }
 
-    pub fn runenv(mut self, runenv: Arc<dyn RunEnv>) -> Self {
+    pub fn runenv(mut self, runenv: RunEnv) -> Self {
         self.runenv = runenv;
         self
     }
@@ -82,19 +82,18 @@ impl Agent {
     }
 
     /// Create an agent using the process-wide [`default_provider`] and an explicit [`RunEnv`].
-    pub fn try_with_runenv(spec: AgentSpec, runenv: Arc<dyn RunEnv>) -> anyhow::Result<Self> {
+    pub fn try_with_runenv(spec: AgentSpec, runenv: RunEnv) -> anyhow::Result<Self> {
         let provider = default_provider();
         Self::try_with_provider_and_runenv(spec, &provider, runenv)
     }
 
-    /// Create an agent with an explicit [`AgentProvider`] and a [`Local`] runenv.
+    /// Create an agent with an explicit [`AgentProvider`] and a local runenv.
     ///
     /// Use this for scoped, explicit control over models and tool sources without
     /// touching global state.  The provider is not stored in the agent and can be
     /// reused across multiple agents.
     pub fn try_with_provider(spec: AgentSpec, provider: &AgentProvider) -> anyhow::Result<Self> {
-        let runenv: Arc<dyn RunEnv> = Arc::new(Local {});
-        Self::try_with_provider_and_runenv(spec, provider, runenv)
+        Self::try_with_provider_and_runenv(spec, provider, RunEnv::local())
     }
 
     /// Create an agent with an explicit [`AgentProvider`] and [`RunEnv`].
@@ -105,7 +104,7 @@ impl Agent {
     pub fn try_with_provider_and_runenv(
         spec: AgentSpec,
         provider: &AgentProvider,
-        runenv: Arc<dyn RunEnv>,
+        runenv: RunEnv,
     ) -> anyhow::Result<Self> {
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
         let model = provider.models.provide(&spec.model)?;
@@ -234,7 +233,11 @@ impl Agent {
 
                 let outcome: Result<anyhow::Result<bool>, _> =
                     std::panic::AssertUnwindSafe(async move {
-                        let mut stream = tool.call(call_args, call_id_for_call, &*runenv);
+                        // Boot the runenv lazily: only when a tool actually runs.
+                        // RunEnv caches the booted handle so concurrent tool calls
+                        // share the same VM.
+                        let handle = runenv.get().await?;
+                        let mut stream = tool.call(call_args, call_id_for_call, handle);
                         let mut last: Option<MessageOutput> = None;
 
                         while let Some(item) = stream.next().await {
@@ -364,9 +367,6 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "sandbox")]
-    use std::sync::Arc;
-
     use futures::StreamExt as _;
 
     use super::*;
@@ -995,7 +995,7 @@ mod tests {
     #[test_with::env(ANTHROPIC_API_KEY)]
     #[tokio::test]
     async fn test_agent_parallel_bash_calls_are_serialized_in_sandbox() {
-        use crate::runenv::{Sandbox, SandboxConfig};
+        use crate::runenv::SandboxConfig;
 
         let mut provider = get_provider();
         provider.tools = ToolProvider::new();
@@ -1008,11 +1008,9 @@ mod tests {
                  across multiple turns.",
             );
 
-        let runenv: Arc<dyn RunEnv> = Arc::new(
-            Sandbox::new(SandboxConfig::default())
-                .await
-                .expect("sandbox creation failed"),
-        );
+        let runenv = RunEnv::sandbox(SandboxConfig::default())
+            .await
+            .expect("sandbox creation failed");
         let mut agent = Agent::try_with_provider_and_runenv(spec, &provider, runenv).unwrap();
 
         let log = "/tmp/agent_serial_test.txt";
@@ -1033,6 +1031,9 @@ mod tests {
         let log_bytes = agent
             .state
             .runenv
+            .get()
+            .await
+            .expect("runenv boot failed")
             .read(std::path::Path::new(log))
             .await
             .expect("failed to read log");
@@ -1076,7 +1077,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "slow: installs docling (~minutes) and requires model artifacts"]
     async fn test_convert_pdf_to_md_skill() {
-        use crate::runenv::{Sandbox, SandboxConfig};
+        use crate::runenv::SandboxConfig;
 
         // Skill content hardcoded — not loaded from disk at test time.
         // This is what gets written to /workspace/skills/convert_pdf_to_md.md inside the sandbox.
@@ -1178,40 +1179,33 @@ To activate a skill, read its SKILL.md using the bash tool \
             ])
             .instruction(instruction);
 
-        let runenv: Arc<dyn RunEnv> = Arc::new(
-            Sandbox::new(SandboxConfig::default())
-                .await
-                .expect("sandbox creation failed"),
-        );
+        let runenv = RunEnv::sandbox(SandboxConfig::default())
+            .await
+            .expect("sandbox creation failed");
         let mut agent = Agent::try_with_provider_and_runenv(spec, &provider, runenv).unwrap();
 
         // Seed the sandbox with the skill file and the test PDF before running the agent.
         let pdf_bytes = minimal_pdf_bytes();
-        // mkdir via exec — start/stop is handled internally by RunEnv.
-        let _ = agent
-            .state
-            .runenv
+        let handle = agent.state.runenv.get().await.expect("runenv boot failed");
+        let _ = handle
             .exec(
                 "sh".to_string(),
                 vec!["-c".to_string(), "mkdir -p /workspace/skills".to_string()],
                 None,
             )
             .await;
-        agent
-            .state
-            .runenv
+        handle
             .write(
                 std::path::Path::new("/workspace/skills/convert_pdf_to_md.md"),
                 skill_md.as_bytes(),
             )
             .await
             .expect("failed to write skill file into sandbox");
-        agent
-            .state
-            .runenv
+        handle
             .write(std::path::Path::new("/workspace/test.pdf"), &pdf_bytes)
             .await
             .expect("failed to write PDF into sandbox");
+        drop(handle);
 
         // Ask the agent to convert the PDF — it must cat the SKILL.md first.
         let query = Message::new(Role::User).with_contents([Part::text(
@@ -1231,6 +1225,9 @@ To activate a skill, read its SKILL.md using the bash tool \
         let markdown_bytes = agent
             .state
             .runenv
+            .get()
+            .await
+            .expect("runenv boot failed")
             .read(std::path::Path::new("/workspace/test.md"))
             .await
             .expect("agent should have written /workspace/test.md");
@@ -1287,16 +1284,14 @@ To activate a skill, read its SKILL.md using the bash tool \
     #[test_with::env(ANTHROPIC_API_KEY)]
     #[tokio::test]
     async fn test_subagent_write_visible_to_parent_in_shared_sandbox() {
-        use crate::runenv::{Sandbox, SandboxConfig};
+        use crate::runenv::SandboxConfig;
 
         let mut provider = get_provider();
         provider.tools = ToolProvider::new();
 
-        let sandbox = Arc::new(
-            Sandbox::new(SandboxConfig::default())
-                .await
-                .expect("sandbox creation failed"),
-        );
+        let runenv = RunEnv::sandbox(SandboxConfig::default())
+            .await
+            .expect("sandbox creation failed");
 
         // Subagent: writes a file when asked, has bash tool + shared sandbox.
         let sub_spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
@@ -1325,8 +1320,7 @@ To activate a skill, read its SKILL.md using the bash tool \
             )
             .subagent(sub_spec);
 
-        let runenv: Arc<dyn RunEnv> = sandbox.clone();
-        let mut parent = Agent::try_with_provider_and_runenv(main_spec, &provider, runenv)
+        let mut parent = Agent::try_with_provider_and_runenv(main_spec, &provider, runenv.clone())
             .expect("parent build failed");
 
         let query =
@@ -1337,9 +1331,12 @@ To activate a skill, read its SKILL.md using the bash tool \
             event.expect("agent stream error");
         }
 
-        // The sentinel must be readable directly through the shared vm Arc,
+        // The sentinel must be readable directly through the shared VM,
         // confirming the subagent's write landed in the same VM.
-        let result = sandbox
+        let result = runenv
+            .get()
+            .await
+            .expect("runenv boot failed")
             .exec(
                 "sh".to_string(),
                 vec!["-c".to_string(), "cat /workspace/sentinel.txt".to_string()],

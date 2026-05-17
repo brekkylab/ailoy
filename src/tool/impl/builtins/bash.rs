@@ -27,7 +27,7 @@ pub fn get_bash_tool_desc() -> ToolDesc {
 }
 
 pub fn get_bash_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value {
+    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
@@ -65,7 +65,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{runenv::Local, to_value, tool::ToolProvider};
+    use crate::{runenv::RunEnv, to_value, tool::ToolProvider};
 
     async fn provider() -> ToolProvider {
         let mut provider = ToolProvider::new();
@@ -78,9 +78,9 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
         let f = funcs.get("bash").unwrap();
-        let runenv = Local {};
+        let runenv = RunEnv::local().get().await.unwrap();
         let msg = f
-            .call(to_value!({}), "", &runenv)
+            .call(to_value!({}), "", runenv)
             .next()
             .await
             .unwrap()
@@ -99,9 +99,9 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
         let f = funcs.get("bash").unwrap();
-        let runenv = Local {};
+        let runenv = RunEnv::local().get().await.unwrap();
         let msg = f
-            .call(to_value!({ "cmd": "echo ailoy" }), "", &runenv)
+            .call(to_value!({ "cmd": "echo ailoy" }), "", runenv)
             .next()
             .await
             .unwrap()
@@ -120,9 +120,9 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
         let f = funcs.get("bash").unwrap();
-        let runenv = Local {};
+        let runenv = RunEnv::local().get().await.unwrap();
         let msg = f
-            .call(to_value!({ "cmd": "exit 42" }), "", &runenv)
+            .call(to_value!({ "cmd": "exit 42" }), "", runenv)
             .next()
             .await
             .unwrap()
@@ -143,13 +143,13 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
         let f = funcs.get("bash").unwrap();
-        let runenv = Local {};
+        let runenv = RunEnv::local().get().await.unwrap();
 
         let r1 = f
             .call(
                 to_value!({ "cmd": format!("echo persisted > {path}") }),
                 "",
-                &runenv,
+                runenv.clone(),
             )
             .next()
             .await
@@ -166,7 +166,7 @@ mod tests {
         );
 
         let r2 = f
-            .call(to_value!({ "cmd": format!("cat {path}") }), "", &runenv)
+            .call(to_value!({ "cmd": format!("cat {path}") }), "", runenv)
             .next()
             .await
             .unwrap()

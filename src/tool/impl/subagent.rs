@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use futures::StreamExt as _;
 
 use crate::{
@@ -57,7 +55,7 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 pub fn get_subagent_tool_func(
     spec: AgentSpec,
     provider: AgentProvider,
-    runenv: Arc<dyn RunEnv>,
+    runenv: RunEnv,
 ) -> ToolFunc {
     tool_func!(stream |args: Value, id: String| -> Message {
         let spec = spec.clone();

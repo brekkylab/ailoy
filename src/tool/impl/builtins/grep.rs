@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::{
-    runenv::RunEnv,
+    runenv::RunEnvHandle,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
     util::truncate::middle_truncate,
@@ -13,7 +13,7 @@ const MAX_OUTPUT_CHARS: usize = 200_000;
 /// Probe for ripgrep by running `rg --version`. A non-zero exit (or spawn
 /// failure, which `Local::exec` surfaces as `exit_code = -1`) is treated as
 /// "not available".
-async fn has_ripgrep(runenv: &dyn RunEnv) -> bool {
+async fn has_ripgrep(runenv: &RunEnvHandle) -> bool {
     runenv
         .exec("rg".to_string(), vec!["--version".to_string()], Some(5))
         .await
@@ -82,7 +82,7 @@ pub fn get_grep_tool_desc() -> ToolDesc {
 }
 
 pub fn get_grep_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value {
+    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
         let Some(pattern_str) = args.pointer("/pattern").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: pattern",
@@ -142,7 +142,7 @@ pub fn get_grep_tool_func() -> ToolFunc {
             });
         }
 
-        let use_rg = has_ripgrep(runenv).await;
+        let use_rg = has_ripgrep(&runenv).await;
 
         // Build a per-tool arg list. The shared shape is roughly:
         //   <flags> [-B N] [-A N] [include-glob] -e PATTERN -- PATH
@@ -265,7 +265,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, runenv::Local, to_value, tool::ToolProvider};
+    use crate::{datatype::Value, message::Message, runenv::RunEnv, to_value, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -277,7 +277,8 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_grep_tool_desc()]).unwrap();
         let f = funcs.get("grep").unwrap();
-        f.call(args, "1", &Local {}).next().await.unwrap().message
+        let runenv = RunEnv::local().get().await.unwrap();
+        f.call(args, "1", runenv).next().await.unwrap().message
     }
 
     fn output(msg: &Message) -> String {

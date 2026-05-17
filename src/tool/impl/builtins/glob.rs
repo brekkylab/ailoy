@@ -63,7 +63,7 @@ pub fn get_glob_tool_desc() -> ToolDesc {
 }
 
 pub fn get_glob_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value {
+    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
         let Some(pattern_str) = args.pointer("/pattern").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: pattern",
@@ -157,7 +157,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, runenv::Local, to_value, tool::ToolProvider};
+    use crate::{datatype::Value, message::Message, runenv::RunEnv, to_value, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -169,7 +169,8 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_glob_tool_desc()]).unwrap();
         let f = funcs.get("glob").unwrap();
-        f.call(args, "1", &Local {}).next().await.unwrap().message
+        let runenv = RunEnv::local().get().await.unwrap();
+        f.call(args, "1", runenv).next().await.unwrap().message
     }
 
     fn paths(msg: &Message) -> Vec<String> {

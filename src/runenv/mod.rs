@@ -1,6 +1,11 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::Path,
+    sync::{Arc, Weak},
+};
 
+use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use tokio::sync::Mutex;
 
 mod local;
 #[cfg(feature = "sandbox")]
@@ -9,6 +14,36 @@ mod sandbox;
 pub use local::*;
 #[cfg(feature = "sandbox")]
 pub use sandbox::*;
+
+#[async_trait]
+pub trait Container: Send + Sync + 'static {
+    type Handle: Console;
+
+    async fn boot(&mut self) -> anyhow::Result<Self::Handle>;
+
+    async fn shutdown(&mut self);
+}
+
+/// Object-safe erased view of `Container`. The blanket impl below adapts any
+/// concrete `Container` by boxing the handle into `Arc<dyn Console>`.
+#[async_trait]
+trait ContainerDyn: Send + Sync + 'static {
+    async fn boot(&mut self) -> anyhow::Result<Arc<dyn Console>>;
+
+    async fn shutdown(&mut self);
+}
+
+#[async_trait]
+impl<B: Container> ContainerDyn for B {
+    async fn boot(&mut self) -> anyhow::Result<Arc<dyn Console>> {
+        // UFCS so this doesn't recurse into the ContainerDyn impl we're in.
+        Ok(Arc::new(Container::boot(self).await?))
+    }
+
+    async fn shutdown(&mut self) {
+        Container::shutdown(self).await;
+    }
+}
 
 /// Execution result from a shell command.
 #[derive(Debug, Clone)]
@@ -19,23 +54,16 @@ pub struct ExecResult {
     pub timed_out: bool,
 }
 
-/// Execution environment for tools that touch the filesystem or run subprocesses.
-///
-/// An [`Agent`](crate::agent::Agent) holds an `Arc<dyn RunEnv>` in [`AgentState::runenv`](crate::agent::AgentState::runenv)
-/// and passes it to every tool call via [`ToolContext`](crate::tool::ToolContext).  Sub-agents
-/// declared in [`AgentSpec::subagents`](crate::agent::AgentSpec) inherit the parent's
-/// `RunEnv`, so they share the same filesystem and process namespace.
-///
-/// Built-in implementations:
-/// * [`Local`] — runs commands directly on the host (the default).
-/// * [`Sandbox`] (with the `sandbox` feature) — runs commands inside a microVM.
-#[async_trait::async_trait]
-pub trait RunEnv: Send + Sync + 'static {
-    /// `linux`, `macos`, `windows`...
+#[async_trait]
+pub trait Console: Send + Sync {
     fn get_os(&self) -> &str;
 
     /// Run `program` with `args`. `timeout` is in seconds; when elapsed the
     /// resulting [`ExecResult`] has `timed_out = true`.
+    ///
+    /// Takes `&self` so a single booted handle can be shared by multiple
+    /// `RunEnvHandle` clones. Implementations are responsible for their own
+    /// internal synchronization (e.g. a Mutex around the stdin/stdout pipe).
     async fn exec(
         &self,
         program: String,
@@ -146,49 +174,95 @@ pub trait RunEnv: Send + Sync + 'static {
         }
         Ok(())
     }
+}
 
-    /// Read an environment variable from inside the environment.
-    ///
-    /// Returns `Err` if the variable is not set.
-    async fn get_env(&self, key: &str) -> anyhow::Result<String> {
-        let result = match self.get_os() {
-            "linux" | "macos" => {
-                // Pass key as argv to avoid shell-escaping concerns. `printenv`
-                // exits 1 if the variable is not set.
-                self.exec("printenv".to_string(), vec![key.to_string()], None)
-                    .await?
-            }
-            "windows" => {
-                let key_q = key.replace('\'', "''");
-                let script = format!(
-                    "$v = [Environment]::GetEnvironmentVariable('{key_q}'); \
-                     if ($null -eq $v) {{ exit 1 }} else {{ Write-Output $v }}"
-                );
-                self.exec_shell(script, None).await?
-            }
-            other => anyhow::bail!("get_env: unsupported OS '{other}'"),
-        };
-        if result.exit_code != 0 {
-            anyhow::bail!("get_env: '{key}' is not set");
+enum RunEnvState {
+    Idle,
+    /// Holds a `Weak` so that when the last user-visible `RunEnvHandle` drops,
+    /// the inner `Arc` count reaches zero and `RunenvInner::drop` fires.
+    Running(Weak<RunEnvHandle>),
+}
+
+#[derive(Clone)]
+pub struct RunEnv {
+    machine: Arc<Mutex<dyn ContainerDyn>>,
+    state: Arc<Mutex<RunEnvState>>,
+}
+
+impl RunEnv {
+    pub fn new<B: Container>(machine: B) -> Self {
+        Self {
+            machine: Arc::new(Mutex::new(machine)),
+            state: Arc::new(Mutex::new(RunEnvState::Idle)),
         }
-        Ok(result.stdout.trim_end_matches(['\r', '\n']).to_string())
     }
 
-    /// Current working directory inside the environment.
-    async fn get_cwd(&self) -> anyhow::Result<PathBuf> {
-        let script = match self.get_os() {
-            "linux" | "macos" => "pwd",
-            "windows" => "(Get-Location).Path",
-            other => anyhow::bail!("get_cwd: unsupported OS '{other}'"),
-        };
-        let result = self.exec_shell(script.to_string(), None).await?;
-        if result.exit_code != 0 {
-            anyhow::bail!(
-                "get_cwd failed (exit {}): {}",
-                result.exit_code,
-                result.stderr.trim(),
-            );
+    pub fn local() -> Self {
+        Self::new(Local::new())
+    }
+
+    #[cfg(feature = "sandbox")]
+    pub async fn sandbox(config: SandboxConfig) -> anyhow::Result<Self> {
+        Ok(Self::new(Sandbox::new(config).await?))
+    }
+
+    pub async fn get(&self) -> anyhow::Result<Arc<RunEnvHandle>> {
+        loop {
+            let mut s = self.state.lock().await;
+            match &*s {
+                RunEnvState::Idle => {
+                    // Hold the state lock through boot; other callers block on
+                    // `state.lock().await` and observe `Running` once we finish.
+                    let console = self.machine.lock().await.boot().await?;
+                    let handle = Arc::new(RunEnvHandle {
+                        machine: self.machine.clone(),
+                        console,
+                        state: self.state.clone(),
+                    });
+                    *s = RunEnvState::Running(Arc::downgrade(&handle));
+                    return Ok(handle);
+                }
+                RunEnvState::Running(weak) => {
+                    if let Some(inner) = weak.upgrade() {
+                        return Ok(inner);
+                    }
+                    // Last user handle just dropped but the `Drop`-spawned
+                    // shutdown hasn't acquired the state lock yet. Release the
+                    // state lock so it can make progress, then retry.
+                    drop(s);
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                }
+            }
         }
-        Ok(PathBuf::from(result.stdout.trim_end_matches(['\r', '\n'])))
+    }
+}
+
+pub struct RunEnvHandle {
+    machine: Arc<Mutex<dyn ContainerDyn>>,
+
+    console: Arc<dyn Console>,
+
+    state: Arc<Mutex<RunEnvState>>,
+}
+
+impl std::ops::Deref for RunEnvHandle {
+    type Target = dyn Console;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.console
+    }
+}
+
+impl Drop for RunEnvHandle {
+    fn drop(&mut self) {
+        let machine = self.machine.clone();
+        let state = self.state.clone();
+        tokio::spawn(async move {
+            // Hold the state lock through shutdown so concurrent `get()` calls
+            // block until we transition back to `Idle`.
+            let mut s = state.lock().await;
+            machine.lock().await.shutdown().await;
+            *s = RunEnvState::Idle;
+        });
     }
 }
