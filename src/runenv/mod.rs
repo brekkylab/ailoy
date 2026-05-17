@@ -1,5 +1,5 @@
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Weak},
 };
 
@@ -84,6 +84,25 @@ pub trait Console: Send + Sync {
             other => anyhow::bail!("exec_shell: unsupported OS '{other}'"),
         };
         self.exec(program, args, timeout).await
+    }
+
+    /// Return the current working directory.
+    async fn get_cwd(&self) -> anyhow::Result<PathBuf> {
+        let script = match self.get_os() {
+            "linux" | "macos" => "pwd",
+            "windows" => "(Get-Location).Path",
+            other => anyhow::bail!("get_cwd: unsupported OS '{other}'"),
+        };
+
+        let result = self.exec_shell(script.to_string(), None).await?;
+        if result.exit_code != 0 {
+            anyhow::bail!(
+                "get_cwd failed (exit {}): {}",
+                result.exit_code,
+                result.stderr.trim(),
+            );
+        }
+        Ok(PathBuf::from(result.stdout.trim_end_matches(['\r', '\n'])))
     }
 
     /// Read a file's bytes.

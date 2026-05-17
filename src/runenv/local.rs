@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
@@ -67,6 +67,10 @@ impl Console for LocalConsole {
                 timed_out: true,
             }),
         }
+    }
+
+    async fn get_cwd(&self) -> anyhow::Result<PathBuf> {
+        std::env::current_dir().map_err(|e| anyhow::anyhow!("get_cwd: {e}"))
     }
 
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {
