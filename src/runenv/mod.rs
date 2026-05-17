@@ -1,3 +1,116 @@
+//! Running environment abstractions.
+//!
+//! A `RunEnv` represents a computing environment that an LLM can interact
+//! with. This module is designed primarily as the execution substrate for
+//! agents: agent tools (shell, file read/write, etc.) are expected to
+//! dispatch their side effects through a `RunEnv` rather than touching the
+//! host directly, so that the same tool implementations can transparently
+//! run against the local machine, a sandbox, or any other backend that
+//! implements the traits below.
+//!
+//! # Usage
+//!
+//! Construct a `RunEnv` for the desired backend, then call [`RunEnv::get`]
+//! to obtain a handle and drive the environment through it:
+//!
+//! ```ignore
+//! # async fn run() -> anyhow::Result<()> {
+//! use ailoy::runenv::RunEnv;
+//!
+//! let env = RunEnv::local();
+//! let handle = env.get().await?;
+//!
+//! let result = handle.exec_shell("echo hello".to_string(), None).await?;
+//! println!("{}", result.stdout);
+//! # Ok(()) }
+//! ```
+//!
+//! For an isolated environment, use the `sandbox` feature and pass a
+//! [`SandboxConfig`]:
+//!
+//! ```ignore
+//! # async fn run() -> anyhow::Result<()> {
+//! use ailoy::runenv::{RunEnv, SandboxConfig};
+//!
+//! let env = RunEnv::sandbox(SandboxConfig::default()).await?;
+//! let handle = env.get().await?;
+//!
+//! let result = handle.exec_shell("uname -a".to_string(), None).await?;
+//! println!("{}", result.stdout);
+//! # Ok(()) }
+//! ```
+//!
+//! # Lifecycle
+//!
+//! A `RunEnv` is cheap to construct and starts out idle. The underlying
+//! machine is only booted on demand: callers obtain a [`RunEnvHandle`] via
+//! [`RunEnv::get`], which lazily boots the container on the first call and
+//! reuses the same booted handle for subsequent callers. When the last
+//! outstanding `RunEnvHandle` is dropped, the container is shut down
+//! automatically and the `RunEnv` returns to the idle state, ready to be
+//! booted again on the next `get()`.
+//!
+//! All operations against the environment go through the handle, which
+//! derefs to [`Console`].
+//!
+//! # Extending with a new runenv
+//!
+//! To add a new kind of running environment, implement two traits:
+//!
+//! - [`Container`]: describes how to boot and shut down the underlying
+//!   machine. `boot` returns a handle type that implements [`Console`].
+//! - [`Console`]: the booted handle. At minimum, implement
+//!   [`Console::get_os`] and [`Console::exec`]; the other methods
+//!   (`exec_shell`, `get_cwd`, `read`, `write`) have default implementations
+//!   built on top of `exec`, but may be overridden for efficiency when a
+//!   backend can serve them natively without shelling out.
+//!
+//! A minimal skeleton looks like this:
+//!
+//! ```ignore
+//! use async_trait::async_trait;
+//! use ailoy::runenv::{Console, Container, ExecResult, RunEnv};
+//!
+//! struct MyMachine { /* connection state, config, ... */ }
+//! struct MyConsole { /* booted session, e.g. an SSH channel */ }
+//!
+//! #[async_trait]
+//! impl Container for MyMachine {
+//!     type Handle = MyConsole;
+//!
+//!     async fn boot(&mut self) -> anyhow::Result<Self::Handle> {
+//!         // open connection, spawn shell, etc.
+//!         Ok(MyConsole { /* ... */ })
+//!     }
+//!
+//!     async fn shutdown(&mut self) {
+//!         // close connection, kill process, etc.
+//!     }
+//! }
+//!
+//! #[async_trait]
+//! impl Console for MyConsole {
+//!     fn get_os(&self) -> &str { "linux" }
+//!
+//!     async fn exec(
+//!         &self,
+//!         program: String,
+//!         args: Vec<String>,
+//!         timeout: Option<u64>,
+//!     ) -> anyhow::Result<ExecResult> {
+//!         // run the command on the backend and collect stdout/stderr/exit
+//!         todo!()
+//!     }
+//! }
+//!
+//! # async fn run() -> anyhow::Result<()> {
+//! let env = RunEnv::new(MyMachine { /* ... */ });
+//! let handle = env.get().await?;
+//! let result = handle.exec_shell("echo hi".to_string(), None).await?;
+//! println!("{}", result.stdout);
+//! # Ok(()) }
+//! ```
+
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Weak},
@@ -15,6 +128,10 @@ pub use local::*;
 #[cfg(feature = "sandbox")]
 pub use sandbox::*;
 
+/// Backend that knows how to boot and tear down a running environment,
+/// yielding a [`Console`] handle for the booted instance.
+///
+/// See the [module-level documentation](self) for the overall design.
 #[async_trait]
 pub trait Container: Send + Sync + 'static {
     type Handle: Console;
@@ -54,6 +171,10 @@ pub struct ExecResult {
     pub timed_out: bool,
 }
 
+/// Handle to a booted running environment, exposing command execution and
+/// file I/O against it.
+///
+/// See the [module-level documentation](self) for the overall design.
 #[async_trait]
 pub trait Console: Send + Sync {
     fn get_os(&self) -> &str;
@@ -197,11 +318,17 @@ pub trait Console: Send + Sync {
 
 enum RunEnvState {
     Idle,
+
     /// Holds a `Weak` so that when the last user-visible `RunEnvHandle` drops,
     /// the inner `Arc` count reaches zero and `RunenvInner::drop` fires.
     Running(Weak<RunEnvHandle>),
 }
 
+/// A running environment. Wraps a [`Container`] backend and hands out shared
+/// [`RunEnvHandle`]s through [`RunEnv::get`]; the backend is booted on the
+/// first `get` and shut down when the last handle is dropped.
+///
+/// See the [module-level documentation](self) for the overall design.
 #[derive(Clone)]
 pub struct RunEnv {
     machine: Arc<Mutex<dyn ContainerDyn>>,
@@ -256,6 +383,10 @@ impl RunEnv {
     }
 }
 
+/// Shared handle to a booted [`RunEnv`]. Derefs to [`Console`] so callers can
+/// invoke `exec`, `read`, `write`, etc. directly on the handle.
+///
+/// See the [module-level documentation](self) for the overall design.
 pub struct RunEnvHandle {
     machine: Arc<Mutex<dyn ContainerDyn>>,
 
