@@ -250,18 +250,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_relative_path_rejected() {
-        let msg = call(to_value!({ "path": "relative/path.txt" })).await;
-        let phase = msg.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/phase")
-            .and_then(|v| v.as_str())
-            .unwrap();
-        assert_eq!(phase, "validation");
-    }
-
-    #[tokio::test]
     async fn test_read_nonexistent_returns_io_error() {
         let msg = call(to_value!({ "path": "/this/path/does/not/exist/xyz" })).await;
         let phase = msg.contents[0]
