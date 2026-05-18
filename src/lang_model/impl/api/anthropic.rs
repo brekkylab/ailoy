@@ -1,9 +1,13 @@
 use anyhow::bail;
 use url::Url;
 
+use super::super::response_format::ResponseSchemaMarshal;
 use crate::{
     datatype::Value,
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
+    lang_model::{
+        LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
+        ResponseFormat,
+    },
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
@@ -18,13 +22,14 @@ impl LangModelProvider {
             schema: LangModelAPISchema::Anthropic,
             url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
             api_key: Some(api_key),
-            max_tokens: None,
         }
     }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct AnthropicMarshal;
+
+impl ResponseSchemaMarshal for AnthropicMarshal {}
 
 fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     let part_to_value = |part: &Part| -> Value {
@@ -224,6 +229,28 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .unwrap()
                 .insert("tools".to_owned(), tools);
         }
+        if let Some(temperature) = req.temperature {
+            body.as_object_mut()
+                .unwrap()
+                .insert("temperature".to_owned(), temperature.into());
+        }
+        if let Some(top_p) = req.top_p {
+            body.as_object_mut()
+                .unwrap()
+                .insert("top_p".to_owned(), top_p.into());
+        }
+        if let Some(top_k) = req.top_k {
+            body.as_object_mut()
+                .unwrap()
+                .insert("top_k".to_owned(), (top_k as i64).into());
+        }
+        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+            let wire_schema = self.marshal_response_schema(schema);
+            body.as_object_mut().unwrap().insert(
+                "output_config".into(),
+                to_value!({"format": {"type": "json_schema", "schema": wire_schema}}),
+            );
+        }
 
         to_value!({
             "url": url,
@@ -383,7 +410,7 @@ mod tests {
     use super::*;
     use crate::{
         datatype::Bytes,
-        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
@@ -403,6 +430,10 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: None,
         };
         f(&req)
     }
@@ -596,6 +627,102 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_marshal_response_format_absent() {
+        with_req("claude-haiku-4-5", None, |req| {
+            let val = AnthropicMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            assert!(body.as_object().unwrap().get("output_config").is_none());
+        });
+    }
+
+    #[test]
+    fn test_marshal_response_format_json_schema() {
+        let schema = to_value!({"type": "object", "properties": {"name": {"type": "string"}}});
+        let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model: "claude-haiku-4-5",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: Some(&fmt),
+        };
+        let val = AnthropicMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        let fmt_type = body
+            .pointer("/output_config/format/type")
+            .and_then(|v| v.as_str());
+        assert_eq!(fmt_type, Some("json_schema"));
+        let fmt_schema = body.pointer("/output_config/format/schema").unwrap();
+        assert_eq!(
+            fmt_schema.pointer("/type").and_then(|v| v.as_str()),
+            Some("object")
+        );
+    }
+
+    /// Verifies structured output via response_format: the model returns valid JSON matching the schema.
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    async fn test_run_response_format_json_schema() {
+        dotenvy::dotenv().ok();
+        let api_key =
+            std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
+
+        // Intentionally omit additionalProperties to verify normalize_schema adds it.
+        let schema = to_value!({
+            "type": "object",
+            "properties": {
+                "country": {"type": "string"},
+                "capital": {"type": "string"}
+            },
+            "required": ["country", "capital"]
+        });
+
+        let model = LangModel::new(
+            "claude-haiku-4-5".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::Anthropic,
+                url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
+                api_key: Some(api_key),
+            },
+        );
+        let messages = vec![Message::new(Role::User).with_contents([Part::text(
+            "Return France's country name and capital city in the requested format.",
+        )])];
+
+        let resp = model
+            .run(
+                &messages,
+                &[],
+                &LangModelOptions {
+                    response_format: Some(ResponseFormat::json_schema(schema).unwrap()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.finish_reason, FinishReason::Stop {});
+        let text = resp
+            .message
+            .contents
+            .iter()
+            .find_map(|p| p.as_text())
+            .expect("Expected text content");
+        let parsed: serde_json::Value =
+            serde_json::from_str(text).expect("Response must be valid JSON");
+        assert_eq!(parsed["capital"].as_str().unwrap().to_lowercase(), "paris");
+    }
+
     /// Verifies that max_tokens is respected by the Anthropic API (stop_reason: max_tokens).
     #[test_with::env(ANTHROPIC_API_KEY)]
     #[tokio::test]
@@ -610,7 +737,6 @@ mod tests {
                 schema: LangModelAPISchema::Anthropic,
                 url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: Some(5),
             },
         );
         let messages = vec![
@@ -619,7 +745,17 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(
+                &messages,
+                &tools,
+                &LangModelOptions {
+                    max_tokens: Some(5),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 
@@ -648,7 +784,6 @@ mod tests {
                 schema: LangModelAPISchema::Anthropic,
                 url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
                 api_key: Some(api_key),
-                max_tokens: None,
             },
         );
 
@@ -677,7 +812,10 @@ mod tests {
             }))
             .build()];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Stop {});
         assert!(
             resp.message.contents.iter().any(|p| p.as_text().is_some()),

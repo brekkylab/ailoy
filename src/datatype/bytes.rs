@@ -37,6 +37,12 @@ impl From<Vec<u8>> for Bytes {
     }
 }
 
+impl AsRef<[u8]> for Bytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 impl std::fmt::Debug for Bytes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Bytes(({} bytes total))", self.0.len())

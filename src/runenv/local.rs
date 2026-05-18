@@ -41,7 +41,7 @@ impl Console for LocalConsole {
         timeout: Option<u64>,
     ) -> anyhow::Result<ExecResult> {
         let mut command = tokio::process::Command::new(program);
-        command.args(args);
+        command.args(args).kill_on_drop(true);
         let result = if let Some(secs) = timeout {
             tokio::time::timeout(std::time::Duration::from_secs(secs), command.output()).await
         } else {

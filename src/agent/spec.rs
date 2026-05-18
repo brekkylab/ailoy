@@ -1,8 +1,12 @@
+use std::path::PathBuf;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     agent::AgentCard,
+    lang_model::LangModelOptions,
+    runenv::FileEntry,
     tool::{
         ToolDesc,
         r#impl::{
@@ -45,12 +49,15 @@ pub struct AgentSpec {
     /// Tool descriptions exposed to the model. Each [`ToolDesc::name`] must match
     /// an entry registered in the [`AgentProvider`](crate::agent::AgentProvider)'s
     /// [`ToolProvider`](crate::tool::ToolProvider).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDesc>,
 
     /// Sub-agents available to the agent (each registered as a callable tool)
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subagents: Vec<AgentSpec>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_options: Option<LangModelOptions>,
 
     /// Public self-introduction exposed to a calling agent or orchestrator.
     ///
@@ -58,6 +65,19 @@ pub struct AgentSpec {
     /// `None` for top-level agents.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub card: Option<AgentCard>,
+
+    /// Files this agent pre-fills into the runenv at build time.  Each entry
+    /// carries an absolute path and its content, so a serialised `AgentSpec`
+    /// reproduces the same runenv layout elsewhere.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<FileEntry>,
+
+    /// Skill directories owned by this agent.  Each entry is the absolute
+    /// path of a directory containing a `SKILL.md` file (plus any supporting
+    /// files).  The skill's identifier is the final path segment.  Entries
+    /// can live anywhere on the runenv — they do not need to share a parent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<PathBuf>,
 }
 
 impl AgentSpec {
@@ -68,6 +88,9 @@ impl AgentSpec {
             tools: Vec::new(),
             subagents: Vec::new(),
             card: None,
+            files: Vec::new(),
+            skills: Vec::new(),
+            model_options: None,
         }
     }
 
@@ -134,5 +157,205 @@ impl AgentSpec {
     pub fn card(mut self, card: AgentCard) -> Self {
         self.card = Some(card);
         self
+    }
+
+    pub fn max_tokens(mut self, max_tokens: u64) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .max_tokens = Some(max_tokens);
+        self
+    }
+
+    pub fn temperature(mut self, temperature: f64) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .temperature = Some(temperature);
+        self
+    }
+
+    pub fn top_p(mut self, top_p: f64) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .top_p = Some(top_p);
+        self
+    }
+
+    pub fn top_k(mut self, top_k: u64) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .top_k = Some(top_k);
+        self
+    }
+
+    pub fn response_format(mut self, fmt: crate::lang_model::ResponseFormat) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .response_format = Some(fmt);
+        self
+    }
+
+    pub fn file(mut self, file: FileEntry) -> Self {
+        self.files.push(file);
+        self
+    }
+
+    pub fn files(mut self, files: impl IntoIterator<Item = FileEntry>) -> Self {
+        self.files = files.into_iter().collect();
+        self
+    }
+
+    /// Declare a skill at `dir` together with its pre-fill content.
+    /// `dir` is appended to [`Self::skills`]; `entries` are appended to
+    /// [`Self::files`].  Every entry's path must be under `dir` — panics
+    /// otherwise — so a skill's declared territory and its seeded content
+    /// stay aligned.
+    pub fn skill(
+        mut self,
+        dir: impl Into<PathBuf>,
+        entries: impl IntoIterator<Item = FileEntry>,
+    ) -> Self {
+        let dir = dir.into();
+        let entries: Vec<FileEntry> = entries.into_iter().collect();
+        for e in &entries {
+            assert!(
+                e.path.starts_with(&dir),
+                "skill entry path {:?} must live under skill dir {:?}",
+                e.path,
+                dir,
+            );
+        }
+        self.skills.push(dir);
+        self.files.extend(entries);
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_files_omitted_from_serialisation() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini");
+        let json = serde_json::to_string(&spec).unwrap();
+        // Empty files must not surface as "files":[] in the wire form.
+        assert!(
+            !json.contains("\"files\""),
+            "serialised spec should omit empty files: {json}"
+        );
+    }
+
+    #[test]
+    fn test_spec_files_roundtrip() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini")
+            .instruction("hello")
+            .file(FileEntry::new(
+                "/workspace/skills/greet/SKILL.md",
+                b"---\nname: greet\ndescription: Say hello.\n---\nhi\n".to_vec(),
+            ))
+            .file(FileEntry::new(
+                "/workspace/data/note.txt",
+                b"unrelated\n".to_vec(),
+            ));
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: AgentSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.files.len(), 2);
+        assert_eq!(
+            back.files[0].path,
+            std::path::PathBuf::from("/workspace/skills/greet/SKILL.md")
+        );
+        assert_eq!(back.files[1].content.as_ref(), b"unrelated\n");
+    }
+
+    #[test]
+    fn test_default_skills_empty() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini");
+        assert!(spec.skills.is_empty());
+    }
+
+    #[test]
+    fn test_default_skills_omitted_from_serialisation() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini");
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(
+            !json.contains("\"skills\""),
+            "serialised spec should omit empty skills: {json}"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "must live under skill dir")]
+    fn test_skill_panics_on_entry_outside_dir() {
+        let _ = AgentSpec::new("openai/gpt-4o-mini").skill(
+            "/workspace/skills/greet",
+            [FileEntry::new(
+                "/workspace/elsewhere/SKILL.md",
+                b"x".to_vec(),
+            )],
+        );
+    }
+
+    #[test]
+    fn test_skill_accepts_entries_under_dir() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini").skill(
+            "/workspace/skills/greet",
+            [
+                FileEntry::new("/workspace/skills/greet/SKILL.md", b"a".to_vec()),
+                FileEntry::new("/workspace/skills/greet/helper.py", b"b".to_vec()),
+            ],
+        );
+        assert_eq!(spec.skills.len(), 1);
+        assert_eq!(spec.files.len(), 2);
+    }
+
+    #[test]
+    fn test_skills_roundtrip() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini")
+            .skill("/workspace/skills/greet", [])
+            .skill("/workspace/skills/farewell", []);
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: AgentSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.skills.len(), 2);
+        assert_eq!(
+            back.skills[0],
+            std::path::PathBuf::from("/workspace/skills/greet")
+        );
+        assert_eq!(
+            back.skills[1],
+            std::path::PathBuf::from("/workspace/skills/farewell")
+        );
+    }
+
+    #[test]
+    fn test_skills_missing_in_payload_falls_back_to_empty() {
+        let json = r#"{"model":"openai/gpt-4o-mini"}"#;
+        let back: AgentSpec = serde_json::from_str(json).unwrap();
+        assert!(back.skills.is_empty());
+    }
+
+    #[test]
+    fn test_spec_with_subagent_files_roundtrip_recursively() {
+        let sub = AgentSpec::new("openai/gpt-4o-mini")
+            .card(AgentCard {
+                name: "child".into(),
+                description: "child agent".into(),
+                skills: vec![],
+            })
+            .file(FileEntry::new(
+                "/workspace/skills/child/c/SKILL.md",
+                b"---\nname: c\ndescription: child skill\n---\nchild body\n".to_vec(),
+            ));
+        let parent = AgentSpec::new("openai/gpt-4o-mini")
+            .file(FileEntry::new(
+                "/workspace/skills/p/SKILL.md",
+                b"---\nname: p\ndescription: parent skill\n---\nparent body\n".to_vec(),
+            ))
+            .subagent(sub);
+
+        let json = serde_json::to_string(&parent).unwrap();
+        let back: AgentSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.files.len(), 1);
+        assert_eq!(back.subagents.len(), 1);
+        assert_eq!(back.subagents[0].files.len(), 1);
     }
 }

@@ -198,22 +198,23 @@ impl Container for Sandbox {
     }
 
     async fn shutdown(&mut self) {
+        // Stop the VM if it is currently running.
         if let Ok(handle) = MsbSandbox::get(&self.name).await {
-            match handle.status() {
-                SandboxStatus::Running | SandboxStatus::Draining => {
-                    if let Ok(connected) = handle.connect().await {
-                        let _ = connected.stop_and_wait().await;
-                        if !self.config.persist {
-                            let _ = connected.remove_persisted().await;
-                        }
-                    }
-                }
-                _ => {
-                    if !self.config.persist {
-                        let _ = handle.remove().await;
-                    }
+            if matches!(
+                handle.status(),
+                SandboxStatus::Running | SandboxStatus::Draining
+            ) {
+                if let Ok(connected) = handle.connect().await {
+                    let _ = connected.stop_and_wait().await;
                 }
             }
+        }
+        // Remove the registration. We call the static Sandbox::remove() so it
+        // re-fetches a fresh handle whose status reflects the stop above.
+        // SandboxHandle::remove() rejects Running handles, so calling
+        // handle.remove() on the original (stale) handle would silently fail.
+        if !self.config.persist {
+            let _ = MsbSandbox::remove(&self.name).await;
         }
     }
 }
@@ -235,18 +236,18 @@ impl Drop for Sandbox {
             {
                 rt.block_on(async move {
                     if let Ok(handle) = MsbSandbox::get(&name).await {
-                        match handle.status() {
-                            SandboxStatus::Running | SandboxStatus::Draining => {
-                                if let Ok(connected) = handle.connect().await {
-                                    let _ = connected.stop_and_wait().await;
-                                    let _ = connected.remove_persisted().await;
-                                }
-                            }
-                            _ => {
-                                let _ = handle.remove().await;
+                        if matches!(
+                            handle.status(),
+                            SandboxStatus::Running | SandboxStatus::Draining
+                        ) {
+                            if let Ok(connected) = handle.connect().await {
+                                let _ = connected.stop_and_wait().await;
                             }
                         }
                     }
+                    // Re-fetch via the static method so the fresh handle has the
+                    // updated Stopped status; the old handle's cached status is stale.
+                    let _ = MsbSandbox::remove(&name).await;
                 });
             }
             let _ = tx.send(());

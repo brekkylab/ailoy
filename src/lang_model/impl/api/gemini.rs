@@ -1,9 +1,13 @@
 use anyhow::bail;
 use url::Url;
 
+use super::super::response_format::ResponseSchemaMarshal;
 use crate::{
     datatype::Value,
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
+    lang_model::{
+        LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
+        ResponseFormat,
+    },
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
@@ -18,13 +22,31 @@ impl LangModelProvider {
             schema: LangModelAPISchema::Gemini,
             url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap(),
             api_key: Some(api_key),
-            max_tokens: None,
         }
     }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct GeminiMarshal;
+
+impl ResponseSchemaMarshal for GeminiMarshal {
+    fn marshal_response_schema(&self, schema: &Value) -> Value {
+        const STRIP: &[&str] = &["additionalProperties", "$schema", "$defs", "definitions"];
+        fn strip(schema: &Value) -> Value {
+            match schema {
+                Value::Object(obj) => Value::Object(
+                    obj.iter()
+                        .filter(|(k, _)| !STRIP.contains(&k.as_str()))
+                        .map(|(k, v)| (k.clone(), strip(v)))
+                        .collect(),
+                ),
+                Value::Array(arr) => Value::Array(arr.iter().map(strip).collect()),
+                other => other.clone(),
+            }
+        }
+        strip(schema)
+    }
+}
 
 fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
     let part_to_value = |part: &Part| -> Value {
@@ -258,11 +280,45 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
         if !tools.is_null() {
             body.as_object_mut().unwrap().insert("tools".into(), tools);
         }
+        let mut generation_config = to_value!({});
         if let Some(max_tokens) = req.max_tokens {
-            body.as_object_mut().unwrap().insert(
-                "generationConfig".into(),
-                to_value!({"maxOutputTokens": max_tokens as i64}),
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("maxOutputTokens".into(), (max_tokens as i64).into());
+        }
+        if let Some(temperature) = req.temperature {
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("temperature".into(), temperature.into());
+        }
+        if let Some(top_p) = req.top_p {
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("topP".into(), top_p.into());
+        }
+        if let Some(top_k) = req.top_k {
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("topK".into(), (top_k as i64).into());
+        }
+        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("responseMimeType".into(), "application/json".into());
+            generation_config.as_object_mut().unwrap().insert(
+                "responseSchema".into(),
+                self.marshal_response_schema(schema),
             );
+        }
+        if !generation_config.as_object().unwrap().is_empty() {
+            body.as_object_mut()
+                .unwrap()
+                .insert("generationConfig".into(), generation_config);
         }
 
         to_value!({
@@ -429,7 +485,7 @@ mod tests {
     use super::*;
     use crate::{
         datatype::{Bytes, Value},
-        lang_model::{LangModel, LangModelAPISchema, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
@@ -449,6 +505,10 @@ mod tests {
             url: &url,
             api_key: &api_key,
             max_tokens,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: None,
         };
         f(&req)
     }
@@ -630,6 +690,105 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_marshal_response_format_absent() {
+        with_req("gemini-2.5-flash-lite", None, |req| {
+            let val = GeminiMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            assert!(body.as_object().unwrap().get("generationConfig").is_none());
+        });
+    }
+
+    #[test]
+    fn test_marshal_response_format_json_schema() {
+        let schema = to_value!({"type": "object", "properties": {"city": {"type": "string"}}});
+        let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model: "gemini-2.5-flash-lite",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: Some(&fmt),
+        };
+        let val = GeminiMarshal::default().marshal(&req);
+        let body = val.as_object().unwrap().get("body").unwrap();
+        let gen_cfg = body.as_object().unwrap().get("generationConfig").unwrap();
+        assert_eq!(
+            gen_cfg
+                .pointer("/responseMimeType")
+                .and_then(|v| v.as_str()),
+            Some("application/json")
+        );
+        assert_eq!(
+            gen_cfg
+                .pointer("/responseSchema/type")
+                .and_then(|v| v.as_str()),
+            Some("object")
+        );
+    }
+
+    /// Verifies structured output via response_format: the model returns valid JSON matching the schema.
+    #[test_with::env(GEMINI_API_KEY)]
+    #[tokio::test]
+    async fn test_run_response_format_json_schema() {
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set in .env");
+
+        let schema = to_value!({
+            "type": "object",
+            "properties": {
+                "country": {"type": "string"},
+                "capital": {"type": "string"}
+            },
+            "required": ["country", "capital"]
+        });
+
+        let model = LangModel::new(
+            "gemini-2.5-flash-lite".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::Gemini,
+                url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
+                    .unwrap(),
+                api_key: Some(api_key),
+            },
+        );
+        let messages = vec![Message::new(Role::User).with_contents([Part::text(
+            "Return France's country name and capital city in the requested format.",
+        )])];
+
+        let resp = model
+            .run(
+                &messages,
+                &[],
+                &LangModelOptions {
+                    response_format: Some(ResponseFormat::json_schema(schema).unwrap()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.finish_reason, FinishReason::Stop {});
+        let text = resp
+            .message
+            .contents
+            .iter()
+            .find_map(|p| p.as_text())
+            .expect("Expected text content");
+        let parsed: serde_json::Value =
+            serde_json::from_str(text).expect("Response must be valid JSON");
+        assert_eq!(parsed["capital"].as_str().unwrap().to_lowercase(), "paris");
+    }
+
     /// Verifies that max_tokens is respected by the Gemini API (finishReason: MAX_TOKENS).
     #[test_with::env(GEMINI_API_KEY)]
     #[tokio::test]
@@ -644,7 +803,6 @@ mod tests {
                 url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
                     .unwrap(),
                 api_key: Some(api_key),
-                max_tokens: Some(5),
             },
         );
         let messages = vec![
@@ -653,7 +811,17 @@ mod tests {
         ];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(
+                &messages,
+                &tools,
+                &LangModelOptions {
+                    max_tokens: Some(5),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 
@@ -688,7 +856,6 @@ mod tests {
                 url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
                     .unwrap(),
                 api_key: Some(api_key),
-                max_tokens: None,
             },
         );
 
@@ -707,7 +874,10 @@ mod tests {
         let user_messages = vec![Message::new(Role::User).with_contents([Part::text(
             "Use the file_read tool to read /tmp/photo.jpg, then describe who you see.",
         )])];
-        let step1 = model.run(&user_messages, &tools).await.unwrap();
+        let step1 = model
+            .run(&user_messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(
             step1.finish_reason,
             FinishReason::ToolCall {},
@@ -744,7 +914,10 @@ mod tests {
                 ]),
         );
 
-        let step2 = model.run(&messages, &tools).await.unwrap();
+        let step2 = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert_eq!(step2.finish_reason, FinishReason::Stop {});
         assert!(
             step2.message.contents.iter().any(|p| p.as_text().is_some()),

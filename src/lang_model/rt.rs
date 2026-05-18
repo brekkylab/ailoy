@@ -4,10 +4,54 @@ use url::Url;
 use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
-    lang_model::r#impl::api,
+    lang_model::{LangModelOptions, r#impl::api},
     message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
     tool::ToolDesc,
 };
+
+/// Constrains the model's response to a specific JSON format.
+///
+/// Constructed via [`ResponseFormat::json_schema`], which validates the schema
+/// against JSON Schema Draft 7 before storing it, then normalises it to satisfy
+/// provider-specific requirements.  The stored schema is provider-agnostic;
+/// each marshal converts it to the wire format expected by its API.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", content = "schema", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    JsonSchema(Value),
+}
+
+impl ResponseFormat {
+    /// Validate `schema` against JSON Schema Draft 7.  Returns `Err` if the
+    /// schema is structurally invalid (e.g. `"type": 123`).  The stored schema
+    /// is the user's original; provider-specific transformations happen in each
+    /// marshal via [`ResponseSchemaMarshal::marshal_response_schema`].
+    pub fn json_schema(schema: Value) -> anyhow::Result<Self> {
+        let serde_schema: serde_json::Value = schema.clone().into();
+        jsonschema::validator_for(&serde_schema)
+            .map_err(|e| anyhow::anyhow!("Invalid JSON schema: {}", e))?;
+        Ok(Self::JsonSchema(schema))
+    }
+}
+
+impl schemars::JsonSchema for ResponseFormat {
+    fn schema_name() -> String {
+        "ResponseFormat".into()
+    }
+
+    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        use schemars::schema::{InstanceType, ObjectValidation, SchemaObject, SingleOrVec};
+        SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(ObjectValidation {
+                required: ["type".to_owned()].into(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+        .into()
+    }
+}
 
 /// Runtime
 pub struct LangModel {
@@ -22,6 +66,10 @@ pub(crate) struct LangModelRequest<'a> {
     pub url: &'a Url,
     pub api_key: &'a Option<String>,
     pub max_tokens: Option<u64>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub top_k: Option<u64>,
+    pub response_format: Option<&'a ResponseFormat>,
 }
 
 impl LangModel {
@@ -37,13 +85,13 @@ impl LangModel {
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
+        options: &LangModelOptions,
     ) -> anyhow::Result<MessageOutput> {
         match &self.provider {
             LangModelProviderElem::API {
                 schema,
                 url,
                 api_key,
-                max_tokens,
             } => {
                 // Create request
                 let req = LangModelRequest {
@@ -52,7 +100,11 @@ impl LangModel {
                     tools,
                     url,
                     api_key,
-                    max_tokens: *max_tokens,
+                    max_tokens: options.max_tokens,
+                    temperature: options.temperature,
+                    top_p: options.top_p,
+                    top_k: options.top_k,
+                    response_format: options.response_format.as_ref(),
                 };
 
                 let req = match schema {
@@ -188,6 +240,43 @@ mod tests {
         tool::{ToolDesc, ToolDescBuilder},
     };
 
+    fn stored_schema(fmt: ResponseFormat) -> Value {
+        match fmt {
+            ResponseFormat::JsonSchema(s) => s,
+        }
+    }
+
+    #[test]
+    fn test_response_format_invalid_schema_rejected() {
+        assert!(ResponseFormat::json_schema(to_value!({"type": 123})).is_err());
+    }
+
+    #[test]
+    fn test_response_format_non_object_rejected() {
+        assert!(ResponseFormat::json_schema(to_value!("not an object")).is_err());
+    }
+
+    #[test]
+    fn test_response_format_stores_raw_schema() {
+        let schema = to_value!({"type": "object", "properties": {"x": {"type": "string"}}});
+        let fmt = ResponseFormat::json_schema(schema.clone()).unwrap();
+        let stored = stored_schema(fmt);
+        assert_eq!(stored, schema, "stored schema must equal input");
+        assert!(
+            stored.pointer("/additionalProperties").is_none(),
+            "ResponseFormat must not mutate the schema at construction time"
+        );
+    }
+
+    #[test]
+    fn test_response_format_serde_round_trip() {
+        let schema = to_value!({"type": "object", "properties": {"name": {"type": "string"}}});
+        let original = ResponseFormat::json_schema(schema).unwrap();
+        let json = serde_json::to_string(&original).expect("should serialize");
+        let restored: ResponseFormat = serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(original, restored);
+    }
+
     fn openai_chat_completion(model: &str, api_key: String) -> LangModel {
         LangModel::new(
             model.to_string(),
@@ -209,7 +298,10 @@ mod tests {
         let messages = vec![Message::new(Role::User).with_contents([Part::text("Hi")])];
         let tools: Vec<ToolDesc> = vec![];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
         assert!(
             !resp.message.contents.is_empty(),
             "Expected at least one message content"
@@ -252,7 +344,10 @@ mod tests {
                 .build(),
         ];
 
-        let resp = model.run(&messages, &tools).await.unwrap();
+        let resp = model
+            .run(&messages, &tools, &LangModelOptions::default())
+            .await
+            .unwrap();
 
         // The model should respond with a tool call
         assert_eq!(resp.finish_reason, FinishReason::ToolCall {});
@@ -281,7 +376,10 @@ mod tests {
         let model = openai_chat_completion("gpt-5.4-mini", api_key);
         let messages = vec![Message::new(Role::User).with_contents([Part::text("Hi")])];
 
-        let resp = model.run(&messages, &[]).await.unwrap();
+        let resp = model
+            .run(&messages, &[], &LangModelOptions::default())
+            .await
+            .unwrap();
         let usage = resp
             .usage
             .expect("usage must be present in real API response");
@@ -340,7 +438,10 @@ mod tests {
         );
         let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
 
-        let resp = model.run(&messages, &[]).await.unwrap();
+        let resp = model
+            .run(&messages, &[], &LangModelOptions::default())
+            .await
+            .unwrap();
 
         assert_eq!(
             *call_count.lock().unwrap(),
