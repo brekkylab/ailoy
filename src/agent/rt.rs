@@ -207,7 +207,7 @@ impl Agent {
 
     /// Maximum number of characters kept in a single tool-result message before
     /// middle-truncation is applied.  Mirrors the limit already enforced by the
-    /// built-in bash tool so that *all* tool results stay within a consistent bound.
+    /// built-in shell tool so that *all* tool results stay within a consistent bound.
     const MAX_TOOL_RESULT_CHARS: usize = 30_000;
 
     /// Clamp every [`Part`] in a [`Role::Tool`] message so that large payloads
@@ -1078,23 +1078,23 @@ mod tests {
         );
     }
 
-    /// Verifies that parallel bash tool calls from the agent loop do not interleave
-    /// inside the sandbox. The LLM is instructed to issue both bash calls in a single
+    /// Verifies that parallel shell tool calls from the agent loop do not interleave
+    /// inside the sandbox. The LLM is instructed to issue both shell calls in a single
     /// response. Each command writes "start_N", sleeps, then writes "end_N" to a shared
     /// log file. The sandbox Mutex guarantees serial execution, so no interleaving occurs.
     #[cfg(feature = "sandbox")]
     #[test_with::env(ANTHROPIC_API_KEY)]
     #[tokio::test]
-    async fn test_agent_parallel_bash_calls_are_serialized_in_sandbox() {
+    async fn test_agent_parallel_shell_calls_are_serialized_in_sandbox() {
         use crate::runenv::SandboxConfig;
 
         let mut provider = get_provider();
         provider.tools = ToolProvider::new();
 
         let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool(crate::tool::r#impl::get_bash_tool_desc())
+            .tool(crate::tool::r#impl::get_shell_tool_desc())
             .instruction(
-                "You have a bash tool. When asked to run two commands, always call bash \
+                "You have a shell tool. When asked to run two commands, always call shell \
                  TWICE in a SINGLE response (parallel tool calls). Never run them sequentially \
                  across multiple turns.",
             );
@@ -1106,7 +1106,7 @@ mod tests {
 
         let log = "/tmp/agent_serial_test.txt";
         let query = Message::new(Role::User).with_contents([Part::text(format!(
-            "Run these two shell commands in a single response using two parallel bash tool calls:\n\
+            "Run these two shell commands in a single response using two parallel shell tool calls:\n\
              1. echo start_1 >> {log} && sleep 0.3 && echo end_1 >> {log}\n\
              2. echo start_2 >> {log} && sleep 0.3 && echo end_2 >> {log}"
         ))]);
@@ -1159,7 +1159,7 @@ mod tests {
 
     /// Verifies the convert_pdf_to_md skill end-to-end:
     ///   1. Agent receives an instruction listing available skills (name, description, path only).
-    ///   2. Agent reads the SKILL.md via `bash cat` to activate the skill.
+    ///   2. Agent reads the SKILL.md via `shell cat` to activate the skill.
     ///   3. Agent installs Docling and converts the PDF to Markdown.
     ///
     /// Requires ANTHROPIC_API_KEY and the sandbox feature.
@@ -1250,7 +1250,7 @@ After the script exits with code 0, the Markdown file is written next to the PDF
         let instruction = "\
 You are a helpful assistant with access to a set of skills. \
 Skills provide step-by-step instructions for specific tasks. \
-To activate a skill, read its SKILL.md using the bash tool \
+To activate a skill, read its SKILL.md using the shell tool \
 (`cat <path>`), then follow the instructions inside.
 
 ## Available Skills
@@ -1265,7 +1265,7 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         let spec = AgentSpec::new("anthropic/claude-sonnet-4-6")
             .tools([
-                crate::tool::r#impl::get_bash_tool_desc(),
+                crate::tool::r#impl::get_shell_tool_desc(),
                 crate::tool::r#impl::get_python_repl_tool_desc(),
             ])
             .instruction(instruction);
@@ -1367,7 +1367,7 @@ To activate a skill, read its SKILL.md using the bash tool \
     }
 
     /// End-to-end: parent agent delegates to subagent via tool call, subagent writes
-    /// a sentinel file in the shared sandbox, parent reads it back with its own bash tool
+    /// a sentinel file in the shared sandbox, parent reads it back with its own shell tool
     /// and returns the content.  Proves the runenv passed to
     /// [`Agent::try_with_provider_and_runenv`] is propagated to spec subagents so they
     /// share the same VM.
@@ -1384,12 +1384,12 @@ To activate a skill, read its SKILL.md using the bash tool \
             .await
             .expect("sandbox creation failed");
 
-        // Subagent: writes a file when asked, has bash tool + shared sandbox.
+        // Subagent: writes a file when asked, has shell tool + shared sandbox.
         let sub_spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool(crate::tool::r#impl::get_bash_tool_desc())
+            .tool(crate::tool::r#impl::get_shell_tool_desc())
             .instruction(
                 "You are a file-writer agent. When asked to write content to a path, \
-                 use the bash tool to do so (e.g. `echo CONTENT > PATH`). \
+                 use the shell tool to do so (e.g. `echo CONTENT > PATH`). \
                  Confirm once the write succeeded.",
             )
             .card(AgentCard {
@@ -1398,15 +1398,15 @@ To activate a skill, read its SKILL.md using the bash tool \
                 skills: vec![],
             });
 
-        // Parent: delegates writing to the subagent, then reads back with bash.
+        // Parent: delegates writing to the subagent, then reads back with shell.
         let main_spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool(crate::tool::r#impl::get_bash_tool_desc())
+            .tool(crate::tool::r#impl::get_shell_tool_desc())
             .instruction(
-                "You are an orchestrator. You have a 'file_writer' subagent and a bash tool. \
+                "You are an orchestrator. You have a 'file_writer' subagent and a shell tool. \
                  When asked to verify shared sandbox state: \
                  1. Call the file_writer subagent to write the text 'sandbox_shared_ok' to \
                     /workspace/sentinel.txt. \
-                 2. After it confirms, use your bash tool to run `cat /workspace/sentinel.txt`. \
+                 2. After it confirms, use your shell tool to run `cat /workspace/sentinel.txt`. \
                  3. Return the exact output of cat.",
             )
             .subagent(sub_spec);

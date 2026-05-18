@@ -194,10 +194,10 @@ pub trait Console: Send + Sync {
 
     /// Run `script` through the system shell
     ///
-    /// `bash -c` on Linux/macOS, `powershell -Command` on Windows.
+    /// `sh -c` on Linux/macOS, `powershell -Command` on Windows.
     async fn exec_shell(&self, script: String, timeout: Option<u64>) -> anyhow::Result<ExecResult> {
         let (program, args) = match self.get_os() {
-            "linux" | "macos" => ("bash".to_string(), vec!["-c".to_string(), script]),
+            "linux" | "macos" => ("sh".to_string(), vec!["-c".to_string(), script]),
             "windows" => (
                 "powershell".to_string(),
                 vec!["-Command".to_string(), script],

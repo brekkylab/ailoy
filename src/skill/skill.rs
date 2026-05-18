@@ -379,7 +379,7 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
 "#;
 
         let instruction = "You are a helpful assistant with access to skills. \
-             To activate a skill, read its SKILL.md using the bash tool \
+             To activate a skill, read its SKILL.md using the shell tool \
              (`cat <path>`), then follow the instructions inside.";
 
         let mut provider = AgentProvider::new();
@@ -401,7 +401,7 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
             .provider(provider)
             .runenv(sandbox)
             .tools([
-                crate::tool::r#impl::get_bash_tool_desc(),
+                crate::tool::r#impl::get_shell_tool_desc(),
                 crate::tool::r#impl::get_python_repl_tool_desc(),
             ])
             .instruction(instruction)
