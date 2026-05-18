@@ -1,12 +1,10 @@
 //! Running environment abstractions.
 //!
 //! A `RunEnv` represents a computing environment that an LLM can interact
-//! with. This module is designed primarily as the execution substrate for
-//! agents: agent tools (shell, file read/write, etc.) are expected to
-//! dispatch their side effects through a `RunEnv` rather than touching the
-//! host directly, so that the same tool implementations can transparently
-//! run against the local machine, a sandbox, or any other backend that
-//! implements the traits below.
+//! with — a uniform abstraction over the local machine, a sandboxed
+//! container, or any other backend that implements the traits below.
+//!
+//! This module is designed primarily as the execution substrate for agents.
 //!
 //! # Usage
 //!
