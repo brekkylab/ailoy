@@ -9,7 +9,7 @@ const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
 pub fn get_shell_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("shell")
         .description(
-            "Shell command. Interpreted by sh on Linux/macOS and by powershell on Windows.",
+            "Shell command. Interpreted by `sh` on Linux/macOS and by `powershell` on Windows.",
         )
         .parameters(crate::to_value!({
             "type": "object",
