@@ -194,14 +194,25 @@ pub trait Console: Send + Sync {
 
     /// Run `script` through the system shell
     ///
-    /// `sh -c` on Linux/macOS, `powershell -Command` on Windows.
+    /// `sh -c` on Linux/macOS, `powershell -EncodedCommand` on Windows.
     async fn exec_shell(&self, script: String, timeout: Option<u64>) -> anyhow::Result<ExecResult> {
         let (program, args) = match self.get_os() {
             "linux" | "macos" => ("sh".to_string(), vec!["-c".to_string(), script]),
-            "windows" => (
-                "powershell".to_string(),
-                vec!["-Command".to_string(), script],
-            ),
+            "windows" => {
+                // On Windows the script is transported as UTF-16LE base64 to bypass
+                // CMD/PowerShell argv quoting; quotes, newlines, and metacharacters in
+                // `script` pass through verbatim. Output encoding (BOM, code page) is
+                // unaffected and must still be handled by callers if relevant.
+                let utf16le: Vec<u8> = script
+                    .encode_utf16()
+                    .flat_map(|u| u.to_le_bytes())
+                    .collect();
+                let b64 = STANDARD.encode(&utf16le);
+                (
+                    "powershell".to_string(),
+                    vec!["-NoLogo".to_string(), "-EncodedCommand".to_string(), b64],
+                )
+            }
             other => anyhow::bail!("exec_shell: unsupported OS '{other}'"),
         };
         self.exec(program, args, timeout).await
