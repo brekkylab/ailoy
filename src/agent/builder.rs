@@ -164,6 +164,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn response_format(mut self, fmt: crate::lang_model::ResponseFormat) -> Self {
+        self.spec = self.spec.response_format(fmt);
+        self
+    }
+
     /// Append a single pre-fill [`FileEntry`] to `spec.files`.  The file is
     /// written into the runenv on the agent's first `run`.
     pub fn file(mut self, entry: FileEntry) -> Self {
@@ -223,6 +228,7 @@ impl AgentBuilder {
 mod tests {
     use super::*;
     use crate::{agent::AgentCard, lang_model::LangModelProvider, message::Role};
+
     const TEST_MODEL: &str = "openai/gpt-4o-mini";
 
     fn dummy_provider() -> AgentProvider {
