@@ -55,7 +55,7 @@
 //!
 //! To add a new kind of running environment, implement two traits:
 //!
-//! - [`Container`]: describes how to boot and shut down the underlying
+//! - [`Machine`]: describes how to boot and shut down the underlying
 //!   machine. `boot` returns a handle type that implements [`Console`].
 //! - [`Console`]: the booted handle. At minimum, implement
 //!   [`Console::get_os`] and [`Console::exec`]; the other methods
@@ -67,13 +67,13 @@
 //!
 //! ```ignore
 //! use async_trait::async_trait;
-//! use ailoy::runenv::{Console, Container, ExecResult, RunEnv};
+//! use ailoy::runenv::{Console, Machine, ExecResult, RunEnv};
 //!
 //! struct MyMachine { /* connection state, config, ... */ }
 //! struct MyConsole { /* booted session, e.g. an SSH channel */ }
 //!
 //! #[async_trait]
-//! impl Container for MyMachine {
+//! impl Machine for MyMachine {
 //!     type Handle = MyConsole;
 //!
 //!     async fn boot(&mut self) -> anyhow::Result<Self::Handle> {
@@ -133,7 +133,7 @@ pub use sandbox::*;
 ///
 /// See the [module-level documentation](self) for the overall design.
 #[async_trait]
-pub trait Container: Send + Sync + 'static {
+pub trait Machine: Send + Sync + 'static {
     type Handle: Console;
 
     async fn boot(&mut self) -> anyhow::Result<Self::Handle>;
@@ -141,24 +141,24 @@ pub trait Container: Send + Sync + 'static {
     async fn shutdown(&mut self);
 }
 
-/// Object-safe erased view of `Container`. The blanket impl below adapts any
-/// concrete `Container` by boxing the handle into `Arc<dyn Console>`.
+/// Object-safe erased view of `Machine`. The blanket impl below adapts any
+/// concrete `Machine` by boxing the handle into `Arc<dyn Console>`.
 #[async_trait]
-trait ContainerDyn: Send + Sync + 'static {
+trait MachineDyn: Send + Sync + 'static {
     async fn boot(&mut self) -> anyhow::Result<Arc<dyn Console>>;
 
     async fn shutdown(&mut self);
 }
 
 #[async_trait]
-impl<B: Container> ContainerDyn for B {
+impl<B: Machine> MachineDyn for B {
     async fn boot(&mut self) -> anyhow::Result<Arc<dyn Console>> {
-        // UFCS so this doesn't recurse into the ContainerDyn impl we're in.
-        Ok(Arc::new(Container::boot(self).await?))
+        // UFCS so this doesn't recurse into the MachineDyn impl we're in.
+        Ok(Arc::new(Machine::boot(self).await?))
     }
 
     async fn shutdown(&mut self) {
-        Container::shutdown(self).await;
+        Machine::shutdown(self).await;
     }
 }
 
@@ -324,19 +324,19 @@ enum RunEnvState {
     Running(Weak<RunEnvHandle>),
 }
 
-/// A running environment. Wraps a [`Container`] backend and hands out shared
+/// A running environment. Wraps a [`Machine`] backend and hands out shared
 /// [`RunEnvHandle`]s through [`RunEnv::get`]; the backend is booted on the
 /// first `get` and shut down when the last handle is dropped.
 ///
 /// See the [module-level documentation](self) for the overall design.
 #[derive(Clone)]
 pub struct RunEnv {
-    machine: Arc<Mutex<dyn ContainerDyn>>,
+    machine: Arc<Mutex<dyn MachineDyn>>,
     state: Arc<Mutex<RunEnvState>>,
 }
 
 impl RunEnv {
-    pub fn new<B: Container>(machine: B) -> Self {
+    pub fn new<B: Machine>(machine: B) -> Self {
         Self {
             machine: Arc::new(Mutex::new(machine)),
             state: Arc::new(Mutex::new(RunEnvState::Idle)),
@@ -388,7 +388,7 @@ impl RunEnv {
 ///
 /// See the [module-level documentation](self) for the overall design.
 pub struct RunEnvHandle {
-    machine: Arc<Mutex<dyn ContainerDyn>>,
+    machine: Arc<Mutex<dyn MachineDyn>>,
 
     console: Arc<dyn Console>,
 
@@ -407,12 +407,22 @@ impl Drop for RunEnvHandle {
     fn drop(&mut self) {
         let machine = self.machine.clone();
         let state = self.state.clone();
-        tokio::spawn(async move {
-            // Hold the state lock through shutdown so concurrent `get()` calls
-            // block until we transition back to `Idle`.
-            let mut s = state.lock().await;
-            machine.lock().await.shutdown().await;
-            *s = RunEnvState::Idle;
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                rt.block_on(async move {
+                    // Hold the state lock through shutdown so concurrent `get()` calls
+                    // block until we transition back to `Idle`.
+                    let mut s = state.lock().await;
+                    machine.lock().await.shutdown().await;
+                    *s = RunEnvState::Idle;
+                });
+            }
+            let _ = tx.send(());
         });
+        let _ = rx.recv_timeout(std::time::Duration::from_secs(30));
     }
 }

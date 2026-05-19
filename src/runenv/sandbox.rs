@@ -1,8 +1,8 @@
-//! microsandbox-backed `Container` for runenv.
+//! microsandbox-backed `Machine` for runenv.
 //!
-//! Adapted from [`crate::runenv::sandbox`] to the v2 Container/Console split.
-//! Heavyweight, fallible setup happens in `Sandbox::new`; `Container::boot`
-//! restarts the VM, and `Container::shutdown` stops/removes it.
+//! Adapted from [`crate::runenv::sandbox`] to the v2 Machine/Console split.
+//! Heavyweight, fallible setup happens in `Sandbox::new`; `Machine::boot`
+//! restarts the VM, and `Machine::shutdown` stops/removes it.
 
 use std::{
     collections::HashMap,
@@ -19,7 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{Console, Container, ExecResult};
+use super::{Console, ExecResult, Machine};
 use crate::util::truncate::middle_truncate;
 
 /// A volume mount attached to a sandbox at creation time.
@@ -124,7 +124,7 @@ fn fresh_sandbox_name() -> String {
     format!("ailoy-{}", Uuid::new_v4())
 }
 
-/// `Container` implementation backed by a microsandbox VM.
+/// `Machine` implementation backed by a microsandbox VM.
 ///
 /// The VM is created at construction time and left stopped; `boot()` starts
 /// it for the duration of the returned [`SandboxConsole`], and `shutdown()`
@@ -168,6 +168,27 @@ impl Sandbox {
 
         Ok(Self { config, name })
     }
+
+    async fn stop(name: &str, persist: bool) {
+        // Stop the VM if it is currently running.
+        if let Ok(handle) = MsbSandbox::get(name).await {
+            if matches!(
+                handle.status(),
+                SandboxStatus::Running | SandboxStatus::Draining
+            ) {
+                if let Ok(connected) = handle.connect().await {
+                    let _ = connected.stop_and_wait().await;
+                }
+            }
+        }
+        // Remove the registration. We call the static Sandbox::remove() so it
+        // re-fetches a fresh handle whose status reflects the stop above.
+        // SandboxHandle::remove() rejects Running handles, so calling
+        // handle.remove() on the original (stale) handle would silently fail.
+        if !persist {
+            let _ = MsbSandbox::remove(name).await;
+        }
+    }
 }
 
 impl std::fmt::Debug for Sandbox {
@@ -181,7 +202,7 @@ impl std::fmt::Debug for Sandbox {
 }
 
 #[async_trait]
-impl Container for Sandbox {
+impl Machine for Sandbox {
     type Handle = SandboxConsole;
 
     async fn boot(&mut self) -> anyhow::Result<SandboxConsole> {
@@ -198,31 +219,14 @@ impl Container for Sandbox {
     }
 
     async fn shutdown(&mut self) {
-        // Stop the VM if it is currently running.
-        if let Ok(handle) = MsbSandbox::get(&self.name).await {
-            if matches!(
-                handle.status(),
-                SandboxStatus::Running | SandboxStatus::Draining
-            ) {
-                if let Ok(connected) = handle.connect().await {
-                    let _ = connected.stop_and_wait().await;
-                }
-            }
-        }
-        // Remove the registration. We call the static Sandbox::remove() so it
-        // re-fetches a fresh handle whose status reflects the stop above.
-        // SandboxHandle::remove() rejects Running handles, so calling
-        // handle.remove() on the original (stale) handle would silently fail.
-        if !self.config.persist {
-            let _ = MsbSandbox::remove(&self.name).await;
-        }
+        Self::stop(&self.name, self.config.persist).await;
     }
 }
 
 impl Drop for Sandbox {
     fn drop(&mut self) {
         // Catches VMs that were created in `new()` but never reached
-        // `Container::shutdown` (e.g. the `Runenv` was dropped without ever
+        // `Machine::shutdown` (e.g. the `Runenv` was dropped without ever
         // calling `get()`). Persisted VMs survive.
         if self.config.persist {
             return;
@@ -234,21 +238,7 @@ impl Drop for Sandbox {
                 .enable_all()
                 .build()
             {
-                rt.block_on(async move {
-                    if let Ok(handle) = MsbSandbox::get(&name).await {
-                        if matches!(
-                            handle.status(),
-                            SandboxStatus::Running | SandboxStatus::Draining
-                        ) {
-                            if let Ok(connected) = handle.connect().await {
-                                let _ = connected.stop_and_wait().await;
-                            }
-                        }
-                    }
-                    // Re-fetch via the static method so the fresh handle has the
-                    // updated Stopped status; the old handle's cached status is stale.
-                    let _ = MsbSandbox::remove(&name).await;
-                });
+                rt.block_on(Self::stop(&name, false));
             }
             let _ = tx.send(());
         });

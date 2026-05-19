@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use super::{Console, Container, ExecResult};
+use super::{Console, Machine, ExecResult};
 
-/// `Container` that runs commands directly on the host. Boot/shutdown are
+/// `Machine` that runs commands directly on the host. Boot/shutdown are
 /// no-ops because there is no underlying VM to spin up.
 #[derive(Debug, Clone, Default)]
 pub struct Local {}
@@ -16,7 +16,7 @@ impl Local {
 }
 
 #[async_trait]
-impl Container for Local {
+impl Machine for Local {
     type Handle = LocalConsole;
 
     async fn boot(&mut self) -> anyhow::Result<LocalConsole> {
