@@ -483,6 +483,7 @@ async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result
         .image(config.image.as_str())
         .cpus(config.cpus)
         .memory(config.memory_mib)
+        .workdir(config.workdir.as_str())
         .pull_policy(PullPolicy::IfMissing);
 
     for (k, v) in &config.env {
@@ -506,7 +507,8 @@ async fn create_from_snapshot(
     let mut builder = MsbSandbox::builder(new_name)
         .from_snapshot(snap_name)
         .cpus(config.cpus)
-        .memory(config.memory_mib);
+        .memory(config.memory_mib)
+        .workdir(config.workdir.as_str());
 
     for (k, v) in &config.env {
         builder = builder.env(k.as_str(), v.as_str());
