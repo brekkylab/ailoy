@@ -649,6 +649,8 @@ mod tests {
             .expect("failed to create sandbox")
     }
 
+    // ── config & validation ──────────────────────────────────────────────────
+
     /// `SandboxConfig::name` round-trips through JSON: Some is preserved, None is omitted.
     #[test]
     fn test_sandbox_config_name_serde_roundtrip() {
@@ -683,23 +685,6 @@ mod tests {
         );
     }
 
-    /// `check_home_conflict` accepts unset env, matching env, and rejects a mismatch.
-    #[test]
-    fn test_check_home_conflict() {
-        let requested = Path::new("/tmp/msb-a");
-        assert!(check_home_conflict(requested, None).is_ok());
-        assert!(check_home_conflict(requested, Some(requested.as_os_str())).is_ok());
-
-        let other = std::ffi::OsString::from("/tmp/msb-b");
-        let err = check_home_conflict(requested, Some(&other))
-            .expect_err("mismatched MSB_HOME must error");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("MSB_HOME already set"),
-            "error should mention MSB_HOME conflict, got: {msg}"
-        );
-    }
-
     /// `home` field round-trips through serde when set, and is omitted when `None`.
     #[test]
     fn test_sandbox_config_home_serde_roundtrip() {
@@ -723,6 +708,23 @@ mod tests {
         );
     }
 
+    /// `check_home_conflict` accepts unset env, matching env, and rejects a mismatch.
+    #[test]
+    fn test_check_home_conflict() {
+        let requested = Path::new("/tmp/msb-a");
+        assert!(check_home_conflict(requested, None).is_ok());
+        assert!(check_home_conflict(requested, Some(requested.as_os_str())).is_ok());
+
+        let other = std::ffi::OsString::from("/tmp/msb-b");
+        let err = check_home_conflict(requested, Some(&other))
+            .expect_err("mismatched MSB_HOME must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("MSB_HOME already set"),
+            "error should mention MSB_HOME conflict, got: {msg}"
+        );
+    }
+
     /// Names that would exceed the socket path limit are rejected synchronously.
     #[test]
     fn test_name_too_long_is_rejected() {
@@ -736,6 +738,8 @@ mod tests {
         );
     }
 
+    // ── exec ─────────────────────────────────────────────────────────────────
+
     #[tokio::test]
     async fn test_exec_stdout() {
         let env = make_env().await;
@@ -748,6 +752,23 @@ mod tests {
         assert!(result.stdout.contains("hello"));
     }
 
+    /// A failing command propagates its non-zero exit code; `timed_out` stays false.
+    #[tokio::test]
+    async fn test_exec_nonzero_exit_code() {
+        let env = make_env().await;
+        let handle = env.get().await.unwrap();
+        let result = handle
+            .exec(
+                "sh".to_string(),
+                vec!["-c".to_string(), "exit 42".to_string()],
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 42, "expected exit code 42");
+        assert!(!result.timed_out, "should not be marked as timed out");
+    }
+
     #[tokio::test]
     async fn test_exec_timeout() {
         let env = make_env().await;
@@ -758,6 +779,30 @@ mod tests {
             .unwrap();
         assert!(result.timed_out);
     }
+
+    /// Output exceeding `max_output_chars` is middle-truncated with an omission notice.
+    #[tokio::test]
+    async fn test_max_output_chars_truncation() {
+        let env = RunEnv::sandbox(SandboxConfig {
+            max_output_chars: 50,
+            ..SandboxConfig::default()
+        })
+        .await
+        .unwrap();
+        let handle = env.get().await.unwrap();
+        let result = handle
+            .exec_shell("printf '%200s' | tr ' ' x".to_string(), None)
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert!(
+            result.stdout.contains("characters omitted"),
+            "expected truncation notice in stdout, got: {:?}",
+            result.stdout
+        );
+    }
+
+    // ── VM lifecycle ─────────────────────────────────────────────────────────
 
     /// A single boot serves multiple `exec` calls without the VM going down
     /// between them.
@@ -836,40 +881,6 @@ mod tests {
         remove_persisted(&name).await.ok();
     }
 
-    /// With `persist = true`, files written during one boot survive the next.
-    #[tokio::test]
-    async fn test_filesystem_persists_across_stop_start() {
-        let name = format!("at-fp-{}", short_id());
-        let env = RunEnv::sandbox(SandboxConfig {
-            name: Some(name.clone()),
-            persist: true,
-            ..SandboxConfig::default()
-        })
-        .await
-        .unwrap();
-
-        {
-            let handle = env.get().await.unwrap();
-            handle
-                .exec_shell("echo hello > ./test.txt".to_string(), None)
-                .await
-                .expect("write failed");
-        }
-
-        let handle = env.get().await.unwrap();
-        let bytes = handle
-            .read(Path::new("./test.txt"))
-            .await
-            .expect("read failed");
-        let content = String::from_utf8_lossy(&bytes);
-        assert!(
-            content.contains("hello"),
-            "file should survive stop/start cycle, got: {content:?}"
-        );
-        drop(handle);
-        remove_persisted(&name).await.ok();
-    }
-
     #[tokio::test]
     async fn test_restart_latency() {
         let name = format!("at-rl-{}", short_id());
@@ -892,6 +903,45 @@ mod tests {
             "restart should be well under 3s, got {restart_ms}ms"
         );
         drop(_h);
+        remove_persisted(&name).await.ok();
+    }
+
+    // ── concurrent access ────────────────────────────────────────────────────
+
+    /// Concurrent `RunEnv::get()` calls all succeed and share the same booted VM —
+    /// the machine is booted at most once.
+    #[tokio::test]
+    async fn test_concurrent_get() {
+        let name = format!("at-cg-{}", short_id());
+        let env = RunEnv::sandbox(SandboxConfig {
+            name: Some(name.clone()),
+            persist: true,
+            ..SandboxConfig::default()
+        })
+        .await
+        .unwrap();
+
+        let tasks: Vec<_> = (0..4)
+            .map(|_| {
+                let e = env.clone();
+                tokio::spawn(async move { e.get().await })
+            })
+            .collect();
+
+        let mut handles = Vec::new();
+        for task in tasks {
+            handles.push(task.await.expect("task panic").expect("get() failed"));
+        }
+
+        assert!(
+            vm_is_running(&name).await,
+            "VM should be running while handles are held"
+        );
+        for h in &handles {
+            let r = h.exec_shell("echo ok".to_string(), None).await.unwrap();
+            assert_eq!(r.exit_code, 0);
+        }
+        drop(handles);
         remove_persisted(&name).await.ok();
     }
 
@@ -938,6 +988,128 @@ mod tests {
                 "iteration {i}: expected 'sequential' in content, got: {content:?}"
             );
         }
+    }
+
+    // ── file I/O ─────────────────────────────────────────────────────────────
+
+    /// `get_cwd()` returns the sandbox workdir (default `/workspace`).
+    #[tokio::test]
+    async fn test_get_cwd() {
+        let env = make_env().await;
+        let handle = env.get().await.unwrap();
+        let cwd = handle.get_cwd().await.expect("get_cwd failed");
+        assert_eq!(
+            cwd,
+            PathBuf::from("/workspace"),
+            "default workdir should be /workspace, got: {cwd:?}"
+        );
+    }
+
+    /// When `workdir` is customized, exec and relative read/write all resolve
+    /// paths against the new directory.
+    #[tokio::test]
+    async fn test_custom_workdir() {
+        let env = RunEnv::sandbox(SandboxConfig {
+            workdir: "/custom_work".to_string(),
+            ..SandboxConfig::default()
+        })
+        .await
+        .unwrap();
+        let handle = env.get().await.unwrap();
+
+        let r = handle
+            .exec_shell("pwd".to_string(), None)
+            .await
+            .expect("pwd failed");
+        assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+        assert!(
+            r.stdout.contains("/custom_work"),
+            "cwd should be /custom_work, got: {:?}",
+            r.stdout
+        );
+
+        handle
+            .write(Path::new("./cw.txt"), b"custom_work_ok")
+            .await
+            .expect("write failed");
+        let bytes = handle
+            .read(Path::new("./cw.txt"))
+            .await
+            .expect("read failed");
+        assert!(
+            String::from_utf8_lossy(&bytes).contains("custom_work_ok"),
+            "file written relative to custom workdir must be readable"
+        );
+    }
+
+    /// Writing to a path whose parent directories do not yet exist creates them
+    /// automatically via `mkdir -p`.
+    #[tokio::test]
+    async fn test_write_nested_dir_creates_parents() {
+        let env = make_env().await;
+        let handle = env.get().await.unwrap();
+        handle
+            .write(Path::new("./deep/nested/dir/data.txt"), b"nested_ok")
+            .await
+            .expect("write to nested path failed");
+        let bytes = handle
+            .read(Path::new("./deep/nested/dir/data.txt"))
+            .await
+            .expect("read back failed");
+        assert!(
+            String::from_utf8_lossy(&bytes).contains("nested_ok"),
+            "nested file content mismatch"
+        );
+    }
+
+    /// Reading a path that does not exist returns `Err`, not an empty `Ok`.
+    #[tokio::test]
+    async fn test_read_nonexistent_returns_error() {
+        let env = make_env().await;
+        let handle = env.get().await.unwrap();
+        let result = handle
+            .read(Path::new("./this_file_does_not_exist_xyz.txt"))
+            .await;
+        assert!(
+            result.is_err(),
+            "reading a non-existent file should return Err"
+        );
+    }
+
+    // ── persistence ──────────────────────────────────────────────────────────
+
+    /// With `persist = true`, files written during one boot survive the next.
+    #[tokio::test]
+    async fn test_filesystem_persists_across_stop_start() {
+        let name = format!("at-fp-{}", short_id());
+        let env = RunEnv::sandbox(SandboxConfig {
+            name: Some(name.clone()),
+            persist: true,
+            ..SandboxConfig::default()
+        })
+        .await
+        .unwrap();
+
+        {
+            let handle = env.get().await.unwrap();
+            handle
+                .exec_shell("echo hello > ./test.txt".to_string(), None)
+                .await
+                .expect("write failed");
+        }
+
+        let handle = env.get().await.unwrap();
+        let bytes = handle
+            .read(Path::new("./test.txt"))
+            .await
+            .expect("read failed");
+        let content = String::from_utf8_lossy(&bytes);
+        assert!(
+            content.contains("hello"),
+            "file should survive stop/start cycle, got: {content:?}"
+        );
+        drop(handle);
+        remove_persisted(&name).await.ok();
     }
 
     #[tokio::test]
@@ -988,6 +1160,8 @@ mod tests {
         drop(handle);
         remove_persisted(&name).await.ok();
     }
+
+    // ── volume mounts ────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn test_bind_mount_host_to_guest() {
@@ -1100,7 +1274,76 @@ mod tests {
         );
     }
 
-    // ── fork tests ──────────────────────────────────────────────────────────
+    #[tokio::test]
+    async fn test_named_volume_persists_across_sandboxes() {
+        use microsandbox::Volume;
+
+        let vol_name = format!("ailoy-test-vol-{}", Uuid::new_v4());
+
+        Volume::builder(&vol_name)
+            .create()
+            .await
+            .expect("failed to create named volume");
+
+        let write_result = async {
+            let env = RunEnv::sandbox(SandboxConfig {
+                volumes: vec![VolumeMount::Named {
+                    name: vol_name.clone(),
+                    guest: "/mnt/vol".to_string(),
+                    readonly: false,
+                }],
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("failed to create first sandbox");
+            let h = env.get().await.unwrap();
+            h.exec_shell("echo named_vol_works > /mnt/vol/data.txt".to_string(), None)
+                .await
+                .expect("write failed")
+        }
+        .await;
+
+        assert_eq!(
+            write_result.exit_code, 0,
+            "write failed, stderr: {}",
+            write_result.stderr
+        );
+
+        let read_result = async {
+            let env = RunEnv::sandbox(SandboxConfig {
+                volumes: vec![VolumeMount::Named {
+                    name: vol_name.clone(),
+                    guest: "/mnt/vol".to_string(),
+                    readonly: false,
+                }],
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("failed to create second sandbox");
+            let h = env.get().await.unwrap();
+            h.exec_shell("cat /mnt/vol/data.txt".to_string(), None)
+                .await
+                .expect("read failed")
+        }
+        .await;
+
+        if let Ok(handle) = Volume::get(&vol_name).await {
+            let _ = handle.remove().await;
+        }
+
+        assert_eq!(
+            read_result.exit_code, 0,
+            "read failed, stderr: {}",
+            read_result.stderr
+        );
+        assert!(
+            read_result.stdout.contains("named_vol_works"),
+            "stdout: {:?}",
+            read_result.stdout
+        );
+    }
+
+    // ── fork ─────────────────────────────────────────────────────────────────
     //
     // Fork operates on the underlying `Sandbox`, not on a booted handle, so
     // these tests bypass `RunEnv` and drive `Machine::boot` / `Machine::shutdown`
@@ -1286,74 +1529,5 @@ mod tests {
         child.shutdown().await;
         remove_persisted(&src_name).await.ok();
         remove_persisted(&child_name).await.ok();
-    }
-
-    #[tokio::test]
-    async fn test_named_volume_persists_across_sandboxes() {
-        use microsandbox::Volume;
-
-        let vol_name = format!("ailoy-test-vol-{}", Uuid::new_v4());
-
-        Volume::builder(&vol_name)
-            .create()
-            .await
-            .expect("failed to create named volume");
-
-        let write_result = async {
-            let env = RunEnv::sandbox(SandboxConfig {
-                volumes: vec![VolumeMount::Named {
-                    name: vol_name.clone(),
-                    guest: "/mnt/vol".to_string(),
-                    readonly: false,
-                }],
-                ..SandboxConfig::default()
-            })
-            .await
-            .expect("failed to create first sandbox");
-            let h = env.get().await.unwrap();
-            h.exec_shell("echo named_vol_works > /mnt/vol/data.txt".to_string(), None)
-                .await
-                .expect("write failed")
-        }
-        .await;
-
-        assert_eq!(
-            write_result.exit_code, 0,
-            "write failed, stderr: {}",
-            write_result.stderr
-        );
-
-        let read_result = async {
-            let env = RunEnv::sandbox(SandboxConfig {
-                volumes: vec![VolumeMount::Named {
-                    name: vol_name.clone(),
-                    guest: "/mnt/vol".to_string(),
-                    readonly: false,
-                }],
-                ..SandboxConfig::default()
-            })
-            .await
-            .expect("failed to create second sandbox");
-            let h = env.get().await.unwrap();
-            h.exec_shell("cat /mnt/vol/data.txt".to_string(), None)
-                .await
-                .expect("read failed")
-        }
-        .await;
-
-        if let Ok(handle) = Volume::get(&vol_name).await {
-            let _ = handle.remove().await;
-        }
-
-        assert_eq!(
-            read_result.exit_code, 0,
-            "read failed, stderr: {}",
-            read_result.stderr
-        );
-        assert!(
-            read_result.stdout.contains("named_vol_works"),
-            "stdout: {:?}",
-            read_result.stdout
-        );
     }
 }
