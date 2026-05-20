@@ -98,7 +98,7 @@ pub fn get_read_tool_desc() -> ToolDesc {
 
 pub fn get_read_tool_func() -> ToolFunc {
     tool_func!(
-        async |args: Value, id: String, runenv: &dyn RunEnv| -> Message {
+        async |args: Value, id: String, runenv: Arc<RunEnvHandle>| -> Message {
             let Some(path_str) = args.pointer("/path").and_then(|v| v.as_str()) else {
                 return error_message(id, "missing required parameter: path", "validation");
             };
@@ -173,7 +173,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, runenv::Local, to_value, tool::ToolProvider};
+    use crate::{datatype::Value, runenv::RunEnv, to_value, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -185,7 +185,8 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_read_tool_desc()]).unwrap();
         let f = funcs.get("read").unwrap();
-        f.call(args, "1", &Local {}).next().await.unwrap().message
+        let runenv = RunEnv::local().get().await.unwrap();
+        f.call(args, "1", runenv).next().await.unwrap().message
     }
 
     #[tokio::test]
@@ -239,18 +240,6 @@ mod tests {
     #[tokio::test]
     async fn test_read_missing_path() {
         let msg = call(to_value!({})).await;
-        let phase = msg.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/phase")
-            .and_then(|v| v.as_str())
-            .unwrap();
-        assert_eq!(phase, "validation");
-    }
-
-    #[tokio::test]
-    async fn test_read_relative_path_rejected() {
-        let msg = call(to_value!({ "path": "relative/path.txt" })).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()

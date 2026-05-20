@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, pin::Pin};
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
@@ -6,7 +6,7 @@ use crate::{
     agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
     lang_model::{LangModel, LangModelOptions},
     message::{FinishReason, Message, MessageOutput, Part, Role},
-    runenv::{Local, RunEnv},
+    runenv::{Console, RunEnv},
     skill::{render_skills_table, scan_declared_skills},
     tool::{
         ToolDesc, ToolFunc,
@@ -20,18 +20,18 @@ use crate::{
 /// runtime modifications survive subsequent invocations.
 fn materialise_files_recursive<'a>(
     spec: &'a AgentSpec,
-    runenv: &'a dyn RunEnv,
+    console: &'a dyn Console,
 ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'a>> {
     Box::pin(async move {
         for f in &spec.files {
             // Write-once: skip if the file already exists.
-            if runenv.read(&f.path).await.is_ok() {
+            if console.read(&f.path).await.is_ok() {
                 continue;
             }
-            f.write_to(runenv).await?;
+            console.write(&f.path, f.content.as_ref()).await?;
         }
         for sub in &spec.subagents {
-            materialise_files_recursive(sub, runenv).await?;
+            materialise_files_recursive(sub, console).await?;
         }
         Ok(())
     })
@@ -40,7 +40,7 @@ fn materialise_files_recursive<'a>(
 pub struct AgentState {
     pub history: Vec<Message>,
 
-    pub runenv: Arc<dyn RunEnv>,
+    pub runenv: RunEnv,
 
     /// Token count from the most recent model API call; used to decide when to truncate history.
     pub last_input_tokens: Option<u64>,
@@ -56,7 +56,7 @@ impl AgentState {
     pub fn new() -> Self {
         Self {
             history: Vec::new(),
-            runenv: Arc::new(Local {}),
+            runenv: RunEnv::local(),
             last_input_tokens: None,
         }
     }
@@ -66,7 +66,7 @@ impl AgentState {
         self
     }
 
-    pub fn runenv(mut self, runenv: Arc<dyn RunEnv>) -> Self {
+    pub fn runenv(mut self, runenv: RunEnv) -> Self {
         self.runenv = runenv;
         self
     }
@@ -119,19 +119,18 @@ impl Agent {
     }
 
     /// Create an agent using the process-wide [`default_provider`] and an explicit [`RunEnv`].
-    pub fn try_with_runenv(spec: AgentSpec, runenv: Arc<dyn RunEnv>) -> anyhow::Result<Self> {
+    pub fn try_with_runenv(spec: AgentSpec, runenv: RunEnv) -> anyhow::Result<Self> {
         let provider = default_provider();
         Self::try_with_provider_and_runenv(spec, &provider, runenv)
     }
 
-    /// Create an agent with an explicit [`AgentProvider`] and a [`Local`] runenv.
+    /// Create an agent with an explicit [`AgentProvider`] and a local runenv.
     ///
     /// Use this for scoped, explicit control over models and tool sources without
     /// touching global state.  The provider is not stored in the agent and can be
     /// reused across multiple agents.
     pub fn try_with_provider(spec: AgentSpec, provider: &AgentProvider) -> anyhow::Result<Self> {
-        let runenv: Arc<dyn RunEnv> = Arc::new(Local {});
-        Self::try_with_provider_and_runenv(spec, provider, runenv)
+        Self::try_with_provider_and_runenv(spec, provider, RunEnv::local())
     }
 
     /// Create an agent with an explicit [`AgentProvider`] and [`RunEnv`].
@@ -148,7 +147,7 @@ impl Agent {
     pub fn try_with_provider_and_runenv(
         spec: AgentSpec,
         provider: &AgentProvider,
-        runenv: Arc<dyn RunEnv>,
+        runenv: RunEnv,
     ) -> anyhow::Result<Self> {
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
         let model = provider.models.provide(&spec.model)?;
@@ -208,7 +207,7 @@ impl Agent {
 
     /// Maximum number of characters kept in a single tool-result message before
     /// middle-truncation is applied.  Mirrors the limit already enforced by the
-    /// built-in bash tool so that *all* tool results stay within a consistent bound.
+    /// built-in shell tool so that *all* tool results stay within a consistent bound.
     const MAX_TOOL_RESULT_CHARS: usize = 30_000;
 
     /// Clamp every [`Part`] in a [`Role::Tool`] message so that large payloads
@@ -257,7 +256,8 @@ impl Agent {
         if self.files_materialised {
             return Ok(());
         }
-        materialise_files_recursive(&self.spec, &*self.state.runenv).await?;
+        let handle = self.state.runenv.get().await?;
+        materialise_files_recursive(&self.spec, &**handle).await?;
         self.files_materialised = true;
         Ok(())
     }
@@ -316,7 +316,11 @@ impl Agent {
 
                 let outcome: Result<anyhow::Result<bool>, _> =
                     std::panic::AssertUnwindSafe(async move {
-                        let mut stream = tool.call(call_args, call_id_for_call, &*runenv);
+                        // Boot the runenv lazily: only when a tool actually runs.
+                        // RunEnv caches the booted handle so concurrent tool calls
+                        // share the same VM.
+                        let handle = runenv.get().await?;
+                        let mut stream = tool.call(call_args, call_id_for_call, handle);
                         let mut last: Option<MessageOutput> = None;
 
                         while let Some(item) = stream.next().await {
@@ -454,9 +458,6 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "sandbox")]
-    use std::sync::Arc;
-
     use futures::StreamExt as _;
 
     use super::*;
@@ -1077,37 +1078,35 @@ mod tests {
         );
     }
 
-    /// Verifies that parallel bash tool calls from the agent loop do not interleave
-    /// inside the sandbox. The LLM is instructed to issue both bash calls in a single
+    /// Verifies that parallel shell tool calls from the agent loop do not interleave
+    /// inside the sandbox. The LLM is instructed to issue both shell calls in a single
     /// response. Each command writes "start_N", sleeps, then writes "end_N" to a shared
     /// log file. The sandbox Mutex guarantees serial execution, so no interleaving occurs.
     #[cfg(feature = "sandbox")]
     #[test_with::env(ANTHROPIC_API_KEY)]
     #[tokio::test]
-    async fn test_agent_parallel_bash_calls_are_serialized_in_sandbox() {
-        use crate::runenv::{Sandbox, SandboxConfig};
+    async fn test_agent_parallel_shell_calls_are_serialized_in_sandbox() {
+        use crate::runenv::SandboxConfig;
 
         let mut provider = get_provider();
         provider.tools = ToolProvider::new();
 
         let spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool(crate::tool::r#impl::get_bash_tool_desc())
+            .tool(crate::tool::r#impl::get_shell_tool_desc())
             .instruction(
-                "You have a bash tool. When asked to run two commands, always call bash \
+                "You have a shell tool. When asked to run two commands, always call shell \
                  TWICE in a SINGLE response (parallel tool calls). Never run them sequentially \
                  across multiple turns.",
             );
 
-        let runenv: Arc<dyn RunEnv> = Arc::new(
-            Sandbox::new(SandboxConfig::default())
-                .await
-                .expect("sandbox creation failed"),
-        );
+        let runenv = RunEnv::sandbox(SandboxConfig::default())
+            .await
+            .expect("sandbox creation failed");
         let mut agent = Agent::try_with_provider_and_runenv(spec, &provider, runenv).unwrap();
 
         let log = "/tmp/agent_serial_test.txt";
         let query = Message::new(Role::User).with_contents([Part::text(format!(
-            "Run these two shell commands in a single response using two parallel bash tool calls:\n\
+            "Run these two shell commands in a single response using two parallel shell tool calls:\n\
              1. echo start_1 >> {log} && sleep 0.3 && echo end_1 >> {log}\n\
              2. echo start_2 >> {log} && sleep 0.3 && echo end_2 >> {log}"
         ))]);
@@ -1123,6 +1122,9 @@ mod tests {
         let log_bytes = agent
             .state
             .runenv
+            .get()
+            .await
+            .expect("runenv boot failed")
             .read(std::path::Path::new(log))
             .await
             .expect("failed to read log");
@@ -1157,7 +1159,7 @@ mod tests {
 
     /// Verifies the convert_pdf_to_md skill end-to-end:
     ///   1. Agent receives an instruction listing available skills (name, description, path only).
-    ///   2. Agent reads the SKILL.md via `bash cat` to activate the skill.
+    ///   2. Agent reads the SKILL.md via `shell cat` to activate the skill.
     ///   3. Agent installs Docling and converts the PDF to Markdown.
     ///
     /// Requires ANTHROPIC_API_KEY and the sandbox feature.
@@ -1166,7 +1168,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "slow: installs docling (~minutes) and requires model artifacts"]
     async fn test_convert_pdf_to_md_skill() {
-        use crate::runenv::{Sandbox, SandboxConfig};
+        use crate::runenv::SandboxConfig;
 
         // Skill content hardcoded — not loaded from disk at test time.
         // This is what gets written to /workspace/skills/convert_pdf_to_md.md inside the sandbox.
@@ -1248,7 +1250,7 @@ After the script exits with code 0, the Markdown file is written next to the PDF
         let instruction = "\
 You are a helpful assistant with access to a set of skills. \
 Skills provide step-by-step instructions for specific tasks. \
-To activate a skill, read its SKILL.md using the bash tool \
+To activate a skill, read its SKILL.md using the shell tool \
 (`cat <path>`), then follow the instructions inside.
 
 ## Available Skills
@@ -1263,45 +1265,38 @@ To activate a skill, read its SKILL.md using the bash tool \
 
         let spec = AgentSpec::new("anthropic/claude-sonnet-4-6")
             .tools([
-                crate::tool::r#impl::get_bash_tool_desc(),
+                crate::tool::r#impl::get_shell_tool_desc(),
                 crate::tool::r#impl::get_python_repl_tool_desc(),
             ])
             .instruction(instruction);
 
-        let runenv: Arc<dyn RunEnv> = Arc::new(
-            Sandbox::new(SandboxConfig::default())
-                .await
-                .expect("sandbox creation failed"),
-        );
+        let runenv = RunEnv::sandbox(SandboxConfig::default())
+            .await
+            .expect("sandbox creation failed");
         let mut agent = Agent::try_with_provider_and_runenv(spec, &provider, runenv).unwrap();
 
         // Seed the sandbox with the skill file and the test PDF before running the agent.
         let pdf_bytes = minimal_pdf_bytes();
-        // mkdir via exec — start/stop is handled internally by RunEnv.
-        let _ = agent
-            .state
-            .runenv
+        let handle = agent.state.runenv.get().await.expect("runenv boot failed");
+        let _ = handle
             .exec(
                 "sh".to_string(),
                 vec!["-c".to_string(), "mkdir -p /workspace/skills".to_string()],
                 None,
             )
             .await;
-        agent
-            .state
-            .runenv
+        handle
             .write(
                 std::path::Path::new("/workspace/skills/convert_pdf_to_md.md"),
                 skill_md.as_bytes(),
             )
             .await
             .expect("failed to write skill file into sandbox");
-        agent
-            .state
-            .runenv
+        handle
             .write(std::path::Path::new("/workspace/test.pdf"), &pdf_bytes)
             .await
             .expect("failed to write PDF into sandbox");
+        drop(handle);
 
         // Ask the agent to convert the PDF — it must cat the SKILL.md first.
         let query = Message::new(Role::User).with_contents([Part::text(
@@ -1321,6 +1316,9 @@ To activate a skill, read its SKILL.md using the bash tool \
         let markdown_bytes = agent
             .state
             .runenv
+            .get()
+            .await
+            .expect("runenv boot failed")
             .read(std::path::Path::new("/workspace/test.md"))
             .await
             .expect("agent should have written /workspace/test.md");
@@ -1369,7 +1367,7 @@ To activate a skill, read its SKILL.md using the bash tool \
     }
 
     /// End-to-end: parent agent delegates to subagent via tool call, subagent writes
-    /// a sentinel file in the shared sandbox, parent reads it back with its own bash tool
+    /// a sentinel file in the shared sandbox, parent reads it back with its own shell tool
     /// and returns the content.  Proves the runenv passed to
     /// [`Agent::try_with_provider_and_runenv`] is propagated to spec subagents so they
     /// share the same VM.
@@ -1377,23 +1375,21 @@ To activate a skill, read its SKILL.md using the bash tool \
     #[test_with::env(ANTHROPIC_API_KEY)]
     #[tokio::test]
     async fn test_subagent_write_visible_to_parent_in_shared_sandbox() {
-        use crate::runenv::{Sandbox, SandboxConfig};
+        use crate::runenv::SandboxConfig;
 
         let mut provider = get_provider();
         provider.tools = ToolProvider::new();
 
-        let sandbox = Arc::new(
-            Sandbox::new(SandboxConfig::default())
-                .await
-                .expect("sandbox creation failed"),
-        );
+        let runenv = RunEnv::sandbox(SandboxConfig::default())
+            .await
+            .expect("sandbox creation failed");
 
-        // Subagent: writes a file when asked, has bash tool + shared sandbox.
+        // Subagent: writes a file when asked, has shell tool + shared sandbox.
         let sub_spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool(crate::tool::r#impl::get_bash_tool_desc())
+            .tool(crate::tool::r#impl::get_shell_tool_desc())
             .instruction(
                 "You are a file-writer agent. When asked to write content to a path, \
-                 use the bash tool to do so (e.g. `echo CONTENT > PATH`). \
+                 use the shell tool to do so (e.g. `echo CONTENT > PATH`). \
                  Confirm once the write succeeded.",
             )
             .card(AgentCard {
@@ -1402,21 +1398,20 @@ To activate a skill, read its SKILL.md using the bash tool \
                 skills: vec![],
             });
 
-        // Parent: delegates writing to the subagent, then reads back with bash.
+        // Parent: delegates writing to the subagent, then reads back with shell.
         let main_spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
-            .tool(crate::tool::r#impl::get_bash_tool_desc())
+            .tool(crate::tool::r#impl::get_shell_tool_desc())
             .instruction(
-                "You are an orchestrator. You have a 'file_writer' subagent and a bash tool. \
+                "You are an orchestrator. You have a 'file_writer' subagent and a shell tool. \
                  When asked to verify shared sandbox state: \
                  1. Call the file_writer subagent to write the text 'sandbox_shared_ok' to \
                     /workspace/sentinel.txt. \
-                 2. After it confirms, use your bash tool to run `cat /workspace/sentinel.txt`. \
+                 2. After it confirms, use your shell tool to run `cat /workspace/sentinel.txt`. \
                  3. Return the exact output of cat.",
             )
             .subagent(sub_spec);
 
-        let runenv: Arc<dyn RunEnv> = sandbox.clone();
-        let mut parent = Agent::try_with_provider_and_runenv(main_spec, &provider, runenv)
+        let mut parent = Agent::try_with_provider_and_runenv(main_spec, &provider, runenv.clone())
             .expect("parent build failed");
 
         let query =
@@ -1427,9 +1422,12 @@ To activate a skill, read its SKILL.md using the bash tool \
             event.expect("agent stream error");
         }
 
-        // The sentinel must be readable directly through the shared vm Arc,
+        // The sentinel must be readable directly through the shared VM,
         // confirming the subagent's write landed in the same VM.
-        let result = sandbox
+        let result = runenv
+            .get()
+            .await
+            .expect("runenv boot failed")
             .exec(
                 "sh".to_string(),
                 vec!["-c".to_string(), "cat /workspace/sentinel.txt".to_string()],

@@ -1,88 +1,34 @@
-use std::path::{Path, PathBuf};
-
-use fancy_regex::Regex;
+use std::path::Path;
 
 use crate::{
-    runenv::Dirent,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
 
 const DEFAULT_LIMIT: usize = 1000;
 
-/// Convert a path glob into a regex anchored at both ends. The glob is matched
-/// against a path relative to the search root. Supports:
-///
-/// * `*`  — any run of characters except `/`
-/// * `?`  — a single character except `/`
-/// * `**` — any number of path segments (use `**/x` to also match `x` at root)
-/// * `[..]` — character classes
-pub(super) fn glob_to_regex(glob: &str) -> Result<Regex, String> {
-    let mut pat = String::from("^");
-    let mut chars = glob.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '*' => {
-                if chars.peek() == Some(&'*') {
-                    chars.next();
-                    if chars.peek() == Some(&'/') {
-                        chars.next();
-                        pat.push_str("(?:.*/)?");
-                    } else {
-                        pat.push_str(".*");
-                    }
-                } else {
-                    pat.push_str("[^/]*");
-                }
-            }
-            '?' => pat.push_str("[^/]"),
-            '[' => {
-                pat.push('[');
-                while let Some(&nc) = chars.peek() {
-                    chars.next();
-                    pat.push(nc);
-                    if nc == ']' {
-                        break;
-                    }
-                }
-            }
-            '.' | '+' | '(' | ')' | '{' | '}' | '|' | '^' | '$' | '\\' => {
-                pat.push('\\');
-                pat.push(c);
-            }
-            _ => pat.push(c),
-        }
-    }
-    pat.push('$');
-    Regex::new(&pat).map_err(|e| format!("invalid glob {glob:?}: {e}"))
+/// POSIX single-quote escaping for embedding `s` between `'…'` in a script.
+fn sh_single_quote_inner(s: &str) -> String {
+    s.replace('\'', "'\\''")
 }
 
-/// Walk the dirent tree rooted at `base`, collecting file paths whose path
-/// relative to `base` matches `pat_re`. Stops once `limit` matches are gathered.
-fn walk(
-    base: &Path,
-    rel_prefix: &str,
-    entries: &[Dirent],
-    pat_re: &Regex,
-    out: &mut Vec<String>,
-    limit: usize,
-) {
-    for entry in entries {
-        if out.len() >= limit {
-            return;
+/// Make `s` safe to use unquoted in a bash glob context: pass glob metacharacters
+/// (`*`, `?`, `[`, `]`, `{`, `}`, `,`), path/word chars (`/`, `.`, `-`, `_`,
+/// alphanumerics) through unchanged, and backslash-escape everything else so the
+/// shell can't interpret it (`$`, `` ` ``, `;`, whitespace, etc.).
+fn glob_escape_unquoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        let preserve = matches!(
+            c,
+            '*' | '?' | '[' | ']' | '{' | '}' | ',' | '/' | '.' | '-' | '_'
+        ) || c.is_alphanumeric();
+        if !preserve {
+            out.push('\\');
         }
-        let rel = if rel_prefix.is_empty() {
-            entry.name().to_string()
-        } else {
-            format!("{}/{}", rel_prefix, entry.name())
-        };
-        if entry.is_file() && pat_re.is_match(&rel).unwrap_or(false) {
-            out.push(base.join(&rel).to_string_lossy().into_owned());
-        }
-        if let Some(children) = entry.children() {
-            walk(base, &rel, children, pat_re, out, limit);
-        }
+        out.push(c);
     }
+    out
 }
 
 pub fn get_glob_tool_desc() -> ToolDesc {
@@ -117,7 +63,7 @@ pub fn get_glob_tool_desc() -> ToolDesc {
 }
 
 pub fn get_glob_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value {
+    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
         let Some(pattern_str) = args.pointer("/pattern").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: pattern",
@@ -138,46 +84,64 @@ pub fn get_glob_tool_func() -> ToolFunc {
             });
         }
 
-        let pat_re = match glob_to_regex(pattern_str) {
-            Ok(re) => re,
-            Err(e) => {
-                return crate::to_value!({
-                    "error": e,
-                    "phase": "validation",
-                });
-            }
-        };
-
         let limit = args
             .pointer("/limit")
             .and_then(|v| v.as_integer())
             .map(|n| n.max(1) as usize)
             .unwrap_or(DEFAULT_LIMIT);
 
-        let entries = match runenv.ls(path).await {
-            Ok(e) => e,
+        let os = runenv.get_os();
+        if os != "linux" && os != "macos" {
+            return crate::to_value!({
+                "error": format!("glob: unsupported OS '{os}'"),
+                "phase": "io",
+            });
+        }
+
+        let base_q = sh_single_quote_inner(path_str);
+        let pat_e = glob_escape_unquoted(pattern_str);
+
+        // Use zsh: macOS ships bash 3.2 without `shopt -s globstar`, so `**`
+        // would silently degrade to single-`*` there. zsh supports `**` for
+        // any-depth segments out of the box. `nullglob` makes a non-matching
+        // pattern expand to nothing; `dotglob` lets `*` match hidden entries.
+        let script = format!(
+            r#"setopt nullglob dotglob
+cd '{base_q}' || exit 1
+for f in {pat_e}; do
+  [ -f "$f" ] && printf '%s\n' "$PWD/$f"
+done"#,
+        );
+
+        let result = match runenv
+            .exec("zsh".to_string(), vec!["-c".to_string(), script], None)
+            .await
+        {
+            Ok(r) => r,
             Err(e) => {
                 return crate::to_value!({
-                    "error": format!("ls {path_str}: {e}"),
+                    "error": format!("exec failed: {e}"),
                     "phase": "io",
                 });
             }
         };
+        if result.exit_code != 0 {
+            return crate::to_value!({
+                "error": format!("glob failed (exit {}): {}", result.exit_code, result.stderr),
+                "phase": "io",
+            });
+        }
 
-        let mut paths: Vec<String> = Vec::new();
-        walk(
-            &PathBuf::from(path_str),
-            "",
-            &entries,
-            &pat_re,
-            &mut paths,
-            limit + 1,
-        );
+        let mut paths: Vec<String> = result
+            .stdout
+            .lines()
+            .take(limit + 1)
+            .map(|s| s.to_string())
+            .collect();
         let truncated = paths.len() > limit;
         if truncated {
             paths.truncate(limit);
         }
-
         let count = paths.len() as i64;
         let paths_v = crate::datatype::Value::array(paths);
         crate::to_value!({
@@ -193,7 +157,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, runenv::Local, to_value, tool::ToolProvider};
+    use crate::{datatype::Value, message::Message, runenv::RunEnv, to_value, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -205,7 +169,8 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_glob_tool_desc()]).unwrap();
         let f = funcs.get("glob").unwrap();
-        f.call(args, "1", &Local {}).next().await.unwrap().message
+        let runenv = RunEnv::local().get().await.unwrap();
+        f.call(args, "1", runenv).next().await.unwrap().message
     }
 
     fn paths(msg: &Message) -> Vec<String> {

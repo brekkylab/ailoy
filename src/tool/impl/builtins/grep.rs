@@ -1,105 +1,24 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use fancy_regex::{Regex, RegexBuilder};
-
-use super::glob::glob_to_regex;
 use crate::{
-    runenv::Dirent,
+    runenv::RunEnvHandle,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
+    util::truncate::middle_truncate,
 };
 
 const DEFAULT_LIMIT: usize = 1000;
-const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_OUTPUT_CHARS: usize = 200_000;
 
-/// Treat a file as binary if its first chunk contains a NUL byte (matches what
-/// GNU grep does by default with `-I`).
-fn is_binary(bytes: &[u8]) -> bool {
-    let probe_len = bytes.len().min(8192);
-    bytes[..probe_len].contains(&0)
-}
-
-fn collect_files(
-    root: &Path,
-    entries: &[Dirent],
-    include_re: Option<&Regex>,
-    out: &mut Vec<PathBuf>,
-) {
-    for entry in entries {
-        let entry_path = root.join(entry.name());
-        match entry {
-            Dirent::File { name, .. } => {
-                let matches = include_re
-                    .map(|re| re.is_match(name).unwrap_or(false))
-                    .unwrap_or(true);
-                if matches {
-                    out.push(entry_path);
-                }
-            }
-            Dirent::Dir { children, .. } => {
-                collect_files(&entry_path, children, include_re, out);
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum OutputMode {
-    Content,
-    FilesWithMatches,
-    Count,
-}
-
-struct LineHit {
-    path: String,
-    line_no: usize,
-    line: String,
-}
-
-fn search_file(
-    pattern: &Regex,
-    path: &Path,
-    bytes: &[u8],
-    context_before: usize,
-    context_after: usize,
-    hits: &mut Vec<LineHit>,
-    file_match_count: &mut usize,
-    line_limit: usize,
-) -> bool {
-    if is_binary(bytes) {
-        return false;
-    }
-    let text = match std::str::from_utf8(bytes) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    let lines: Vec<&str> = text.lines().collect();
-    let mut matched_idx: Vec<usize> = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        if pattern.is_match(line).unwrap_or(false) {
-            matched_idx.push(i);
-        }
-    }
-    if matched_idx.is_empty() {
-        return false;
-    }
-    *file_match_count += matched_idx.len();
-    let path_str = path.to_string_lossy().into_owned();
-    let mut emitted: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
-    for &i in &matched_idx {
-        let start = i.saturating_sub(context_before);
-        let end = (i + context_after).min(lines.len().saturating_sub(1));
-        for j in start..=end {
-            if emitted.insert(j) && hits.len() < line_limit {
-                hits.push(LineHit {
-                    path: path_str.clone(),
-                    line_no: j + 1,
-                    line: lines[j].to_string(),
-                });
-            }
-        }
-    }
-    true
+/// Probe for ripgrep by running `rg --version`. A non-zero exit (or spawn
+/// failure, which `Local::exec` surfaces as `exit_code = -1`) is treated as
+/// "not available".
+async fn has_ripgrep(runenv: &RunEnvHandle) -> bool {
+    runenv
+        .exec("rg".to_string(), vec!["--version".to_string()], Some(5))
+        .await
+        .map(|r| r.exit_code == 0)
+        .unwrap_or(false)
 }
 
 pub fn get_grep_tool_desc() -> ToolDesc {
@@ -125,7 +44,7 @@ pub fn get_grep_tool_desc() -> ToolDesc {
                 },
                 "include": {
                     "type": "string",
-                    "description": "Glob pattern matched against file basenames (e.g. '*.rs'). Applies only when path is a directory."
+                    "description": "Glob pattern matched against file paths (e.g. '*.rs'). Applies only when path is a directory."
                 },
                 "case_insensitive": {
                     "type": "boolean",
@@ -152,7 +71,7 @@ pub fn get_grep_tool_desc() -> ToolDesc {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of result entries (lines or files) to return (default 1000).",
+                    "description": "Maximum number of output lines to return (default 1000).",
                     "minimum": 1,
                     "default": 1000
                 }
@@ -163,7 +82,7 @@ pub fn get_grep_tool_desc() -> ToolDesc {
 }
 
 pub fn get_grep_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value {
+    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
         let Some(pattern_str) = args.pointer("/pattern").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: pattern",
@@ -188,49 +107,15 @@ pub fn get_grep_tool_func() -> ToolFunc {
             .pointer("/case_insensitive")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-
-        let pattern = match RegexBuilder::new(pattern_str)
-            .case_insensitive(case_insensitive)
-            .build()
-        {
-            Ok(re) => re,
-            Err(e) => {
-                return crate::to_value!({
-                    "error": format!("invalid regex {pattern_str:?}: {e}"),
-                    "phase": "validation",
-                });
-            }
-        };
-
-        let include_re = match args.pointer("/include").and_then(|v| v.as_str()) {
-            Some(g) => match glob_to_regex(g) {
-                Ok(re) => Some(re),
-                Err(e) => {
-                    return crate::to_value!({
-                        "error": e,
-                        "phase": "validation",
-                    });
-                }
-            },
-            None => None,
-        };
-
-        let output_mode = match args
+        let include = args
+            .pointer("/include")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let output_mode = args
             .pointer("/output_mode")
             .and_then(|v| v.as_str())
             .unwrap_or("content")
-        {
-            "content" => OutputMode::Content,
-            "files_with_matches" => OutputMode::FilesWithMatches,
-            "count" => OutputMode::Count,
-            other => {
-                return crate::to_value!({
-                    "error": format!("invalid output_mode {other:?}"),
-                    "phase": "validation",
-                });
-            }
-        };
-
+            .to_string();
         let context_before = args
             .pointer("/context_before")
             .and_then(|v| v.as_integer())
@@ -247,110 +132,131 @@ pub fn get_grep_tool_func() -> ToolFunc {
             .map(|n| n.max(1) as usize)
             .unwrap_or(DEFAULT_LIMIT);
 
-        // Build the candidate file list.
-        let candidate_files: Vec<PathBuf> = match runenv.ls(path).await {
-            Ok(entries) => {
-                let mut files = Vec::new();
-                collect_files(
-                    &PathBuf::from(path_str),
-                    &entries,
-                    include_re.as_ref(),
-                    &mut files,
-                );
-                files
+        if !matches!(
+            output_mode.as_str(),
+            "content" | "files_with_matches" | "count"
+        ) {
+            return crate::to_value!({
+                "error": format!("invalid output_mode {output_mode:?}"),
+                "phase": "validation",
+            });
+        }
+
+        let use_rg = has_ripgrep(&runenv).await;
+
+        // Build a per-tool arg list. The shared shape is roughly:
+        //   <flags> [-B N] [-A N] [include-glob] -e PATTERN -- PATH
+        // rg differs from grep in: no `-r` (always recursive on dirs), `-g GLOB`
+        // instead of `--include=GLOB`, and `--no-heading` to get inline output.
+        let (program, tool_args, tool_name): (String, Vec<String>, &'static str) = if use_rg {
+            let mut a = vec![
+                "--color=never".to_string(),
+                "--no-heading".to_string(),
+                "-n".to_string(),
+                "-H".to_string(),
+            ];
+            if case_insensitive {
+                a.push("-i".to_string());
             }
-            // ls failed — maybe `path` is a regular file. Fall back to a single-file search.
-            Err(_) => vec![PathBuf::from(path_str)],
+            match output_mode.as_str() {
+                "files_with_matches" => a.push("-l".to_string()),
+                "count" => a.push("-c".to_string()),
+                _ => {
+                    if context_before > 0 {
+                        a.push("-B".to_string());
+                        a.push(context_before.to_string());
+                    }
+                    if context_after > 0 {
+                        a.push("-A".to_string());
+                        a.push(context_after.to_string());
+                    }
+                }
+            }
+            if let Some(g) = &include {
+                a.push("-g".to_string());
+                a.push(g.clone());
+            }
+            a.push("-e".to_string());
+            a.push(pattern_str.to_string());
+            a.push("--".to_string());
+            a.push(path_str.to_string());
+            ("rg".to_string(), a, "rg")
+        } else {
+            let mut a = vec![
+                "-r".to_string(),
+                "-n".to_string(),
+                "-H".to_string(),
+                "-E".to_string(),
+                "-I".to_string(),
+                "--color=never".to_string(),
+            ];
+            if case_insensitive {
+                a.push("-i".to_string());
+            }
+            match output_mode.as_str() {
+                "files_with_matches" => a.push("-l".to_string()),
+                "count" => a.push("-c".to_string()),
+                _ => {
+                    if context_before > 0 {
+                        a.push("-B".to_string());
+                        a.push(context_before.to_string());
+                    }
+                    if context_after > 0 {
+                        a.push("-A".to_string());
+                        a.push(context_after.to_string());
+                    }
+                }
+            }
+            if let Some(g) = &include {
+                a.push(format!("--include={g}"));
+            }
+            a.push("-e".to_string());
+            a.push(pattern_str.to_string());
+            a.push("--".to_string());
+            a.push(path_str.to_string());
+            ("grep".to_string(), a, "grep")
         };
 
-        let mut hits: Vec<LineHit> = Vec::new();
-        let mut files_matched: Vec<String> = Vec::new();
-        let mut total_match_count: usize = 0;
-        let mut truncated = false;
+        let result = match runenv.exec(program, tool_args, None).await {
+            Ok(r) => r,
+            Err(e) => {
+                return crate::to_value!({
+                    "error": format!("exec failed: {e}"),
+                    "phase": "io",
+                });
+            }
+        };
 
-        for file in &candidate_files {
-            let bytes = match runenv.read(file).await {
-                Ok(b) => b,
-                Err(_) => continue,
-            };
-            if bytes.len() > MAX_FILE_BYTES {
-                continue;
-            }
-            let mut file_count: usize = 0;
-            let line_capacity = if output_mode == OutputMode::Content {
-                limit
-            } else {
-                usize::MAX
-            };
-            let any = search_file(
-                &pattern,
-                file,
-                &bytes,
-                context_before,
-                context_after,
-                &mut hits,
-                &mut file_count,
-                line_capacity,
-            );
-            if any {
-                files_matched.push(file.to_string_lossy().into_owned());
-                total_match_count += file_count;
-            }
-
-            match output_mode {
-                OutputMode::Content => {
-                    if hits.len() >= limit {
-                        truncated = true;
-                        break;
-                    }
-                }
-                OutputMode::FilesWithMatches => {
-                    if files_matched.len() >= limit {
-                        truncated = true;
-                        break;
-                    }
-                }
-                // Count mode returns only aggregate numbers, so `limit` does not apply.
-                // stopping early would just produce an undercount.
-                OutputMode::Count => {}
-            }
+        // 0 = matches, 1 = no matches, 2+ = real error (invalid regex, missing
+        // path, etc.). Spawn failure surfaces as exit_code = -1.
+        if result.exit_code >= 2 || result.exit_code < 0 {
+            return crate::to_value!({
+                "error": format!(
+                    "{tool_name} failed (exit {}): {}",
+                    result.exit_code,
+                    result.stderr.trim()
+                ),
+                "phase": "io",
+            });
         }
 
-        match output_mode {
-            OutputMode::Content => {
-                let matches = hits
-                    .into_iter()
-                    .map(|h| {
-                        crate::to_value!({
-                            "path": h.path.as_str(),
-                            "line_no": h.line_no as i64,
-                            "line": h.line.as_str(),
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                let count = matches.len() as i64;
-                crate::to_value!({
-                    "matches": matches,
-                    "count": count,
-                    "truncated": truncated,
-                })
-            }
-            OutputMode::FilesWithMatches => {
-                let count = files_matched.len() as i64;
-                let files_v = crate::datatype::Value::array(files_matched);
-                crate::to_value!({
-                    "files": files_v,
-                    "count": count,
-                    "truncated": truncated,
-                })
-            }
-            OutputMode::Count => {
-                crate::to_value!({
-                    "match_count": total_match_count as i64,
-                    "files_matched": files_matched.len() as i64,
-                })
-            }
-        }
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        let total = lines.len();
+        let truncated = total > limit;
+        let kept = if truncated {
+            &lines[..limit]
+        } else {
+            &lines[..]
+        };
+        let output_text = kept.join("\n");
+        let output_text = middle_truncate(output_text, MAX_OUTPUT_CHARS);
+
+        crate::to_value!({
+            "output": output_text.as_str(),
+            "tool": tool_name,
+            "count": kept.len() as i64,
+            "truncated": truncated,
+        })
     })
 }
 
@@ -359,7 +265,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, runenv::Local, to_value, tool::ToolProvider};
+    use crate::{datatype::Value, message::Message, runenv::RunEnv, to_value, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -371,7 +277,18 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_grep_tool_desc()]).unwrap();
         let f = funcs.get("grep").unwrap();
-        f.call(args, "1", &Local {}).next().await.unwrap().message
+        let runenv = RunEnv::local().get().await.unwrap();
+        f.call(args, "1", runenv).next().await.unwrap().message
+    }
+
+    fn output(msg: &Message) -> String {
+        msg.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/output")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string()
     }
 
     #[tokio::test]
@@ -386,15 +303,10 @@ mod tests {
             "path": root.to_string_lossy().to_string(),
         }))
         .await;
-        let val = msg.contents[0].as_value().unwrap();
-        let matches = val.pointer("/matches").and_then(|v| v.as_array()).unwrap();
-        assert_eq!(matches.len(), 2);
-        assert!(matches.iter().all(|m| {
-            m.pointer("/path")
-                .and_then(|v| v.as_str())
-                .unwrap()
-                .ends_with("a.txt")
-        }));
+        let out = output(&msg);
+        let world_lines: Vec<&str> = out.lines().filter(|l| l.contains("world")).collect();
+        assert_eq!(world_lines.len(), 2);
+        assert!(world_lines.iter().all(|l| l.contains("a.txt")));
     }
 
     #[tokio::test]
@@ -406,16 +318,11 @@ mod tests {
             "path": tmp.path().to_string_lossy().to_string(),
         }))
         .await;
-        let val = msg.contents[0].as_value().unwrap();
-        let matches = val.pointer("/matches").and_then(|v| v.as_array()).unwrap();
-        assert_eq!(matches.len(), 1);
-        assert_eq!(
-            matches[0]
-                .pointer("/line_no")
-                .and_then(|v| v.as_integer())
-                .unwrap(),
-            2
-        );
+        let out = output(&msg);
+        assert_eq!(out.lines().count(), 1);
+        assert!(out.contains("beta"));
+        // both rg and grep emit `path:lineno:text` — line 2 should appear.
+        assert!(out.contains(":2:"));
     }
 
     #[tokio::test]
@@ -448,16 +355,10 @@ mod tests {
             "include": "*.rs",
         }))
         .await;
-        let val = msg.contents[0].as_value().unwrap();
-        let matches = val.pointer("/matches").and_then(|v| v.as_array()).unwrap();
-        assert_eq!(matches.len(), 1);
-        assert!(
-            matches[0]
-                .pointer("/path")
-                .and_then(|v| v.as_str())
-                .unwrap()
-                .ends_with("a.rs")
-        );
+        let out = output(&msg);
+        assert_eq!(out.lines().count(), 1);
+        assert!(out.contains("a.rs"));
+        assert!(!out.contains("b.txt"));
     }
 
     #[tokio::test]
@@ -474,9 +375,11 @@ mod tests {
             "output_mode": "files_with_matches",
         }))
         .await;
-        let val = msg.contents[0].as_value().unwrap();
-        let files = val.pointer("/files").and_then(|v| v.as_array()).unwrap();
+        let out = output(&msg);
+        let files: Vec<&str> = out.lines().collect();
         assert_eq!(files.len(), 2);
+        assert!(files.iter().any(|f| f.ends_with("a.txt")));
+        assert!(files.iter().any(|f| f.ends_with("b.txt")));
     }
 
     #[tokio::test]
@@ -492,19 +395,13 @@ mod tests {
             "output_mode": "count",
         }))
         .await;
-        let val = msg.contents[0].as_value().unwrap();
-        assert_eq!(
-            val.pointer("/match_count")
-                .and_then(|v| v.as_integer())
-                .unwrap(),
-            4
-        );
-        assert_eq!(
-            val.pointer("/files_matched")
-                .and_then(|v| v.as_integer())
-                .unwrap(),
-            2
-        );
+        let out = output(&msg);
+        // Output is `path:N` per file. Sum the Ns.
+        let total: i64 = out
+            .lines()
+            .filter_map(|l| l.rsplit(':').next().and_then(|n| n.parse::<i64>().ok()))
+            .sum();
+        assert_eq!(total, 4);
     }
 
     #[tokio::test]
@@ -522,16 +419,11 @@ mod tests {
             "path": root.to_string_lossy().to_string(),
         }))
         .await;
-        let val = msg.contents[0].as_value().unwrap();
-        let matches = val.pointer("/matches").and_then(|v| v.as_array()).unwrap();
-        assert_eq!(matches.len(), 1);
-        assert!(
-            matches[0]
-                .pointer("/path")
-                .and_then(|v| v.as_str())
-                .unwrap()
-                .ends_with("text.txt")
-        );
+        let out = output(&msg);
+        assert!(out.contains("text.txt"));
+        // The binary should not show up as a content line. `grep -I` and rg both
+        // skip it; without `-I` grep would emit a "Binary file … matches" line.
+        assert!(!out.lines().any(|l| l.contains("/bin:")));
     }
 
     #[tokio::test]
@@ -545,29 +437,12 @@ mod tests {
             "context_after": 1,
         }))
         .await;
-        let val = msg.contents[0].as_value().unwrap();
-        let matches = val.pointer("/matches").and_then(|v| v.as_array()).unwrap();
-        let line_nos: Vec<i64> = matches
-            .iter()
-            .map(|m| m.pointer("/line_no").and_then(|v| v.as_integer()).unwrap())
-            .collect();
-        assert_eq!(line_nos, vec![2, 3, 4]);
-    }
-
-    #[tokio::test]
-    async fn test_grep_invalid_regex() {
-        let msg = call(to_value!({
-            "pattern": "(",
-            "path": "/tmp",
-        }))
-        .await;
-        let phase = msg.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/phase")
-            .and_then(|v| v.as_str())
-            .unwrap();
-        assert_eq!(phase, "validation");
+        let out = output(&msg);
+        // Both rg and grep print 3 lines: context (`-`), match (`:`), context (`-`).
+        assert_eq!(out.lines().count(), 3);
+        assert!(out.contains("MATCH"));
+        assert!(out.contains("b"));
+        assert!(out.contains("c"));
     }
 
     #[tokio::test]

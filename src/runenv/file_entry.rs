@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{datatype::Bytes, runenv::RunEnv};
+use crate::{datatype::Bytes, runenv::Console};
 
 /// A file to be pre-filled into a [`RunEnv`], or read back from one.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -21,8 +21,8 @@ impl FileEntry {
     }
 
     /// Write this entry to `runenv` at its declared path.
-    pub async fn write_to(&self, runenv: &dyn RunEnv) -> anyhow::Result<()> {
-        runenv.write(&self.path, self.content.as_ref()).await
+    pub async fn write_to(&self, console: &dyn Console) -> anyhow::Result<()> {
+        console.write(&self.path, self.content.as_ref()).await
     }
 }
 

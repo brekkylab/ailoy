@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::{
     datatype::Value,
-    runenv::RunEnv,
+    runenv::RunEnvHandle,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
@@ -106,7 +106,7 @@ fn parse_patch(text: &str) -> anyhow::Result<Vec<PatchOp>> {
     Ok(ops)
 }
 
-async fn apply_op(op: &PatchOp, runenv: &dyn RunEnv) -> anyhow::Result<String> {
+async fn apply_op(op: &PatchOp, runenv: &RunEnvHandle) -> anyhow::Result<String> {
     match op {
         PatchOp::Add { path, content } => {
             runenv.write(Path::new(path), content.as_bytes()).await?;
@@ -192,7 +192,7 @@ pub fn get_apply_patch_tool_desc() -> ToolDesc {
 }
 
 pub fn get_apply_patch_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value {
+    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
         let Some(patch_text) = args.pointer("/patch").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: patch",
@@ -212,7 +212,7 @@ pub fn get_apply_patch_tool_func() -> ToolFunc {
 
         let mut summary: Vec<Value> = Vec::new();
         for op in &ops {
-            match apply_op(op, runenv).await {
+            match apply_op(op, &runenv).await {
                 Ok(msg) => summary.push(Value::from(msg)),
                 Err(e) => {
                     return crate::to_value!({
@@ -235,7 +235,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{message::Message, runenv::Local, to_value, tool::ToolProvider};
+    use crate::{message::Message, runenv::RunEnv, to_value, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -247,7 +247,8 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_apply_patch_tool_desc()]).unwrap();
         let f = funcs.get("apply_patch").unwrap();
-        f.call(args, "1", &Local {}).next().await.unwrap().message
+        let runenv = RunEnv::local().get().await.unwrap();
+        f.call(args, "1", runenv).next().await.unwrap().message
     }
 
     #[tokio::test]

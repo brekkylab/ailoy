@@ -6,15 +6,17 @@ use crate::{
 
 const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
 
-pub fn get_bash_tool_desc() -> ToolDesc {
-    ToolDescBuilder::new("bash")
-        .description("Execute a shell command and return stdout/stderr/exit_code.")
+pub fn get_shell_tool_desc() -> ToolDesc {
+    ToolDescBuilder::new("shell")
+        .description(
+            "Shell command. Interpreted by `sh` on Linux/macOS and by `powershell` on Windows.",
+        )
         .parameters(crate::to_value!({
             "type": "object",
             "properties": {
                 "cmd": {
                     "type": "string",
-                    "description": "Shell command to execute (interpreted by sh -c)"
+                    "description": "Shell command to execute"
                 },
                 "timeout_secs": {
                     "type": "integer",
@@ -26,8 +28,8 @@ pub fn get_bash_tool_desc() -> ToolDesc {
         .build()
 }
 
-pub fn get_bash_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: &dyn RunEnv| -> Value {
+pub fn get_shell_tool_func() -> ToolFunc {
+    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
@@ -40,10 +42,7 @@ pub fn get_bash_tool_func() -> ToolFunc {
             }
         };
 
-        let Ok(out) = runenv
-            .exec("sh".to_string(), vec!["-c".to_string(), cmd], None)
-            .await
-        else {
+        let Ok(out) = runenv.exec_shell(cmd, None).await else {
             return crate::to_value!({
                 "stdout": String::new(),
                 "stderr": String::from("Internal error"),
@@ -65,22 +64,22 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{runenv::Local, to_value, tool::ToolProvider};
+    use crate::{runenv::RunEnv, to_value, tool::ToolProvider};
 
     async fn provider() -> ToolProvider {
         let mut provider = ToolProvider::new();
-        provider.insert_func("bash", get_bash_tool_func());
+        provider.insert_func("shell", get_shell_tool_func());
         provider
     }
 
     #[tokio::test]
     async fn test_missing_cmd_returns_validation_error() {
         let provider = provider().await;
-        let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
-        let f = funcs.get("bash").unwrap();
-        let runenv = Local {};
+        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
+        let f = funcs.get("shell").unwrap();
+        let runenv = RunEnv::local().get().await.unwrap();
         let msg = f
-            .call(to_value!({}), "", &runenv)
+            .call(to_value!({}), "", runenv)
             .next()
             .await
             .unwrap()
@@ -97,11 +96,11 @@ mod tests {
     #[tokio::test]
     async fn test_echo_returns_stdout() {
         let provider = provider().await;
-        let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
-        let f = funcs.get("bash").unwrap();
-        let runenv = Local {};
+        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
+        let f = funcs.get("shell").unwrap();
+        let runenv = RunEnv::local().get().await.unwrap();
         let msg = f
-            .call(to_value!({ "cmd": "echo ailoy" }), "", &runenv)
+            .call(to_value!({ "cmd": "echo ailoy" }), "", runenv)
             .next()
             .await
             .unwrap()
@@ -118,11 +117,11 @@ mod tests {
     #[tokio::test]
     async fn test_exit_code_is_captured() {
         let provider = provider().await;
-        let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
-        let f = funcs.get("bash").unwrap();
-        let runenv = Local {};
+        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
+        let f = funcs.get("shell").unwrap();
+        let runenv = RunEnv::local().get().await.unwrap();
         let msg = f
-            .call(to_value!({ "cmd": "exit 42" }), "", &runenv)
+            .call(to_value!({ "cmd": "exit 42" }), "", runenv)
             .next()
             .await
             .unwrap()
@@ -141,15 +140,15 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_string_lossy().to_string();
         let provider = provider().await;
-        let funcs = provider.provide(&[get_bash_tool_desc()]).unwrap();
-        let f = funcs.get("bash").unwrap();
-        let runenv = Local {};
+        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
+        let f = funcs.get("shell").unwrap();
+        let runenv = RunEnv::local().get().await.unwrap();
 
         let r1 = f
             .call(
                 to_value!({ "cmd": format!("echo persisted > {path}") }),
                 "",
-                &runenv,
+                runenv.clone(),
             )
             .next()
             .await
@@ -166,7 +165,7 @@ mod tests {
         );
 
         let r2 = f
-            .call(to_value!({ "cmd": format!("cat {path}") }), "", &runenv)
+            .call(to_value!({ "cmd": format!("cat {path}") }), "", runenv)
             .next()
             .await
             .unwrap()

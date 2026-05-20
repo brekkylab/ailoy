@@ -242,7 +242,7 @@ mod tests {
             agent::{AgentBuilder, AgentProvider},
             lang_model::LangModelProvider,
             message::{FinishReason, Message, Part, Role},
-            runenv::{Sandbox, SandboxConfig},
+            runenv::SandboxConfig,
             tool::ToolProvider,
         };
 
@@ -379,7 +379,7 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
 "#;
 
         let instruction = "You are a helpful assistant with access to skills. \
-             To activate a skill, read its SKILL.md using the bash tool \
+             To activate a skill, read its SKILL.md using the shell tool \
              (`cat <path>`), then follow the instructions inside.";
 
         let mut provider = AgentProvider::new();
@@ -389,7 +389,7 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
         );
         provider.tools = ToolProvider::new();
 
-        let sandbox = Sandbox::new(SandboxConfig {
+        let sandbox = crate::runenv::RunEnv::sandbox(SandboxConfig {
             image: "python:3.12-slim".into(),
             ..SandboxConfig::default()
         })
@@ -401,7 +401,7 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
             .provider(provider)
             .runenv(sandbox)
             .tools([
-                crate::tool::r#impl::get_bash_tool_desc(),
+                crate::tool::r#impl::get_shell_tool_desc(),
                 crate::tool::r#impl::get_python_repl_tool_desc(),
             ])
             .instruction(instruction)
@@ -443,6 +443,9 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
         let skill_md_on_disk = agent
             .state
             .runenv
+            .get()
+            .await
+            .expect("runenv boot failed")
             .read(&skill_dir.join("SKILL.md"))
             .await
             .expect("SKILL.md should have been materialised");

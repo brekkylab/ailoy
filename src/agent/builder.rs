@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use crate::{
     agent::{Agent, AgentProvider, AgentSpec, ContextManager},
@@ -51,7 +51,7 @@ pub struct AgentBuilder {
 
     history: Vec<Message>,
 
-    runenv: Option<Arc<dyn RunEnv>>,
+    runenv: Option<RunEnv>,
 
     context_manager: Option<ContextManager>,
 }
@@ -126,11 +126,11 @@ impl AgentBuilder {
         self
     }
 
-    /// Use this [`RunEnv`] for tool execution instead of the default [`Local`](crate::runenv::Local).
-    /// Taken by value; wrap an existing [`Arc<Sandbox>`](crate::runenv::Sandbox) in a
-    /// `Clone + RunEnv` newtype if you need to share the same VM across agents.
-    pub fn runenv(mut self, runenv: impl RunEnv) -> Self {
-        self.runenv = Some(Arc::new(runenv));
+    /// Use this [`RunEnv`] for tool execution instead of the default local runenv.
+    /// `RunEnv` is cheaply cloneable, so the same underlying VM can be shared between
+    /// multiple agents by cloning the value.
+    pub fn runenv(mut self, runenv: RunEnv) -> Self {
+        self.runenv = Some(runenv);
         self
     }
 
@@ -227,7 +227,7 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{agent::AgentCard, lang_model::LangModelProvider, message::Role, runenv::Local};
+    use crate::{agent::AgentCard, lang_model::LangModelProvider, message::Role};
 
     const TEST_MODEL: &str = "openai/gpt-4o-mini";
 
@@ -278,13 +278,12 @@ mod tests {
     async fn test_builder_runenv_is_applied() {
         let agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
-            .runenv(Local {})
+            .runenv(RunEnv::local())
             .build()
             .unwrap();
         // Smoke check: runenv is plugged in and usable.
-        let result = agent
-            .state
-            .runenv
+        let handle = agent.state.runenv.get().await.expect("runenv boot failed");
+        let result = handle
             .exec("sh".into(), vec!["-c".into(), "echo ok".into()], None)
             .await
             .expect("exec failed");
@@ -306,7 +305,7 @@ mod tests {
         let skill_path = greet_dir.join("SKILL.md");
         let agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
-            .runenv(Local {})
+            .runenv(RunEnv::local())
             .skill(
                 &greet_dir,
                 [FileEntry::new(
@@ -365,7 +364,7 @@ mod tests {
 
         let parent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
-            .runenv(Local {})
+            .runenv(RunEnv::local())
             .skill(
                 &parent_skill_dir,
                 [FileEntry::new(
@@ -414,7 +413,7 @@ mod tests {
 
         let parent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
-            .runenv(Local {})
+            .runenv(RunEnv::local())
             .skill(
                 &parent_foo_dir,
                 [FileEntry::new(
@@ -469,76 +468,34 @@ mod tests {
             .unwrap();
     }
 
-    /// Newtype over `Arc<Sandbox>` so the same underlying VM can be handed to
-    /// multiple builders via `.runenv()`.  `AgentBuilder::runenv` takes
-    /// `impl RunEnv + 'static` by value, so a bare `Arc<Sandbox>` would need
-    /// `RunEnv` to be implemented for `Arc<T>`; this wrapper sidesteps that.
-    #[cfg(feature = "sandbox")]
-    #[derive(Clone)]
-    struct SharedSandbox(Arc<crate::runenv::Sandbox>);
-
-    #[cfg(feature = "sandbox")]
-    #[async_trait::async_trait]
-    impl RunEnv for SharedSandbox {
-        async fn exec(
-            &self,
-            program: String,
-            args: Vec<String>,
-            timeout: Option<u64>,
-        ) -> anyhow::Result<crate::runenv::ExecResult> {
-            self.0.exec(program, args, timeout).await
-        }
-
-        async fn ls(&self, path: &std::path::Path) -> anyhow::Result<Vec<crate::runenv::Dirent>> {
-            self.0.ls(path).await
-        }
-
-        async fn mkdir(&self, path: &std::path::Path) -> anyhow::Result<()> {
-            self.0.mkdir(path).await
-        }
-
-        async fn rmdir(&self, path: &std::path::Path) -> anyhow::Result<()> {
-            self.0.rmdir(path).await
-        }
-
-        async fn read(&self, path: &std::path::Path) -> anyhow::Result<Vec<u8>> {
-            self.0.read(path).await
-        }
-
-        async fn write(&self, path: &std::path::Path, content: &[u8]) -> anyhow::Result<()> {
-            self.0.write(path, content).await
-        }
-    }
-
-    /// Two agents built with the same `Arc<Sandbox>` (via `SharedSandbox`) see
-    /// each other's filesystem writes — confirms `.runenv()` carries the VM
-    /// reference through to the agent's `state.runenv`.
+    /// Two agents built with the same cloned `RunEnv` see each other's
+    /// filesystem writes — confirms `.runenv()` carries the VM reference
+    /// through to the agent's `state.runenv`, and that cloning the v2
+    /// `RunEnv` shares the underlying container.
     #[cfg(feature = "sandbox")]
     #[tokio::test]
     async fn test_builder_shared_arc_sandbox() {
-        use crate::runenv::{Sandbox, SandboxConfig};
+        use crate::runenv::SandboxConfig;
 
-        let sandbox = Arc::new(
-            Sandbox::new(SandboxConfig::default())
-                .await
-                .expect("sandbox creation failed"),
-        );
-        let shared = SharedSandbox(sandbox.clone());
+        let runenv = RunEnv::sandbox(SandboxConfig::default())
+            .await
+            .expect("sandbox creation failed");
 
         let sub_agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
-            .runenv(shared.clone())
+            .runenv(runenv.clone())
             .build()
             .unwrap();
 
         let parent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
-            .runenv(shared.clone())
+            .runenv(runenv.clone())
             .build()
             .unwrap();
 
         // Write through the underlying VM, read back through parent's runenv.
-        sandbox
+        let handle = runenv.get().await.expect("runenv boot failed");
+        handle
             .write(
                 std::path::Path::new("/workspace/shared_test.txt"),
                 b"shared_ok",
@@ -549,6 +506,9 @@ mod tests {
         let bytes = parent
             .state
             .runenv
+            .get()
+            .await
+            .expect("runenv boot failed")
             .read(std::path::Path::new("/workspace/shared_test.txt"))
             .await
             .expect("read failed");
@@ -562,6 +522,9 @@ mod tests {
         parent
             .state
             .runenv
+            .get()
+            .await
+            .expect("runenv boot failed")
             .write(std::path::Path::new("/workspace/shared.txt"), b"shared_ok")
             .await
             .expect("write failed");
@@ -569,6 +532,9 @@ mod tests {
         let bytes = sub_agent
             .state
             .runenv
+            .get()
+            .await
+            .expect("runenv boot failed")
             .read(std::path::Path::new("/workspace/shared.txt"))
             .await
             .expect("subagent runenv should see file written by parent");

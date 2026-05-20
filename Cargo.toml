@@ -42,7 +42,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.16"
 log = "0.4"
-microsandbox = { version = "0.4.6", optional = true }
+microsandbox = { git = "https://github.com/superradcompany/microsandbox", rev = "1294b4d7f850741e4d7fa91624226fcb45aa848a", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"

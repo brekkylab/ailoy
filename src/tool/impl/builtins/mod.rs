@@ -1,22 +1,22 @@
 mod apply_patch;
-mod bash;
 mod edit;
 mod glob;
 mod grep;
 mod python_repl;
 mod read;
+mod shell;
 mod web_search;
 mod write;
 
 use std::sync::Arc;
 
 pub use apply_patch::*;
-pub use bash::*;
 pub use edit::*;
 pub use glob::*;
 pub use grep::*;
 pub use python_repl::*;
 pub use read::*;
+pub use shell::*;
 pub use web_search::*;
 pub use write::*;
 
@@ -28,7 +28,7 @@ type BuiltinFactory = Arc<dyn Fn(&ToolDesc) -> ToolFunc + Send + Sync + 'static>
 /// the [`ToolDesc`] requested by an agent spec and returns the [`ToolFunc`]
 /// to bind to it.
 pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
-    let bash = get_bash_tool_func();
+    let shell = get_shell_tool_func();
     let read = get_read_tool_func();
     let write = get_write_tool_func();
     let edit = get_edit_tool_func();
@@ -37,7 +37,7 @@ pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
     let grep = get_grep_tool_func();
 
     vec![
-        ("bash", Arc::new(move |_| bash.clone())),
+        ("shell", Arc::new(move |_| shell.clone())),
         ("python_repl", Arc::new(get_python_repl_tool_factory())),
         ("read", Arc::new(move |_| read.clone())),
         ("write", Arc::new(move |_| write.clone())),

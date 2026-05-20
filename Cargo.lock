@@ -3154,8 +3154,7 @@ dependencies = [
 [[package]]
 name = "microsandbox"
 version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d289ffd511867e5f82bbe2b577fcc78acbf8c99100c9435d515902c532f6f45"
+source = "git+https://github.com/superradcompany/microsandbox?rev=1294b4d7f850741e4d7fa91624226fcb45aa848a#1294b4d7f850741e4d7fa91624226fcb45aa848a"
 dependencies = [
  "astral-tokio-tar",
  "async-compression",
@@ -3198,8 +3197,7 @@ dependencies = [
 [[package]]
 name = "microsandbox-db"
 version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e0cf4b1e42563a39975ec111d0c5ca3b2d2648dcc445a97be6cebc1c8155308"
+source = "git+https://github.com/superradcompany/microsandbox?rev=1294b4d7f850741e4d7fa91624226fcb45aa848a#1294b4d7f850741e4d7fa91624226fcb45aa848a"
 dependencies = [
  "async-trait",
  "sea-orm",
@@ -3211,8 +3209,7 @@ dependencies = [
 [[package]]
 name = "microsandbox-filesystem"
 version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efdf0dbee927e3e828860eddc6a3b234a8e793ccc23636ed9962c25b3955121e"
+source = "git+https://github.com/superradcompany/microsandbox?rev=1294b4d7f850741e4d7fa91624226fcb45aa848a#1294b4d7f850741e4d7fa91624226fcb45aa848a"
 dependencies = [
  "libc",
  "microsandbox-utils",
@@ -3225,8 +3222,7 @@ dependencies = [
 [[package]]
 name = "microsandbox-image"
 version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e99be592e0bf911930b31ae52864217c7d5d9b54e83cadd3b93d065ad23bed8d"
+source = "git+https://github.com/superradcompany/microsandbox?rev=1294b4d7f850741e4d7fa91624226fcb45aa848a#1294b4d7f850741e4d7fa91624226fcb45aa848a"
 dependencies = [
  "astral-tokio-tar",
  "async-compression",
@@ -3251,8 +3247,7 @@ dependencies = [
 [[package]]
 name = "microsandbox-migration"
 version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b72e5b5b2c5bdea11a4d50b540c69d20466b828311466713ed03b2e1720718a"
+source = "git+https://github.com/superradcompany/microsandbox?rev=1294b4d7f850741e4d7fa91624226fcb45aa848a#1294b4d7f850741e4d7fa91624226fcb45aa848a"
 dependencies = [
  "sea-orm-migration",
 ]
@@ -3260,8 +3255,7 @@ dependencies = [
 [[package]]
 name = "microsandbox-network"
 version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e51003a55eb30a25b767a1664622b7b376cbd39ecb186b982db16c120ca1abd0"
+source = "git+https://github.com/superradcompany/microsandbox?rev=1294b4d7f850741e4d7fa91624226fcb45aa848a#1294b4d7f850741e4d7fa91624226fcb45aa848a"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -3298,8 +3292,7 @@ dependencies = [
 [[package]]
 name = "microsandbox-protocol"
 version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d655a839bc767cadbd769a15f35b3cedd23aac8c67a53ba36188822e6af193d4"
+source = "git+https://github.com/superradcompany/microsandbox?rev=1294b4d7f850741e4d7fa91624226fcb45aa848a#1294b4d7f850741e4d7fa91624226fcb45aa848a"
 dependencies = [
  "chrono",
  "ciborium",
@@ -3312,8 +3305,7 @@ dependencies = [
 [[package]]
 name = "microsandbox-runtime"
 version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e601dd7c100467e7318845df3fb8e5ab0d83866416eab1405ff3290a1ec53874"
+source = "git+https://github.com/superradcompany/microsandbox?rev=1294b4d7f850741e4d7fa91624226fcb45aa848a#1294b4d7f850741e4d7fa91624226fcb45aa848a"
 dependencies = [
  "bytes",
  "chrono",
@@ -3340,8 +3332,7 @@ dependencies = [
 [[package]]
 name = "microsandbox-utils"
 version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d62293decc8415995915c95f45b5e2425316e518f3ff90a28c23beecf945108"
+source = "git+https://github.com/superradcompany/microsandbox?rev=1294b4d7f850741e4d7fa91624226fcb45aa848a#1294b4d7f850741e4d7fa91624226fcb45aa848a"
 dependencies = [
  "dirs",
  "libc",

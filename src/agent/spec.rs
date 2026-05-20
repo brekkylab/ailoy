@@ -10,8 +10,8 @@ use crate::{
     tool::{
         ToolDesc,
         r#impl::{
-            get_apply_patch_tool_desc, get_bash_tool_desc, get_edit_tool_desc, get_glob_tool_desc,
-            get_grep_tool_desc, get_python_repl_tool_desc, get_read_tool_desc,
+            get_apply_patch_tool_desc, get_edit_tool_desc, get_glob_tool_desc, get_grep_tool_desc,
+            get_python_repl_tool_desc, get_read_tool_desc, get_shell_tool_desc,
             get_web_search_tool_desc, get_write_tool_desc,
         },
     },
@@ -78,7 +78,6 @@ pub struct AgentSpec {
     /// can live anywhere on the runenv — they do not need to share a parent.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<PathBuf>,
-
 }
 
 impl AgentSpec {
@@ -112,19 +111,19 @@ impl AgentSpec {
 
     /// Append the canonical local-execution toolset for the spec's model family.
     ///
-    /// * `openai/*`: `bash`, `read`, `apply_patch`. Shell-first — `bash` is preferred
+    /// * `openai/*`: `shell`, `read`, `apply_patch`. Shell-first — `shell` is preferred
     ///   over dedicated `glob`/`grep`, and `apply_patch` is preferred over `write`+`edit`.
-    /// * others: `bash`, `read`, `write`, `edit`, `glob`, `grep`.
+    /// * others: `shell`, `read`, `write`, `edit`, `glob`, `grep`.
     pub fn system_tools(mut self) -> Self {
         self.tools.extend(if self.model.starts_with("openai/") {
             vec![
-                get_bash_tool_desc(),
+                get_shell_tool_desc(),
                 get_read_tool_desc(),
                 get_apply_patch_tool_desc(),
             ]
         } else {
             vec![
-                get_bash_tool_desc(),
+                get_shell_tool_desc(),
                 get_read_tool_desc(),
                 get_write_tool_desc(),
                 get_edit_tool_desc(),
@@ -289,7 +288,10 @@ mod tests {
     fn test_skill_panics_on_entry_outside_dir() {
         let _ = AgentSpec::new("openai/gpt-4o-mini").skill(
             "/workspace/skills/greet",
-            [FileEntry::new("/workspace/elsewhere/SKILL.md", b"x".to_vec())],
+            [FileEntry::new(
+                "/workspace/elsewhere/SKILL.md",
+                b"x".to_vec(),
+            )],
         );
     }
 
@@ -314,8 +316,14 @@ mod tests {
         let json = serde_json::to_string(&spec).unwrap();
         let back: AgentSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(back.skills.len(), 2);
-        assert_eq!(back.skills[0], std::path::PathBuf::from("/workspace/skills/greet"));
-        assert_eq!(back.skills[1], std::path::PathBuf::from("/workspace/skills/farewell"));
+        assert_eq!(
+            back.skills[0],
+            std::path::PathBuf::from("/workspace/skills/greet")
+        );
+        assert_eq!(
+            back.skills[1],
+            std::path::PathBuf::from("/workspace/skills/farewell")
+        );
     }
 
     #[test]
