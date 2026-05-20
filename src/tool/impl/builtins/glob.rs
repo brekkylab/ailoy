@@ -12,21 +12,60 @@ fn sh_single_quote_inner(s: &str) -> String {
     s.replace('\'', "'\\''")
 }
 
-/// Make `s` safe to use unquoted in a bash glob context: pass glob metacharacters
-/// (`*`, `?`, `[`, `]`, `{`, `}`, `,`), path/word chars (`/`, `.`, `-`, `_`,
-/// alphanumerics) through unchanged, and backslash-escape everything else so the
-/// shell can't interpret it (`$`, `` ` ``, `;`, whitespace, etc.).
-fn glob_escape_unquoted(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        let preserve = matches!(
+/// Convert a glob pattern to a POSIX extended regular expression.
+///   `**`    → `.*`     (matches across path segments; an optional trailing `/`
+///                       is absorbed so `**/foo` also matches `foo` at the base)
+///   `*`     → `[^/]*`  (within a single segment)
+///   `?`     → `[^/]`
+///   `[..]`  → `[..]`   (character class, with `!` → `^` negation)
+///   regex metacharacters elsewhere (`.`, `+`, `(`, `)`, `|`, `^`, `$`, `\`,
+///   `{`, `}`) are backslash-escaped so they match literally.
+fn glob_to_ere(pat: &str) -> String {
+    let mut out = String::with_capacity(pat.len());
+    let chars: Vec<char> = pat.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '*' {
+            if i + 1 < chars.len() && chars[i + 1] == '*' {
+                out.push_str(".*");
+                i += 2;
+                if i < chars.len() && chars[i] == '/' {
+                    i += 1;
+                }
+            } else {
+                out.push_str("[^/]*");
+                i += 1;
+            }
+        } else if c == '?' {
+            out.push_str("[^/]");
+            i += 1;
+        } else if c == '[' {
+            out.push('[');
+            i += 1;
+            if i < chars.len() && (chars[i] == '!' || chars[i] == '^') {
+                out.push('^');
+                i += 1;
+            }
+            while i < chars.len() && chars[i] != ']' {
+                out.push(chars[i]);
+                i += 1;
+            }
+            if i < chars.len() {
+                out.push(']');
+                i += 1;
+            }
+        } else if matches!(
             c,
-            '*' | '?' | '[' | ']' | '{' | '}' | ',' | '/' | '.' | '-' | '_'
-        ) || c.is_alphanumeric();
-        if !preserve {
+            '.' | '+' | '(' | ')' | '|' | '^' | '$' | '\\' | '{' | '}'
+        ) {
             out.push('\\');
+            out.push(c);
+            i += 1;
+        } else {
+            out.push(c);
+            i += 1;
         }
-        out.push(c);
     }
     out
 }
@@ -99,24 +138,21 @@ pub fn get_glob_tool_func() -> ToolFunc {
         }
 
         let base_q = sh_single_quote_inner(path_str);
-        let pat_e = glob_escape_unquoted(pattern_str);
+        let regex_q = sh_single_quote_inner(&glob_to_ere(pattern_str));
 
-        // Use zsh: macOS ships bash 3.2 without `shopt -s globstar`, so `**`
-        // would silently degrade to single-`*` there. zsh supports `**` for
-        // any-depth segments out of the box. `nullglob` makes a non-matching
-        // pattern expand to nothing; `dotglob` lets `*` match hidden entries.
+        // Stay in POSIX `sh` (via `exec_shell`) so this works on any sandbox
+        // image, including ones without zsh or bash 4+. `find` walks the tree,
+        // `grep -E` filters via a glob-to-ERE conversion (handles `**`), and a
+        // shell read-loop prefixes the absolute base path.
         let script = format!(
-            r#"setopt nullglob dotglob
-cd '{base_q}' || exit 1
-for f in {pat_e}; do
-  [ -f "$f" ] && printf '%s\n' "$PWD/$f"
+            r#"base='{base_q}'
+cd "$base" || exit 1
+find . -type f 2>/dev/null | grep -E '^\./{regex_q}$' | while IFS= read -r f; do
+  printf '%s%s\n' "$base" "${{f#.}}"
 done"#,
         );
 
-        let result = match runenv
-            .exec("zsh".to_string(), vec!["-c".to_string(), script], None)
-            .await
-        {
+        let result = match runenv.exec_shell(script, None).await {
             Ok(r) => r,
             Err(e) => {
                 return crate::to_value!({
