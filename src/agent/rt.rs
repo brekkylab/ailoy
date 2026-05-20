@@ -170,10 +170,10 @@ impl Agent {
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("subagent must declare an AgentCard"))?;
             let desc = get_subagent_tool_desc(card);
-            let name = card.name.clone();
+            let tool_name = desc.name.clone();
             let func = get_subagent_tool_func(sub_spec.clone(), provider.clone(), runenv.clone());
             tool_descs.push(desc);
-            tools.insert(name, func);
+            tools.insert(tool_name, func);
         }
 
         // Build the system message: instruction + (optionally) the skills table.

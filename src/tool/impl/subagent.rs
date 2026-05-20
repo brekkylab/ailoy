@@ -10,6 +10,16 @@ use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
 };
 
+/// Prefix applied to every subagent tool's descriptor name so callers can
+/// identify subagent tool calls without additional metadata.
+/// The card name (and therefore `source_agent`) is left unchanged.
+pub const SUBAGENT_TOOL_PREFIX: &str = "subagent_";
+
+/// Returns the tool-descriptor name for a subagent card (prefixed form).
+pub fn subagent_tool_name(card: &AgentCard) -> String {
+    format!("{}{}", SUBAGENT_TOOL_PREFIX, card.name)
+}
+
 /// Build the [`ToolDesc`] for a sub-agent from its agent card.
 pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
     let description = if card.skills.is_empty() {
@@ -24,7 +34,7 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
         format!("{}\n\n# Skills\n\n{}", card.description, skills)
     };
 
-    ToolDescBuilder::new(&card.name)
+    ToolDescBuilder::new(subagent_tool_name(card))
         .description(description)
         .parameters(crate::to_value!({
             "type": "object",
