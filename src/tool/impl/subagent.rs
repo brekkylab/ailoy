@@ -1,12 +1,13 @@
+use std::sync::Arc;
+
 use futures::StreamExt as _;
 
 use crate::{
     agent::{Agent, AgentCard, AgentProvider, AgentSpec},
     datatype::Value,
-    message::{FinishReason, Message, Part, Role},
-    runenv::RunEnv,
+    message::{FinishReason, Message, MessageOutput, Part, Role},
+    runenv::{RunEnv, RunEnvHandle},
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
-    tool_func,
 };
 
 /// Build the [`ToolDesc`] for a sub-agent from its agent card.
@@ -51,19 +52,24 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 ///
 /// The returned function:
 /// 1. Streams every [`MessageOutput`](crate::message::MessageOutput) produced by
-///    the sub-agent during its turn.
+///    the sub-agent during its turn, with `source_agent` already set to the
+///    sub-agent's [`AgentCard::name`].
 /// 2. Emits a final `Role::Tool` message whose value content is the sub-agent's
-///    last assistant answer.
+///    last assistant answer, also tagged with `source_agent`.
 pub fn get_subagent_tool_func(
     spec: AgentSpec,
     provider: AgentProvider,
     runenv: RunEnv,
 ) -> ToolFunc {
-    tool_func!(stream |args: Value, id: String| -> Message {
+    // Capture the card name once; it's needed on every synthesised MessageOutput.
+    let card_name = spec.card.as_ref().map(|c| c.name.clone());
+
+    ToolFunc::new(move |args: Value, id: String, _: Arc<RunEnvHandle>| {
         let spec = spec.clone();
         let provider = provider.clone();
         let runenv = runenv.clone();
-        let id = id.clone();
+        let card_name = card_name.clone();
+
         async_stream::stream! {
             let task = match args
                 .as_object()
@@ -72,9 +78,15 @@ pub fn get_subagent_tool_func(
             {
                 Some(v) => v.to_string(),
                 None => {
-                    yield Message::new(Role::Tool)
-                        .with_contents([Part::value(Value::string("Error: expected 'task' string field in arguments"))])
-                        .with_id(id);
+                    yield MessageOutput {
+                        message: Message::new(Role::Tool)
+                            .with_contents([Part::value(Value::string("Error: expected 'task' string field in arguments"))])
+                            .with_id(id),
+                        finish_reason: FinishReason::Stop {},
+                        usage: None,
+                        depth: None,
+                        source_agent: card_name,
+                    };
                     return;
                 }
             };
@@ -82,9 +94,15 @@ pub fn get_subagent_tool_func(
             let mut agent = match Agent::try_with_provider_and_runenv(spec, &provider, runenv) {
                 Ok(a) => a,
                 Err(e) => {
-                    yield Message::new(Role::Tool)
-                        .with_contents([Part::value(Value::string(format!("Error building subagent: {e}")))])
-                        .with_id(id);
+                    yield MessageOutput {
+                        message: Message::new(Role::Tool)
+                            .with_contents([Part::value(Value::string(format!("Error building subagent: {e}")))])
+                            .with_id(id),
+                        finish_reason: FinishReason::Stop {},
+                        usage: None,
+                        depth: None,
+                        source_agent: card_name,
+                    };
                     return;
                 }
             };
@@ -108,21 +126,36 @@ pub fn get_subagent_tool_func(
                                     .collect::<Vec<_>>()
                                     .join("");
                             }
-                            yield output.message;
+                            // Yield the full MessageOutput so source_agent (stamped by the
+                            // sub-agent's own Agent::run) is preserved through to the parent.
+                            yield output;
                         }
                         Err(e) => {
-                            yield Message::new(Role::Tool)
-                                .with_contents([Part::value(Value::string(format!("Error: {e}")))])
-                                .with_id(id);
+                            yield MessageOutput {
+                                message: Message::new(Role::Tool)
+                                    .with_contents([Part::value(Value::string(format!("Error: {e}")))])
+                                    .with_id(id.clone()),
+                                finish_reason: FinishReason::Stop {},
+                                usage: None,
+                                depth: None,
+                                source_agent: card_name.clone(),
+                            };
                             return;
                         }
                     }
                 }
             }
 
-            yield Message::new(Role::Tool)
-                .with_contents([Part::value(Value::string(last_answer))])
-                .with_id(id);
+            yield MessageOutput {
+                message: Message::new(Role::Tool)
+                    .with_contents([Part::value(Value::string(last_answer))])
+                    .with_id(id),
+                finish_reason: FinishReason::Stop {},
+                usage: None,
+                depth: None,
+                source_agent: card_name,
+            };
         }
+        .boxed()
     })
 }

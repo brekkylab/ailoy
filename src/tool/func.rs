@@ -58,22 +58,24 @@ pub mod __private {
 
     pub fn value_to_stream(id: String, value: Value) -> BoxStream<'static, MessageOutput> {
         stream::once(std::future::ready(MessageOutput {
-            depth: None,
             message: Message::new(Role::Tool)
                 .with_contents([Part::value(value)])
                 .with_id(id),
             finish_reason: FinishReason::Stop {},
             usage: None,
+            depth: None,
+            source_agent: None,
         }))
         .boxed()
     }
 
     pub fn message_to_stream(message: Message) -> BoxStream<'static, MessageOutput> {
         stream::once(std::future::ready(MessageOutput {
-            depth: None,
             message,
             finish_reason: FinishReason::Stop {},
             usage: None,
+            depth: None,
+            source_agent: None,
         }))
         .boxed()
     }
@@ -84,12 +86,13 @@ pub mod __private {
     ) -> BoxStream<'static, MessageOutput> {
         stream::once(async move {
             MessageOutput {
-                depth: None,
                 message: Message::new(Role::Tool)
                     .with_contents([Part::value(fut.await)])
                     .with_id(id),
                 finish_reason: FinishReason::Stop {},
                 usage: None,
+                depth: None,
+                source_agent: None,
             }
         })
         .boxed()
@@ -100,10 +103,11 @@ pub mod __private {
     ) -> BoxStream<'static, MessageOutput> {
         stream::once(async move {
             MessageOutput {
-                depth: None,
                 message: fut.await,
                 finish_reason: FinishReason::Stop {},
                 usage: None,
+                depth: None,
+                source_agent: None,
             }
         })
         .boxed()
@@ -114,12 +118,13 @@ pub mod __private {
         s: BoxStream<'static, Value>,
     ) -> BoxStream<'static, MessageOutput> {
         s.map(move |value| MessageOutput {
-            depth: None,
             message: Message::new(Role::Tool)
                 .with_contents([Part::value(value)])
                 .with_id(id.clone()),
             finish_reason: FinishReason::Stop {},
             usage: None,
+            depth: None,
+            source_agent: None,
         })
         .boxed()
     }
@@ -128,10 +133,11 @@ pub mod __private {
         s: BoxStream<'static, Message>,
     ) -> BoxStream<'static, MessageOutput> {
         s.map(|message| MessageOutput {
-            depth: None,
             message,
             finish_reason: FinishReason::Stop {},
             usage: None,
+            depth: None,
+            source_agent: None,
         })
         .boxed()
     }

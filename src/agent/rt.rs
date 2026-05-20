@@ -362,10 +362,11 @@ impl Agent {
                             )))])
                             .with_id(call_id);
                         let _ = tx.send(Ok(MessageOutput {
-                            depth: Some(0),
                             message: err_msg,
                             finish_reason: FinishReason::Stop {},
                             usage: None,
+                            depth: Some(0),
+                            source_agent: None,
                         }));
                     }
                 }
@@ -381,6 +382,20 @@ impl Agent {
                 yield event;
             }
         }))
+    }
+
+    /// Stamp `out.source_agent` with this agent's card name if not already set.
+    ///
+    /// Called on every `MessageOutput` just before it is yielded from
+    /// [`Agent::run`].  Because it only writes when the field is `None`,
+    /// messages that already carry a name from a deeper subagent are forwarded
+    /// unchanged — the innermost producer always wins in nested chains.
+    fn stamp_source_agent(&self, out: &mut MessageOutput) {
+        if out.source_agent.is_none() {
+            if let Some(card) = self.spec.card.as_ref() {
+                out.source_agent = Some(card.name.clone());
+            }
+        }
     }
 
     /// Return the full message history accumulated so far.
@@ -425,6 +440,7 @@ impl Agent {
 
                 output.depth = Some(0);
                 self.state.history.push(output.message.clone());
+                self.stamp_source_agent(&mut output);
 
                 let tool_calls = match &output.finish_reason {
                     FinishReason::ToolCall {} => {
@@ -447,6 +463,7 @@ impl Agent {
                                 output.message = Self::cap_tool_result(output.message);
                                 self.state.history.push(output.message.clone());
                             }
+                            self.stamp_source_agent(&mut output);
                             yield output;
                         }
                     }
@@ -647,10 +664,20 @@ mod tests {
             // Intermediate sub-agent outputs: depth > 0.
             if output.depth.is_some_and(|d| d > 0) {
                 tool_deltas += 1;
+                assert_eq!(
+                    output.source_agent.as_deref(),
+                    Some("math-agent"),
+                    "Intermediate subagent events must carry the subagent's card name"
+                );
             }
             // Final tool result yielded back to the outer agent: Role::Tool at depth 0.
             if output.message.role == Role::Tool && output.depth == Some(0) {
                 tool_results += 1;
+                assert_eq!(
+                    output.source_agent.as_deref(),
+                    Some("math-agent"),
+                    "Final tool-result event must carry the subagent's card name"
+                );
             }
         }
 
