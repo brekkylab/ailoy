@@ -5,7 +5,7 @@ use reqwest::Client;
 
 use super::{
     engine::{SearchEngine, SearchError},
-    engines::{Bing, Brave, DuckDuckGo, Google, LibreX, Mojeek, Startpage, Yahoo, Yandex},
+    engines::WebSearchEngineKind,
 };
 
 /// A search result aggregated from multiple engines.
@@ -102,24 +102,23 @@ pub struct MetaSearcher {
 }
 
 impl MetaSearcher {
-    pub fn new() -> Self {
+    /// Constructs a `MetaSearcher` using the given engine selection.
+    ///
+    /// An empty `engines` slice uses all available engines (default meta-search behaviour).
+    pub fn new(engines: Vec<WebSearchEngineKind>) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .user_agent(super::engine::USER_AGENT)
             .build()
             .expect("Failed to build HTTP client");
 
-        let engines: Vec<Box<dyn SearchEngine>> = vec![
-            Box::new(Bing::new().expect("Bing init failed")),
-            Box::new(Brave::new().expect("Brave init failed")),
-            Box::new(DuckDuckGo::new().expect("DuckDuckGo init failed")),
-            Box::new(Google::new().expect("Google init failed")),
-            Box::new(LibreX::new().expect("LibreX init failed")),
-            Box::new(Mojeek::new().expect("Mojeek init failed")),
-            Box::new(Startpage::new().expect("Startpage init failed")),
-            Box::new(Yahoo::new().expect("Yahoo init failed")),
-            Box::new(Yandex::new().expect("Yandex init failed")),
-        ];
+        let kinds = if engines.is_empty() {
+            WebSearchEngineKind::ALL.to_vec()
+        } else {
+            engines
+        };
+        let engines: Vec<Box<dyn SearchEngine>> =
+            kinds.into_iter().map(|k| k.instantiate()).collect();
 
         Self { engines, client }
     }
@@ -362,5 +361,44 @@ mod tests {
 
         let results = searcher.search("test", 5).await;
         assert_eq!(results.len(), 5);
+    }
+
+    // --- WebSearchEngineKind / MetaSearcher::new engine selection tests ---
+
+    #[test]
+    fn test_empty_engines_uses_all() {
+        let searcher = MetaSearcher::new(vec![]);
+        assert_eq!(
+            searcher.engines.len(),
+            WebSearchEngineKind::ALL.len(),
+            "empty engines vec should use all available engines"
+        );
+        let names: Vec<&str> = searcher.engines.iter().map(|e| e.name()).collect();
+        for kind in WebSearchEngineKind::ALL {
+            assert!(
+                names.contains(&kind.name()),
+                "engine {:?} should be present",
+                kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_specific_engines_subset() {
+        let kinds = vec![WebSearchEngineKind::Google, WebSearchEngineKind::Brave];
+        let searcher = MetaSearcher::new(kinds.clone());
+        assert_eq!(searcher.engines.len(), 2);
+        let names: Vec<&str> = searcher.engines.iter().map(|e| e.name()).collect();
+        for kind in &kinds {
+            assert!(
+                names.contains(&kind.name()),
+                "engine {:?} should be present",
+                kind
+            );
+        }
+        assert!(
+            !names.contains(&WebSearchEngineKind::Bing.name()),
+            "Bing should not be present"
+        );
     }
 }

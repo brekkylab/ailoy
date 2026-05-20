@@ -10,7 +10,7 @@ use crate::{
     skill::{render_skills_table, scan_declared_skills},
     tool::{
         ToolDesc, ToolFunc,
-        r#impl::{get_subagent_tool_desc, get_subagent_tool_func},
+        r#impl::{get_subagent_tool_desc, get_subagent_tool_func, get_web_search_tool_factory},
     },
 };
 
@@ -154,8 +154,15 @@ impl Agent {
 
         let model_options = spec.model_options.clone().unwrap_or_default();
 
-        // Collect tools required by the spec; error if any tool is missing
-        let mut tools = provider.tools.provide(&spec.tools)?;
+        // Collect tools required by the spec; error if any tool is missing.
+        // When the spec requests specific web_search engines, override the default factory.
+        let mut tools = if let Some(engines) = spec.web_search_engines.as_ref() {
+            let mut tp = provider.tools.clone();
+            tp.insert_func_factory("web_search", get_web_search_tool_factory(engines.clone()));
+            tp.provide(&spec.tools)?
+        } else {
+            provider.tools.provide(&spec.tools)?
+        };
         let mut tool_descs = spec.tools.clone();
 
         // Sub-agents become regular tool entries: each is a one-shot ToolFunc
