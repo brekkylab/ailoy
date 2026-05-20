@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use super::{Console, Machine, ExecResult};
+use super::{Console, ExecResult, Machine};
 
 /// `Machine` that runs commands directly on the host. Boot/shutdown are
 /// no-ops because there is no underlying VM to spin up.

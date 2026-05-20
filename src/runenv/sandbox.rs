@@ -1,6 +1,5 @@
 //! microsandbox-backed `Machine` for runenv.
 //!
-//! Adapted from [`crate::runenv::sandbox`] to the v2 Machine/Console split.
 //! Heavyweight, fallible setup happens in `Sandbox::new`; `Machine::boot`
 //! restarts the VM, and `Machine::shutdown` stops/removes it.
 
@@ -238,21 +237,31 @@ impl Sandbox {
     }
 
     async fn stop(name: &str, persist: bool) {
-        // Stop the VM if it is currently running.
-        if let Ok(handle) = MsbSandbox::get(name).await {
-            if matches!(
-                handle.status(),
-                SandboxStatus::Running | SandboxStatus::Draining
-            ) {
-                if let Ok(connected) = handle.connect().await {
-                    let _ = connected.stop_and_wait().await;
+        match MsbSandbox::get(name).await {
+            Err(e) => log::warn!("sandbox stop: get '{name}' failed: {e}"),
+            Ok(handle) => {
+                // TODO: remove once superradcompany/microsandbox#746 is merged and
+                // agentd is updated past v0.4.6. The prebuilt agentd v0.4.6 does not
+                // call sync() before poweroff; that call was added in the unreleased
+                // PR #746 branch. Without an explicit syncfs the overlayfs ext4
+                // journal is committed but never checkpointed at VM exit, leaving the
+                // on-disk block bitmap stale — subsequent boots reallocate "free"
+                // blocks that still hold data, corrupting files. Running sync -f /
+                // here, while the VM is fully live, forces the checkpoint via
+                // ovl_sync_fs → ext4_sync_fs → jbd2_journal_flush before the
+                // shutdown sequence begins.
+                if matches!(
+                    handle.status(),
+                    SandboxStatus::Running | SandboxStatus::Draining
+                ) {
+                    if let Ok(connected) = handle.connect().await {
+                        let _ = connected.shell("sync -f / 2>/dev/null || sync").await;
+                    }
                 }
+                let _ = handle.stop().await;
             }
         }
-        // Remove the registration. We call the static Sandbox::remove() so it
-        // re-fetches a fresh handle whose status reflects the stop above.
-        // SandboxHandle::remove() rejects Running handles, so calling
-        // handle.remove() on the original (stale) handle would silently fail.
+
         if !persist {
             let _ = MsbSandbox::remove(name).await;
         }
@@ -274,13 +283,14 @@ impl Machine for Sandbox {
     type Handle = SandboxConsole;
 
     async fn boot(&mut self) -> anyhow::Result<SandboxConsole> {
-        let inner = start_with_retry(&self.name).await?;
+        let inner = start_and_connect(&self.name).await?;
         // Bind-mounted workdirs reset on each boot — re-create.
         let _ = inner
             .shell(&format!("mkdir -p {}", self.config.workdir))
             .await;
         Ok(SandboxConsole {
             inner,
+            workdir: self.config.workdir.clone(),
             default_timeout_secs: self.config.default_timeout_secs,
             max_output_chars: self.config.max_output_chars,
         })
@@ -294,7 +304,7 @@ impl Machine for Sandbox {
 impl Drop for Sandbox {
     fn drop(&mut self) {
         // Catches VMs that were created in `new()` but never reached
-        // `Machine::shutdown` (e.g. the `Runenv` was dropped without ever
+        // `Machine::shutdown` (e.g. the `RunEnv` was dropped without ever
         // calling `get()`). Persisted VMs survive.
         if self.config.persist {
             return;
@@ -317,6 +327,7 @@ impl Drop for Sandbox {
 /// `Console` wrapping a running microsandbox VM.
 pub struct SandboxConsole {
     inner: MsbSandbox,
+    workdir: String,
     default_timeout_secs: u64,
     max_output_chars: usize,
 }
@@ -338,6 +349,7 @@ impl Console for SandboxConsole {
             .inner
             .exec_with(&program, |b: ExecOptionsBuilder| {
                 b.args(args.iter().map(|s| s.as_str()))
+                    .cwd(self.workdir.clone())
                     .timeout(Duration::from_secs(timeout_secs))
             })
             .await;
@@ -345,23 +357,36 @@ impl Console for SandboxConsole {
     }
 
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {
-        let path_s = path
+        // agentd resolves relative paths against its own cwd (/), not the
+        // sandbox workdir. Resolve here so behaviour matches exec_shell.
+        let abs = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            PathBuf::from(&self.workdir).join(path)
+        };
+        let path_s = abs
             .to_str()
-            .ok_or_else(|| anyhow::anyhow!("read: path {} is not valid UTF-8", path.display()))?;
+            .ok_or_else(|| anyhow::anyhow!("read: path {} is not valid UTF-8", abs.display()))?;
         let bytes = self
             .inner
             .fs()
             .read(path_s)
             .await
-            .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
+            .map_err(|e| anyhow::anyhow!("read {}: {e}", abs.display()))?;
         Ok(bytes.to_vec())
     }
 
     async fn write(&self, path: &Path, content: &[u8]) -> anyhow::Result<()> {
-        let path_s = path
+        // Same cwd resolution as read — agentd uses /, exec_shell uses workdir.
+        let abs = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            PathBuf::from(&self.workdir).join(path)
+        };
+        let path_s = abs
             .to_str()
-            .ok_or_else(|| anyhow::anyhow!("write: path {} is not valid UTF-8", path.display()))?;
-        if let Some(parent) = path.parent()
+            .ok_or_else(|| anyhow::anyhow!("write: path {} is not valid UTF-8", abs.display()))?;
+        if let Some(parent) = abs.parent()
             && !parent.as_os_str().is_empty()
         {
             let parent_s = parent.to_str().ok_or_else(|| {
@@ -377,28 +402,36 @@ impl Console for SandboxConsole {
             .fs()
             .write(path_s, content)
             .await
-            .map_err(|e| anyhow::anyhow!("write {}: {e}", path.display()))
+            .map_err(|e| anyhow::anyhow!("write {}: {e}", abs.display()))
     }
 }
 
-/// `start_detached` with one force-stop retry when microsandbox reports the
-/// VM as already running — covers the case where a previous `stop_and_wait`
-/// failed silently and left a stale handle alive.
-async fn start_with_retry(name: &str) -> anyhow::Result<MsbSandbox> {
-    match MsbSandbox::start_detached(name).await {
-        Ok(s) => Ok(s),
+/// Start the sandbox with one force-stop retry on `SandboxStillRunning`, then
+/// detach lifecycle ownership and reconnect without it, so dropping the
+/// returned handle will not SIGTERM the VM. SIGTERM bypasses agentd's shutdown
+/// path and loses in-flight dirty pages; all stops must go through `Sandbox::stop`.
+async fn start_and_connect(name: &str) -> anyhow::Result<MsbSandbox> {
+    let inner = match MsbSandbox::start_detached(name).await {
+        Ok(s) => s,
         Err(MicrosandboxError::SandboxStillRunning(_)) => {
             if let Ok(h) = MsbSandbox::get(name).await
-                && let Ok(connected) = h.connect().await
+                && let Ok(c) = h.connect().await
             {
-                let _ = connected.stop_and_wait().await;
+                let _ = c.stop_and_wait().await;
             }
             MsbSandbox::start_detached(name)
                 .await
-                .map_err(|e| anyhow::anyhow!("sandbox start after force-stop: {e}"))
+                .map_err(|e| anyhow::anyhow!("sandbox start after force-stop: {e}"))?
         }
-        Err(e) => Err(anyhow::anyhow!("sandbox start: {e}")),
-    }
+        Err(e) => return Err(anyhow::anyhow!("sandbox start: {e}")),
+    };
+    inner.detach().await;
+    MsbSandbox::get(name)
+        .await
+        .map_err(|e| anyhow::anyhow!("boot: sandbox not found: {e}"))?
+        .connect()
+        .await
+        .map_err(|e| anyhow::anyhow!("boot: connect failed: {e}"))
 }
 
 fn handle_exec_result(
@@ -483,7 +516,6 @@ async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result
         .image(config.image.as_str())
         .cpus(config.cpus)
         .memory(config.memory_mib)
-        .workdir(config.workdir.as_str())
         .pull_policy(PullPolicy::IfMissing);
 
     for (k, v) in &config.env {
@@ -507,8 +539,7 @@ async fn create_from_snapshot(
     let mut builder = MsbSandbox::builder(new_name)
         .from_snapshot(snap_name)
         .cpus(config.cpus)
-        .memory(config.memory_mib)
-        .workdir(config.workdir.as_str());
+        .memory(config.memory_mib);
 
     for (k, v) in &config.env {
         builder = builder.env(k.as_str(), v.as_str());
@@ -525,12 +556,13 @@ async fn create_from_snapshot(
         .await
         .map_err(|e| anyhow::anyhow!("fork: create from snapshot: {e}"))?;
 
-    // Workdir already exists from the snapshot, but ensure it is present.
+    // Ensure workdir exists. A no-op when the source already had it, but
+    // required when forking a sandbox whose workdir wasn't in the source.
     let _ = sb.shell(&format!("mkdir -p {}", config.workdir)).await;
-    let _ = sb.shell("sync").await;
+
     sb.stop_and_wait()
         .await
-        .map_err(|e| anyhow::anyhow!("fork: stop new sandbox after creation: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("fork: stop new sandbox: {e}"))?;
 
     Ok(sb)
 }
@@ -737,10 +769,7 @@ mod tests {
             let r = handle
                 .exec(
                     "sh".to_string(),
-                    vec![
-                        "-c".to_string(),
-                        "echo first > /workspace/marker".to_string(),
-                    ],
+                    vec!["-c".to_string(), "echo first > ./marker".to_string()],
                     None,
                 )
                 .await
@@ -749,11 +778,7 @@ mod tests {
         }
         {
             let r = handle
-                .exec(
-                    "cat".to_string(),
-                    vec!["/workspace/marker".to_string()],
-                    None,
-                )
+                .exec("cat".to_string(), vec!["./marker".to_string()], None)
                 .await
                 .unwrap();
             assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
@@ -826,14 +851,14 @@ mod tests {
         {
             let handle = env.get().await.unwrap();
             handle
-                .exec_shell("echo hello > /workspace/test.txt".to_string(), None)
+                .exec_shell("echo hello > ./test.txt".to_string(), None)
                 .await
                 .expect("write failed");
         }
 
         let handle = env.get().await.unwrap();
         let bytes = handle
-            .read(Path::new("/workspace/test.txt"))
+            .read(Path::new("./test.txt"))
             .await
             .expect("read failed");
         let content = String::from_utf8_lossy(&bytes);
@@ -898,13 +923,13 @@ mod tests {
         let handle = env.get().await.unwrap();
 
         handle
-            .write(Path::new("/workspace/marker.txt"), b"sequential")
+            .write(Path::new("./marker.txt"), b"sequential")
             .await
             .expect("write failed");
 
         for i in 0..10 {
             let bytes = handle
-                .read(Path::new("/workspace/marker.txt"))
+                .read(Path::new("./marker.txt"))
                 .await
                 .unwrap_or_else(|e| panic!("read failed on iteration {i}: {e}"));
             let content = String::from_utf8_lossy(&bytes);
@@ -938,7 +963,7 @@ mod tests {
             .expect("failed to create sandbox");
             let handle = env.get().await.unwrap();
             handle
-                .write(Path::new("/workspace/marker.txt"), b"persist_marker")
+                .write(Path::new("./marker.txt"), b"persist_marker")
                 .await
                 .expect("write failed");
         }
@@ -955,7 +980,7 @@ mod tests {
         .await
         .expect("failed to recreate sandbox");
         let handle = env2.get().await.unwrap();
-        let result = handle.read(Path::new("/workspace/marker.txt")).await;
+        let result = handle.read(Path::new("./marker.txt")).await;
         assert!(
             result.is_err(),
             "fresh VM should not contain the marker file from the previous run"
@@ -1134,7 +1159,7 @@ mod tests {
         {
             let console = src.boot().await.expect("boot src");
             console
-                .exec_shell("echo fork_content > /workspace/note.txt".to_string(), None)
+                .exec_shell("echo fork_content > ./note.txt".to_string(), None)
                 .await
                 .expect("write note");
         }
@@ -1151,7 +1176,7 @@ mod tests {
 
         let child_console = child.boot().await.expect("boot child");
         let bytes = child_console
-            .read(Path::new("/workspace/note.txt"))
+            .read(Path::new("./note.txt"))
             .await
             .expect("read from child");
         let content = String::from_utf8_lossy(&bytes);
@@ -1183,7 +1208,7 @@ mod tests {
         {
             let console = src.boot().await.expect("boot src");
             console
-                .exec_shell("echo original > /workspace/data.txt".to_string(), None)
+                .exec_shell("echo original > ./data.txt".to_string(), None)
                 .await
                 .expect("write original");
         }
@@ -1201,7 +1226,7 @@ mod tests {
         {
             let console = child.boot().await.expect("boot child");
             console
-                .exec_shell("echo mutated > /workspace/data.txt".to_string(), None)
+                .exec_shell("echo mutated > ./data.txt".to_string(), None)
                 .await
                 .expect("mutate child");
         }
@@ -1209,7 +1234,7 @@ mod tests {
 
         let src_console = src.boot().await.expect("boot src after fork");
         let bytes = src_console
-            .read(Path::new("/workspace/data.txt"))
+            .read(Path::new("./data.txt"))
             .await
             .expect("read source after child mutation");
         let src_content = String::from_utf8_lossy(&bytes);
