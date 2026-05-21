@@ -1491,7 +1491,7 @@ mod tests {
 
         drop(_console);
         src.shutdown().await;
-        remove_persisted(&src_name).await.ok();
+        Sandbox::remove_persisted(&src_name).await.ok();
     }
 
     #[tokio::test]
@@ -1539,8 +1539,8 @@ mod tests {
 
         drop(child_console);
         child.shutdown().await;
-        remove_persisted(&src_name).await.ok();
-        remove_persisted(&child_name).await.ok();
+        Sandbox::remove_persisted(&src_name).await.ok();
+        Sandbox::remove_persisted(&child_name).await.ok();
     }
 
     #[tokio::test]
@@ -1597,8 +1597,8 @@ mod tests {
 
         drop(src_console);
         src.shutdown().await;
-        remove_persisted(&src_name).await.ok();
-        remove_persisted(&child_name).await.ok();
+        Sandbox::remove_persisted(&src_name).await.ok();
+        Sandbox::remove_persisted(&child_name).await.ok();
     }
 
     #[tokio::test]
@@ -1635,7 +1635,7 @@ mod tests {
         );
 
         child.shutdown().await;
-        remove_persisted(&src_name).await.ok();
-        remove_persisted(&child_name).await.ok();
+        Sandbox::remove_persisted(&src_name).await.ok();
+        Sandbox::remove_persisted(&child_name).await.ok();
     }
 }
