@@ -212,6 +212,132 @@ mod tests {
     use super::*;
     use crate::{datatype::Value, message::Message, runenv::RunEnv, to_value, tool::ToolProvider};
 
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    /// Simulate the exact grep pattern used in the glob script:
+    ///   grep -E '^\./<ere>$'
+    /// and test it against a find(1)-style path like "./dir/file".
+    fn ere_matches_find_path(ere: &str, find_path: &str) -> bool {
+        let pattern = format!("^\\./{ere}$");
+        fancy_regex::Regex::new(&pattern)
+            .expect("glob_to_ere produced invalid ERE")
+            .is_match(find_path)
+            .unwrap()
+    }
+
+    // ── unit tests: glob_to_ere ───────────────────────────────────────────────
+
+    /// `*` must stay within one path segment — `[^/]*`, not `.*`.
+    #[test]
+    fn glob_to_ere_single_star_does_not_cross_slash() {
+        assert_eq!(glob_to_ere("*").unwrap(), "[^/]*");
+    }
+
+    /// `?` must produce `[^/]` so it never matches a path separator.
+    #[test]
+    fn glob_to_ere_question_mark_is_single_non_slash() {
+        let ere = glob_to_ere("fo?").unwrap();
+        assert!(ere_matches_find_path(&ere, "./foo"), "should match foo");
+        assert!(!ere_matches_find_path(&ere, "./fo/"), "? must not match /");
+        assert!(
+            !ere_matches_find_path(&ere, "./fooo"),
+            "? is exactly one char"
+        );
+    }
+
+    /// `.` in a glob pattern is a literal dot, not an ERE wildcard.
+    #[test]
+    fn glob_to_ere_dot_is_escaped_to_literal() {
+        let ere = glob_to_ere("foo.rs").unwrap();
+        assert!(ere_matches_find_path(&ere, "./foo.rs"));
+        assert!(
+            !ere_matches_find_path(&ere, "./fooXrs"),
+            "unescaped dot would match any char — escaping is broken"
+        );
+    }
+
+    /// ERE metacharacters other than `.` must also be escaped.
+    #[test]
+    fn glob_to_ere_regex_metachars_are_escaped() {
+        for meta in ['+', '(', ')', '|', '^', '$', '{', '}'] {
+            let pat = format!("foo{meta}bar");
+            let ere = glob_to_ere(&pat).unwrap();
+            assert!(
+                ere_matches_find_path(&ere, &format!("./foo{meta}bar")),
+                "literal '{meta}' should match itself"
+            );
+            assert!(
+                !ere_matches_find_path(&ere, "./fooXbar"),
+                "'{meta}' was not escaped — it acted as a regex operator"
+            );
+        }
+    }
+
+    /// `[!abc]` glob negation must become `[^abc]` in the ERE.
+    #[test]
+    fn glob_to_ere_char_class_negation_converts_bang_to_caret() {
+        let ere = glob_to_ere("[!abc].rs").unwrap();
+        assert!(
+            ere.contains("[^abc]"),
+            "expected [^abc] in ERE, got: {ere:?}"
+        );
+        assert!(ere_matches_find_path(&ere, "./d.rs"), "d is not in [abc]");
+        assert!(!ere_matches_find_path(&ere, "./a.rs"), "a is in [abc]");
+    }
+
+    /// `**/foo.rs` must match at root and any depth, but must NOT match a
+    /// partial filename like `barfoo.rs`. Fixed by translating `**/` → `(.*/)?`
+    /// which anchors the match to a segment boundary.
+    #[test]
+    fn glob_to_ere_double_star_no_partial_filename_false_positive() {
+        let ere = glob_to_ere("**/foo.rs").unwrap();
+        assert!(
+            ere_matches_find_path(&ere, "./foo.rs"),
+            "**/ should match at root"
+        );
+        assert!(
+            ere_matches_find_path(&ere, "./src/foo.rs"),
+            "**/ should match one level deep"
+        );
+        assert!(
+            ere_matches_find_path(&ere, "./a/b/c/foo.rs"),
+            "**/ should match any depth"
+        );
+        assert!(
+            !ere_matches_find_path(&ere, "./barfoo.rs"),
+            "** must require a path separator boundary — barfoo.rs must not match **/foo.rs"
+        );
+    }
+
+    /// `[]abc]` — bracket-first syntax: `]` as the first char in `[...]` is a
+    /// literal `]`. Because ERE uses the same rule, the parser output `[]abc]`
+    /// happens to be a valid ERE that matches `]`, `a`, `b`, `c` correctly.
+    #[test]
+    fn glob_to_ere_bracket_first_closing_bracket_in_class() {
+        let ere = glob_to_ere("[]abc]").unwrap();
+        let re = fancy_regex::Regex::new(&format!("^{ere}$"))
+            .expect("bracket-first class produced invalid ERE");
+        for ch in [']', 'a', 'b', 'c'] {
+            assert!(
+                re.is_match(&ch.to_string()).unwrap(),
+                "'{ch}' should be matched by []abc]"
+            );
+        }
+        assert!(!re.is_match("d").unwrap(), "'d' must not match []abc]");
+    }
+
+    /// An unterminated character class (`[abc` with no `]`) must be rejected
+    /// with `Err`, not silently produce an unclosed `[` that makes grep fail.
+    #[test]
+    fn glob_to_ere_unterminated_char_class_returns_err() {
+        assert!(
+            glob_to_ere("[abc").is_err(),
+            "unterminated '[' must return Err, not a broken ERE string"
+        );
+    }
+
+    // ── integration tests (end-to-end through RunEnv) ────────────────────────
+
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
         p.insert_func("glob", get_glob_tool_func());
@@ -385,5 +511,108 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap();
         assert_eq!(phase, "validation");
+    }
+
+    /// `**/foo.rs` must not match a file named `barfoo.rs` in the root.
+    #[tokio::test]
+    async fn test_glob_double_star_no_partial_filename_false_positive() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // This file shares the suffix "foo.rs" but is NOT named "foo.rs".
+        std::fs::write(root.join("barfoo.rs"), "").unwrap();
+        // This is the only legitimate match.
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/foo.rs"), "").unwrap();
+
+        let msg = call(to_value!({
+            "path": root.to_string_lossy().to_string(),
+            "pattern": "**/foo.rs",
+        }))
+        .await;
+        let p = paths(&msg);
+        assert!(
+            p.iter().any(|x| x.ends_with("/src/foo.rs")),
+            "src/foo.rs should be matched"
+        );
+        assert!(
+            !p.iter().any(|x| x.ends_with("barfoo.rs")),
+            "**/foo.rs must not match barfoo.rs (false positive from `**` → `.*`)"
+        );
+    }
+
+    /// `*.txt` matches a file named `a.txt` but must NOT match `atxt`
+    /// (the dot in the pattern is literal, not an ERE `.` wildcard).
+    #[tokio::test]
+    async fn test_glob_dot_in_extension_is_literal() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("a.txt"), "").unwrap();
+        std::fs::write(root.join("atxt"), "").unwrap(); // no dot
+
+        let msg = call(to_value!({
+            "path": root.to_string_lossy().to_string(),
+            "pattern": "*.txt",
+        }))
+        .await;
+        let p = paths(&msg);
+        assert!(p.iter().any(|x| x.ends_with("/a.txt")));
+        assert!(
+            !p.iter().any(|x| x.ends_with("/atxt")),
+            "dot in pattern must be literal — atxt must not match *.txt"
+        );
+    }
+
+    /// `[!rs]*` should match files that do NOT start with `r` or `s`.
+    #[tokio::test]
+    async fn test_glob_char_class_negation() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("readme.md"), "").unwrap(); // starts with r
+        std::fs::write(root.join("setup.sh"), "").unwrap(); // starts with s
+        std::fs::write(root.join("main.go"), "").unwrap(); // starts with m → should match
+
+        let msg = call(to_value!({
+            "path": root.to_string_lossy().to_string(),
+            "pattern": "[!rs]*",
+        }))
+        .await;
+        let p = paths(&msg);
+        assert!(
+            p.iter().any(|x| x.ends_with("/main.go")),
+            "main.go should match [!rs]*"
+        );
+        assert!(
+            !p.iter().any(|x| x.ends_with("/readme.md")),
+            "readme.md starts with r — must not match [!rs]*"
+        );
+        assert!(
+            !p.iter().any(|x| x.ends_with("/setup.sh")),
+            "setup.sh starts with s — must not match [!rs]*"
+        );
+    }
+
+    /// A glob pattern with ERE metacharacters (`+`, `(`) must treat them as
+    /// literals, not as regex operators.
+    #[tokio::test]
+    async fn test_glob_regex_metachars_in_filename_are_literal() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("a+b.txt"), "").unwrap();
+        std::fs::write(root.join("aab.txt"), "").unwrap(); // would match if + is unescaped
+
+        let msg = call(to_value!({
+            "path": root.to_string_lossy().to_string(),
+            "pattern": "a+b.txt",
+        }))
+        .await;
+        let p = paths(&msg);
+        assert!(
+            p.iter().any(|x| x.ends_with("/a+b.txt")),
+            "a+b.txt should match the literal pattern a+b.txt"
+        );
+        assert!(
+            !p.iter().any(|x| x.ends_with("/aab.txt")),
+            "aab.txt must not match — + is literal in glob, not a quantifier"
+        );
     }
 }
