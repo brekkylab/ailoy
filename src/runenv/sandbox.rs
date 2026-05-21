@@ -1,7 +1,8 @@
 //! microsandbox-backed `Machine` for runenv.
 //!
 //! Heavyweight, fallible setup happens in `Sandbox::new`; `Machine::boot`
-//! restarts the VM, and `Machine::shutdown` stops/removes it.
+//! starts the VM, `Machine::shutdown` stops it, and dropping the `Sandbox`
+//! removes the VM definition (unless `config.persist` is `true`).
 
 use std::{
     collections::HashMap,
@@ -94,8 +95,12 @@ pub struct SandboxConfig {
     /// Maximum characters to keep from stdout/stderr. Default: `30_000`.
     pub max_output_chars: usize,
 
-    /// When `true`, the sandbox is not removed on drop and can be reused by
-    /// name in a future session. Default: `false`.
+    /// When `true`, the VM definition survives drop of the [`Sandbox`] struct
+    /// and can be reattached by name in a future session. Use
+    /// [`Sandbox::remove_persisted`] to delete it explicitly.
+    ///
+    /// Independent of `Machine::boot`/`Machine::shutdown` cycles — those only
+    /// start and stop the VM regardless of this flag. Default: `false`.
     pub persist: bool,
 
     /// Volume mounts attached at sandbox creation time.
@@ -137,7 +142,8 @@ fn fresh_sandbox_name() -> String {
 ///
 /// The VM is created at construction time and left stopped; `boot()` starts
 /// it for the duration of the returned [`SandboxConsole`], and `shutdown()`
-/// stops (and, unless `config.persist`, removes) it.
+/// stops it. The VM definition is removed when the `Sandbox` value is
+/// dropped, unless `config.persist` is `true`.
 pub struct Sandbox {
     config: SandboxConfig,
     name: String,
@@ -236,7 +242,8 @@ impl Sandbox {
         })
     }
 
-    async fn stop(name: &str, persist: bool) {
+    /// Stop the named VM if it is running. Does not remove the VM definition.
+    async fn stop(name: &str) {
         match MsbSandbox::get(name).await {
             Err(e) => log::warn!("sandbox stop: get '{name}' failed: {e}"),
             Ok(handle) => {
@@ -261,9 +268,38 @@ impl Sandbox {
                 let _ = handle.stop().await;
             }
         }
+    }
 
-        if !persist {
-            let _ = MsbSandbox::remove(name).await;
+    /// Stop the VM and remove its definition. Called only from `Drop`
+    /// for non-persist sandboxes; never from `Machine::shutdown`.
+    async fn remove(name: &str) {
+        Self::stop(name).await;
+        let _ = MsbSandbox::remove(name).await;
+    }
+
+    /// Remove a `persist = true` sandbox by name without holding a [`Sandbox`] instance.
+    ///
+    /// Intended for explicit cleanup when the `Sandbox` object is no longer available
+    /// (e.g. after a process restart). For `persist = false` sandboxes, removal happens
+    /// automatically on drop.
+    ///
+    /// Idempotent: if the named sandbox does not exist, returns `Ok(())`.
+    pub async fn remove_persisted(name: &str) -> anyhow::Result<()> {
+        match MsbSandbox::get(name).await {
+            Err(_) => Ok(()),
+            Ok(handle) => {
+                match handle.status() {
+                    SandboxStatus::Running | SandboxStatus::Draining => {
+                        let connected = handle.connect().await?;
+                        connected.stop_and_wait().await?;
+                        connected.remove_persisted().await?;
+                    }
+                    _ => {
+                        handle.remove().await?;
+                    }
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -296,16 +332,18 @@ impl Machine for Sandbox {
         })
     }
 
+    /// Stops the VM only; the VM definition is removed when the `Sandbox` is dropped.
     async fn shutdown(&mut self) {
-        Self::stop(&self.name, self.config.persist).await;
+        Self::stop(&self.name).await;
     }
 }
 
 impl Drop for Sandbox {
     fn drop(&mut self) {
-        // Catches VMs that were created in `new()` but never reached
-        // `Machine::shutdown` (e.g. the `RunEnv` was dropped without ever
-        // calling `get()`). Persisted VMs survive.
+        // Drop is the sole owner of VM definition removal for non-persist
+        // sandboxes. `Machine::shutdown` only stops the VM; removal happens
+        // here so the VM definition survives multiple boot/shutdown cycles
+        // within the same `Sandbox` lifetime.
         if self.config.persist {
             return;
         }
@@ -316,7 +354,7 @@ impl Drop for Sandbox {
                 .enable_all()
                 .build()
             {
-                rt.block_on(Self::stop(&name, false));
+                rt.block_on(Self::remove(&name));
             }
             let _ = tx.send(());
         });
@@ -574,28 +612,6 @@ async fn vm_is_running(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Remove a `persist = true` sandbox by name without holding a [`Sandbox`] instance.
-///
-/// Idempotent: if the named sandbox does not exist, returns `Ok(())`.
-pub async fn remove_persisted(name: &str) -> anyhow::Result<()> {
-    match MsbSandbox::get(name).await {
-        Err(_) => Ok(()),
-        Ok(handle) => {
-            match handle.status() {
-                SandboxStatus::Running | SandboxStatus::Draining => {
-                    let connected = handle.connect().await?;
-                    connected.stop_and_wait().await?;
-                    connected.remove_persisted().await?;
-                }
-                _ => {
-                    handle.remove().await?;
-                }
-            }
-            Ok(())
-        }
-    }
-}
-
 fn apply_volume_mount(builder: SandboxBuilder, mount: &VolumeMount) -> SandboxBuilder {
     match mount {
         VolumeMount::Bind {
@@ -804,6 +820,54 @@ mod tests {
 
     // ── VM lifecycle ─────────────────────────────────────────────────────────
 
+    /// VM definition survives `Machine::shutdown` (handle drop) when
+    /// `persist = false` — subsequent boots on the same `Sandbox` must succeed.
+    /// The definition is only removed when the `Sandbox` struct itself is dropped.
+    #[tokio::test]
+    async fn test_vm_definition_survives_machine_shutdown_with_persist_false() {
+        let name = format!("at-vmdef-{}", short_id());
+        let env = RunEnv::sandbox(SandboxConfig {
+            name: Some(name.clone()),
+            persist: false,
+            ..SandboxConfig::default()
+        })
+        .await
+        .unwrap();
+
+        // 1st boot/shutdown cycle
+        {
+            let h = env.get().await.unwrap();
+            let r = h
+                .exec_shell("echo a > ./m.txt".to_string(), None)
+                .await
+                .unwrap();
+            assert_eq!(r.exit_code, 0);
+        } // handle drop → Machine::shutdown is called
+
+        // VM definition must still exist
+        assert!(
+            MsbSandbox::get(&name).await.is_ok(),
+            "VM definition must survive handle drop when persist=false"
+        );
+
+        // 2nd boot must succeed and file state must be preserved
+        let h2 = env.get().await.unwrap();
+        let r = h2
+            .exec_shell("cat ./m.txt".to_string(), None)
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0, "second boot must succeed: {}", r.stderr);
+        drop(h2);
+
+        // VM definition must be gone after the Sandbox is dropped
+        drop(env);
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(
+            MsbSandbox::get(&name).await.is_err(),
+            "VM definition must be removed when persist=false Sandbox is dropped"
+        );
+    }
+
     /// A single boot serves multiple `exec` calls without the VM going down
     /// between them.
     #[tokio::test]
@@ -857,16 +921,18 @@ mod tests {
         let handle = env.get().await.unwrap();
         assert!(vm_is_running(&name).await, "VM should be running again");
         drop(handle);
-        remove_persisted(&name).await.ok();
+        Sandbox::remove_persisted(&name).await.ok();
     }
 
-    /// Repeated boot/drop cycles are safe — no resource leak or double-stop error.
+    /// Repeated boot/drop cycles are safe with `persist = false` — the VM
+    /// definition survives each cycle and no resource leak or double-stop error
+    /// occurs. Removal happens only when the `Sandbox` is dropped.
     #[tokio::test]
     async fn test_start_stop_idempotent() {
         let name = format!("at-si-{}", short_id());
         let env = RunEnv::sandbox(SandboxConfig {
             name: Some(name.clone()),
-            persist: true,
+            persist: false,
             ..SandboxConfig::default()
         })
         .await
@@ -878,7 +944,8 @@ mod tests {
             drop(handle);
             assert!(!vm_is_running(&name).await);
         }
-        remove_persisted(&name).await.ok();
+        // VM definition is still present — removal happens on Sandbox drop.
+        assert!(MsbSandbox::get(&name).await.is_ok());
     }
 
     #[tokio::test]
@@ -903,7 +970,7 @@ mod tests {
             "restart should be well under 3s, got {restart_ms}ms"
         );
         drop(_h);
-        remove_persisted(&name).await.ok();
+        Sandbox::remove_persisted(&name).await.ok();
     }
 
     // ── concurrent access ────────────────────────────────────────────────────
@@ -942,7 +1009,7 @@ mod tests {
             assert_eq!(r.exit_code, 0);
         }
         drop(handles);
-        remove_persisted(&name).await.ok();
+        Sandbox::remove_persisted(&name).await.ok();
     }
 
     /// Two cloned `Arc<RunEnvHandle>`s can issue `exec` concurrently from
@@ -1078,17 +1145,12 @@ mod tests {
 
     // ── persistence ──────────────────────────────────────────────────────────
 
-    /// With `persist = true`, files written during one boot survive the next.
+    /// Files written during one boot survive the next — the VM definition is
+    /// preserved across stop/start cycles as long as the `Sandbox` is alive,
+    /// regardless of `persist`.
     #[tokio::test]
     async fn test_filesystem_persists_across_stop_start() {
-        let name = format!("at-fp-{}", short_id());
-        let env = RunEnv::sandbox(SandboxConfig {
-            name: Some(name.clone()),
-            persist: true,
-            ..SandboxConfig::default()
-        })
-        .await
-        .unwrap();
+        let env = make_env().await;
 
         {
             let handle = env.get().await.unwrap();
@@ -1108,13 +1170,11 @@ mod tests {
             content.contains("hello"),
             "file should survive stop/start cycle, got: {content:?}"
         );
-        drop(handle);
-        remove_persisted(&name).await.ok();
     }
 
     #[tokio::test]
     async fn test_remove_persisted_idempotent() {
-        let result = remove_persisted("ailoy-nonexistent-sandbox-xyz-12345").await;
+        let result = Sandbox::remove_persisted("ailoy-nonexistent-sandbox-xyz-12345").await;
         assert!(
             result.is_ok(),
             "remove_persisted on unknown name should return Ok, got: {result:?}"
@@ -1140,7 +1200,7 @@ mod tests {
                 .expect("write failed");
         }
 
-        remove_persisted(&name)
+        Sandbox::remove_persisted(&name)
             .await
             .expect("remove_persisted failed");
 
@@ -1158,7 +1218,7 @@ mod tests {
             "fresh VM should not contain the marker file from the previous run"
         );
         drop(handle);
-        remove_persisted(&name).await.ok();
+        Sandbox::remove_persisted(&name).await.ok();
     }
 
     // ── volume mounts ────────────────────────────────────────────────────────
@@ -1431,7 +1491,7 @@ mod tests {
 
         drop(_console);
         src.shutdown().await;
-        remove_persisted(&src_name).await.ok();
+        Sandbox::remove_persisted(&src_name).await.ok();
     }
 
     #[tokio::test]
@@ -1479,8 +1539,8 @@ mod tests {
 
         drop(child_console);
         child.shutdown().await;
-        remove_persisted(&src_name).await.ok();
-        remove_persisted(&child_name).await.ok();
+        Sandbox::remove_persisted(&src_name).await.ok();
+        Sandbox::remove_persisted(&child_name).await.ok();
     }
 
     #[tokio::test]
@@ -1537,8 +1597,8 @@ mod tests {
 
         drop(src_console);
         src.shutdown().await;
-        remove_persisted(&src_name).await.ok();
-        remove_persisted(&child_name).await.ok();
+        Sandbox::remove_persisted(&src_name).await.ok();
+        Sandbox::remove_persisted(&child_name).await.ok();
     }
 
     #[tokio::test]
@@ -1575,7 +1635,7 @@ mod tests {
         );
 
         child.shutdown().await;
-        remove_persisted(&src_name).await.ok();
-        remove_persisted(&child_name).await.ok();
+        Sandbox::remove_persisted(&src_name).await.ok();
+        Sandbox::remove_persisted(&child_name).await.ok();
     }
 }
