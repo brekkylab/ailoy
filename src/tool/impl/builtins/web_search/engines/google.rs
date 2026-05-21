@@ -85,9 +85,9 @@ impl Google {
     /// Direct `http(s)://` hrefs are returned as-is.  Everything else (relative
     /// paths, fragment-only anchors, etc.) returns `None` and will be skipped.
     fn clean_url(href: &str) -> Option<String> {
-        if href.starts_with("/url?q=") {
+        if let Some(rest) = href.strip_prefix("/url?q=") {
             // Take the part after `/url?q=` and before the first `&sa=U` token.
-            let encoded = href[7..].split("&sa=U").next().unwrap_or("");
+            let encoded = rest.split("&sa=U").next().unwrap_or("");
             let decoded = urlencoding::decode(encoded).ok()?.into_owned();
             if decoded.starts_with("http") {
                 Some(decoded)

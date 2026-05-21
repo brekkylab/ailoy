@@ -132,31 +132,19 @@ impl Part {
     }
 
     pub fn is_text(&self) -> bool {
-        match self {
-            Self::Text { .. } => true,
-            _ => false,
-        }
+        matches!(self, Self::Text { .. })
     }
 
     pub fn is_function(&self) -> bool {
-        match self {
-            Self::Function { .. } => true,
-            _ => false,
-        }
+        matches!(self, Self::Function { .. })
     }
 
     pub fn is_value(&self) -> bool {
-        match self {
-            Self::Value { .. } => true,
-            _ => false,
-        }
+        matches!(self, Self::Value { .. })
     }
 
     pub fn is_image(&self) -> bool {
-        match self {
-            Self::Image { .. } => true,
-            _ => false,
-        }
+        matches!(self, Self::Image { .. })
     }
 
     pub fn as_text(&self) -> Option<&str> {

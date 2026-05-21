@@ -117,10 +117,7 @@ impl Value {
     }
 
     pub fn is_null(&self) -> bool {
-        match self {
-            Value::Null => true,
-            _ => false,
-        }
+        matches!(self, Value::Null)
     }
 
     pub fn as_bool(&self) -> Option<bool> {
@@ -131,12 +128,10 @@ impl Value {
     }
 
     pub fn is_number(&self) -> bool {
-        match self {
-            Value::Unsigned(_) => true,
-            Value::Integer(_) => true,
-            Value::Float(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Value::Unsigned(_) | Value::Integer(_) | Value::Float(_)
+        )
     }
 
     pub fn as_unsigned(&self) -> Option<u64> {
@@ -170,10 +165,7 @@ impl Value {
     }
 
     pub fn is_string(&self) -> bool {
-        match self {
-            Value::String(_) => true,
-            _ => false,
-        }
+        matches!(self, Value::String(_))
     }
 
     pub fn as_str(&self) -> Option<&str> {
@@ -191,10 +183,7 @@ impl Value {
     }
 
     pub fn is_array(&self) -> bool {
-        match self {
-            Value::Array(_) => true,
-            _ => false,
-        }
+        matches!(self, Value::Array(_))
     }
 
     pub fn as_array(&self) -> Option<&Vec<Value>> {
@@ -212,10 +201,7 @@ impl Value {
     }
 
     pub fn is_object(&self) -> bool {
-        match self {
-            Value::Object(_) => true,
-            _ => false,
-        }
+        matches!(self, Value::Object(_))
     }
 
     pub fn as_object(&self) -> Option<&IndexMap<String, Value>> {
