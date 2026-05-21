@@ -952,8 +952,10 @@ mod tests {
     ///
     /// History layout when truncation fires (after run() pushes the new query):
     ///   [0] sys  [1] u1  [2] a1_tc(old)  [3] tr_old  [4] u2  [5] a2_tc(recent)  [6] tr_recent  [7] u3
-    /// With preserve_recent_turns=1 the boundary lands at index 4 (u2), so tr_old at
-    /// index 3 is outside the preserve window and must become a placeholder.
+    /// `find_preserve_boundary` walks backwards counting User messages, including the
+    /// just-pushed `u3`. With `preserve_recent_turns=2` the boundary lands at index 4
+    /// (`u2`), so `tr_old` at index 3 is outside the preserve window and must become
+    /// a placeholder, while `tr_recent` at index 6 stays intact.
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_context_manager_truncates_tool_results_when_threshold_exceeded() {
@@ -996,7 +998,9 @@ mod tests {
 
         agent.set_context_manager(Some(ContextManager {
             max_input_tokens: 1, // always exceeded
-            preserve_recent_turns: 1,
+            // Two recent turns: the just-pushed `u3` plus the previous `u2`, so the
+            // boundary lands on `u2` and only `tr_old` (from the `u1` turn) is truncated.
+            preserve_recent_turns: 2,
         }));
         agent.state.last_input_tokens = Some(9999);
 
