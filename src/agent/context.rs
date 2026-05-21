@@ -56,6 +56,16 @@ impl ContextManager {
             0
         };
 
+        // `preserve_from = 0` means "fewer turns than requested — preserve everything":
+        // `.take(0).skip(start_idx)` is always empty, so nothing is truncated.
+        // When `preserve_from > 0` the System message always lands at index 0 and
+        // the oldest preserved User turn is at index >= 1, so start_idx <= preserve_from.
+        debug_assert!(
+            preserve_from == 0 || start_idx <= preserve_from,
+            "start_idx ({start_idx}) > preserve_from ({preserve_from}): \
+             truncation window would overlap the system message"
+        );
+
         // ── Replace Tool messages outside the preserve window with placeholders ────
         for msg in history.iter_mut().take(preserve_from).skip(start_idx) {
             if msg.role == Role::Tool {

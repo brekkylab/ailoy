@@ -216,7 +216,7 @@ impl Sandbox {
             log::warn!("fork: failed to clean up snapshot '{snap_name}': {e}");
         }
 
-        result.map_err(|e| {
+        result.inspect_err(|_| {
             // Best-effort removal of any partially-created sandbox.
             let nn = new_name.clone();
             tokio::spawn(async move {
@@ -224,7 +224,6 @@ impl Sandbox {
                     let _ = h.remove().await;
                 }
             });
-            e
         })?;
 
         Ok(Sandbox {
@@ -253,10 +252,9 @@ impl Sandbox {
                 if matches!(
                     handle.status(),
                     SandboxStatus::Running | SandboxStatus::Draining
-                ) {
-                    if let Ok(connected) = handle.connect().await {
-                        let _ = connected.shell("sync -f / 2>/dev/null || sync").await;
-                    }
+                ) && let Ok(connected) = handle.connect().await
+                {
+                    let _ = connected.shell("sync -f / 2>/dev/null || sync").await;
                 }
                 let _ = handle.stop().await;
             }
