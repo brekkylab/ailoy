@@ -110,6 +110,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn web_fetch_tool(mut self) -> Self {
+        self.spec = self.spec.web_fetch_tool();
+        self
+    }
+
     /// Append a sub-agent spec.  At [`build`](Self::build) time the sub-agent is
     /// materialised and registered as a callable tool, sharing the parent's [`RunEnv`].
     /// The sub-spec must carry an [`AgentCard`](crate::agent::AgentCard).
