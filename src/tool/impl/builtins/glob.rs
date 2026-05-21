@@ -13,14 +13,16 @@ fn sh_single_quote_inner(s: &str) -> String {
 }
 
 /// Convert a glob pattern to a POSIX extended regular expression.
-///   `**`    → `.*`     (matches across path segments; an optional trailing `/`
-///                       is absorbed so `**/foo` also matches `foo` at the base)
+///   `**/`   → `(.*/)?` (zero or more complete path segments; anchored to a
+///                       separator so `**/foo` matches `foo` and `a/foo`, but
+///                       not `barfoo`)
+///   `**`    → `.*`     (when not followed by `/`, e.g. trailing `src/**`)
 ///   `*`     → `[^/]*`  (within a single segment)
 ///   `?`     → `[^/]`
 ///   `[..]`  → `[..]`   (character class, with `!` → `^` negation)
 ///   regex metacharacters elsewhere (`.`, `+`, `(`, `)`, `|`, `^`, `$`, `\`,
 ///   `{`, `}`) are backslash-escaped so they match literally.
-fn glob_to_ere(pat: &str) -> String {
+fn glob_to_ere(pat: &str) -> Result<String, String> {
     let mut out = String::with_capacity(pat.len());
     let chars: Vec<char> = pat.chars().collect();
     let mut i = 0;
@@ -28,10 +30,12 @@ fn glob_to_ere(pat: &str) -> String {
         let c = chars[i];
         if c == '*' {
             if i + 1 < chars.len() && chars[i + 1] == '*' {
-                out.push_str(".*");
-                i += 2;
-                if i < chars.len() && chars[i] == '/' {
-                    i += 1;
+                if i + 2 < chars.len() && chars[i + 2] == '/' {
+                    out.push_str("(.*/)?");
+                    i += 3;
+                } else {
+                    out.push_str(".*");
+                    i += 2;
                 }
             } else {
                 out.push_str("[^/]*");
@@ -41,6 +45,7 @@ fn glob_to_ere(pat: &str) -> String {
             out.push_str("[^/]");
             i += 1;
         } else if c == '[' {
+            let start = i;
             out.push('[');
             i += 1;
             if i < chars.len() && (chars[i] == '!' || chars[i] == '^') {
@@ -51,10 +56,13 @@ fn glob_to_ere(pat: &str) -> String {
                 out.push(chars[i]);
                 i += 1;
             }
-            if i < chars.len() {
-                out.push(']');
-                i += 1;
+            if i >= chars.len() {
+                return Err(format!(
+                    "unterminated character class starting at position {start}"
+                ));
             }
+            out.push(']');
+            i += 1;
         } else if matches!(
             c,
             '.' | '+' | '(' | ')' | '|' | '^' | '$' | '\\' | '{' | '}'
@@ -67,7 +75,7 @@ fn glob_to_ere(pat: &str) -> String {
             i += 1;
         }
     }
-    out
+    Ok(out)
 }
 
 pub fn get_glob_tool_desc() -> ToolDesc {
@@ -133,12 +141,21 @@ pub fn get_glob_tool_func() -> ToolFunc {
         if os != "linux" && os != "macos" {
             return crate::to_value!({
                 "error": format!("glob: unsupported OS '{os}'"),
-                "phase": "io",
+                "phase": "validation",
             });
         }
 
+        let regex = match glob_to_ere(pattern_str) {
+            Ok(r) => r,
+            Err(e) => {
+                return crate::to_value!({
+                    "error": format!("invalid pattern: {e}"),
+                    "phase": "validation",
+                });
+            }
+        };
         let base_q = sh_single_quote_inner(path_str);
-        let regex_q = sh_single_quote_inner(&glob_to_ere(pattern_str));
+        let regex_q = sh_single_quote_inner(&regex);
 
         // Stay in POSIX `sh` (via `exec_shell`) so this works on any sandbox
         // image, including ones without zsh or bash 4+. `find` walks the tree,
@@ -322,6 +339,40 @@ mod tests {
             2
         );
         assert!(val.pointer("/truncated").and_then(|v| v.as_bool()).unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_glob_globstar_requires_separator() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("foo.rs"), "").unwrap();
+        std::fs::write(root.join("barfoo.rs"), "").unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/foo.rs"), "").unwrap();
+        std::fs::write(root.join("sub/barfoo.rs"), "").unwrap();
+
+        let msg = call(to_value!({
+            "path": root.to_string_lossy().to_string(),
+            "pattern": "**/foo.rs",
+        }))
+        .await;
+        let p = paths(&msg);
+        assert!(p.iter().any(|x| x.ends_with("/foo.rs")));
+        assert!(p.iter().any(|x| x.ends_with("/sub/foo.rs")));
+        assert!(!p.iter().any(|x| x.ends_with("barfoo.rs")));
+    }
+
+    #[tokio::test]
+    async fn test_glob_unterminated_class_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let msg = call(to_value!({
+            "path": dir.path().to_string_lossy().to_string(),
+            "pattern": "[abc",
+        }))
+        .await;
+        let val = msg.contents[0].as_value().unwrap();
+        let phase = val.pointer("/phase").and_then(|v| v.as_str()).unwrap();
+        assert_eq!(phase, "validation");
     }
 
     #[tokio::test]

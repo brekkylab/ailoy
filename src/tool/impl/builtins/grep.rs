@@ -149,7 +149,7 @@ pub fn get_grep_tool_func() -> ToolFunc {
         if os != "linux" && os != "macos" {
             return crate::to_value!({
                 "error": format!("grep: unsupported OS '{os}'"),
-                "phase": "io",
+                "phase": "validation",
             });
         }
 
