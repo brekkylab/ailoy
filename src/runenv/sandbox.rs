@@ -1343,6 +1343,54 @@ mod tests {
         );
     }
 
+    // ── networking ───────────────────────────────────────────────────────────
+
+    /// By default the sandbox can reach external hosts.
+    ///
+    /// Uses alpine (busybox `nc`) to avoid needing bash for the /dev/tcp trick.
+    #[tokio::test]
+    async fn test_network_reachable_by_default() {
+        let env = RunEnv::sandbox(SandboxConfig {
+            image: "alpine:latest".to_string(),
+            ..SandboxConfig::default()
+        })
+        .await
+        .unwrap();
+        let handle = env.get().await.unwrap();
+        // nc -zw5: zero-I/O scan mode, 5-second timeout. No raw-socket privilege needed.
+        let result = handle
+            .exec_shell("nc -zw5 8.8.8.8 53".to_string(), Some(10))
+            .await
+            .unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "TCP connect to 8.8.8.8:53 should succeed with default network settings, \
+             stderr: {}",
+            result.stderr
+        );
+    }
+
+    /// With `disable_network = true`, outbound connections are blocked.
+    #[tokio::test]
+    async fn test_disable_network_blocks_outbound() {
+        let env = RunEnv::sandbox(SandboxConfig {
+            image: "alpine:latest".to_string(),
+            disable_network: true,
+            ..SandboxConfig::default()
+        })
+        .await
+        .unwrap();
+        let handle = env.get().await.unwrap();
+        let result = handle
+            .exec_shell("nc -zw5 8.8.8.8 53 2>/dev/null".to_string(), Some(10))
+            .await
+            .unwrap();
+        assert_ne!(
+            result.exit_code, 0,
+            "TCP connect to 8.8.8.8:53 should fail when network is disabled"
+        );
+    }
+
     // ── fork ─────────────────────────────────────────────────────────────────
     //
     // Fork operates on the underlying `Sandbox`, not on a booted handle, so

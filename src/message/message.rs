@@ -171,6 +171,15 @@ pub struct TokenUsage {
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageOutput {
+    pub message: Message,
+
+    pub finish_reason: FinishReason,
+
+    /// Token usage reported by the language model for this response.
+    /// Only populated for top-level LM calls; tool results leave this as `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
+
     /// Nesting level of this message relative to the top-level agent turn.
     ///
     /// `depth` reflects how many layers of tool calls separate this message from
@@ -192,14 +201,16 @@ pub struct MessageOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<u8>,
 
-    pub message: Message,
-
-    pub finish_reason: FinishReason,
-
-    /// Token usage reported by the language model for this response.
-    /// Only populated for top-level LM calls; tool results leave this as `None`.
+    /// Name of the agent (from its [`AgentCard`]) that produced this message.
+    ///
+    /// `None` when the emitting agent has no `AgentCard` (e.g. a top-level
+    /// agent without a card) or when the output originates from a non-agent
+    /// tool.  In nested subagent chains the innermost producer's name is
+    /// preserved: once set, outer agents never overwrite it.
+    ///
+    /// [`AgentCard`]: crate::agent::AgentCard
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub usage: Option<TokenUsage>,
+    pub source_agent: Option<String>,
 }
 
 impl fmt::Display for MessageOutput {
