@@ -456,19 +456,22 @@ pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
                 .map(|n| n.max(256).min(MAX_BODY_CHARS as i64) as usize)
                 .unwrap_or(DEFAULT_BODY_CHARS);
 
-            // `urls` (array) takes precedence over `url` when both are sent.
-            let urls_array = args.pointer("/urls").and_then(|v| v.as_array()).cloned();
+            // Accept `urls` only when it is a non-empty array of strings.
+            // An empty/missing `urls` (some LLMs send `"urls": []` next to a
+            // single `url`) falls through to the single-URL path so callers
+            // get a result instead of a validation error.
+            let urls_array: Option<Vec<String>> = args
+                .pointer("/urls")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<String>>()
+                })
+                .filter(|v| !v.is_empty());
 
             if let Some(urls) = urls_array {
-                let urls: Vec<String> = urls
-                    .iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect();
-                if urls.is_empty() {
-                    return crate::to_value!({
-                        "error": "`urls` array is empty or contains no strings"
-                    });
-                }
                 if urls.len() > MAX_BATCH_URLS {
                     let msg = format!(
                         "batch size {} exceeds max {MAX_BATCH_URLS} — split into multiple calls",
@@ -682,10 +685,7 @@ mod tests {
                 .pointer("/status")
                 .and_then(|v| v.as_integer())
                 .unwrap_or(0);
-            let body = r
-                .pointer("/body")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let body = r.pointer("/body").and_then(|v| v.as_str()).unwrap_or("");
             assert!(
                 url.starts_with(&urls[i].trim_end_matches('/')),
                 "result {i} url mismatch: input={} got={url}",
