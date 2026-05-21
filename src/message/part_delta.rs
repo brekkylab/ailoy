@@ -152,7 +152,7 @@ impl PartDelta {
                 function: PartDeltaFunction::WithStringArgs { name, arguments },
             } => serde_json::from_str::<Value>(&arguments)
                 .ok()
-                .and_then(|arguments| Some((id, name, arguments))),
+                .map(|arguments| (id, name, arguments)),
             Self::Function {
                 id,
                 function: PartDeltaFunction::Verbatim { text },

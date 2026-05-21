@@ -33,7 +33,7 @@ impl<'d, D: ?Sized, M: Marshal<D>> Marshaled<'d, D, M> {
     pub fn new(data: &'d D) -> Self {
         Self {
             data,
-            m: PhantomData::default(),
+            m: PhantomData,
         }
     }
 }
@@ -78,7 +78,7 @@ impl<'de, D: Delta, U: Unmarshal<D>> Deserialize<'de> for Unmarshaled<D, U> {
             .map_err(|_| serde::de::Error::custom("Unable to decode"))?;
         Ok(Unmarshaled {
             data: delta,
-            u: std::marker::PhantomData::default(),
+            u: std::marker::PhantomData,
         })
     }
 }

@@ -682,9 +682,9 @@ impl<'a> TryFrom<&'a mut Value> for &'a mut IndexMap<String, Value> {
     }
 }
 
-impl Into<serde_json::Value> for Value {
-    fn into(self) -> serde_json::Value {
-        match self {
+impl From<Value> for serde_json::Value {
+    fn from(val: Value) -> Self {
+        match val {
             Value::Null => serde_json::Value::Null,
             Value::Bool(b) => serde_json::Value::Bool(b),
             Value::Unsigned(u) => serde_json::Value::Number((u).into()),
@@ -705,9 +705,9 @@ impl Into<serde_json::Value> for Value {
     }
 }
 
-impl Into<Value> for serde_json::Value {
-    fn into(self) -> Value {
-        match self {
+impl From<serde_json::Value> for Value {
+    fn from(val: serde_json::Value) -> Self {
+        match val {
             serde_json::Value::Null => Value::Null,
             serde_json::Value::Bool(b) => Value::Bool(b),
             serde_json::Value::Number(n) => {

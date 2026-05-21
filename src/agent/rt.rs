@@ -398,10 +398,10 @@ impl Agent {
     /// messages that already carry a name from a deeper subagent are forwarded
     /// unchanged — the innermost producer always wins in nested chains.
     fn stamp_source_agent(&self, out: &mut MessageOutput) {
-        if out.source_agent.is_none() {
-            if let Some(card) = self.spec.card.as_ref() {
-                out.source_agent = Some(card.name.clone());
-            }
+        if out.source_agent.is_none()
+            && let Some(card) = self.spec.card.as_ref()
+        {
+            out.source_agent = Some(card.name.clone());
         }
     }
 
@@ -429,11 +429,10 @@ impl Agent {
 
             loop {
                 // Truncation check based on previous call's token usage.
-                if let Some(cm) = &self.context_manager {
-                    if self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens {
+                if let Some(cm) = &self.context_manager
+                    && self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens {
                         cm.truncate_history(&mut self.state.history);
                     }
-                }
 
                 let mut output = self
                     .model

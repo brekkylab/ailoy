@@ -126,7 +126,7 @@ fn marshal_messages(msgs: &[Message]) -> Value {
     let last_user_index = msgs
         .iter()
         .rposition(|m| m.role == Role::User)
-        .unwrap_or_else(|| msgs.len());
+        .unwrap_or(msgs.len());
     Value::Array(
         msgs.iter()
             .enumerate()
@@ -177,7 +177,7 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 }
             });
 
-        let input = marshal_messages(&req.messages);
+        let input = marshal_messages(req.messages);
 
         let tools = if !req.tools.is_empty() {
             Value::Array(req.tools.iter().map(|t| self.marshal(t)).collect())
@@ -325,14 +325,13 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
                             for part in parts {
                                 let part_ty =
                                     part.pointer("/type").and_then(|v| v.as_str()).unwrap_or("");
-                                if part_ty == "output_text" || part_ty == "text" {
-                                    if let Some(text) =
+                                if (part_ty == "output_text" || part_ty == "text")
+                                    && let Some(text) =
                                         part.pointer("/text").and_then(|v| v.as_str())
-                                    {
-                                        delta.contents.push(PartDelta::Text {
-                                            text: text.to_owned(),
-                                        });
-                                    }
+                                {
+                                    delta.contents.push(PartDelta::Text {
+                                        text: text.to_owned(),
+                                    });
                                 }
                             }
                         }

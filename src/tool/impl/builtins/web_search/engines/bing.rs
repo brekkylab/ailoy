@@ -166,12 +166,11 @@ impl SearchEngine for Bing {
                 .select(&self.sel_caption)
                 .flat_map(|p| {
                     p.children().filter_map(|child| {
-                        if let Some(el) = child.value().as_element() {
-                            if el.name() == "span" {
-                                if el.attr("class").unwrap_or("").contains("algoSlug_icon") {
-                                    return None;
-                                }
-                            }
+                        if let Some(el) = child.value().as_element()
+                            && el.name() == "span"
+                            && el.attr("class").unwrap_or("").contains("algoSlug_icon")
+                        {
+                            return None;
                         }
                         Some(
                             scraper::ElementRef::wrap(child)

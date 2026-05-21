@@ -130,7 +130,7 @@ fn marshal_messages(messages: &[Message]) -> Value {
     let last_user_index = messages
         .iter()
         .rposition(|m| m.role == Role::User)
-        .unwrap_or_else(|| messages.len());
+        .unwrap_or(messages.len());
     Value::Array(
         messages
             .iter()
@@ -182,7 +182,7 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 }
             });
 
-        let messages = marshal_messages(&req.messages);
+        let messages = marshal_messages(req.messages);
 
         let tools = if !req.tools.is_empty() {
             self.marshal(req.tools)
