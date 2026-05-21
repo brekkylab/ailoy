@@ -97,7 +97,7 @@ pub struct SandboxConfig {
 
     /// When `true`, the VM definition survives drop of the [`Sandbox`] struct
     /// and can be reattached by name in a future session. Use
-    /// [`remove_persisted`] to delete it explicitly.
+    /// [`Sandbox::remove_persisted`] to delete it explicitly.
     ///
     /// Independent of `Machine::boot`/`Machine::shutdown` cycles — those only
     /// start and stop the VM regardless of this flag. Default: `false`.
@@ -275,6 +275,32 @@ impl Sandbox {
     async fn remove(name: &str) {
         Self::stop(name).await;
         let _ = MsbSandbox::remove(name).await;
+    }
+
+    /// Remove a `persist = true` sandbox by name without holding a [`Sandbox`] instance.
+    ///
+    /// Intended for explicit cleanup when the `Sandbox` object is no longer available
+    /// (e.g. after a process restart). For `persist = false` sandboxes, removal happens
+    /// automatically on drop.
+    ///
+    /// Idempotent: if the named sandbox does not exist, returns `Ok(())`.
+    pub async fn remove_persisted(name: &str) -> anyhow::Result<()> {
+        match MsbSandbox::get(name).await {
+            Err(_) => Ok(()),
+            Ok(handle) => {
+                match handle.status() {
+                    SandboxStatus::Running | SandboxStatus::Draining => {
+                        let connected = handle.connect().await?;
+                        connected.stop_and_wait().await?;
+                        connected.remove_persisted().await?;
+                    }
+                    _ => {
+                        handle.remove().await?;
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 }
 
@@ -586,31 +612,6 @@ async fn vm_is_running(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Remove a `persist = true` sandbox by name without holding a [`Sandbox`] instance.
-///
-/// This is the explicit cleanup hook for `persist = true` sandboxes. For
-/// `persist = false` sandboxes, removal happens automatically on `Sandbox` drop.
-///
-/// Idempotent: if the named sandbox does not exist, returns `Ok(())`.
-pub async fn remove_persisted(name: &str) -> anyhow::Result<()> {
-    match MsbSandbox::get(name).await {
-        Err(_) => Ok(()),
-        Ok(handle) => {
-            match handle.status() {
-                SandboxStatus::Running | SandboxStatus::Draining => {
-                    let connected = handle.connect().await?;
-                    connected.stop_and_wait().await?;
-                    connected.remove_persisted().await?;
-                }
-                _ => {
-                    handle.remove().await?;
-                }
-            }
-            Ok(())
-        }
-    }
-}
-
 fn apply_volume_mount(builder: SandboxBuilder, mount: &VolumeMount) -> SandboxBuilder {
     match mount {
         VolumeMount::Bind {
@@ -920,7 +921,7 @@ mod tests {
         let handle = env.get().await.unwrap();
         assert!(vm_is_running(&name).await, "VM should be running again");
         drop(handle);
-        remove_persisted(&name).await.ok();
+        Sandbox::remove_persisted(&name).await.ok();
     }
 
     /// Repeated boot/drop cycles are safe with `persist = false` — the VM
@@ -969,7 +970,7 @@ mod tests {
             "restart should be well under 3s, got {restart_ms}ms"
         );
         drop(_h);
-        remove_persisted(&name).await.ok();
+        Sandbox::remove_persisted(&name).await.ok();
     }
 
     // ── concurrent access ────────────────────────────────────────────────────
@@ -1008,7 +1009,7 @@ mod tests {
             assert_eq!(r.exit_code, 0);
         }
         drop(handles);
-        remove_persisted(&name).await.ok();
+        Sandbox::remove_persisted(&name).await.ok();
     }
 
     /// Two cloned `Arc<RunEnvHandle>`s can issue `exec` concurrently from
@@ -1173,7 +1174,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_persisted_idempotent() {
-        let result = remove_persisted("ailoy-nonexistent-sandbox-xyz-12345").await;
+        let result = Sandbox::remove_persisted("ailoy-nonexistent-sandbox-xyz-12345").await;
         assert!(
             result.is_ok(),
             "remove_persisted on unknown name should return Ok, got: {result:?}"
@@ -1199,7 +1200,7 @@ mod tests {
                 .expect("write failed");
         }
 
-        remove_persisted(&name)
+        Sandbox::remove_persisted(&name)
             .await
             .expect("remove_persisted failed");
 
@@ -1217,7 +1218,7 @@ mod tests {
             "fresh VM should not contain the marker file from the previous run"
         );
         drop(handle);
-        remove_persisted(&name).await.ok();
+        Sandbox::remove_persisted(&name).await.ok();
     }
 
     // ── volume mounts ────────────────────────────────────────────────────────
