@@ -4,7 +4,7 @@ use crate::{
     agent::{Agent, AgentProvider, AgentSpec, ContextManager},
     message::Message,
     runenv::{FileEntry, RunEnv},
-    tool::ToolDesc,
+    tool::{ToolDesc, WebSearchEngineKind},
 };
 
 /// Fluent builder over [`AgentSpec`] for [`Agent`].
@@ -105,8 +105,8 @@ impl AgentBuilder {
         self
     }
 
-    pub fn web_search_tool(mut self) -> Self {
-        self.spec = self.spec.web_search_tool();
+    pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
+        self.spec = self.spec.web_search_tool(engines);
         self
     }
 

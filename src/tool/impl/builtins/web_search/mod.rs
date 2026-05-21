@@ -5,6 +5,7 @@ mod engines;
 use std::sync::Arc;
 
 use aggregator::MetaSearcher;
+pub use engines::WebSearchEngineKind;
 
 use crate::{
     datatype::Value,
@@ -38,9 +39,14 @@ pub fn get_web_search_tool_desc() -> ToolDesc {
         .build()
 }
 
-pub fn get_web_search_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
-    |_| {
-        let searcher = Arc::new(MetaSearcher::new());
+/// Returns a factory for the `web_search` tool that fans out to the given engines.
+///
+/// An empty `engines` vec falls back to all available engines.
+pub fn get_web_search_tool_factory(
+    engines: Vec<WebSearchEngineKind>,
+) -> impl Fn(&ToolDesc) -> ToolFunc {
+    move |_| {
+        let searcher = Arc::new(MetaSearcher::new(engines.clone()));
         tool_func!(async |args: Value| -> Value
             with [searcher = searcher.clone()]
             {
@@ -119,7 +125,7 @@ mod tests {
     #[ignore = "requires network"]
     async fn test_web_search_tool_aggregation() {
         // Call the underlying searcher directly so we can inspect AggregatedResult fields.
-        let searcher = MetaSearcher::new();
+        let searcher = MetaSearcher::new(vec![]);
         let results = searcher.search("ailoy", 20).await;
 
         println!("Total aggregated results: {}", results.len());
@@ -189,5 +195,23 @@ mod tests {
             "Expected results from at least 3 distinct engines, got {:?}",
             all_sources
         );
+    }
+
+    #[test]
+    fn test_engine_kind_all_count() {
+        assert_eq!(WebSearchEngineKind::ALL.len(), 9);
+    }
+
+    #[test]
+    fn test_engine_kind_name_matches_engine_name() {
+        for kind in WebSearchEngineKind::ALL {
+            let engine = kind.instantiate();
+            assert_eq!(
+                kind.name(),
+                engine.name(),
+                "WebSearchEngineKind::{:?} name() must match engine.name()",
+                kind
+            );
+        }
     }
 }

@@ -34,5 +34,6 @@ mod provider;
 
 pub use desc::*;
 pub use func::*;
+pub use r#impl::WebSearchEngineKind;
 pub use provider::*;
 // pub use r#impl::builtin::{};

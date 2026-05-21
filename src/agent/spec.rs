@@ -8,7 +8,7 @@ use crate::{
     lang_model::LangModelOptions,
     runenv::FileEntry,
     tool::{
-        ToolDesc,
+        ToolDesc, WebSearchEngineKind,
         r#impl::{
             get_apply_patch_tool_desc, get_edit_tool_desc, get_glob_tool_desc, get_grep_tool_desc,
             get_python_repl_tool_desc, get_read_tool_desc, get_shell_tool_desc,
@@ -78,6 +78,11 @@ pub struct AgentSpec {
     /// can live anywhere on the runenv — they do not need to share a parent.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<PathBuf>,
+
+    /// Engines used by the `web_search` tool. `None` (or not provided) means
+    /// all available engines. Only meaningful when `web_search` is listed in `tools`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search_engines: Option<Vec<WebSearchEngineKind>>,
 }
 
 impl AgentSpec {
@@ -91,6 +96,7 @@ impl AgentSpec {
             files: Vec::new(),
             skills: Vec::new(),
             model_options: None,
+            web_search_engines: None,
         }
     }
 
@@ -139,8 +145,15 @@ impl AgentSpec {
         self
     }
 
-    pub fn web_search_tool(mut self) -> Self {
+    /// Add the `web_search` tool to the spec.
+    ///
+    /// Pass a non-empty `engines` vec to restrict which engines are used;
+    /// an empty vec (or `vec![]`) uses all available engines.
+    pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
         self.tools.push(get_web_search_tool_desc());
+        if !engines.is_empty() {
+            self.web_search_engines = Some(engines);
+        }
         self
     }
 
@@ -357,5 +370,53 @@ mod tests {
         assert_eq!(back.files.len(), 1);
         assert_eq!(back.subagents.len(), 1);
         assert_eq!(back.subagents[0].files.len(), 1);
+    }
+
+    #[test]
+    fn test_web_search_tool_empty_engines_keeps_field_none() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini").web_search_tool(vec![]);
+        assert!(
+            spec.web_search_engines.is_none(),
+            "empty engines should leave web_search_engines as None"
+        );
+        assert_eq!(spec.tools.len(), 1);
+        assert_eq!(spec.tools[0].name, "web_search");
+    }
+
+    #[test]
+    fn test_web_search_tool_with_engines_stores_field() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini").web_search_tool(vec![
+            WebSearchEngineKind::Google,
+            WebSearchEngineKind::Brave,
+        ]);
+        assert_eq!(
+            spec.web_search_engines.as_deref(),
+            Some(vec![WebSearchEngineKind::Google, WebSearchEngineKind::Brave].as_slice())
+        );
+        assert_eq!(spec.tools.len(), 1);
+    }
+
+    #[test]
+    fn test_web_search_engines_omitted_from_serialisation_when_none() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini").web_search_tool(vec![]);
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(
+            !json.contains("web_search_engines"),
+            "web_search_engines should be absent when None: {json}"
+        );
+    }
+
+    #[test]
+    fn test_web_search_engines_roundtrip() {
+        let spec = AgentSpec::new("openai/gpt-4o-mini").web_search_tool(vec![
+            WebSearchEngineKind::Google,
+            WebSearchEngineKind::Yahoo,
+        ]);
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: AgentSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.web_search_engines.as_deref(),
+            Some(vec![WebSearchEngineKind::Google, WebSearchEngineKind::Yahoo].as_slice())
+        );
     }
 }
