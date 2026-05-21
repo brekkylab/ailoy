@@ -586,6 +586,31 @@ async fn vm_is_running(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Remove a `persist = true` sandbox by name without holding a [`Sandbox`] instance.
+///
+/// This is the explicit cleanup hook for `persist = true` sandboxes. For
+/// `persist = false` sandboxes, removal happens automatically on `Sandbox` drop.
+///
+/// Idempotent: if the named sandbox does not exist, returns `Ok(())`.
+pub async fn remove_persisted(name: &str) -> anyhow::Result<()> {
+    match MsbSandbox::get(name).await {
+        Err(_) => Ok(()),
+        Ok(handle) => {
+            match handle.status() {
+                SandboxStatus::Running | SandboxStatus::Draining => {
+                    let connected = handle.connect().await?;
+                    connected.stop_and_wait().await?;
+                    connected.remove_persisted().await?;
+                }
+                _ => {
+                    handle.remove().await?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 fn apply_volume_mount(builder: SandboxBuilder, mount: &VolumeMount) -> SandboxBuilder {
     match mount {
         VolumeMount::Bind {
@@ -637,25 +662,6 @@ mod tests {
         RunEnv::sandbox(SandboxConfig::default())
             .await
             .expect("failed to create sandbox")
-    }
-
-    async fn remove_persisted(name: &str) -> anyhow::Result<()> {
-        match MsbSandbox::get(name).await {
-            Err(_) => Ok(()),
-            Ok(handle) => {
-                match handle.status() {
-                    SandboxStatus::Running | SandboxStatus::Draining => {
-                        let connected = handle.connect().await?;
-                        connected.stop_and_wait().await?;
-                        connected.remove_persisted().await?;
-                    }
-                    _ => {
-                        handle.remove().await?;
-                    }
-                }
-                Ok(())
-            }
-        }
     }
 
     // ── config & validation ──────────────────────────────────────────────────
