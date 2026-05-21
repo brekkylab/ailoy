@@ -10,12 +10,15 @@ use crate::{
 const DEFAULT_LIMIT: usize = 1000;
 const MAX_OUTPUT_CHARS: usize = 200_000;
 
-/// Probe for ripgrep by running `rg --version`. A non-zero exit (or spawn
-/// failure, which `Local::exec` surfaces as `exit_code = -1`) is treated as
-/// "not available".
+/// POSIX-safe shell quoting: wrap `s` in single quotes, escaping embedded `'`.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Probe for ripgrep by asking the shell to locate it. Exit 0 means available.
 async fn has_ripgrep(runenv: &RunEnvHandle) -> bool {
     runenv
-        .exec("rg".to_string(), vec!["--version".to_string()], Some(5))
+        .exec_shell("command -v rg >/dev/null 2>&1".to_string(), Some(5))
         .await
         .map(|r| r.exit_code == 0)
         .unwrap_or(false)
@@ -142,13 +145,21 @@ pub fn get_grep_tool_func() -> ToolFunc {
             });
         }
 
+        let os = runenv.get_os();
+        if os != "linux" && os != "macos" {
+            return crate::to_value!({
+                "error": format!("grep: unsupported OS '{os}'"),
+                "phase": "validation",
+            });
+        }
+
         let use_rg = has_ripgrep(&runenv).await;
 
         // Build a per-tool arg list. The shared shape is roughly:
         //   <flags> [-B N] [-A N] [include-glob] -e PATTERN -- PATH
         // rg differs from grep in: no `-r` (always recursive on dirs), `-g GLOB`
         // instead of `--include=GLOB`, and `--no-heading` to get inline output.
-        let (program, tool_args, tool_name): (String, Vec<String>, &'static str) = if use_rg {
+        let (program, tool_args, tool_name): (&str, Vec<String>, &'static str) = if use_rg {
             let mut a = vec![
                 "--color=never".to_string(),
                 "--no-heading".to_string(),
@@ -180,7 +191,7 @@ pub fn get_grep_tool_func() -> ToolFunc {
             a.push(pattern_str.to_string());
             a.push("--".to_string());
             a.push(path_str.to_string());
-            ("rg".to_string(), a, "rg")
+            ("rg", a, "rg")
         } else {
             let mut a = vec![
                 "-r".to_string(),
@@ -214,10 +225,18 @@ pub fn get_grep_tool_func() -> ToolFunc {
             a.push(pattern_str.to_string());
             a.push("--".to_string());
             a.push(path_str.to_string());
-            ("grep".to_string(), a, "grep")
+            ("grep", a, "grep")
         };
 
-        let result = match runenv.exec(program, tool_args, None).await {
+        // Quote every argument for embedding in a single `sh -c` command line.
+        // Flags are literal-safe but uniform quoting keeps the assembly simple.
+        let mut cmd = String::from(program);
+        for arg in &tool_args {
+            cmd.push(' ');
+            cmd.push_str(&sh_quote(arg));
+        }
+
+        let result = match runenv.exec_shell(cmd, None).await {
             Ok(r) => r,
             Err(e) => {
                 return crate::to_value!({
