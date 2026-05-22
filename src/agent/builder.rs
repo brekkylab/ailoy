@@ -129,10 +129,8 @@ impl AgentBuilder {
     }
 
     /// Use this [`RunEnv`] for tool execution instead of the default local runenv.
-    /// `RunEnv` is cheaply cloneable, so the same underlying VM can be shared between
-    /// multiple agents by cloning the value.
-    pub fn runenv(mut self, runenv: RunEnv) -> Self {
-        self.state.runenv = Arc::new(runenv);
+    pub fn runenv(mut self, runenv: impl Into<Arc<RunEnv>>) -> Self {
+        self.state.runenv = runenv.into();
         self
     }
 
@@ -217,7 +215,7 @@ impl AgentBuilder {
             state,
         } = self;
 
-        let runenv = (*state.runenv).clone();
+        let runenv = state.runenv.clone();
         let mut agent = match provider {
             None => Agent::try_with_provider_and_runenv(spec, &default_provider(), runenv)?,
             Some(provider) => Agent::try_with_provider_and_runenv(spec, &provider, runenv)?,
@@ -486,9 +484,11 @@ mod tests {
     async fn test_builder_shared_arc_sandbox() {
         use crate::runenv::SandboxConfig;
 
-        let runenv = RunEnv::sandbox(SandboxConfig::default())
-            .await
-            .expect("sandbox creation failed");
+        let runenv = Arc::new(
+            RunEnv::sandbox(SandboxConfig::default())
+                .await
+                .expect("sandbox creation failed"),
+        );
 
         let sub_agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())

@@ -978,13 +978,15 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_get() {
         let name = format!("at-cg-{}", short_id());
-        let env = RunEnv::sandbox(SandboxConfig {
-            name: Some(name.clone()),
-            persist: true,
-            ..SandboxConfig::default()
-        })
-        .await
-        .unwrap();
+        let env = std::sync::Arc::new(
+            RunEnv::sandbox(SandboxConfig {
+                name: Some(name.clone()),
+                persist: true,
+                ..SandboxConfig::default()
+            })
+            .await
+            .unwrap(),
+        );
 
         let tasks: Vec<_> = (0..4)
             .map(|_| {

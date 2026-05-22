@@ -340,7 +340,6 @@ enum RunEnvState {
 /// first `get` and shut down when the last handle is dropped.
 ///
 /// See the [module-level documentation](self) for the overall design.
-#[derive(Clone)]
 pub struct RunEnv {
     machine: Arc<Mutex<dyn MachineDyn>>,
     state: Arc<Mutex<RunEnvState>>,

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, pin::Pin};
+use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
@@ -82,7 +82,10 @@ impl Agent {
     }
 
     /// Create an agent using the process-wide [`default_provider`] and an explicit [`RunEnv`].
-    pub fn try_with_runenv(spec: AgentSpec, runenv: RunEnv) -> anyhow::Result<Self> {
+    pub fn try_with_runenv(
+        spec: AgentSpec,
+        runenv: impl Into<Arc<RunEnv>>,
+    ) -> anyhow::Result<Self> {
         let provider = default_provider();
         Self::try_with_provider_and_runenv(spec, &provider, runenv)
     }
@@ -93,7 +96,7 @@ impl Agent {
     /// touching global state.  The provider is not stored in the agent and can be
     /// reused across multiple agents.
     pub fn try_with_provider(spec: AgentSpec, provider: &AgentProvider) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_runenv(spec, provider, RunEnv::local())
+        Self::try_with_provider_and_runenv(spec, provider, Arc::new(RunEnv::local()))
     }
 
     /// Create an agent with an explicit [`AgentProvider`] and [`RunEnv`].
@@ -110,8 +113,9 @@ impl Agent {
     pub fn try_with_provider_and_runenv(
         spec: AgentSpec,
         provider: &AgentProvider,
-        runenv: RunEnv,
+        runenv: impl Into<Arc<RunEnv>>,
     ) -> anyhow::Result<Self> {
+        let runenv: Arc<RunEnv> = runenv.into();
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
         let model = provider.models.provide(&spec.model)?;
 
@@ -1366,9 +1370,11 @@ To activate a skill, read its SKILL.md using the shell tool \
         let mut provider = get_provider();
         provider.tools = ToolProvider::new();
 
-        let runenv = RunEnv::sandbox(SandboxConfig::default())
-            .await
-            .expect("sandbox creation failed");
+        let runenv = Arc::new(
+            RunEnv::sandbox(SandboxConfig::default())
+                .await
+                .expect("sandbox creation failed"),
+        );
 
         // Subagent: writes a file when asked, has shell tool + shared sandbox.
         let sub_spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")

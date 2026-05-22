@@ -1,9 +1,12 @@
-use std::path::PathBuf;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::runenv::FileEntry;
+use crate::runenv::{FileEntry, RunEnvHandle};
 
 /// Conventional basename of a skill's declaration file.
 pub const SKILL_FILE: &str = "SKILL.md";
@@ -20,6 +23,108 @@ impl SkillMeta {
     pub fn skill_md_path(&self) -> PathBuf {
         self.dir.join(SKILL_FILE)
     }
+}
+
+/// Read one skill's metadata from `dir` inside `console`.  Returns `None`
+/// when `dir/SKILL.md` does not exist; bubbles up other I/O or parse errors.
+pub async fn get_skill(
+    console: Arc<RunEnvHandle>,
+    dir: &Path,
+) -> anyhow::Result<Option<SkillMeta>> {
+    let skill_md_path = dir.join(SKILL_FILE);
+    let path_s = skill_md_path.to_string_lossy();
+
+    let script = match console.get_os() {
+        "linux" | "macos" => format!("test -f '{}'", path_s.replace('\'', "'\\''")),
+        "windows" => format!(
+            "if (Test-Path -LiteralPath '{}' -PathType Leaf) {{ exit 0 }} else {{ exit 1 }}",
+            path_s.replace('\'', "''"),
+        ),
+        other => anyhow::bail!("get_skill: unsupported OS '{other}'"),
+    };
+    let result = console.exec_shell(script, None).await?;
+    if result.exit_code != 0 {
+        return Ok(None);
+    }
+
+    let bytes = console.read(&skill_md_path).await?;
+    let raw = std::str::from_utf8(&bytes).map_err(|e| {
+        anyhow::anyhow!(
+            "SKILL.md at {} is not valid UTF-8: {e}",
+            skill_md_path.display()
+        )
+    })?;
+    let (name, description, _body) = parse_skill_frontmatter(raw)
+        .map_err(|e| anyhow::anyhow!("SKILL.md at {}: {e}", skill_md_path.display()))?;
+    Ok(Some(SkillMeta {
+        name,
+        description,
+        dir: dir.to_path_buf(),
+    }))
+}
+
+/// Recursively scan `path` inside `console` for `SKILL.md` files, parse their
+/// frontmatter, and return one [`SkillMeta`] per match.  The path may point
+/// at a single skill directory or a parent that contains many.
+pub async fn list_skills(
+    console: Arc<RunEnvHandle>,
+    path: &Path,
+) -> anyhow::Result<Vec<SkillMeta>> {
+    let path_s = path.to_string_lossy();
+    let script = match console.get_os() {
+        "linux" | "macos" => format!(
+            "find '{}' -type f -name '{}' 2>/dev/null",
+            path_s.replace('\'', "'\\''"),
+            SKILL_FILE,
+        ),
+        "windows" => format!(
+            "Get-ChildItem -Path '{}' -Recurse -Filter '{}' -File -ErrorAction SilentlyContinue \
+             | ForEach-Object {{ $_.FullName }}",
+            path_s.replace('\'', "''"),
+            SKILL_FILE,
+        ),
+        other => anyhow::bail!("list_skills: unsupported OS '{other}'"),
+    };
+
+    let result = console.exec_shell(script, None).await?;
+    if result.exit_code != 0 {
+        anyhow::bail!(
+            "list_skills: list under {} failed (exit {}): {}",
+            path.display(),
+            result.exit_code,
+            result.stderr.trim(),
+        );
+    }
+
+    let mut skills = Vec::new();
+    for line in result.stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let skill_md_path = PathBuf::from(line);
+        let dir = skill_md_path
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let bytes = console.read(&skill_md_path).await?;
+        let raw = std::str::from_utf8(&bytes).map_err(|e| {
+            anyhow::anyhow!(
+                "SKILL.md at {} is not valid UTF-8: {e}",
+                skill_md_path.display()
+            )
+        })?;
+        let (name, description, _body) = parse_skill_frontmatter(raw)
+            .map_err(|e| anyhow::anyhow!("SKILL.md at {}: {e}", skill_md_path.display()))?;
+        skills.push(SkillMeta {
+            name,
+            description,
+            dir,
+        });
+    }
+
+    Ok(skills)
 }
 
 /// Parse `---\nname: …\ndescription: …\n---\n<body>` frontmatter.

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::{
     message::{Message, Part, Role},
     runenv::RunEnv,
+    skill::{self, SkillMeta},
 };
 
 /// Conversation transcript paired with the policy that bounds it.
@@ -179,6 +180,23 @@ impl AgentState {
     /// Truncate the conversation history to reduce context size.
     pub fn truncate_messages(&mut self) {
         self.history.truncate();
+    }
+
+    /// List skills available under `path` inside the agent's [`RunEnv`].
+    ///
+    /// Recursively scans for `SKILL.md` files and parses their `name` /
+    /// `description` frontmatter.  Works against any backend (local FS or
+    /// sandbox) since the walk is performed through the runenv's shell.
+    pub async fn list_skills(&self, path: &std::path::Path) -> anyhow::Result<Vec<SkillMeta>> {
+        let handle = self.runenv.get().await?;
+        skill::list_skills(handle, path).await
+    }
+
+    /// Load a single skill from the directory `path` inside the agent's
+    /// [`RunEnv`].  Returns `Ok(None)` when `path/SKILL.md` does not exist.
+    pub async fn get_skill(&self, path: &std::path::Path) -> anyhow::Result<Option<SkillMeta>> {
+        let handle = self.runenv.get().await?;
+        skill::get_skill(handle, path).await
     }
 }
 
