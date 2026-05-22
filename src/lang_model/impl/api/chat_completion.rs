@@ -24,6 +24,22 @@ impl LangModelProvider {
         }
     }
 
+    pub fn deepseek(api_key: String) -> LangModelProviderElem {
+        LangModelProviderElem::API {
+            schema: LangModelAPISchema::ChatCompletion,
+            url: Url::parse("https://api.deepseek.com/chat/completions").unwrap(),
+            api_key: Some(api_key),
+        }
+    }
+
+    pub fn kimi(api_key: String) -> LangModelProviderElem {
+        LangModelProviderElem::API {
+            schema: LangModelAPISchema::ChatCompletion,
+            url: Url::parse("https://api.moonshot.ai/v1/chat/completions").unwrap(),
+            api_key: Some(api_key),
+        }
+    }
+
     pub fn chat_completion(
         url: &str,
         api_key: Option<String>,
@@ -75,10 +91,23 @@ impl Marshal<Message> for ChatCompletionMarshal {
                 .unwrap()
                 .insert("tool_call_id".into(), id.into());
         }
+        // DeepSeek thinking-mode endpoint requires the prior `reasoning_content`
+        // to be replayed on every follow-up turn.
+        if item.role == Role::Assistant
+            && let Some(thinking) = &item.thinking
+            && !thinking.is_empty()
+        {
+            rv.as_object_mut()
+                .unwrap()
+                .insert("reasoning_content".into(), thinking.clone().into());
+        }
         if !item.contents.is_empty() {
             let contents: Vec<Value> = item
                 .contents
                 .iter()
+                // Some ChatCompletion-compatible backends (e.g. Kimi)
+                // reject content arrays containing an empty-text part
+                .filter(|p| !matches!(p, Part::Text { text } if text.is_empty()))
                 .map(|p| {
                     // ChatCompletion backends don't reliably accept images in tool results;
                     // substitute a text label so the model knows an image was returned.
@@ -103,9 +132,11 @@ impl Marshal<Message> for ChatCompletionMarshal {
                     part_to_value(p)
                 })
                 .collect();
-            rv.as_object_mut()
-                .unwrap()
-                .insert("content".into(), contents.into());
+            if !contents.is_empty() {
+                rv.as_object_mut()
+                    .unwrap()
+                    .insert("content".into(), contents.into());
+            }
         }
         if let Some(tool_calls) = &item.tool_calls
             && !tool_calls.is_empty()
@@ -337,12 +368,24 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             .map(Self::parse_tool_calls)
             .unwrap_or_default();
 
+        // DeepSeek thinking-mode responses include `reasoning_content` as a
+        // sibling of `content`. Map it onto ailoy's canonical `thinking` field
+        // so the same value gets replayed on follow-up turns.
+        let thinking = message
+            .pointer("/reasoning_content")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_owned());
+
         let mut delta = MessageDelta::new().with_role(role);
         if !contents.is_empty() {
             delta = delta.with_contents(contents);
         }
         if !tool_calls.is_empty() {
             delta = delta.with_tool_calls(tool_calls);
+        }
+        if let Some(t) = thinking {
+            delta.thinking = Some(t);
         }
 
         // Parse usage (Chat Completion: usage.prompt_tokens / completion_tokens)

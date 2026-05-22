@@ -54,8 +54,9 @@ pub enum LangModelProviderElem {
 ///
 /// [`Default::default`] (and therefore [`AgentProvider::new`]) returns a
 /// registry pre-populated from the environment:  registers `openai/*`,
-/// `anthropic/*`, and/or `gemini/*` for every `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
-/// / `GEMINI_API_KEY` that is set.
+/// `anthropic/*`, `google/*`, `x-ai/*`, `deepseek/*`, and/or `moonshotai/kimi-*` for every
+/// `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY`
+/// / `KIMI_API_KEY` that is set.
 /// Use [`new`](Self::new) for an empty registry.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
@@ -74,7 +75,16 @@ impl Default for LangModelProvider {
             p.insert("anthropic/*".into(), Self::anthropic(key));
         }
         if let Ok(key) = std::env::var("GEMINI_API_KEY") {
-            p.insert("gemini/*".into(), Self::gemini(key));
+            p.insert("google/*".into(), Self::gemini(key));
+        }
+        if let Ok(key) = std::env::var("XAI_API_KEY") {
+            p.insert("x-ai/*".into(), Self::grok(key));
+        }
+        if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
+            p.insert("deepseek/*".into(), Self::deepseek(key));
+        }
+        if let Ok(key) = std::env::var("KIMI_API_KEY") {
+            p.insert("moonshotai/*".into(), Self::kimi(key));
         }
         p
     }
