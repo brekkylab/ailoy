@@ -143,14 +143,7 @@ fn convert_with_crate(html: &str, output_format: OutputFormat) -> Converted {
                 .document
                 .title
                 .clone()
-                .or_else(|| {
-                    result
-                        .metadata
-                        .document
-                        .open_graph
-                        .get("title")
-                        .cloned()
-                })
+                .or_else(|| result.metadata.document.open_graph.get("title").cloned())
                 .unwrap_or_default()
                 .trim()
                 .to_string();
@@ -224,11 +217,7 @@ fn slice_body(text: &str, offset: usize, len: usize) -> (String, usize, Option<u
     };
     let e = end_byte.unwrap_or(text.len());
     let slice = text[s..e].to_string();
-    let next_offset = if e < text.len() {
-        Some(end_char)
-    } else {
-        None
-    };
+    let next_offset = if e < text.len() { Some(end_char) } else { None };
     (slice, total_chars, next_offset)
 }
 
@@ -335,7 +324,10 @@ async fn fetch_one(
         Ok(t) => t,
         Err(e) => return crate::to_value!({"url": url_str, "error": e}),
     };
-    let Converted { body: readable, title } = convert(&body, &content_type, format);
+    let Converted {
+        body: readable,
+        title,
+    } = convert(&body, &content_type, format);
     let (slice, total_chars, next_offset) = slice_body(&readable, offset, length);
     let complete = next_offset.is_none();
     let next_offset = match next_offset {
@@ -483,16 +475,11 @@ mod tests {
 
     #[test]
     fn convert_markdown_preserves_structure() {
-        let html =
-            "<html><body><h1>Title</h1><p>See <a href=\"https://example.com/x\">docs</a></p></body></html>";
+        let html = "<html><body><h1>Title</h1><p>See <a href=\"https://example.com/x\">docs</a></p></body></html>";
         let out = convert(html, "text/html", BodyFormat::Markdown);
         // Markdown should keep the heading sigil and the anchor URL.
         assert!(out.body.contains("# Title"), "{}", out.body);
-        assert!(
-            out.body.contains("(https://example.com/x)"),
-            "{}",
-            out.body
-        );
+        assert!(out.body.contains("(https://example.com/x)"), "{}", out.body);
     }
 
     #[test]
@@ -595,5 +582,4 @@ mod tests {
             &body.chars().take(200).collect::<String>()
         );
     }
-
 }
