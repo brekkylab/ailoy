@@ -12,7 +12,7 @@ use crate::{
         r#impl::{
             get_apply_patch_tool_desc, get_edit_tool_desc, get_glob_tool_desc, get_grep_tool_desc,
             get_python_repl_tool_desc, get_read_tool_desc, get_shell_tool_desc,
-            get_web_search_tool_desc, get_write_tool_desc,
+            get_web_fetch_tool_desc, get_web_search_tool_desc, get_write_tool_desc,
         },
     },
 };
@@ -154,6 +154,17 @@ impl AgentSpec {
         if !engines.is_empty() {
             self.web_search_engines = Some(engines);
         }
+        self
+    }
+
+    /// Add the `web_fetch` tool to the spec.
+    ///
+    /// Like `web_search_tool`, this is opt-in and is not included in
+    /// `system_tools()`. The tool accepts either a single `url` or a `urls`
+    /// array (up to five) for parallel fetches, honors robots.txt, and
+    /// rate-limits one request per second per host.
+    pub fn web_fetch_tool(mut self) -> Self {
+        self.tools.push(get_web_fetch_tool_desc());
         self
     }
 

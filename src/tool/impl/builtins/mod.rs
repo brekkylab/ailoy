@@ -5,6 +5,7 @@ mod grep;
 mod python_repl;
 mod read;
 mod shell;
+mod web_fetch;
 mod web_search;
 mod write;
 
@@ -17,6 +18,7 @@ pub use grep::*;
 pub use python_repl::*;
 pub use read::*;
 pub use shell::*;
+pub use web_fetch::*;
 pub use web_search::*;
 pub use write::*;
 
@@ -46,5 +48,6 @@ pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
         ("glob", Arc::new(move |_| glob.clone())),
         ("grep", Arc::new(move |_| grep.clone())),
         ("web_search", Arc::new(get_web_search_tool_factory(vec![]))),
+        ("web_fetch", Arc::new(get_web_fetch_tool_factory())),
     ]
 }
