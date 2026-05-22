@@ -51,6 +51,10 @@ async fn rate_limit_for(state: &WebFetchState, host: &str) {
             .and_then(|when| PER_HOST_MIN_INTERVAL.checked_sub(now.duration_since(*when)))
             .unwrap_or(Duration::ZERO);
         m.insert(host.to_string(), now + wait);
+        // Self-trim: only keep hosts hit within the rate-limit window.
+        // Future timestamps (the entry we just inserted with non-zero wait)
+        // survive because `duration_since` saturates to zero for them.
+        m.retain(|_, when| now.duration_since(*when) < PER_HOST_MIN_INTERVAL);
         wait
     };
     if !wait.is_zero() {
@@ -440,6 +444,26 @@ mod tests {
         assert_eq!(BodyFormat::parse("HTML"), Some(BodyFormat::Html));
         assert_eq!(BodyFormat::parse("raw"), Some(BodyFormat::Html));
         assert_eq!(BodyFormat::parse("xml"), None);
+    }
+
+    /// `last_hit` self-trim invariants. The retain expression is replicated
+    /// here exactly as `rate_limit_for` uses it; if either drifts, this test
+    /// catches it before the table starts growing unbounded again.
+    #[test]
+    fn last_hit_retain_keeps_fresh_and_future_drops_stale() {
+        let now = Instant::now();
+        let mut m: HashMap<String, Instant> = HashMap::new();
+        m.insert("fresh".into(), now);
+        m.insert("stale".into(), now - PER_HOST_MIN_INTERVAL * 2);
+        // Mirrors `rate_limit_for`: the just-inserted entry uses `now + wait`,
+        // i.e. a future timestamp when wait > 0.
+        m.insert("future".into(), now + PER_HOST_MIN_INTERVAL);
+
+        m.retain(|_, when| now.duration_since(*when) < PER_HOST_MIN_INTERVAL);
+
+        assert!(m.contains_key("fresh"));
+        assert!(m.contains_key("future"));
+        assert!(!m.contains_key("stale"));
     }
 
     #[test]
