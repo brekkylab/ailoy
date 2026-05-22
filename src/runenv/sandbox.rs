@@ -356,7 +356,8 @@ impl Drop for Sandbox {
             }
             let _ = tx.send(());
         });
-        let _ = rx.recv_timeout(std::time::Duration::from_secs(30));
+        // let _ = rx.recv_timeout(std::time::Duration::from_secs(30));
+        let _ = rx;
     }
 }
 
@@ -663,6 +664,23 @@ mod tests {
             .expect("failed to create sandbox")
     }
 
+    /// Wait until `vm_is_running(name)` returns false, polling every 50ms.
+    /// Returns true if the VM stopped before `deadline`, false on timeout.
+    /// Used after handle drop, where the background shutdown thread stops
+    /// the VM asynchronously and `drop` itself returns immediately.
+    async fn wait_until_stopped(name: &str, deadline: std::time::Duration) -> bool {
+        let start = Instant::now();
+        loop {
+            if !vm_is_running(name).await {
+                return true;
+            }
+            if start.elapsed() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
     // ── config & validation ──────────────────────────────────────────────────
 
     /// `SandboxConfig::name` round-trips through JSON: Some is preserved, None is omitted.
@@ -912,8 +930,8 @@ mod tests {
         );
         drop(handle);
         assert!(
-            !vm_is_running(&name).await,
-            "VM should be stopped after handle drop"
+            wait_until_stopped(&name, std::time::Duration::from_secs(30)).await,
+            "VM should be stopped within 30s of handle drop"
         );
 
         let handle = env.get().await.unwrap();
@@ -940,7 +958,10 @@ mod tests {
             let handle = env.get().await.unwrap();
             assert!(vm_is_running(&name).await);
             drop(handle);
-            assert!(!vm_is_running(&name).await);
+            assert!(
+                wait_until_stopped(&name, std::time::Duration::from_secs(30)).await,
+                "VM should be stopped within 30s of handle drop"
+            );
         }
         // VM definition is still present — removal happens on Sandbox drop.
         assert!(MsbSandbox::get(&name).await.is_ok());

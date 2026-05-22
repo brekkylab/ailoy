@@ -434,6 +434,7 @@ impl Drop for RunEnvHandle {
             }
             let _ = tx.send(());
         });
-        let _ = rx.recv_timeout(std::time::Duration::from_secs(30));
+        // let _ = rx.recv_timeout(std::time::Duration::from_secs(30));
+        let _ = rx;
     }
 }
