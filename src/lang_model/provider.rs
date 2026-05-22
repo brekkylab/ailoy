@@ -81,7 +81,7 @@ impl Default for LangModelProvider {
             p.insert("deepseek/*".into(), Self::deepseek(key));
         }
         if let Ok(key) = std::env::var("KIMI_API_KEY") {
-            p.insert("moonshot/kimi-*".into(), Self::kimi(key));
+            p.insert("moonshotai/kimi-*".into(), Self::kimi(key));
         }
         p
     }
