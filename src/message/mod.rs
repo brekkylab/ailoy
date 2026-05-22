@@ -1,5 +1,6 @@
 mod delta;
 mod marshal;
+#[allow(clippy::module_inception)]
 mod message;
 mod message_delta;
 mod part;

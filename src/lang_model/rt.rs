@@ -211,17 +211,13 @@ impl LangModel {
                 // Unmarshal
                 let delta_output = match schema {
                     LangModelAPISchema::Anthropic => {
-                        api::AnthropicUnmarshal::default().unmarshal(response_value)?
+                        api::AnthropicUnmarshal.unmarshal(response_value)?
                     }
                     LangModelAPISchema::ChatCompletion => {
-                        api::ChatCompletionUnmarshal::default().unmarshal(response_value)?
+                        api::ChatCompletionUnmarshal.unmarshal(response_value)?
                     }
-                    LangModelAPISchema::Gemini => {
-                        api::GeminiUnmarshal::default().unmarshal(response_value)?
-                    }
-                    LangModelAPISchema::OpenAI => {
-                        api::OpenAIUnmarshal::default().unmarshal(response_value)?
-                    }
+                    LangModelAPISchema::Gemini => api::GeminiUnmarshal.unmarshal(response_value)?,
+                    LangModelAPISchema::OpenAI => api::OpenAIUnmarshal.unmarshal(response_value)?,
                 };
 
                 delta_output.finish()

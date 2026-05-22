@@ -244,7 +244,7 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
                 }
             });
 
-        let contents = marshal_messages(&req.messages);
+        let contents = marshal_messages(req.messages);
 
         let tools = if !req.tools.is_empty() {
             let declarations = req

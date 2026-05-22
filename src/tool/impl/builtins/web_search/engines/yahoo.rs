@@ -79,7 +79,7 @@ impl SearchEngine for Yahoo {
             el.select(&self.parser.result_url)
                 .next()
                 .and_then(|a| a.value().attr("href"))
-                .map(|href| Self::extract_redirect_url(href))
+                .map(Self::extract_redirect_url)
                 .filter(|url| !url.is_empty())
         });
 

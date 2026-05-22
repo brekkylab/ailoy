@@ -117,10 +117,7 @@ impl Value {
     }
 
     pub fn is_null(&self) -> bool {
-        match self {
-            Value::Null => true,
-            _ => false,
-        }
+        matches!(self, Value::Null)
     }
 
     pub fn as_bool(&self) -> Option<bool> {
@@ -131,12 +128,10 @@ impl Value {
     }
 
     pub fn is_number(&self) -> bool {
-        match self {
-            Value::Unsigned(_) => true,
-            Value::Integer(_) => true,
-            Value::Float(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Value::Unsigned(_) | Value::Integer(_) | Value::Float(_)
+        )
     }
 
     pub fn as_unsigned(&self) -> Option<u64> {
@@ -170,10 +165,7 @@ impl Value {
     }
 
     pub fn is_string(&self) -> bool {
-        match self {
-            Value::String(_) => true,
-            _ => false,
-        }
+        matches!(self, Value::String(_))
     }
 
     pub fn as_str(&self) -> Option<&str> {
@@ -191,10 +183,7 @@ impl Value {
     }
 
     pub fn is_array(&self) -> bool {
-        match self {
-            Value::Array(_) => true,
-            _ => false,
-        }
+        matches!(self, Value::Array(_))
     }
 
     pub fn as_array(&self) -> Option<&Vec<Value>> {
@@ -212,10 +201,7 @@ impl Value {
     }
 
     pub fn is_object(&self) -> bool {
-        match self {
-            Value::Object(_) => true,
-            _ => false,
-        }
+        matches!(self, Value::Object(_))
     }
 
     pub fn as_object(&self) -> Option<&IndexMap<String, Value>> {
@@ -682,9 +668,9 @@ impl<'a> TryFrom<&'a mut Value> for &'a mut IndexMap<String, Value> {
     }
 }
 
-impl Into<serde_json::Value> for Value {
-    fn into(self) -> serde_json::Value {
-        match self {
+impl From<Value> for serde_json::Value {
+    fn from(val: Value) -> Self {
+        match val {
             Value::Null => serde_json::Value::Null,
             Value::Bool(b) => serde_json::Value::Bool(b),
             Value::Unsigned(u) => serde_json::Value::Number((u).into()),
@@ -705,9 +691,9 @@ impl Into<serde_json::Value> for Value {
     }
 }
 
-impl Into<Value> for serde_json::Value {
-    fn into(self) -> Value {
-        match self {
+impl From<serde_json::Value> for Value {
+    fn from(val: serde_json::Value) -> Self {
+        match val {
             serde_json::Value::Null => Value::Null,
             serde_json::Value::Bool(b) => Value::Bool(b),
             serde_json::Value::Number(n) => {

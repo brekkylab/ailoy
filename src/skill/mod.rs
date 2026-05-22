@@ -8,6 +8,7 @@
 //! written into the runenv with write-once semantics; the system instruction
 //! lists the declared skills via [`scan_declared_skills`].
 
+#[allow(clippy::module_inception)]
 mod skill;
 
 pub use skill::*;

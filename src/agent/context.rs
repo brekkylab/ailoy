@@ -42,7 +42,7 @@ impl ContextManager {
     /// post-truncation token estimate that is not yet available here.  For now,
     /// placeholder replacement alone is sufficient to keep the context window
     /// manageable for most workloads.
-    pub(crate) fn truncate_history(&self, history: &mut Vec<Message>) {
+    pub(crate) fn truncate_history(&self, history: &mut [Message]) {
         if history.is_empty() {
             return;
         }
@@ -56,13 +56,23 @@ impl ContextManager {
             0
         };
 
+        // `preserve_from = 0` means "fewer turns than requested — preserve everything":
+        // `.take(0).skip(start_idx)` is always empty, so nothing is truncated.
+        // When `preserve_from > 0` the System message always lands at index 0 and
+        // the oldest preserved User turn is at index >= 1, so start_idx <= preserve_from.
+        debug_assert!(
+            preserve_from == 0 || start_idx <= preserve_from,
+            "start_idx ({start_idx}) > preserve_from ({preserve_from}): \
+             truncation window would overlap the system message"
+        );
+
         // ── Replace Tool messages outside the preserve window with placeholders ────
-        for i in start_idx..preserve_from {
-            if history[i].role == Role::Tool {
-                let original_id = history[i].id.clone();
+        for msg in history.iter_mut().take(preserve_from).skip(start_idx) {
+            if msg.role == Role::Tool {
+                let original_id = msg.id.clone();
                 let placeholder =
                     Message::new(Role::Tool).with_contents([Part::text("[context truncated]")]);
-                history[i] = if let Some(id) = original_id {
+                *msg = if let Some(id) = original_id {
                     placeholder.with_id(id)
                 } else {
                     placeholder

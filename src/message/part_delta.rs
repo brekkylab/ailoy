@@ -78,46 +78,40 @@ pub enum PartDelta {
 
 impl PartDelta {
     pub fn is_text(&self) -> bool {
-        match self {
-            Self::Text { .. } => true,
-            _ => false,
-        }
+        matches!(self, Self::Text { .. })
     }
     pub fn is_verbatim_function(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::Function {
                 function: PartDeltaFunction::Verbatim { .. },
                 ..
-            } => true,
-            _ => false,
-        }
+            }
+        )
     }
 
     pub fn is_function(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::Function {
                 function: PartDeltaFunction::WithStringArgs { .. },
                 ..
-            } => true,
-            _ => false,
-        }
+            }
+        )
     }
 
     pub fn is_parsed_function(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::Function {
                 function: PartDeltaFunction::WithParsedArgs { .. },
                 ..
-            } => true,
-            _ => false,
-        }
+            }
+        )
     }
 
     pub fn is_value(&self) -> bool {
-        match self {
-            Self::Value { .. } => true,
-            _ => false,
-        }
+        matches!(self, Self::Value { .. })
     }
 
     pub fn to_text(self) -> Option<String> {
@@ -152,7 +146,7 @@ impl PartDelta {
                 function: PartDeltaFunction::WithStringArgs { name, arguments },
             } => serde_json::from_str::<Value>(&arguments)
                 .ok()
-                .and_then(|arguments| Some((id, name, arguments))),
+                .map(|arguments| (id, name, arguments)),
             Self::Function {
                 id,
                 function: PartDeltaFunction::Verbatim { text },

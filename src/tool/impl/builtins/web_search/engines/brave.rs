@@ -127,9 +127,7 @@ impl SearchEngine for Brave {
                 // Only keep results with a proper absolute URL (filters out ads
                 // that have partial/relative paths).
                 let parsed = Url::parse(&href).ok()?;
-                if parsed.host().is_none() {
-                    return None;
-                }
+                parsed.host()?;
 
                 // Title: text of the first element whose class contains "title".
                 let title = snippet
