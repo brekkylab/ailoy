@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf, pin::Pin};
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
 use crate::{
-    agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
+    agent::{AgentProvider, AgentSpec, AgentState, default_provider},
     lang_model::{LangModel, LangModelOptions},
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{Console, RunEnv},
@@ -37,41 +37,6 @@ fn materialise_files_recursive<'a>(
     })
 }
 
-pub struct AgentState {
-    pub history: Vec<Message>,
-
-    pub runenv: RunEnv,
-
-    /// Token count from the most recent model API call; used to decide when to truncate history.
-    pub last_input_tokens: Option<u64>,
-}
-
-impl Default for AgentState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AgentState {
-    pub fn new() -> Self {
-        Self {
-            history: Vec::new(),
-            runenv: RunEnv::local(),
-            last_input_tokens: None,
-        }
-    }
-
-    pub fn history(mut self, history: Vec<Message>) -> Self {
-        self.history = history;
-        self
-    }
-
-    pub fn runenv(mut self, runenv: RunEnv) -> Self {
-        self.runenv = runenv;
-        self
-    }
-}
-
 /// An agent that drives a language model through multi-turn, tool-augmented conversations.
 ///
 /// `Agent` pairs an [`AgentSpec`] (model + instruction + tools + sub-agents) with an
@@ -96,8 +61,6 @@ pub struct Agent {
     tools: HashMap<String, ToolFunc>,
 
     pub state: AgentState,
-
-    context_manager: Option<ContextManager>,
 
     /// The spec this agent was built from.  Carries the agent's identity:
     /// model, instruction, tools, sub-agents, card, declared files, and
@@ -198,7 +161,7 @@ impl Agent {
             .map(|t| vec![Message::new(Role::System).with_contents([Part::text(t)])])
             .unwrap_or_default();
 
-        let state = AgentState::new().history(history).runenv(runenv);
+        let state = AgentState::new().messages(history).runenv(runenv);
 
         Ok(Self {
             model,
@@ -206,7 +169,6 @@ impl Agent {
             tools,
             tool_descs,
             state,
-            context_manager: None,
             spec,
             files_materialised: false,
         })
@@ -249,10 +211,6 @@ impl Agent {
             }
         }
         msg
-    }
-
-    pub(crate) fn set_context_manager(&mut self, cm: Option<ContextManager>) {
-        self.context_manager = cm;
     }
 
     /// Lazy gate: materialise this agent's declared files (and the entire
@@ -407,11 +365,7 @@ impl Agent {
 
     /// Return the full message history accumulated so far.
     pub fn get_history(&self) -> &[Message] {
-        &self.state.history
-    }
-
-    pub fn get_context_manager(&self) -> Option<&ContextManager> {
-        self.context_manager.as_ref()
+        &self.state.history.messages
     }
 
     /// Stream all events for a single agent turn.
@@ -425,27 +379,24 @@ impl Agent {
             // runtime modifications across subsequent runs.
             self.ensure_files_materialised().await?;
 
-            self.state.history.push(query);
+            self.state.history.messages.push(query);
 
             loop {
                 // Truncation check based on previous call's token usage.
-                if let Some(cm) = &self.context_manager
-                    && self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens {
-                        cm.truncate_history(&mut self.state.history);
-                    }
+                self.state.history.truncate_if_needed();
 
                 let mut output = self
                     .model
-                    .run(&self.state.history, &self.tool_descs, &self.model_options)
+                    .run(&self.state.history.messages, &self.tool_descs, &self.model_options)
                     .await?;
 
                 // Capture token usage for next iteration's truncation check.
                 if let Some(u) = &output.usage {
-                    self.state.last_input_tokens = Some(u.input_tokens);
+                    self.state.history.last_input_tokens = Some(u.input_tokens);
                 }
 
                 output.depth = Some(0);
-                self.state.history.push(output.message.clone());
+                self.state.history.messages.push(output.message.clone());
                 self.stamp_source_agent(&mut output);
 
                 let tool_calls = match &output.finish_reason {
@@ -467,7 +418,7 @@ impl Agent {
                         Ok(mut output) => {
                             if output.message.role == Role::Tool && output.depth == Some(0) {
                                 output.message = Self::cap_tool_result(output.message);
-                                self.state.history.push(output.message.clone());
+                                self.state.history.messages.push(output.message.clone());
                             }
                             self.stamp_source_agent(&mut output);
                             yield output;
@@ -485,7 +436,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{AgentCard, AgentProvider, AgentSpec, ContextManager},
+        agent::{AgentCard, AgentProvider, AgentSpec},
         datatype::Value,
         lang_model::LangModelProvider,
         message::{Message, Part, Role},
@@ -946,7 +897,7 @@ mod tests {
         );
     }
 
-    /// Verifies that ContextManager replaces old tool results with "[context truncated]"
+    /// Verifies that AgentHistory replaces old tool results with "[context truncated]"
     /// when last_input_tokens exceeds max_input_tokens at the start of a run.
     ///
     /// History layout when truncation fires (after run() pushes the new query):
@@ -980,28 +931,27 @@ mod tests {
             agent
                 .state
                 .history
+                .messages
                 .push(Message::new(Role::User).with_contents([Part::text(user_text)]));
-            agent.state.history.push(
+            agent.state.history.messages.push(
                 Message::new(Role::Assistant).with_tool_calls([Part::function(
                     call_id,
                     "dummy_tool",
                     to_value!({}),
                 )]),
             );
-            agent.state.history.push(
+            agent.state.history.messages.push(
                 Message::new(Role::Tool)
                     .with_id(call_id)
                     .with_contents([Part::value(Value::string(format!("{call_id}_value")))]),
             );
         }
 
-        agent.set_context_manager(Some(ContextManager {
-            max_input_tokens: 1, // always exceeded
-            // Two recent turns: the just-pushed `u3` plus the previous `u2`, so the
-            // boundary lands on `u2` and only `tr_old` (from the `u1` turn) is truncated.
-            preserve_recent_turns: 2,
-        }));
-        agent.state.last_input_tokens = Some(9999);
+        agent.state.history.max_input_tokens = 1; // always exceeded
+        // Two recent turns: the just-pushed `u3` plus the previous `u2`, so the
+        // boundary lands on `u2` and only `tr_old` (from the `u1` turn) is truncated.
+        agent.state.history.preserve_recent_turns = 2;
+        agent.state.history.last_input_tokens = Some(9999);
 
         {
             let mut strm = agent.run(Message::new(Role::User).with_contents([Part::text("q3")]));
@@ -1040,7 +990,7 @@ mod tests {
         );
     }
 
-    /// Verifies that ContextManager does NOT truncate tool results when
+    /// Verifies that AgentHistory does NOT truncate tool results when
     /// last_input_tokens is below max_input_tokens.
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
@@ -1067,15 +1017,16 @@ mod tests {
             agent
                 .state
                 .history
+                .messages
                 .push(Message::new(Role::User).with_contents([Part::text(user_text)]));
-            agent.state.history.push(
+            agent.state.history.messages.push(
                 Message::new(Role::Assistant).with_tool_calls([Part::function(
                     call_id,
                     "dummy_tool",
                     to_value!({}),
                 )]),
             );
-            agent.state.history.push(
+            agent.state.history.messages.push(
                 Message::new(Role::Tool)
                     .with_id(call_id)
                     .with_contents([Part::value(Value::string(format!("{call_id}_value")))]),
@@ -1083,11 +1034,9 @@ mod tests {
         }
 
         // High threshold — will never be exceeded by the preset last_input_tokens.
-        agent.set_context_manager(Some(ContextManager {
-            max_input_tokens: 1_000_000,
-            preserve_recent_turns: 1,
-        }));
-        agent.state.last_input_tokens = Some(100);
+        agent.state.history.max_input_tokens = 1_000_000;
+        agent.state.history.preserve_recent_turns = 1;
+        agent.state.history.last_input_tokens = Some(100);
 
         {
             let mut strm = agent.run(Message::new(Role::User).with_contents([Part::text("q3")]));

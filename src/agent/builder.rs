@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    agent::{Agent, AgentProvider, AgentSpec, ContextManager},
+    agent::{Agent, AgentProvider, AgentSpec},
     message::Message,
     runenv::{FileEntry, RunEnv},
     tool::{ToolDesc, WebSearchEngineKind},
@@ -53,7 +53,9 @@ pub struct AgentBuilder {
 
     runenv: Option<RunEnv>,
 
-    context_manager: Option<ContextManager>,
+    max_input_tokens: Option<u64>,
+
+    preserve_recent_turns: Option<usize>,
 }
 
 impl AgentBuilder {
@@ -66,7 +68,8 @@ impl AgentBuilder {
             provider: None,
             history: Vec::new(),
             runenv: None,
-            context_manager: None,
+            max_input_tokens: None,
+            preserve_recent_turns: None,
         }
     }
 
@@ -134,12 +137,20 @@ impl AgentBuilder {
         self
     }
 
-    /// Set the context window management spec.
+    /// Override [`AgentHistory::max_input_tokens`](crate::agent::AgentHistory::max_input_tokens).
     ///
-    /// When set, the agent will automatically truncate history when the input token count
-    /// exceeds `spec.max_input_tokens`, preserving the most recent turns.
-    pub fn context_manager(mut self, spec: ContextManager) -> Self {
-        self.context_manager = Some(spec);
+    /// When the input-token count of the previous model call exceeds this value,
+    /// tool results outside the preserve window are reduced to placeholders.
+    pub fn max_input_tokens(mut self, n: u64) -> Self {
+        self.max_input_tokens = Some(n);
+        self
+    }
+
+    /// Override [`AgentHistory::preserve_recent_turns`](crate::agent::AgentHistory::preserve_recent_turns).
+    ///
+    /// Number of recent user turns kept intact when truncation fires.
+    pub fn preserve_recent_turns(mut self, n: usize) -> Self {
+        self.preserve_recent_turns = Some(n);
         self
     }
 
@@ -201,7 +212,8 @@ impl AgentBuilder {
             provider,
             history,
             runenv,
-            context_manager,
+            max_input_tokens,
+            preserve_recent_turns,
         } = self;
 
         let mut agent = match (provider, runenv) {
@@ -215,10 +227,13 @@ impl AgentBuilder {
         // Only override the spec-derived history (which seeds the system instruction)
         // when the caller explicitly supplied one — e.g. for session resumption.
         if !history.is_empty() {
-            agent.state.history = history;
+            agent.state.history.messages = history;
         }
-        if context_manager.is_some() {
-            agent.set_context_manager(context_manager);
+        if let Some(n) = max_input_tokens {
+            agent.state.history.max_input_tokens = n;
+        }
+        if let Some(n) = preserve_recent_turns {
+            agent.state.history.preserve_recent_turns = n;
         }
         Ok(agent)
     }
@@ -546,16 +561,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_builder_context_manager_is_applied() {
-        let cm = ContextManager {
-            max_input_tokens: 10_000,
-            preserve_recent_turns: 2,
-        };
+    async fn test_builder_truncation_config_is_applied() {
         let agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
-            .context_manager(cm)
+            .max_input_tokens(10_000)
+            .preserve_recent_turns(2)
             .build()
             .unwrap();
-        assert!(agent.get_context_manager().is_some());
+        assert_eq!(agent.state.history.max_input_tokens, 10_000);
+        assert_eq!(agent.state.history.preserve_recent_turns, 2);
     }
 }
