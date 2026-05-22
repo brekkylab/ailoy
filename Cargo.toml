@@ -38,6 +38,7 @@ fancy-regex = "0.16"
 futures = "0.3"
 getrandom = "0.3"
 hex = "0.4"
+html-to-markdown-rs = { version = "3.4", features = ["metadata"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.16"

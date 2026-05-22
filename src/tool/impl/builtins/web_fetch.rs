@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use html_to_markdown_rs::{ConversionOptions, OutputFormat};
 use parking_lot::Mutex;
 use reqwest::Client;
-use scraper::{Html, Selector};
 use url::Url;
 
 use crate::{
@@ -27,7 +27,6 @@ const USER_AGENT: &str =
 struct WebFetchState {
     client: Client,
     last_hit: Arc<Mutex<HashMap<String, Instant>>>,
-    robots: Arc<Mutex<HashMap<String, RobotsRules>>>,
 }
 
 impl WebFetchState {
@@ -40,84 +39,8 @@ impl WebFetchState {
         Self {
             client,
             last_hit: Arc::new(Mutex::new(HashMap::new())),
-            robots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
-}
-
-#[derive(Default, Clone)]
-struct RobotsRules {
-    disallow: Vec<String>,
-    allow: Vec<String>,
-    // Per RFC 9309 §2.3.1.4: when robots.txt cannot be fetched, allow all.
-    fetch_failed: bool,
-}
-
-impl RobotsRules {
-    fn permits(&self, path: &str) -> bool {
-        if self.fetch_failed {
-            return true;
-        }
-        let mut best_len = 0usize;
-        let mut best_allow = true;
-        for d in &self.disallow {
-            if !d.is_empty() && path.starts_with(d.as_str()) && d.len() >= best_len {
-                best_len = d.len();
-                best_allow = false;
-            }
-        }
-        for a in &self.allow {
-            if !a.is_empty() && path.starts_with(a.as_str()) && a.len() >= best_len {
-                best_len = a.len();
-                best_allow = true;
-            }
-        }
-        best_allow
-    }
-}
-
-fn parse_robots(body: &str) -> RobotsRules {
-    let mut rules = RobotsRules::default();
-    let mut applies_to_us = false;
-    for raw in body.lines() {
-        let line = raw.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
-        let (key, value) = match line.split_once(':') {
-            Some((k, v)) => (k.trim().to_ascii_lowercase(), v.trim().to_string()),
-            None => continue,
-        };
-        match key.as_str() {
-            "user-agent" => applies_to_us = value == "*",
-            "disallow" if applies_to_us => rules.disallow.push(value),
-            "allow" if applies_to_us => rules.allow.push(value),
-            _ => {}
-        }
-    }
-    rules
-}
-
-async fn robots_rules_for(state: &WebFetchState, host_origin: &str) -> RobotsRules {
-    if let Some(cached) = state.robots.lock().get(host_origin).cloned() {
-        return cached;
-    }
-    let robots_url = format!("{host_origin}/robots.txt");
-    let rules = match state.client.get(&robots_url).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            let body = resp.text().await.unwrap_or_default();
-            parse_robots(&body)
-        }
-        _ => RobotsRules {
-            fetch_failed: true,
-            ..Default::default()
-        },
-    };
-    state
-        .robots
-        .lock()
-        .insert(host_origin.to_string(), rules.clone());
-    rules
 }
 
 async fn rate_limit_for(state: &WebFetchState, host: &str) {
@@ -175,134 +98,135 @@ async fn download(
     Ok((body, content_type, status, final_url))
 }
 
-fn html_to_text(body: &str) -> String {
-    let doc = Html::parse_document(body);
-    let mut out = String::new();
-    walk(doc.root_element(), &mut out);
-
-    // Collapse 3+ newlines to 2 and trim.
-    let mut collapsed = String::with_capacity(out.len());
-    let mut newline_run = 0;
-    for ch in out.chars() {
-        if ch == '\n' {
-            newline_run += 1;
-            if newline_run <= 2 {
-                collapsed.push('\n');
-            }
-        } else {
-            newline_run = 0;
-            collapsed.push(ch);
-        }
-    }
-    collapsed.trim().to_string()
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum BodyFormat {
+    Text,
+    Markdown,
+    Html,
 }
 
-fn walk(el: scraper::ElementRef, out: &mut String) {
-    let tag = el.value().name();
-    if matches!(tag, "script" | "style" | "noscript" | "svg" | "template") {
-        return;
+impl BodyFormat {
+    fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "text" | "plain" | "plaintext" => Some(Self::Text),
+            "markdown" | "md" => Some(Self::Markdown),
+            "html" | "raw" => Some(Self::Html),
+            _ => None,
+        }
     }
-    let is_block = matches!(
-        tag,
-        "p" | "div"
-            | "section"
-            | "article"
-            | "header"
-            | "footer"
-            | "nav"
-            | "main"
-            | "aside"
-            | "li"
-            | "tr"
-            | "h1"
-            | "h2"
-            | "h3"
-            | "h4"
-            | "h5"
-            | "h6"
-            | "blockquote"
-            | "pre"
-            | "ul"
-            | "ol"
-            | "table"
-            | "br"
-            | "hr"
-    );
-    if is_block && !out.ends_with('\n') {
-        out.push('\n');
-    }
-    if tag == "a" {
-        let text = el.text().collect::<String>();
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            out.push_str(trimmed);
-            if let Some(href) = el.value().attr("href") {
-                let h = href.trim();
-                if !h.is_empty() && !h.starts_with('#') {
-                    out.push_str(" [");
-                    out.push_str(h);
-                    out.push(']');
-                }
+}
+
+// Output of the HTML→{text,markdown} conversion path. We return both the
+// readable body and the document title because `html_to_markdown_rs` already
+// extracts both in one pass — no point parsing twice.
+struct Converted {
+    body: String,
+    title: String,
+}
+
+fn convert_with_crate(html: &str, output_format: OutputFormat) -> Converted {
+    let opts = ConversionOptions::builder()
+        .output_format(output_format)
+        // Inline base64 data-URI images blow up the byte budget for no
+        // benefit to an LLM caller; skip them.
+        .skip_images(true)
+        .build();
+    match html_to_markdown_rs::convert(html, Some(opts)) {
+        Ok(result) => {
+            // Prefer the `<title>` element; fall back to `og:title` so SPAs
+            // that set only the OG tag still surface something useful.
+            let title = result
+                .metadata
+                .document
+                .title
+                .clone()
+                .or_else(|| {
+                    result
+                        .metadata
+                        .document
+                        .open_graph
+                        .get("title")
+                        .cloned()
+                })
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            Converted {
+                body: result.content.unwrap_or_default(),
+                title,
             }
         }
+        // On conversion error (malformed input, etc.), return the raw input
+        // and an empty title rather than surfacing an error — `web_fetch` is
+        // best-effort.
+        Err(_) => Converted {
+            body: html.to_string(),
+            title: String::new(),
+        },
+    }
+}
+
+// Pick the conversion path for the requested format and content-type.
+//
+// - `format=html`: raw passthrough, regardless of content type.
+// - `format={text,markdown}`: route HTML through `html_to_markdown_rs`;
+//   non-HTML content (JSON, plain text, etc.) passes through verbatim so a
+//   caller asking for a JSON body gets a JSON body, not an empty conversion.
+fn convert(body: &str, content_type: &str, format: BodyFormat) -> Converted {
+    if matches!(format, BodyFormat::Html) {
+        return Converted {
+            body: body.to_string(),
+            title: String::new(),
+        };
+    }
+    let is_html = content_type.to_ascii_lowercase().contains("html");
+    if !is_html {
+        return Converted {
+            body: body.to_string(),
+            title: String::new(),
+        };
+    }
+    let output_format = match format {
+        BodyFormat::Text => OutputFormat::Plain,
+        BodyFormat::Markdown => OutputFormat::Markdown,
+        BodyFormat::Html => unreachable!(),
+    };
+    convert_with_crate(body, output_format)
+}
+
+// Returns `(slice, total_chars, next_offset)`. `next_offset = None` means the
+// slice reaches the end of `text` (caller treats this as `complete`).
+//
+// Single `char_indices()` pass: locates the start/end byte boundaries for the
+// requested char window, counts total chars, and computes `next_offset` without
+// re-iterating the slice or copying into a `Vec<char>`. Byte-indexing into
+// `text` is safe because `char_indices()` yields char-boundary offsets.
+fn slice_body(text: &str, offset: usize, len: usize) -> (String, usize, Option<usize>) {
+    let end_char = offset.saturating_add(len);
+    let mut start_byte: Option<usize> = None;
+    let mut end_byte: Option<usize> = None;
+    let mut total_chars: usize = 0;
+    for (char_idx, (byte_idx, _)) in text.char_indices().enumerate() {
+        if char_idx == offset {
+            start_byte = Some(byte_idx);
+        }
+        if char_idx == end_char {
+            end_byte = Some(byte_idx);
+        }
+        total_chars = char_idx + 1;
+    }
+    let Some(s) = start_byte else {
+        // `offset >= total_chars`: nothing to return, and we are complete.
+        return (String::new(), total_chars, None);
+    };
+    let e = end_byte.unwrap_or(text.len());
+    let slice = text[s..e].to_string();
+    let next_offset = if e < text.len() {
+        Some(end_char)
     } else {
-        for child in el.children() {
-            if let Some(child_el) = scraper::ElementRef::wrap(child) {
-                walk(child_el, out);
-            } else if let Some(text) = child.value().as_text() {
-                out.push_str(text);
-            }
-        }
-    }
-    if is_block && !out.ends_with('\n') {
-        out.push('\n');
-    }
-}
-
-fn extract_title(content_type: &str, body: &str) -> String {
-    if !content_type.to_ascii_lowercase().contains("html") {
-        return String::new();
-    }
-    let doc = Html::parse_document(body);
-    let sel = Selector::parse("title").expect("static selector");
-    let raw = doc
-        .select(&sel)
-        .next()
-        .map(|el| el.text().collect::<String>())
-        .unwrap_or_default();
-    // HTML parsers treat <title> as RAWTEXT, so inline tags like <b>...</b>
-    // come through as literal text. Strip them with a simple manual pass.
-    let mut out = String::with_capacity(raw.len());
-    let mut in_tag = false;
-    for ch in raw.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' if in_tag => in_tag = false,
-            c if !in_tag => out.push(c),
-            _ => {}
-        }
-    }
-    out.trim().to_string()
-}
-
-fn extract_readable(body: &str, content_type: &str) -> String {
-    if content_type.to_ascii_lowercase().contains("html") {
-        html_to_text(body)
-    } else {
-        body.to_string()
-    }
-}
-
-fn slice_body(text: &str, offset: usize, len: usize) -> (String, usize, bool) {
-    let total: Vec<char> = text.chars().collect();
-    let total_chars = total.len();
-    if offset >= total_chars {
-        return (String::new(), total_chars, true);
-    }
-    let end = offset.saturating_add(len).min(total_chars);
-    let slice: String = total[offset..end].iter().collect();
-    let truncated = end < total_chars;
-    (slice, total_chars, !truncated)
+        None
+    };
+    (slice, total_chars, next_offset)
 }
 
 fn now_iso_utc() -> String {
@@ -337,11 +261,12 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 pub fn get_web_fetch_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("web_fetch")
         .description(concat!(
-            "Fetch one or more URLs and return readable bodies. HTML is reduced ",
-            "to plain text: script/style/svg/template/noscript subtrees are ",
-            "removed and <a href> anchors render as `text [url]` so outbound ",
-            "links survive. Use this after `web_search` to read the full body ",
-            "of a result instead of relying on the snippet.\n\n",
+            "Fetch one or more URLs and return their bodies. HTML responses ",
+            "are converted via `html-to-markdown-rs`, which uses `html5ever` ",
+            "to parse, drops script/style/nav noise, and emits the requested ",
+            "format. Non-HTML responses (JSON, plain text, etc.) pass through ",
+            "unchanged. Use this after `web_search` to read a result's full ",
+            "body instead of relying on the snippet.\n\n",
             "Two call shapes:\n",
             "  - single: pass `url` (string), get one result back.\n",
             "  - batch: pass `urls` (array of strings) to fetch up to 5 URLs in ",
@@ -349,8 +274,8 @@ pub fn get_web_fetch_tool_desc() -> ToolDesc {
             "per input URL, in the same order. Independent fetches (e.g. ",
             "URLs returned by one `web_search` call) should be batched.\n\n",
             "Each body is clamped to 30 KiB by default; for more, call again ",
-            "with `offset` set to the previous `next_offset`. Respects ",
-            "robots.txt and rate-limits 1 request/second per host."
+            "with `offset` set to the previous `next_offset`. Rate-limited to ",
+            "1 request/second per host."
         ))
         .parameters(crate::to_value!({
             "type": "object",
@@ -364,9 +289,15 @@ pub fn get_web_fetch_tool_desc() -> ToolDesc {
                     "items": { "type": "string" },
                     "description": "Batch of URLs to fetch in parallel (max 5). Use this OR `url`. Returns `{results: [...]}` matching input order."
                 },
+                "format": {
+                    "type": "string",
+                    "enum": ["text", "markdown", "html"],
+                    "description": "Body format. `text` (default) returns visible text only — smallest token cost, no document structure. `markdown` returns CommonMark — preserves headings, lists, tables, and link targets. `html` returns the response body unchanged.",
+                    "default": "text"
+                },
                 "offset": {
                     "type": "integer",
-                    "description": "Character offset into each readable body. Use 0 for the first call; on subsequent calls pass the `next_offset` returned previously.",
+                    "description": "Character offset into each body. Use 0 for the first call; on subsequent calls pass the `next_offset` returned previously.",
                     "default": 0,
                     "minimum": 0
                 },
@@ -382,7 +313,13 @@ pub fn get_web_fetch_tool_desc() -> ToolDesc {
         .build()
 }
 
-async fn fetch_one(state: WebFetchState, url_str: String, offset: usize, length: usize) -> Value {
+async fn fetch_one(
+    state: WebFetchState,
+    url_str: String,
+    offset: usize,
+    length: usize,
+    format: BodyFormat,
+) -> Value {
     if url_str.len() > MAX_URL_CHARS {
         let msg = format!("url exceeds {MAX_URL_CHARS} characters");
         return crate::to_value!({"url": url_str, "error": msg});
@@ -402,13 +339,6 @@ async fn fetch_one(state: WebFetchState, url_str: String, offset: usize, length:
         Some(h) => h.to_string(),
         None => return crate::to_value!({"url": url_str, "error": "url has no host"}),
     };
-    let host_origin = format!("{}://{}", parsed.scheme(), host);
-
-    let rules = robots_rules_for(&state, &host_origin).await;
-    if !rules.permits(parsed.path()) {
-        let msg = format!("robots.txt disallows fetching {url_str}");
-        return crate::to_value!({"url": url_str, "error": msg});
-    }
 
     rate_limit_for(&state, &host).await;
 
@@ -416,13 +346,12 @@ async fn fetch_one(state: WebFetchState, url_str: String, offset: usize, length:
         Ok(t) => t,
         Err(e) => return crate::to_value!({"url": url_str, "error": e}),
     };
-    let title = extract_title(&content_type, &body);
-    let readable = extract_readable(&body, &content_type);
-    let (slice, total_chars, complete) = slice_body(&readable, offset, length);
-    let next_offset = if complete {
-        Value::Null
-    } else {
-        Value::from((offset + slice.chars().count()) as i64)
+    let Converted { body: readable, title } = convert(&body, &content_type, format);
+    let (slice, total_chars, next_offset) = slice_body(&readable, offset, length);
+    let complete = next_offset.is_none();
+    let next_offset = match next_offset {
+        Some(n) => Value::from(n as i64),
+        None => Value::Null,
     };
 
     crate::to_value!({
@@ -439,7 +368,7 @@ async fn fetch_one(state: WebFetchState, url_str: String, offset: usize, length:
 }
 
 /// Factory closes over a process-wide [`WebFetchState`] so the rate limiter
-/// and robots cache are shared across calls, matching `web_search`.
+/// is shared across calls, matching `web_search`.
 pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
     let state = WebFetchState::new();
     move |_| {
@@ -455,6 +384,13 @@ pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
                 .and_then(|v| v.as_integer())
                 .map(|n| n.max(256).min(MAX_BODY_CHARS as i64) as usize)
                 .unwrap_or(DEFAULT_BODY_CHARS);
+            // Unknown `format` values silently fall back to "text" so a
+            // mistyped value still returns something useful.
+            let format = args
+                .pointer("/format")
+                .and_then(|v| v.as_str())
+                .and_then(BodyFormat::parse)
+                .unwrap_or(BodyFormat::Text);
 
             // Accept `urls` only when it is a non-empty array of strings.
             // An empty/missing `urls` (some LLMs send `"urls": []` next to a
@@ -482,7 +418,13 @@ pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
 
                 let mut handles = Vec::with_capacity(urls.len());
                 for u in urls {
-                    handles.push(tokio::spawn(fetch_one(state.clone(), u, offset, length)));
+                    handles.push(tokio::spawn(fetch_one(
+                        state.clone(),
+                        u,
+                        offset,
+                        length,
+                        format,
+                    )));
                 }
                 let mut results: Vec<Value> = Vec::with_capacity(handles.len());
                 for h in handles {
@@ -505,7 +447,7 @@ pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
                     });
                 }
             };
-            fetch_one(state, url_str, offset, length).await
+            fetch_one(state, url_str, offset, length, format).await
         })
     }
 }
@@ -517,97 +459,113 @@ mod tests {
     #[test]
     fn slice_body_basic() {
         let s = "abcdefghij";
-        let (out, total, complete) = slice_body(s, 0, 5);
+        let (out, total, next) = slice_body(s, 0, 5);
         assert_eq!(out, "abcde");
         assert_eq!(total, 10);
-        assert!(!complete);
-        let (out2, _, complete2) = slice_body(s, 5, 5);
+        assert_eq!(next, Some(5));
+        let (out2, _, next2) = slice_body(s, 5, 5);
         assert_eq!(out2, "fghij");
-        assert!(complete2);
-        let (out3, _, complete3) = slice_body(s, 100, 5);
+        assert_eq!(next2, None);
+        let (out3, _, next3) = slice_body(s, 100, 5);
         assert_eq!(out3, "");
-        assert!(complete3);
+        assert_eq!(next3, None);
     }
 
     #[test]
     fn slice_body_unicode_is_char_based() {
         let s = "한국어테스트";
-        let (out, total, _) = slice_body(s, 0, 3);
+        let (out, total, next) = slice_body(s, 0, 3);
         assert_eq!(out, "한국어");
         assert_eq!(total, 6);
+        assert_eq!(next, Some(3));
+        let (out2, _, next2) = slice_body(s, 3, 3);
+        assert_eq!(out2, "테스트");
+        assert_eq!(next2, None);
     }
 
     #[test]
-    fn robots_longest_match_wins() {
-        let body = "User-agent: *\nDisallow: /private\nAllow: /private/public\n";
-        let rules = parse_robots(body);
-        assert!(!rules.permits("/private/secret.html"));
-        assert!(rules.permits("/private/public/file.html"));
-        assert!(rules.permits("/about"));
+    fn slice_body_next_offset_matches_chars_count() {
+        // Freezes the contract that callers can rely on `next_offset` instead
+        // of calling `.chars().count()` themselves. If this ever drifts,
+        // `fetch_one` would emit a wrong pagination cursor.
+        let s = "한국어테스트0123456789";
+        let (slice, _, next) = slice_body(s, 2, 4);
+        assert_eq!(next, Some(2 + slice.chars().count()));
     }
 
     #[test]
-    fn robots_other_user_agents_are_ignored() {
-        let body = "User-agent: GoogleBot\nDisallow: /\n";
-        let rules = parse_robots(body);
-        assert!(rules.permits("/anything"));
+    fn body_format_parse_accepts_known_values() {
+        assert_eq!(BodyFormat::parse("text"), Some(BodyFormat::Text));
+        assert_eq!(BodyFormat::parse("plain"), Some(BodyFormat::Text));
+        assert_eq!(BodyFormat::parse("Markdown"), Some(BodyFormat::Markdown));
+        assert_eq!(BodyFormat::parse("md"), Some(BodyFormat::Markdown));
+        assert_eq!(BodyFormat::parse("HTML"), Some(BodyFormat::Html));
+        assert_eq!(BodyFormat::parse("raw"), Some(BodyFormat::Html));
+        assert_eq!(BodyFormat::parse("xml"), None);
     }
 
     #[test]
-    fn robots_fetch_failed_allows_all() {
-        let rules = RobotsRules {
-            fetch_failed: true,
-            disallow: vec!["/".into()],
-            ..Default::default()
-        };
-        assert!(rules.permits("/anything"));
-    }
-
-    #[test]
-    fn html_to_text_strips_script_and_style() {
-        let html = "<html><body>\
+    fn convert_text_strips_script_and_style() {
+        let html = "<html><head><title>T</title></head><body>\
                     <script>var x = 1;</script>\
                     <style>body { color: red; }</style>\
                     <h1>Hello</h1>\
                     <p>World</p>\
                     </body></html>";
-        let out = html_to_text(html);
-        assert!(!out.contains("var x"), "{out}");
-        assert!(!out.contains("color: red"), "{out}");
-        assert!(out.contains("Hello"), "{out}");
-        assert!(out.contains("World"), "{out}");
+        let out = convert(html, "text/html", BodyFormat::Text);
+        assert!(!out.body.contains("var x"), "{}", out.body);
+        assert!(!out.body.contains("color: red"), "{}", out.body);
+        assert!(out.body.contains("Hello"), "{}", out.body);
+        assert!(out.body.contains("World"), "{}", out.body);
     }
 
     #[test]
-    fn html_to_text_preserves_anchor_href() {
+    fn convert_markdown_preserves_structure() {
         let html =
-            "<html><body><p>See <a href=\"https://example.com/x\">the docs</a></p></body></html>";
-        let out = html_to_text(html);
+            "<html><body><h1>Title</h1><p>See <a href=\"https://example.com/x\">docs</a></p></body></html>";
+        let out = convert(html, "text/html", BodyFormat::Markdown);
+        // Markdown should keep the heading sigil and the anchor URL.
+        assert!(out.body.contains("# Title"), "{}", out.body);
         assert!(
-            out.contains("the docs [https://example.com/x]"),
-            "anchor href should survive flattening, got: {out:?}"
+            out.body.contains("(https://example.com/x)"),
+            "{}",
+            out.body
         );
     }
 
     #[test]
-    fn html_to_text_skips_pure_fragment_links() {
-        let html = "<a href=\"#top\">jump</a>";
-        let out = html_to_text(html);
-        assert!(out.contains("jump"), "{out}");
-        assert!(!out.contains("[#top]"), "{out}");
+    fn convert_html_returns_body_verbatim() {
+        let html = "<html><body><script>var x = 1;</script>\
+                    <a href=\"https://example.com\">link</a></body></html>";
+        let out = convert(html, "text/html", BodyFormat::Html);
+        assert_eq!(out.body, html);
+        // `format=html` skips conversion entirely, so no title is extracted.
+        assert_eq!(out.title, "");
     }
 
     #[test]
-    fn extract_title_pulls_title_element() {
-        let html = "<html><head><title>Hello <b>World</b></title></head><body></body></html>";
-        let title = extract_title("text/html", html);
-        assert_eq!(title, "Hello World");
+    fn convert_non_html_passes_through() {
+        let body = "{\"key\":\"value\"}";
+        let out_text = convert(body, "application/json", BodyFormat::Text);
+        assert_eq!(out_text.body, body);
+        assert_eq!(out_text.title, "");
+        let out_md = convert(body, "application/json", BodyFormat::Markdown);
+        assert_eq!(out_md.body, body);
     }
 
     #[test]
-    fn extract_title_empty_for_non_html_content_type() {
-        let html = "<title>Foo</title>";
-        assert_eq!(extract_title("application/json", html), "");
+    fn convert_extracts_title_from_title_tag() {
+        let html = "<html><head><title>Hello World</title></head><body><p>x</p></body></html>";
+        let out = convert(html, "text/html", BodyFormat::Text);
+        assert_eq!(out.title, "Hello World");
+    }
+
+    #[test]
+    fn convert_falls_back_to_og_title() {
+        let html = "<html><head><meta property=\"og:title\" content=\"OG Title\"></head>\
+                    <body><p>x</p></body></html>";
+        let out = convert(html, "text/html", BodyFormat::Text);
+        assert_eq!(out.title, "OG Title");
     }
 
     #[test]
@@ -627,6 +585,7 @@ mod tests {
             "https://example.com/".to_string(),
             0,
             DEFAULT_BODY_CHARS,
+            BodyFormat::Text,
         )
         .await;
         let status = result
@@ -650,9 +609,34 @@ mod tests {
         assert!(retrieved_at.ends_with('Z'), "retrieved_at: {retrieved_at}");
     }
 
+    /// `format="html"` against the same endpoint should return raw markup —
+    /// `<html`, `<title>`, etc. — not the converted text form.
+    #[tokio::test]
+    #[ignore = "requires network"]
+    async fn network_single_fetch_html_returns_raw_markup() {
+        let state = WebFetchState::new();
+        let result = fetch_one(
+            state,
+            "https://example.com/".to_string(),
+            0,
+            DEFAULT_BODY_CHARS,
+            BodyFormat::Html,
+        )
+        .await;
+        let body = result
+            .pointer("/body")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(
+            body.contains("<html") || body.contains("<HTML"),
+            "html format should preserve markup, got first 200 chars: {:?}",
+            &body.chars().take(200).collect::<String>()
+        );
+    }
+
     /// Batch fetch across multiple distinct hosts. Verifies the response
     /// shape (`{"results": [...]}`), input-order preservation, and that all
-    /// five fetches return a non-empty body.
+    /// fetches return a non-empty body.
     #[tokio::test]
     #[ignore = "requires network"]
     async fn network_batch_fetch_returns_results_in_order() {
@@ -669,6 +653,7 @@ mod tests {
                 u.clone(),
                 0,
                 DEFAULT_BODY_CHARS,
+                BodyFormat::Text,
             )));
         }
         let mut results = Vec::with_capacity(handles.len());
