@@ -19,7 +19,6 @@ const MAX_DOWNLOAD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_URL_CHARS: usize = 2048;
 const REQUEST_TIMEOUT_SECS: u64 = 10;
 const PER_HOST_MIN_INTERVAL: Duration = Duration::from_millis(1000);
-const MAX_BATCH_URLS: usize = 5;
 const USER_AGENT: &str =
     "Mozilla/5.0 (compatible; ailoy/web_fetch; +https://github.com/brekkylab/ailoy)";
 
@@ -261,54 +260,40 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 pub fn get_web_fetch_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("web_fetch")
         .description(concat!(
-            "Fetch one or more URLs and return their bodies. HTML responses ",
-            "are converted via `html-to-markdown-rs`, which uses `html5ever` ",
-            "to parse, drops script/style/nav noise, and emits the requested ",
-            "format. Non-HTML responses (JSON, plain text, etc.) pass through ",
-            "unchanged. Use this after `web_search` to read a result's full ",
-            "body instead of relying on the snippet.\n\n",
-            "Two call shapes:\n",
-            "  - single: pass `url` (string), get one result back.\n",
-            "  - batch: pass `urls` (array of strings) to fetch up to 5 URLs in ",
-            "parallel. The response is `{\"results\": [...]}` with one entry ",
-            "per input URL, in the same order. Independent fetches (e.g. ",
-            "URLs returned by one `web_search` call) should be batched.\n\n",
-            "Each body is clamped to 30 KiB by default; for more, call again ",
-            "with `offset` set to the previous `next_offset`. Rate-limited to ",
-            "1 request/second per host."
+            "Fetch a URL and return its body. HTML responses are converted to ",
+            "the requested format; non-HTML responses (JSON, plain text, etc.) ",
+            "pass through unchanged. Bodies are clamped to 30 KiB by default; ",
+            "for more, call again with `offset` set to the previous ",
+            "`next_offset`. Rate-limited to 1 request/second per host."
         ))
         .parameters(crate::to_value!({
             "type": "object",
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "Single URL to fetch. Use this OR `urls`, not both."
-                },
-                "urls": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Batch of URLs to fetch in parallel (max 5). Use this OR `url`. Returns `{results: [...]}` matching input order."
+                    "description": "URL to fetch."
                 },
                 "format": {
                     "type": "string",
                     "enum": ["text", "markdown", "html"],
-                    "description": "Body format. `text` (default) returns visible text only — smallest token cost, no document structure. `markdown` returns CommonMark — preserves headings, lists, tables, and link targets. `html` returns the response body unchanged.",
+                    "description": "Body format. `text` (default) is visible text only — smallest token cost, no document structure. `markdown` keeps headings, lists, tables, and link targets. `html` returns the response body unchanged.",
                     "default": "text"
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "Character offset into each body. Use 0 for the first call; on subsequent calls pass the `next_offset` returned previously.",
+                    "description": "Character offset into the body. Use 0 for the first call; on subsequent calls pass the `next_offset` returned previously.",
                     "default": 0,
                     "minimum": 0
                 },
                 "length": {
                     "type": "integer",
-                    "description": "Maximum number of characters per body returned in this call. Default 30720 (30 KiB). Hard cap 61440.",
+                    "description": "Maximum number of characters returned in this call. Default 30720 (30 KiB). Hard cap 61440.",
                     "default": 30720,
                     "minimum": 256,
                     "maximum": 61440
                 }
-            }
+            },
+            "required": ["url"]
         }))
         .build()
 }
@@ -392,58 +377,11 @@ pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
                 .and_then(BodyFormat::parse)
                 .unwrap_or(BodyFormat::Text);
 
-            // Accept `urls` only when it is a non-empty array of strings.
-            // An empty/missing `urls` (some LLMs send `"urls": []` next to a
-            // single `url`) falls through to the single-URL path so callers
-            // get a result instead of a validation error.
-            let urls_array: Option<Vec<String>> = args
-                .pointer("/urls")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect::<Vec<String>>()
-                })
-                .filter(|v| !v.is_empty());
-
-            if let Some(urls) = urls_array {
-                if urls.len() > MAX_BATCH_URLS {
-                    let msg = format!(
-                        "batch size {} exceeds max {MAX_BATCH_URLS} — split into multiple calls",
-                        urls.len()
-                    );
-                    return crate::to_value!({"error": msg});
-                }
-
-                let mut handles = Vec::with_capacity(urls.len());
-                for u in urls {
-                    handles.push(tokio::spawn(fetch_one(
-                        state.clone(),
-                        u,
-                        offset,
-                        length,
-                        format,
-                    )));
-                }
-                let mut results: Vec<Value> = Vec::with_capacity(handles.len());
-                for h in handles {
-                    match h.await {
-                        Ok(v) => results.push(v),
-                        Err(e) => {
-                            let msg = format!("fetch task panicked: {e}");
-                            results.push(crate::to_value!({"error": msg}));
-                        }
-                    }
-                }
-                return crate::to_value!({"results": Value::array(results)});
-            }
-
             let url_str = match args.pointer("/url").and_then(|v| v.as_str()) {
                 Some(u) => u.to_string(),
                 None => {
                     return crate::to_value!({
-                        "error": "missing required parameter: either `url` (string) or `urls` (array)"
+                        "error": "missing required parameter: `url`"
                     });
                 }
             };
@@ -634,50 +572,4 @@ mod tests {
         );
     }
 
-    /// Batch fetch across multiple distinct hosts. Verifies the response
-    /// shape (`{"results": [...]}`), input-order preservation, and that all
-    /// fetches return a non-empty body.
-    #[tokio::test]
-    #[ignore = "requires network"]
-    async fn network_batch_fetch_returns_results_in_order() {
-        let state = WebFetchState::new();
-        let urls = vec![
-            "https://example.com/".to_string(),
-            "https://example.org/".to_string(),
-            "https://example.net/".to_string(),
-        ];
-        let mut handles = Vec::with_capacity(urls.len());
-        for u in urls.iter() {
-            handles.push(tokio::spawn(fetch_one(
-                state.clone(),
-                u.clone(),
-                0,
-                DEFAULT_BODY_CHARS,
-                BodyFormat::Text,
-            )));
-        }
-        let mut results = Vec::with_capacity(handles.len());
-        for h in handles {
-            results.push(h.await.unwrap());
-        }
-        assert_eq!(results.len(), urls.len());
-        for (i, r) in results.iter().enumerate() {
-            let url = r
-                .pointer("/url")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let status = r
-                .pointer("/status")
-                .and_then(|v| v.as_integer())
-                .unwrap_or(0);
-            let body = r.pointer("/body").and_then(|v| v.as_str()).unwrap_or("");
-            assert!(
-                url.starts_with(&urls[i].trim_end_matches('/')),
-                "result {i} url mismatch: input={} got={url}",
-                urls[i]
-            );
-            assert_eq!(status, 200, "result {i}: {r:?}");
-            assert!(!body.is_empty(), "result {i} body empty");
-        }
-    }
 }
