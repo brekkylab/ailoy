@@ -1,7 +1,7 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::{
-    agent::{Agent, AgentProvider, AgentSpec},
+    agent::{Agent, AgentProvider, AgentSpec, AgentState, default_provider},
     message::Message,
     runenv::{FileEntry, RunEnv},
     tool::{ToolDesc, WebSearchEngineKind},
@@ -49,13 +49,7 @@ pub struct AgentBuilder {
 
     provider: Option<AgentProvider>,
 
-    history: Vec<Message>,
-
-    runenv: Option<RunEnv>,
-
-    max_input_tokens: Option<u64>,
-
-    preserve_recent_turns: Option<usize>,
+    state: AgentState,
 }
 
 impl AgentBuilder {
@@ -66,11 +60,16 @@ impl AgentBuilder {
         Self {
             spec,
             provider: None,
-            history: Vec::new(),
-            runenv: None,
-            max_input_tokens: None,
-            preserve_recent_turns: None,
+            state: AgentState::new(),
         }
+    }
+
+    /// Replace the working [`AgentState`] wholesale.  Useful when the caller has
+    /// already constructed a state (for session resumption, custom truncation
+    /// policy, or a shared [`RunEnv`]) and wants to seed the builder with it.
+    pub fn state(mut self, state: AgentState) -> Self {
+        self.state = state;
+        self
     }
 
     /// Use this [`AgentProvider`] instead of the global [`default_provider`](crate::agent::default_provider).
@@ -125,7 +124,7 @@ impl AgentBuilder {
     /// When non-empty, this overrides the system message that the spec's instruction
     /// would otherwise produce.
     pub fn history(mut self, history: impl IntoIterator<Item = Message>) -> Self {
-        self.history = history.into_iter().collect();
+        self.state.history.messages = history.into_iter().collect();
         self
     }
 
@@ -133,7 +132,7 @@ impl AgentBuilder {
     /// `RunEnv` is cheaply cloneable, so the same underlying VM can be shared between
     /// multiple agents by cloning the value.
     pub fn runenv(mut self, runenv: RunEnv) -> Self {
-        self.runenv = Some(runenv);
+        self.state.runenv = Arc::new(runenv);
         self
     }
 
@@ -142,7 +141,7 @@ impl AgentBuilder {
     /// When the input-token count of the previous model call exceeds this value,
     /// tool results outside the preserve window are reduced to placeholders.
     pub fn max_input_tokens(mut self, n: u64) -> Self {
-        self.max_input_tokens = Some(n);
+        self.state.history.max_input_tokens = n;
         self
     }
 
@@ -150,7 +149,7 @@ impl AgentBuilder {
     ///
     /// Number of recent user turns kept intact when truncation fires.
     pub fn preserve_recent_turns(mut self, n: usize) -> Self {
-        self.preserve_recent_turns = Some(n);
+        self.state.history.preserve_recent_turns = n;
         self
     }
 
@@ -204,37 +203,32 @@ impl AgentBuilder {
         self
     }
 
-    /// Materialise the agent by dispatching to the appropriate `Agent::try_*` constructor
-    /// based on which optional fields were supplied.
+    /// Materialise the agent from the accumulated [`AgentState`] and provider.
+    ///
+    /// The state's [`RunEnv`] is shared with sub-agents constructed from
+    /// [`AgentSpec::subagents`], and its truncation policy
+    /// (`max_input_tokens` / `preserve_recent_turns`) is applied to the agent's
+    /// history.  An explicitly seeded `history` overrides the spec-derived
+    /// system message (used for session resumption).
     pub fn build(self) -> anyhow::Result<Agent> {
         let Self {
             spec,
             provider,
-            history,
-            runenv,
-            max_input_tokens,
-            preserve_recent_turns,
+            state,
         } = self;
 
-        let mut agent = match (provider, runenv) {
-            (None, None) => Agent::try_new(spec)?,
-            (None, Some(runenv)) => Agent::try_with_runenv(spec, runenv)?,
-            (Some(provider), None) => Agent::try_with_provider(spec, &provider)?,
-            (Some(provider), Some(runenv)) => {
-                Agent::try_with_provider_and_runenv(spec, &provider, runenv)?
-            }
+        let runenv = (*state.runenv).clone();
+        let mut agent = match provider {
+            None => Agent::try_with_provider_and_runenv(spec, &default_provider(), runenv)?,
+            Some(provider) => Agent::try_with_provider_and_runenv(spec, &provider, runenv)?,
         };
         // Only override the spec-derived history (which seeds the system instruction)
         // when the caller explicitly supplied one — e.g. for session resumption.
-        if !history.is_empty() {
-            agent.state.history.messages = history;
+        if !state.history.messages.is_empty() {
+            agent.state.history.messages = state.history.messages;
         }
-        if let Some(n) = max_input_tokens {
-            agent.state.history.max_input_tokens = n;
-        }
-        if let Some(n) = preserve_recent_turns {
-            agent.state.history.preserve_recent_turns = n;
-        }
+        agent.state.history.max_input_tokens = state.history.max_input_tokens;
+        agent.state.history.preserve_recent_turns = state.history.preserve_recent_turns;
         Ok(agent)
     }
 }

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     message::{Message, Part, Role},
     runenv::RunEnv,
@@ -93,12 +95,7 @@ impl AgentHistory {
              truncation window would overlap the system message"
         );
 
-        for msg in self
-            .messages
-            .iter_mut()
-            .take(preserve_from)
-            .skip(start_idx)
-        {
+        for msg in self.messages.iter_mut().take(preserve_from).skip(start_idx) {
             if msg.role == Role::Tool {
                 let original_id = msg.id.clone();
                 let placeholder =
@@ -152,7 +149,7 @@ impl AgentHistory {
 pub struct AgentState {
     pub history: AgentHistory,
 
-    pub runenv: RunEnv,
+    pub runenv: Arc<RunEnv>,
 }
 
 impl Default for AgentState {
@@ -165,7 +162,7 @@ impl AgentState {
     pub fn new() -> Self {
         Self {
             history: AgentHistory::new(),
-            runenv: RunEnv::local(),
+            runenv: Arc::new(RunEnv::local()),
         }
     }
 
@@ -174,9 +171,14 @@ impl AgentState {
         self
     }
 
-    pub fn runenv(mut self, runenv: RunEnv) -> Self {
-        self.runenv = runenv;
+    pub fn runenv(mut self, runenv: impl Into<Arc<RunEnv>>) -> Self {
+        self.runenv = runenv.into();
         self
+    }
+
+    /// Truncate the conversation history to reduce context size.
+    pub fn truncate_messages(&mut self) {
+        self.history.truncate();
     }
 }
 
@@ -254,7 +256,11 @@ mod tests {
         );
         let original_len = history.messages.len();
         history.truncate();
-        assert_eq!(history.messages.len(), original_len, "nothing should change");
+        assert_eq!(
+            history.messages.len(),
+            original_len,
+            "nothing should change"
+        );
     }
 
     #[test]
