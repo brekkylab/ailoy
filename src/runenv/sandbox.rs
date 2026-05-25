@@ -1,11 +1,11 @@
 //! microsandbox-backed `Machine` for runenv.
 //!
-//! Heavyweight, fallible setup happens in `Sandbox::new`; `Machine::boot`
-//! starts the VM, `Machine::shutdown` stops it, and dropping the `Sandbox`
+//! Heavyweight, fallible setup happens in `Sandbox::new`; `Machine::start`
+//! starts the VM, `Machine::stop` stops it, and dropping the `Sandbox`
 //! removes the VM definition (unless `config.persist` is `true`).
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -15,6 +15,7 @@ use microsandbox::{
     ExecOutput, MicrosandboxError, Sandbox as MsbSandbox, Snapshot,
     sandbox::{ExecOptionsBuilder, PullPolicy, SandboxBuilder, SandboxStatus},
 };
+use tokio::sync::OnceCell;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -58,6 +59,74 @@ pub enum VolumeMount {
     },
 }
 
+impl VolumeMount {
+    /// Guest mount path. Matches the `guest` field across all variants.
+    pub fn guest_path(&self) -> &str {
+        match self {
+            VolumeMount::Bind { guest, .. }
+            | VolumeMount::Named { guest, .. }
+            | VolumeMount::Tmpfs { guest, .. } => guest,
+        }
+    }
+}
+
+/// Label key/value applied to volumes ailoy provisions. The startup sweep
+/// removes only labelled volumes so volumes from other tools are never touched.
+const AILOY_VOLUME_LABEL_KEY: &str = "ailoy.managed";
+const AILOY_VOLUME_LABEL_VALUE: &str = "true";
+
+/// Prefix for the per-sandbox `/tmp` volume injected by `Sandbox::new`.
+const AILOY_TMP_VOLUME_PREFIX: &str = "ailoy-tmp-";
+
+fn tmp_volume_name(sandbox_name: &str) -> String {
+    format!("{AILOY_TMP_VOLUME_PREFIX}{sandbox_name}")
+}
+
+static STARTUP_SWEEP_DONE: OnceCell<()> = OnceCell::const_new();
+
+/// Remove `ailoy-tmp-*` volumes left over by previous process invocations
+/// (panic, SIGKILL, or a `RunEnvHandle::Drop` background thread racing
+/// process exit). Targets only volumes that carry the `ailoy.managed` label
+/// and whose owner sandbox is no longer present, so volumes from other
+/// tools and from an in-flight `Sandbox::new` in a parallel process are
+/// left alone.
+async fn sweep_orphan_tmp_volumes() {
+    let active: HashSet<String> = match MsbSandbox::list().await {
+        Ok(handles) => handles.into_iter().map(|h| h.name().to_string()).collect(),
+        Err(e) => {
+            log::warn!("startup sweep: list sandboxes failed: {e}");
+            return;
+        }
+    };
+
+    let volumes = match microsandbox::Volume::list().await {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("startup sweep: list volumes failed: {e}");
+            return;
+        }
+    };
+
+    for v in volumes {
+        let vname = v.name().to_string();
+        let Some(owner) = vname.strip_prefix(AILOY_TMP_VOLUME_PREFIX) else {
+            continue;
+        };
+        let labelled = v.labels().iter().any(|(k, val)| {
+            k == AILOY_VOLUME_LABEL_KEY && val == AILOY_VOLUME_LABEL_VALUE
+        });
+        if !labelled {
+            continue;
+        }
+        if active.contains(owner) {
+            continue;
+        }
+        if let Err(e) = microsandbox::Volume::remove(&vname).await {
+            log::warn!("startup sweep: remove '{vname}' failed: {e}");
+        }
+    }
+}
+
 /// Configuration for creating a new sandbox.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SandboxConfig {
@@ -80,7 +149,7 @@ pub struct SandboxConfig {
     pub memory_mib: u32,
 
     /// Default working directory inside the sandbox. Default: `"/workspace"`.
-    /// Created automatically after boot if it does not already exist.
+    /// Created automatically after start if it does not already exist.
     pub workdir: String,
 
     /// Environment variables passed to every command.
@@ -99,7 +168,7 @@ pub struct SandboxConfig {
     /// and can be reattached by name in a future session. Use
     /// [`Sandbox::remove_persisted`] to delete it explicitly.
     ///
-    /// Independent of `Machine::boot`/`Machine::shutdown` cycles — those only
+    /// Independent of `Machine::start`/`Machine::stop` cycles — those only
     /// start and stop the VM regardless of this flag. Default: `false`.
     pub persist: bool,
 
@@ -140,9 +209,9 @@ fn fresh_sandbox_name() -> String {
 
 /// `Machine` implementation backed by a microsandbox VM.
 ///
-/// The VM is created at construction time and left stopped; `boot()` starts
-/// it for the duration of the returned [`SandboxConsole`], and `shutdown()`
-/// stops it. The VM definition is removed when the `Sandbox` value is
+/// The VM is created at construction time and left stopped; `start()` boots
+/// the VM for the duration of the returned [`SandboxConsole`], and `stop()`
+/// halts it. The VM definition is removed when the `Sandbox` value is
 /// dropped, unless `config.persist` is `true`.
 pub struct Sandbox {
     config: SandboxConfig,
@@ -152,7 +221,7 @@ pub struct Sandbox {
 impl Sandbox {
     /// Install the microsandbox runtime if needed, create or attach to the
     /// named VM, ensure `workdir` exists, then stop the VM.
-    pub async fn new(config: SandboxConfig) -> anyhow::Result<Self> {
+    pub async fn new(mut config: SandboxConfig) -> anyhow::Result<Self> {
         use anyhow::Context as _;
 
         if let Some(home) = &config.home {
@@ -174,17 +243,59 @@ impl Sandbox {
             log::info!("microsandbox runtime installed");
         }
 
+        STARTUP_SWEEP_DONE
+            .get_or_init(|| async { sweep_orphan_tmp_volumes().await })
+            .await;
+
         let name = config.name.clone().unwrap_or_else(fresh_sandbox_name);
         validate_sandbox_name(&name)?;
 
-        let inner = if config.persist && MsbSandbox::get(&name).await.is_ok() {
+        // Pre-populate `/tmp` with a per-sandbox named volume so the
+        // microsandbox auto-tmpfs escape hatch (apply_runtime_defaults in
+        // microsandbox 0.4.6 lib/sandbox/config.rs:305-323) fires and `/tmp`
+        // survives the start/stop cycle that `RunEnvHandle::Drop` drives.
+        // A user-supplied `/tmp` mount takes precedence.
+        let tmp_vol_provisioned = if config.volumes.iter().any(|v| v.guest_path() == "/tmp") {
+            None
+        } else {
+            let vol_name = tmp_volume_name(&name);
+            match microsandbox::Volume::builder(&vol_name)
+                .label(AILOY_VOLUME_LABEL_KEY, AILOY_VOLUME_LABEL_VALUE)
+                .create()
+                .await
+            {
+                Ok(_) => {}
+                // `persist=true` reattach: reuse the existing volume.
+                Err(MicrosandboxError::VolumeAlreadyExists(_)) => {}
+                Err(e) => {
+                    return Err(anyhow::anyhow!("create /tmp named volume: {e}"));
+                }
+            }
+            config.volumes.push(VolumeMount::Named {
+                name: vol_name.clone(),
+                guest: "/tmp".to_string(),
+                readonly: false,
+            });
+            Some(vol_name)
+        };
+
+        let inner = match if config.persist && MsbSandbox::get(&name).await.is_ok() {
             MsbSandbox::start_detached(&name)
                 .await
-                .context("sandbox start")?
+                .context("sandbox start")
         } else {
             create_registered(&name, &config)
                 .await
-                .context("sandbox create-registered")?
+                .context("sandbox create-registered")
+        } {
+            Ok(s) => s,
+            Err(e) => {
+                // Roll back the volume we just provisioned.
+                if let Some(vol) = tmp_vol_provisioned {
+                    let _ = microsandbox::Volume::remove(&vol).await;
+                }
+                return Err(e);
+            }
         };
         let _ = inner.shell(&format!("mkdir -p {}", config.workdir)).await;
         inner.stop_and_wait().await?;
@@ -196,7 +307,7 @@ impl Sandbox {
     ///
     /// The source sandbox must be stopped; running sandboxes are rejected
     /// with an error. The returned `Sandbox` is registered but stopped, ready
-    /// to be booted.
+    /// to be started.
     pub async fn fork(&self, new_cfg: SandboxConfig) -> anyhow::Result<Sandbox> {
         if vm_is_running(&self.name).await {
             anyhow::bail!("cannot fork running sandbox '{}'; stop it first", self.name);
@@ -242,7 +353,7 @@ impl Sandbox {
     }
 
     /// Stop the named VM if it is running. Does not remove the VM definition.
-    async fn stop(name: &str) {
+    async fn stop_vm(name: &str) {
         match MsbSandbox::get(name).await {
             Err(e) => log::warn!("sandbox stop: get '{name}' failed: {e}"),
             Ok(handle) => {
@@ -251,7 +362,7 @@ impl Sandbox {
                 // call sync() before poweroff; that call was added in the unreleased
                 // PR #746 branch. Without an explicit syncfs the overlayfs ext4
                 // journal is committed but never checkpointed at VM exit, leaving the
-                // on-disk block bitmap stale — subsequent boots reallocate "free"
+                // on-disk block bitmap stale — subsequent starts reallocate "free"
                 // blocks that still hold data, corrupting files. Running sync -f /
                 // here, while the VM is fully live, forces the checkpoint via
                 // ovl_sync_fs → ext4_sync_fs → jbd2_journal_flush before the
@@ -269,10 +380,13 @@ impl Sandbox {
     }
 
     /// Stop the VM and remove its definition. Called only from `Drop`
-    /// for non-persist sandboxes; never from `Machine::shutdown`.
+    /// for non-persist sandboxes; never from `Machine::stop`.
     async fn remove(name: &str) {
-        Self::stop(name).await;
+        Self::stop_vm(name).await;
         let _ = MsbSandbox::remove(name).await;
+        // Drop the per-sandbox /tmp volume provisioned in `Sandbox::new`.
+        // No-op if the user supplied their own /tmp mount.
+        let _ = microsandbox::Volume::remove(&tmp_volume_name(name)).await;
     }
 
     /// Remove a `persist = true` sandbox by name without holding a [`Sandbox`] instance.
@@ -296,6 +410,7 @@ impl Sandbox {
                         handle.remove().await?;
                     }
                 }
+                let _ = microsandbox::Volume::remove(&tmp_volume_name(name)).await;
                 Ok(())
             }
         }
@@ -316,9 +431,9 @@ impl std::fmt::Debug for Sandbox {
 impl Machine for Sandbox {
     type Handle = SandboxConsole;
 
-    async fn boot(&mut self) -> anyhow::Result<SandboxConsole> {
+    async fn start(&mut self) -> anyhow::Result<SandboxConsole> {
         let inner = start_and_connect(&self.name).await?;
-        // Bind-mounted workdirs reset on each boot — re-create.
+        // Bind-mounted workdirs reset on each start — re-create.
         let _ = inner
             .shell(&format!("mkdir -p {}", self.config.workdir))
             .await;
@@ -331,16 +446,16 @@ impl Machine for Sandbox {
     }
 
     /// Stops the VM only; the VM definition is removed when the `Sandbox` is dropped.
-    async fn shutdown(&mut self) {
-        Self::stop(&self.name).await;
+    async fn stop(&mut self) {
+        Self::stop_vm(&self.name).await;
     }
 }
 
 impl Drop for Sandbox {
     fn drop(&mut self) {
         // Drop is the sole owner of VM definition removal for non-persist
-        // sandboxes. `Machine::shutdown` only stops the VM; removal happens
-        // here so the VM definition survives multiple boot/shutdown cycles
+        // sandboxes. `Machine::stop` only stops the VM; removal happens
+        // here so the VM definition survives multiple start/stop cycles
         // within the same `Sandbox` lifetime.
         if self.config.persist {
             return;
@@ -445,7 +560,7 @@ impl Console for SandboxConsole {
 
 /// Start the sandbox with one force-stop retry on `SandboxStillRunning`, then
 /// detach lifecycle ownership and reconnect without it, so dropping the
-/// returned handle will not SIGTERM the VM. SIGTERM bypasses agentd's shutdown
+/// returned handle will not SIGTERM the VM. SIGTERM bypasses agentd's stop
 /// path and loses in-flight dirty pages; all stops must go through `Sandbox::stop`.
 async fn start_and_connect(name: &str) -> anyhow::Result<MsbSandbox> {
     let inner = match MsbSandbox::start_detached(name).await {
@@ -465,10 +580,10 @@ async fn start_and_connect(name: &str) -> anyhow::Result<MsbSandbox> {
     inner.detach().await;
     MsbSandbox::get(name)
         .await
-        .map_err(|e| anyhow::anyhow!("boot: sandbox not found: {e}"))?
+        .map_err(|e| anyhow::anyhow!("start: sandbox not found: {e}"))?
         .connect()
         .await
-        .map_err(|e| anyhow::anyhow!("boot: connect failed: {e}"))
+        .map_err(|e| anyhow::anyhow!("start: connect failed: {e}"))
 }
 
 fn handle_exec_result(
@@ -666,7 +781,7 @@ mod tests {
 
     /// Wait until `vm_is_running(name)` returns false, polling every 50ms.
     /// Returns true if the VM stopped before `deadline`, false on timeout.
-    /// Used after handle drop, where the background shutdown thread stops
+    /// Used after handle drop, where the background stop thread stops
     /// the VM asynchronously and `drop` itself returns immediately.
     async fn wait_until_stopped(name: &str, deadline: std::time::Duration) -> bool {
         let start = Instant::now();
@@ -836,11 +951,11 @@ mod tests {
 
     // ── VM lifecycle ─────────────────────────────────────────────────────────
 
-    /// VM definition survives `Machine::shutdown` (handle drop) when
-    /// `persist = false` — subsequent boots on the same `Sandbox` must succeed.
+    /// VM definition survives `Machine::stop` (handle drop) when
+    /// `persist = false` — subsequent starts on the same `Sandbox` must succeed.
     /// The definition is only removed when the `Sandbox` struct itself is dropped.
     #[tokio::test]
-    async fn test_vm_definition_survives_machine_shutdown_with_persist_false() {
+    async fn test_vm_definition_survives_machine_stop_with_persist_false() {
         let name = format!("at-vmdef-{}", short_id());
         let env = RunEnv::sandbox(SandboxConfig {
             name: Some(name.clone()),
@@ -850,7 +965,7 @@ mod tests {
         .await
         .unwrap();
 
-        // 1st boot/shutdown cycle
+        // 1st start/stop cycle
         {
             let h = env.get().await.unwrap();
             let r = h
@@ -858,7 +973,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(r.exit_code, 0);
-        } // handle drop → Machine::shutdown is called
+        } // handle drop → Machine::stop is called
 
         // VM definition must still exist
         assert!(
@@ -866,13 +981,13 @@ mod tests {
             "VM definition must survive handle drop when persist=false"
         );
 
-        // 2nd boot must succeed and file state must be preserved
+        // 2nd start must succeed and file state must be preserved
         let h2 = env.get().await.unwrap();
         let r = h2
             .exec_shell("cat ./m.txt".to_string(), None)
             .await
             .unwrap();
-        assert_eq!(r.exit_code, 0, "second boot must succeed: {}", r.stderr);
+        assert_eq!(r.exit_code, 0, "second start must succeed: {}", r.stderr);
         drop(h2);
 
         // VM definition must be gone after the Sandbox is dropped
@@ -884,7 +999,7 @@ mod tests {
         );
     }
 
-    /// A single boot serves multiple `exec` calls without the VM going down
+    /// A single start serves multiple `exec` calls without the VM going down
     /// between them.
     #[tokio::test]
     async fn test_vm_stays_up_across_exec_calls() {
@@ -911,7 +1026,7 @@ mod tests {
         }
     }
 
-    /// Dropping the last handle shuts the VM down; `get()` boots it again.
+    /// Dropping the last handle stops the VM; `get()` starts it again.
     #[tokio::test]
     async fn test_stop_and_start() {
         let name = format!("at-ss-{}", short_id());
@@ -940,7 +1055,7 @@ mod tests {
         Sandbox::remove_persisted(&name).await.ok();
     }
 
-    /// Repeated boot/drop cycles are safe with `persist = false` — the VM
+    /// Repeated start/drop cycles are safe with `persist = false` — the VM
     /// definition survives each cycle and no resource leak or double-stop error
     /// occurs. Removal happens only when the `Sandbox` is dropped.
     #[tokio::test]
@@ -994,8 +1109,8 @@ mod tests {
 
     // ── concurrent access ────────────────────────────────────────────────────
 
-    /// Concurrent `RunEnv::get()` calls all succeed and share the same booted VM —
-    /// the machine is booted at most once.
+    /// Concurrent `RunEnv::get()` calls all succeed and share the same started VM —
+    /// the machine is started at most once.
     #[tokio::test]
     async fn test_concurrent_get() {
         let name = format!("at-cg-{}", short_id());
@@ -1164,7 +1279,7 @@ mod tests {
 
     // ── persistence ──────────────────────────────────────────────────────────
 
-    /// Files written during one boot survive the next — the VM definition is
+    /// Files written during one start survive the next — the VM definition is
     /// preserved across stop/start cycles as long as the `Sandbox` is alive,
     /// regardless of `persist`.
     #[tokio::test]
@@ -1422,6 +1537,145 @@ mod tests {
         );
     }
 
+    /// `/tmp` is backed by an auto-injected named volume, so writes from one
+    /// handle scope survive into the next within the same `Sandbox`.
+    #[tokio::test]
+    async fn test_tmp_persists_across_starts() {
+        let env = make_env().await;
+
+        {
+            let h = env.get().await.unwrap();
+            h.exec_shell("echo hello > /tmp/probe".to_string(), None)
+                .await
+                .expect("write failed");
+        }
+
+        let h = env.get().await.unwrap();
+        let r = h
+            .exec_shell(
+                "cat /tmp/probe 2>/dev/null || echo MISSING".to_string(),
+                None,
+            )
+            .await
+            .expect("read failed");
+        assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+        assert!(
+            r.stdout.contains("hello"),
+            "stdout: {:?}",
+            r.stdout
+        );
+    }
+
+    /// User-supplied `/tmp` mounts take precedence over the auto-injected
+    /// named volume, so callers can opt out and get tmpfs semantics back.
+    #[tokio::test]
+    async fn test_user_tmpfs_overrides_default_tmp() {
+        let env = RunEnv::sandbox(SandboxConfig {
+            volumes: vec![VolumeMount::Tmpfs {
+                guest: "/tmp".to_string(),
+                size_mib: Some(64),
+            }],
+            ..SandboxConfig::default()
+        })
+        .await
+        .expect("failed to create sandbox");
+
+        {
+            let h = env.get().await.unwrap();
+            h.exec_shell("echo hello > /tmp/probe".to_string(), None)
+                .await
+                .expect("write failed");
+        }
+
+        let h = env.get().await.unwrap();
+        let r = h
+            .exec_shell(
+                "cat /tmp/probe 2>/dev/null || echo MISSING".to_string(),
+                None,
+            )
+            .await
+            .expect("read failed");
+        assert!(
+            r.stdout.contains("MISSING"),
+            "user tmpfs at /tmp must wipe between starts, stdout: {:?}",
+            r.stdout
+        );
+    }
+
+    /// Dropping a non-persist `Sandbox` removes its auto-injected `/tmp`
+    /// volume along with the VM definition.
+    #[tokio::test]
+    async fn test_tmp_volume_removed_on_sandbox_drop() {
+        use microsandbox::Volume;
+
+        let name = format!("drop-test-{}", short_id());
+        let vol = tmp_volume_name(&name);
+        {
+            let _env = RunEnv::sandbox(SandboxConfig {
+                name: Some(name.clone()),
+                persist: false,
+                ..SandboxConfig::default()
+            })
+            .await
+            .expect("failed to create sandbox");
+            Volume::get(&vol)
+                .await
+                .expect("volume must exist while sandbox is alive");
+        }
+
+        // Drop runs cleanup on a background thread; poll until the volume
+        // disappears or the deadline elapses.
+        let start = Instant::now();
+        loop {
+            if Volume::get(&vol).await.is_err() {
+                return;
+            }
+            if start.elapsed() >= std::time::Duration::from_secs(30) {
+                panic!("volume '{vol}' was not removed within 30s of Sandbox drop");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    /// The startup sweep removes `ailoy.managed` volumes whose owner sandbox
+    /// is no longer present. Volumes without the label are left alone.
+    #[tokio::test]
+    async fn test_startup_sweep_targets_only_labelled_orphans() {
+        use microsandbox::Volume;
+
+        // Orphan: ailoy-tmp-* prefix + ailoy.managed label, no owner sandbox.
+        let orphan_owner = format!("nonexistent-{}", Uuid::new_v4());
+        let orphan_vol = tmp_volume_name(&orphan_owner);
+        Volume::builder(&orphan_vol)
+            .label(AILOY_VOLUME_LABEL_KEY, AILOY_VOLUME_LABEL_VALUE)
+            .create()
+            .await
+            .expect("create orphan volume");
+
+        // Bystander: ailoy-tmp-* prefix but no label, mimicking an external
+        // volume coincidentally named like ours.
+        let bystander_vol = format!("ailoy-tmp-external-{}", Uuid::new_v4());
+        Volume::builder(&bystander_vol)
+            .create()
+            .await
+            .expect("create bystander volume");
+
+        sweep_orphan_tmp_volumes().await;
+
+        let orphan_present = Volume::get(&orphan_vol).await.is_ok();
+        let bystander_present = Volume::get(&bystander_vol).await.is_ok();
+
+        if bystander_present {
+            let _ = Volume::remove(&bystander_vol).await;
+        }
+        if orphan_present {
+            let _ = Volume::remove(&orphan_vol).await;
+        }
+
+        assert!(!orphan_present, "labelled orphan must be swept");
+        assert!(bystander_present, "unlabelled volume must be left alone");
+    }
+
     // ── networking ───────────────────────────────────────────────────────────
 
     /// By default the sandbox can reach external hosts.
@@ -1472,8 +1726,8 @@ mod tests {
 
     // ── fork ─────────────────────────────────────────────────────────────────
     //
-    // Fork operates on the underlying `Sandbox`, not on a booted handle, so
-    // these tests bypass `RunEnv` and drive `Machine::boot` / `Machine::shutdown`
+    // Fork operates on the underlying `Sandbox`, not on a started handle, so
+    // these tests bypass `RunEnv` and drive `Machine::start` / `Machine::stop`
     // directly.
 
     #[tokio::test]
@@ -1489,7 +1743,7 @@ mod tests {
 
         // Boot the VM directly so we can observe the "running" state when
         // calling `fork`.
-        let _console = src.boot().await.expect("boot");
+        let _console = src.start().await.expect("start");
         assert!(
             vm_is_running(&src_name).await,
             "should be running before fork"
@@ -1509,7 +1763,7 @@ mod tests {
         );
 
         drop(_console);
-        src.shutdown().await;
+        src.stop().await;
         Sandbox::remove_persisted(&src_name).await.ok();
     }
 
@@ -1527,13 +1781,13 @@ mod tests {
         .expect("create source");
 
         {
-            let console = src.boot().await.expect("boot src");
+            let console = src.start().await.expect("start src");
             console
                 .exec_shell("echo fork_content > ./note.txt".to_string(), None)
                 .await
                 .expect("write note");
         }
-        src.shutdown().await;
+        src.stop().await;
 
         let mut child = src
             .fork(SandboxConfig {
@@ -1544,7 +1798,7 @@ mod tests {
             .await
             .expect("fork");
 
-        let child_console = child.boot().await.expect("boot child");
+        let child_console = child.start().await.expect("start child");
         let bytes = child_console
             .read(Path::new("./note.txt"))
             .await
@@ -1557,7 +1811,7 @@ mod tests {
         );
 
         drop(child_console);
-        child.shutdown().await;
+        child.stop().await;
         Sandbox::remove_persisted(&src_name).await.ok();
         Sandbox::remove_persisted(&child_name).await.ok();
     }
@@ -1576,13 +1830,13 @@ mod tests {
         .expect("create source");
 
         {
-            let console = src.boot().await.expect("boot src");
+            let console = src.start().await.expect("start src");
             console
                 .exec_shell("echo original > ./data.txt".to_string(), None)
                 .await
                 .expect("write original");
         }
-        src.shutdown().await;
+        src.stop().await;
 
         let mut child = src
             .fork(SandboxConfig {
@@ -1594,15 +1848,15 @@ mod tests {
             .expect("fork");
 
         {
-            let console = child.boot().await.expect("boot child");
+            let console = child.start().await.expect("start child");
             console
                 .exec_shell("echo mutated > ./data.txt".to_string(), None)
                 .await
                 .expect("mutate child");
         }
-        child.shutdown().await;
+        child.stop().await;
 
-        let src_console = src.boot().await.expect("boot src after fork");
+        let src_console = src.start().await.expect("start src after fork");
         let bytes = src_console
             .read(Path::new("./data.txt"))
             .await
@@ -1615,7 +1869,7 @@ mod tests {
         );
 
         drop(src_console);
-        src.shutdown().await;
+        src.stop().await;
         Sandbox::remove_persisted(&src_name).await.ok();
         Sandbox::remove_persisted(&child_name).await.ok();
     }
@@ -1653,7 +1907,7 @@ mod tests {
             "snapshot should be deleted after fork, still found at {snap_dir:?}"
         );
 
-        child.shutdown().await;
+        child.stop().await;
         Sandbox::remove_persisted(&src_name).await.ok();
         Sandbox::remove_persisted(&child_name).await.ok();
     }
